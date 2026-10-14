@@ -121,12 +121,21 @@ class ThinkingControlMiddleware(AgentMiddleware):
             return {"thinking_level": cache_key.split(":", 1)[1]}
         return {}
 
-    def _build(self, cache_key: str | None, override: dict | None) -> Any:
+    def _build(
+        self,
+        cache_key: str | None,
+        override: dict | None,
+        custom_mapping: dict | None = None,
+    ) -> Any:
         from models import build_main_llm
 
         thinking_kwargs = self._thinking_kwargs(cache_key)
         if override is None:
-            return build_main_llm(temperature=self._temperature, **thinking_kwargs)
+            return build_main_llm(
+                temperature=self._temperature,
+                custom_mapping=custom_mapping,
+                **thinking_kwargs,
+            )
 
         from models import build_main_llm_for_profile
 
@@ -136,6 +145,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
             api_key=override.get("api_key"),
             base_url=override.get("base_url"),
             temperature=self._temperature,
+            custom_mapping=custom_mapping,
             **thinking_kwargs,
         )
 
@@ -155,11 +165,23 @@ class ThinkingControlMiddleware(AgentMiddleware):
         digest = hashlib.blake2s(fields.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
         return f"{override.get('model')}#{digest}"
 
-    def _variant(self, cache_key: str | None, override: dict | None) -> Any:
-        signature = f"{cache_key or 'default'}::{self._override_signature(override)}"
+    def _variant(
+        self,
+        cache_key: str | None,
+        override: dict | None,
+        custom_mapping: dict | None = None,
+    ) -> Any:
+        # The mapping participates in the signature: editing it must build a
+        # fresh client, while two calls with the same mapping share one.
+        mapping_sig = (
+            repr(sorted((str(k), repr(v)) for k, v in custom_mapping.items()))
+            if custom_mapping
+            else "builtin"
+        )
+        signature = f"{cache_key or 'default'}::{self._override_signature(override)}::{mapping_sig}"
         cached = self._variants.get(signature)
         if cached is None:
-            cached = self._build(cache_key, override)
+            cached = self._build(cache_key, override, custom_mapping)
             self._variants[signature] = cached
         return cached
 
@@ -175,11 +197,12 @@ class ThinkingControlMiddleware(AgentMiddleware):
             return f"level:{value}"
         return None
 
-    def _read_controls(self, session_id: str) -> tuple[str | None, dict | None]:
-        """(thinking cache key, model override) as stored for the session.
+    def _read_controls(self, session_id: str) -> tuple[str | None, dict | None, dict | None]:
+        """(thinking cache key, model override, custom wire mapping) as stored.
 
         Mem-register only (no blocking I/O on the loop). A malformed override
-        (no usable model name) is ignored, mirroring the service's validation.
+        (no usable model name) is ignored, mirroring the service's validation;
+        so is a custom mapping without a usable level map.
         """
         from runtime import state_register_mem
 
@@ -189,8 +212,14 @@ class ThinkingControlMiddleware(AgentMiddleware):
         override = (
             raw_override if isinstance(raw_override, dict) and raw_override.get("model") else None
         )
-        if cache_key is None and override is None:
-            return None, None
+        raw_mapping = state_register_mem.get_state(
+            session_id, StateKey.CUSTOM_THINKING_MAPPING, None
+        )
+        custom_mapping = (
+            raw_mapping if isinstance(raw_mapping, dict) and raw_mapping.get("level_map") else None
+        )
+        if cache_key is None and override is None and custom_mapping is None:
+            return None, None, None
         applied = (cache_key, (override or {}).get("model"))
         if self._last_applied.get(session_id) != applied:
             logger.info(
@@ -200,7 +229,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
                 cache_key or "env-default",
             )
             self._last_applied[session_id] = applied
-        return cache_key, override
+        return cache_key, override, custom_mapping
 
     def _maybe_swap(self, request: Any) -> tuple[Any, str | None, dict | None]:
         """Return (request, applied_thinking_key, override) — original when no-op."""
@@ -209,13 +238,13 @@ class ThinkingControlMiddleware(AgentMiddleware):
         if not session_id:
             return request, None, None
 
-        cache_key, override = self._read_controls(session_id)
-        if cache_key is None and override is None:
-            _applied_model_configs[session_id] = self._descriptor(None, None)
+        cache_key, override, custom_mapping = self._read_controls(session_id)
+        if cache_key is None and override is None and custom_mapping is None:
+            _applied_model_configs[session_id] = self._descriptor(None, None, None)
             return request, None, None
 
         try:
-            variant = self._variant(cache_key, override)
+            variant = self._variant(cache_key, override, custom_mapping)
         except Exception as exc:
             logger.warning(
                 "Model variant build failed (thinking={}, model={}), keeping env-default model: {}",
@@ -223,17 +252,23 @@ class ThinkingControlMiddleware(AgentMiddleware):
                 (override or {}).get("model"),
                 exc,
             )
-            _applied_model_configs[session_id] = self._descriptor(None, None)
+            _applied_model_configs[session_id] = self._descriptor(None, None, custom_mapping)
             return request, None, None
-        _applied_model_configs[session_id] = self._descriptor(cache_key, override)
+        _applied_model_configs[session_id] = self._descriptor(cache_key, override, custom_mapping)
         return request.override(model=variant), cache_key, override
 
-    def _descriptor(self, cache_key: str | None, override: dict | None) -> dict[str, Any]:
+    def _descriptor(
+        self,
+        cache_key: str | None,
+        override: dict | None,
+        custom_mapping: dict | None = None,
+    ) -> dict[str, Any]:
         """The rebuildable config of the variant for ``(cache_key, override)``."""
         return {
             "override": override,
             "thinking_kwargs": self._thinking_kwargs(cache_key),
             "temperature": self._temperature,
+            "custom_mapping": custom_mapping,
         }
 
     def _retry_with_floor(self, request: Any, handler: Any, override: dict | None) -> Any:

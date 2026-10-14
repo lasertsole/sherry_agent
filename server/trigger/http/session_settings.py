@@ -54,8 +54,10 @@ import asyncio
 from loguru import logger
 
 from server.service.session_settings_service import (
+    apply_custom_thinking_mapping,
     apply_main_model_choice,
     apply_thinking_choice,
+    get_custom_thinking_mapping,
     get_main_model_state,
     get_thinking_state,
     session_turn_active,
@@ -100,6 +102,47 @@ async def put_thinking_handler(request):
         return bad_request("invalid session_id or value")
     logger.info("Thinking toggle: session={} value={} pending={}", session_id, value, pending)
     return ok({"success": True, "session_id": session_id, "value": value, "pending": pending})
+
+
+@app.get("/sessions/thinking/custom")
+async def get_thinking_custom_handler(request):
+    """Return the session's custom thinking wire mapping (or null)."""
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    try:
+        mapping = await asyncio.to_thread(get_custom_thinking_mapping, session_id)
+    except ValueError:
+        return bad_request("invalid session_id")
+    return ok({"success": True, "session_id": session_id, "mapping": mapping})
+
+
+@app.put("/sessions/thinking/custom")
+async def put_thinking_custom_handler(request):
+    """Write (or clear, with ``mapping: null``) the custom thinking mapping."""
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    session_id = body.get("session_id") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    if "mapping" not in body:
+        return bad_request("'mapping' is required (an object, or null to clear)")
+    mapping = body.get("mapping")
+    if mapping is not None and not isinstance(mapping, dict):
+        return bad_request("'mapping' must be an object or null")
+    try:
+        pending = await apply_custom_thinking_mapping(session_id, mapping)
+    except ValueError as exc:
+        return bad_request(str(exc) or "invalid mapping")
+    logger.info(
+        "Thinking custom mapping: session={} pending={} wire={}",
+        session_id,
+        pending,
+        (mapping or {}).get("wire_format") or "-",
+    )
+    return ok({"success": True, "session_id": session_id, "pending": pending})
 
 
 @app.get("/sessions/turn_state")

@@ -124,6 +124,9 @@
                   @update:model-value="value => setRoleModel(role.role, value)" />
               </div>
             </template>
+            <!-- Advanced: the per-session custom thinking wire mapping
+                 (escape hatch for providers the built-in formats miss). -->
+            <ThinkingCustomMappingPanel :session-id="sessionId" />
           </div>
         </TabPanel>
 
@@ -357,6 +360,7 @@
 
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue';
+import ThinkingCustomMappingPanel from './ThinkingCustomMappingPanel.vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import type { SessionPresetBinding } from '@/composables/db';

@@ -1,7 +1,7 @@
 # EMA Agent 中间件系统
 
-[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)]()
-[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)]()
+[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)](<>)
+[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)](<>)
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
@@ -53,12 +53,12 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 
 中间件继承 `langchain.agents.middleware.AgentMiddleware`，在 Agent 循环的明确定义好的位置接入。系统使用四个钩子家族（均提供同步与异步两种形式）：
 
-| 钩子家族 | 同步 | 异步 | 作用范围 |
-|---|---|---|---|
-| Agent 前/后 | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | 每个对话回合一次，围绕整个模型–工具循环 |
-| 模型前/后 | `before_model` / `after_model` | `abefore_model` / `aafter_model` | 围绕每一次单独的模型请求 |
-| 模型调用包装 | `wrap_model_call` | `awrap_model_call` | 拦截模型请求本身（修改消息 / 系统提示词、短路 LLM） |
-| 工具调用包装 | `wrap_tool_call` | `awrap_tool_call` | 拦截每一次工具执行 |
+| 钩子家族     | 同步                           | 异步                             | 作用范围                                            |
+| ------------ | ------------------------------ | -------------------------------- | --------------------------------------------------- |
+| Agent 前/后  | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | 每个对话回合一次，围绕整个模型–工具循环             |
+| 模型前/后    | `before_model` / `after_model` | `abefore_model` / `aafter_model` | 围绕每一次单独的模型请求                            |
+| 模型调用包装 | `wrap_model_call`              | `awrap_model_call`               | 拦截模型请求本身（修改消息 / 系统提示词、短路 LLM） |
+| 工具调用包装 | `wrap_tool_call`               | `awrap_tool_call`                | 拦截每一次工具执行                                  |
 
 ### 钩子顺序语义
 
@@ -170,14 +170,14 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### 每回合的实际执行顺序（主 Agent）
 
-| 阶段 | 顺序 |
-|---|---|
-| `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `before_model`（列表顺序） | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离） |
+| 阶段                                 | 顺序                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before_agent`（列表顺序）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                      |
+| `before_model`（列表顺序）           | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离）                                                                             |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
-| `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
-| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state） |
-| `after_agent`（逆序） | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合） |
+| `after_model`（逆序）                | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库）                                                                                                                                                                 |
+| `wrap_tool_call`（最外层 → 最内层）  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
+| `after_agent`（逆序）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合）                                                                                                                                             |
 
 表中只列出在该阶段实现了对应钩子的中间件。
 
@@ -245,11 +245,11 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `GET /agent/catalog` 返回整条链；预设角色-中间件栏可关闭其中的**三个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
 
-| 可关闭项 | 关闭后的效果 |
-| --- | --- |
-| `PlanContinuationEnforcer` | 计划（待办 / 任务流）未完成也不再自动续跑 |
-| `TaskIntentMiddleware` | 不再注入任务意图引导 |
-| `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话 |
+| 可关闭项                            | 关闭后的效果                              |
+| ----------------------------------- | ----------------------------------------- |
+| `PlanContinuationEnforcer`          | 计划（待办 / 任务流）未完成也不再自动续跑 |
+| `TaskIntentMiddleware`              | 不再注入任务意图引导                      |
+| `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话              |
 
 其余全部锁定（前端只读展示）：**14** 个 `_MAIN_REQUIRED` 安全项——原 12 项加上 `WorkspaceNoticeMiddleware`（提示词渲染的是当前根，没有这条通知 agent 会继续按旧目录作答）与 `MultimodalProcessor`（缺它即丢附件）——外加 `system_prompt_injection`（关掉即无系统提示词）、`ThinkingControlMiddleware`（它就是模型/思考开关）与 `ToolSelectionMiddleware`（它负责应用工具选择）。历史载荷里若点名了必需项会被忽略：`middleware_enabled()` 对必需项一律返回 `True`。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
 
@@ -293,20 +293,20 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 检测五种失败病理，并以四级升级 `ALLOW → WARN → BLOCK → HALT`（`GuardrailAction` 枚举）作出反应：
 
-| 病理 | 触发条件 | WARN 阈值 | BLOCK 阈值 | hard-stop 模式 |
-|---|---|---|---|---|
-| 精确失败重复 | 相同工具 + 相同参数（参数 JSON `sort_keys` 后取 MD5）失败 | 2（`exact_failure_warn_after`） | 5（`exact_failure_block_after`） | 5 次时 HALT |
-| 同工具失败累积 | 相同工具以**不同**参数反复失败 | 3（`same_tool_failure_warn_after`） | 8（`same_tool_failure_halt_after`） | 8 次时 HALT |
-| 幂等无进展 | 同一幂等工具（元数据 `idempotent: true`）返回本回合中它已产出过的结果哈希 | 2（`no_progress_warn_after`） | 5（`no_progress_block_after`） | 5 次时 HALT |
-| 乒乓 | 两个工具之间不间断的 A → B → A → B 往返，且相邻两次调用均无进展（stagnant） | 4（`ping_pong_warn_after`） | 6（`ping_pong_block_after`） | 6 次时 HALT |
-| 参数翻新 | 同一幂等工具轮换参数变体，但结果保持不变（无进展） | 3 种变体（`arg_churn_warn_after`） | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT |
+| 病理           | 触发条件                                                                    | WARN 阈值                           | BLOCK 阈值                          | hard-stop 模式 |
+| -------------- | --------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | -------------- |
+| 精确失败重复   | 相同工具 + 相同参数（参数 JSON `sort_keys` 后取 MD5）失败                   | 2（`exact_failure_warn_after`）     | 5（`exact_failure_block_after`）    | 5 次时 HALT    |
+| 同工具失败累积 | 相同工具以**不同**参数反复失败                                              | 3（`same_tool_failure_warn_after`） | 8（`same_tool_failure_halt_after`） | 8 次时 HALT    |
+| 幂等无进展     | 同一幂等工具（元数据 `idempotent: true`）返回本回合中它已产出过的结果哈希   | 2（`no_progress_warn_after`）       | 5（`no_progress_block_after`）      | 5 次时 HALT    |
+| 乒乓           | 两个工具之间不间断的 A → B → A → B 往返，且相邻两次调用均无进展（stagnant） | 4（`ping_pong_warn_after`）         | 6（`ping_pong_block_after`）        | 6 次时 HALT    |
+| 参数翻新       | 同一幂等工具轮换参数变体，但结果保持不变（无进展）                          | 3 种变体（`arg_churn_warn_after`）  | 5 种变体（`arg_churn_block_after`） | 5 种时 HALT    |
 
 - `before_agent` 重置回合级护栏状态（`state_register_mem` 中的键 `tool_guardrail_state`）——严格回合作用域，新回合从干净状态开始。
 - `wrap_tool_call` 先做拦截预检（对被阻止的工具/终止状态直接返回错误 `ToolMessage`，不执行），再运行工具，然后评估结果：
   - `warn` 在 `ToolMessage` 后附加警告；
   - `block` 将工具记入 `blocked_tools`；
   - `halt` 为本回合剩余时间设置粘性终止（`halt_decision`）。
-- **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
+- **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，_precheck_ 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT——一个受管的重试窗口，而不是一堵立即竖起的墙。
 - **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
 - `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
 
@@ -424,21 +424,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `HITLConfig` 默认值：
 
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
-| `timeout` | `60` | 中断决策超时 |
-| `deny_rules` | `[]` | 显式拒绝规则 |
-| `yolo_mode` | `False` | 跳过所有审批 |
-| `write_approval_memory` | `False` | 记忆工具写入需审批 |
-| `write_approval_skills` | `False` | 技能写入需审批 |
-| `clarify_timeout` | `3600` | 澄清提问超时 |
-| `kanban_recurrence_limit` | `3`（`BLOCK_RECURRENCE_LIMIT`） | 触发看板分诊前的重复阻止上限 |
-| `mcp_reload_confirm` | `True` | MCP 服务器重载需确认 |
-| `destructive_slash_confirm` | `True` | 破坏性斜杠命令需确认 |
-| `smart_approval_llm` | `None` | 用于智能自动审批的 LLM |
-| `interrupted_tools` | `{}` | 总是触发 `interrupt()` 的工具 |
-| `description_prefix` | `"Action requires human approval"` | 审批对话框标题前缀 |
+| 参数                        | 默认值                             | 含义                          |
+| --------------------------- | ---------------------------------- | ----------------------------- |
+| `mode`                      | `ApprovalMode.SMART`               | `SMART` / `MANUAL` / `OFF`    |
+| `timeout`                   | `60`                               | 中断决策超时                  |
+| `deny_rules`                | `[]`                               | 显式拒绝规则                  |
+| `yolo_mode`                 | `False`                            | 跳过所有审批                  |
+| `write_approval_memory`     | `False`                            | 记忆工具写入需审批            |
+| `write_approval_skills`     | `False`                            | 技能写入需审批                |
+| `clarify_timeout`           | `3600`                             | 澄清提问超时                  |
+| `kanban_recurrence_limit`   | `3`（`BLOCK_RECURRENCE_LIMIT`）    | 触发看板分诊前的重复阻止上限  |
+| `mcp_reload_confirm`        | `True`                             | MCP 服务器重载需确认          |
+| `destructive_slash_confirm` | `True`                             | 破坏性斜杠命令需确认          |
+| `smart_approval_llm`        | `None`                             | 用于智能自动审批的 LLM        |
+| `interrupted_tools`         | `{}`                               | 总是触发 `interrupt()` 的工具 |
+| `description_prefix`        | `"Action requires human approval"` | 审批对话框标题前缀            |
 
 工具调用的审批决策还会通过 `ToolApprovalStore`（`approval_store.py`）持久化到 `SRC_DIR/data/approvals.json`：按操作员隔离的 JSON 存储，以字节修订 CAS 更新，因此已批准的 `interrupted_tools` 调用在重启后不会再次询问。当范围内没有操作员（或该轮次为无人的系统注入）时，需要审批的门控会直接自动拒绝而不再中断。
 
@@ -453,12 +453,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **延迟——各类消息何时进入 `messages` 表：**
 
-| 消息 | 落库时机 |
-|---|---|
-| human | 当轮首个模型边界 |
-| AI（含其 `tool_calls`） | 模型产出后的那个模型边界 |
-| 工具结果 | **工具 handler 返回的瞬间**（`wrap_tool_call` / `awrap_tool_call`），不再等下一次模型调用 |
-| HITL 拒绝（`HumanInTheLoop` 短路产生的 `status="error"` ToolMessage） | 下一个模型边界——HITL 从外层包住本中间件，其短路不会调用内层 |
+| 消息                                                                  | 落库时机                                                                                  |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| human                                                                 | 当轮首个模型边界                                                                          |
+| AI（含其 `tool_calls`）                                               | 模型产出后的那个模型边界                                                                  |
+| 工具结果                                                              | **工具 handler 返回的瞬间**（`wrap_tool_call` / `awrap_tool_call`），不再等下一次模型调用 |
+| HITL 拒绝（`HumanInTheLoop` 短路产生的 `status="error"` ToolMessage） | 下一个模型边界——HITL 从外层包住本中间件，其短路不会调用内层                               |
 
 **工具返回落库：** wrap 钩子先执行 `handler(request)`，再从响应中取出 `ToolMessage`——响应可能是裸 `ToolMessage`、混合 `ToolMessage` / `Command` 的列表、或 `Command.update["messages"]` 携带消息（`_iter_tool_messages` 全部覆盖）——走同一批次管线落库后**原样**返回响应。不含 `ToolMessage` 的响应（纯导航 `Command`）不写任何行。
 
@@ -483,17 +483,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成工具结果的关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
 
 **不可信工具结果会被围栏。** 驱逐之后，来自攻击者可控工具的结果（`web_search`——无论后端是谁都是同一个工具，另含它改名前的名字 `tavily_search`——`message_search`，以及任何 `mcp_` 工具）会被包进 `<untrusted_tool_result source="…" id="…">` 块，块内提示语声明这些内容是数据而非指令。载荷里的任何闭合标签都会在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块；被围栏的只有模型视图——内层已持久化的原文不受影响。开关与提示语在 `config/features/agent_side/untrusted_output.py`。
- 同一趟还会掩码那些天生易泄漏的工具结果（`terminal`、`python_repl`、不可信工具集、`mcp_*`）中的凭证——顺序为 **evict → redact → fence**；文件工具保持原文，避免读回再写回时破坏配置。开关：`REDACTION["tool_output_enabled"]`。
+同一趟还会掩码那些天生易泄漏的工具结果（`terminal`、`python_repl`、不可信工具集、`mcp_*`）中的凭证——顺序为 **evict → redact → fence**；文件工具保持原文，避免读回再写回时破坏配置。开关：`REDACTION["tool_output_enabled"]`。
 
 同一中间件还持有**人类消息**路径（P1-9），其三是三态切分与工具侧相反；见下文[人类消息驱逐](#人类消息驱逐p1-9)。
 
 **工具结果的两条缩减路径**
 
-| 结果 | 处理 |
-|---|---|
-| 普通工具，文本 > `evict_threshold_chars`（20 000 字符） | 全文写入 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`，内容替换为 head/tail 预览 |
-| `read_file`（P2-4） | 文件已在磁盘——内容截为前 4 000 字符 + 恢复提示，**不写文件** |
-| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | 永不驱逐（`excluded_tools`）；`read_file` 也在该集合中，但走上面的切片路径 |
+| 结果                                                                                                 | 处理                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 普通工具，文本 > `evict_threshold_chars`（20 000 字符）                                              | 全文写入 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`，内容替换为 head/tail 预览 |
+| `read_file`（P2-4）                                                                                  | 文件已在磁盘——内容截为前 4 000 字符 + 恢复提示，**不写文件**                                         |
+| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | 永不驱逐（`excluded_tools`）；`read_file` 也在该集合中，但走上面的切片路径                           |
 
 **预览格式**（`pub/func/message/eviction.py::build_preview`，`preview_head_lines=5`、`preview_tail_lines=5`）：
 
@@ -513,11 +513,11 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **三处存储**
 
-| 位置 | 内容 |
-|---|---|
-| graph state / checkpointer / 下一次模型调用 | 仅预览 |
-| MesMemory（`messages` 表） | 完整原文（由内层在工具返回时写入） |
-| `SESSIONS_DIR/<session_id>/evicted/` | 逐字节一致的副本（`load_evicted()` / `read_file` 可取回） |
+| 位置                                        | 内容                                                      |
+| ------------------------------------------- | --------------------------------------------------------- |
+| graph state / checkpointer / 下一次模型调用 | 仅预览                                                    |
+| MesMemory（`messages` 表）                  | 完整原文（由内层在工具返回时写入）                        |
+| `SESSIONS_DIR/<session_id>/evicted/`        | 逐字节一致的副本（`load_evicted()` / `read_file` 可取回） |
 
 **水位安全。** `model_copy` 同时携带内层落库写入的进程内 `_db_persisted` 标记，下一次模型边界会跳过预览；当原文落库成功时，还会为替换消息的水位键写入墓碑——覆盖"重启后标记丢失且预览指纹与原文不再一致"的场景。两种情况都不会为同一逻辑消息写入第二行；若原文落库失败则不写墓碑，边界会以预览内容重试。
 
@@ -537,12 +537,12 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **三处存储——与工具结果相反的切分**
 
-| 位置 | 工具结果（P0-2） | 人类消息（P1-9） |
-|---|---|---|
-| graph state / checkpointer | 仅预览 | **完整原文** + `lc_evicted_to` 标记 |
-| MesMemory（`messages` 表） | 完整原文 | **完整原文**（标记不会过滤落库） |
-| 下一次模型调用（请求视图） | 预览 | 预览（路径 + `read_file` 提示） |
-| `SESSIONS_DIR/<session_id>/evicted/` | 逐字节副本 | 逐字节副本 |
+| 位置                                 | 工具结果（P0-2） | 人类消息（P1-9）                    |
+| ------------------------------------ | ---------------- | ----------------------------------- |
+| graph state / checkpointer           | 仅预览           | **完整原文** + `lc_evicted_to` 标记 |
+| MesMemory（`messages` 表）           | 完整原文         | **完整原文**（标记不会过滤落库）    |
+| 下一次模型调用（请求视图）           | 预览             | 预览（路径 + `read_file` 提示）     |
+| `SESSIONS_DIR/<session_id>/evicted/` | 逐字节副本       | 逐字节副本                          |
 
 差异原因：人类消息在回合的首个 `after_model` 边界才落库，state 必须保留全文，MesMemory 才能归档全文（否则 `message_search` 与压缩只能看到预览）；工具结果则由内层持久化在工具返回时即时落库，state 可以只留预览。人类消息 id 不变，持久化水位不受影响、不会写第二行。HITL 与工具配对不与 `HumanMessage` 交互；P1-2 溢出尾部裁剪只 stub `ToolMessage`，`_filter_summary_messages` 只丢弃 `lc_source='summarization'` 产物——两者都不会销毁标记或指针。
 
@@ -559,13 +559,13 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **按 `FailoverReason` 的重试语义**
 
-| 类别 | 原因 | 处置 |
-|---|---|---|
-| 抖动退避重试（`retryable=True`） | `auth`、`rate_limit`、`overloaded`、`server_error`、`timeout`、`image_too_large`、`invalid_response`、`unknown` | 至多重试 `max_retries` 次；延迟 = `base_delay × 2^(attempt−1)`，封顶 `max_delay`，±`jitter`，钳制在 `[0.1, max_delay]` |
-| 压缩委托（`should_compress=True`） | `context_overflow`、`payload_too_large` | 立即重新抛出——溢出错误归 Summarization 的 T4/T5 恢复环管 |
-| 多模态技能回退（`retryable=True`） | `multimodal_not_supported` | 仅在 auto 模式的原生尝试中：把消息中实际出现的媒体类型写为 `unsupported`，将请求改写为技能路径，重置重试预算后重呼；其他情况重新抛出 |
-| 回退（`should_fallback=True`，不可重试） | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 切换到下一个回退候选；链耗尽 → 重新抛出 |
-| 硬失败 | `format_error` | 重新抛出（不重试、不回退） |
+| 类别                                     | 原因                                                                                                                                                | 处置                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 抖动退避重试（`retryable=True`）         | `auth`、`rate_limit`、`overloaded`、`server_error`、`timeout`、`image_too_large`、`invalid_response`、`unknown`                                     | 至多重试 `max_retries` 次；延迟 = `base_delay × 2^(attempt−1)`，封顶 `max_delay`，±`jitter`，钳制在 `[0.1, max_delay]`               |
+| 压缩委托（`should_compress=True`）       | `context_overflow`、`payload_too_large`                                                                                                             | 立即重新抛出——溢出错误归 Summarization 的 T4/T5 恢复环管                                                                             |
+| 多模态技能回退（`retryable=True`）       | `multimodal_not_supported`                                                                                                                          | 仅在 auto 模式的原生尝试中：把消息中实际出现的媒体类型写为 `unsupported`，将请求改写为技能路径，重置重试预算后重呼；其他情况重新抛出 |
+| 回退（`should_fallback=True`，不可重试） | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 切换到下一个回退候选；链耗尽 → 重新抛出                                                                                              |
+| 硬失败                                   | `format_error`                                                                                                                                      | 重新抛出（不重试、不回退）                                                                                                           |
 
 **过期连击熔断器（跨回合）：** 每一次被分类为 timeout 的失败——以及每一次 timeout 分类的部分流桩（partial-stub）重试——都会把会话级 `llm_stale_streak`（存于 `state_register_mem`）加一；任何一次成功的 handler 调用都会把它清零。当连击达到 `stale_giveup_threshold` 时，下一次模型调用会在**调用 LLM 之前**抛出 `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`，跨回合终结提供方持续无响应的僵局。
 
@@ -666,6 +666,16 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   返回的 `levels` 列表驱动，不支持的值根本不会被发出（旧行为：发出去、靠 400
   学习）。`thinking_control_mode()` 仍对 glm-5 系列报告 `"levels"`，其余为
   `"on_off"`。
+  会话还可以携带**自定义 wire 映射**（`PUT /sessions/thinking/custom`：
+  `{wire_field, wire_format, level_map, thinking_budgets?}`）——内置格式覆盖不到的
+  provider 的逃生舱。它完整覆盖声明式映射（引擎把该级别的取值写到点分 `wire_field`
+  路径，或复用某个具名格式的形状），在 API 边界做校验（小写点分路径、字母数字取值、
+  至少声明一个级别、预算为正且低于上下文窗口），与其它每会话控制一样 park/promote，
+  并同时进入模型调用变体与记忆复盘的 cache-warm 重建。Anthropic 新增 adaptive 分支
+  （4.5+/4.6 模型用 `thinking.type: "adaptive"` + `output_config.effort`，更早模型保留
+  token budget），Bedrock 按模型名分流 Claude（`additional_model_request_fields`）与
+  GPT（`reasoning_effort`），思考预算按级别经 `REASONING_BUDGET["thinking_budgets"]`
+  缩放（普通开启保持原 family 默认值）。
 
 关闭阶梯：服务端默认开启思考的网关需要显式 disable 载荷，但"始终思考"模型
 （glm-5 系列，2026-09 实测：glm-5.3-flash 以错误码 1210 拒绝 `disabled`——
@@ -695,6 +705,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   - 2–10 字符的短语重复 ≥ 5 次。
 
   内部警告按标签每会话只触发一次。
+
 - 少于 `_MIN_CONTENT_LENGTH = 20` 字符的内容跳过；含工具调用的模型响应整体跳过（工具循环结束后会再次检查）。
 - **推理内容单独跟踪**（`additional_kwargs` 中的 `reasoning_content` / `reasoning` / `reasoning_text`，以及内联的 `<think>` / `<thinking>` / `<reasoning>` 块——会被提取并从可见内容中剥离）。
 
@@ -720,33 +731,33 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 所有跨调用的中间件状态都按会话隔离，存放在两个寄存器加一个定时器注册表中：
 
-| 寄存器 | 底层存储 | 说明 |
-|---|---|---|
-| `state_register_mem`（`StateRegisterMeM`） | 内存字典 | 易失；`_initialized` 守卫保证进程启动时只重置一次 |
-| `state_register_db`（`StateRegisterDB`） | SQLite（`src/data/state_register.db`） | 重启后仍保留；不支持 `clear_session`（返回 `False`）；提供 `get_all_session_ids` |
-| `timer_call_register`（`TimerCallRegister`） | asyncio 定时器 | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
+| 寄存器                                       | 底层存储                               | 说明                                                                             |
+| -------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
+| `state_register_mem`（`StateRegisterMeM`）   | 内存字典                               | 易失；`_initialized` 守卫保证进程启动时只重置一次                                |
+| `state_register_db`（`StateRegisterDB`）     | SQLite（`src/data/state_register.db`） | 重启后仍保留；不支持 `clear_session`（返回 `False`）；提供 `get_all_session_ids` |
+| `timer_call_register`（`TimerCallRegister`） | asyncio 定时器                         | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)`    |
 
 通用接口（`runtime/session/state_register.py`）：`set_state`、`get_state`、`get_all_states`、`delete_state`、`clear_session`、`has_session`、`has_key`、`update_states`。
 
 ### 命名空间约定
 
-| 键 | 归属 | 寄存器 |
-|---|---|---|
-| `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_plan_extraction_fired` | 计划完成触发器（PlanContinuationEnforcer → `summarization/nudges.py`） | db |
-| `nudge_plan_snapshot_hash` | 计划完成触发器——上次已抽取计划的指纹（id + content + status + plan_ref） | db |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | nudge fork（压缩记忆复盘 / 计划完成抽取） | mem |
-| `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
-| `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |
-| `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`heartbeat_skip`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
-| OutputRepetitionGuard 的键（`SESSION_STATE_KEYS`，六个） | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
-| `llm_stale_streak`、`llm_fallback_index` | LLMRetryMiddleware | mem |
-| `_multimodal_trying_native`、`_multimodal_native_model` | MultimodalProcessor（写入）→ LLMRetryMiddleware（消费） | mem |
-| `llm_content_filter_blocked`、`llm_content_filter_terminated` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
-| `llm_partial_stream_stub`、`llm_partial_stream_cause` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
-| `summarization_force_recovery` | ContextLimitGuardWrapper（写入）→ Summarization（消费） | mem |
-| `hitl:` 前缀键（`_STATE_PREFIX = "hitl"`） | HumanInTheLoop | mem |
+| 键                                                                                                                                          | 归属                                                                     | 寄存器   |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | -------- |
+| `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                  | mem + db |
+| `nudge_plan_extraction_fired`                                                                                                               | 计划完成触发器（PlanContinuationEnforcer → `summarization/nudges.py`）   | db       |
+| `nudge_plan_snapshot_hash`                                                                                                                  | 计划完成触发器——上次已抽取计划的指纹（id + content + status + plan_ref） | db       |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock`                                                                                    | nudge fork（压缩记忆复盘 / 计划完成抽取）                                | mem      |
+| `iteration_budget`、`iteration_budget_used`                                                                                                 | IterationBudget                                                          | mem      |
+| `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                           | mem      |
+| `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问）                                        | Summarization                                                            | mem      |
+| `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`heartbeat_skip`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness                                                       | mem      |
+| OutputRepetitionGuard 的键（`SESSION_STATE_KEYS`，六个）                                                                                    | OutputRepetitionGuard / RepetitionGuardWrapper                           | mem      |
+| `llm_stale_streak`、`llm_fallback_index`                                                                                                    | LLMRetryMiddleware                                                       | mem      |
+| `_multimodal_trying_native`、`_multimodal_native_model`                                                                                     | MultimodalProcessor（写入）→ LLMRetryMiddleware（消费）                  | mem      |
+| `llm_content_filter_blocked`、`llm_content_filter_terminated`                                                                               | 流式层（写入）→ LLMRetryMiddleware（消费）                               | mem      |
+| `llm_partial_stream_stub`、`llm_partial_stream_cause`                                                                                       | 流式层（写入）→ LLMRetryMiddleware（消费）                               | mem      |
+| `summarization_force_recovery`                                                                                                              | ContextLimitGuardWrapper（写入）→ Summarization（消费）                  | mem      |
+| `hitl:` 前缀键（`_STATE_PREFIX = "hitl"`）                                                                                                  | HumanInTheLoop                                                           | mem      |
 
 ---
 
@@ -754,28 +765,28 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 ### 环境变量与配置项
 
-| 配置项 | 位置 | 作用 |
-|---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 与 `ContextLimitGuardWrapper.context_window` 传入。必须 >= 131072 (128K)：token guard 会在启动与图构建阶段阻止低于该值 |
-| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 输出 token 预算（默认 8192）：MaxTokensBoost boost base 的第 2 层，也是思考预算膨胀叠加的基数 |
-| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | `LLMRetryMiddleware` 的模型回退链候选（i = 1…，遇到第一个缺失的 `NAME` 即停止） |
+| 配置项                                              | 位置                               | 作用                                                                                                                                                                                         |
+| --------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 与 `ContextLimitGuardWrapper.context_window` 传入。必须 >= 131072 (128K)：token guard 会在启动与图构建阶段阻止低于该值 |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN`                         | `.env` → `models/LLMs/main_llm.py` | 输出 token 预算（默认 8192）：MaxTokensBoost boost base 的第 2 层，也是思考预算膨胀叠加的基数                                                                                                |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()`  | `LLMRetryMiddleware` 的模型回退链候选（i = 1…，遇到第一个缺失的 `NAME` 即停止）                                                                                                              |
 
 ### 特性配置（`config/features/agent_side/`）
 
 中间件调优存放在按对象拆分的 TypedDict 模块中——环境变量只提供上表的两个 LLM 预算。本层消费的旋钮：
 
-| 模块 | 旋钮 |
-|---|---|
-| `iteration_budget.py` | `main_agent_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50` |
-| `media_pipeline.py` | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
-| `summarization.py` | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/nudges.py` 读取的保留/尝试/冷却/阈值常量 |
-| `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000` |
-| `tool_guardrails.py` | ToolGuardrails 小节列出的五类病态阈值与恢复默认值 |
-| `heartbeat_staleness.py` | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20` |
-| `repetition_guard.py` | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30` |
-| `max_tokens_boost.py` | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3` |
-| `llm_retry.py` | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` |
-| `context_guard.py` | `output_cut_ratio=0.20`、`check_interval=20` |
+| 模块                      | 旋钮                                                                                                                                                                                                            |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                                         |
+| `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
+| `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/nudges.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
+| `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |
+| `tool_guardrails.py`      | ToolGuardrails 小节列出的五类病态阈值与恢复默认值                                                                                                                                                               |
+| `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`、`stale_cycles_idle=7`、`stale_cycles_in_tool=20`                                                                                                                                |
+| `repetition_guard.py`     | `max_identical_outputs=3`、`warn_after=2`、`internal_repeat_ratio=0.6`、`internal_min_lines=6`、`char_run_min=8`、`tail_chars=500`、`max_history=30`                                                            |
+| `max_tokens_boost.py`     | `base_max_tokens`（`MAIN_LLM_OUTPUT_MAX_TOKEN`，默认 8192）、`default_max_tokens=8192`、`max_cap=32 768`、`max_retries=3`                                                                                       |
+| `llm_retry.py`            | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                   |
+| `context_guard.py`        | `output_cut_ratio=0.20`、`check_interval=20`                                                                                                                                                                    |
 
 > **相关但独立：** 各工具的超时是绑定特性注册表的模块常量（`config/features/agent_side/tools_timeouts.py` 中的 `TOOLS_TIMEOUTS`）——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`TOOL_CALL_TIMEOUT_MINUTES`（默认 5）是 `sherry.jsonc` 设置，经 `config/sherry_settings.py` 贯通并由配置服务对外暴露，但**没有任何工具执行路径消费它**——它不是生效的超时旋钮。摘要管线从 `config/features/agent_side/summarization.py` 读取其常量。
 
@@ -822,20 +833,20 @@ agent = create_agent(
 
 ### 各中间件参数
 
-| 中间件 | 参数 | 默认值 | 实际注册值 |
-|---|---|---|---|
-| `IterationBudget` | `max_iterations` | `50` | `90`（主）/ `60`（worker） |
-| `Summarization` | `need_update_system_prompt` | `False` | `True`（主） |
-| `Summarization` | `model` | 必填 | `auxiliary_llm` |
-| `Summarization` | `main_llm_context_window` | 必填 | `main_llm_max_tokens` |
-| `Summarization` | `trigger` | 必填 | 见[中间件链](#中间件链) |
-| `Summarization` | `keep` | 必填 | `("messages", 10)`（接受但未使用） |
-| `ToolGuardrails` | `config: ToolCallGuardrailConfig` | 见上文默认值 | 默认值 |
-| `HumanInTheLoop` | `config: HITLConfig` | 见上文默认值 | 默认值 |
-| `HeartbeatStaleness` | （默认） | 间隔 1 分钟，空闲 7 / 工具内 20 | 默认值 |
-| `OutputRepetitionGuard` | （默认） | 3 / 2 / 0.6 / 6 / 8 | 默认值 |
-| `MaxTokensBoostMiddleware` | （环境变量） | base：请求 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`（8192）→ 8192，上限 32768，重试 3 次 | 默认值 |
-| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` | 默认值（外加来自 `FALLBACK_LLM_*` 的 `fallback_chain`） |
+| 中间件                     | 参数                              | 默认值                                                                                        | 实际注册值                                              |
+| -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `IterationBudget`          | `max_iterations`                  | `50`                                                                                          | `90`（主）/ `60`（worker）                              |
+| `Summarization`            | `need_update_system_prompt`       | `False`                                                                                       | `True`（主）                                            |
+| `Summarization`            | `model`                           | 必填                                                                                          | `auxiliary_llm`                                         |
+| `Summarization`            | `main_llm_context_window`         | 必填                                                                                          | `main_llm_max_tokens`                                   |
+| `Summarization`            | `trigger`                         | 必填                                                                                          | 见[中间件链](#中间件链)                                 |
+| `Summarization`            | `keep`                            | 必填                                                                                          | `("messages", 10)`（接受但未使用）                      |
+| `ToolGuardrails`           | `config: ToolCallGuardrailConfig` | 见上文默认值                                                                                  | 默认值                                                  |
+| `HumanInTheLoop`           | `config: HITLConfig`              | 见上文默认值                                                                                  | 默认值                                                  |
+| `HeartbeatStaleness`       | （默认）                          | 间隔 1 分钟，空闲 7 / 工具内 20                                                               | 默认值                                                  |
+| `OutputRepetitionGuard`    | （默认）                          | 3 / 2 / 0.6 / 6 / 8                                                                           | 默认值                                                  |
+| `MaxTokensBoostMiddleware` | （环境变量）                      | base：请求 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`（8192）→ 8192，上限 32768，重试 3 次    | 默认值                                                  |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5` | 默认值（外加来自 `FALLBACK_LLM_*` 的 `fallback_chain`） |
 
 ---
 

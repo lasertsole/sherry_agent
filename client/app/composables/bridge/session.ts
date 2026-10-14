@@ -569,6 +569,53 @@ export async function setThinkingValue(sessionId: string, value: ThinkingValue):
   return { pending: res.pending === true };
 }
 
+/** A per-session override of the declarative thinking wire mapping. */
+export interface CustomThinkingMapping {
+  /** Dotted wire path written verbatim, e.g. `extra_body.thinking.type`. */
+  wire_field: string;
+  /** A known format name, or 'custom' (writes `wire_field`). */
+  wire_format: string;
+  /** Per-level wire value; null = the level does not exist for this model. */
+  level_map: Partial<Record<ThinkingLevel, string | null>>;
+  /** Optional per-level token headroom overrides. */
+  thinking_budgets?: Record<string, number>;
+}
+
+/**
+ * `GET /sessions/thinking/custom` — the session's mapping (null = built-in).
+ * @param sessionId
+ */
+export async function fetchCustomThinkingMapping(
+  sessionId: string
+): Promise<{ mapping: CustomThinkingMapping | null; pending: boolean }> {
+  const res = await fetchApiPayload<{
+    mapping?: CustomThinkingMapping | null;
+    pending?: boolean;
+  }>({
+    url: '/sessions/thinking/custom',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return { mapping: res.mapping ?? null, pending: res.pending === true };
+}
+
+/**
+ * `PUT /sessions/thinking/custom` — write the mapping, or null to clear it.
+ * @param sessionId
+ * @param mapping
+ */
+export async function setCustomThinkingMapping(
+  sessionId: string,
+  mapping: CustomThinkingMapping | null
+): Promise<{ pending: boolean }> {
+  const res = await fetchApiPayload<{ pending?: boolean }>({
+    url: '/sessions/thinking/custom',
+    opts: { session_id: sessionId, mapping },
+    method: 'put'
+  });
+  return { pending: res.pending === true };
+}
+
 /** Session project directory: where the tools resolve relative paths against. */
 export interface ProjectDirectoryState {
   /** The session's own binding; null = unbound (the process default applies). */

@@ -1,7 +1,7 @@
 # EMA Agent Middleware System
 
-[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)]()
-[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)]()
+[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)](<>)
+[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)](<>)
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
@@ -53,12 +53,12 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 
 A middleware extends `langchain.agents.middleware.AgentMiddleware` and hooks into the agent loop at well-defined points. The system uses four hook families (each available in sync and async form):
 
-| Hook family | Sync | Async | Runs |
-|---|---|---|---|
-| Before / after agent | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | Once per conversational turn, around the whole model–tool loop |
-| Before / after model | `before_model` / `after_model` | `abefore_model` / `aafter_model` | Around each individual model request |
-| Model-call wrap | `wrap_model_call` | `awrap_model_call` | Intercepts the model request itself (modify messages / system prompt, short-circuit the LLM) |
-| Tool-call wrap | `wrap_tool_call` | `awrap_tool_call` | Intercepts each tool execution |
+| Hook family          | Sync                           | Async                            | Runs                                                                                         |
+| -------------------- | ------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------- |
+| Before / after agent | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | Once per conversational turn, around the whole model–tool loop                               |
+| Before / after model | `before_model` / `after_model` | `abefore_model` / `aafter_model` | Around each individual model request                                                         |
+| Model-call wrap      | `wrap_model_call`              | `awrap_model_call`               | Intercepts the model request itself (modify messages / system prompt, short-circuit the LLM) |
+| Tool-call wrap       | `wrap_tool_call`               | `awrap_tool_call`                | Intercepts each tool execution                                                               |
 
 ### Hook Ordering Semantics
 
@@ -172,14 +172,14 @@ Differences vs the main agent:
 
 ### Effective Per-Turn Order (main agent)
 
-| Phase | Order |
-|---|---|
-| `before_agent` (list order) | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `before_model` (list order) | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn) |
-| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
-| `after_model` (reverse order) | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush) |
-| `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
-| `after_agent` (reverse order) | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn) |
+| Phase                                     | Order                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before_agent` (list order)               | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                                                                         |
+| `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
+| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
+| `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
+| `wrap_tool_call` (outermost → innermost)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
+| `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
 
 Only the middlewares that implement a given hook appear in that phase's row.
 
@@ -199,7 +199,7 @@ Second in the list, right after `PlanContinuationEnforcer` (which implements no 
 1. Resolve `session_id` with `require_session_id` — a missing/blank id raises `RuntimeError("Not pass session_id")`.
 2. Look up `system_prompt` in `state_register_mem`.
 3. Fall back to `state_register_db`; if still missing, rebuild via `workspace.prompt_builder.build_system_prompt(session_id)` and **dual-write db + mem**.
-4. Same-content skip: `@dynamic_prompt`'s generated wrapper *unconditionally* calls `request.override(system_message=...)`. When the request already carries a `SystemMessage` with the same content, the decorated function returns **that same message object**, so the override re-applies identical bytes — the model-visible prefix stays byte-identical for provider prefix caching; only a real change (or a missing message, e.g. the first call) returns a fresh `SystemMessage`.
+4. Same-content skip: `@dynamic_prompt`'s generated wrapper _unconditionally_ calls `request.override(system_message=...)`. When the request already carries a `SystemMessage` with the same content, the decorated function returns **that same message object**, so the override re-applies identical bytes — the model-visible prefix stays byte-identical for provider prefix caching; only a real change (or a missing message, e.g. the first call) returns a fresh `SystemMessage`.
 
 > The `system_prompt` mem key is a contract with the compression pipeline: `Summarization` reads it for token estimation (`_estimate_system_prompt_tokens`) and rewrites it (mem + db) after a compression — which is why a cache miss always dual-writes.
 
@@ -247,11 +247,11 @@ Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. F
 
 `GET /agent/catalog` lists the chain; the 预设角色-中间件 tab may turn **three optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
 
-| Gateable | Effect of turning it off |
-| --- | --- |
-| `PlanContinuationEnforcer` | the plan (todos / flows) no longer keeps the turn alive |
-| `TaskIntentMiddleware` | no task-intent steering message |
-| `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected |
+| Gateable                            | Effect of turning it off                                |
+| ----------------------------------- | ------------------------------------------------------- |
+| `PlanContinuationEnforcer`          | the plan (todos / flows) no longer keeps the turn alive |
+| `TaskIntentMiddleware`              | no task-intent steering message                         |
+| `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected            |
 
 Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_REQUIRED` safety entries — the original twelve plus `WorkspaceNoticeMiddleware` (the prompt renders the current root, so without the notice the agent keeps answering from the old tree) and `MultimodalProcessor` (a turn without it loses the attachments) — plus `system_prompt_injection` (a turn without it has no instructions), `ThinkingControlMiddleware` (it IS the model/thinking control) and `ToolSelectionMiddleware` (it applies the tool selection). A stale payload naming a required entry is ignored: `middleware_enabled()` answers `True` for it. Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
 
@@ -295,22 +295,22 @@ Hard cap on **model calls + tool calls combined** within one turn. Constructor: 
 
 Detects five failure pathologies and reacts with a four-level escalation `ALLOW → WARN → BLOCK → HALT` (the `GuardrailAction` enum):
 
-| Pathology | Trigger | WARN after | BLOCK after | hard-stop mode |
-|---|---|---|---|---|
-| Exact failure repetition | Same tool + same arguments (MD5 of the JSON args, `sort_keys`) failing | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | HALT at 5 |
-| Same-tool failure accumulation | Same tool failing with **different** arguments | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | HALT at 8 |
-| Idempotent no-progress | Same idempotent tool (metadata `idempotent: true`) returning a result hash an earlier call of that tool already produced this turn | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | HALT at 5 |
-| Ping-pong | Unbroken A → B → A → B bouncing between two tools where both consecutive calls are stagnant | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | HALT at 6 |
-| Argument churn | Same idempotent tool cycling through argument variants whose result stays unchanged (stagnant) | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5 |
+| Pathology                      | Trigger                                                                                                                            | WARN after                          | BLOCK after                          | hard-stop mode |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------ | -------------- |
+| Exact failure repetition       | Same tool + same arguments (MD5 of the JSON args, `sort_keys`) failing                                                             | 2 (`exact_failure_warn_after`)      | 5 (`exact_failure_block_after`)      | HALT at 5      |
+| Same-tool failure accumulation | Same tool failing with **different** arguments                                                                                     | 3 (`same_tool_failure_warn_after`)  | 8 (`same_tool_failure_halt_after`)   | HALT at 8      |
+| Idempotent no-progress         | Same idempotent tool (metadata `idempotent: true`) returning a result hash an earlier call of that tool already produced this turn | 2 (`no_progress_warn_after`)        | 5 (`no_progress_block_after`)        | HALT at 5      |
+| Ping-pong                      | Unbroken A → B → A → B bouncing between two tools where both consecutive calls are stagnant                                        | 4 (`ping_pong_warn_after`)          | 6 (`ping_pong_block_after`)          | HALT at 6      |
+| Argument churn                 | Same idempotent tool cycling through argument variants whose result stays unchanged (stagnant)                                     | 3 variants (`arg_churn_warn_after`) | 5 variants (`arg_churn_block_after`) | HALT at 5      |
 
 - `before_agent` resets the per-turn guard state (key `tool_guardrail_state` in `state_register_mem`) — strictly turn-scoped, so a fresh turn starts clean.
 - `wrap_tool_call` pre-checks blocked tools and halt state (returns an error `ToolMessage` without executing), runs the tool, then evaluates the result:
   - `warn` appends a warning to the `ToolMessage`;
   - `block` records the tool in `blocked_tools`;
   - `halt` sets a sticky halt for the rest of the turn (`halt_decision`).
-- **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT — a managed retry window instead of an immediate wall.
-- **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
-- `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every *block* threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
+- **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the _precheck_ path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT — a managed retry window instead of an immediate wall.
+- **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the _same tool_ already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while _both_ consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
+- `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every _block_ threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
 
 ▶️ Full details: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
 
@@ -426,21 +426,21 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 `HITLConfig` defaults:
 
-| Parameter | Default | Meaning |
-|---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
-| `timeout` | `60` | Interrupt decision timeout |
-| `deny_rules` | `[]` | Explicit deny patterns |
-| `yolo_mode` | `False` | Skip all approvals |
-| `write_approval_memory` | `False` | Gate memory-tool writes |
-| `write_approval_skills` | `False` | Gate skill writes |
-| `clarify_timeout` | `3600` | Clarification-question timeout |
-| `kanban_recurrence_limit` | `3` (`BLOCK_RECURRENCE_LIMIT`) | Repeated-block limit before kanban triage |
-| `mcp_reload_confirm` | `True` | Confirm MCP server reloads |
-| `destructive_slash_confirm` | `True` | Confirm destructive slash commands |
-| `smart_approval_llm` | `None` | LLM used for smart auto-approval |
-| `interrupted_tools` | `{}` | Tools that always raise `interrupt()` |
-| `description_prefix` | `"Action requires human approval"` | Approval-dialog title prefix |
+| Parameter                   | Default                            | Meaning                                   |
+| --------------------------- | ---------------------------------- | ----------------------------------------- |
+| `mode`                      | `ApprovalMode.SMART`               | `SMART` / `MANUAL` / `OFF`                |
+| `timeout`                   | `60`                               | Interrupt decision timeout                |
+| `deny_rules`                | `[]`                               | Explicit deny patterns                    |
+| `yolo_mode`                 | `False`                            | Skip all approvals                        |
+| `write_approval_memory`     | `False`                            | Gate memory-tool writes                   |
+| `write_approval_skills`     | `False`                            | Gate skill writes                         |
+| `clarify_timeout`           | `3600`                             | Clarification-question timeout            |
+| `kanban_recurrence_limit`   | `3` (`BLOCK_RECURRENCE_LIMIT`)     | Repeated-block limit before kanban triage |
+| `mcp_reload_confirm`        | `True`                             | Confirm MCP server reloads                |
+| `destructive_slash_confirm` | `True`                             | Confirm destructive slash commands        |
+| `smart_approval_llm`        | `None`                             | LLM used for smart auto-approval          |
+| `interrupted_tools`         | `{}`                               | Tools that always raise `interrupt()`     |
+| `description_prefix`        | `"Action requires human approval"` | Approval-dialog title prefix              |
 
 Tool-approval decisions are also persisted through `ToolApprovalStore` (`approval_store.py`) into `SRC_DIR/data/approvals.json`: an operator-scoped JSON store updated with a byte-revision CAS, so an approved `interrupted_tools` call is not re-prompted after a restart. When no operator is in scope (or the turn is a headless system injection), approval-requiring gates auto-deny instead of interrupting.
 
@@ -455,12 +455,12 @@ Registered in the main agent **right after `HumanInTheLoop`**; because `after_mo
 
 **Latency — when each message type reaches the `messages` table:**
 
-| Message | Persisted at |
-|---|---|
-| Human | the turn's first model boundary |
-| AI (including its `tool_calls`) | the model boundary right after the model produced it |
-| Tool result | **the moment the tool handler returns** (`wrap_tool_call` / `awrap_tool_call`), no longer waiting for the next model call |
-| HITL denial (`status="error"` ToolMessage from the `HumanInTheLoop` short-circuit) | the next model boundary — HITL wraps this middleware from the outside, so its short-circuit never calls the inner layer |
+| Message                                                                            | Persisted at                                                                                                              |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Human                                                                              | the turn's first model boundary                                                                                           |
+| AI (including its `tool_calls`)                                                    | the model boundary right after the model produced it                                                                      |
+| Tool result                                                                        | **the moment the tool handler returns** (`wrap_tool_call` / `awrap_tool_call`), no longer waiting for the next model call |
+| HITL denial (`status="error"` ToolMessage from the `HumanInTheLoop` short-circuit) | the next model boundary — HITL wraps this middleware from the outside, so its short-circuit never calls the inner layer   |
 
 **Tool-return flush:** the wrap hook runs `handler(request)` first, then extracts the response's `ToolMessage`s — the handler may hand back a bare `ToolMessage`, a list mixing `ToolMessage` / `Command`, or a `Command` carrying messages in `update["messages"]` (`_iter_tool_messages` walks all of them) — and persists them before returning the response **untouched**. A response without a `ToolMessage` (pure navigation `Command`) writes nothing.
 
@@ -485,17 +485,17 @@ The shared batch pipeline (both hooks):
 Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Not registered in the worker pipeline: child transcripts keep their full tool results.
 
 **Untrusted tool results are fenced.** After eviction, a result from an attacker-facing tool (`web_search` — one tool whichever backend serves it, plus the `tavily_search` name it carried before the rename — `message_search`, and any `mcp_` tool) is wrapped in an `<untrusted_tool_result source="…" id="…">` block whose advisory states the content is data, not instructions. Any closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early, and only this model view is fenced — the raw text the inner boundary persisted is untouched. Switch and wording live in `config/features/agent_side/untrusted_output.py`.
- The same pass masks credentials in results from tools that leak them for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`) — **evict → redact → fence**, in that order; file tools stay verbatim so a read-then-write round trip cannot corrupt a config. Switch: `REDACTION["tool_output_enabled"]`.
+The same pass masks credentials in results from tools that leak them for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`) — **evict → redact → fence**, in that order; file tools stay verbatim so a read-then-write round trip cannot corrupt a config. Switch: `REDACTION["tool_output_enabled"]`.
 
 The same middleware owns the **human-message** path (P1-9) with the opposite three-state split; see [Human-message eviction](#human-message-eviction-p1-9) below.
 
 **Tool-result reduction paths**
 
-| Result | Action |
-|---|---|
-| generic tool, text > `evict_threshold_chars` (20 000 chars) | full text written to `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`; content replaced by a head/tail preview |
-| `read_file` (P2-4) | file already on disk — content sliced to the first 4 000 chars + recovery notice, **no file written** |
-| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | never evicted (`excluded_tools`); `read_file` is listed there too but is routed through the slice path above |
+| Result                                                                                               | Action                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| generic tool, text > `evict_threshold_chars` (20 000 chars)                                          | full text written to `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`; content replaced by a head/tail preview |
+| `read_file` (P2-4)                                                                                   | file already on disk — content sliced to the first 4 000 chars + recovery notice, **no file written**                          |
+| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | never evicted (`excluded_tools`); `read_file` is listed there too but is routed through the slice path above                   |
 
 **Preview format** (`pub/func/message/eviction.py::build_preview`, `preview_head_lines=5`, `preview_tail_lines=5`):
 
@@ -515,11 +515,11 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **The three stores**
 
-| Where | What it holds |
-|---|---|
-| graph state / checkpointer / next model call | the preview only |
-| MesMemory (`messages` table) | the full text, written by the inner persistence flush at tool return |
-| `SESSIONS_DIR/<session_id>/evicted/` | a byte-identical copy (`load_evicted()` / `read_file` retrieves it) |
+| Where                                        | What it holds                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------- |
+| graph state / checkpointer / next model call | the preview only                                                     |
+| MesMemory (`messages` table)                 | the full text, written by the inner persistence flush at tool return |
+| `SESSIONS_DIR/<session_id>/evicted/`         | a byte-identical copy (`load_evicted()` / `read_file` retrieves it)  |
 
 **Watermark safety.** `model_copy` also carries the inner flush's in-process `_db_persisted` marker, so the next model boundary skips the preview. When the raw write succeeded, the replacement's watermark key is additionally tombstoned — that covers a restart where the marker is lost and the preview's content fingerprint no longer matches the raw one. Either way no second row is written for the same logical message; when the raw write failed, nothing is tombstoned and the boundary retries with the preview content.
 
@@ -539,12 +539,12 @@ A user can paste a huge plain-text payload (logs, documents, transcripts, code) 
 
 **The three stores — the opposite split from tool results**
 
-| Where | Tool results (P0-2) | Human messages (P1-9) |
-|---|---|---|
-| graph state / checkpointer | the preview only | the **full text** + the `lc_evicted_to` tag |
-| MesMemory (`messages` table) | the full text | the **full text** (the tag does not filter persistence) |
-| next model call (request view) | the preview | the preview (path + `read_file` hint) |
-| `SESSIONS_DIR/<session_id>/evicted/` | byte-identical copy | byte-identical copy |
+| Where                                | Tool results (P0-2) | Human messages (P1-9)                                   |
+| ------------------------------------ | ------------------- | ------------------------------------------------------- |
+| graph state / checkpointer           | the preview only    | the **full text** + the `lc_evicted_to` tag             |
+| MesMemory (`messages` table)         | the full text       | the **full text** (the tag does not filter persistence) |
+| next model call (request view)       | the preview         | the preview (path + `read_file` hint)                   |
+| `SESSIONS_DIR/<session_id>/evicted/` | byte-identical copy | byte-identical copy                                     |
 
 Why the difference: the human message is persisted at the turn's first `after_model` boundary, so state must keep the full text for MesMemory to archive it (otherwise `message_search` and compression would only ever see the preview); the tool result is already flushed by the inner persistence layer at tool return, so state can hold the preview. The human message id never changes, so the persistence watermark is untouched and no second row is written. HITL and tool pairing have no interaction with `HumanMessage`s; the P1-2 overflow tail clip only stubs `ToolMessage`s, and `_filter_summary_messages` only drops `lc_source='summarization'` artifacts — neither destroys the tag or the pointer.
 
@@ -561,13 +561,13 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 
 **Retry semantics by `FailoverReason`**
 
-| Class | Reasons | Action |
-|---|---|---|
-| Retry with jittered backoff (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | Up to `max_retries` re-calls; delay = `base_delay × 2^(attempt−1)` capped at `max_delay`, ±`jitter`, clamped to `[0.1, max_delay]` |
-| Compress-delegate (`should_compress=True`) | `context_overflow`, `payload_too_large` | Re-raise immediately — Summarization's T4/T5 recovery ring owns overflow errors |
-| Multimodal skill fallback (`retryable=True`) | `multimodal_not_supported` | Only during an auto-mode native attempt: cache the media families present as `unsupported`, rewrite the request onto the skill path, reset the retry budget and re-call; otherwise re-raise |
-| Fallback (`should_fallback=True`, non-retryable) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | Switch to the next fallback candidate; chain exhausted → re-raise |
-| Hard fail | `format_error` | Re-raise (no retry, no fallback) |
+| Class                                            | Reasons                                                                                                                                             | Action                                                                                                                                                                                      |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry with jittered backoff (`retryable=True`)   | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown`                                     | Up to `max_retries` re-calls; delay = `base_delay × 2^(attempt−1)` capped at `max_delay`, ±`jitter`, clamped to `[0.1, max_delay]`                                                          |
+| Compress-delegate (`should_compress=True`)       | `context_overflow`, `payload_too_large`                                                                                                             | Re-raise immediately — Summarization's T4/T5 recovery ring owns overflow errors                                                                                                             |
+| Multimodal skill fallback (`retryable=True`)     | `multimodal_not_supported`                                                                                                                          | Only during an auto-mode native attempt: cache the media families present as `unsupported`, rewrite the request onto the skill path, reset the retry budget and re-call; otherwise re-raise |
+| Fallback (`should_fallback=True`, non-retryable) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | Switch to the next fallback candidate; chain exhausted → re-raise                                                                                                                           |
+| Hard fail                                        | `format_error`                                                                                                                                      | Re-raise (no retry, no fallback)                                                                                                                                                            |
 
 **Stale-streak circuit breaker (cross-turn):** every timeout-classified failure — and every timeout-classified partial-stream-stub retry — increments the session-scoped `llm_stale_streak` in `state_register_mem`; any successful handler call resets it to 0. When the streak reaches `stale_giveup_threshold`, the next model call raises `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")` **before** the LLM is invoked, ending a persistent provider stall across turns.
 
@@ -678,6 +678,19 @@ the event loop) and, when the user made an explicit choice, swaps
   unsupported level is never offered), instead of sending it and learning from
   a 400. `thinking_control_mode()` still reports `"levels"` for the glm-5
   series and `"on_off"` otherwise.
+  A session may also carry a **custom wire mapping** (`PUT /sessions/thinking/custom`:
+  `{wire_field, wire_format, level_map, thinking_budgets?}`) — the escape hatch for a
+  provider no built-in format covers. It overrides the declarative map entirely
+  (the engine writes the level's value at the dotted `wire_field`, or reuses a
+  named format's shape), is validated at the API boundary (lowercase dotted path,
+  alphanumeric values, at least one level, budgets positive and under the context
+  window), parks/promotes like every other per-session control, and rides into the
+  model-call variant AND the memory review's cache-warm rebuild. Anthropic gets an
+  adaptive branch (`thinking.type: "adaptive"` + `output_config.effort` for the
+  4.5+/4.6 models, the legacy token budget otherwise), Bedrock splits Claude
+  (`additional_model_request_fields`) from GPT (`reasoning_effort`), and the
+  thinking headroom scales per level through `REASONING_BUDGET["thinking_budgets"]`
+  (a plain ON keeps the family default).
 
 Disable ladder: gateways whose server default is thinking ON need an explicit
 disable payload, but ALWAYS-THINK models (glm-5 series, verified live
@@ -711,6 +724,7 @@ For the main agent the same detection runs through **`RepetitionGuardWrapper`** 
   - a short phrase (2–10 characters) repeated ≥ 5 times.
 
   Internal warnings fire once per label per session.
+
 - Contents shorter than `_MIN_CONTENT_LENGTH = 20` characters are skipped; model responses that contain tool calls are skipped entirely (they are re-checked after the tool loop).
 - **Reasoning is tracked separately** (`reasoning_content` / `reasoning` / `reasoning_text` in `additional_kwargs`, plus inline `<think>` / `<thinking>` / `<reasoning>` blocks, which are extracted and stripped from the visible content).
 
@@ -736,33 +750,33 @@ A graph wrapper (like `RepetitionGuardWrapper`), **not** a middleware. `agent/co
 
 All cross-call middleware state is session-scoped and lives in two registers plus a timer registry:
 
-| Register | Backing | Notes |
-|---|---|---|
-| `state_register_mem` (`StateRegisterMeM`) | In-memory dict | Volatile; an `_initialized` guard resets it once per process start |
-| `state_register_db` (`StateRegisterDB`) | SQLite (`src/data/state_register.db`) | Survives restarts; `clear_session` is not supported (returns `False`); exposes `get_all_session_ids` |
-| `timer_call_register` (`TimerCallRegister`) | Asyncio timers | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
+| Register                                    | Backing                               | Notes                                                                                                |
+| ------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `state_register_mem` (`StateRegisterMeM`)   | In-memory dict                        | Volatile; an `_initialized` guard resets it once per process start                                   |
+| `state_register_db` (`StateRegisterDB`)     | SQLite (`src/data/state_register.db`) | Survives restarts; `clear_session` is not supported (returns `False`); exposes `get_all_session_ids` |
+| `timer_call_register` (`TimerCallRegister`) | Asyncio timers                        | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)`                        |
 
 Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
 
 ### Namespace Convention
 
-| Key(s) | Owner | Register |
-|---|---|---|
-| `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_plan_extraction_fired` | plan-completion trigger (PlanContinuationEnforcer → `summarization/nudges.py`) | db |
-| `nudge_plan_snapshot_hash` | plan-completion trigger — fingerprint of the last extracted plan (id + content + status + plan_ref) | db |
-| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | nudge forks (compression memory review / plan-completion extraction) | mem |
-| `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
-| `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question) | Summarization | mem |
-| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
-| OutputRepetitionGuard keys (`SESSION_STATE_KEYS`, six) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
-| `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
-| `_multimodal_trying_native`, `_multimodal_native_model` | MultimodalProcessor (written) → LLMRetryMiddleware (consumed) | mem |
-| `llm_content_filter_blocked`, `llm_content_filter_terminated` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
-| `llm_partial_stream_stub`, `llm_partial_stream_cause` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
-| `summarization_force_recovery` | ContextLimitGuardWrapper (written) → Summarization (consumed) | mem |
-| `hitl:`-prefixed keys (`_STATE_PREFIX = "hitl"`) | HumanInTheLoop | mem |
+| Key(s)                                                                                                                                      | Owner                                                                                               | Register |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------- |
+| `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                                             | mem + db |
+| `nudge_plan_extraction_fired`                                                                                                               | plan-completion trigger (PlanContinuationEnforcer → `summarization/nudges.py`)                      | db       |
+| `nudge_plan_snapshot_hash`                                                                                                                  | plan-completion trigger — fingerprint of the last extracted plan (id + content + status + plan_ref) | db       |
+| `nudge_review_memory_lock`, `nudge_plan_extraction_lock`                                                                                    | nudge forks (compression memory review / plan-completion extraction)                                | mem      |
+| `iteration_budget`, `iteration_budget_used`                                                                                                 | IterationBudget                                                                                     | mem      |
+| `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                                                      | mem      |
+| `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question)  | Summarization                                                                                       | mem      |
+| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness                                                                                  | mem      |
+| OutputRepetitionGuard keys (`SESSION_STATE_KEYS`, six)                                                                                      | OutputRepetitionGuard / RepetitionGuardWrapper                                                      | mem      |
+| `llm_stale_streak`, `llm_fallback_index`                                                                                                    | LLMRetryMiddleware                                                                                  | mem      |
+| `_multimodal_trying_native`, `_multimodal_native_model`                                                                                     | MultimodalProcessor (written) → LLMRetryMiddleware (consumed)                                       | mem      |
+| `llm_content_filter_blocked`, `llm_content_filter_terminated`                                                                               | stream layer (written) → LLMRetryMiddleware (consumed)                                              | mem      |
+| `llm_partial_stream_stub`, `llm_partial_stream_cause`                                                                                       | stream layer (written) → LLMRetryMiddleware (consumed)                                              | mem      |
+| `summarization_force_recovery`                                                                                                              | ContextLimitGuardWrapper (written) → Summarization (consumed)                                       | mem      |
+| `hitl:`-prefixed keys (`_STATE_PREFIX = "hitl"`)                                                                                            | HumanInTheLoop                                                                                      | mem      |
 
 ---
 
@@ -770,28 +784,28 @@ Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`
 
 ### Environment & Config Knobs
 
-| Knob | Where | Effect |
-|---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = 80 % of this value; also passed as `main_llm_context_window` and as `ContextLimitGuardWrapper.context_window`. Must be >= 131072 (128K): the token guard blocks startup and graph building below this |
-| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | Output-token budget (default 8192): layer 2 of MaxTokensBoost's boost base, and the base that thinking-budget inflation adds to |
-| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | Model fallback chain candidates for `LLMRetryMiddleware` (i = 1…, stops at the first missing `NAME`) |
+| Knob                                                | Where                              | Effect                                                                                                                                                                                                                                   |
+| --------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | Main-agent Summarization trigger = 80 % of this value; also passed as `main_llm_context_window` and as `ContextLimitGuardWrapper.context_window`. Must be >= 131072 (128K): the token guard blocks startup and graph building below this |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN`                         | `.env` → `models/LLMs/main_llm.py` | Output-token budget (default 8192): layer 2 of MaxTokensBoost's boost base, and the base that thinking-budget inflation adds to                                                                                                          |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()`  | Model fallback chain candidates for `LLMRetryMiddleware` (i = 1…, stops at the first missing `NAME`)                                                                                                                                     |
 
 ### Feature Config (`config/features/agent_side/`)
 
 Middleware tuning lives in per-object TypedDict modules — the env only supplies the two LLM budgets above. Knobs consumed by this layer:
 
-| Module | Knobs |
-|---|---|
-| `iteration_budget.py` | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50` |
-| `media_pipeline.py` | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
-| `summarization.py` | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/nudges.py` |
-| `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000` |
-| `tool_guardrails.py` | the five-pathology thresholds and recovery defaults listed in the ToolGuardrails section |
-| `heartbeat_staleness.py` | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20` |
-| `repetition_guard.py` | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30` |
-| `max_tokens_boost.py` | `base_max_tokens` (`MAIN_LLM_OUTPUT_MAX_TOKEN`, default 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3` |
-| `llm_retry.py` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` |
-| `context_guard.py` | `output_cut_ratio=0.20`, `check_interval=20` |
+| Module                    | Knobs                                                                                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                                                           |
+| `media_pipeline.py`       | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
+| `summarization.py`        | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/nudges.py`                                                                                     |
+| `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                                            |
+| `tool_guardrails.py`      | the five-pathology thresholds and recovery defaults listed in the ToolGuardrails section                                                                                                                                          |
+| `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                                  |
+| `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                                              |
+| `max_tokens_boost.py`     | `base_max_tokens` (`MAIN_LLM_OUTPUT_MAX_TOKEN`, default 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                                       |
+| `llm_retry.py`            | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                                     |
+| `context_guard.py`        | `output_cut_ratio=0.20`, `check_interval=20`                                                                                                                                                                                      |
 
 > **Related but separate:** per-tool timeouts are module constants bound to the feature registry (`TOOLS_TIMEOUTS` in `config/features/agent_side/tools_timeouts.py`) — `WEB_SEARCH_TIMEOUT = 15` (`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30` (`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30` (`agent/tools/python_repl.py`; the child process is killed on expiry). `TOOL_CALL_TIMEOUT_MINUTES` (default 5) is a `sherry.jsonc` setting plumbed through `config/sherry_settings.py` and exposed by the config service, but **no tool-execution path consumes it** — it is not an active timeout knob. The summarization pipeline reads its constants from `config/features/agent_side/summarization.py`.
 
@@ -837,20 +851,20 @@ agent = create_agent(
 
 ### Per-Middleware Parameters
 
-| Middleware | Parameter | Default | Registered value |
-|---|---|---|---|
-| `IterationBudget` | `max_iterations` | `50` | `90` (main) / `60` (worker) |
-| `Summarization` | `need_update_system_prompt` | `False` | `True` (main) |
-| `Summarization` | `model` | required | `auxiliary_llm` |
-| `Summarization` | `main_llm_context_window` | required | `main_llm_max_tokens` |
-| `Summarization` | `trigger` | required | see [Middleware Chain](#middleware-chain) |
-| `Summarization` | `keep` | required | `("messages", 10)` (accepted but unused) |
-| `ToolGuardrails` | `config: ToolCallGuardrailConfig` | defaults above | defaults |
-| `HumanInTheLoop` | `config: HITLConfig` | defaults above | defaults |
-| `HeartbeatStaleness` | (defaults) | interval 1 min, idle 7 / in-tool 20 | defaults |
-| `OutputRepetitionGuard` | (defaults) | 3 / 2 / 0.6 / 6 / 8 | defaults |
-| `MaxTokensBoostMiddleware` | (env) | base: request `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN` (8192) → 8192, cap 32768, 3 retries | defaults |
-| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | defaults (+ `fallback_chain` from `FALLBACK_LLM_*`) |
+| Middleware                 | Parameter                         | Default                                                                                       | Registered value                                    |
+| -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `IterationBudget`          | `max_iterations`                  | `50`                                                                                          | `90` (main) / `60` (worker)                         |
+| `Summarization`            | `need_update_system_prompt`       | `False`                                                                                       | `True` (main)                                       |
+| `Summarization`            | `model`                           | required                                                                                      | `auxiliary_llm`                                     |
+| `Summarization`            | `main_llm_context_window`         | required                                                                                      | `main_llm_max_tokens`                               |
+| `Summarization`            | `trigger`                         | required                                                                                      | see [Middleware Chain](#middleware-chain)           |
+| `Summarization`            | `keep`                            | required                                                                                      | `("messages", 10)` (accepted but unused)            |
+| `ToolGuardrails`           | `config: ToolCallGuardrailConfig` | defaults above                                                                                | defaults                                            |
+| `HumanInTheLoop`           | `config: HITLConfig`              | defaults above                                                                                | defaults                                            |
+| `HeartbeatStaleness`       | (defaults)                        | interval 1 min, idle 7 / in-tool 20                                                           | defaults                                            |
+| `OutputRepetitionGuard`    | (defaults)                        | 3 / 2 / 0.6 / 6 / 8                                                                           | defaults                                            |
+| `MaxTokensBoostMiddleware` | (env)                             | base: request `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN` (8192) → 8192, cap 32768, 3 retries  | defaults                                            |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | defaults (+ `fallback_chain` from `FALLBACK_LLM_*`) |
 
 ---
 
@@ -1077,4 +1091,3 @@ from agent.middlewares import (
 # SubagentCompletionDrainMiddleware / TaskIntentMiddleware / PlanContinuationEnforcer
 # are imported from their submodules by agent/core.py — the package does not re-export them.
 ```
-

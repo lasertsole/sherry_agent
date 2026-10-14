@@ -318,7 +318,12 @@ def resolve_thinking_level_map(
     return level_map
 
 
-def get_supported_thinking_levels(provider: str | None, model_name: str | None) -> list[str]:
+def get_supported_thinking_levels(
+    provider: str | None,
+    model_name: str | None,
+    *,
+    custom_mapping: dict[str, Any] | None = None,
+) -> list[str]:
     """The levels this model accepts, in clamp order (``off`` … ``max``).
 
     A level is supported when the resolved map declares a wire value for it; an
@@ -326,20 +331,29 @@ def get_supported_thinking_levels(provider: str | None, model_name: str | None) 
     entirely unmapped pair reports ``["off"]`` — pi's fallback: a model we know
     nothing about gets the one level that sends nothing.
     """
+    if custom_mapping and custom_mapping.get("level_map"):
+        level_map = dict(custom_mapping["level_map"])
+        return [lvl for lvl in EXTENDED_THINKING_LEVELS if level_map.get(lvl) is not None]
     level_map = resolve_thinking_level_map(provider, model_name)
     if level_map is None:
         return ["off"]
     return [level for level in EXTENDED_THINKING_LEVELS if level_map.get(level) is not None]
 
 
-def clamp_thinking_level(provider: str | None, model_name: str | None, level: str) -> str:
+def clamp_thinking_level(
+    provider: str | None,
+    model_name: str | None,
+    level: str,
+    *,
+    custom_mapping: dict[str, Any] | None = None,
+) -> str:
     """Land ``level`` on the nearest level ``(provider, model)`` actually has.
 
     pi's rule: an exact hit wins; otherwise search UP first (more thinking),
     then DOWN; a pair with no supported level clamps to ``off``. An unknown
     token is returned untouched (callers validate their own input).
     """
-    supported = get_supported_thinking_levels(provider, model_name)
+    supported = get_supported_thinking_levels(provider, model_name, custom_mapping=custom_mapping)
     if level in supported:
         return level
     if level not in EXTENDED_THINKING_LEVELS:
@@ -357,6 +371,78 @@ def clamp_thinking_level(provider: str | None, model_name: str | None, level: st
 # ---------------------------------------------------------------------------
 # The dispatcher: level -> wire kwargs
 # ---------------------------------------------------------------------------
+
+
+def _nested_wire_field(path: str, value: str) -> dict[str, Any]:
+    """Build ``{"a": {"b": value}}`` from a dotted ``a.b`` wire field.
+
+    Empty segments are skipped, so a malformed path degrades to a shallower
+    fragment rather than raising (the API boundary validates the path first).
+    """
+    segments = [segment for segment in path.split(".") if segment]
+    payload: dict[str, Any] = {}
+    cursor = payload
+    for segment in segments[:-1]:
+        nxt: dict[str, Any] = {}
+        cursor[segment] = nxt
+        cursor = nxt
+    if segments:
+        cursor[segments[-1]] = value
+    return payload
+
+
+def _custom_mapping_payload(custom_mapping: dict[str, Any], wire_value: str) -> dict[str, Any]:
+    """The fragment for a session's custom mapping at one wire value.
+
+    A known ``wire_format`` reuses that format's shape; ``"custom"`` (or a
+    missing format) writes the value at the mapping's own dotted ``wire_field``.
+    """
+    known = {
+        ThinkingFormat.OPENAI.value,
+        ThinkingFormat.DEEPSEEK.value,
+        ThinkingFormat.ZAI.value,
+        ThinkingFormat.QWEN.value,
+        ThinkingFormat.TOGETHER.value,
+        ThinkingFormat.BASETEN.value,
+        ThinkingFormat.OPENROUTER.value,
+        ThinkingFormat.CHAT_TEMPLATE.value,
+        ThinkingFormat.QWEN_CHAT_TEMPLATE.value,
+        ThinkingFormat.STRING_THINKING.value,
+        ThinkingFormat.ANT_LING.value,
+    }
+    wire_format = str(custom_mapping.get("wire_format") or "custom")
+    if wire_format in known:
+        return _wire_payload(wire_format, wire_value)
+    wire_field = str(custom_mapping.get("wire_field") or "")
+    if not wire_field:
+        return {}
+    return _nested_wire_field(wire_field, wire_value)
+
+
+def _resolved_level_map(
+    provider: str | None,
+    model_name: str | None,
+    thinking_format: str | None,
+    thinking_level_map: dict[str, str | None] | None,
+    custom_mapping: dict[str, Any] | None,
+) -> tuple[str | None, dict[str, str | None] | None]:
+    """(format, level map) with the custom mapping taking precedence.
+
+    A custom mapping's own ``wire_format`` overrides the provider-resolved one,
+    and its ``level_map`` replaces the declarative map entirely — the escape
+    hatch is meant to win.
+    """
+    if custom_mapping and custom_mapping.get("level_map"):
+        custom_level_map = dict(custom_mapping["level_map"])
+        custom_format = custom_mapping.get("wire_format")
+        if isinstance(custom_format, str) and custom_format == "custom":
+            custom_format = None
+        resolved = custom_format or thinking_format or resolve_thinking_format(provider, model_name)
+        return resolved, custom_level_map
+    resolved = thinking_format or resolve_thinking_format(provider, model_name)
+    if thinking_level_map is not None:
+        return resolved, dict(thinking_level_map)
+    return resolved, resolve_thinking_level_map(provider, model_name, thinking_format=resolved)
 
 
 def _wire_payload(thinking_format: str, wire_value: str) -> dict[str, Any]:
@@ -403,17 +489,69 @@ def _wire_payload(thinking_format: str, wire_value: str) -> dict[str, Any]:
     return {}
 
 
+#: Anthropic models that take the ADAPTIVE thinking form
+#: (``thinking.type: "adaptive"`` + ``output_config.effort``) instead of the
+#: legacy token budget. Declared per prefix; a model outside the list keeps the
+#: budget form.
+_ANTHROPIC_ADAPTIVE_PREFIXES = (
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-4-5",
+    "claude-4-6",
+)
+
+#: Level -> the three named efforts Anthropic accepts.
+_ANTHROPIC_EFFORT = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+    "max": "high",
+}
+
+
+def _anthropic_thinking_kwargs(model_name: str | None, level: str) -> dict[str, Any]:
+    """Anthropic's thinking payload for one model + level.
+
+    Adaptive-capable models (``_ANTHROPIC_ADAPTIVE_PREFIXES``) carry an effort
+    via ``output_config``; everything else keeps the documented token budget.
+    ``off`` is an absent param -- the API's own default is OFF.
+    """
+    if not model_name or not _is_anthropic_reasoning_model(model_name):
+        return {}
+    if level == "off":
+        return {}
+    name = _bare_name(model_name)
+    if name.startswith(_ANTHROPIC_ADAPTIVE_PREFIXES):
+        effort = _ANTHROPIC_EFFORT.get(level, "high")
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
+    return {"thinking": {"type": "enabled", "budget_tokens": _DEFAULT_ANTHROPIC_BUDGET}}
+
+
 def _native_thinking_kwargs(provider: str, model_name: str | None, level: str) -> dict[str, Any]:
     """Anthropic / Google / Bedrock branches (first-class client kwargs)."""
     if provider == "anthropic":
-        if not model_name or not _is_anthropic_reasoning_model(model_name):
+        return _anthropic_thinking_kwargs(model_name, level)
+    if provider == "bedrock":
+        # Bedrock carries Claude's thinking under ``additional_model_request_fields``
+        # and GPT's effort as a first-class param; the model name decides.
+        if not model_name or level == "off":
             return {}
-        if level == "off":
-            # Anthropic reasoning defaults to OFF: an absent param disables it.
-            return {}
-        # Every enabled level sends the documented budget block: Anthropic has
-        # no named effort levels (adaptive/managed-effort are future work).
-        return {"thinking": {"type": "enabled", "budget_tokens": _DEFAULT_ANTHROPIC_BUDGET}}
+        name = _bare_name(model_name)
+        if "claude" in name:
+            effort = _ANTHROPIC_EFFORT.get(level, "high")
+            return {
+                "additional_model_request_fields": {
+                    "thinking": {"type": "adaptive"},
+                    "output_config": {"effort": effort},
+                }
+            }
+        if "gpt" in name or "openai" in name:
+            return {"reasoning_effort": _ANTHROPIC_EFFORT.get(level, "high")}
+        return {}
     if provider in ("google", "google-genai", "gemini", "vertexai"):
         if not model_name or level == "off":
             # Gemini's thinking cannot be disabled; absent param = server default.
@@ -439,6 +577,7 @@ def build_thinking_kwargs(
     *,
     thinking_format: str | None = None,
     thinking_level_map: dict[str, str | None] | None = None,
+    custom_mapping: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The reasoning kwargs for one ``(provider, model, level)`` triple.
 
@@ -465,31 +604,44 @@ def build_thinking_kwargs(
     if not provider:
         return {}
     provider = provider.strip().lower()
-    if provider in ("anthropic", "google", "google-genai", "gemini", "vertexai", "bedrock"):
+    custom_active = bool(custom_mapping and custom_mapping.get("level_map"))
+    if not custom_active and provider in (
+        "anthropic",
+        "google",
+        "google-genai",
+        "gemini",
+        "vertexai",
+        "bedrock",
+    ):
         return _native_thinking_kwargs(provider, model_name, level)
-    thinking_format = thinking_format or resolve_thinking_format(provider, model_name)
-    if thinking_format is None:
-        return {}
-    level_map = (
-        thinking_level_map
-        if thinking_level_map is not None
-        else resolve_thinking_level_map(provider, model_name, thinking_format=thinking_format)
+    resolved_format, level_map = _resolved_level_map(
+        provider,
+        model_name,
+        thinking_format,
+        thinking_level_map,
+        custom_mapping,
     )
-    if level_map is None:
+    if level_map is None or not level_map:
         return {}
+
+    def _payload_for(wire: str) -> dict[str, Any]:
+        if custom_active and custom_mapping is not None:
+            return _custom_mapping_payload(custom_mapping, wire)
+        return _wire_payload(str(resolved_format), wire)
+
     if level == "off":
         wire = level_map.get("off")
         if wire is None:
-            if thinking_format == ThinkingFormat.OPENAI.value:
+            if not custom_active and resolved_format == ThinkingFormat.OPENAI.value:
                 return {}  # no disable wire: absent param is the best effort
-            level = clamp_thinking_level(provider, model_name, "off")
+            level = clamp_thinking_level(provider, model_name, "off", custom_mapping=custom_mapping)
             wire = level_map.get(level)
-        return _wire_payload(thinking_format, str(wire)) if wire is not None else {}
-    clamped = clamp_thinking_level(provider, model_name, level)
+        return _payload_for(str(wire)) if wire is not None else {}
+    clamped = clamp_thinking_level(provider, model_name, level, custom_mapping=custom_mapping)
     wire = level_map.get(clamped)
     if wire is None:
         return {}
-    return _wire_payload(thinking_format, str(wire))
+    return _payload_for(str(wire))
 
 
 # ---------------------------------------------------------------------------
@@ -588,7 +740,13 @@ def is_thinking_disable_rejection(exc: BaseException) -> bool:
     return ("不支持关闭思考" in text) or ("始终思考" in text)
 
 
-def get_thinking_budget(provider: str | None, model_name: str | None, enabled: bool) -> int:
+def get_thinking_budget(
+    provider: str | None,
+    model_name: str | None,
+    enabled: bool,
+    *,
+    level: str | None = None,
+) -> int:
     """Return the reasoning-token headroom the model config must add to ``max_tokens``.
 
     Thinking tokens and output tokens share the ``max_tokens`` budget: without
@@ -609,6 +767,10 @@ def get_thinking_budget(provider: str | None, model_name: str | None, enabled: b
         return 0
     if resolve_thinking_level_map(provider, model_name) is None:
         return 0
+    if level:
+        per_level = REASONING_BUDGET.get("thinking_budgets") or {}
+        if level in per_level:
+            return int(per_level[level])
     return _DEFAULT_NON_ANTHROPIC_BUDGET
 
 

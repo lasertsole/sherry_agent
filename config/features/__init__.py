@@ -13,6 +13,7 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    CustomThinkingMapping as CustomThinkingMapping,
     EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
     THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,
     THINKING_LEVELS as THINKING_LEVELS,

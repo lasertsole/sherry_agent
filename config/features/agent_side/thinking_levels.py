@@ -86,6 +86,30 @@ class ThinkingFormat(StrEnum):
     ANT_LING = "ant-ling"
 
 
+class CustomThinkingMapping(TypedDict, total=False):
+    """A per-session override of the declarative map (advanced panel).
+
+    The escape hatch for a provider the built-in formats do not cover: the user
+    names the wire field, picks the level values, and the engine builds exactly
+    that request fragment. Validated at the API boundary
+    (``session_settings_service``): ``wire_field`` segments are lowercase
+    ``[a-z_]``, level values are ``[A-Za-z0-9_-]``, at least one level must be
+    declared, and budgets stay positive and under the output cap.
+    """
+
+    wire_field: str
+    """Dotted path written verbatim, e.g. ``extra_body.thinking.type``."""
+
+    wire_format: str
+    """A known ``ThinkingFormat`` value, or ``"custom"`` (uses wire_field)."""
+
+    level_map: ThinkingLevelMap
+    """Per-level wire values; ``None`` (or omitted) = the level does not exist."""
+
+    thinking_budgets: dict[str, int]
+    """Optional per-level token headroom overrides."""
+
+
 class ThinkingConfig(TypedDict):
     """Aggregated thinking-level tuning."""
 

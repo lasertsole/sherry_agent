@@ -131,6 +131,7 @@ client/
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关，或按模型声明档位（含关闭）的选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
+│   │           ├── ThinkingCustomMappingPanel.vue # 会话级自定义思考 wire 映射（高级；适配内置格式未覆盖的 provider）
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
@@ -280,25 +281,25 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 `bridge.ts` 提供在 Tauri 桌面与浏览器两种模式下均可工作的统一 API。所有后端访问都经由它（或经 `requestApi.ts` 中的 `fetchApi`）：
 
-| API                                                                                                | 说明                                                                                   |
-| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
-| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage` 的便捷封装                                                         |
-| `stopChatMessage(sessionId)`                                                                       | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧）                                 |
-| `resumeHitl(sessionId, decision, ...)`                                                             | 通过新建 WebSocket 恢复暂停的 HITL 智能体                                              |
-| `clearSession(sessionId)`                                                                          | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`）                              |
-| `getHistory(sessionId, lastTurnCount)`                                                             | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 后台子智能体任务管理                                                                   |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 系统提示词文件 CRUD                                                                    |
-| `readMemory` / `writeMemory`                                                                       | 长期记忆文件（`workspace/memory/*`）                                                   |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | 定时任务管理                                                                           |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 技能管理                                                                               |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 通道设置                                                                               |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自动技能 curator 控制                                                                  |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | 后端配置文件读取/更新（`GET/PUT /env`、`/models-config`、`/network-config`）              |
-| `checkHealth()`                                                                                    | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
+| API                                                                                                                                    | 说明                                                                                   |
+| -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                                | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
+| `sendChatMessage(request, onChunk)`                                                                                                    | `streamChatMessage` 的便捷封装                                                         |
+| `stopChatMessage(sessionId)`                                                                                                           | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧）                                 |
+| `resumeHitl(sessionId, decision, ...)`                                                                                                 | 通过新建 WebSocket 恢复暂停的 HITL 智能体                                              |
+| `clearSession(sessionId)`                                                                                                              | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`）                              |
+| `getHistory(sessionId, lastTurnCount)`                                                                                                 | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                      | 后台子智能体任务管理                                                                   |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                           | 系统提示词文件 CRUD                                                                    |
+| `readMemory` / `writeMemory`                                                                                                           | 长期记忆文件（`workspace/memory/*`）                                                   |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                     | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                     | 定时任务管理                                                                           |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                             | 技能管理                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                          | 通道设置                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                       | 自动技能 curator 控制                                                                  |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                       | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | 后端配置文件读取/更新（`GET/PUT /env`、`/models-config`、`/network-config`）           |
+| `checkHealth()`                                                                                                                        | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
 
 浏览器模式聊天流细节：
 
@@ -342,7 +343,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 | `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | 技能管理                           |
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | Curator 审查与设置                 |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | 通道开关与配置                     |
-| `/env`、`/models-config`、`/network-config`                                                        | GET / PUT                | 后端配置文件读取/更新             |
+| `/env`、`/models-config`、`/network-config`                                                      | GET / PUT                | 后端配置文件读取/更新              |
 | `/model-config`                                                                                  | GET                      | 模型配置与有效性                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | 日志文件列表与尾部读取             |
 | `/logs/ws`                                                                                       | WS                       | 实时日志流                         |

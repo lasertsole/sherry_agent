@@ -155,11 +155,28 @@ class TestWireFormats:
         assert rp.build_thinking_kwargs("google", "gemini-3-pro", "off") == {}
 
     def test_anthropic_level_payloads(self):
-        # Any enabled level sends the documented budget block; off is param-free.
+        # Adaptive models map the level onto output_config.effort; off is param-free.
         assert rp.build_thinking_kwargs("anthropic", "claude-opus-4-5", "max") == {
-            "thinking": {"type": "enabled", "budget_tokens": rp._DEFAULT_ANTHROPIC_BUDGET}
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
         }
         assert rp.build_thinking_kwargs("anthropic", "claude-opus-4-5", "off") == {}
+        # Legacy models keep the documented budget block.
+        assert rp.build_thinking_kwargs("anthropic", "claude-sonnet-4", "high") == {
+            "thinking": {"type": "enabled", "budget_tokens": rp._DEFAULT_ANTHROPIC_BUDGET}
+        }
+
+    def test_bedrock_branches(self):
+        assert rp.build_thinking_kwargs("bedrock", "anthropic.claude-sonnet-4-5-v1", "medium") == {
+            "additional_model_request_fields": {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": "medium"},
+            }
+        }
+        assert rp.build_thinking_kwargs("bedrock", "openai.gpt-oss-120b", "low") == {
+            "reasoning_effort": "low"
+        }
+        assert rp.build_thinking_kwargs("bedrock", "amazon.titan", "high") == {}
 
     def test_unknown_provider_stays_a_noop(self):
         assert rp.build_thinking_kwargs("ollama", "llama3", "high") == {}

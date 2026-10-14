@@ -27,6 +27,8 @@ EXPECTED_VALUES: dict[str, str] = {
     "LLM_PARTIAL_STREAM_STUB": "llm_partial_stream_stub",
     "LLM_PARTIAL_STREAM_CAUSE": "llm_partial_stream_cause",
     "LLM_THINKING_ENABLED": "llm_thinking_enabled",
+    "CUSTOM_THINKING_MAPPING": "custom_thinking_mapping",
+    "CUSTOM_THINKING_MAPPING_PENDING": "custom_thinking_mapping_pending",
     "LLM_MAIN_MODEL": "llm_main_model",
     "LLM_MAIN_MODEL_PENDING": "llm_main_model_pending",
     "PROJECT_DIR": "project_dir",

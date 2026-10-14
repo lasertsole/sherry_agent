@@ -678,6 +678,7 @@ def _build_session_model(session_id: str) -> Any:
     override = config.get("override")
     temperature = config.get("temperature")
     thinking_kwargs = dict(config.get("thinking_kwargs") or {})
+    custom_mapping = config.get("custom_mapping") or None
     if override:
         return build_main_llm_for_profile(
             provider=override.get("provider"),
@@ -685,9 +686,10 @@ def _build_session_model(session_id: str) -> Any:
             api_key=override.get("api_key"),
             base_url=override.get("base_url"),
             temperature=temperature,
+            custom_mapping=custom_mapping,
             **thinking_kwargs,
         )
-    return build_main_llm(temperature=temperature, **thinking_kwargs)
+    return build_main_llm(temperature=temperature, custom_mapping=custom_mapping, **thinking_kwargs)
 
 
 async def _create_memory_review_agent(session_id: str, system_prompt: str):

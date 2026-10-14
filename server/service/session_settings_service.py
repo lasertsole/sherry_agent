@@ -37,6 +37,7 @@ parked"; ``value: null`` means clear on promotion.
 """
 
 import asyncio
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -70,6 +71,7 @@ _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.LLM_MAIN_MODEL, StateKey.LLM_MAIN_MODEL_PENDING),
     (StateKey.AGENT_CONFIG, StateKey.AGENT_CONFIG_PENDING),
     (StateKey.SEARCH_BACKEND, StateKey.SEARCH_BACKEND_PENDING),
+    (StateKey.CUSTOM_THINKING_MAPPING, StateKey.CUSTOM_THINKING_MAPPING_PENDING),
 )
 
 
@@ -522,6 +524,142 @@ async def apply_thinking_choice(session_id: str, value: bool | str | None) -> bo
         pending_key=StateKey.LLM_THINKING_ENABLED_PENDING,
         value=value,
         write_live=lambda: set_thinking_value(session_id, value),
+    )
+
+
+#: ``wire_field`` = dotted lowercase path, at most 4 segments, 128 chars total.
+_WIRE_FIELD_RE = re.compile(r"^[a-z_]+(\.[a-z_]+){0,3}$")
+#: Level wire values: letters/digits/underscore/dash, 1-64 chars.
+_WIRE_VALUE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MAX_WIRE_FIELD_CHARS = 128
+
+
+def _validate_custom_mapping(mapping: dict) -> dict:
+    """Normalize + validate a custom thinking mapping (raises ``ValueError``).
+
+    The mapping is the user's escape hatch into the request body, so every
+    string that can reach the wire is constrained here: the field path to
+    lowercase segments (no injection surface), the values to a conservative
+    charset, the level keys to the shared enum, and the budgets to positive
+    numbers under the model's context window.
+    """
+    from config.features import EXTENDED_THINKING_LEVELS, THINKING_LEVELS
+    from models.LLMs.reasoning_payload import _FORMAT_LEVEL_MAPS  # noqa: PLC0415 - leaf read
+
+    wire_format = mapping.get("wire_format") or "custom"
+    if not isinstance(wire_format, str):
+        raise ValueError("'wire_format' must be a string")
+    known_formats = set(_FORMAT_LEVEL_MAPS) | {"custom"}
+    if wire_format not in known_formats:
+        raise ValueError(f"'wire_format' must be one of {sorted(known_formats)}")
+
+    wire_field = mapping.get("wire_field") or ""
+    if not isinstance(wire_field, str):
+        raise ValueError("'wire_field' must be a string")
+    wire_field = wire_field.strip()
+    if wire_field:
+        if len(wire_field) > _MAX_WIRE_FIELD_CHARS or not _WIRE_FIELD_RE.match(wire_field):
+            raise ValueError(
+                "'wire_field' must be a dotted lowercase path (letters/underscores), "
+                "at most 4 segments"
+            )
+    if wire_format == "custom" and not wire_field:
+        raise ValueError("'wire_field' is required when 'wire_format' is 'custom'")
+
+    raw_map = mapping.get("level_map") or {}
+    if not isinstance(raw_map, dict):
+        raise ValueError("'level_map' must be an object")
+    level_map: dict[str, str | None] = {}
+    for key, value in raw_map.items():
+        if key not in EXTENDED_THINKING_LEVELS:
+            raise ValueError(f"'level_map' keys must be thinking levels, got {key!r}")
+        if value is None or value == "":
+            level_map[key] = None
+            continue
+        if not isinstance(value, str) or not _WIRE_VALUE_RE.match(value):
+            raise ValueError(
+                f"'level_map[{key}]' must be letters/digits/underscore/dash, 1-64 chars"
+            )
+        level_map[key] = value
+    if not any(v is not None for v in level_map.values()):
+        raise ValueError("'level_map' must declare at least one level")
+
+    cleaned: dict = {"wire_field": wire_field, "wire_format": wire_format, "level_map": level_map}
+
+    raw_budgets = mapping.get("thinking_budgets") or {}
+    if raw_budgets:
+        if not isinstance(raw_budgets, dict):
+            raise ValueError("'thinking_budgets' must be an object")
+        from models.LLMs import main_llm as _main_llm
+
+        ceiling = int(getattr(_main_llm, "max_tokens", 0) or 0) or 131072
+        budgets: dict[str, int] = {}
+        for key, value in raw_budgets.items():
+            if key not in THINKING_LEVELS:
+                raise ValueError(f"'thinking_budgets' keys must be effort levels, got {key!r}")
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"'thinking_budgets[{key}]' must be a positive integer")
+            if ceiling and value >= ceiling:
+                raise ValueError(f"'thinking_budgets[{key}]' must stay under the context window")
+            budgets[key] = value
+        if budgets:
+            cleaned["thinking_budgets"] = budgets
+    return cleaned
+
+
+def get_custom_thinking_mapping(session_id: str) -> dict | None:
+    """The session's custom thinking mapping (parked value wins), or None."""
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    if not _session_turn_active(session_id):
+        promote_pending_settings_sync(session_id)
+    parked, parked_value = _pending_value(session_id, StateKey.CUSTOM_THINKING_MAPPING_PENDING)
+    value = parked_value if parked else _read_value(session_id, StateKey.CUSTOM_THINKING_MAPPING)
+    if isinstance(value, dict) and value.get("level_map"):
+        return {"pending": parked, **value}
+    return None
+
+
+def clear_custom_thinking_mapping(session_id: str) -> None:
+    """Drop the session's custom mapping from both register tiers."""
+    state_register_mem.delete_state(session_id, StateKey.CUSTOM_THINKING_MAPPING)
+    state_register_db.delete_state(session_id, StateKey.CUSTOM_THINKING_MAPPING)
+
+
+def set_custom_thinking_mapping(session_id: str, mapping: dict) -> None:
+    """Write the custom mapping to the LIVE keys (idle/tests callers)."""
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    state_register_mem.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, mapping)
+    state_register_db.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, mapping)
+
+
+async def apply_custom_thinking_mapping(session_id: str, mapping: dict | None) -> bool:
+    """HTTP entry for ``PUT /sessions/thinking/custom``; returns ``pending``.
+
+    ``None`` clears the mapping (back to the declarative defaults). Otherwise
+    the payload is validated, then written live or parked — the same
+    next-turn semantics as every other per-session control.
+    """
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+
+    if mapping is None:
+        return await _apply_session_choice(
+            session_id,
+            live_key=StateKey.CUSTOM_THINKING_MAPPING,
+            pending_key=StateKey.CUSTOM_THINKING_MAPPING_PENDING,
+            value=None,
+            write_live=lambda: clear_custom_thinking_mapping(session_id),
+        )
+
+    cleaned = _validate_custom_mapping(mapping)
+    return await _apply_session_choice(
+        session_id,
+        live_key=StateKey.CUSTOM_THINKING_MAPPING,
+        pending_key=StateKey.CUSTOM_THINKING_MAPPING_PENDING,
+        value=cleaned,
+        write_live=lambda: set_custom_thinking_mapping(session_id, cleaned),
     )
 
 

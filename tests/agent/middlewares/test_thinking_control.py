@@ -31,7 +31,14 @@ def fake_build(monkeypatch):
     """Stub build_main_llm so no real LLM client is constructed."""
     calls: list[dict] = []
 
-    def _fake_build(temperature=None, *, thinking=None, thinking_level=None, thinking_floor=False):
+    def _fake_build(
+        temperature=None,
+        *,
+        thinking=None,
+        thinking_level=None,
+        thinking_floor=False,
+        custom_mapping=None,
+    ):
         calls.append({"thinking": thinking, "level": thinking_level, "floor": thinking_floor})
         tag = (
             f"level:{thinking_level}"
@@ -247,6 +254,7 @@ def fake_profile_build(monkeypatch):
         api_key=None,
         base_url=None,
         temperature=None,
+        custom_mapping=None,
         thinking=None,
         thinking_level=None,
         thinking_floor=False,
@@ -390,6 +398,7 @@ class TestAppliedConfigPublication:
             "override": _PROFILE,
             "thinking_kwargs": {"thinking_level": "max"},
             "temperature": 0.8,
+            "custom_mapping": None,
         }
 
     def test_the_env_default_is_published_when_no_control_is_set(
@@ -404,6 +413,7 @@ class TestAppliedConfigPublication:
             "override": None,
             "thinking_kwargs": {},
             "temperature": 0.8,
+            "custom_mapping": None,
         }
 
     def test_clearing_the_controls_replaces_the_stale_config(self, sid, fake_profile_build):

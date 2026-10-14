@@ -190,6 +190,7 @@ async def test_the_review_agent_rebuilds_the_turns_model_config(monkeypatch):
         "api_key": "k",
         "base_url": "u",
         "temperature": 0.8,
+        "custom_mapping": None,
         "thinking_level": "high",
     }
     assert calls["agent_kwargs"]["model"] is sentinel
@@ -213,7 +214,7 @@ async def test_the_review_agent_rebuilds_the_env_default_config(monkeypatch):
 
     await nudge_mod._create_memory_review_agent("sess-y", "sys")
 
-    assert env_kwargs == {"temperature": 0.8, "thinking": False}
+    assert env_kwargs == {"temperature": 0.8, "custom_mapping": None, "thinking": False}
     assert calls["agent_kwargs"]["model"] is sentinel
 
 

@@ -130,6 +130,7 @@ client/
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch, or the model-declared level picker incl. off, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
+│   │           ├── ThinkingCustomMappingPanel.vue # Advanced per-session custom thinking wire mapping (escape hatch for unsupported providers)
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
@@ -280,25 +281,25 @@ app.vue (root: toast layer, connection banner, locale restore)
 
 `bridge.ts` provides a unified API that works in both Tauri desktop and browser modes. All backend access flows through it (or through `fetchApi` in `requestApi.ts`):
 
-| API                                                                                                | Description                                                                                    |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
-| `sendChatMessage(request, onChunk)`                                                                | Convenience wrapper around `streamChatMessage`                                                 |
-| `stopChatMessage(sessionId)`                                                                       | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame)                                  |
-| `resumeHitl(sessionId, decision, ...)`                                                             | Resume a paused HITL agent over a fresh WebSocket                                              |
-| `clearSession(sessionId)`                                                                          | Clear session state (`session_clear` IPC or `DELETE /sessions`)                                |
-| `getHistory(sessionId, lastTurnCount)`                                                             | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | Background subagent task management                                                            |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | System prompt files CRUD                                                                       |
-| `readMemory` / `writeMemory`                                                                       | Long-term memory files (`workspace/memory/*`)                                                  |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | Cron job management                                                                            |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | Skill management                                                                               |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | Channel settings                                                                               |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | Auto-skill curator control                                                                     |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | Backend log reading + live `/logs/ws` stream                                                   |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig` (`env.ts`) | Backend config-file read/update (`GET/PUT /env`, `/models-config`, `/network-config`)           |
-| `checkHealth()`                                                                                    | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
+| API                                                                                                                                   | Description                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                               | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                                                   | Convenience wrapper around `streamChatMessage`                                                 |
+| `stopChatMessage(sessionId)`                                                                                                          | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame)                                  |
+| `resumeHitl(sessionId, decision, ...)`                                                                                                | Resume a paused HITL agent over a fresh WebSocket                                              |
+| `clearSession(sessionId)`                                                                                                             | Clear session state (`session_clear` IPC or `DELETE /sessions`)                                |
+| `getHistory(sessionId, lastTurnCount)`                                                                                                | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                     | Background subagent task management                                                            |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                          | System prompt files CRUD                                                                       |
+| `readMemory` / `writeMemory`                                                                                                          | Long-term memory files (`workspace/memory/*`)                                                  |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                    | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                    | Cron job management                                                                            |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                            | Skill management                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                         | Channel settings                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                      | Auto-skill curator control                                                                     |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                      | Backend log reading + live `/logs/ws` stream                                                   |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig` (`env.ts`) | Backend config-file read/update (`GET/PUT /env`, `/models-config`, `/network-config`)          |
+| `checkHealth()`                                                                                                                       | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
 
 Browser-mode chat streaming details:
 

@@ -27,35 +27,35 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 
 ## Directory Structure
 
-| Directory | Purpose | Key entry point |
-|---|---|---|
-| `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
-| `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
-| `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
-| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector) | `agent/tools/taskflow/config.py` |
-| `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
-| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
-| `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
-| `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
-| `agent/state_port.py` | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API) | `agent/state_port.py` |
-| `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
-| `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
-| `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (74 TypedDicts) | `config/features/__init__.py` |
-| `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
-| `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
-| `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
-| `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
-| `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
-| `runtime/` | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py` |
-| `runtime/hooks.py` | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server` | `runtime/hooks.py` |
-| `runtime/data_provider.py` | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent` | `runtime/data_provider.py` |
-| `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
-| `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf) | `tests/run_tests_split.py` |
-| `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
-| `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
-| `docs/context-governance/` | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering) | `docs/context-governance/README.md` |
-| `scripts/` | Dev tooling (git hooks, maintenance scripts) | `scripts/hooks/` |
+| Directory                            | Purpose                                                                                                                                                                              | Key entry point                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `agent/`                             | Agent core: middleware chain, tools, subagent system, checkpointer                                                                                                                   | `agent/core.py::built_agent()`                       |
+| `agent/middlewares/`                 | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence)                                                                       | `agent/middlewares/__init__.py`                      |
+| `agent/tools/`                       | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...)                                                                                                         | `agent/tools/__init__.py::build_main_tools()`        |
+| `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
+| `agent/tools/todolist/`              | Session-scoped todo planning layer + append-only evidence ledger/recorder                                                                                                            | `agent/tools/todolist/service.py`                    |
+| `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
+| `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
+| `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
+| `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
+| `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
+| `config/features/`                   | Per-object feature config (74 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
+| `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
+| `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
+| `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
+| `models/`                            | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
+| `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
+| `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
+| `runtime/lane/`                      | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`)                                                                                                        | `runtime/lane/core.py`                               |
+| `tests/`                             | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf)                                                                                             | `tests/run_tests_split.py`                           |
+| `skills/`                            | SKILL.md skill system (builtin/auto/plugins)                                                                                                                                         | `skills/loader.py::scan_skills()`                    |
+| `docs/`                              | VitePress documentation site                                                                                                                                                         | `docs/long-running-tasks/README.md`                  |
+| `docs/context-governance/`           | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering)                                                                                            | `docs/context-governance/README.md`                  |
+| `scripts/`                           | Dev tooling (git hooks, maintenance scripts)                                                                                                                                         | `scripts/hooks/`                                     |
 
 ## Architecture
 
@@ -118,7 +118,16 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     resolves a per-model thinkingLevelMap + thinkingFormat and CLAMPS the
   │     request onto the nearest level the model accepts, and GET
   │     /sessions/thinking returns the model's `levels` list so the client's
-  │     picker never offers an unsupported level
+  │     picker never offers an unsupported level. A session can also carry a
+  │     CUSTOM wire mapping (GET/PUT /sessions/thinking/custom,
+  │     StateKey.CUSTOM_THINKING_MAPPING with the usual parked twin): validated
+  │     at the API boundary (lowercase dotted wire_field, alphanumeric values,
+  │     >=1 level, budgets positive and under the context window) and it
+  │     overrides the declarative map outright — it rides into the variant AND
+  │     into the memory review's cache-warm rebuild (the published descriptor
+  │     carries it). Anthropic has an adaptive branch, Bedrock splits Claude
+  │     from GPT, and the headroom scales per level via
+  │     REASONING_BUDGET["thinking_budgets"]
   │
   ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
@@ -365,7 +374,7 @@ backend exceeds several times over.
   — the difference between fitting the asset cap and not); macOS/Windows wheels
   are already CPU-only.
 - **Which backend runs**: `services/backend_downloader.rs` owns the first-run
-  flow — `<app_home>/sherry-backend/sherry-backend` present *and* its `VERSION`
+  flow — `<app_home>/sherry-backend/sherry-backend` present _and_ its `VERSION`
   equal to this build's → spawn it straight away; otherwise download
   `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest release
   (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background thread, unpack
@@ -421,7 +430,7 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   and `LANGSMITH_*` tracing (moved out of `sherry.jsonc`, which is tracked and
   must not hold a key). Loaded by `config/network_settings.py`.
 
-Both files are JSON5 (flat ``"KEY": value,`` lines; comments and trailing commas
+Both files are JSON5 (flat `"KEY": value,` lines; comments and trailing commas
 allowed). The loaders SEED a missing file from its template, overlaying the
 values still found in a legacy `.env` (and, for the tracing keys, in
 sherry.jsonc's old `LANGSMITH` object), then `hydrate` every key into
@@ -508,13 +517,13 @@ the model/thinking controls)::
 
 - `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
-  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
-  the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
-  false` = under `skills/plugins/`); each tool entry also carries the
-  tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
-  it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
-  reads/writes the payload; the service rejects an unknown tool / skill / role, and any
-  system-required middleware name, with a 400 that names it.
+  - `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
+    the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
+false` = under `skills/plugins/`); each tool entry also carries the
+    tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
+    it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
+    reads/writes the payload; the service rejects an unknown tool / skill / role, and any
+    system-required middleware name, with a 400 that names it.
 - **Tools** are applied per call by `ToolSelectionMiddleware`
   (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
   what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
@@ -556,7 +565,7 @@ the model/thinking controls)::
   call — with the session's system prompt and tool face, so the compaction's
   prefix cut makes the request a prefix-cache hit on the main model and only
   the review instruction is fresh input; `NUDGE["memory_review_mode"] =
-  "digest"` falls back to the folded view, `summarization/digest.py`) and the
+"digest"` falls back to the folded view, `summarization/digest.py`) and the
   plan-completion extraction fork
   (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
   on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
@@ -637,19 +646,19 @@ handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
 **ONE account, password only.** There is no username anywhere: the single
-``auth_account`` row (``CHECK (id = 1)`` — the schema cannot hold a second) is
+`auth_account` row (`CHECK (id = 1)` — the schema cannot hold a second) is
 identified by nothing, login takes just the password, and a username-era
-``auth_users`` table is copied into it at init and dropped
-(``_MIGRATION_DDLS`` in ``server/DAO/auth_store.py``). The JWT carries only
-``sub``/``jti``/``typ`` — no personal data.
+`auth_users` table is copied into it at init and dropped
+(`_MIGRATION_DDLS` in `server/DAO/auth_store.py`). The JWT carries only
+`sub`/`jti`/`typ` — no personal data.
 
-**Brute force is throttled, injection has no surface.** ``_LoginThrottle``
-(``server/service/auth_service.py``) counts consecutive failures per CLIENT
-SOCKET ADDRESS and escalates: ``AUTH["login_max_attempts"]`` free tries, then
-``login_lockout_base_seconds`` doubling to ``login_lockout_max_seconds``
-(a locked client is refused BEFORE any hashing, 429 + ``retry_after``), and a
+**Brute force is throttled, injection has no surface.** `_LoginThrottle`
+(`server/service/auth_service.py`) counts consecutive failures per CLIENT
+SOCKET ADDRESS and escalates: `AUTH["login_max_attempts"]` free tries, then
+`login_lockout_base_seconds` doubling to `login_lockout_max_seconds`
+(a locked client is refused BEFORE any hashing, 429 + `retry_after`), and a
 success clears the streak. Every query in the store is parameterized
-(``?`` placeholders only — never string-built SQL), which the test suite pins
+(`?` placeholders only — never string-built SQL), which the test suite pins
 with SQL-shaped passwords, and a missing account still pays one dummy scrypt
 verify so timing says nothing.
 
@@ -689,7 +698,7 @@ silent while nobody is signed in (the socket cannot connect by design then).
 
 **Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_account`
 (the single row: scrypt hash), `auth_settings` (single row = the runtime
-switch; `SHERRY_AUTH_ENABLED` only *seeds* a fresh row) and
+switch; `SHERRY_AUTH_ENABLED` only _seeds_ a fresh row) and
 `auth_jwt_blacklist` (`expires_at` in JWT seconds). Server tests isolate it with
 the autouse `isolated_auth_store` fixture — no test may touch the real file.
 
@@ -704,9 +713,9 @@ codes in, no generic toasts) and the transport's own 401 → refresh-once → re
 Two reporting views, both pushed (never polled) to the chat's floating progress
 panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
-* **Todos** — the existing `todo_updated` push from
+- **Todos** — the existing `todo_updated` push from
   `agent/tools/todolist/service.py::_push_todo_update`.
-* **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
+- **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
   (reporting only: the scheduler still unlocks each step on its own
   `depends_on`; an unknown dep id is ignored and a cycle lands in a trailing wave
   flagged `cyclic` instead of looping). Every flow mutation calls
@@ -807,7 +816,7 @@ Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 
 **Server side** — `server/service/browser_cdp.py` is a thin CDP transport (one
-WebSocket, JSON-RPC ids, flat sessions, *droppable* screencast events) plus the
+WebSocket, JSON-RPC ids, flat sessions, _droppable_ screencast events) plus the
 launcher: it probes `--no-sandbox` last (the first attempt is capped at 6 s so a
 host without user namespaces pays seconds, not the whole launch budget) and
 honours `SHERRY_BROWSER_HEADLESS` (default: headed when a DISPLAY exists). The
@@ -872,12 +881,12 @@ some job still loads. Documented in the four-language `scripts/README*.md`.
 
 Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.
 
-| Lane | Constrains | Default | Config key |
-|---|---|---|---|
-| `MAIN` | main-agent turn (`_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
-| `SUBAGENT` | child-agent executions (spawn + steer) | 8 | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
-| `NESTED` | `sessions_send` reply turns (serial) | 1 | `LANE_SYSTEM["nested_max_concurrent"]` |
+| Lane       | Constrains                                                   | Default                                                               | Config key                               |
+| ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
+| `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
+| `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
+| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
+| `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
 - Queueing: a spawn that passes per-parent admission but exceeds the SUBAGENT lane is registered `PENDING` (no `forbidden`); `PENDING → RUNNING` happens inside the lane slot and only then is `started_at` stamped (queue wait is not run time). `PENDING` counts as active in registry queries and is killable; restore finalizes restart-leftover PENDING runs the same way at startup (silently — no announce), and orphan recovery covers same-lifetime lost tasks with `ended_reason="pending_orphaned"`.
@@ -887,14 +896,14 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 ## Key Configuration
 
-| File | Contents |
-|---|---|
+| File                          | Contents                                                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config/features/agent_side/` | 47 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
-| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 74 TypedDicts + instances re-exported |
-| `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
-| `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
-| `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
+| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 74 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
+| `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
+| `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
 
 ## Code Graph
 
@@ -989,7 +998,7 @@ to the suite is the version-controlled reference (threshold + model id).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`).
 - the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
-  writable_roots)` takes the caller's write surface, which each tool resolves from
+writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
   writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
   an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=auto` (the same

@@ -100,6 +100,7 @@ from .llm_client_defaults import (
     LLM_CLIENT_DEFAULTS as LLM_CLIENT_DEFAULTS,
 )
 from .thinking_levels import (
+    CustomThinkingMapping as CustomThinkingMapping,
     THINKING_LEVELS as THINKING_LEVELS,
     EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
     THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,

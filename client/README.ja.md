@@ -131,6 +131,7 @@ client/
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグル、またはモデル宣言のレベルピッカー（off 含む）、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（モデル設定 MAIN_LLM プロファイル、次ターンから有効）
+│   │           ├── ThinkingCustomMappingPanel.vue # セッション単位のカスタム思考 wire マッピング（上級、未対応プロバイダ向け）
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：トリガー（プランモード / 変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
@@ -249,7 +250,7 @@ client/
 | **E2E repro**                    | [@playwright/test](https://playwright.dev/) ^1.62                                                        | 開発サーバーに対する repro テスト（Desktop Edge）                                          |
 | **Lint / フォーマット**          | ESLint ^10（flat config）+ Prettier                                                                      | コード品質                                                                                 |
 | **型チェック**                   | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                                | `pnpm typecheck`                                                                           |
-| **バックエンド言語**             | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri シェル（バックエンドプロセス + 初回ダウンロード）                     |
+| **バックエンド言語**             | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri シェル（バックエンドプロセス + 初回ダウンロード）                                    |
 
 ### 主要な設定
 
@@ -280,25 +281,25 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 
 `bridge.ts` は Tauri デスクトップとブラウザの両モードで動作する統一 API を提供します。バックエンドへのアクセスはすべてこれ（または `requestApi.ts` の `fetchApi`）経由です：
 
-| API                                                                                                | 説明                                                                                                             |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | ストリーミングエージェントチャット；`{ controller, promise }` を返す（Tauri Events または `/sessions/agent/ws`） |
-| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage` の簡易ラッパー                                                                               |
-| `stopChatMessage(sessionId)`                                                                       | 進行中の生成を停止（`agent_stop` IPC または WS `stop` フレーム）                                                 |
-| `resumeHitl(sessionId, decision, ...)`                                                             | 新しい WebSocket で一時停止中の HITL エージェントを再開                                                          |
-| `clearSession(sessionId)`                                                                          | セッション状態をクリア（`session_clear` IPC または `DELETE /sessions`）                                          |
-| `getHistory(sessionId, lastTurnCount)`                                                             | 履歴を取得（`session_history` IPC または `GET /n_turns_history_messages`）                                       |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | バックグラウンドのサブエージェントタスク管理                                                                     |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | システムプロンプトファイルの CRUD                                                                                |
-| `readMemory` / `writeMemory`                                                                       | 長期メモリファイル（`workspace/memory/*`）                                                                       |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`（常に直接 HTTP）                                                                        |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron ジョブ管理                                                                                                  |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | スキル管理                                                                                                       |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | チャネル設定                                                                                                     |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自動スキル curator の制御                                                                                        |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | バックエンドログの読み取り + ライブ `/logs/ws` ストリーム                                                        |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | バックエンド設定ファイルの読み取り/更新（`GET/PUT /env`、`/models-config`、`/network-config`） |
-| `checkHealth()`                                                                                    | バックエンド到達性（`system_health` IPC または `GET /system_prompt`）                                            |
+| API                                                                                                                                    | 説明                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                                | ストリーミングエージェントチャット；`{ controller, promise }` を返す（Tauri Events または `/sessions/agent/ws`） |
+| `sendChatMessage(request, onChunk)`                                                                                                    | `streamChatMessage` の簡易ラッパー                                                                               |
+| `stopChatMessage(sessionId)`                                                                                                           | 進行中の生成を停止（`agent_stop` IPC または WS `stop` フレーム）                                                 |
+| `resumeHitl(sessionId, decision, ...)`                                                                                                 | 新しい WebSocket で一時停止中の HITL エージェントを再開                                                          |
+| `clearSession(sessionId)`                                                                                                              | セッション状態をクリア（`session_clear` IPC または `DELETE /sessions`）                                          |
+| `getHistory(sessionId, lastTurnCount)`                                                                                                 | 履歴を取得（`session_history` IPC または `GET /n_turns_history_messages`）                                       |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                      | バックグラウンドのサブエージェントタスク管理                                                                     |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                           | システムプロンプトファイルの CRUD                                                                                |
+| `readMemory` / `writeMemory`                                                                                                           | 長期メモリファイル（`workspace/memory/*`）                                                                       |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                     | `workspace/HEARTBEAT.md`（常に直接 HTTP）                                                                        |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                     | cron ジョブ管理                                                                                                  |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                             | スキル管理                                                                                                       |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                          | チャネル設定                                                                                                     |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                       | 自動スキル curator の制御                                                                                        |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                       | バックエンドログの読み取り + ライブ `/logs/ws` ストリーム                                                        |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | バックエンド設定ファイルの読み取り/更新（`GET/PUT /env`、`/models-config`、`/network-config`）                   |
+| `checkHealth()`                                                                                                                        | バックエンド到達性（`system_health` IPC または `GET /system_prompt`）                                            |
 
 ブラウザモードのチャットストリーミング詳細：
 
@@ -342,7 +343,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 | `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | スキル管理                                           |
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | curator レビューと設定                               |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | チャネル切替と設定                                   |
-| `/env`、`/models-config`、`/network-config`                                                       | GET / PUT                | バックエンド設定ファイルの読み取り/更新             |
+| `/env`、`/models-config`、`/network-config`                                                      | GET / PUT                | バックエンド設定ファイルの読み取り/更新              |
 | `/model-config`                                                                                  | GET                      | モデル設定と有効性                                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | ログファイル一覧と末尾読み取り                       |
 | `/logs/ws`                                                                                       | WS                       | ライブログストリーム                                 |

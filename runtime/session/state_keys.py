@@ -34,6 +34,15 @@ class StateKey(StrEnum):
     # keeps its variant, then promoted to the live key when the turn ends.
     LLM_THINKING_ENABLED_PENDING = "llm_thinking_enabled_pending"
 
+    # Per-session CUSTOM thinking wire mapping (the advanced panel): overrides
+    # the declarative per-model map so any provider can be adapted without a
+    # code change. ``{wire_field, wire_format, level_map, thinking_budgets}``;
+    # absent = the built-in maps apply.
+    CUSTOM_THINKING_MAPPING = "custom_thinking_mapping"
+    # Choice made mid-turn: parked so the running turn keeps its wire mapping;
+    # promoted at the turn boundary (the same park/promote twin as thinking).
+    CUSTOM_THINKING_MAPPING_PENDING = "custom_thinking_mapping_pending"
+
     # Per-session main-model override (client UI → /sessions/model): the
     # profile descriptor {id, label, provider, model, base_url, api_key} the
     # session runs on, or absent = follow the env-configured main LLM. The
