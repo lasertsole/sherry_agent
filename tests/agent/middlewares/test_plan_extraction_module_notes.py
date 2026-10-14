@@ -124,10 +124,10 @@ class TestFactsRendering:
                 prompts.append(input["messages"][-1].content)
                 return {"messages": [AIMessage(content="nothing")]}
 
-        async def _create(system_prompt, allowed_metadata_key=None, tools=None):
+        async def _create(system_prompt):
             return _CapturingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _create)
 
         await nudge_mod._nudge_memory("sess-review", "sys", [HumanMessage("hi")])
 

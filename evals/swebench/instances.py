@@ -31,6 +31,7 @@ heavier, which is a second harness, not a first one.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -56,9 +57,39 @@ SPIKE_INSTANCES: tuple[str, ...] = (
     "sympy__sympy-24213",
 )
 
+#: The HARD slice: same dataset, instances whose fixes need a real codebase and
+#: whose regression surface is large (multi-test FAIL_TO_PASS sets and 100+
+#: PASS_TO_PASS tests), one per repo so the number is not a single-repo artefact.
+#: Versions are chosen for Python 3.11 compatibility (django 5.0, pytest 8.0,
+#: pylint 2.15, sympy 1.8) — an old checkout whose suite fails for interpreter
+#: reasons would measure the harness, not the agent.
+HARD_INSTANCES: tuple[str, ...] = (
+    "django__django-17051",
+    "sympy__sympy-20639",
+)
+
+#: Two further repos were intended here and are NOT, each for a measured
+#: environment reason (not a benchmark one — the gold-patch self-check catches
+#: them before any model call, which is exactly its job):
+#:
+#: - ``pytest-dev__pytest-11148``: pytest's OWN suite owns the ``pytest``
+#:   distribution, so installing it beside the checkout is a knife-edge; even
+#:   with the editable checkout it leaves two PASS_TO_PASS tests failing in a
+#:   hand-built venv (``test_usage_error_code`` and a conftest-load-failure case)
+#:   — the official image pins that environment.
+#: - ``pylint-dev__pylint-7080``: its 2.15 suite imports ``py._path.local``, and
+#:   the ``py`` module a modern pytest leaves behind is a stub without ``py.io``.
+#:
+#: See ``evals/FINDINGS.md`` F7 for both.
+
 #: Interpreter for the instance environments (the benchmark's images pin old
 #: Pythons; 3.11 keeps modern pytest working with these checkouts).
 INSTANCE_PYTHON = "3.11"
+
+#: Repos whose test ids are unittest labels routed through their own runner
+#: (``python tests/runtests.py module.Class.method``); everything else runs as
+#: pytest node ids.
+_DJANGO_LABEL_RE = re.compile(r"^(?P<name>[\w\[\].\-]+)\s+\((?P<module>[\w.]+)\)$")
 
 
 @dataclass
@@ -74,6 +105,12 @@ class Instance:
     fail_to_pass: list[str]
     pass_to_pass: list[str]
     repo_dir: Path
+    #: The library version this instance targets (SWE-bench's ``version``
+    #: column). Used as the setuptools-scm pretend version so a SHALLOW clone —
+    #: which cannot see the tag history — still reports a real version instead
+    #: of ``0.1.dev1``: pytest's own suite refuses to start below its
+    #: ``minversion`` otherwise.
+    version: str = ""
     python_exe: Path = field(default=Path("python"))
 
     @property
@@ -81,13 +118,38 @@ class Instance:
         """The clone URL of the benchmark repository."""
         return f"https://github.com/{self.repo}.git"
 
+    @property
+    def judge_mode(self) -> str:
+        """How this instance's tests are named and run."""
+        return "django" if self.repo == "django/django" else "pytest"
+
     def node_ids(self) -> tuple[list[str], list[str]]:
-        """``(fail_to_pass, pass_to_pass)`` as pytest node ids."""
+        """``(fail_to_pass, pass_to_pass)`` as runnable test ids.
+
+        pytest repos get ``file::name`` node ids; django's unittest labels
+        (``test_x (module.Class)``) become ``module.Class.test_x`` for its own
+        runner. A label that does not parse is dropped from the RUNNABLE set and
+        reported (``unrunnable_ids``) rather than silently weakening the verdict.
+        """
+        if self.judge_mode == "django":
+            return (
+                [label for name in self.fail_to_pass if (label := _django_label(name))],
+                [label for name in self.pass_to_pass if (label := _django_label(name))],
+            )
         files = test_files_of(self.test_patch)
         return (
             _as_node_ids(self.fail_to_pass, files),
             _as_node_ids(self.pass_to_pass, files),
         )
+
+    def unrunnable_ids(self) -> dict[str, list[str]]:
+        """Benchmark test names this harness cannot schedule (reported, never hidden)."""
+        if self.judge_mode != "django":
+            return {}
+        return {
+            "fail_to_pass": [n for n in self.fail_to_pass if not _django_label(n)],
+            "pass_to_pass": [n for n in self.pass_to_pass if not _django_label(n)],
+        }
 
 
 def fetch_dataset(cache_path: Path) -> list[dict]:
@@ -125,6 +187,7 @@ def to_instance(row: dict, repo_dir: Path) -> Instance:
         gold_patch=str(row.get("patch") or ""),
         fail_to_pass=_as_list(row.get("FAIL_TO_PASS")),
         pass_to_pass=_as_list(row.get("PASS_TO_PASS")),
+        version=str(row.get("version") or ""),
         repo_dir=repo_dir,
     )
 
@@ -146,6 +209,24 @@ _PATCH_FILE_RE = re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE)
 def test_files_of(test_patch: str) -> list[str]:
     """The repository-relative paths a test patch touches."""
     return [match.strip() for match in _PATCH_FILE_RE.findall(test_patch)]
+
+
+def _django_label(entry: str) -> str:
+    """``test_x (module.Class)`` -> ``module.Class.test_x``; ``""`` when unrunnable.
+
+    Some rows carry the FULL label inside the parentheses
+    (``test_x (module.Class.test_x)``, which is how the benchmark's parser
+    records an async or nested test). Appending the name there would produce
+    ``module.Class.test_x.test_x`` — django's loader then resolves ``test_x`` as
+    a function and every id errors out.
+    """
+    match = _DJANGO_LABEL_RE.match(entry.strip())
+    if not match:
+        return ""
+    name, module = match.group("name"), match.group("module")
+    if module.endswith(f".{name}"):
+        return module
+    return f"{module}.{name}"
 
 
 def _as_node_ids(names: list[str], files: list[str]) -> list[str]:
@@ -182,13 +263,85 @@ def materialize(instance: Instance, work_dir: Path) -> Instance:
         shutil.rmtree(venv_dir)
     _run(["uv", "venv", "--python", INSTANCE_PYTHON, str(venv_dir)], cwd=work_dir)
     python_exe = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    _run(
-        ["uv", "pip", "install", "--python", str(python_exe), "-q", "-e", str(repo_dir), "pytest"],
-        cwd=work_dir,
-    )
+    _install(repo_dir, python_exe, work_dir, scm_version=instance.version)
     instance.repo_dir = repo_dir
     instance.python_exe = python_exe
     return instance
+
+
+def _install(repo_dir: Path, python_exe: Path, work_dir: Path, *, scm_version: str = "") -> None:
+    """Install the checkout plus whatever its own test suite needs.
+
+    A repo that declares an optional dependency group for testing
+    (``[testing]`` / ``[test]``) gets it; a repo whose tests are driven by
+    ``test_requirements.txt`` gets that file. Both mirror how the official
+    images prepare their environments — nothing invented here.
+    """
+    base = ["uv", "pip", "install", "--python", str(python_exe), "-q"]
+    # setuptools-scm BAKES the version at build time (pytest writes it into
+    # ``src/_pytest/_version.py``), so a shallow clone needs the pretend version
+    # before the editable install — not only when the tests run.
+    env = dict(os.environ)
+    if scm_version:
+        env["SETUPTOOLS_SCM_PRETEND_VERSION"] = scm_version
+    # A repo that IS pytest provides the ``pytest`` distribution itself: asking
+    # for PyPI's pytest beside the editable checkout would fight it.
+    extra_pytest = [] if _distribution_name(repo_dir) == "pytest" else ["pytest"]
+    installed = False
+    for extra in _test_extras(repo_dir):
+        completed = subprocess.run(
+            [*base, "-e", f"{repo_dir}[{extra}]", *extra_pytest],
+            cwd=str(work_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        if completed.returncode == 0:
+            installed = True
+            break
+    if not installed:
+        _run([*base, "-e", str(repo_dir), *extra_pytest], cwd=work_dir, env=env)
+    # The repo's own test pins matter: pylint 2.15's suite imports ``py``, which
+    # only an old pytest (or the ``py`` package) provides.
+    for candidate in (
+        "test_requirements.txt",
+        "requirements_test.txt",
+        "requirements-test.txt",
+        "requirements_dev.txt",
+    ):
+        requirements = repo_dir / candidate
+        if requirements.is_file():
+            # cwd = the repo: these files carry relative entries (`-e .`), and uv
+            # resolves them against the working directory.
+            _run([*base, "-r", str(requirements)], cwd=repo_dir, env=env)
+            break
+
+
+def _distribution_name(repo_dir: Path) -> str:
+    """The package name a checkout installs as (``[project].name``)."""
+    pyproject = repo_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return ""
+    text = pyproject.read_text(encoding="utf-8", errors="replace")
+    section = re.search(r"^\[project\]$(.*?)(?=^\[|\Z)", text, re.S | re.M)
+    if not section:
+        return ""
+    name = re.search(r'^\s*name\s*=\s*"([^"]+)"', section.group(1), re.M)
+    return name.group(1) if name else ""
+
+
+def _test_extras(repo_dir: Path) -> list[str]:
+    """Optional-dependency group names that look like the repo's test deps."""
+    pyproject = repo_dir / "pyproject.toml"
+    if not pyproject.is_file():
+        return []
+    text = pyproject.read_text(encoding="utf-8", errors="replace")
+    section = re.search(r"^\[project\.optional-dependencies\]$(.*?)(?=^\[|\Z)", text, re.S | re.M)
+    if not section:
+        return []
+    names = re.findall(r"^\s*([\w.\-]+)\s*=", section.group(1), re.M)
+    return [name for name in names if name.lower().startswith("test")]
 
 
 def apply_patch(instance: Instance, patch: str) -> bool:
@@ -213,13 +366,15 @@ def revert(instance: Instance) -> None:
 
 
 def run_tests(
-    instance: Instance, node_ids: list[str], timeout_s: float = 900.0
+    instance: Instance, node_ids: list[str], timeout_s: float = 1800.0
 ) -> tuple[bool, str]:
-    """Run the given node ids with the instance's own interpreter."""
+    """Run the given test ids with the instance's own interpreter and runner."""
     if not node_ids:
         return True, "(no tests)"
-    completed = subprocess.run(
-        [
+    if instance.judge_mode == "django":
+        argv = [str(instance.python_exe), "tests/runtests.py", "--verbosity", "1", *node_ids]
+    else:
+        argv = [
             str(instance.python_exe),
             "-m",
             "pytest",
@@ -228,8 +383,15 @@ def run_tests(
             "-p",
             "no:cacheprovider",
             *node_ids,
-        ],
+        ]
+    env = dict(os.environ)
+    if instance.version:
+        # See Instance.version: a shallow clone cannot report the real version.
+        env["SETUPTOOLS_SCM_PRETEND_VERSION"] = instance.version
+    completed = subprocess.run(
+        argv,
         cwd=str(instance.repo_dir),
+        env=env,
         capture_output=True,
         text=True,
         timeout=timeout_s,
@@ -249,8 +411,17 @@ def diff(instance: Instance) -> str:
     return _run(["git", "diff"], cwd=instance.repo_dir)
 
 
-def _run(argv: list[str], cwd: Path, timeout: float = 1800.0) -> str:
-    completed = subprocess.run(argv, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+def _run(
+    argv: list[str], cwd: Path, timeout: float = 1800.0, env: dict[str, str] | None = None
+) -> str:
+    completed = subprocess.run(
+        argv,
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
     if completed.returncode != 0:
         raise RuntimeError(
             f"{argv[0]} failed ({completed.returncode}): "

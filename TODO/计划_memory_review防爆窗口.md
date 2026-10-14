@@ -1,7 +1,7 @@
 # 计划：memory review 防爆窗口（参考 hermes-agent）
 
 - 建档日期：2026-10-14
-- 状态：方案设计，未开工
+- 状态：**已执行（2026-10-14）** —— 见文末「落地记录」；本文件保留作参考
 - 参考：hermes-agent `background_review.py` + `context_compressor.py`
 - 前置已落地：plan extraction 已独立到 plan 完成路径（本计划的姊妹计划已执行完毕并归档）。本计划只管 memory review。
 
@@ -350,3 +350,13 @@ memory review 有两层防爆窗口保护：
 | compression lock | session 级 SQLite 锁防并发压缩 | Sherry 有 per-session lock（`_state_lock`），但不是压缩专用。可后续加 |
 
 Sherry 不照搬 hermes 的"每 N 轮触发"——Sherry 的压缩路径触发已够用（压缩时消息要丢失了，正好 review）。Sherry 也不需要 cache-warm 策略——直接用 aux 模型 + digest 更简单（不依赖 provider 的前缀缓存行为）。
+
+---
+
+## 落地记录（2026-10-14）
+
+- `agent/middlewares/summarization/digest.py` 新建（`digest_history` + `_text_of`，含 `tail == 0` 时"全部折叠"的分支——Python 的 `messages[-0:]` 是整表，会把最需要折叠的一档整段保留）。
+- `nudges.py`：`_create_memory_review_agent`（aux、`temperature=0`）；`_nudge_memory` 先 digest 后 sanitize；`_run_compression_nudges` → `_run_memory_review(session_id, messages_to_summarize)`；`schedule_compression_nudges` → `schedule_memory_review`。
+- `core.py`：`_schedule_compression_nudges` → `_schedule_memory_review`，`_fire_compression_nudges` 改传 `messages_to_summarize`（压缩后待办 fork 的传参不变）。
+- 测试：`tests/agent/middlewares/test_memory_review_digest.py` 12 例（短历史原样、30 条折叠、按角色截断 300/200/150、SystemMessage 与空消息跳过、多模态只取文本、tail=0 全折、折叠后远小于原文且 <30K token、aux 模型、被丢弃段而非整段、调度透传、会话开关关闭不调度、折叠发生在 agent 之前）；顺带把 `_create_nudge_agent` 相关的存量测试改为各自的工厂（记忆复盘 → `_create_memory_review_agent`）。
+- 文档：`agent/middlewares/README`×4、`docs/experience/README`×4、`AGENTS.md` 均改写为"被丢弃段 + digest + aux 模型"。

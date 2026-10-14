@@ -101,7 +101,8 @@ def isolated_facts(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_review_merges_and_prunes_facts(isolated_facts, monkeypatch):
-    monkeypatch.setattr("models.build_main_llm", lambda: _EditorialModel())
+    # The review follows the plan: folded input on the AUXILIARY model.
+    monkeypatch.setattr("models.build_auxiliary_llm", lambda **kwargs: _EditorialModel())
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_memory_tool()])
     monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
 

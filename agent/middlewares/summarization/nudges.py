@@ -382,7 +382,7 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 #
 # Both triggers are driven by the compression pipeline: the Summarization
 # middleware calls
-# ``schedule_compression_nudges`` on every compression that actually discards
+# ``schedule_memory_review`` on every compression that actually discards
 # messages. The memory review is dispatched on **every** compression (a
 # compaction discards content, so the review must never be skipped), and plan
 # extraction is evaluated at compression time. The single-fire flag semantics
@@ -479,17 +479,17 @@ def _nudges_locked(session_id: str) -> bool:
     )
 
 
-async def _run_compression_nudges(
+async def _run_memory_review(
     session_id: str,
-    messages: list[BaseMessage],
+    messages_to_summarize: list[BaseMessage],
 ) -> None:
-    """Run the compression-scoped nudge under the NUDGE lane (fail-open).
+    """Run the compression-scoped memory review under the NUDGE lane (fail-open).
 
-    Compaction carries the MEMORY review only: its job is to rescue long-term
-    memory out of the messages about to be discarded, which is why it is handed
-    the conversation. Plan extraction lives on the plan-completion path
-    (:func:`maybe_trigger_plan_extraction`) — it needs no message history and it
-    must not wait for a window to fill.
+    Compaction carries the MEMORY review only, and it is handed the messages
+    about to be DISCARDED — those are the ones whose facts are about to be lost,
+    and they are a fraction of the whole conversation. Plan extraction lives on
+    the plan-completion path (:func:`maybe_trigger_plan_extraction`) — it needs
+    no message history and must not wait for a window to fill.
     """
     try:
         # Call-time import keeps the patch seam on
@@ -498,39 +498,38 @@ async def _run_compression_nudges(
         from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
 
         system_prompt = _get_and_reload_system_prompt(session_id)
-        sanitized = sanitize_tool_use_result_pairing(list(messages))
-        await _nudge_memory(session_id, system_prompt, sanitized)
+        await _nudge_memory(session_id, system_prompt, list(messages_to_summarize))
     except Exception:
-        logger.exception("compression nudge dispatch failed (fail-open) for {}", session_id)
+        logger.exception("memory review dispatch failed (fail-open) for {}", session_id)
 
 
-def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]) -> bool:
-    """Dispatch the compression-scoped nudges.
+def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[BaseMessage]) -> bool:
+    """Dispatch the compression-time memory review.
 
     Called by the Summarization middleware once per compression that actually
-    discards messages. Returns True when a nudge task was created.
+    discards messages, with the messages being discarded. Returns True when a
+    task was created.
 
-    The memory review runs on every compression (plan extraction does not ride
-    this path — it forks on plan completion, see
+    Plan extraction does not ride this path — it forks on plan completion (see
     :func:`maybe_trigger_plan_extraction`). While a nudge is in flight, dispatch
     is skipped entirely — nothing is queued. With no running event loop (the
     sync compression path outside an async caller) scheduling is skipped
     entirely.
 
-    A session may turn the nudges OFF (预设-中间件 → Summarization → nudge, the
+    A session may turn the review OFF (预设-中间件 → Summarization → nudge, the
     one option a REQUIRED middleware exposes; the service only accepts it beside
-    an enabled ``memory`` tool, which is what the memory review writes with).
+    an enabled ``memory`` tool, which is what the review writes with).
     """
     from agent.middlewares.agent_switch import middleware_option
 
     if not middleware_option(session_id, "Summarization", "nudge"):
-        logger.debug("compression nudges: disabled by the session config ({})", session_id)
+        logger.debug("memory review: disabled by the session config ({})", session_id)
         return False
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         logger.debug(
-            "compression nudges: no running event loop, skipping for session {}",
+            "memory review: no running event loop, skipping for session {}",
             session_id,
         )
         return False
@@ -538,7 +537,7 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
     if _nudges_locked(session_id):
         return False
 
-    coro = _run_compression_nudges(session_id, list(messages))
+    coro = _run_memory_review(session_id, list(messages_to_summarize))
     try:
         task = asyncio.create_task(coro)
     except RuntimeError:  # pragma: no cover - the loop vanished after the check
@@ -546,7 +545,7 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
         return False
     _COMPRESSION_NUDGE_TASKS.add(task)
     task.add_done_callback(_COMPRESSION_NUDGE_TASKS.discard)
-    logger.debug("compression nudges scheduled for session {}", session_id)
+    logger.debug("memory review scheduled for session {}", session_id)
     return True
 
 
@@ -636,6 +635,33 @@ async def _create_nudge_agent(
             _get_iteration_budget(),
         ],
         tools=list(agent_tools),
+    )
+
+
+async def _create_memory_review_agent(system_prompt: str):
+    """The memory review's agent: auxiliary model, digest-sized input.
+
+    NOT ``_create_nudge_agent`` (which keeps the main model for the
+    compression-todo fork): the review reads a FOLDED history and its job is
+    extracting facts worth remembering, which the judges already run on the
+    auxiliary model. The system prompt is kept — the memory tool's write guard
+    and the skills index live there.
+    """
+    from agent import get_agent_tools
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails
+    from models import build_auxiliary_llm
+
+    return create_agent(
+        model=build_auxiliary_llm(temperature=0),
+        state_schema=StateSchema,
+        system_prompt=system_prompt,
+        middleware=[
+            _NudgeLimitTool(),
+            ToolCallNormalize(),
+            ToolGuardrails(),
+            _get_iteration_budget(),
+        ],
+        tools=list(get_agent_tools()),
     )
 
 
@@ -731,18 +757,30 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-    # NUDGE lane is event-loop-bound: acquire only on the main loop. Nudges
-    # are dispatched exclusively from the async compression path, so no
-    # run_async() worker loop ever touches this semaphore.
+    """Compression-time memory review: folded history, auxiliary model.
+
+    Two guards keep it off the window's ceiling: the caller hands it the
+    DISCARDED slice (not the whole conversation), and the fold
+    (:func:`digest_history`) keeps only the recent tail verbatim. Neither is
+    optional — the review runs exactly when the window is at its fullest.
+
+    NUDGE lane is event-loop-bound: acquire only on the main loop. Nudges are
+    dispatched exclusively from the async compression path, so no run_async()
+    worker loop ever touches this semaphore.
+    """
     state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
     try:
+        from agent.middlewares.summarization.digest import digest_history
+
+        digested = digest_history(list(messages))
+        sanitized = sanitize_tool_use_result_pairing(digested)
         async with lane_slot(LaneType.NUDGE):
-            _agent = await _create_nudge_agent(system_prompt)
+            _agent = await _create_memory_review_agent(system_prompt)
             res = await _agent.ainvoke(
                 input={
                     "session_id": session_id,
                     "messages": [
-                        *messages,
+                        *sanitized,
                         HumanMessage(content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT)),
                     ],
                 }

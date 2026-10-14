@@ -3,7 +3,7 @@
 Covers:
 - ``_detect_todo_all_complete`` — the decision branches (no todos / first
   all-complete fire / already-fired fingerprint / not-all-complete reset).
-- ``schedule_compression_nudges`` — per-compression memory-review dispatch and
+- ``schedule_memory_review`` — per-compression memory-review dispatch and
   lock semantics. Plan extraction no longer rides this path (it forks on plan
   completion — see ``tests/agent/middlewares/test_plan_extraction_trigger.py``).
 - ``system_prompt_injection`` — the ``@dynamic_prompt`` middleware does not
@@ -27,7 +27,7 @@ from agent.middlewares.summarization import nudges as nudge_mod
 from agent.middlewares.summarization.nudges import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
-    schedule_compression_nudges,
+    schedule_memory_review,
 )
 from agent.tools.todolist.knowledge.identity import fallback_plan_name
 
@@ -130,7 +130,7 @@ class TestDetectTodoAllComplete:
 
 
 # ---------------------------------------------------------------------------
-# schedule_compression_nudges (compression-time trigger)
+# schedule_memory_review (compression-time trigger)
 # ---------------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ class TestScheduleCompressionNudges:
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        scheduled = schedule_compression_nudges("sess-first", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-first", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is True
@@ -156,9 +156,9 @@ class TestScheduleCompressionNudges:
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        first = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        first = schedule_memory_review("sess-twice", [HumanMessage("hi")])
         await _settle()
-        second = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        second = schedule_memory_review("sess-twice", [HumanMessage("hi")])
         await _settle()
 
         assert first is True
@@ -177,7 +177,7 @@ class TestScheduleCompressionNudges:
         monkeypatch.setattr(nudge_mod, "_PLAN_EXTRACTION_ENABLED", True)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
 
-        scheduled = schedule_compression_nudges("sess-plan", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-plan", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is True
@@ -196,7 +196,7 @@ class TestScheduleCompressionNudges:
         )
         fake_state_mem.set_state("sess-locked", nudge_mod._NUDGE_MEMORY_LOCK_KEY, True)
 
-        scheduled = schedule_compression_nudges("sess-locked", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-locked", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is False
@@ -212,7 +212,7 @@ class TestScheduleCompressionNudges:
             lambda session_id: detect_calls.append(session_id) or True,
         )
 
-        scheduled = schedule_compression_nudges("sess-sync", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-sync", [HumanMessage("hi")])
 
         assert scheduled is False
         assert calls == []

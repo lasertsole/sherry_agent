@@ -427,6 +427,7 @@ class _Sandbox:
     def instrument(self, recorder: _NudgeRecorder) -> None:
         monkeypatch = self.monkeypatch
         original_create = nudge_mod._create_nudge_agent
+        original_review_create = nudge_mod._create_memory_review_agent
         original_plan_create = nudge_mod._create_plan_extraction_agent
 
         async def recording_create(system_prompt, allowed_metadata_key=None, tools=None):
@@ -435,11 +436,18 @@ class _Sandbox:
             )
             return _RecordingAgent(inner, recorder)
 
+        async def recording_review_create(system_prompt):
+            inner = await original_review_create(system_prompt)
+            return _RecordingAgent(inner, recorder)
+
         async def recording_plan_create(system_prompt):
             inner = await original_plan_create(system_prompt)
             return _RecordingAgent(inner, recorder)
 
+        # Three seams: the compression-todo fork keeps the main model, the memory
+        # review and the plan extraction each build their own (auxiliary) agent.
         monkeypatch.setattr(nudge_mod, "_create_nudge_agent", recording_create)
+        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", recording_review_create)
         # The extraction fork builds its own agent (auxiliary model) — the seam
         # the recorder has to wrap to see its runs.
         monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", recording_plan_create)

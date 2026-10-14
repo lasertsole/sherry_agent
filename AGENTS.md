@@ -537,7 +537,8 @@ the model/thinking controls)::
   `memory` (the nudge writes memory THROUGH that tool). At runtime
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
   both nudge entries — the compression-time memory review
-  (`schedule_compression_nudges`) and the plan-completion extraction fork
+  (`schedule_memory_review`, handed the messages about to be discarded and
+  folded by `summarization/digest.py`) and the plan-completion extraction fork
   (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
   on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
   on the AUXILIARY model with no conversation history, and dedupes on a plan

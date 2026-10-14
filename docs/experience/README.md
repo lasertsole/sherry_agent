@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
+This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression, handed the messages about to be discarded and folded by `digest_history`), plan extraction when the plan completes at a turn boundary, the pre-compression memory flush, and the post-compression todo fork. The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
 
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
@@ -17,7 +17,7 @@ This document covers the experience system: **when** the agent extracts experien
 
 | Trigger | Mechanism (fork agent? call shape?) | Destination |
 |---|---|---|
-| Every compression | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
+| Every compression | Memory review (`_nudge_memory`): the DISCARDED slice, folded by `digest_history` (recent 24 messages verbatim, older ones one truncated line each), on a dedicated `create_agent` fork (`_create_memory_review_agent`, AUXILIARY model) with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
 | The plan completes — every todo `completed` / `cancelled` at a turn boundary (NOT at compression) | Plan extraction (`_run_plan_extraction`): the completion hook (`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`) forks a dedicated agent on the AUXILIARY model with `_PLAN_EXTRACTION_PROMPT` and NO conversation history | ① knowledge JSON, ② `skills/auto/` (class-level skills + `<module>-notes`), ③ FACTS.md |
 | Pre-compression (a cut actually discards messages) | Memory flush (`run_memory_flush[_sync]`): one cheap LLM call, not an agent | MEMORY.md and USER.md via `MemoryStore.append_entries` |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
@@ -26,15 +26,15 @@ This document covers the experience system: **when** the agent extracts experien
 
 ### 1. Compression-time memory review
 
-`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task on every compression, running under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression skips dispatch entirely (nothing is queued).
+`schedule_memory_review` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) dispatches `_nudge_memory(session_id, system_prompt, messages_to_summarize)` as a fire-and-forget task on every compression, running under the `nudge_review_memory_lock` (`state_register_mem`). The messages handed over are the DISCARDED slice — those are the facts about to be lost, and they are a fraction of the conversation — and `_nudge_memory` then folds them with `digest_history` before the agent sees anything. While either nudge lock is held, the compression skips dispatch entirely (nothing is queued).
 
-`_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus the rendered `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations under the `user` target, and broad module-independent pitfalls under the `facts` target. It is rendered with the current FACTS.md content and char limit (`_render_prompt_facts`) and tells the agent to maintain the file like an editor — merge entries describing the same pitfall, replace outdated ones, prefer saving nothing over bloating the file. Otherwise it answers "Nothing to save." and stops.
+`_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds the review agent via `_create_memory_review_agent` (the AUXILIARY model, `temperature=0`) and invokes it with the folded history plus the rendered `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. Two guards keep the pass off the window's ceiling: the discarded slice instead of the whole conversation, and the fold — the review runs exactly when the context is at its fullest. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations under the `user` target, and broad module-independent pitfalls under the `facts` target. It is rendered with the current FACTS.md content and char limit (`_render_prompt_facts`) and tells the agent to maintain the file like an editor — merge entries describing the same pitfall, replace outdated ones, prefer saving nothing over bloating the file. Otherwise it answers "Nothing to save." and stops.
 
-- The nudge agent is a separate `create_agent` on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` and no checkpointer.
+- The review agent is a separate `create_agent` on the auxiliary LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` and no checkpointer.
 - `_NudgeLimitTool` (no `allowed_metadata_key`) admits only tools whose metadata carries `nudge: True`. `memory`, `skill_list`, `skill_view`, `skill_manage` and `knowledge` carry that marker, so the nudge agent can write memory but cannot call arbitrary main tools.
 - The fork's messages are logged only. Nothing from `res["messages"]` reaches the main graph.
 
-### 2. Compression-time plan extraction (todo-complete)
+### 2. Plan extraction (todo-complete, at the turn boundary)
 
 `_detect_todo_all_complete(session_id)` (`summarization/nudges.py`) is evaluated at every compression and fires once per completion cycle:
 
@@ -164,7 +164,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
-- `test_compression_nudges.py`: compression-time nudge dispatch (memory review + plan extraction fire from the compact seam; a no-cut compaction dispatches nothing). Persistence assertions live in `tests/agent/middlewares/message_persistence/`.
+- `test_compression_nudges.py`: compression-time dispatch (the memory review fires from the compact seam; a no-cut compaction dispatches nothing). `test_memory_review_digest.py` pins the fold and the discarded-slice wiring. Persistence assertions live in `tests/agent/middlewares/message_persistence/`.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
 - `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the per-compression memory-review dispatch and lock semantics of `schedule_compression_nudges`, and `_build_plan_context`.

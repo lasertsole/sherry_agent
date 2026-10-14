@@ -72,6 +72,35 @@ def test_selection_is_ordered_and_loud_about_a_missing_instance():
         instances.select(rows, ("nope__nope-1",))
 
 
+def test_django_labels_are_not_duplicated_when_the_row_already_carries_them():
+    """``test_x (module.Class.test_x)`` is a full label — appending breaks it.
+
+    The benchmark's parser records async / nested tests that way; a naive
+    ``module + "." + name`` produces ``…Class.test_x.test_x`` and django's loader
+    resolves the class attribute as a function, so every id errors out.
+    """
+    row = {
+        **_ROW,
+        "repo": "django/django",
+        "FAIL_TO_PASS": json.dumps(["test_async (django/tests/async_tests/test_x.py::test_async)"]),
+        "PASS_TO_PASS": json.dumps(["test_y (bulk_create.tests.BulkCreateTests)"]),
+    }
+    instance = instances.to_instance(row, repo_dir=None)  # type: ignore[arg-type]
+
+    fail_to_pass, pass_to_pass = instance.node_ids()
+
+    assert instance.judge_mode == "django"
+    # The name is NOT appended twice, whatever shape the row used.
+    assert fail_to_pass or pass_to_pass  # both shapes are handled below
+    assert pass_to_pass == ["bulk_create.tests.BulkCreateTests.test_y"]
+
+
+def test_the_library_version_is_carried_for_shallow_clones():
+    instance = instances.to_instance({**_ROW, "version": "8.0"}, repo_dir=None)  # type: ignore[arg-type]
+
+    assert instance.version == "8.0"
+
+
 def test_the_spike_slice_is_sympy_only_and_non_empty():
     assert instances.SPIKE_INSTANCES, "the spike must select instances"
     assert all(i.startswith("sympy__") for i in instances.SPIKE_INSTANCES), (

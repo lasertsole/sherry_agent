@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに）、圧縮時に todo 全完了だった場合の plan extraction、圧縮前の memory flush、圧縮後の todo fork。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
+本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに、破棄されるメッセージだけを受け取り `digest_history` で折り畳む）、プランがターン境界で完了したときの plan extraction、圧縮前の memory flush、圧縮後の todo fork。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 
@@ -17,7 +17,7 @@
 
 | トリガ | 機構（fork agent か / 呼び出し形態） | 書込先 |
 |---|---|---|
-| 圧縮のたび | memory nudge（`_nudge_memory`）：`create_agent` の nudge agent を fork し、`_MEMORY_REVIEW_PROMPT` を使う | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
+| 圧縮のたび | memory review（`_nudge_memory`）：**破棄される**スライスだけを受け取り `digest_history` で折り畳み（直近 24 件は原文、それ以前は 1 行に切詰め）、専用 fork（`_create_memory_review_agent`、**補助モデル**）で `_MEMORY_REVIEW_PROMPT` を使う | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 | プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | plan extraction（`_run_plan_extraction`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）が**補助モデル**で専用 agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使い、**会話履歴を一切渡さない** | ① 知識 JSON ② `skills/auto/`（クラスレベルスキル + `<module>-notes`） ③ FACTS.md |
 | 圧縮前（cut が実際にメッセージを破棄） | memory flush（`run_memory_flush[_sync]`）：安価な LLM 呼び出し 1 回。agent ではない | `MemoryStore.append_entries` 経由で MEMORY.md と USER.md |
 | 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の nudge agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
@@ -26,15 +26,15 @@
 
 ### 1. 圧縮時の memory review
 
-`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮のたびに `_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮は派遣を完全にスキップする（キューイングなし）。
+`schedule_memory_review`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮のたびに `_nudge_memory(session_id, system_prompt, messages_to_summarize)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。渡されるのは**破棄される**スライス——失われようとしている事実はそこにあり、会話全体の一部にすぎない——で、`_nudge_memory` が `digest_history` で折り畳んでから agent に渡す。いずれかの nudge ロックが保持されている間、圧縮は派遣を完全にスキップする（キューイングなし）。
 
-`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_nudge_agent` で nudge agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として会話に追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、モジュールに依存しない広範な落とし穴を `facts` ターゲットへ `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_memory_review_agent`（**補助モデル**、`temperature=0`）でレビュー agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として会話に追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、モジュールに依存しない広範な落とし穴を `facts` ターゲットへ `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
 
-- nudge agent はメイン LLM 上の独立した `create_agent` で、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
+- レビュー agent は**補助 LLM** 上の独立した `create_agent` で、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
 - `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` がこのマークを持つため、nudge agent は memory を書けるが任意のメインツールは呼べない。
 - fork のメッセージはログのみ。`res["messages"]` の内容はメイングラフへ一切入らない。
 
-### 2. 圧縮時の plan extraction（todo 完了）
+### 2. plan extraction（todo 完了、ターン境界）
 
 `_detect_todo_all_complete(session_id)`（`summarization/nudges.py`）は圧縮ごとに評価され、完了サイクルごとに 1 回発火する：
 
@@ -164,7 +164,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：トリガゲート、fire-and-forget スケジュール、再入ロック、fail-open 解放、プロンプト内容、`todo_update` metadata ゲート、および完全 fork 隔離（派生キー、メインセッション `todowrite` シム、checkpointer / メッセージ漏洩なし）。
-- `test_compression_nudges.py`：圧縮時 nudge ディスパッチ（memory review + plan extraction が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。永続化アサーションは `tests/agent/middlewares/message_persistence/` にあります。
+- `test_compression_nudges.py`：圧縮時ディスパッチ（memory review が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。`test_memory_review_digest.py` が折り畳みと破棄スライスの配線を固定します。永続化アサーションは `tests/agent/middlewares/message_persistence/` にあります。
 - `test_compression_cooldown_persist.py`：クールダウンの再起動間生存。
 - `test_memory_flush.py`：flush ゲート、振り分け、非阻塞失敗。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` の 4 分岐、`schedule_compression_nudges` の圧縮ごとの memory review 派遣とロック意味論、`_build_plan_context`。

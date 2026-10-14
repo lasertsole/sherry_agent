@@ -63,7 +63,9 @@ class FakeNudgeAgent:
 
 
 def _fake_builder(tracker: NudgeTracker):
-    async def build(system_prompt, allowed_metadata_key=None, tools=None):
+    """Tolerant of both factory signatures (memory review / plan extraction)."""
+
+    async def build(system_prompt, *args, **kwargs):
         return FakeNudgeAgent(tracker)
 
     return build
@@ -86,7 +88,7 @@ class TestNudgeLaneCap:
         _isolated_lanes.set_concurrency(LaneType.NUDGE, 2)
         lane = _isolated_lanes.get_lane(LaneType.NUDGE)
         tracker = NudgeTracker()
-        monkeypatch.setattr(nudge, "_create_nudge_agent", _fake_builder(tracker))
+        monkeypatch.setattr(nudge, "_create_memory_review_agent", _fake_builder(tracker))
 
         tasks = [asyncio.create_task(nudge._nudge_memory(f"s{i}", "sys", [])) for i in range(3)]
 
@@ -109,7 +111,7 @@ class TestNudgeLaneCap:
         _isolated_lanes.set_concurrency(LaneType.NUDGE, 1)
         lane = _isolated_lanes.get_lane(LaneType.NUDGE)
         tracker = NudgeTracker()
-        monkeypatch.setattr(nudge, "_create_nudge_agent", _fake_builder(tracker))
+        monkeypatch.setattr(nudge, "_create_memory_review_agent", _fake_builder(tracker))
         monkeypatch.setattr(nudge, "_create_plan_extraction_agent", _fake_builder(tracker))
         monkeypatch.setattr(nudge, "_build_plan_context", lambda session_id: {"plan": "x"})
 
@@ -145,7 +147,7 @@ class TestNudgeLaneCap:
         monkeypatch.setattr(nudge, "_nudge_memory", _memory)
         monkeypatch.setattr(nudge, "_run_plan_extraction", _plan)
 
-        scheduled = nudge.schedule_compression_nudges("sess-sync", [])
+        scheduled = nudge.schedule_memory_review("sess-sync", [])
 
         assert scheduled is False, "no running loop: the scheduler must not dispatch"
         assert calls == [], "the sync path must not dispatch nudge agents"

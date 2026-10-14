@@ -374,7 +374,7 @@ async def test_compaction_no_longer_extracts_but_keeps_the_memory_review(patched
     # A completed plan must not make compaction fork the extraction.
     patched["set_todos"]([_todo("a")])
 
-    await nudge_mod._run_compression_nudges(sid, [])
+    await nudge_mod._run_memory_review(sid, [])
     await _settle()
 
     assert calls == ["memory"]
@@ -382,7 +382,7 @@ async def test_compaction_no_longer_extracts_but_keeps_the_memory_review(patched
 
 
 @pytest.mark.asyncio
-async def test_schedule_compression_nudges_no_longer_asks_whether_the_plan_is_done(
+async def test_schedule_memory_review_no_longer_asks_whether_the_plan_is_done(
     base, sid, monkeypatch
 ):
     """The dispatch must stay memory-only: no completion probe on the path."""
@@ -393,12 +393,12 @@ async def test_schedule_compression_nudges_no_longer_asks_whether_the_plan_is_do
     dispatched: list[str] = []
     monkeypatch.setattr(
         nudge_mod,
-        "_run_compression_nudges",
+        "_run_memory_review",
         lambda session_id, messages: dispatched.append(session_id) or _noop(),
     )
     base["set_todos"]([_todo("a")])
 
-    scheduled = nudge_mod.schedule_compression_nudges(sid, [])
+    scheduled = nudge_mod.schedule_memory_review(sid, [])
 
     assert scheduled is True
     assert probes == []

@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -76,17 +77,29 @@ def main() -> None:
 
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    wanted = tuple(args) or instances.SPIKE_INSTANCES
+    # ``--hard`` runs the HARD slice (multi-test regressions, 100+ PASS_TO_PASS
+    # tests, one repo each); without it the small sympy spike is the default.
+    default_slice = instances.HARD_INSTANCES if "--hard" in flags else instances.SPIKE_INSTANCES
+    wanted = tuple(args) or default_slice
     raise SystemExit(
         _run(
             wanted,
             update_baseline="--update-baseline" in flags,
             skip_self_check="--skip-self-check" in flags,
+            hard="--hard" in flags or not args,
+            keep_instances="--keep-instances" in flags,
         )
     )
 
 
-def _run(instance_ids: tuple[str, ...], *, update_baseline: bool, skip_self_check: bool) -> int:
+def _run(
+    instance_ids: tuple[str, ...],
+    *,
+    update_baseline: bool,
+    skip_self_check: bool,
+    hard: bool = False,
+    keep_instances: bool = False,
+) -> int:
     run_id = time.strftime("%Y%m%d_%H%M%S")
     results_dir = REPO_ROOT / "evals" / "results" / "swebench" / run_id
     results_dir.mkdir(parents=True)
@@ -126,7 +139,14 @@ def _run(instance_ids: tuple[str, ...], *, update_baseline: bool, skip_self_chec
 
     started = time.monotonic()
     try:
-        rows = instances.fetch_dataset(results_dir / "swebench_lite.json")
+        # One cache for the whole suite (not per run): the dataset is stable and
+        # a fresh run must not depend on the network to start.
+        cache = results_dir.parent / "swebench_lite.json"
+        if not cache.is_file() and Path("/tmp/swebench_lite.json").is_file():
+            cache.write_text(
+                Path("/tmp/swebench_lite.json").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        rows = instances.fetch_dataset(cache)
         selected = instances.select(rows, instance_ids)
         print(
             f"[evals] dataset: {len(rows)} SWE-bench_Lite rows; running {len(selected)}", flush=True
@@ -142,10 +162,18 @@ def _run(instance_ids: tuple[str, ...], *, update_baseline: bool, skip_self_chec
                         flush=True,
                     )
             return 2
-        results = asyncio.run(_run_instances(prepared, results_dir))
+        results = asyncio.run(_run_instances(prepared, results_dir, hard=hard))
     finally:
         sandbox.restore()
         sandbox.close_aiosqlite_connections()
+
+    if not keep_instances:
+        # A checkout + venv per instance is hundreds of megabytes INSIDE the
+        # repository: left behind, it slows every repo-wide scan (ripgrep has a
+        # wall-clock budget) and the unit suite's search test starts failing for
+        # a reason that has nothing to do with the code. They are derived
+        # artifacts — re-materialised in minutes when a run needs them.
+        shutil.rmtree(results_dir / "instances", ignore_errors=True)
 
     report = {
         "run_id": run_id,
@@ -160,6 +188,7 @@ def _run(instance_ids: tuple[str, ...], *, update_baseline: bool, skip_self_chec
                 "FAIL_TO_PASS / PASS_TO_PASS verdict; NOT the official docker harness"
             ),
             "instance_python": instances.INSTANCE_PYTHON,
+            "slice": "hard" if hard else "spike",
         },
         "model": {**harness._model_info(), "thinking_enabled": False},
         "agent_config": harness._coding_preset_payload(),
@@ -228,10 +257,12 @@ def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
     return checks
 
 
-async def _run_instances(prepared: list[Instance], results_dir: Path) -> list[dict[str, Any]]:
+async def _run_instances(
+    prepared: list[Instance], results_dir: Path, *, hard: bool = False
+) -> list[dict[str, Any]]:
     results = []
     for instance in prepared:
-        result = await _run_instance(instance, results_dir)
+        result = await _run_instance(instance, results_dir, hard=hard)
         results.append(result)
         print(
             f"[evals] {instance.instance_id}: resolved={result['resolved']} "
@@ -242,7 +273,15 @@ async def _run_instances(prepared: list[Instance], results_dir: Path) -> list[di
     return results
 
 
-async def _run_instance(instance: Instance, results_dir: Path) -> dict[str, Any]:
+#: A hard instance gets a longer turn budget: the fix spans a real codebase and
+#: the model has to find its way around first.
+_TURN_TIMEOUT_S = 1200.0
+_TURN_TIMEOUT_HARD_S = 2400.0
+
+
+async def _run_instance(
+    instance: Instance, results_dir: Path, *, hard: bool = False
+) -> dict[str, Any]:
     fail_to_pass, pass_to_pass = instance.node_ids()
     prompt = _TASK_TEMPLATE.format(problem=instance.problem_statement.strip(), repo=instance.repo)
     session_id = f"evals-swe-{instance.instance_id}-{uuid.uuid4().hex[:6]}"
@@ -253,9 +292,15 @@ async def _run_instance(instance: Instance, results_dir: Path) -> dict[str, Any]
     # is the closest equivalent to that (restored right after the turn).
     original_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{instance.python_exe.parent}{os.pathsep}{original_path}"
+    # The agent runs the repo's tests too, so the pretend version has to be in
+    # ITS environment as well (a shallow clone cannot report the real version).
+    previous_scm = os.environ.get("SETUPTOOLS_SCM_PRETEND_VERSION")
+    if instance.version:
+        os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = instance.version
     started = time.monotonic()
     try:
-        drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=1200.0)
+        timeout_s = _TURN_TIMEOUT_HARD_S if hard else _TURN_TIMEOUT_S
+        drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout_s)
     except TimeoutError:
         drive = {
             "tool_calls": 0,
@@ -267,6 +312,10 @@ async def _run_instance(instance: Instance, results_dir: Path) -> dict[str, Any]
         }
     finally:
         os.environ["PATH"] = original_path
+        if previous_scm is None:
+            os.environ.pop("SETUPTOOLS_SCM_PRETEND_VERSION", None)
+        else:
+            os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = previous_scm
     duration_s = round(time.monotonic() - started, 1)
 
     agent_diff = instances.diff(instance)
