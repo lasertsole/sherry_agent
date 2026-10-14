@@ -1,7 +1,8 @@
-# 计划：续跑 enforcer 加 turn 级硬上限
+# 计划：续跑 enforcer 加 turn 级硬上限 + 资源上限补齐
 
 - 建档日期：2026-10-13
 - 状态：**计划（未开工）**
+- **2026-10-14 更新**：`审计_Sherry过度工程.md` 将 PlanContinuationEnforcer 标记为**过度工程**——"auto-turn 延长在交互场景下多余，agent 自然会继续工作"。本文 §3（turn 计数器）**不与此结论冲突**：turn 计数器是 enforcer **已开启时**的安全 guard（简单 in-memory counter，非 LLM 机制），防止"模型每轮微改计划 → 停滞永不触发 → 无限 inject 循环"。审计的建议是让 enforcer opt-in（自主场景开、用户在场关），本文的 turn 计数器正是在"已开启"场景下兜底。两者互补：审计管"何时开 enforcer"，本文管"开了之后如何限界"。
 - 触发问题：`PlanContinuationEnforcer` 的 `aafter_agent` 在每轮结束时检查计划
   是否完成，未完成则通过 `MAYBE_TRIGGER_AUTO_TURN` 注入续跑指令。停滞检测
   （3 次不变快照 + 2 次恢复）能捕获"无进展"场景，但如果模型每轮都微改计划
@@ -203,7 +204,9 @@ class GoalState:
 
 ---
 
-## 3. 设计方案
+## 3. 设计方案（仅当 enforcer 已开启时生效）
+
+> **与 `审计_Sherry过度工程.md` 的关系**：审计认定 PlanContinuationEnforcer 整体过度工程，建议用户在场场景默认关。本节的 turn 计数器不改变这一结论——它是一个 in-memory counter + stopped flag（非 LLM 机制），只在 enforcer **已开启**（自主多步场景）时兜底"无限 inject 循环"。如果按审计建议在用户在场场景默认关 enforcer，本节不生效。两者互补。
 
 ### 3.1 Config（`config/features/agent_side/todolist_infra.py`）
 
