@@ -127,7 +127,7 @@ client/
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
-│   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
+│   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch, or the model-declared level picker incl. off, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)

@@ -669,9 +669,15 @@ the event loop) and, when the user made an explicit choice, swaps
 
 - boolean flag → thinking on/off variant; an unset flag passes the request
   through untouched (the `MAIN_LLM_ENABLE_THINKING` env default applies);
-- `"low"` / `"high"` / `"max"` → an explicit level for always-think models
-  whose control is a selector rather than a switch (`thinking_control_mode()`
-  reports `"levels"` for the glm-5 series, `"on_off"` otherwise).
+- any of the **seven level tokens** (`off` / `minimal` / `low` / `medium` /
+  `high` / `xhigh` / `max`, the shared `EXTENDED_THINKING_LEVELS` enum) → an
+  explicit level. Levels are DECLARATIVE now: `models/LLMs/reasoning_payload.py`
+  resolves a per-model map (pi-style `thinkingLevelMap` + `thinkingFormat`) and
+  **clamps** the request onto the nearest level the model accepts (the client's
+  picker is driven by `GET /sessions/thinking`'s `levels` list, so an
+  unsupported level is never offered), instead of sending it and learning from
+  a 400. `thinking_control_mode()` still reports `"levels"` for the glm-5
+  series and `"on_off"` otherwise.
 
 Disable ladder: gateways whose server default is thinking ON need an explicit
 disable payload, but ALWAYS-THINK models (glm-5 series, verified live

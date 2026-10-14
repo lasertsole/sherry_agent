@@ -214,16 +214,15 @@
 
 증거 원장은 공유되는 추가 전용 검증 추적입니다(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나). `agent/tools/todolist/evidence_recorder.py`는 `terminal` / `python_repl`에서 인식된 검증 명령을 항상 자동 기록하며(분류표는 `EVIDENCE_LEDGER["verify_commands"]`), `write_file` / `patch_file`은 편집된 경로에 `stale` 이벤트를 항상 추가합니다. `agent/tools/taskflow/evidence_collector.py`는 읽기 시점에 스테일을 도출하고(나중의 `stale` 행이 어떤 행의 명령에 포함된 경로를 지목), 판정기에게 보여줄 요약을 렌더링합니다.
 
-`taskflow_finish.py`는 DONE 전환을 네 검사로 순서대로 게이트합니다:
+`taskflow_finish.py`는 DONE 전환을 세 검사로 순서대로 게이트합니다:
 
 | 게이트 | 검사 | 거부 사유 |
 |---|---|---|
 | **A — DAG 완전성** | 모든 단계가 `done` 또는 `blocked` | `step(s) not done/blocked` |
 | **B — 차단 없음** | 어떤 단계도 `blocked`가 아님 | `step(s) are blocked` |
 | **C — 흐름 증거** | 흐름 증거에 `FAIL`도 `[stale]` 행도 없음 | `failing verification evidence` / `stale evidence` |
-| **D — SisyphusVerifier** | 플랜 재독, 수용 기준, 연결된 `done` 단계 — 호출자가 `todo`와 `plan_path`를 모두 넘길 때만 | `SisyphusVerifier` 사유 |
 
-Gate D는 `todo` + `plan_path` 연결이 없으면 완전히 건너뛰고, 모든 게이트는 fail-open입니다. 읽을 수 없는 원장이나 검증기 오류는 완료를 막지 않고 통과시킵니다.
+모든 게이트는 fail-open입니다: 읽을 수 없는 원장은 완료를 막지 않고 통과시킵니다. 옵트인 네 번째 검사 **Gate E**는 수집된 결과가 흐름의 `description`을 충족하는지 보조 모델에 묻습니다——흐름의 단계 수가 `GOAL_GATE["min_steps"]`(3) 이상일 때만 실행되며, 그보다 작은 흐름은 자식 수준 판정에 맡깁니다.
 
 ### 파이프라인 수준: 완료 drain 프로그램 게이트
 

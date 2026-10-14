@@ -305,7 +305,7 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続け、フローがキャンセルされるまで `taskflow_resume` で結果を届けられます。
 
-`finish` は DONE への遷移を 4 つのチェックで順に守ります：**A** すべてのステップが `done` か `blocked`；**B** 未解決のステップを残さない——`failed`・`skipped`・`cancelled` のステップは id と記録された理由付きで報告され（呼び出し側の判断が必要です：resume・retry・cancel）、`blocked` も同様です；**C** フローの証跡（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` も `[stale]` 行もない；**D** `SisyphusVerifier` が通る——呼び出し側が `todo` と `plan_path` の両方を渡したときだけ実行されるため、flow/step schema の移行は不要です。各ゲートは fail-open で、証跡コレクタが使えない場合や検証器のエラーは完了を妨げず通します。
+`finish` は DONE への遷移を 3 つのチェックで順に守ります：**A** すべてのステップが `done` か `blocked`；**B** 未解決のステップを残さない——`failed`・`skipped`・`cancelled` のステップは id と記録された理由付きで報告され（呼び出し側の判断が必要です：resume・retry・cancel）、`blocked` も同様です；**C** フローの証跡（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` も `[stale]` 行もない。各ゲートは fail-open で、証跡コレクタが使えない場合は完了を妨げず通します。オプトインの **Gate E**（`_goal_gate`）が続いて、結果がフローの `description` を満たすかを補助モデルに問います——フローのステップ数が `GOAL_GATE["min_steps"]`（3）以上のときだけ実行されます。
 
 `cancel` は終端化の前に、未完了のすべてのステップを `cancelled`（キャンセル理由付き）にします。フロー終了後もステップ状態が `ready` / `dispatched` / `blocked` を主張し続けないためです。
 ---

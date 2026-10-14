@@ -125,12 +125,12 @@ Four gates stack from the child run outward. All four are always on; the only in
 |---|-------|------|----------------|--------------------|
 | 1 | Child run | completion judge + goal loop (`spawn/completion_judge.py`) | task, latest response, evidence summary; budget `goal_max_turns` (default `5`) | model error / unparseable → `done` |
 | 2 | Step | TaskFlow step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (absent → no judge call) | model error / unparseable → `pass` |
-| 3 | Flow | `taskflow_finish` gates A–D (`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG state and flow evidence; plus `todo` and `plan_path` for Gate D | unreadable ledger / verifier error → pass |
+| 3 | Flow | `taskflow_finish` gates A–C (`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG state and flow evidence | unreadable ledger → pass |
 | 4 | Parent turn | completion-drain programmatic gate (`agent/middlewares/subagent_completion_drain/`) | the session's verification-evidence summary | lookup failure → gate skipped |
 
 **Layer 2 — step judge.** After `taskflow_resume` injects a child result, a step that carries `validation_criteria` is judged `PASS` / `RETRY` / `BLOCK`. A `RETRY` re-dispatches the step with the judge's feedback while the step's retry count is below `STEP_JUDGE["max_retries"]` (default `2`); exhausting the budget blocks the step. Criteria are the judge's input, not a switch — a step without them is never sent to the judge.
 
-**Layer 3 — flow gates.** `taskflow_finish` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, Gate C sees no `FAIL` or `[stale]` flow evidence, and — only when the caller supplies both `todo` and `plan_path` — Gate D passes the `SisyphusVerifier`. Gate D's linkage is an input rather than a switch: without it the finish has no independent verdict, and the skipped gate is silent.
+**Layer 3 — flow gates.** `taskflow_finish` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, and Gate C sees no `FAIL` or `[stale]` flow evidence (plus the opt-in Gate E goal judge for a described flow of `GOAL_GATE["min_steps"]` steps or more).
 
 **Layer 4 — parent-turn gate.** When the drain injects queued completion carriers, it also checks the parent session's evidence. The carriers are injected verbatim; if the session has no passing evidence, a mandatory-verification message is appended after them. The check is unconditional — no configuration disables it — and it is fail-open only when the evidence lookup itself is unavailable.
 
@@ -140,7 +140,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 
 | Subsystem | What crosses this boundary | Details |
 |-----------|---------------------------|---------|
-| TaskFlow engine | step dispatch, `validation_criteria`, `aggregate_deps`, finish gates A–D | [Long-Running Tasks](../long-running-tasks/README.md) |
+| TaskFlow engine | step dispatch, `validation_criteria`, `aggregate_deps`, finish gates A–C (+ Gate E) | [Long-Running Tasks](../long-running-tasks/README.md) |
 | Loop prevention | completion gates, judge budgets, drain and announce retry behavior | [Loop Prevention](../loop-prevention/README.md) |
 | Context engine | only the completion carrier is persisted to MesMemory; child transcripts stay checkpoint-only | [Context Engine README](../../context_engine/README.md) |
 | Runtime lanes | the `SUBAGENT` lane bounds concurrent child runs; over-limit spawns queue as `PENDING` | [Loop Prevention](../loop-prevention/README.md) |
@@ -180,7 +180,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 - Every judge is fail-open by design: an unreachable or unparseable judge finalizes `done` / `pass`. Availability wins over strictness — a wedged judge must never trap a run.
 - `goal_max_turns` of `1` makes the child single-turn; the completion judge is not called for that spawn.
 - The call-time privilege guard backs `sessions_spawn`; `sessions_yield` relies on assembly-time stripping alone.
-- Gate D activates only with both `todo` and `plan_path`; without that linkage `taskflow_finish` has no independent completion verdict.
+- The old Gate D (`SisyphusVerifier` via caller-supplied `todo` + `plan_path`) was removed by the over-engineering audit: no prompt required the linkage and nothing passed it. The Sisyphus contract lives on as orchestrator doctrine in `skills/builtin/core/ulw-execute/SKILL.md`.
 - The parent-turn gate reasons over a text evidence summary and its `FAIL` / `[stale]` markers, not over a structured ledger.
 - `aggregate_deps` concatenates raw dependency results — it does not summarize, so very large results grow the dispatched task text.
 - Child context isolation is fixed by design: there is no mode that inherits the parent transcript.

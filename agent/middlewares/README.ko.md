@@ -667,8 +667,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 - 불리언 플래그 → 사고 온/오프 변형. 설정이 없으면 요청은 그대로 통과하며
   `MAIN_LLM_ENABLE_THINKING` 환경변수 기본값이 적용됩니다;
-- `"low"` / `"high"` / `"max"` → 항상 사고하는 모델(스위치가 아닌 셀렉터)을 위한
-  명시적 레벨. `thinking_control_mode()`는 glm-5 시리즈에 `"levels"`, 그 외에는
+- **일곱 개 레벨 토큰**(`off` / `minimal` / `low` / `medium` / `high` /
+  `xhigh` / `max`, 공유 `EXTENDED_THINKING_LEVELS` 열거) 중 아무거나 →
+  명시적 레벨. 레벨은 이제 **선언적**입니다: `models/LLMs/reasoning_payload.py`가
+  per-model 맵(pi 스타일 `thinkingLevelMap` + `thinkingFormat`)으로 해석하고
+  모델이 실제로 받는 가장 가까운 레벨로 **클램프**합니다——클라이언트 피커는
+  `GET /sessions/thinking`이 돌려주는 `levels` 목록으로 구동되므로, 지원하지
+  않는 값은 애초에 전송되지 않습니다(옛 동작: 보내고 400으로 배움).
+  `thinking_control_mode()`는 여전히 glm-5 시리즈에 `"levels"`, 그 외에는
   `"on_off"`를 보고합니다.
 
 비활성화 사다리: 서버 기본값이 사고 켜짐인 게이트웨이에는 명시적 disable

@@ -1,7 +1,9 @@
 # 计划：思考等级全模型适配（学 pi 声明式 + 前端用户自配）
 
 - 建档日期：2026-10-14
-- 状态：**方案设计中，未开工**
+- 状态：**部分执行（2026-10-15）**——Phase 1 (P0) 与 Phase 2 (P1) 的声明式主体已落地，
+  Phase 3 (P2，前端自配 wire 属性名面板) 未开工。落地明细见文末「落地记录」。
+
 - 触发问题：Sherry 当前思考等级适配仅覆盖 4 类 provider（DeepSeek / Anthropic budget /
   OpenAI reasoning_effort / GLM thinking），3 级枚举（low / high / max），硬编码 if/else
   Strategy 链，不支持 Anthropic adaptive、Google 双格式、Bedrock，always-think 处理仅
@@ -884,3 +886,50 @@ interface Tool {
 | `response_format` | ❌（tool 级） | ❌ | ✅ 学 per-tool strict |
 | `logprobs` | ❌ | ❌ | ❌ 仅分类器用 |
 | `watermark` | ❌ | ❌ | ❌ 不存在 |
+
+---
+
+## 落地记录（2026-10-15）
+
+**已落地（Phase 1 P0 + Phase 2 P1 主体）**
+
+- `config/features/agent_side/thinking_levels.py` 新建：`ThinkingLevel`（7 级）、
+  `THINKING_LEVELS` / `EXTENDED_THINKING_LEVELS`（钳位顺序）、`ThinkingLevelMap`、
+  `ThinkingFormat`（11 种 wire 格式枚举）、`ThinkingConfig`（`THINKING_LEVEL_CONFIG`）；
+  经 `config/features/agent_side/__init__.py` 与 `config/features/__init__.py` 逐层 re-export。
+- `models/LLMs/reasoning_payload.py` 重写为声明式引擎：`_FORMAT_LEVEL_MAPS`（每格式默认映射）
+  + `_MODEL_LEVEL_OVERRIDES`（glm-5 / glm-4.5 / glm-4.6 的 per-level 声明）+ 五个新公共函数
+  （`resolve_thinking_format` / `resolve_thinking_level_map` / `get_supported_thinking_levels`
+  / `clamp_thinking_level` / `build_thinking_kwargs`）。旧入口
+  （`build_reasoning_kwargs` / `build_thinking_off_kwargs` / `build_thinking_floor_kwargs` /
+  `build_thinking_level_kwargs` / `thinking_control_mode` / `get_thinking_budget`）保留为
+  wrapper，现有四类 provider 的线上 payload **逐字节不变**（兼容性由既有测试钉住）。
+  Anthropic（budget 形式）与 Google（`thinking_level` 离散形式）走原生分支；
+  OpenRouter / Qwen / Together / Baseten / chat-template / string-thinking / ant-ling 走格式分发。
+- `models/LLMs/main_llm.py`：`build_main_llm` / `build_main_llm_for_profile` 新增统一
+  `level` 别名参数（等价 `thinking_level`）。
+- `agent/middlewares/thinking_control/core.py`：档位 token 集合改为从
+  `EXTENDED_THINKING_LEVELS` 派生（7 级全部可入 cache key）；`_off_floor_learned`
+  阶梯保留为运行时安全网（声明式映射已把已知模型的 off 提前钳位，阶梯只在映射未覆盖的
+  网关新行为时兜底）。
+- `server/service/session_settings_service.py`：值域 `_VALID_LEVELS` 改为从
+  `EXTENDED_THINKING_LEVELS` 派生（7 级）；`GET /sessions/thinking` 的返回体新增
+  `levels`（当前模型支持的档位列表，钳位顺序）。
+- 前端：`bridge/session.ts` 新增 `ThinkingLevel` 类型与 `levels` 字段；
+  `stores/thinking.ts` 新增 `levelsBySession` / `availableLevels()`（后端驱动，兜底全 7 级）；
+  `ThinkingToggle.vue` 在模型声明了多个档位时自动切换为**统一档位选择器**（含 off，
+  按后端列表过滤），单一 `off` 的模型保持原开关形态；i18n 四语新增
+  minimal/medium/xhigh 标签；移动端循环也改为遍历可用档位。
+- 测试：`tests/models/LLMs/test_thinking_levels_declarative.py` 新增 30 例（支持列表、
+  钳位、各格式 wire、显式覆盖 seam）；`tests/models/LLMs/` 全绿 103 例；
+  前端 `thinking.test.ts` / `ThinkingToggle.integration.test.ts` 新增统一选择器与
+  7 级回归用例；客户端 unit 798 / integration 349 / typecheck / dpdm 全绿。
+
+**未落地（本计划剩余项）**
+
+- Phase 2 未做的部分：Anthropic adaptive / managed-effort（现为 budget 形式）、
+  Bedrock（Claude/GPT）分支、per-level token budget 表（现为族常量）。
+- Phase 3 (P2) 全部：`CustomThinkingMapping` + state key、`GET/PUT /sessions/thinking/custom`、
+  `ThinkingCustomMappingPanel.vue` 与安全约束。
+  （引擎侧的 seam 已就位：`build_thinking_kwargs(thinking_format=..., thinking_level_map=...)`
+  两个显式参数即为该功能的接入点。）

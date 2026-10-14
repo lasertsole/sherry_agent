@@ -658,9 +658,14 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 - 布尔标志 → 思考开/关变体；未设置时请求原样通过（沿用
   `MAIN_LLM_ENABLE_THINKING` 环境变量默认值）；
-- `"low"` / `"high"` / `"max"` → 显式档位，用于"始终思考"、控制形态是选择器
-  而非开关的模型（`thinking_control_mode()` 对 glm-5 系列报告 `"levels"`，
-  其余为 `"on_off"`）。
+- **七个档位 token**（`off` / `minimal` / `low` / `medium` / `high` /
+  `xhigh` / `max`，即共享的 `EXTENDED_THINKING_LEVELS` 枚举）中任意一个 →
+  显式档位。档位现在是**声明式**的：`models/LLMs/reasoning_payload.py` 按
+  per-model 映射表（pi 风格 `thinkingLevelMap` + `thinkingFormat`）解析，并
+  **钳位**到模型真正支持的最近档位——前端选择器由 `GET /sessions/thinking`
+  返回的 `levels` 列表驱动，不支持的值根本不会被发出（旧行为：发出去、靠 400
+  学习）。`thinking_control_mode()` 仍对 glm-5 系列报告 `"levels"`，其余为
+  `"on_off"`。
 
 关闭阶梯：服务端默认开启思考的网关需要显式 disable 载荷，但"始终思考"模型
 （glm-5 系列，2026-09 实测：glm-5.3-flash 以错误码 1210 拒绝 `disabled`——

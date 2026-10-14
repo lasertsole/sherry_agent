@@ -305,7 +305,7 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话会继续运行；在流被取消之前，它们的结果仍可通过 `taskflow_resume` 送达。
 
-`finish` 按顺序用四道检查把守 DONE 转换：**A** 每个步骤都是 `done` 或 `blocked`；**B** 不能留下未解决的步骤——`failed`、`skipped`、`cancelled` 的步骤会带 id 与记录的原因被报出（它们需要调用方决策：resume、retry 或 cancel），`blocked` 的步骤同理；**C** 流的证据（`agent/tools/taskflow/evidence_collector.py`）中没有 `FAIL`、也没有 `[stale]` 行；**D** `SisyphusVerifier` 通过——仅在调用方同时给出 `todo` 与 `plan_path` 时执行，因此不需要任何 flow/step schema 迁移。每道门都是 fail-open：证据收集器不可用或校验器报错都会放行而不是挡住完成。
+`finish` 按顺序用三道检查把守 DONE 转换：**A** 每个步骤都是 `done` 或 `blocked`；**B** 不能留下未解决的步骤——`failed`、`skipped`、`cancelled` 的步骤会带 id 与记录的原因被报出（它们需要调用方决策：resume、retry 或 cancel），`blocked` 的步骤同理；**C** 流的证据（`agent/tools/taskflow/evidence_collector.py`）中没有 `FAIL`、也没有 `[stale]` 行。每道门都是 fail-open：证据收集器不可用会放行而不是挡住完成。可选的 **Gate E**（`_goal_gate`）随后用辅助模型判断结果是否满足流的 `description`，仅当流的步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行。
 
 `cancel` 会把所有未完成的步骤标为 `cancelled`（连同取消原因）再翻转流终态，这样流终结后步骤状态不会继续声称 `ready` / `dispatched` / `blocked`。
 ---

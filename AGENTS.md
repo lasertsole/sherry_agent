@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (71 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (74 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -66,12 +66,11 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
-  │    (TaskIntent's intent detection is TWO layers: four-language rules — EN/ZH/JA/KO
-  │     keywords plus question/chat patterns, then a length fallback over 100 chars —
-  │     and an auxiliary-LLM classification that runs ONLY for first arming, ONLY in the
-  │     20-100 char window with request phrasing (してください / 해줘 / please / 帮我) and no
-  │     keyword; armed sessions and session-less calls stay rule-only, and every failure
-  │     path is fail-open to "not a task")
+  │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
+  │     keywords plus question/chat patterns, then a length fallback over 100 chars.
+  │     The old auxiliary-LLM fallback for the 20-100 char request-phrasing window was
+  │     removed by the over-engineering audit; a short JA/KO request with no keyword is
+  │     no longer armed — the conservative direction, fail-open to "not a task")
   │    → MessagePersistence → LLMRetry → Summarization → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
@@ -109,10 +108,17 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     reaches state; read_file results are sliced, never offloaded. Its
   │     before_model tags an oversized trailing HumanMessage (full text stays in
   │     state/MesMemory) and wrap_model_call truncates only the model view)
-  │    ThinkingControl: per-session thinking toggle (client switch →
-  │     PUT /sessions/thinking → state register); swaps request.model for the
-  │     thinking on/off variant built by build_main_llm(thinking=...) when the
-  │     session carries an explicit LLM_THINKING_ENABLED flag, else env default
+  │    ThinkingControl: per-session thinking control (client switch / level
+  │     picker → PUT /sessions/thinking → state register); swaps request.model
+  │     for the variant built by build_main_llm(thinking=... / level=...) when
+  │     the session carries an explicit LLM_THINKING_ENABLED flag, else env
+  │     default. Levels are DECLARATIVE since the pi-style rework: the value
+  │     domain is the shared EXTENDED_THINKING_LEVELS enum (off / minimal / low
+  │     / medium / high / xhigh / max), models/LLMs/reasoning_payload.py
+  │     resolves a per-model thinkingLevelMap + thinkingFormat and CLAMPS the
+  │     request onto the nearest level the model accepts, and GET
+  │     /sessions/thinking returns the model's `levels` list so the client's
+  │     picker never offers an unsupported level
   │
   ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
@@ -137,12 +143,18 @@ User message → Robyn WS → agent.core.built_agent() graph
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
       caller-declared step_outcome outranks both
     · CompletionJudge goal loop — every spawn, bounded by
-      COMPLETION_JUDGE["goal_max_turns"]; continue injects a follow-up turn
+      COMPLETION_JUDGE["goal_max_turns"] and gated by its master switch
+      (COMPLETION_JUDGE["enabled"]; off = no judge call at all, whatever budget
+      a caller passes); continue injects a follow-up turn. The judge's FIRST
+      call is skipped when the opening turn produced a result AND the child
+      session's ledger shows a passing, non-stale row — the ledger already
+      carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events; read side derives staleness (evidence_collector.py)
-    · taskflow_finish gates A–D — DAG completeness, no unresolved steps
+    · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      no FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
+      no FAIL/[stale] evidence, then Gate E's goal judge (only for a flow with a
+      description and at least GOAL_GATE["min_steps"] = 3 steps)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence
 ```
@@ -877,9 +889,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 44 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/agent_side/` | 47 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
 | `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 71 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 74 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |

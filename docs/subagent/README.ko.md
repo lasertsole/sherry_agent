@@ -125,12 +125,12 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 |---|------|--------|-------------|----------------|
 | 1 | 자식 실행 | 완료 판정기 + goal loop(`spawn/completion_judge.py`) | 작업, 최신 응답, 증거 요약; 예산 `goal_max_turns`(기본 `5`) | 모델 오류 / 파싱 불가 → `done` |
 | 2 | 단계 | TaskFlow 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `validation_criteria`(없으면 판정기 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
-| 3 | 흐름 | `taskflow_finish` 게이트 A–D(`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG 상태와 흐름 증거; 게이트 D에는 `todo`와 `plan_path`도 필요 | 원장 읽기 불가 / 검증기 오류 → 통과 |
+| 3 | 흐름 | `taskflow_finish` 게이트 A–C(`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG 상태와 흐름 증거 | 원장 읽기 불가 → 통과 |
 | 4 | 부모 턴 | 완료 drain 프로그램 게이트(`agent/middlewares/subagent_completion_drain/`) | 세션의 검증 증거 요약 | 조회 실패 → 게이트 생략 |
 
 **2계층——단계 판정기.** `taskflow_resume`이 자식 결과를 주입한 뒤, `validation_criteria`를 가진 단계는 `PASS` / `RETRY` / `BLOCK`으로 판정됩니다. `RETRY`는 단계 재시도 횟수가 `STEP_JUDGE["max_retries"]`(기본 `2`) 미만이면 판정기 피드백과 함께 단계를 재디스패치하고, 예산을 다 쓰면 단계를 차단합니다. 판정 기준은 판정기의 입력이지 스위치가 아닙니다——기준이 없는 단계는 판정기로 보내지지 않습니다.
 
-**3계층——흐름 게이트.** `taskflow_finish`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않으며, 그리고——호출자가 `todo`와 `plan_path`를 모두 제공한 경우에만——게이트 D가 `SisyphusVerifier`를 통과할 것. 게이트 D의 연결은 스위치가 아니라 입력입니다: 그것이 없으면 완료에 독립적 판정이 없고, 생략된 게이트는 조용히 넘어갑니다.
+**3계층——흐름 게이트.** `taskflow_finish`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않습니다(그리고 `description`이 있는 흐름의 단계 수가 `GOAL_GATE["min_steps"]` 이상일 때만 도는 옵트인 Gate E 목표 판정).
 
 **4계층——부모 턴 게이트.** drain이 대기 중인 완료 캐리어를 주입할 때 부모 세션의 증거도 검사합니다. 캐리어는 그대로 주입되고, 세션에 통과 증거가 없으면 필수 검증 메시지가 그 뒤에 덧붙습니다. 이 검사는 무조건적이며——어떤 설정으로도 끌 수 없고——증거 조회 자체가 이용 불가능할 때만 페일오픈합니다.
 
@@ -140,7 +140,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 
 | 하위 시스템 | 이 경계를 넘는 것 | 세부 |
 |-------------|-------------------|------|
-| TaskFlow 엔진 | 단계 디스패치, `validation_criteria`, `aggregate_deps`, 흐름 게이트 A–D | [장기 실행 작업](../long-running-tasks/README.ko.md) |
+| TaskFlow 엔진 | 단계 디스패치, `validation_criteria`, `aggregate_deps`, 흐름 게이트 A–C(+ Gate E) | [장기 실행 작업](../long-running-tasks/README.ko.md) |
 | 런어웨이 루프 방지 | 완료 게이트, 판정기 예산, drain과 announce 재시도 동작 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
 | 컨텍스트 엔진 | MesMemory에 영속되는 것은 완료 캐리어뿐; 자식 트랜스크립트는 checkpoint에만 존재 | [Context Engine README](../../context_engine/README.ko.md) |
 | 런타임 레인 | `SUBAGENT` 레인이 동시 자식 실행을 제한; 초과 spawn은 `PENDING`으로 대기 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
@@ -180,7 +180,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 - 모든 판정기는 설계상 페일오픈입니다: 도달할 수 없거나 파싱할 수 없는 판정기는 `done` / `pass`로 확정됩니다. 가용성이 엄격함보다 우선합니다——멈춘 판정기가 실행을 가두어서는 안 됩니다.
 - `goal_max_turns`가 `1`이면 자식은 단일 턴이 되고, 그 spawn에서는 완료 판정기가 호출되지 않습니다.
 - 호출 시점 권한 가드가 뒷받침하는 것은 `sessions_spawn`입니다; `sessions_yield`는 조립 시점 제거에만 의존합니다.
-- 게이트 D는 `todo`와 `plan_path`가 모두 있을 때만 활성화됩니다; 그 연결이 없으면 `taskflow_finish`에 독립적 완료 판정이 없습니다.
+- 옛 게이트 D(호출자가 `todo` + `plan_path`를 넘길 때 `SisyphusVerifier` 실행)는 과잉 엔지니어링 감사로 제거되었습니다: 그 연결을 요구하는 프롬프트도, 넘기는 경로도 없었습니다. Sisyphus 계약은 오케스트레이터 원칙으로 `skills/builtin/core/ulw-execute/SKILL.md`에 남아 있습니다.
 - 부모 턴 게이트는 구조화 원장이 아니라 텍스트 증거 요약과 그 `FAIL` / `[stale]` 마커로 추론합니다.
 - `aggregate_deps`는 원시 의존성 결과를 연결할 뿐 요약하지 않으므로, 거대한 결과는 디스패치되는 작업 텍스트를 키웁니다.
 - 자식 컨텍스트 격리는 설계상 고정입니다: 부모 트랜스크립트를 상속하는 모드는 존재하지 않습니다.

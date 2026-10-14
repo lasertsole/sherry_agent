@@ -669,8 +669,14 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 
 - 真偽値フラグ → 思考オン/オフ変数。未設定ならリクエストはそのまま通過し、
   `MAIN_LLM_ENABLE_THINKING` 環境変数のデフォルトが適用されます；
-- `"low"` / `"high"` / `"max"` → 常時思考モデル（スイッチではなくセレクタ）向けの
-  明示レベル。`thinking_control_mode()` は glm-5 系列に `"levels"`、それ以外に
+- **7 つのレベルトークン**（`off` / `minimal` / `low` / `medium` / `high` /
+  `xhigh` / `max`、共有の `EXTENDED_THINKING_LEVELS` 列挙）のいずれか →
+  明示レベル。レベルは**宣言的**になりました：`models/LLMs/reasoning_payload.py`
+  が per-model マップ（pi 風 `thinkingLevelMap` + `thinkingFormat`）で解決し、
+  モデルが実際に受け付ける最も近いレベルへ**クランプ**します——クライアントの
+  ピッカーは `GET /sessions/thinking` が返す `levels` リストで駆動されるため、
+  未対応の値はそもそも送られません（旧挙動：送って 400 で学習）。
+  `thinking_control_mode()` は従来どおり glm-5 系列に `"levels"`、それ以外に
   `"on_off"` を報告します。
 
 無効化ラダー：サーバ側デフォルトが思考オンのゲートウェイには明示的な disable

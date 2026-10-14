@@ -211,16 +211,15 @@
 
 证据账本是共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`agent/tools/todolist/evidence_recorder.py` 恒自动记录来自 `terminal` / `python_repl` 的可识别验证命令（分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），且 `write_file` / `patch_file` 恒为被编辑路径追加一条 `stale` 事件。`agent/tools/taskflow/evidence_collector.py` 在读取时推导陈旧性（较晚的 `stale` 行点名了某行命令中包含的路径），并渲染给判别器看的摘要。
 
-`taskflow_finish.py` 以四项检查、按顺序把守 DONE 转换：
+`taskflow_finish.py` 以三项检查、按顺序把守 DONE 转换：
 
 | 门 | 检查 | 拒绝理由 |
 |---|---|---|
 | **A — DAG 完整性** | 每个步骤都是 `done` 或 `blocked` | `step(s) not done/blocked` |
 | **B — 无阻塞步骤** | 没有步骤是 `blocked` | `step(s) are blocked` |
 | **C — 流程证据** | 流程证据中没有 `FAIL`、也没有 `[stale]` 行 | `failing verification evidence` / `stale evidence` |
-| **D — SisyphusVerifier** | 重读计划、验收标准与关联的 `done` 步骤——仅当调用方同时传入 `todo` 与 `plan_path` | `SisyphusVerifier` 的理由 |
 
-缺少 `todo` + `plan_path` 关联时 Gate D 完全跳过；每道门都是 fail-open：账本不可读或验证器报错会放行，而不是阻塞完成。
+每道门都是 fail-open：账本不可读会放行，而不是阻塞完成。可选的第四道 **Gate E** 用辅助模型判断收集到的结果是否满足 flow 的 `description`——仅当 flow 的步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行，更小的 flow 由子级判定负责。
 
 ### 管线级：完成 drain 程序化门控
 

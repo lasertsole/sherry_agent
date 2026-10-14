@@ -128,7 +128,7 @@ client/
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
-│   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
+│   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关，或按模型声明档位（含关闭）的选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）

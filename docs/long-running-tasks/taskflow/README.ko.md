@@ -305,7 +305,7 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. 디스패치된 자식 세션은 계속 돌고, 플로우가 취소되기 전까지 `taskflow_resume`으로 결과를 전달할 수 있습니다.
 
-`finish`는 DONE 전환을 네 검사로 순서대로 지킵니다: **A** 모든 단계가 `done` 또는 `blocked`; **B** 미해결 단계를 남기지 않음 — `failed`·`skipped`·`cancelled` 단계는 id와 기록된 이유와 함께 보고되며(호출자의 결정이 필요합니다: resume·retry·cancel), `blocked`도 마찬가지입니다; **C** 플로우 증거(`agent/tools/taskflow/evidence_collector.py`)에 `FAIL`도 `[stale]` 행도 없음; **D** `SisyphusVerifier` 통과 — 호출자가 `todo`와 `plan_path`를 모두 줄 때만 실행되므로 flow/step schema 마이그레이션이 필요 없습니다. 각 게이트는 fail-open이라 증거 수집기를 쓸 수 없거나 검증기가 오류를 내도 완료를 막지 않고 통과시킵니다.
+`finish`는 DONE 전환을 세 검사로 순서대로 지킵니다: **A** 모든 단계가 `done` 또는 `blocked`; **B** 미해결 단계를 남기지 않음 — `failed`·`skipped`·`cancelled` 단계는 id와 기록된 이유와 함께 보고되며(호출자의 결정이 필요합니다: resume·retry·cancel), `blocked`도 마찬가지입니다; **C** 플로우 증거(`agent/tools/taskflow/evidence_collector.py`)에 `FAIL`도 `[stale]` 행도 없음. 각 게이트는 fail-open이라 증거 수집기를 쓸 수 없으면 완료를 막지 않고 통과시킵니다. 옵트인 **Gate E**(`_goal_gate`)가 이어서 결과가 플로우의 `description`을 충족하는지 보조 모델에 묻습니다——플로우의 단계 수가 `GOAL_GATE["min_steps"]`(3) 이상일 때만 실행됩니다.
 
 `cancel`은 종단화 전에 아직 끝나지 않은 모든 단계를 `cancelled`(취소 이유 포함)로 만듭니다. 플로우가 끝난 뒤에도 단계 상태가 `ready` / `dispatched` / `blocked`를 주장하지 않게 하기 위해서입니다.
 ---
