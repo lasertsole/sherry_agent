@@ -119,19 +119,26 @@ async def _settle() -> None:
 
 class TestCompressionNudgeDispatch:
     @pytest.mark.asyncio
-    async def test_compression_dispatches_memory_and_plan_nudges(
+    async def test_compression_dispatches_the_memory_review_only(
         self, isolated_db, sid, monkeypatch
     ):
+        """Compaction carries the memory review; plan extraction moved off it.
+
+        Plan extraction now forks on plan completion
+        (``maybe_trigger_plan_extraction``), so a compaction must not schedule it
+        even when every todo is complete — that path used to hand the fork the
+        whole conversation and to wait for a window to fill.
+        """
         calls: list[str] = []
 
         async def _memory(session_id: str, system_prompt: str, messages: list) -> None:
             calls.append("memory")
 
-        async def _plan(session_id: str, system_prompt: str, messages: list) -> None:
+        async def _plan(session_id: str) -> None:  # pragma: no cover - must not run
             calls.append("plan")
 
         monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
-        monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", _plan)
+        monkeypatch.setattr(nudge_mod, "_run_plan_extraction", _plan)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
         monkeypatch.setattr(
             ce_core,
@@ -144,7 +151,7 @@ class TestCompressionNudgeDispatch:
         )
         await _settle()
 
-        assert calls == ["memory", "plan"]
+        assert calls == ["memory"]
 
     @pytest.mark.asyncio
     async def test_no_cut_does_not_dispatch_nudges(self, isolated_db, sid, monkeypatch):
@@ -153,12 +160,7 @@ class TestCompressionNudgeDispatch:
         async def _memory(session_id: str, system_prompt: str, messages: list) -> None:
             calls.append("memory")
 
-        async def _plan(session_id: str, system_prompt: str, messages: list) -> None:
-            calls.append("plan")
-
         monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
-        monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", _plan)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
         monkeypatch.setattr(Summarization, "_determine_cutoff", lambda self, messages: 0)
 
         await _make_summarization()._aapply_compression_under_lock(

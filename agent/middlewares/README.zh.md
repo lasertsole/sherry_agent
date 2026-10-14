@@ -598,12 +598,13 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **结构化摘要：** 辅助调用经 `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）；Markdown 由文档代码渲染，cap 后的文档本体存于 AIMessage 的 `additional_kwargs["summary_doc"]`（链式再压缩以 `<prior-summary-json>` 回喂）。解析失败退化为 `json_repair`，再退化为旧 free-form 路径；条目上限是数组切片（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`），不再解析 Markdown。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
 - **不再持久化：** 压缩路径不向 MesMemory 写任何内容。消息持久化在每个模型边界由 `MessagePersistenceMiddleware` 完成；原先 `compaction_persistence.py` 的被丢弃前缀落库及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。
-- **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每次压缩都派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行；nudge 锁被持有时压缩完全跳过派发。after-agent 钩子不再派发它们。
+- **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每次压缩只派发**记忆复盘**——它是唯一需要对话的 nudge，职责是从即将丢弃的消息里抢救长期记忆。它以 fire-and-forget 任务在 NUDGE 车道上运行；nudge 锁被持有时压缩完全跳过派发。计划提取已不在这条路径上（改为计划完成时 fork，见下）。
 
 **Nudge 子 Agent**（`summarization/nudges.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
 
-- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：周期性运行，通过记忆工具保存用户的持久偏好与期望。
-- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出两项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。其上下文来自 `_build_plan_context`：计划文件、todo 列表以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
+- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：由压缩管线触发，用主模型（`_create_nudge_agent`），并且**拿到对话**——周期性运行，通过记忆工具保存用户的持久偏好与期望。
+- `_PLAN_EXTRACTION_PROMPT`（计划提取）：由**计划完成**钩子触发（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`），用**辅助模型**（`_create_plan_extraction_agent`，`temperature=0`），并且**完全不拿对话**——只有指令 + plan context。产出两项内容：**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`；**Part 2** 通过 `skill_manage` 更新技能库（含 `<module>-notes` 承接）。其上下文来自 `_build_plan_context`：计划文件、todo 列表以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
+- **计划提取去重：** `_detect_todo_all_complete` 在全部 todo 为 `completed`/`cancelled` 且计划的**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**抽取后存于 `nudge_plan_snapshot_hash` 的指纹不同时触发——因此就地修改已完成的 todo 会重抽、计划未变则跳过、失败的一轮会在下次完成轮重试。前置门控：每会话 `Summarization → nudge` 开关、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、以及必须有运行中的事件循环。
 - **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用 nudge agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_NudgeLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
 ▶️ 完整文档：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -727,8 +728,9 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | 键 | 归属 | 寄存器 |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_plan_extraction_fired` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | db |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | mem |
+| `nudge_plan_extraction_fired` | 计划完成触发器（PlanContinuationEnforcer → `summarization/nudges.py`） | db |
+| `nudge_plan_snapshot_hash` | 计划完成触发器——上次已抽取计划的指纹（id + content + status + plan_ref） | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | nudge fork（压缩记忆复盘 / 计划完成抽取） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |

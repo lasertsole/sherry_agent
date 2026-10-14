@@ -330,13 +330,17 @@ class TestNudgeSessionIdSupply:
                 captured.append(dict(input))
                 return {"messages": []}
 
-        async def _create(system_prompt: str, allowed_metadata_key: Any = None, tools: Any = None):
+        async def _create(system_prompt: str):
             return _RecordingAgent()
 
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", _create)
+        monkeypatch.setattr(
+            "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
+            lambda session_id: "sys",
+        )
 
-        await nudge_mod._nudge_plan_extraction("sess-nudge", "sys", [])
+        await nudge_mod._run_plan_extraction("sess-nudge")
 
         assert len(captured) == 1
         assert captured[0]["session_id"] == "sess-nudge"

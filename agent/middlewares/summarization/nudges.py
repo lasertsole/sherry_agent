@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, override
@@ -397,6 +398,8 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 
 _NUDGE_MEMORY_LOCK_KEY = StateKey.NUDGE_REVIEW_MEMORY_LOCK
 _PLAN_EXTRACTION_FIRED_KEY = StateKey.NUDGE_PLAN_EXTRACTION_FIRED
+#: Fingerprint of the plan content the last SUCCESSFUL extraction consumed.
+_PLAN_SNAPSHOT_HASH_KEY = StateKey.NUDGE_PLAN_SNAPSHOT_HASH
 _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 
 # Keeps scheduled nudge coroutines referenced until they complete (asyncio
@@ -404,18 +407,44 @@ _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 _COMPRESSION_NUDGE_TASKS: set[asyncio.Task[None]] = set()
 
 
+def _plan_snapshot_hash(todos: list[dict]) -> str:
+    """Content fingerprint of the plan (id + content + status + plan_ref).
+
+    Deliberately blind to everything else a todo row carries: the extraction is
+    about the plan's own content, and a fingerprint that moved for unrelated
+    bookkeeping would re-extract on every turn.
+    """
+    items = sorted(
+        (
+            {
+                "id": str(todo.get("id", "")),
+                "content": str(todo.get("content", "")),
+                "status": str(todo.get("status", "")),
+                "plan_ref": str(todo.get("plan_ref", "")),
+            }
+            for todo in todos
+        ),
+        key=lambda item: item["id"],
+    )
+    return hashlib.sha256(
+        json.dumps(items, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+
 def _detect_todo_all_complete(session_id: str) -> bool:
-    """Detect when the todo list just became all-complete (fire once).
+    """Whether the plan is complete AND its current content is not extracted yet.
 
     Conditions:
     1. todos exist (non-empty)
     2. every todo is ``completed`` or ``cancelled``
-    3. plan extraction has not already fired for this completion cycle
+    3. either nothing was extracted for this completion cycle yet, or the plan
+       content CHANGED since the last successful extraction
 
-    Returns True after setting ``_PLAN_EXTRACTION_FIRED_KEY`` so a later
-    compression cannot fire the same completion again; the flag is reset to
-    False whenever the todo list is not (or no longer) all-complete. Reads fail
-    open — a broken todo store must never break the compression.
+    The once-per-cycle flag alone cannot see an in-place edit of a completed todo
+    (status unchanged), which is how a changed plan used to go un-extracted; the
+    snapshot fingerprint closes that hole. The flag is reset whenever the todo
+    list is not (or no longer) all-complete, so the next completion extracts
+    again. Reads fail open — a broken todo store must never break a turn.
     """
     try:
         from agent.tools.todolist.registry.store_sqlite import get_todos_sync
@@ -434,11 +463,12 @@ def _detect_todo_all_complete(session_id: str) -> bool:
         return False
 
     already_fired = state_register_db.get_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
-    if already_fired:
-        return False
+    if not already_fired:
+        state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
+        return True
 
-    state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
-    return True
+    stored = state_register_db.get_state(session_id, _PLAN_SNAPSHOT_HASH_KEY, "") or ""
+    return _plan_snapshot_hash(todos) != stored
 
 
 def _nudges_locked(session_id: str) -> bool:
@@ -451,10 +481,16 @@ def _nudges_locked(session_id: str) -> bool:
 
 async def _run_compression_nudges(
     session_id: str,
-    need_plan: bool,
     messages: list[BaseMessage],
 ) -> None:
-    """Run the scheduled nudges sequentially under the NUDGE lane (fail-open)."""
+    """Run the compression-scoped nudge under the NUDGE lane (fail-open).
+
+    Compaction carries the MEMORY review only: its job is to rescue long-term
+    memory out of the messages about to be discarded, which is why it is handed
+    the conversation. Plan extraction lives on the plan-completion path
+    (:func:`maybe_trigger_plan_extraction`) — it needs no message history and it
+    must not wait for a window to fill.
+    """
     try:
         # Call-time import keeps the patch seam on
         # ``agent.middlewares.system_prompt.core._get_and_reload_system_prompt``
@@ -464,8 +500,6 @@ async def _run_compression_nudges(
         system_prompt = _get_and_reload_system_prompt(session_id)
         sanitized = sanitize_tool_use_result_pairing(list(messages))
         await _nudge_memory(session_id, system_prompt, sanitized)
-        if need_plan:
-            await _nudge_plan_extraction(session_id, system_prompt, sanitized)
     except Exception:
         logger.exception("compression nudge dispatch failed (fail-open) for {}", session_id)
 
@@ -476,11 +510,12 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
     Called by the Summarization middleware once per compression that actually
     discards messages. Returns True when a nudge task was created.
 
-    The memory review runs on every compression; plan extraction additionally
-    fires when the todo list just became all-complete (single fire per
-    completion cycle). While a nudge is in flight, dispatch is skipped
-    entirely — nothing is queued. With no running event loop (the sync
-    compression path outside an async caller) scheduling is skipped entirely.
+    The memory review runs on every compression (plan extraction does not ride
+    this path — it forks on plan completion, see
+    :func:`maybe_trigger_plan_extraction`). While a nudge is in flight, dispatch
+    is skipped entirely — nothing is queued. With no running event loop (the
+    sync compression path outside an async caller) scheduling is skipped
+    entirely.
 
     A session may turn the nudges OFF (预设-中间件 → Summarization → nudge, the
     one option a REQUIRED middleware exposes; the service only accepts it beside
@@ -503,9 +538,7 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
     if _nudges_locked(session_id):
         return False
 
-    need_plan = _PLAN_EXTRACTION_ENABLED and _detect_todo_all_complete(session_id)
-
-    coro = _run_compression_nudges(session_id, need_plan, list(messages))
+    coro = _run_compression_nudges(session_id, list(messages))
     try:
         task = asyncio.create_task(coro)
     except RuntimeError:  # pragma: no cover - the loop vanished after the check
@@ -719,46 +752,124 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
         state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
 
 
-async def _nudge_plan_extraction(
-    session_id: str, system_prompt: str, messages: list[BaseMessage]
-) -> None:
-    """Plan-aware knowledge extraction + skill library update.
+async def _create_plan_extraction_agent(system_prompt: str):
+    """The extraction fork's agent: auxiliary model, its own tool gate.
 
-    Triggered when all todos are complete. Builds plan context (plan file +
-    todos + subagent runs) and launches a nudge agent with the
+    NOT ``_create_nudge_agent``: the memory review keeps the main model (it reads
+    a conversation), while this pass consumes structured data (todos + subagent
+    runs + the plan file) and runs a template-driven extraction — the same shape
+    the step / completion judges already run on the auxiliary model, at a
+    fraction of the cost and with no chance of crowding the main window.
+    The system prompt is kept: the skills index in it decides patch-vs-create.
+    """
+    from agent import get_agent_tools
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails
+    from models import build_auxiliary_llm
+
+    return create_agent(
+        model=build_auxiliary_llm(temperature=0),
+        state_schema=StateSchema,
+        system_prompt=system_prompt,
+        middleware=[
+            # Only tools carrying ``nudge: True`` (knowledge write / skill_manage).
+            _NudgeLimitTool(),
+            ToolCallNormalize(),
+            ToolGuardrails(),
+            _get_iteration_budget(),
+        ],
+        tools=list(get_agent_tools()),
+    )
+
+
+async def _run_plan_extraction(session_id: str) -> None:
+    """One independent extraction pass: instruction + plan context, no history.
+
+    Plan-aware knowledge extraction + skill library update, driven by the
     rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
     knowledge(action="write"); Part 2: skill library update via skill_manage,
     including ``<module>-notes`` carry-forward; Part 3: broad pitfalls to the
     ``facts`` memory target).
-    Both tools carry ``nudge: True`` metadata and pass ``_NudgeLimitTool``.
 
-    Fail-open: errors are logged and swallowed, never propagated into the
-    turn's ``after_agent`` hook.
+    The snapshot fingerprint is stored only AFTER a successful pass (and for the
+    very todos this pass consumed), so a failed or raced extraction is retried on
+    the next completion turn instead of being silently marked done.
+
+    Fail-open: errors are logged and swallowed, never propagated into the turn's
+    ``after_agent`` hook.
     """
     state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, True)
     try:
+        from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
+
         context = _build_plan_context(session_id)
         if not context:
             logger.debug("plan extraction: no plan context for session {}", session_id)
             return
 
+        system_prompt = _get_and_reload_system_prompt(session_id)
         context_str = json.dumps(context, ensure_ascii=False, indent=2)
-        prompt = _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
-        prompt = _render_prompt_facts(prompt)
+        prompt = _render_prompt_facts(
+            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
+        )
 
         async with lane_slot(LaneType.NUDGE):
-            _agent = await _create_nudge_agent(system_prompt)
+            _agent = await _create_plan_extraction_agent(system_prompt)
             res = await _agent.ainvoke(
                 input={
                     "session_id": session_id,
-                    "messages": [*messages, HumanMessage(content=prompt)],
+                    "messages": [HumanMessage(content=prompt)],
                 }
             )
         logger.debug("plan extraction res is {}", res["messages"][-1])
+
+        state_register_db.set_state(
+            session_id,
+            _PLAN_SNAPSHOT_HASH_KEY,
+            _plan_snapshot_hash(list(context.get("todos") or [])),
+        )
     except Exception:
         logger.exception("plan extraction failed (fail-open) for {}", session_id)
     finally:
         state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
+
+
+async def maybe_trigger_plan_extraction(session_id: str) -> None:
+    """Fork the extraction pass when the plan just finished (fail-open).
+
+    Called by the plan-completion hook (``PlanContinuationEnforcer`` at the end
+    of a turn whose plan has no incomplete rows). Independent of composition and
+    of the window: a session whose plan completes after two turns extracts just
+    like one that took fifty, and no conversation history rides along.
+
+    Every gate is checked BEFORE the completion detector (which consumes the
+    once-per-cycle flag) so a bail-out never marks a plan as extracted.
+    """
+    if not session_id or not _PLAN_EXTRACTION_ENABLED:
+        return
+    from agent.middlewares.agent_switch import middleware_option
+
+    if not middleware_option(session_id, "Summarization", "nudge"):
+        logger.debug("plan extraction: disabled by the session config ({})", session_id)
+        return
+    if state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False):
+        return
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("plan extraction: no running event loop, skipping for {}", session_id)
+        return
+    if not _detect_todo_all_complete(session_id):
+        return
+
+    coro = _run_plan_extraction(session_id)
+    try:
+        task = asyncio.create_task(coro)
+    except RuntimeError:  # pragma: no cover - the loop vanished after the check
+        coro.close()
+        return
+    _COMPRESSION_NUDGE_TASKS.add(task)
+    task.add_done_callback(_COMPRESSION_NUDGE_TASKS.discard)
+    logger.debug("plan extraction scheduled for session {}", session_id)
 
 
 def _build_main_session_todowrite(main_session_id: str) -> BaseTool:

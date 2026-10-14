@@ -332,6 +332,16 @@ class PlanContinuationEnforcer(AgentMiddleware):
             incomplete = [row for row in plan_rows if row["status"] in _INCOMPLETE_STATUSES]
             if not incomplete:
                 st.reset(session_id)
+                # The plan just finished: hand it to the plan-extraction fork.
+                # Deliberately independent of compaction — a short session whose
+                # window never fills must still get its plan extracted, and the
+                # fork needs no conversation history (the data is in the todos,
+                # the subagent runs and the plan file).
+                from agent.middlewares.summarization.nudges import (
+                    maybe_trigger_plan_extraction,
+                )
+
+                await maybe_trigger_plan_extraction(session_id)
                 return None
 
             flow_block = _build_flow_block(flows)

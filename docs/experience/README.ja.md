@@ -18,7 +18,7 @@
 | トリガ | 機構（fork agent か / 呼び出し形態） | 書込先 |
 |---|---|---|
 | 圧縮のたび | memory nudge（`_nudge_memory`）：`create_agent` の nudge agent を fork し、`_MEMORY_REVIEW_PROMPT` を使う | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
-| 圧縮時に todo リストが全完了（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：nudge agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使う | ① 知識 JSON ② `skills/auto/`（クラスレベルスキル + `<module>-notes`） ③ FACTS.md |
+| プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | plan extraction（`_run_plan_extraction`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）が**補助モデル**で専用 agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使い、**会話履歴を一切渡さない** | ① 知識 JSON ② `skills/auto/`（クラスレベルスキル + `<module>-notes`） ③ FACTS.md |
 | 圧縮前（cut が実際にメッセージを破棄） | memory flush（`run_memory_flush[_sync]`）：安価な LLM 呼び出し 1 回。agent ではない | `MemoryStore.append_entries` 経由で MEMORY.md と USER.md |
 | 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の nudge agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
 
@@ -41,12 +41,14 @@
 - todo が存在し、すべて `completed` または `cancelled` である；
 - `nudge_plan_extraction_fired`（`state_register_db`）が未設定である。
 
-遷移時にフラグを立て、リストが全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出は圧縮時にのみ走るため、一度も圧縮しないセッションは plan extraction を発火しない。
+遷移時にフラグを立て、リストが全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出はかつて圧縮時にのみ走っていた——一度も圧縮しないセッションは抽出しなかった。今は**プランが完了した毎ターン**（完了フック）に走るため、短いセッションでも抽出する。
 
-`plan_extraction_enabled` が有効で検出が発火すると、`_nudge_plan_extraction` が同じ接縫から fire-and-forget で派遣され、`nudge_plan_extraction_lock` の下で走る：
+フラグだけでは「完了済み todo のその場編集」を見えないため、トリガはプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）を、最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と比較する——内容が変われば再抽出、変化なしならスキップ、失敗したパスは次の完了ターンで再試行する。
+
+`plan_extraction_enabled` が有効で、セッション単位の `Summarization → nudge` スイッチが入り、検出が発火すると、フックが `_run_plan_extraction` を fire-and-forget で派遣し、`nudge_plan_extraction_lock` の下、NUDGE レーンで走る：
 
 1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
-2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、会話とともに nudge agent（同じビルダー、同じ `nudge: True` ゲート）へ送る。
+2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、専用 agent（`_create_plan_extraction_agent`：**補助モデル**、`temperature=0`、同じ `nudge: True` ツールゲート）へ送る——**会話は一切なし**。データはプランファイル、todo、子 agent 実行記録に揃っているため、このパスはウィンドウを圧迫せず、チャットも読まない。
 
 プロンプトは 3 種類の産出を行う：
 
@@ -170,7 +172,7 @@ uv run pytest \
 - `test_memory_store.py`：MEMORY.md / USER.md ストアの意味論。
 - `test_memory_store_facts.py`：`facts` ターゲット——add/replace/remove、上限超過時の最古項目ロールオフ、原子的書込、ロード時のファイル作成、ライブ内容レンダリング、プロンプトスナップショット注入（空ファイル → ブロックなし）。
 
-AI 判定評価：`evals/nudge_extraction/suite.py` が完了済み plan の実行（plan ファイル、完了 todos、合成子 Agent 実行記録）を用意し、実 `_nudge_plan_extraction` を呼び、続いて補助 LLM judge に、生成されたスキルが今回の実行に真に根ざし、再利用可能で、汎用的でないかを判定させる。すべての書込はサンドボックスへリダイレクトされ、実 `skills/auto/` と `workspace/` は一切触れられない。
+AI 判定評価：`evals/nudge_extraction/suite.py` が完了済み plan の実行（plan ファイル、完了 todos、合成子 Agent 実行記録）を用意し、実 `_run_plan_extraction` を呼び、続いて補助 LLM judge に、生成されたスキルが今回の実行に真に根ざし、再利用可能で、汎用的でないかを判定させる。すべての書込はサンドボックスへリダイレクトされ、実 `skills/auto/` と `workspace/` は一切触れられない。
 
 ```bash
 uv run python evals/evals.py nudge_extraction

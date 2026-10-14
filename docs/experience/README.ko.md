@@ -18,7 +18,7 @@
 | 트리거 | 메커니즘(fork agent 여부 / 호출 형태) | 기록 대상 |
 |---|---|---|
 | 압축마다 | memory nudge(`_nudge_memory`): `create_agent` nudge agent를 fork하고 `_MEMORY_REVIEW_PROMPT` 사용 | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
-| 압축 시 todo 목록이 전부 완료(`completed` / `cancelled`) | plan extraction(`_nudge_plan_extraction`): nudge agent를 fork하고 `_PLAN_EXTRACTION_PROMPT` 사용 | ① 지식 JSON ② `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`) ③ FACTS.md |
+| 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | plan extraction(`_run_plan_extraction`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`)이 **보조 모델**로 전용 agent를 fork하고 `_PLAN_EXTRACTION_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | ① 지식 JSON ② `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`) ③ FACTS.md |
 | 압축 전(cut이 실제로 메시지를 버림) | memory flush(`run_memory_flush[_sync]`): 값싼 LLM 호출 한 번, agent 아님 | `MemoryStore.append_entries`를 거쳐 MEMORY.md와 USER.md |
 | 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget nudge agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
 
@@ -41,12 +41,14 @@
 - todo가 존재하고, 모든 todo가 `completed` 또는 `cancelled`입니다.
 - `nudge_plan_extraction_fired`(`state_register_db`)가 아직 설정되지 않았습니다.
 
-전이 시 플래그를 세우고, 목록이 전부 완료가 아니면 `False`로 되돌리므로 다음 완료 사이클에서 다시 발화합니다. 읽기는 fail-open. 감지가 압축 시점에만 실행되므로, 한 번도 압축하지 않는 세션은 plan extraction을 발화하지 않습니다.
+전이 시 플래그를 세우고, 목록이 전부 완료가 아니면 `False`로 되돌리므로 다음 완료 사이클에서 다시 발화합니다. 읽기는 fail-open. 감지는 예전에는 압축 시점에만 돌았습니다——한 번도 압축하지 않는 세션은 추출하지 못했습니다. 이제 **플랜이 완료된 모든 턴**(완료 훅)에 돌기 때문에 짧은 세션도 추출합니다.
 
-`plan_extraction_enabled`가 켜져 있고 감지가 발화하면 `_nudge_plan_extraction`이 같은 접점에서 fire-and-forget으로 디스패치되어 `nudge_plan_extraction_lock` 아래에서 실행됩니다:
+플래그만으로는 완료된 todo의 제자리 수정을 볼 수 없으므로, 트리거는 플랜 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)을 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 비교합니다——내용이 바뀌면 재추출, 변화가 없으면 건너뛰고, 실패한 패스는 다음 완료 턴에 재시도합니다.
+
+`plan_extraction_enabled`가 켜져 있고, 세션별 `Summarization → nudge` 스위치가 켜져 있고, 감지가 발화하면 훅이 `_run_plan_extraction`을 fire-and-forget으로 디스패치해 `nudge_plan_extraction_lock` 아래, NUDGE 레인에서 실행합니다:
 
 1. `_build_plan_context`가 plan 파일(`plan_ref` 상태 우선, 없으면 `plan_ref`를 가진 첫 todo), todo 목록, 이 세션의 자식 Agent 실행 기록(`result_text`는 24 KB로 절단, `outcome`, task)을 모읍니다. todo 목록이 없으면 `{}`를 반환하며, 호출자는 이를 보고 건너뜁니다.
-2. plan 컨텍스트를 채운 `_PLAN_EXTRACTION_PROMPT`를 대화와 함께 nudge agent(같은 빌더, 같은 `nudge: True` 게이트)로 보냅니다.
+2. plan 컨텍스트를 채운 `_PLAN_EXTRACTION_PROMPT`를 전용 agent(`_create_plan_extraction_agent`: **보조 모델**, `temperature=0`, 같은 `nudge: True` 도구 게이트)로 보냅니다——**대화는 전혀 없음**. 데이터는 플랜 파일, todo, 자식 agent 실행 기록에 모두 있으므로 이 패스는 창을 압박하지도, 채팅을 읽지도 않습니다.
 
 프롬프트는 세 종류의 산출물을 만듭니다:
 
@@ -170,7 +172,7 @@ uv run pytest \
 - `test_memory_store.py`: MEMORY.md / USER.md 저장소 의미론.
 - `test_memory_store_facts.py`: `facts` 대상——add/replace/remove, 상한 초과 시 가장 오래된 항목 롤오프, 원자적 쓰기, 로드 시 파일 생성, 라이브 내용 렌더링, 프롬프트 스냅샷 주입(빈 파일 → 블록 없음).
 
-AI 판정 평가: `evals/nudge_extraction/suite.py`는 완료된 plan 실행(plan 파일, 완료된 todos, 합성 자식 Agent 실행 기록)을 구성하고 실제 `_nudge_plan_extraction`을 호출한 뒤, 보조 LLM judge에게 생성된 스킬이 이번 실행에 진정으로 근거하며 재사용 가능하고 일반적이지 않은지 판정하게 합니다. 모든 쓰기는 샌드박스로 리디렉션되어 실제 `skills/auto/`와 `workspace/`는 절대 건드리지 않습니다.
+AI 판정 평가: `evals/nudge_extraction/suite.py`는 완료된 plan 실행(plan 파일, 완료된 todos, 합성 자식 Agent 실행 기록)을 구성하고 실제 `_run_plan_extraction`을 호출한 뒤, 보조 LLM judge에게 생성된 스킬이 이번 실행에 진정으로 근거하며 재사용 가능하고 일반적이지 않은지 판정하게 합니다. 모든 쓰기는 샌드박스로 리디렉션되어 실제 `skills/auto/`와 `workspace/`는 절대 건드리지 않습니다.
 
 ```bash
 uv run python evals/evals.py nudge_extraction

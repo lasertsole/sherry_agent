@@ -536,7 +536,13 @@ the model/thinking controls)::
   option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
   `memory` (the nudge writes memory THROUGH that tool). At runtime
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
-  `schedule_compression_nudges`; the panel's switch is DISABLED while the draft has memory off —
+  both nudge entries — the compression-time memory review
+  (`schedule_compression_nudges`) and the plan-completion extraction fork
+  (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
+  on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
+  on the AUXILIARY model with no conversation history, and dedupes on a plan
+  snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
+  the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
   nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
   情感陪伴 pin `nudge: false`.

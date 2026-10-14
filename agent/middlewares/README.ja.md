@@ -600,12 +600,13 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **構造化要約：** 補助呼び出しは `with_structured_output(SummaryDoc, method="json_mode")`（`summarization/summary_doc.py`）を通ります。Markdown はドキュメントからコードでレンダリングされ、cap 後のドキュメント本体は AIMessage の `additional_kwargs["summary_doc"]` に保存されます（チェイニング再要約は `<prior-summary-json>` として再入力）。解析失敗は `json_repair`、次にレガシー free-form パスへ降格します。項目上限は配列スライス（`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`、`evicted_refs[-20:]`）で、Markdown の再解析ではありません。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
 - **永続化は行いません：** 圧縮パスは MesMemory へ何も書き込みません。メッセージ永続化は各モデル境界で `MessagePersistenceMiddleware` が実行します；旧 `compaction_persistence.py` の破棄プレフィックスフラッシュと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。
-- **圧縮時 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）が圧縮のたびにメモリレビューを派遣します；プラン抽出は同じ時点で `_detect_todo_all_complete` により評価されます。どちらも NUDGE レーン上の fire-and-forget タスクとして走ります；nudge ロックが保持されている間、圧縮は派遣を完全にスキップします。after-agent フックはこれらを派遣しません。
+- **圧縮時 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）は圧縮のたびに**メモリレビュー**だけを派遣します——会話を必要とする唯一の nudge で、破棄されるメッセージから長期記憶を救出するのが役割です。NUDGE レーン上の fire-and-forget タスクとして走ります；nudge ロックが保持されている間、圧縮は派遣を完全にスキップします。プラン抽出はもうこの経路にはありません（プラン完了時に fork、下記参照）。
 
 **Nudge サブエージェント**（`summarization/nudges.py`、圧縮パイプラインが派遣）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
 
-- `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：ユーザーの持続的な好みや期待をメモリツールで保存する定期パス。
-- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：全ての todo が完了したときに 1 回発火するパスで、2 つの成果物を生成します。**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます。**Part 2** は `skill_manage` でスキルライブラリを更新します（旧来の独立したスキルレビュー指針はここに統合）。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
+- `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：圧縮パイプラインが起動し、メインモデル（`_create_nudge_agent`）を使い、**会話を受け取ります**——ユーザーの持続的な好みや期待をメモリツールで保存する定期パス。
+- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：**プラン完了**フック（`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`）が起動し、**補助モデル**（`_create_plan_extraction_agent`、`temperature=0`）を使い、**会話を一切受け取りません**——指示と plan context だけです。2 つの成果物：**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます；**Part 2** は `skill_manage` でスキルライブラリを更新します（`<module>-notes` の引き継ぎを含む）。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
+- **プラン抽出の重複排除：** `_detect_todo_all_complete` は、全 todo が `completed`/`cancelled` で、かつプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）が最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と異なるときに発火します——完了済み todo のその場編集は再抽出し、変化のないプランはスキップし、失敗したパスは次の完了ターンで再試行します。手前のゲート：セッション単位の `Summarization → nudge` スイッチ、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、実行中のイベントループ。
 - **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
 ▶️ 詳細：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -742,8 +743,9 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 | キー | 所有者 | レジスタ |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_plan_extraction_fired` | 圧縮時 nudge スケジューラ（Summarization → `summarization/nudges.py`） | db |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 圧縮時 nudge スケジューラ（Summarization → `summarization/nudges.py`） | mem |
+| `nudge_plan_extraction_fired` | プラン完了トリガ（PlanContinuationEnforcer → `summarization/nudges.py`） | db |
+| `nudge_plan_snapshot_hash` | プラン完了トリガ——最後に抽出したプランの指紋（id + content + status + plan_ref） | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | nudge fork（圧縮メモリレビュー / プラン完了抽出） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` キー（圧縮カウンター、無効連続、直近トークン/戦略、スキップ LLM フラグ、リカバリ状態、直近ユーザー質問） | Summarization | mem |

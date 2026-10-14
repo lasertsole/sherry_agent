@@ -18,7 +18,7 @@ This document covers the experience system: **when** the agent extracts experien
 | Trigger | Mechanism (fork agent? call shape?) | Destination |
 |---|---|---|
 | Every compression | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
-| Todo list all-complete at a compression (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` (class-level skills + `<module>-notes`), ③ FACTS.md |
+| The plan completes — every todo `completed` / `cancelled` at a turn boundary (NOT at compression) | Plan extraction (`_run_plan_extraction`): the completion hook (`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`) forks a dedicated agent on the AUXILIARY model with `_PLAN_EXTRACTION_PROMPT` and NO conversation history | ① knowledge JSON, ② `skills/auto/` (class-level skills + `<module>-notes`), ③ FACTS.md |
 | Pre-compression (a cut actually discards messages) | Memory flush (`run_memory_flush[_sync]`): one cheap LLM call, not an agent | MEMORY.md and USER.md via `MemoryStore.append_entries` |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
 
@@ -41,12 +41,14 @@ This document covers the experience system: **when** the agent extracts experien
 - todos exist and every todo is `completed` or `cancelled`;
 - `nudge_plan_extraction_fired` (`state_register_db`) is not already set.
 
-It sets the fired flag on the transition and resets it to `False` whenever the list is not all-complete, so a later all-complete cycle fires again. Reads are fail-open. Because detection runs only at compression time, a session that never compresses never fires plan extraction.
+It sets the fired flag on the transition and resets it to `False` whenever the list is not all-complete, so a later all-complete cycle fires again. Reads are fail-open. Detection used to run only at compression time — a session that never compressed never extracted; it now runs on EVERY turn whose plan is complete (the completion hook), so a short session extracts too.
 
-When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extraction` is dispatched fire-and-forget from the same seam and runs under `nudge_plan_extraction_lock`:
+The flag alone cannot see an in-place edit of a completed todo, so the trigger also compares a plan **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) against the one stored under `nudge_plan_snapshot_hash` after the last SUCCESSFUL pass — changed content re-extracts, an unchanged plan is skipped, and a failed pass retries on the next completion turn.
+
+When `plan_extraction_enabled` is on, the per-session `Summarization → nudge` option is on, and detection fires, `_run_plan_extraction` is dispatched fire-and-forget by the hook and runs under `nudge_plan_extraction_lock` on the NUDGE lane:
 
 1. `_build_plan_context` gathers the plan file (`plan_ref` state first, else the first todo carrying one), the todo list, and this session's subagent runs (`result_text` truncated to 24 KB, `outcome`, task). It returns `{}` when there is no todo list, which makes the caller skip the pass.
-2. The prompt `_PLAN_EXTRACTION_PROMPT` is rendered with the plan context, then sent to a nudge agent (same builder, same `nudge: True` gate) with the conversation.
+2. The prompt `_PLAN_EXTRACTION_PROMPT` is rendered with the plan context, then sent to a dedicated agent (`_create_plan_extraction_agent`: the AUXILIARY model at `temperature=0`, same `nudge: True` tool gate) — with **no conversation at all**: the data is in the plan file, the todos and the subagent runs, so the pass can neither crowd the window nor read the chat.
 
 The prompt produces three outputs:
 
@@ -170,7 +172,7 @@ uv run pytest \
 - `test_memory_store.py`: MEMORY.md / USER.md store semantics.
 - `test_memory_store_facts.py`: the `facts` target — add/replace/remove, oldest-first rollover, atomic writes, load-time file creation, live content rendering, and prompt-snapshot injection (empty file → no block).
 
-AI-judged evaluation: `evals/nudge_extraction/suite.py` seeds a completed-plan run (plan file, completed todos, synthetic subagent runs), invokes the real `_nudge_plan_extraction`, then asks an auxiliary LLM judge whether the produced skill is genuinely grounded in that run, reusable, and non-generic. Every write is redirected into the sandbox, so the real `skills/auto/` and `workspace/` are never touched.
+AI-judged evaluation: `evals/nudge_extraction/suite.py` seeds a completed-plan run (plan file, completed todos, synthetic subagent runs), invokes the real `_run_plan_extraction`, then asks an auxiliary LLM judge whether the produced skill is genuinely grounded in that run, reusable, and non-generic. Every write is redirected into the sandbox, so the real `skills/auto/` and `workspace/` are never touched.
 
 ```bash
 uv run python evals/evals.py nudge_extraction

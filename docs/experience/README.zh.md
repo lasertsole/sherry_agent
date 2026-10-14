@@ -18,7 +18,7 @@
 | 触发 | 机制（是否 fork agent / 调用形态） | 写入目标 |
 |---|---|---|
 | 每次压缩 | memory nudge（`_nudge_memory`）：fork 一个 `create_agent` nudge agent，使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
-| 压缩时 todo 列表全部完成（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：fork 一个 nudge agent，使用 `_PLAN_EXTRACTION_PROMPT` | ① 知识 JSON ② `skills/auto/`（类级技能 + `<module>-notes`） ③ FACTS.md |
+| 计划完成——轮次边界上全部 todo 为 `completed` / `cancelled`（**不在压缩时**） | plan extraction（`_run_plan_extraction`）：完成钩子（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）用**辅助模型** fork 一个专用 agent，使用 `_PLAN_EXTRACTION_PROMPT`，且**不带任何对话历史** | ① 知识 JSON ② `skills/auto/`（类级技能 + `<module>-notes`） ③ FACTS.md |
 | 压缩前（cut 确实丢弃了消息） | memory flush（`run_memory_flush[_sync]`）：一次廉价 LLM 调用，非 agent | 经 `MemoryStore.append_entries` 写入 MEMORY.md 与 USER.md |
 | 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget nudge agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
 
@@ -41,12 +41,14 @@
 - todo 存在，且每项都是 `completed` 或 `cancelled`；
 - `nudge_plan_extraction_fired`（`state_register_db`）尚未置位。
 
-它在状态跃迁时置位，并在列表并非全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。由于检测只在压缩时运行，从不压缩的会话永远不会触发 plan extraction。
+它在状态跃迁时置位，并在列表并非全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。检测过去只在压缩时运行——从不压缩的会话永远不会抽取；现在它在**每个计划已完成的轮次**（完成钩子）运行，短会话同样会抽取。
 
-当 `plan_extraction_enabled` 开启且检测触发时，`_nudge_plan_extraction` 从同一接缝 fire-and-forget 派发，并在 `nudge_plan_extraction_lock` 保护下运行：
+光靠标志位看不到「就地改写已完成的 todo」，因此触发器还会比较计划**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**抽取后存于 `nudge_plan_snapshot_hash` 的值——内容变了就重抽、计划没变就跳过、失败的一轮会在下次完成轮重试。
+
+当 `plan_extraction_enabled` 开启、每会话 `Summarization → nudge` 开关开启且检测触发时，钩子以 fire-and-forget 派发 `_run_plan_extraction`，在 `nudge_plan_extraction_lock` 保护下于 NUDGE 车道运行：
 
 1. `_build_plan_context` 收集 plan 文件（优先 `plan_ref` 状态，其次第一个带 `plan_ref` 的 todo）、todo 列表以及本会话的子 agent 运行记录（`result_text` 截断到 24 KB、`outcome`、task）。无 todo 列表时返回 `{}`，调用方据此跳过。
-2. 用 plan 上下文渲染 `_PLAN_EXTRACTION_PROMPT`，连同对话一起发给 nudge agent（同一构建器、同一 `nudge: True` 门禁）。
+2. 用 plan 上下文渲染 `_PLAN_EXTRACTION_PROMPT`，发给专用 agent（`_create_plan_extraction_agent`：**辅助模型**、`temperature=0`、同一 `nudge: True` 工具门禁）——**完全不带对话**：数据全在 plan 文件、todo 和子 agent 运行记录里，因此这一轮既挤不爆窗口、也读不到聊天内容。
 
 该提示产出三项结果：
 
@@ -170,7 +172,7 @@ uv run pytest \
 - `test_memory_store.py`：MEMORY.md / USER.md 存储语义。
 - `test_memory_store_facts.py`：`facts` target——add/replace/remove、超限滚动淘汰最旧、原子写、加载时创建文件、实时内容渲染与提示快照注入（空文件不产生空块）。
 
-AI 评判评估：`evals/nudge_extraction/suite.py` 构造一次已完成 plan 的运行（plan 文件、已完成 todos、合成的子 agent 运行记录），调用真实的 `_nudge_plan_extraction`，再让辅助 LLM judge 判断产出的技能是否真正扎根于本次运行、可复用且非泛泛而谈。所有写入都重定向进沙箱，真实 `skills/auto/` 与 `workspace/` 绝不被触碰。
+AI 评判评估：`evals/nudge_extraction/suite.py` 构造一次已完成 plan 的运行（plan 文件、已完成 todos、合成的子 agent 运行记录），调用真实的 `_run_plan_extraction`，再让辅助 LLM judge 判断产出的技能是否真正扎根于本次运行、可复用且非泛泛而谈。所有写入都重定向进沙箱，真实 `skills/auto/` 与 `workspace/` 绝不被触碰。
 
 ```bash
 uv run python evals/evals.py nudge_extraction

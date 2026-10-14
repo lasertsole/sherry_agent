@@ -3,7 +3,7 @@
 - 建档日期：2026-10-14
 - 状态：方案设计，未开工
 - 参考：hermes-agent `background_review.py` + `context_compressor.py`
-- 前置：`计划_修复plan_extraction重复抽取.md` 已将 plan extraction 独立到 plan 完成路径。本计划只管 memory review。
+- 前置已落地：plan extraction 已独立到 plan 完成路径（本计划的姊妹计划已执行完毕并归档）。本计划只管 memory review。
 
 ---
 
@@ -249,7 +249,7 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
     if _nudges_locked(session_id):  # _NUDGE_MEMORY_LOCK_KEY 或 _PLAN_EXTRACTION_LOCK_KEY
         return False
 
-    # need_plan 逻辑已删除（plan extraction 移到 plan 完成路径）
+    # need_plan 逻辑已删除（plan extraction 移到 plan 完成路径，已落地）
 
     coro = _run_memory_review(session_id, list(messages_to_summarize))
     try:
@@ -306,7 +306,7 @@ memory review 有两层防爆窗口保护：
 | `_NudgeLimitTool` | 工具门控不变 |
 | `_MEMORY_REVIEW_PROMPT` | prompt 不改 |
 | memory review 触发时机 | 仍在压缩路径触发（不改为每 N 轮——那是 hermes 的做法，Sherry 的压缩路径触发已经够用） |
-| plan extraction | 已在 `计划_修复plan_extraction重复抽取.md` 独立到 plan 完成路径 |
+| plan extraction | 已独立到 plan 完成路径（姊妹计划已执行并归档） |
 
 ---
 

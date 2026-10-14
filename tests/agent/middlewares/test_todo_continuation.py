@@ -266,6 +266,49 @@ async def test_all_done_resets_and_does_not_inject(
     assert _SID not in st._stagnation_count
 
 
+@pytest.mark.asyncio
+async def test_all_done_forks_the_plan_extraction(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """The completion hook is the extraction's ONLY entry point.
+
+    It hangs off this branch on purpose: the plan is complete exactly here, and
+    the trigger keeps its own gates (fingerprint, in-flight lock, nudge option),
+    so a plan that was already extracted forks nothing.
+    """
+    import agent.middlewares.summarization.nudges as nudge_mod
+
+    forked: list[str] = []
+
+    async def _record(session_id: str) -> None:
+        forked.append(session_id)
+
+    monkeypatch.setattr(nudge_mod, "maybe_trigger_plan_extraction", _record)
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert forked == [_SID]
+    assert spy_auto_turn == [], "a finished plan must not arm a continuation turn"
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_plan_never_forks_the_extraction(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    import agent.middlewares.summarization.nudges as nudge_mod
+
+    forked: list[str] = []
+    monkeypatch.setattr(
+        nudge_mod, "maybe_trigger_plan_extraction", lambda session_id: forked.append(session_id)
+    )
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "pending")])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert forked == []
+
+
 # ============================================================================
 # (g) auto_turn raising -> swallowed (fail-open)
 # ============================================================================

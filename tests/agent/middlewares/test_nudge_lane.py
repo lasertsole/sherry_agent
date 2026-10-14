@@ -110,12 +110,13 @@ class TestNudgeLaneCap:
         lane = _isolated_lanes.get_lane(LaneType.NUDGE)
         tracker = NudgeTracker()
         monkeypatch.setattr(nudge, "_create_nudge_agent", _fake_builder(tracker))
+        monkeypatch.setattr(nudge, "_create_plan_extraction_agent", _fake_builder(tracker))
         monkeypatch.setattr(nudge, "_build_plan_context", lambda session_id: {"plan": "x"})
 
         memory_task = asyncio.create_task(nudge._nudge_memory("s1", "sys", []))
         await _wait_until(lambda: lane.active_count == 1)
 
-        plan_task = asyncio.create_task(nudge._nudge_plan_extraction("s2", "sys", []))
+        plan_task = asyncio.create_task(nudge._run_plan_extraction("s2"))
         await _wait_until(lambda: lane.queued_count == 1)
         assert tracker.max_active == 1
 
@@ -142,8 +143,7 @@ class TestNudgeLaneCap:
             calls.append("plan")
 
         monkeypatch.setattr(nudge, "_nudge_memory", _memory)
-        monkeypatch.setattr(nudge, "_nudge_plan_extraction", _plan)
-        monkeypatch.setattr(nudge, "_detect_todo_all_complete", lambda session_id: True)
+        monkeypatch.setattr(nudge, "_run_plan_extraction", _plan)
 
         scheduled = nudge.schedule_compression_nudges("sess-sync", [])
 

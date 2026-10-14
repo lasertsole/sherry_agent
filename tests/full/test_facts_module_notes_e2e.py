@@ -1,7 +1,7 @@
 """Live-network e2e: experience routing to FACTS.md (Part 3) and <module>-notes (Part 2).
 
 LIVE-NETWORK, RUN EXPLICITLY. These tests drive the REAL plan-extraction nudge
-(``summarization/nudges.py::_nudge_plan_extraction``: the real nudge agent
+(``summarization/nudges.py::_run_plan_extraction``: the real fork agent
 built on the main LLM via ``build_main_llm()``, the real ``memory`` /
 ``skill_manage`` / ``knowledge`` tools), the real ``Summarization`` compression
 harness for the FACTS prompt context, real SQLite stores and real files under
@@ -52,7 +52,7 @@ from typing import Any
 
 import pytest
 import yaml
-from langchain_core.messages import AIMessage, HumanMessage
+
 from loguru import logger
 
 import agent.core as agent_core
@@ -227,17 +227,21 @@ async def _seed_completed_plan(sid: str, tag: str) -> str:
     return plan_name
 
 
-async def _run_plan_extraction(session_id: str, instruction: str) -> None:
-    """Run the real plan-extraction nudge once (real agent, real main LLM, real tools)."""
+async def _run_plan_extraction(session_id: str, instruction: str = "") -> None:
+    """Run the real plan-extraction fork once (real agent, real aux LLM, real tools).
+
+    The fork carries NO conversation by design, so the scenario's steering line
+    is appended to the extraction prompt itself — the same place the old call
+    site appended its extra HumanMessage.
+    """
     state_register_mem.set_state(session_id, "system_prompt", _TEST_SYSTEM_PROMPT)
-    await nudge_mod._nudge_plan_extraction(
-        session_id,
-        _TEST_SYSTEM_PROMPT,
-        [
-            HumanMessage(content=instruction),
-            AIMessage(content="好的，我来提取并分流这些经验。"),
-        ],
-    )
+    original_prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+    if instruction:
+        nudge_mod._PLAN_EXTRACTION_PROMPT = f"{original_prompt}\n\n{instruction}"
+    try:
+        await nudge_mod._run_plan_extraction(session_id)
+    finally:
+        nudge_mod._PLAN_EXTRACTION_PROMPT = original_prompt
 
 
 def _facts_has_broad_pitfall(content: str) -> bool:

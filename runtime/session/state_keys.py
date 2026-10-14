@@ -117,6 +117,11 @@ class StateKey(StrEnum):
 
     NUDGE_PLAN_EXTRACTION_LOCK = "nudge_plan_extraction_lock"
     NUDGE_PLAN_EXTRACTION_FIRED = "nudge_plan_extraction_fired"
+    # The todo-snapshot fingerprint (id + content + status + plan_ref, hashed) at
+    # the last SUCCESSFUL plan extraction. Plan completion alone cannot dedupe:
+    # the once-per-cycle fired flag misses a plan whose completed todos were
+    # edited in place, so a changed fingerprint triggers the re-extraction.
+    NUDGE_PLAN_SNAPSHOT_HASH = "nudge_plan_snapshot_hash"
     NUDGE_REVIEW_MEMORY_LOCK = "nudge_review_memory_lock"
     COMPRESSION_TODO_UPDATE_LOCK = "compression_todo_update_lock"
     PLAN_REF = "plan_ref"
