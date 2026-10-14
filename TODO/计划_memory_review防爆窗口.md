@@ -349,14 +349,24 @@ memory review 有两层防爆窗口保护：
 | 合并 prompt | memory + skill 合并为一次 fork | 不需要合并——plan extraction 已独立 |
 | compression lock | session 级 SQLite 锁防并发压缩 | Sherry 有 per-session lock（`_state_lock`），但不是压缩专用。可后续加 |
 
-Sherry 不照搬 hermes 的"每 N 轮触发"——Sherry 的压缩路径触发已够用（压缩时消息要丢失了，正好 review）。Sherry 也不需要 cache-warm 策略——直接用 aux 模型 + digest 更简单（不依赖 provider 的前缀缓存行为）。
+Sherry 不照搬 hermes 的"每 N 轮触发"——Sherry 的压缩路径触发已够用（压缩时消息要丢失了，正好 review）。（本节原文结论"不需要 cache-warm、直接用 aux + digest"已被用户决策**推翻**：压缩切点即前缀切点，cache_warm 是零成本命中，现行默认即它，`digest` 降级为回退模式——见文末落地记录第二版。压缩本身仍用 aux，未变。）
 
 ---
 
 ## 落地记录（2026-10-14）
 
+**第一版（aux + digest）**——计划原文的形态：
+
 - `agent/middlewares/summarization/digest.py` 新建（`digest_history` + `_text_of`，含 `tail == 0` 时"全部折叠"的分支——Python 的 `messages[-0:]` 是整表，会把最需要折叠的一档整段保留）。
 - `nudges.py`：`_create_memory_review_agent`（aux、`temperature=0`）；`_nudge_memory` 先 digest 后 sanitize；`_run_compression_nudges` → `_run_memory_review(session_id, messages_to_summarize)`；`schedule_compression_nudges` → `schedule_memory_review`。
 - `core.py`：`_schedule_compression_nudges` → `_schedule_memory_review`，`_fire_compression_nudges` 改传 `messages_to_summarize`（压缩后待办 fork 的传参不变）。
-- 测试：`tests/agent/middlewares/test_memory_review_digest.py` 12 例（短历史原样、30 条折叠、按角色截断 300/200/150、SystemMessage 与空消息跳过、多模态只取文本、tail=0 全折、折叠后远小于原文且 <30K token、aux 模型、被丢弃段而非整段、调度透传、会话开关关闭不调度、折叠发生在 agent 之前）；顺带把 `_create_nudge_agent` 相关的存量测试改为各自的工厂（记忆复盘 → `_create_memory_review_agent`）。
+- 测试：`tests/agent/middlewares/test_memory_review_digest.py`（短历史原样、30 条折叠、按角色截断 300/200/150、SystemMessage 与空消息跳过、多模态只取文本、tail=0 全折、折叠后远小于原文且 <30K token、被丢弃段而非整段、调度透传、会话开关关闭不调度、折叠发生在 agent 之前）；顺带把 `_create_nudge_agent` 相关的存量测试改为各自的工厂（记忆复盘 → `_create_memory_review_agent`）。
 - 文档：`agent/middlewares/README`×4、`docs/experience/README`×4、`AGENTS.md` 均改写为"被丢弃段 + digest + aux 模型"。
+
+**第二版（cache_warm，现行默认）**——用户拍板覆盖了本计划第 8 节"不需要 cache-warm"的结论：压缩切点本就是**前缀切点**，被丢弃段正是请求中紧跟系统提示词的部分，于是把同一段原文连同同一模型配置、同一系统提示词、同一工具面发回去就能命中主模型自己的前缀缓存——**不需要折叠也不换模型**，复盘反而读到真实原文。压缩本身仍用 aux（未变）。
+
+- `config/features/agent_side/nudge.py`：`NUDGE["memory_review_mode"]`（`cache_warm` 默认 / `digest` 回退，给缓存不友好或小窗部署）；`digest.py` 与折叠测试全部保留，作为 `digest` 模式的实现。
+- `agent/middlewares/thinking_control/core.py`：新增进程内 `_applied_model_configs` + `current_session_model_config(session_id)`——每次主链模型调用（含无覆盖、构建失败、floor 回退三条路径）发布**可重建的配置描述符**（override / thinking_kwargs / temperature）。发布描述符而非实例：图每轮重建并关闭客户端，捕获的实例会过期。
+- `nudges.py`：`_build_session_model(session_id)` 按描述符新建主模型实例（无描述符则环境默认）；`_session_tool_face(session_id)` 复刻会话的工具面与顺序；`_memory_review_messages` 依 `memory_review_mode` 决定原文或折叠；`_nudge_memory` 记 `memory review done: session=… prefix_served_from_cache=…`（读 `usage_metadata.input_token_details["cache_read"]`，实测可确认命中）。
+- 测试：`test_memory_review_digest.py` 16 例（新增：按描述符重建 profile/环境默认/无描述符三态、会话工具面顺序、cache_warm 原文透传、digest 模式折叠；`test_thinking_control.py` 新增 `TestAppliedConfigPublication` 6 例钉住描述符发布与陈旧替换）。
+- 文档：上述四语 README/experience 与 `AGENTS.md` 再改写为"主模型配置重建 + 原文前缀命中（`digest` 为回退模式）"。

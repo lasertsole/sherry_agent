@@ -1,8 +1,9 @@
 """Compression-time nudge dispatch (migrated from test_compaction_persistence).
 
 The compression path no longer persists messages (that moved to
-``MessagePersistenceMiddleware``), but it still schedules the memory-review and
-plan-extraction nudges from the same seam.
+``MessagePersistenceMiddleware``), but it still schedules the memory-review
+nudge from the same seam — plan extraction forks on plan completion instead
+(``test_plan_extraction_trigger.py``).
 """
 
 from __future__ import annotations

@@ -537,8 +537,15 @@ the model/thinking controls)::
   `memory` (the nudge writes memory THROUGH that tool). At runtime
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
   both nudge entries — the compression-time memory review
-  (`schedule_memory_review`, handed the messages about to be discarded and
-  folded by `summarization/digest.py`) and the plan-completion extraction fork
+  (`schedule_memory_review`, handed the messages about to be discarded and run
+  CACHE-WARM: the slice goes back VERBATIM on the model configuration the turn
+  used — `nudges._build_session_model` rebuilds it from the descriptor
+  `thinking_control.current_session_model_config` publishes every main-chain
+  call — with the session's system prompt and tool face, so the compaction's
+  prefix cut makes the request a prefix-cache hit on the main model and only
+  the review instruction is fresh input; `NUDGE["memory_review_mode"] =
+  "digest"` falls back to the folded view, `summarization/digest.py`) and the
+  plan-completion extraction fork
   (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
   on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
   on the AUXILIARY model with no conversation history, and dedupes on a plan

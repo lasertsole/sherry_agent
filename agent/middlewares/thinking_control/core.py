@@ -54,6 +54,30 @@ from models.LLMs.reasoning_payload import is_thinking_disable_rejection
 from runtime.session.state_keys import StateKey
 
 
+#: The model CONFIGURATION the session's last main-chain model call ran with,
+#: per session (process-local, advisory). The memory review forks off the turn
+#: and must run on the same model identity: the provider's prefix cache matches
+#: on the request prefix, which is keyed on the model build. A DESCRIPTOR, not
+#: the instance — the graph is rebuilt and its clients closed every turn, so a
+#: captured instance can outlive its transport pool; the review builds a fresh
+#: instance from this and serialises the identical body. A miss (no turn yet in
+#: this process) simply means the review builds the env-default model.
+_applied_model_configs: dict[str, dict[str, Any]] = {}
+
+
+def current_session_model_config(session_id: str | None) -> dict[str, Any] | None:
+    """The model config this session's last main-chain call used, when known.
+
+    ``{"override": profile|None, "thinking_kwargs": {...}, "temperature": float|None}``
+    — everything :func:`~models.build_main_llm` / ``build_main_llm_for_profile``
+    need to rebuild the same request body.
+    """
+    if not session_id:
+        return None
+    config = _applied_model_configs.get(session_id)
+    return dict(config) if config is not None else None
+
+
 class ThinkingControlMiddleware(AgentMiddleware):
     """Swap the per-call model for the session's model/thinking choice."""
 
@@ -173,6 +197,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
 
         cache_key, override = self._read_controls(session_id)
         if cache_key is None and override is None:
+            _applied_model_configs[session_id] = self._descriptor(None, None)
             return request, None, None
 
         try:
@@ -184,8 +209,18 @@ class ThinkingControlMiddleware(AgentMiddleware):
                 (override or {}).get("model"),
                 exc,
             )
+            _applied_model_configs[session_id] = self._descriptor(None, None)
             return request, None, None
+        _applied_model_configs[session_id] = self._descriptor(cache_key, override)
         return request.override(model=variant), cache_key, override
+
+    def _descriptor(self, cache_key: str | None, override: dict | None) -> dict[str, Any]:
+        """The rebuildable config of the variant for ``(cache_key, override)``."""
+        return {
+            "override": override,
+            "thinking_kwargs": self._thinking_kwargs(cache_key),
+            "temperature": self._temperature,
+        }
 
     def _retry_with_floor(self, request: Any, handler: Any, override: dict | None) -> Any:
         """Re-run the handler with the minimum-thinking variant after the
@@ -197,6 +232,10 @@ class ThinkingControlMiddleware(AgentMiddleware):
         except Exception as exc:
             logger.warning("Thinking floor variant build failed: {}", exc)
             raise
+        session_id = getattr(request, "state", None)
+        session_id = session_id.get("session_id") if hasattr(session_id, "get") else None
+        if session_id:
+            _applied_model_configs[session_id] = self._descriptor("off_floor", override)
         swapped = request.override(model=floor_variant)
         return handler(swapped)
 

@@ -638,21 +638,77 @@ async def _create_nudge_agent(
     )
 
 
-async def _create_memory_review_agent(system_prompt: str):
-    """The memory review's agent: auxiliary model, digest-sized input.
+def _session_tool_face(session_id: str) -> list[BaseTool]:
+    """The tools the session's turn actually binds, in the same order.
 
-    NOT ``_create_nudge_agent`` (which keeps the main model for the
-    compression-todo fork): the review reads a FOLDED history and its job is
-    extracting facts worth remembering, which the judges already run on the
-    auxiliary model. The system prompt is kept — the memory tool's write guard
-    and the skills index live there.
+    The provider's prefix cache is keyed on the request prefix, and the tool
+    block is part of it — a review that binds a different tool list (or a
+    different order) misses the cache at the very first token. The selection
+    middleware narrows the face per session (预设-工具), so the review mirrors it
+    instead of assuming the full list.
     """
     from agent import get_agent_tools
+    from agent.middlewares.tool_selection.core import enabled_tool_names
+
+    enabled = enabled_tool_names(session_id)
+    tools = list(get_agent_tools())
+    if enabled is None:
+        return tools
+    return [tool for tool in tools if getattr(tool, "name", "") in enabled]
+
+
+def _build_session_model(session_id: str) -> Any:
+    """A fresh main-model instance matching this session's last turn.
+
+    Built from the CONFIGURATION the turn used (``current_session_model_config``)
+    rather than a captured instance: the graph is rebuilt — and its transport
+    pools closed — every turn, so a captured client can outlive its loop;
+    a fresh instance with the same provider/model/thinking/temperature
+    serialises the identical body and still hits the provider's prefix cache.
+    No descriptor known (no main-chain call yet in this process, e.g. a session
+    restored from disk right at a compaction) builds the env-default model.
+    """
+    from agent.middlewares.thinking_control.core import current_session_model_config
+    from models import build_main_llm, build_main_llm_for_profile
+
+    config = current_session_model_config(session_id) or {}
+    override = config.get("override")
+    temperature = config.get("temperature")
+    thinking_kwargs = dict(config.get("thinking_kwargs") or {})
+    if override:
+        return build_main_llm_for_profile(
+            provider=override.get("provider"),
+            model=override["model"],
+            api_key=override.get("api_key"),
+            base_url=override.get("base_url"),
+            temperature=temperature,
+            **thinking_kwargs,
+        )
+    return build_main_llm(temperature=temperature, **thinking_kwargs)
+
+
+async def _create_memory_review_agent(session_id: str, system_prompt: str):
+    """The memory review's agent: the MAIN model the turn ran on.
+
+    Cache-warm on purpose. The compaction cut is a PREFIX cut
+    (``messages_to_summarize = current_messages[:cutoff]``), so the discarded
+    segment sits immediately after the system prompt in the request the main
+    model just served. A review request built as
+    ``[tools][system prompt][discarded messages][review instruction]`` therefore
+    reproduces that prefix exactly, and the provider serves it from its prefix
+    cache: the review reads the REAL discarded text (no digest folding) while
+    paying cache-read prices for it, and only the instruction is fresh input.
+
+    Everything that is part of the prefix is reproduced: the model
+    configuration the turn used (``_build_session_model`` — the session's
+    override and thinking variant, or the env default), the session's assembled
+    system prompt, the session's own tool face and order. The nudge gate still
+    applies — the review may only EXECUTE the tools carrying ``nudge: True``.
+    """
     from agent.middlewares import ToolCallNormalize, ToolGuardrails
-    from models import build_auxiliary_llm
 
     return create_agent(
-        model=build_auxiliary_llm(temperature=0),
+        model=_build_session_model(session_id),
         state_schema=StateSchema,
         system_prompt=system_prompt,
         middleware=[
@@ -661,7 +717,7 @@ async def _create_memory_review_agent(system_prompt: str):
             ToolGuardrails(),
             _get_iteration_budget(),
         ],
-        tools=list(get_agent_tools()),
+        tools=_session_tool_face(session_id),
     )
 
 
@@ -756,13 +812,55 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
     }
 
 
-async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-    """Compression-time memory review: folded history, auxiliary model.
+def _memory_review_messages(session_id: str, messages: list[BaseMessage]) -> list[BaseMessage]:
+    """The messages the review sends, per ``NUDGE["memory_review_mode"]``.
 
-    Two guards keep it off the window's ceiling: the caller hands it the
-    DISCARDED slice (not the whole conversation), and the fold
-    (:func:`digest_history`) keeps only the recent tail verbatim. Neither is
-    optional — the review runs exactly when the window is at its fullest.
+    ``cache_warm`` (default): the discarded slice VERBATIM — it is the main
+    model's own prefix, so the provider serves it from cache and the review sees
+    the real text.
+
+    ``digest``: the folded view (``digest_history``), for a deployment whose
+    provider does not cache prefixes well or whose review model has a small
+    window — the fold bounds the input regardless of provider behaviour.
+    """
+    if str(NUDGE.get("memory_review_mode", "cache_warm")) == "digest":
+        from agent.middlewares.summarization.digest import digest_history
+
+        return digest_history(list(messages))
+    return list(messages)
+
+
+def _cache_hit_tokens(message: Any) -> int | None:
+    """Prompt tokens the provider served from its prefix cache, when reported.
+
+    langchain only normalizes the OpenAI shape; the DeepSeek / Anthropic fields
+    survive in ``response_metadata`` — the same provider-aware read the message
+    store uses (``context_engine.store.core._cache_read_tokens_from_usage``), so
+    the log line reflects every configured backend rather than reporting
+    "unknown" on the ones the SDK does not map.
+    """
+    usage = getattr(message, "usage_metadata", None) or {}
+    details = usage.get("input_token_details") or {}
+    value = details.get("cache_read")
+    if isinstance(value, (int, float)):
+        return int(value)
+    from context_engine.store.core import _cache_read_tokens_from_usage
+
+    metadata = getattr(message, "response_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return None
+    return _cache_read_tokens_from_usage(metadata)
+
+
+async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
+    """Compression-time memory review: the main model, on the turn's own prefix.
+
+    The caller hands it the DISCARDED slice, which — because the cut is a prefix
+    cut — is exactly the part of the request immediately following the system
+    prompt. Sending it verbatim with the same model, system prompt and tools
+    turns the whole thing into a prefix-cache hit; only the review instruction
+    is fresh input. ``NUDGE["memory_review_mode"] = "digest"`` switches to the
+    folded view for deployments whose provider caches poorly.
 
     NUDGE lane is event-loop-bound: acquire only on the main loop. Nudges are
     dispatched exclusively from the async compression path, so no run_async()
@@ -770,12 +868,10 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
     """
     state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
     try:
-        from agent.middlewares.summarization.digest import digest_history
-
-        digested = digest_history(list(messages))
-        sanitized = sanitize_tool_use_result_pairing(digested)
+        prepared = _memory_review_messages(session_id, messages)
+        sanitized = sanitize_tool_use_result_pairing(prepared)
         async with lane_slot(LaneType.NUDGE):
-            _agent = await _create_memory_review_agent(system_prompt)
+            _agent = await _create_memory_review_agent(session_id, system_prompt)
             res = await _agent.ainvoke(
                 input={
                     "session_id": session_id,
@@ -785,7 +881,14 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
                     ],
                 }
             )
-        logger.debug("nudge memory res is {}", res["messages"][-1])
+        reply = res["messages"][-1]
+        cache_read = _cache_hit_tokens(reply)
+        logger.info(
+            "memory review done: session={} prefix_served_from_cache={}",
+            session_id,
+            cache_read if cache_read is not None else "unknown",
+        )
+        logger.debug("nudge memory res is {}", reply)
     finally:
         state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
 

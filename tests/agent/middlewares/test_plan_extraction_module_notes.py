@@ -124,7 +124,7 @@ class TestFactsRendering:
                 prompts.append(input["messages"][-1].content)
                 return {"messages": [AIMessage(content="nothing")]}
 
-        async def _create(system_prompt):
+        async def _create(session_id, system_prompt):
             return _CapturingAgent()
 
         monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _create)
@@ -228,9 +228,13 @@ def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
         monkeypatch.setattr(pub_base, name, lambda *a, **k: None)
     monkeypatch.setattr(pub_base, "is_background_review", lambda: False)
 
-    # The fork builds its own agent on the AUXILIARY model (the memory review is
-    # the one that keeps the main model).
+    # Plan extraction builds its agent on the AUXILIARY model; the memory review
+    # rebuilds the session's main-model configuration (cache-warm), so both seams
+    # get the stub.
     monkeypatch.setattr("models.build_auxiliary_llm", lambda **kwargs: _stub_model(tool_call))
+    monkeypatch.setattr(
+        nudge_mod, "_build_session_model", lambda session_id: _stub_model(tool_call)
+    )
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_skill_manage_tool()])
     monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
     monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())

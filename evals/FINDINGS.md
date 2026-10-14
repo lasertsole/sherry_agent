@@ -22,7 +22,7 @@ Rules for entries:
 | F3 | Near-miss fixes are not verified against the reported behaviour | `swebench` `sympy__sympy-24909` (two runs) | TODO (skill) |
 | F4 | Harness: the local pytest gate is load-sensitive | gate runs 2026-10-14 | WONTFIX-ENV |
 | F5 | The measurement host has no OS sandbox backend | every eval run | WONTFIX-ENV |
-| F6 | The auxiliary model's provider returned 429 "balance exhausted" | unit run 2026-10-14 (review factory fix) | TODO (account) |
+| F6 | The auxiliary model's provider returned 429 "balance exhausted" | unit run 2026-10-14 (review factory fix) | RESOLVED (aux → DeepSeek) |
 | F7 | External instances whose own suite fights a hand-built venv | hard-slice gold checks 2026-10-14 | WONTFIX-ENV (documented) |
 | F8 | Eval leftovers inside the repo slow a repo-wide search test | gate run 2026-10-14 (`test_search_engines`) | FIXED (suite cleans up) |
 
@@ -178,7 +178,7 @@ measurement run cannot perturb the unit suite it sits next to.
 
 **Status.** FIXED (in the same commit as this entry).
 
-## F6 — The auxiliary model's provider returned 429 "balance exhausted" (account)
+## F6 — The auxiliary model's provider returned 429 "balance exhausted" (RESOLVED: aux → DeepSeek)
 
 **Symptom.** While adapting the memory-review tests, a test that used to run on
 the (faked) main model now builds the REAL auxiliary model — and the provider
@@ -186,6 +186,10 @@ answered `429 {'code': '1113', 'message': '余额不足或无可用资源包'}`.
 auxiliary-backed pass (memory review, plan extraction, step/completion judges,
 the summarization call itself) degrades under that: the two nudge forks are
 fail-open, so reviews simply stop happening; the summarizer's call is not.
+(Update 2026-10-14, later the same day: the memory review no longer runs on the
+auxiliary model — it was moved to a cache-warm pass on the session's own main
+model, so this finding now covers plan extraction, the judges and the
+summarizer.)
 
 **Evidence.** `tests/agent/middlewares/test_memory_review_facts.py` failure
 output, 2026-10-14.
@@ -196,7 +200,13 @@ classifying provider failures as `invalid_run` when they surface there. The
 nudge forks' fail-open behaviour is correct (a broken provider must not break a
 turn) but means the degradation is SILENT — worth a log at warning level.
 
-**Status.** TODO (account / observability).
+**Resolved 2026-10-14.** The auxiliary family was pointed at DeepSeek
+(`.models`: `AUXILIARY_LLM_PROVIDER=deepseek`, `AUXILIARY_LLM_API_NAME=deepseek-flash`,
+`AUXILIARY_LLM_API_BASE=https://api.deepseek.com/v1`), verified with a live call;
+the live nudge-cadence e2e then passes end-to-end (real compaction → real
+summary → real memory review, 21k prefix tokens served from cache).
+
+**Status.** RESOLVED (account). The silent-degradation log stays TODO.
 
 ## F5 — The measurement host has no OS sandbox backend (WONTFIX-ENV)
 

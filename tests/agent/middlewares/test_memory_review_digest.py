@@ -144,28 +144,117 @@ def test_the_folded_input_is_far_smaller_than_the_raw_history():
 # ── the review's own wiring ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_the_review_agent_runs_on_the_auxiliary_model(monkeypatch):
+def _descriptor(monkeypatch, config):
+    """Patch the seam: a published model descriptor + a fake create_agent."""
+    monkeypatch.setattr(
+        "agent.middlewares.thinking_control.core.current_session_model_config",
+        lambda session_id: config,
+    )
     calls: dict = {}
-
-    def _build_auxiliary_llm(temperature: float | None = None):
-        calls["temperature"] = temperature
-        return object()
 
     def _create_agent(**kwargs):
         calls["agent_kwargs"] = kwargs
         return object()
 
-    import models
-
-    monkeypatch.setattr(models, "build_auxiliary_llm", _build_auxiliary_llm)
     monkeypatch.setattr(nudge_mod, "create_agent", _create_agent)
     monkeypatch.setattr("agent.get_agent_tools", lambda: [])
+    return calls
 
-    await nudge_mod._create_memory_review_agent("sys")
 
-    assert calls["temperature"] == 0
+@pytest.mark.asyncio
+async def test_the_review_agent_rebuilds_the_turns_model_config(monkeypatch):
+    """Cache-warm: the same provider/model/thinking/temperature = same body."""
+    import models
+
+    sentinel = object()
+    profile_kwargs: dict = {}
+    monkeypatch.setattr(
+        models,
+        "build_main_llm_for_profile",
+        lambda **kwargs: profile_kwargs.update(kwargs) or sentinel,
+    )
+    calls = _descriptor(
+        monkeypatch,
+        {
+            "override": {"provider": "openai", "model": "gpt-x", "api_key": "k", "base_url": "u"},
+            "thinking_kwargs": {"thinking_level": "high"},
+            "temperature": 0.8,
+        },
+    )
+
+    await nudge_mod._create_memory_review_agent("sess-x", "sys")
+
+    assert profile_kwargs == {
+        "provider": "openai",
+        "model": "gpt-x",
+        "api_key": "k",
+        "base_url": "u",
+        "temperature": 0.8,
+        "thinking_level": "high",
+    }
+    assert calls["agent_kwargs"]["model"] is sentinel
     assert calls["agent_kwargs"]["system_prompt"] == "sys"
+
+
+@pytest.mark.asyncio
+async def test_the_review_agent_rebuilds_the_env_default_config(monkeypatch):
+    """A session with no model override still carries thinking/temperature."""
+    import models
+
+    sentinel = object()
+    env_kwargs: dict = {}
+    monkeypatch.setattr(
+        models, "build_main_llm", lambda **kwargs: env_kwargs.update(kwargs) or sentinel
+    )
+    calls = _descriptor(
+        monkeypatch,
+        {"override": None, "thinking_kwargs": {"thinking": False}, "temperature": 0.8},
+    )
+
+    await nudge_mod._create_memory_review_agent("sess-y", "sys")
+
+    assert env_kwargs == {"temperature": 0.8, "thinking": False}
+    assert calls["agent_kwargs"]["model"] is sentinel
+
+
+@pytest.mark.asyncio
+async def test_the_review_agent_without_a_descriptor_builds_the_env_default(monkeypatch):
+    """No main-chain call yet in this process: plain env-default model."""
+    import models
+
+    sentinel = object()
+    monkeypatch.setattr(models, "build_main_llm", lambda *args, **kwargs: sentinel)
+    calls = _descriptor(monkeypatch, None)
+
+    await nudge_mod._create_memory_review_agent("sess-z", "sys")
+
+    assert calls["agent_kwargs"]["model"] is sentinel
+
+
+@pytest.mark.asyncio
+async def test_the_review_agent_binds_the_sessions_own_tool_face(monkeypatch):
+    """The tool block is part of the cached prefix: same tools, same order."""
+    import models
+
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    monkeypatch.setattr(models, "build_main_llm", lambda *args, **kwargs: object())
+    calls = _descriptor(monkeypatch, None)
+    monkeypatch.setattr(
+        "agent.get_agent_tools",
+        lambda: [_Tool("a"), _Tool("b"), _Tool("c")],
+    )
+    monkeypatch.setattr(
+        "agent.middlewares.tool_selection.core.enabled_tool_names",
+        lambda session_id: frozenset({"a", "c"}),
+    )
+
+    await nudge_mod._create_memory_review_agent("sess-t", "sys")
+
+    names = [tool.name for tool in calls["agent_kwargs"]["tools"]]
+    assert names == ["a", "c"], "the session's face, in the same order"
 
 
 @pytest.mark.asyncio
@@ -229,8 +318,31 @@ async def test_the_session_switch_off_schedules_nothing(monkeypatch):
     assert recorded == []
 
 
+def test_the_cache_read_reads_every_provider_shape():
+    """The hit-ratio log must work on DeepSeek/Anthropic too, not just OpenAI."""
+    openai_shaped = AIMessage(
+        content="ok",
+        usage_metadata={
+            "input_tokens": 100,
+            "output_tokens": 5,
+            "total_tokens": 105,
+            "input_token_details": {"cache_read": 900},
+        },
+    )
+    deepseek_shaped = AIMessage(
+        content="ok",
+        response_metadata={"token_usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 640}},
+    )
+    silent = AIMessage(content="ok")
+
+    assert nudge_mod._cache_hit_tokens(openai_shaped) == 900
+    assert nudge_mod._cache_hit_tokens(deepseek_shaped) == 640
+    assert nudge_mod._cache_hit_tokens(silent) is None
+
+
 @pytest.mark.asyncio
-async def test_nudge_memory_folds_the_history_before_the_agent(monkeypatch):
+async def test_cache_warm_sends_the_discarded_messages_verbatim(monkeypatch):
+    """The default: the slice IS the main model's prefix, so it goes as-is."""
     captured: dict = {}
 
     class _CapturingAgent:
@@ -238,10 +350,35 @@ async def test_nudge_memory_folds_the_history_before_the_agent(monkeypatch):
             captured["messages"] = list(input["messages"])
             return {"messages": [AIMessage(content="ok")]}
 
-    async def _factory(system_prompt: str) -> _CapturingAgent:
+    async def _factory(session_id: str, system_prompt: str) -> _CapturingAgent:
         return _CapturingAgent()
 
     monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _factory)
+    monkeypatch.setitem(nudge_mod.NUDGE, "memory_review_mode", "cache_warm")
+    discarded = _history(50)
+
+    await nudge_mod._nudge_memory("mr-" + uuid.uuid4().hex[:8], "sys", discarded)
+
+    messages = captured["messages"]
+    assert len(messages) == len(discarded) + 1
+    assert messages[: len(discarded)] == discarded
+    assert messages[-1].content.startswith("Review the conversation")
+
+
+@pytest.mark.asyncio
+async def test_the_digest_mode_folds_the_history_before_the_agent(monkeypatch):
+    captured: dict = {}
+
+    class _CapturingAgent:
+        async def ainvoke(self, input: dict, config=None) -> dict:  # noqa: ARG002
+            captured["messages"] = list(input["messages"])
+            return {"messages": [AIMessage(content="ok")]}
+
+    async def _factory(session_id: str, system_prompt: str) -> _CapturingAgent:
+        return _CapturingAgent()
+
+    monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _factory)
+    monkeypatch.setitem(nudge_mod.NUDGE, "memory_review_mode", "digest")
     session_id = "mr-" + uuid.uuid4().hex[:8]
 
     await nudge_mod._nudge_memory(session_id, "sys", _history(50))

@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 `digest_history`로 접음), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork. 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 해당 턴 자신의 모델과 프리픽스에서 캐시 온존으로 실행), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork. 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 
@@ -17,7 +17,7 @@
 
 | 트리거 | 메커니즘(fork agent 여부 / 호출 형태) | 기록 대상 |
 |---|---|---|
-| 압축마다 | memory review(`_nudge_memory`): **버려질** 슬라이스만 받아 `digest_history`로 접고(최근 24개는 원문, 그 이전은 한 줄로 절단), 전용 fork(`_create_memory_review_agent`, **보조 모델**)에서 `_MEMORY_REVIEW_PROMPT` 사용 | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
+| 압축마다 | memory review(`_nudge_memory`): **버려질** 슬라이스만 **원문 그대로** 해당 턴이 사용한 모델 구성(`_build_session_model`)으로 보내고, 세션의 시스템 프롬프트와 도구 면도 재현해 프리픽스 캐시에 적중시킴; `NUDGE["memory_review_mode"] = "digest"`면 대신 접음(최근 24개는 원문, 그 이전은 한 줄로 절단) | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 | 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | plan extraction(`_run_plan_extraction`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`)이 **보조 모델**로 전용 agent를 fork하고 `_PLAN_EXTRACTION_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | ① 지식 JSON ② `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`) ③ FACTS.md |
 | 압축 전(cut이 실제로 메시지를 버림) | memory flush(`run_memory_flush[_sync]`): 값싼 LLM 호출 한 번, agent 아님 | `MemoryStore.append_entries`를 거쳐 MEMORY.md와 USER.md |
 | 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget nudge agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
@@ -26,9 +26,9 @@
 
 ### 1. 압축 시점 memory review
 
-`schedule_memory_review`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 넘겨받는 것은 **버려질** 슬라이스——잃게 될 사실이 거기에 있고, 대화 전체의 일부일 뿐입니다——이며 `_nudge_memory`가 `digest_history`로 접은 뒤 agent에게 보여줍니다. 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음).
+`schedule_memory_review`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 넘겨받는 것은 **버려질** 슬라이스——잃게 될 사실이 거기에 있고, 대화 전체의 일부일 뿐입니다——이며 기본 `cache_warm` 모드에서는 **원문 그대로** 모델로 전송됩니다(`NUDGE["memory_review_mode"] = "digest"`일 때만 `digest_history`로 접음). 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음).
 
-`_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_memory_review_agent`(**보조 모델**, `temperature=0`)로 리뷰 agent를 만들고, 렌더링된 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 대화에 덧붙여 호출합니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `user` 대상에, 모듈에 얽매이지 않는 광범위한 함정을 `facts` 대상에 `memory` 도구로 저장하라고 요구합니다. 렌더링 시 현재 FACTS.md 내용과 문자 상한(`_render_prompt_facts`)을 함께 전달하고, 편집자처럼 유지할 것——같은 함정을 병합하고, 오래된 항목을 교체하며, 파일을 부풀리느니 아무것도 저장하지 않기를 우선할 것——을 지시합니다. 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
+`_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_memory_review_agent`로 리뷰 agent를 만들고, 렌더링된 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 버려질 슬라이스에 덧붙여 호출합니다. **구조적으로 캐시 온존:** 압축 절단은 프리픽스 절단이고, 버려질 슬라이스는 시스템 프롬프트 바로 뒤에 위치하는 부분 그 자체입니다——같은 모델 구성(`_build_session_model`: 세션의 provider/model/thinking/temperature. 그래프는 턴마다 재구축되고 클라이언트가 닫히므로 구성에서 **새 인스턴스**를 구축), 같은 시스템 프롬프트, 같은 도구 면으로 되돌려 보내면 메인 모델 자신의 프리픽스를 재현하고 제공자는 프리픽스 캐시에서 응답합니다; 새 입력은 리뷰 지시뿐이고 리뷰가 읽는 것은 **실제 원문 그대로**입니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `user` 대상에, 모듈에 얽매이지 않는 광범위한 함정을 `facts` 대상에 `memory` 도구로 저장하라고 요구합니다. 렌더링 시 현재 FACTS.md 내용과 문자 상한(`_render_prompt_facts`)을 함께 전달하고, 편집자처럼 유지할 것——같은 함정을 병합하고, 오래된 항목을 교체하며, 파일을 부풀리느니 아무것도 저장하지 않기를 우선할 것——을 지시합니다. 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
 
 - 리뷰 agent는 **보조 LLM** 위의 별도 `create_agent`이며, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`, checkpointer 없음.
 - `_NudgeLimitTool`(`allowed_metadata_key` 미지정)은 metadata에 `nudge: True`가 있는 도구만 통과시킵니다. `memory`, `skill_list`, `skill_view`, `skill_manage`, `knowledge`가 이 마커를 가지므로 nudge agent는 memory를 쓸 수 있지만 임의의 메인 도구는 호출할 수 없습니다.
@@ -164,10 +164,10 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: 트리거 게이트, fire-and-forget 예약, 재진입 락, fail-open 해제, 프롬프트 내용, `todo_update` metadata 게이트, 그리고 완전한 fork 격리(파생 키, 메인 세션 `todowrite` 심, checkpointer / 메시지 누출 없음).
-- `test_compression_nudges.py`: 압축 시점 디스패치(memory review가 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). `test_memory_review_digest.py`가 접기와 버려질 슬라이스 배선을 고정합니다. 영속화 단언은 `tests/agent/middlewares/message_persistence/`에 있습니다.
+- `test_compression_nudges.py`: 압축 시점 디스패치(memory review가 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). `test_memory_review_digest.py`가 버려질 슬라이스 배선, cache_warm의 모델 재구축(descriptor 필드, 환경 기본값 폴백, 세션 도구 면), `memory_review_mode="digest"`에서의 접기를 고정합니다. 영속화 단언은 `tests/agent/middlewares/message_persistence/`에 있습니다.
 - `test_compression_cooldown_persist.py`: 쿨다운의 재시작 간 생존.
 - `test_memory_flush.py`: flush 게이트, 라우팅, 비블로킹 실패.
-- `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_compression_nudges`의 압축마다 memory review 디스패치와 락 의미론, `_build_plan_context`.
+- `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_memory_review`의 압축마다 memory review 디스패치와 락 의미론, `_build_plan_context`.
 - `test_plan_extraction_module_notes.py`: Part 2의 `<module>-notes` carry-forward 가이던스와 Part 3의 FACTS 지시, 두 nudge 프롬프트로의 라이브 FACTS.md 렌더링, 스텁 LLM 동작(create는 `skills/auto/<module>-notes/`에 안착, 기존 동명 스킬은 patch되고 중복 생성되지 않음).
 - `test_memory_store.py`: MEMORY.md / USER.md 저장소 의미론.
 - `test_memory_store_facts.py`: `facts` 대상——add/replace/remove, 상한 초과 시 가장 오래된 항목 롤오프, 원자적 쓰기, 로드 시 파일 생성, 라이브 내용 렌더링, 프롬프트 스냅샷 주입(빈 파일 → 블록 없음).

@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并经 `digest_history` 折叠）、计划在轮次边界完成时的 plan extraction、压缩前 memory flush、压缩后 todo fork。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 plan extraction、压缩前 memory flush、压缩后 todo fork。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
@@ -17,7 +17,7 @@
 
 | 触发 | 机制（是否 fork agent / 调用形态） | 写入目标 |
 |---|---|---|
-| 每次压缩 | 记忆复盘（`_nudge_memory`）：只收**被丢弃**的那段，经 `digest_history` 折叠（最近 24 条原文，更早的每条截断成一行），跑在专用 fork 上（`_create_memory_review_agent`，**辅助模型** `temperature=0`），使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
+| 每次压缩 | 记忆复盘（`_nudge_memory`）：只收**被丢弃**的那段，**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`），并复刻会话的系统提示词与工具面，使请求命中前缀缓存；`NUDGE["memory_review_mode"] = "digest"` 则改为折叠（最近 24 条原文，更早的每条截断成一行） | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 | 计划完成——轮次边界上全部 todo 为 `completed` / `cancelled`（**不在压缩时**） | plan extraction（`_run_plan_extraction`）：完成钩子（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）用**辅助模型** fork 一个专用 agent，使用 `_PLAN_EXTRACTION_PROMPT`，且**不带任何对话历史** | ① 知识 JSON ② `skills/auto/`（类级技能 + `<module>-notes`） ③ FACTS.md |
 | 压缩前（cut 确实丢弃了消息） | memory flush（`run_memory_flush[_sync]`）：一次廉价 LLM 调用，非 agent | 经 `MemoryStore.append_entries` 写入 MEMORY.md 与 USER.md |
 | 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget nudge agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
@@ -26,9 +26,9 @@
 
 ### 1. 压缩时 memory review
 
-`schedule_memory_review`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每次压缩都以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。交给它的是**被丢弃**的那段——要丢的事实正在那里，而且只占整段对话的一小部分——`_nudge_memory` 随后用 `digest_history` 折叠后才让 agent 看到。任一 nudge 锁被持有时，压缩完全跳过派发（不排队）。
+`schedule_memory_review`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每次压缩都以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。交给它的是**被丢弃**的那段——要丢的事实正在那里，而且只占整段对话的一小部分——默认 `cache_warm` 模式下这段**原文**直接发给模型（`NUDGE["memory_review_mode"] = "digest"` 才先用 `digest_history` 折叠）。任一 nudge 锁被持有时，压缩完全跳过派发（不排队）。
 
-`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_memory_review_agent`（**辅助模型**、`temperature=0`）构建复盘 agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到折叠后的历史后调用。两道防爆：传被丢弃段而非整段对话、以及折叠——这次复盘恰好在上下文最满时运行。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把不绑定模块的广泛坑写入 `facts` 目标。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_memory_review_agent` 构建复盘 agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到被丢弃段后调用。**构造上就是缓存命中：** 压缩切点是前缀切点，被丢弃段恰是请求中紧跟系统提示词的那部分——用同一模型配置（`_build_session_model`：会话的 provider/model/思考/temperature；因图在每轮重建后会关闭客户端，故按配置**新建实例**）、同一系统提示词与同一工具面把它发回去，就复现了主模型自己的前缀，提供商随后从前缀缓存作答；新增输入只有那条复盘指令，而复盘读到的仍是**真实原文**。两道防爆不变：只传被丢弃段而非整段对话（绝不传保留段），且绝不阻塞本轮（fire-and-forget，跑在 NUDGE 车道上）——这次复盘恰好在上下文最满时运行。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把不绑定模块的广泛坑写入 `facts` 目标。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
 
 - 复盘 agent 是**辅助 LLM** 上独立的 `create_agent`，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，无 checkpointer。
 - `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` 都带该标记，因此 nudge agent 能写 memory，但无法调用任意主工具。
@@ -164,10 +164,10 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
-- `test_compression_nudges.py`：压缩时派发（memory review 从 compact 接缝触发；无切点压缩不派发）。`test_memory_review_digest.py` 钉住折叠与被丢弃段的接线。持久化断言位于 `tests/agent/middlewares/message_persistence/`。
+- `test_compression_nudges.py`：压缩时派发（memory review 从 compact 接缝触发；无切点压缩不派发）。`test_memory_review_digest.py` 钉住被丢弃段的接线、cache_warm 的模型重建（descriptor 字段、环境默认回退、会话工具面），以及 `memory_review_mode="digest"` 下的折叠。持久化断言位于 `tests/agent/middlewares/message_persistence/`。
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。
 - `test_memory_flush.py`：flush 门槛、路由与非阻塞失败。
-- `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_compression_nudges` 的每次压缩派发记忆回顾与锁语义，以及 `_build_plan_context`。
+- `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_memory_review` 的每次压缩派发记忆回顾与锁语义，以及 `_build_plan_context`。
 - `test_plan_extraction_module_notes.py`：Part 2 的 `<module>-notes` carry-forward 指引与 Part 3 的 FACTS 指令、两个 nudge 提示中的实时 FACTS.md 渲染，以及假 LLM 行为测试（create 落到 `skills/auto/<module>-notes/`；同名已存在则 patch，绝不重复创建）。
 - `test_memory_store.py`：MEMORY.md / USER.md 存储语义。
 - `test_memory_store_facts.py`：`facts` target——add/replace/remove、超限滚动淘汰最旧、原子写、加载时创建文件、实时内容渲染与提示快照注入（空文件不产生空块）。
