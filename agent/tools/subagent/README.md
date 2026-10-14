@@ -510,7 +510,7 @@ Completion gates layer from the child run through the step to the flow, and all 
 |-------|------|----------------|--------------------|
 | Child run | completion judge + goal loop (`agent/tools/subagent/spawn/completion_judge.py`) | the task and the child's latest response; budget `COMPLETION_JUDGE["goal_max_turns"]` (default 5) | judge error → `done` |
 | Step | step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (no criteria → no judge call) | model error / unparseable → `pass` |
-| Flow | `taskflow_finish` gates A–D | DAG state and the flow's evidence | unreadable ledger / verifier error → pass |
+| Flow | `taskflow_finish` gates A–C (+ the opt-in Gate E judge) | DAG state and the flow's evidence | unreadable ledger / judge error → pass |
 | Parent turn | completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`) | the session's verification evidence | unavailable lookup → no gate |
 
 The completion judge runs on every spawn; `goal_max_turns` is its only budget knob (a budget of 1 keeps the child single-turn). The step judge equally runs for every criteria-bearing step — `validation_criteria` is its input, not a switch — and `taskflow_finish` requires the evidence gates to pass before a flow can reach DONE.

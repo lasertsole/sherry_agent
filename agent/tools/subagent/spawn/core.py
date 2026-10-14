@@ -862,6 +862,12 @@ async def _run_goal_loop(
     CONTINUE injects the judge's continuation prompt as the next human turn.
     Fail-open (judge errors => DONE) so it cannot trap the subagent. Returns the
     latest result text and an outcome only when the budget ran out.
+
+    The judge's FIRST call is skipped when the child's opening turn already
+    cleared the bar on its own: a non-empty result plus at least one passing,
+    non-stale evidence row in the child's ledger (``_first_turn_self_evident``).
+    The point: a simple spawn should not pay an auxiliary LLM call for a verdict
+    the ledger already carries.
     """
     from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 
@@ -869,10 +875,17 @@ async def _run_goal_loop(
 
     turns_used = 1
     while True:
+        evidence_summary = collect_evidence_summary(session_key=run.child_session_key)
+        if turns_used == 1 and _first_turn_self_evident(result_text, evidence_summary):
+            logger.debug(
+                "CompletionJudge skipped for run {}: first turn carries passing evidence",
+                run.run_id,
+            )
+            return result_text, None
         judge_result = await judge_completion(
             task_text=user_message,
             last_response=result_text or "",
-            evidence_summary=collect_evidence_summary(session_key=run.child_session_key),
+            evidence_summary=evidence_summary,
         )
         if judge_result.verdict == CompletionVerdict.DONE:
             return result_text, None
@@ -888,6 +901,21 @@ async def _run_goal_loop(
         agent_result = await invoke([HumanMessage(content=judge_result.continuation_prompt)])
         result_text = _extract_result_text(agent_result)
         turns_used += 1
+
+
+def _first_turn_self_evident(result_text: str | None, evidence_summary: str | None) -> bool:
+    """True when the opening turn needs no judge: result + passing evidence.
+
+    The summary format is the evidence collector's (``[pass]`` / ``[FAIL]`` /
+    ``?`` per row, `` [stale]`` suffixed): a pass exists, nothing failed, and
+    nothing went stale. Any read failure returns False — the shortcut must
+    never suppress a judge on incomplete information (fail towards judging).
+    """
+    if not (result_text or "").strip():
+        return False
+    if not evidence_summary or "[pass]" not in evidence_summary:
+        return False
+    return "FAIL" not in evidence_summary and "[stale]" not in evidence_summary
 
 
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
@@ -1116,6 +1144,17 @@ async def _execute_subagent_scoped(
         # Goal loop: the completion judge reviews every turn; CONTINUE injects its
         # continuation prompt as the next human turn until DONE or the budget is
         # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
+        # The master switch is read HERE, at the funnel every execution path
+        # passes through (spawn, steer, direct calls): disabled ends the loop
+        # whatever budget the caller resolved.
+        from config.features import COMPLETION_JUDGE as _CJ
+
+        if not _CJ.get("enabled", True):
+            if goal_max_turns > 1:
+                logger.debug(
+                    "CompletionJudge disabled: run {} executes without a goal loop", run.run_id
+                )
+            goal_max_turns = 1
         if goal_max_turns > 1:
             result_text, budget_outcome = await _run_goal_loop(
                 run, user_message, result_text, _invoke, goal_max_turns

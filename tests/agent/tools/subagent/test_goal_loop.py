@@ -50,8 +50,16 @@ def _make_run() -> SubagentRunRecord:
     )
 
 
-def _install_deps(monkeypatch: pytest.MonkeyPatch, child: _FakeChildAgent) -> list:
-    """Patch the child builder, completion seam, hooks, and evidence collector."""
+def _install_deps(
+    monkeypatch: pytest.MonkeyPatch,
+    child: _FakeChildAgent,
+    *,
+    evidence: str | None = None,
+) -> list:
+    """Patch the child builder, completion seam, hooks, and evidence collector.
+
+    ``evidence`` is what the child session's ledger reports (``None`` = empty).
+    """
     captured: list = []
 
     async def _fake_build(**_: object) -> _FakeChildAgent:
@@ -69,7 +77,7 @@ def _install_deps(monkeypatch: pytest.MonkeyPatch, child: _FakeChildAgent) -> li
     monkeypatch.setattr(lifecycle, "complete_subagent_run", _fake_complete)
     monkeypatch.setattr(spawn_core, "fire_progress_hook", _noop)
     monkeypatch.setattr(spawn_core, "fire_ended_hook", _noop)
-    monkeypatch.setattr(evidence_collector, "collect_evidence_summary", lambda **_: None)
+    monkeypatch.setattr(evidence_collector, "collect_evidence_summary", lambda **_: evidence)
     # The subagent conftest's pub.func stub is clobbered in whole-suite runs
     # (build_agent_config resolves to the module, not a callable); pin the seam.
     pub_func = sys.modules.get("pub.func")
@@ -98,8 +106,8 @@ def _continue(prompt: str = "keep going") -> CompletionJudgeResult:
     return CompletionJudgeResult(CompletionVerdict.CONTINUE, "more work", prompt)
 
 
-async def _run_goal(monkeypatch, run, child, *, goal_max_turns=5) -> list:
-    captured = _install_deps(monkeypatch, child)
+async def _run_goal(monkeypatch, run, child, *, goal_max_turns=5, evidence=None) -> list:
+    captured = _install_deps(monkeypatch, child, evidence=evidence)
     await spawn_core._execute_subagent(
         run=run,
         system_prompt="sys",
@@ -124,6 +132,49 @@ async def test_goal_loop_done_on_first_turn(monkeypatch: pytest.MonkeyPatch):
     assert recorded[0][1] == "turn-1 output"
     assert captured[0][1].error is None
     assert captured[0][2] == "turn-1 output"
+
+
+@pytest.mark.asyncio
+async def test_goal_loop_skips_the_judge_when_the_first_turn_is_self_evident(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A passing ledger row + a real result: the judge adds nothing."""
+    run = _make_run()
+    child = _FakeChildAgent(["turn-1 output"])
+
+    async def _boom(*_a, **_k):
+        raise AssertionError("judge must not run when the first turn carries passing evidence")
+
+    monkeypatch.setattr(completion_judge, "judge_completion", _boom)
+    captured = await _run_goal(monkeypatch, run, child, evidence="  [pass] terminal: `pytest -q`")
+
+    assert len(child.inputs) == 1
+    assert captured[0][1].error is None
+    assert captured[0][2] == "turn-1 output"
+
+
+@pytest.mark.asyncio
+async def test_the_evidence_shortcut_needs_a_clean_pass(monkeypatch: pytest.MonkeyPatch):
+    """FAIL / stale / no-evidence / empty answer all fall back to judging."""
+    assert spawn_core._first_turn_self_evident("done", "  [pass] terminal: `pytest -q`")
+    assert not spawn_core._first_turn_self_evident("done", None)
+    assert not spawn_core._first_turn_self_evident("done", "  [?] terminal: `ls`")
+    assert not spawn_core._first_turn_self_evident("done", "  [FAIL] terminal: `pytest -q`")
+    assert not spawn_core._first_turn_self_evident("done", "  [pass] terminal: `pytest -q` [stale]")
+    assert not spawn_core._first_turn_self_evident("", "  [pass] terminal: `pytest -q`")
+    assert not spawn_core._first_turn_self_evident(None, "  [pass] terminal: `pytest -q`")
+
+
+@pytest.mark.asyncio
+async def test_a_failing_first_turn_still_goes_to_the_judge(monkeypatch: pytest.MonkeyPatch):
+    run = _make_run()
+    child = _FakeChildAgent(["turn-1 output", "turn-2 output"])
+    recorded = _install_judge(monkeypatch, [_continue("fix it"), _done()])
+
+    captured = await _run_goal(monkeypatch, run, child, evidence="  [FAIL] terminal: `pytest -q`")
+
+    assert len(recorded) == 2
+    assert captured[0][2] == "turn-2 output"
 
 
 @pytest.mark.asyncio
@@ -167,6 +218,23 @@ async def test_goal_loop_budget_of_one_is_single_turn(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(completion_judge, "judge_completion", _boom)
     captured = await _run_goal(monkeypatch, run, child, goal_max_turns=1)
+
+    assert len(child.inputs) == 1
+    assert captured[0][1].error is None
+
+
+@pytest.mark.asyncio
+async def test_the_master_switch_disables_the_goal_loop(monkeypatch: pytest.MonkeyPatch):
+    """``COMPLETION_JUDGE["enabled"] = False`` beats every per-call budget."""
+    run = _make_run()
+    child = _FakeChildAgent(["only turn"])
+    monkeypatch.setitem(COMPLETION_JUDGE, "enabled", False)
+
+    async def _boom(*_a, **_k):
+        raise AssertionError("judge must not run while the master switch is off")
+
+    monkeypatch.setattr(completion_judge, "judge_completion", _boom)
+    captured = await _run_goal(monkeypatch, run, child, goal_max_turns=5)
 
     assert len(child.inputs) == 1
     assert captured[0][1].error is None

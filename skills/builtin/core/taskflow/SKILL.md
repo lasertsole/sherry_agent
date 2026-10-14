@@ -105,11 +105,9 @@ getTaskSummary).
   `failed` without calling the judge, `skipped` marks it `skipped`, and
   `success` / `partial` are recorded while the gates still run. The judge is
   fail-open — when it is disabled or unavailable the step is marked `done`.
-- `taskflow_finish(flow_id, summary, expected_revision, todo, plan_path,
-  checkbox_label)`: mark done (terminal). Gated, fail-open: every step must be
-  `done` or `blocked`, no step may be `blocked`, the flow's evidence must have
-  no failing/stale row, and — only when you pass the linked `todo` +
-  `plan_path` — `SisyphusVerifier` must pass.
+- `taskflow_finish(flow_id, summary, expected_revision)`: mark done (terminal).
+  Gated, fail-open: every step must be `done` or `blocked`, no step may be
+  `blocked`, and the flow's evidence must have no failing/stale row.
 - `taskflow_fail(flow_id, reason, expected_revision)`: mark failed (terminal).
 - `taskflow_cancel(flow_id, reason, expected_revision)`: cancel the flow (terminal).
 - `taskflow_summary(flow_id)`: read-only readback of status, revision,

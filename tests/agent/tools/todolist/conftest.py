@@ -94,6 +94,24 @@ def isolated_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return db_path
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_auxiliary_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No hermetic taskflow test may reach the network through Gate E.
+
+    ``_goal_gate`` (and the nudge forks) import ``models.build_auxiliary_llm``
+    at call time; a test that wants a verdict patches that seam itself and its
+    patch wins. Everything else fails open exactly like an unreachable judge —
+    without this, a described flow in a unit test would call the live provider
+    (observed: the goal judge rejecting finishes once the aux provider came
+    back up, i.e. a test that only ever passed because the provider was down).
+    """
+
+    def _unreachable(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("auxiliary model is stubbed in hermetic taskflow tests")
+
+    monkeypatch.setattr("models.build_auxiliary_llm", _unreachable)
+
+
 @pytest.fixture()
 def build_main_tools_real() -> Callable[[], list]:
     """Call build_main_tools, robust against the unit-test stub regime.
