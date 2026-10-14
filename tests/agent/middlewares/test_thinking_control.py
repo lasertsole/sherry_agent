@@ -80,12 +80,24 @@ def test_unset_flag_passes_request_through(sid):
 
 
 def test_non_flag_values_pass_through(sid):
-    for junk in ("true", 1, "off", "medium"):
+    # Unknown tokens only: every level spelling in the seven-level enum IS a
+    # valid control value now (pinned by the level tests below).
+    for junk in ("true", 1, "turbo", "highest"):
         state_register_mem.set_state(sid, _FLAG_KEY, junk)
         mw = ThinkingControlMiddleware()
         request = _make_request()
         _, _, seen = _run(mw, request)
         assert all(m is request.model for m in seen), junk
+
+
+def test_every_level_token_swaps_a_level_variant(sid):
+    # The full seven-level enum is accepted; each token keys its own variant.
+    for token in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
+        state_register_mem.set_state(sid, _FLAG_KEY, token)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+        _, _, seen = _run(mw, request)
+        assert all(m.tag == f"level:{token}" for m in seen), token
 
 
 def test_bool_flag_swaps_model_both_paths(sid):

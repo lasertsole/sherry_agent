@@ -54,6 +54,20 @@ from models.LLMs.reasoning_payload import is_thinking_disable_rejection
 from runtime.session.state_keys import StateKey
 
 
+#: Every thinking-level token the client may store (off + the six efforts).
+#: ``off`` as a STRING is distinct from ``False``: the string names the OFF
+#: level explicitly on a model whose level map defines it, while ``False`` is
+#: the switch's off position (identical payloads, different provenance). The
+#: set is derived from the shared config so the client and backend cannot drift.
+def _thinking_level_tokens() -> frozenset[str]:
+    from config.features import EXTENDED_THINKING_LEVELS
+
+    return frozenset(EXTENDED_THINKING_LEVELS)
+
+
+THINKING_LEVEL_TOKEN_SET = _thinking_level_tokens()
+
+
 #: The model CONFIGURATION the session's last main-chain model call ran with,
 #: per session (process-local, advisory). The memory review forks off the turn
 #: and must run on the same model identity: the provider's prefix cache matches
@@ -157,7 +171,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
             # After the gateway taught us it always thinks, go straight to the
             # minimum-thinking variant instead of replaying the rejected rung.
             return "off_floor" if self._off_floor_learned else "off"
-        if isinstance(value, str) and value in ("low", "high", "max"):
+        if isinstance(value, str) and value in THINKING_LEVEL_TOKEN_SET:
             return f"level:{value}"
         return None
 

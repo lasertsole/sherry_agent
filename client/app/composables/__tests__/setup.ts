@@ -328,6 +328,10 @@ vi.stubGlobal('useThinkingStore', () =>
     bySession: {},
     pendingBySession: {},
     current: () => false,
+    // The unified picker reads the session's model-declared levels; the default
+    // stub is switch-shaped (a single `off`), so toolbar mounts keep rendering
+    // the on/off control unless a suite overrides this.
+    availableLevels: () => ['off'],
     hydrate: async () => {},
     isPending: () => false,
     setValue: async () => {}

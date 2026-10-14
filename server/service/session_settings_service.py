@@ -44,7 +44,19 @@ from agent.tools.subagent.registry.session_state import is_session_busy
 from runtime import StateKey, state_register_db, state_register_mem
 from pub.func.validator import is_safe_session_id
 
-_VALID_LEVELS = ("low", "high", "max")
+
+def _valid_levels() -> tuple[str, ...]:
+    """Every thinking-level token the API accepts (the shared 7-level enum).
+
+    Derived from ``config.features.EXTENDED_THINKING_LEVELS`` so the value domain
+    can never drift from the declarative engine's own level list.
+    """
+    from config.features import EXTENDED_THINKING_LEVELS
+
+    return tuple(EXTENDED_THINKING_LEVELS)
+
+
+_VALID_LEVELS = _valid_levels()
 
 #: Descriptor fields accepted by ``PUT /sessions/model`` (unknown keys are
 #: rejected so a typo in the client cannot silently store junk).
@@ -202,6 +214,29 @@ def _default_enabled() -> bool:
         return False
 
 
+def _supported_levels(session_id: str) -> list[str]:
+    """The thinking levels the session's EFFECTIVE model accepts, clamp order.
+
+    Unmapped pairs report ``["off"]`` (the declarative engine's own fallback).
+    The client renders its picker from this, so a level the model cannot take
+    is never offered — the clamp then never has to fire in practice.
+    """
+    try:
+        from models.LLMs.reasoning_payload import get_supported_thinking_levels
+
+        provider, model_name = _session_model_identity(session_id)
+        return get_supported_thinking_levels(provider, model_name)
+    except Exception:  # noqa: BLE001 - a read model must not break on lookup
+        # The loguru logger is imported lazily: the module keeps its import
+        # surface small and this path must not fail on a missing logger either.
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "thinking levels lookup failed; offering the full enum"
+        )
+        return list(_VALID_LEVELS)
+
+
 def get_thinking_state(session_id: str) -> dict:
     """Return ``{"mode", "enabled", "level", "pending"}`` for the session.
 
@@ -224,7 +259,11 @@ def get_thinking_state(session_id: str) -> dict:
     mode = get_thinking_mode(session_id)
     parked, parked_value = _pending_value(session_id, StateKey.LLM_THINKING_ENABLED_PENDING)
     value = parked_value if parked else _read_value(session_id, StateKey.LLM_THINKING_ENABLED)
-    defaults = {"default_enabled": _default_enabled(), "default_level": _DEFAULT_LEVEL}
+    defaults = {
+        "default_enabled": _default_enabled(),
+        "default_level": _DEFAULT_LEVEL,
+        "levels": _supported_levels(session_id),
+    }
     if isinstance(value, bool):
         return {"mode": mode, "enabled": value, "level": None, "pending": parked, **defaults}
     if isinstance(value, str) and value in _VALID_LEVELS:

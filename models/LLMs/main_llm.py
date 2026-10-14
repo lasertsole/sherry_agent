@@ -226,6 +226,7 @@ def build_main_llm(
     thinking: bool | None = None,
     thinking_level: str | None = None,
     thinking_floor: bool = False,
+    level: str | None = None,
 ):
     """Create a fresh LLM instance bound to the current event loop.
 
@@ -246,9 +247,12 @@ def build_main_llm(
     configs), ``None`` keeps the env-derived default. Used by the per-session
     thinking toggle (ThinkingControlMiddleware). With ``thinking=False`` and
     ``thinking_floor=True`` the variant carries the MINIMUM thinking level for
-    always-think models that reject the disable payload. ``thinking_level``
-    pins an explicit low/high/max level instead (level selector models).
+    always-think models that reject the disable payload. ``thinking_level`` (or
+    its unified alias ``level``) pins an explicit level instead — any of the
+    seven (off/minimal/low/medium/high/xhigh/max); the declarative engine
+    clamps it to the nearest level the model actually accepts.
     """
+    thinking_level = thinking_level or level
     if thinking is None and thinking_level is None:
         inner = _build_inner_chat_model()
     else:
@@ -318,6 +322,7 @@ def build_main_llm_for_profile(
     thinking: bool | None = None,
     thinking_level: str | None = None,
     thinking_floor: bool = False,
+    level: str | None = None,
 ):
     """Build a main-LLM instance for an explicit identity (session override).
 

@@ -99,6 +99,15 @@ from .llm_client_defaults import (
     LlmClientDefaultsConfig as LlmClientDefaultsConfig,
     LLM_CLIENT_DEFAULTS as LLM_CLIENT_DEFAULTS,
 )
+from .thinking_levels import (
+    THINKING_LEVELS as THINKING_LEVELS,
+    EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
+    THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,
+    ThinkingConfig as ThinkingConfig,
+    ThinkingFormat as ThinkingFormat,
+    ThinkingLevel as ThinkingLevel,
+    ThinkingLevelMap as ThinkingLevelMap,
+)
 from .reasoning_budget import (
     ReasoningBudgetConfig as ReasoningBudgetConfig,
     REASONING_BUDGET as REASONING_BUDGET,

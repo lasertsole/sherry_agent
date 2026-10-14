@@ -207,7 +207,9 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
  * a 低/高/最高 selector (`level: "low" | "high" | "max"`).
  */
 export type ThinkingMode = 'on_off' | 'levels';
-export type ThinkingValue = boolean | 'low' | 'high' | 'max';
+/** The seven thinking levels, least to most (mirrors the backend enum). */
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ThinkingValue = boolean | ThinkingLevel;
 
 /** Toolbar shield control: how much the session may do unattended. */
 export type AccessMode = 'plan' | 'confirm_all' | 'auto_edit' | 'full_access';
@@ -485,20 +487,23 @@ export async function fetchContextInspect(sessionId: string): Promise<ContextIns
 export interface ThinkingState {
   mode: ThinkingMode;
   enabled: boolean | null;
-  level: 'low' | 'high' | 'max' | null;
+  level: ThinkingLevel | null;
   /** What an UNSET on/off control follows (the MAIN_LLM_ENABLE_THINKING env flag). */
   defaultEnabled?: boolean;
   /** What an UNSET level control follows (mirrors reasoning_effort's default). */
-  defaultLevel?: 'low' | 'high' | 'max';
+  defaultLevel?: ThinkingLevel;
+  /** Levels the session's model accepts, clamp order (backend-declared). */
+  levels?: ThinkingLevel[];
   /** True when the choice was parked mid-turn and lands on the next turn. */
   pending?: boolean;
 }
 
 /** The raw wire payload (snake_case backend field names). */
-type ThinkingStatePayload = Omit<ThinkingState, 'defaultEnabled' | 'defaultLevel'> & {
+type ThinkingStatePayload = Omit<ThinkingState, 'defaultEnabled' | 'defaultLevel' | 'levels'> & {
   success?: boolean;
   default_enabled?: boolean;
-  default_level?: 'low' | 'high' | 'max';
+  default_level?: ThinkingLevel;
+  levels?: ThinkingLevel[];
 };
 
 /**
@@ -520,6 +525,7 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
     level: res.level ?? null,
     defaultEnabled: res.default_enabled === true,
     defaultLevel: res.default_level ?? 'high',
+    levels: res.levels ?? undefined,
     pending: res.pending === true
   };
 }

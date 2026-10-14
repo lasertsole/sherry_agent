@@ -1,5 +1,13 @@
 import { defineStore } from 'pinia';
-import type { ThinkingMode, ThinkingValue } from '~/composables/bridge/session';
+import type { ThinkingLevel, ThinkingMode, ThinkingValue } from '~/composables/bridge/session';
+
+/**
+ * Every thinking level in clamp order — the picker's fallback before the first
+ * hydrate (and for a backend that does not declare a list). Lives HERE, not on
+ * the bridge module, because the tests mock the bridge wholesale: a runtime
+ * constant imported from it would read as undefined inside the store.
+ */
+export const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 // The store needs a stable module specifier so tests can vi.mock the bridge;
 // the unimport injection is compile-time and leaves bare symbols unmockable.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -24,7 +32,9 @@ export const useThinkingStore = defineStore('thinking', () => {
   /** What an UNSET on/off control follows (the env flag the backend reports). */
   const defaultEnabled = ref(false);
   /** What an UNSET level control follows. */
-  const defaultLevel = ref<'low' | 'high' | 'max'>('high');
+  const defaultLevel = ref<ThinkingLevel>('high');
+  /** sid → the levels the session's model accepts (backend-declared). */
+  const levelsBySession = ref<Record<string, ThinkingLevel[]>>({});
 
   /**
    * The position an unset control follows (until the first hydrate says more).
@@ -41,6 +51,17 @@ export const useThinkingStore = defineStore('thinking', () => {
    */
   function current(sessionId: string): ThinkingValue {
     return bySession.value[sessionId] ?? unsetValue();
+  }
+
+  /**
+   * The thinking levels the session's model accepts (backend-declared, clamp
+   * order). Falls back to the full seven before the first hydrate — the picker
+   * is then just less precise, never empty.
+   * @param sessionId
+   */
+  function availableLevels(sessionId: string): ThinkingLevel[] {
+    const declared = levelsBySession.value[sessionId];
+    return declared && declared.length > 0 ? declared : THINKING_LEVELS;
   }
 
   /**
@@ -61,6 +82,9 @@ export const useThinkingStore = defineStore('thinking', () => {
         ? (state.level ?? state.defaultLevel ?? 'high')
         : (state.enabled ?? state.defaultEnabled ?? false);
     bySession.value = { ...bySession.value, [sessionId]: value };
+    if (state.levels && state.levels.length > 0) {
+      levelsBySession.value = { ...levelsBySession.value, [sessionId]: state.levels };
+    }
     pendingBySession.value = { ...pendingBySession.value, [sessionId]: state.pending === true };
   }
 
@@ -100,7 +124,9 @@ export const useThinkingStore = defineStore('thinking', () => {
     pendingBySession,
     defaultEnabled,
     defaultLevel,
+    levelsBySession,
     current,
+    availableLevels,
     hydrate,
     isPending,
     setValue
