@@ -911,8 +911,14 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 
 `tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
 
-`evals/` sits beside the pytest tree: a homegrown, sandboxed framework with six
-registered suites (`uv run python evals/evals.py [suite]`). `coding_capability`
+`evals/` sits beside the pytest tree: a homegrown, sandboxed framework with seven
+registered suites (`uv run python evals/evals.py [suite]`). `swebench` is the
+EXTERNAL benchmark — SWE-bench_Lite instances run through the same harness with
+the instance's own verdict (pinned base commit + a per-instance `uv venv
+--python 3.11` with the checkout installed; the agent sees only the problem
+statement, the test patch is applied by the JUDGE, and an instance whose gold
+patch does not resolve it fails a harness check before any model call).
+`coding_capability`
 is the coding baseline — it drives the REAL main agent
 (`server.service.messages.async_generate`) over a self-designed task set, judges
 every task with that repository's own `python -m pytest`, fails a task whose

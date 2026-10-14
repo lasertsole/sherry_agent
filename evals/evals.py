@@ -25,6 +25,9 @@ SUITES: dict[str, str] = {
     "session_memory": "evals.session_memory.suite",
     "nudge_extraction": "evals.nudge_extraction.suite",
     "coding_capability": "evals.coding_capability.suite",
+    # External benchmark: SWE-bench_Lite instances (own process, same reason as
+    # coding_capability — it repoints SHERRY_WORKSPACE_DIR).
+    "swebench": "evals.swebench.suite",
 }
 
 

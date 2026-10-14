@@ -181,7 +181,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # Opt-in login protection (account + session)
 │
-├── evals/                  # Evaluation framework (dispatcher + 6 suites)
+├── evals/                  # Evaluation framework (dispatcher + 7 suites)
 │   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # Sandbox that redirects repo writes during a run
 │   ├── graph_rag/          # RAGAS metrics for the graph-RAG pipeline
@@ -470,10 +470,11 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 | `session_memory` | The session-memory stack over 6 checks: cooldown, compaction lock, checkpoint restore, idempotent replay, context eligibility, semantic search ranking |
 | `nudge_extraction` | The plan-extraction pass, judged by an auxiliary LLM for grounded, reusable, non-generic skills |
 | `coding_capability` | The real main agent on a small self-designed coding task set, each task judged by its own repository's pytest run — a baseline, not an external benchmark |
+| `swebench` | External SWE-bench_Lite instances through the same harness (pinned base commit + per-instance venv + the instance's own FAIL_TO_PASS / PASS_TO_PASS verdict; the agent sees the problem statement only) |
 
 Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
 
-`coding_capability` additionally keeps a version-controlled baseline (`evals/coding_capability/baseline.json`), points the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exits non-zero when it drops below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
+`coding_capability` and `swebench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
 
 `coding_capability` additionally keeps a version-controlled baseline (`evals/coding_capability/baseline.json`), points the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exits non-zero when it drops below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
 

@@ -181,7 +181,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │
-├── evals/                  # 평가 프레임워크(dispatcher + 6개 스위트)
+├── evals/                  # 평가 프레임워크(dispatcher + 7개 스위트)
 │   ├── evals.py            # 스위트 러너: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
 │   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
@@ -470,10 +470,11 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
 | `nudge_extraction` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
 | `coding_capability` | 실제 메인 agent를 소규모 자체 설계 코딩 작업 세트로 평가하고, 각 작업은 해당 저장소 자체의 pytest 실행으로 판정——베이스라인이며 외부 벤치마크가 아님 |
+| `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. agent는 문제 설명만 봄) |
 
 모든 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기가 임시 샌드박스로 리디렉션됨), 리포트를 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 리포트는 절대 커밋되지 않습니다.
 
-`coding_capability`는 추가로 버전 관리되는 베이스라인(`evals/coding_capability/baseline.json`)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
+`coding_capability`와 `swebench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
 
 ---
 
