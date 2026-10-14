@@ -31,7 +31,7 @@
 `_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_memory_review_agent` でレビュー agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として破棄スライスに追加して呼び出す。**構造としてキャッシュ温存：** 圧縮の切れ目はプレフィックス切断であり、破棄スライスはシステムプロンプトの直後に位置する部分そのもの——同じモデル構成（`_build_session_model`：セッションの provider/model/thinking/temperature。グラフはターンごとに再構築されクライアントが閉じられるため、構成から**新規インスタンス**を構築）、同じシステムプロンプト、同じツール面で送り返せば、メインモデル自身のプレフィックスを再現し、プロバイダはプレフィックスキャッシュから応答します；新規入力はレビュー指示だけで、レビューが読むのは**実テキストのまま**です。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、モジュールに依存しない広範な落とし穴を `facts` ターゲットへ `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
 
 - レビュー agent は**補助 LLM** 上の独立した `create_agent` で、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
-- `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` がこのマークを持つため、nudge agent は memory を書けるが任意のメインツールは呼べない。
+- `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory` と `knowledge` がこのマークを持ち（ほかに対話用 `question` とプランモードの 2 つ）、memory review は memory を書けるが任意のメインツールは呼べない。スキル三点セット（`skill_list` / `skill_view` / `skill_manage`）は**意図的に未マーク**——スキル抽出はプラン完了パスの担当で、そちらはタグではなく明示的な 4 ツール面をバインドする。
 - fork のメッセージはログのみ。`res["messages"]` の内容はメイングラフへ一切入らない。
 
 ### 2. plan extraction（todo 完了、ターン境界）
@@ -48,7 +48,7 @@
 `plan_extraction_enabled` が有効で、セッション単位の `Summarization → nudge` スイッチが入り、検出が発火すると、フックが `_run_plan_extraction` を fire-and-forget で派遣し、`nudge_plan_extraction_lock` の下、NUDGE レーンで走る：
 
 1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
-2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、専用 agent（`_create_plan_extraction_agent`：**補助モデル**、`temperature=0`、同じ `nudge: True` ツールゲート）へ送る——**会話は一切なし**。データはプランファイル、todo、子 agent 実行記録に揃っているため、このパスはウィンドウを圧迫せず、チャットも読まない。
+2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、専用 agent（`_create_plan_extraction_agent`：**補助モデル**、`temperature=0`）へ送る——**会話は一切なし**。データはプランファイル、todo、子 agent 実行記録に揃っているため、このパスはウィンドウを圧迫せず、チャットも読まない。ツール面は明示バインド（`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`——最後は Part 3 の FACTS.md 書き込み経路）で、スキル書き込みはこのパスだけが担う。
 
 プロンプトは 3 種類の産出を行う：
 

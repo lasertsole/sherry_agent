@@ -262,6 +262,45 @@ async def test_the_extraction_agent_runs_on_the_auxiliary_model(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_the_extraction_agent_binds_only_the_extraction_tools(monkeypatch):
+    """The bound list IS the barrier: nothing but the prompt's own tools."""
+
+    class _Tool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.metadata = {}
+
+    face = [
+        _Tool("knowledge"),
+        _Tool("skill_list"),
+        _Tool("skill_view"),
+        _Tool("skill_manage"),
+        _Tool("memory"),
+        _Tool("terminal"),
+    ]
+    calls: dict[str, Any] = {}
+    import models
+
+    monkeypatch.setattr(models, "build_auxiliary_llm", lambda **kwargs: object())
+    monkeypatch.setattr(
+        nudge_mod, "create_agent", lambda **kwargs: calls.update(kwargs) or object()
+    )
+    monkeypatch.setattr("agent.get_agent_tools", lambda: face)
+
+    await nudge_mod._create_plan_extraction_agent("sys")
+
+    assert [tool.name for tool in calls["tools"]] == [
+        "knowledge",
+        "skill_list",
+        "skill_view",
+        "skill_manage",
+        "memory",
+    ]
+    # No tag-based gate anymore: the bound list already excludes everything else.
+    assert nudge_mod._NudgeLimitTool not in [type(entry) for entry in calls["middleware"]]
+
+
+@pytest.mark.asyncio
 async def test_the_fork_receives_no_conversation_history(base, sid, monkeypatch):
     from langchain_core.messages import HumanMessage
 

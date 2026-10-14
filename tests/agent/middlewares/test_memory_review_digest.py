@@ -340,6 +340,35 @@ def test_the_cache_read_reads_every_provider_shape():
     assert nudge_mod._cache_hit_tokens(silent) is None
 
 
+def test_the_skill_tools_carry_no_nudge_marker():
+    """Skills belong to the plan-completion extraction, never to the review."""
+    from agent.tools.skill_tools import (
+        build_skill_list_tool,
+        build_skill_manage_tool,
+        build_skill_view_tool,
+    )
+
+    for builder in (build_skill_list_tool, build_skill_manage_tool, build_skill_view_tool):
+        tool = builder()
+        assert not (tool.metadata or {}).get("nudge"), tool.name
+
+
+def test_the_nudge_gate_refuses_the_skill_tools():
+    """The review may EXECUTE only the tagged set; skill tools are out."""
+
+    class _Tool:
+        def __init__(self, name: str, metadata: dict | None = None) -> None:
+            self.name = name
+            self.metadata = metadata or {}
+
+    gate = nudge_mod._NudgeLimitTool()
+    from agent.tools.memory import build_memory_tool
+
+    assert gate._is_allowed(build_memory_tool()) is True
+    for name in ("skill_manage", "skill_list", "skill_view"):
+        assert gate._is_allowed(_Tool(name)) is False, name
+
+
 @pytest.mark.asyncio
 async def test_cache_warm_sends_the_discarded_messages_verbatim(monkeypatch):
     """The default: the slice IS the main model's prefix, so it goes as-is."""

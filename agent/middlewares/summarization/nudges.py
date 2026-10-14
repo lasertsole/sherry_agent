@@ -40,8 +40,9 @@ _MEMORY_REVIEW_PROMPT = (
     "(target: 'facts')\n\n"
     "Routing: user preferences and traits go to 'user'; general agent-side notes about "
     "this environment/project go to 'memory'; broad cross-plan pitfalls and conventions "
-    "go to 'facts'. A pitfall bound to one module belongs in a '<module>-notes' skill "
-    "(skill_manage), not in memory.\n\n"
+    "go to 'facts'. A pitfall bound to one module belongs in a '<module>-notes' skill, "
+    "which the plan-completion extraction pass maintains — do not write skills from "
+    "here (the skill tools are not available in this pass).\n\n"
     "Current FACTS.md content (target 'facts', limit {facts_limit} chars):\n"
     "<facts>\n{facts_block}\n</facts>\n\n"
     "Maintain FACTS.md like an editor, not an appender: merge entries describing the "
@@ -167,7 +168,7 @@ not WHETHER you update.
   1. UPDATE A CURRENTLY-LOADED SKILL. Look through the plan context for
      skills the user loaded or you read. If any covers the territory of
      the new learning, PATCH that one first.
-  2. UPDATE AN EXISTING UMBRELLA (via skills_list + skill_view). If no
+  2. UPDATE AN EXISTING UMBRELLA (via skill_list + skill_view). If no
      loaded skill fits but an existing class-level skill does, patch it.
      Add a subsection, a pitfall, or broaden a trigger.
   3. ADD A SUPPORT FILE under an existing umbrella. Three kinds:
@@ -553,11 +554,15 @@ class _NudgeLimitTool(AgentMiddleware):
     """Tool gate for nudge sub-agents.
 
     With no ``allowed_metadata_key`` (the default), a tool passes only when its
-    metadata carries ``nudge: True`` — the legacy rule every existing memory /
-    plan-extraction nudge agent relies on. With an explicit metadata key, a
+    metadata carries ``nudge: True`` — the memory review's rule (``memory``,
+    ``knowledge``, ``question``, plan mode). With an explicit metadata key, a
     tool passes only when ``tool.metadata[key] is True`` (strict identity), so
     the compression todo fork can admit exactly the metadata-marked
     ``todowrite`` while every unmarked tool is rejected.
+
+    The skills toolset is deliberately UNTAGGED: skill extraction is the
+    plan-completion fork's job, and that fork binds its own explicit four-tool
+    face (``_extraction_tool_face``) instead of riding this gate.
     """
 
     def __init__(self, allowed_metadata_key: str | None = None) -> None:
@@ -894,7 +899,7 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
 
 
 async def _create_plan_extraction_agent(system_prompt: str):
-    """The extraction fork's agent: auxiliary model, its own tool gate.
+    """The extraction fork's agent: auxiliary model, an EXPLICIT tool binding.
 
     NOT ``_create_nudge_agent``: the memory review keeps the main model (it reads
     a conversation), while this pass consumes structured data (todos + subagent
@@ -902,8 +907,14 @@ async def _create_plan_extraction_agent(system_prompt: str):
     the step / completion judges already run on the auxiliary model, at a
     fraction of the cost and with no chance of crowding the main window.
     The system prompt is kept: the skills index in it decides patch-vs-create.
+
+    The tool face is bound to exactly the tools the extraction prompt drives
+    (knowledge write, the skills trio, and ``memory`` for the FACTS.md target) —
+    the bound list IS the barrier, so nothing else is even callable. The skills
+    toolset deliberately carries NO ``nudge`` marker: the memory review
+    (``_NudgeLimitTool()``, the tag-based gate) must not extract skills — the
+    experience extraction is this pass's whole job.
     """
-    from agent import get_agent_tools
     from agent.middlewares import ToolCallNormalize, ToolGuardrails
     from models import build_auxiliary_llm
 
@@ -912,14 +923,27 @@ async def _create_plan_extraction_agent(system_prompt: str):
         state_schema=StateSchema,
         system_prompt=system_prompt,
         middleware=[
-            # Only tools carrying ``nudge: True`` (knowledge write / skill_manage).
-            _NudgeLimitTool(),
             ToolCallNormalize(),
             ToolGuardrails(),
             _get_iteration_budget(),
         ],
-        tools=list(get_agent_tools()),
+        tools=_extraction_tool_face(),
     )
+
+
+#: The tools the extraction prompt drives, by name — knowledge write, the
+#: skills-index read / skill read / skill write trio, and ``memory`` (its Part 3
+#: routes broad pitfalls to the FACTS.md target through that tool).
+_EXTRACTION_TOOL_NAMES = ("knowledge", "skill_list", "skill_view", "skill_manage", "memory")
+
+
+def _extraction_tool_face() -> list[BaseTool]:
+    """The extraction fork's bound tools, in the main face's order."""
+    from agent import get_agent_tools
+
+    return [
+        tool for tool in get_agent_tools() if getattr(tool, "name", "") in _EXTRACTION_TOOL_NAMES
+    ]
 
 
 async def _run_plan_extraction(session_id: str) -> None:
