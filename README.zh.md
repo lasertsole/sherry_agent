@@ -93,6 +93,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 | **本地推理** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT 模型）、FunASR（STT） |
 | **文档解析** | mineru-vl-utils |
 | **联网搜索** | langchain-tavily（Tavily API）+ 自托管 SearXNG 作为备选后端，Tavily 失效时自动降级 |
+| **网页读取** | `web_fetch` 把单个 http(s) URL 读成 markdown：公网页面走 SSRF 防护、DNS pinning 与逐跳重定向复检；本地/开发服务器地址需要显式开关（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`） |
 | **代码搜索** | ripgrep，随依赖一并安装（`ripgrep-bin`）；纯 Python 扫描始终作为兜底 |
 | **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
 | **结构化输出** | instructor、json_repair |
@@ -131,6 +132,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
 │       ├── mcp_plugin.py   # MCP 工具集成
 │       ├── web_search.py   # 联网搜索工具（Tavily）
+│       ├── web_fetch.py    # 网页读取工具（markdown；公网 + 可选本地）
 │       ├── python_repl.py  # Python 代码执行
 │       ├── terminal.py     # 终端命令执行
 │       ├── memory.py       # 记忆查看工具

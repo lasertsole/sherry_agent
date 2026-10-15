@@ -93,6 +93,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 | **Local Inference** | llama-cpp-python (GGUF: bge-m3 embedding, bge-reranker-v2-m3 reranker, auxiliary/ITTT/VTTT models), FunASR (STT) |
 | **Document Parsing** | mineru-vl-utils |
 | **Web Search** | langchain-tavily (Tavily API) + a self-hosted SearXNG instance as the alternative backend, with automatic Tavily→SearXNG fallback |
+| **Web Fetch** | `web_fetch` reads ONE http(s) URL as markdown: SSRF-guarded, DNS-pinned and per-hop-redirect-checked for public pages, with an opt-in switch (`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`) for local/dev-server addresses |
 | **Code Search** | ripgrep, installed with the dependencies (`ripgrep-bin`), with the pure-Python scan as the always-available fallback |
 | **LLM Providers** | langchain-openai, langchain-deepseek, langchain-community + a 20+ provider registry (OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM, and more) |
 | **Structured Output** | instructor, json_repair |
@@ -131,6 +132,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # Shared tool utilities & infrastructure (BaseSQLiteRepository, path utils)
 │       ├── mcp_plugin.py   # MCP tool integration
 │       ├── web_search.py   # Web search tool (Tavily)
+│       ├── web_fetch.py    # URL-reading tool (markdown; public + opt-in local)
 │       ├── python_repl.py  # Python code execution
 │       ├── terminal.py     # Terminal command execution
 │       ├── memory.py       # Memory inspection tool

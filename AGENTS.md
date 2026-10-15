@@ -130,7 +130,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     REASONING_BUDGET["thinking_budgets"]
   │
   ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(8)
-  │         + file_tools + web_search + terminal + python_repl + question + ...
+  │         + file_tools + web_search + web_fetch + terminal + python_repl + question + ...
   │
   ├─ graph wrappers: apply_graph_wrappers(inner)
   │    → ContextLimitGuard(RepetitionGuard(graph))
@@ -795,6 +795,37 @@ without a session too. `scripts/dev/mock_searxng.py` implements exactly the call
 the provider makes, for exercising the fallback end-to-end without a real
 instance (and without a Tavily key: point `SEARXNG_URL` at it and set
 `TAVILY_API_KEY` to a dummy to watch the downgrade fire).
+
+## URL Fetching (`agent/tools/web_fetch.py`)
+
+`web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
+companion to `web_search` (search finds URLs, this reads one). Two branches:
+
+- **public** (default): `is_public_url` (its own DNS resolution) then
+  `safe_fetch` — the same SSRF guard + DNS pinning + per-hop redirect re-check
+  the media pipeline uses; the body is capped at
+  `TOOLS_TIMEOUTS["web_fetch_max_bytes"]` (10 MiB) and the fetch at
+  `web_fetch_timeout_seconds` (30 s);
+- **local / private** (`localhost`, literal private / loopback / link-local
+  IPs): REFUSED unless `SHERRY_WEB_FETCH_ALLOW_LOCAL=1` (tracked `.env`,
+  default 0, read per call). Then httpx does the fetch (`verify=False` — dev
+  servers and self-signed certs — with a 5-hop redirect cap and a 10 s budget).
+  Address classification is literal-only: a public hostname resolving to
+  127.0.0.1 still goes down the public branch and is refused there, so the
+  switch can never turn a public-looking name into a local fetch. This is the
+  deliberate escape hatch for debugging a dev server the agent is running; the
+  switch reaches every service this machine can see.
+
+Both branches share the tail: a non-HTML body (JSON, plain text) is returned
+VERBATIM (html2text would escape and reflow it), HTML goes through `html2text`
+(scripts/styles/noscript stripped first; a tag-stripping fallback if the import
+ever fails), and the output is capped at
+`TOOLS_TIMEOUTS["web_fetch_max_output_chars"]` (50 K chars) — the context
+eviction layer is the second net for whatever still arrives oversized. The tool
+is in the `web` catalogue group with `idempotent: False`; it is not
+`main_only`, but a specialized child only receives it in `general` (inherit)
+mode, since no functional role's allow-list names it. Tests:
+`tests/agent/tools/test_web_fetch.py`.
 
 ## Log Tracing & the Trajectory Ledger (`server/service/trajectory_store.py`)
 

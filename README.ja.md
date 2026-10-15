@@ -93,6 +93,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 | **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
 | **ドキュメント解析** | mineru-vl-utils |
 | **Web 検索** | langchain-tavily（Tavily API）＋セルフホストの SearXNG を代替バックエンドとして利用（Tavily 失敗時は自動的にフォールバック） |
+| **Web 取得** | `web_fetch` は 1 つの http(s) URL を markdown として読みます：公開ページは SSRF ガード・DNS ピン留め・ホップごとのリダイレクト検査を通し、ローカル/開発サーバーのアドレスは明示スイッチ（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`）が必要です |
 | **コード検索** | ripgrep（依存関係と一緒に入る `ripgrep-bin`）。純 Python 走査が常時のフォールバック |
 | **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
 | **構造化出力** | instructor、json_repair |
@@ -131,6 +132,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
 │       ├── mcp_plugin.py   # MCP ツール統合
 │       ├── web_search.py   # Web 検索ツール（Tavily）
+│       ├── web_fetch.py    # URL 取得ツール（markdown、公開＋任意のローカル）
 │       ├── python_repl.py  # Python コード実行
 │       ├── terminal.py     # ターミナルコマンド実行
 │       ├── memory.py       # メモリ閲覧ツール

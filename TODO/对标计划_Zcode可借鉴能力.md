@@ -559,7 +559,11 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 常量（`webfetch-constants.ts:1-11`）：`MAX_WEBFETCH_RESPONSE_BYTES` 10 MiB / `MAX_MODEL_INPUT_CHARS` 100,000（头截断 + 后缀标记）/ `MAX_WEBFETCH_MODEL_BYTES` 100,000 / `MAX_WEBFETCH_URL_CHARS` 2,000 / `MAX_REDIRECTS` 10 / 缓存 TTL 15 分钟 / 上限 50 MiB。
 重定向策略：HTTP 升级 HTTPS；**仅跟随同 host（允许 `www` 变体）/ 同协议 / 同端口**；**跨 host 重定向返回给模型而非跟随**。
 
-**Sherry 现状** [实测]：`web_search.py` 用 Tavily（`max_results=5`），有显式重试（3 次 + 指数退避 + jitter）+ `asyncio.wait_for(30s)` + **无 key 时返回解释性 stub**（比 Zcode 的「硬前置 `supportsNativeWebSearch`」更优雅）。**无 URL 抓取工具。**
+**Sherry 现状** [实测]：`web_search.py` 用 Tavily（`max_results=5`），有显式重试（3 次 + 指数退避 + jitter）+ `asyncio.wait_for(30s)` + **无 key 时返回解释性 stub**（比 Zcode 的「硬前置 `supportsNativeWebSearch`」更优雅）。
+
+> **落地记录（2026-10-15）**：`agent/tools/web_fetch.py` 已落地 —— 公网分支复用本仓库既有栈（`is_public_url` 预检 + `safe_fetch` 的 DNS pinning 与逐跳复核），本地/私网地址走**显式开关**分支（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`，tracked `.env`，默认 0，per-call 读取），HTML→Markdown 用 `html2text`（脚本/样式先剥，导入失败降级为剥标签），非 HTML（JSON/纯文本）**原样返回**（html2text 会转义并重排 JSON），输出 50K 字符封顶 + 既有 ContextEviction 二次兜底；分类只认字面量 IP/hostname（解析到 127.0.0.1 的公网域名仍走公网分支被拒）。测试 `tests/agent/tools/test_web_fetch.py`（23 例）。
+>
+> **有意偏离**：(1) 改造建议 #3 的「重定向只跟同 host」**未采纳** —— 公网分支用 `safe_fetch` 的逐跳模型（每跳重新解析 + 重新校验 + 钉住已校验地址），和媒体管线同一套策略；同 host 白名单会挡掉 `example.com → www.example.com` 这类常见跳转，且是多一份需要维护的分支。(2) 改造建议 #5 的「无凭据降级 + 重试退避」**不适用** —— 本工具不持有凭据，失败按 `safe_fetch` 的 reason 文本返回，由模型决定是否重试。(3) Zcode 的 `prompt`（辅助小模型作答）**未做** —— 工具把 markdown 直接交给调用它的那个模型，多一次无上下文的辅助调用只会丢信息、增延迟。
 
 **⚠️ 不可照抄的部分**：Zcode 的 SSRF 防护**只覆盖字面量**——拦 `localhost` / `*.local` / 非公网 IP 字面量 / URL 内嵌凭据 / 单标签主机名；每次 GET 前 `assertWebFetchLiteralEgress` 要求 `ipaddr.js` 的 `range() === "unicast"` 并排除基准测试段 / IPv4-mapped IPv6 / NAT64 前缀，**但域名无 DNS 预检**（源码注释明说依赖 HTTP egress proxy 兜底）→ **不防 DNS rebinding**。
 
@@ -622,7 +626,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 | 未开工 |
 | ~~P2~~ | ~~2.4 计划模式~~ | 中 | 低 | 与 1.5 协调 | **✅ 已完成**（plan_mode 工具 + 状态机） |
 | ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **❌ 不做**（trajectory ledger 已覆盖最危险场景；完整 7 事件协议需前端协同 + WS_STREAM 已有 4 次重试，边际收益低） |
-| **P2** | 6.1 WebFetch | 中 | **高（SSRF 必须重做）** | 独立安全设计 | 未开工 |
+| ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
 | ~~P3~~ | ~~1.1①④ input_hash 短路 + 步骤缓存~~ | 低-中 | 中 | 依赖原型验证 | **❌ 不做**（DAG 已防重跑） |
 | ~~P3~~ | ~~1.1② PAUSED 显式挂起~~ | 低 | 中 | — | **❌ 不做**（不杀子 agent 无效果） |
 | ~~P3~~ | ~~1.1③ 血缘指针~~ | 低 | 低 | 无 | **✅ 已合并到 `计划_taskflow并行执行.md` §8** |

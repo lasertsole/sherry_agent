@@ -93,6 +93,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 | **로컬 추론** | llama-cpp-python(GGUF: bge-m3 embedding, bge-reranker-v2-m3 reranker, auxiliary/ITTT/VTTT 모델), FunASR(STT) |
 | **문서 파싱** | mineru-vl-utils |
 | **웹 검색** | langchain-tavily(Tavily API) + 자체 호스팅 SearXNG를 대체 백엔드로 사용, Tavily 실패 시 자동 폴백 |
+| **웹 fetch** | `web_fetch`는 http(s) URL 하나를 markdown으로 읽습니다: 공개 페이지는 SSRF 가드·DNS 피닝·홉별 리다이렉트 검사를 거치고, 로컬/개발 서버 주소는 명시 스위치(`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`)가 필요합니다 |
 | **코드 검색** | ripgrep(`ripgrep-bin` 으로 의존성과 함께 설치), 순수 Python 스캔이 항상 대비하는 폴백 |
 | **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-community + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
 | **구조화 출력** | instructor, json_repair |
@@ -131,6 +132,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
 │       ├── mcp_plugin.py   # MCP 도구 통합
 │       ├── web_search.py   # 웹 검색 도구(Tavily)
+│       ├── web_fetch.py    # URL 읽기 도구(markdown; 공개 + 선택적 로컬)
 │       ├── python_repl.py  # Python 코드 실행
 │       ├── terminal.py     # 터미널 명령 실행
 │       ├── memory.py       # 메모리 확인 도구
