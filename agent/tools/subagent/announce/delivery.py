@@ -395,11 +395,23 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
             result=result_text,
             session_id=run.child_session_key,
         )
+        first_line = answer.splitlines()[0] if answer else ""
+        if isinstance(answer, str) and answer.startswith("Error:"):
+            # The flow refused the resume (conflict exhausted, not found, ...).
+            # The result is still delivered to the session; the caller is told
+            # the auto-resume did NOT land, so the answer is not silently gone.
+            logger.warning(
+                "TaskFlow auto-resume failed for run {}: flow={} -> {}",
+                run.run_id,
+                flow_id,
+                first_line,
+            )
+            return False
         logger.info(
             "TaskFlow auto-resume for run {}: flow={} -> {}",
             run.run_id,
             flow_id,
-            answer.splitlines()[0] if answer else "",
+            first_line,
         )
         return True
     except Exception:

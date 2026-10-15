@@ -168,6 +168,7 @@ SPOT_DEFAULTS = [
     (TASKFLOW_INFRA, "wait_all_default_timeout_seconds", 300.0),
     (TASKFLOW_INFRA, "max_steps_per_flow", 20),
     (TASKFLOW_INFRA, "max_flows_per_session", 20),
+    (TASKFLOW_INFRA, "max_parallel_dispatch", 2),
     (TODOLIST_INFRA, "store_busy_timeout_ms", 5000),
     (TODOLIST_INFRA, "stagnation_max_stagnation", 3),
     (TODOLIST_INFRA, "stagnation_base_cooldown_s", 2.0),

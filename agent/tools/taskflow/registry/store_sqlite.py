@@ -5,7 +5,8 @@ Table schema: task_flows(flow_id TEXT PK, state_json TEXT NOT NULL,
 wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL,
 child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
 total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0,
-deadline_ts REAL)
+deadline_ts REAL, session_id TEXT NOT NULL DEFAULT '',
+resumed_from TEXT, superseded_by TEXT)
 
 Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
 (``BaseSQLiteRepository``, the shared skeleton also used by the todolist and
@@ -21,7 +22,9 @@ Optimistic locking: ALL mutations go through
 ``UPDATE ... WHERE flow_id = ? AND expected_revision = ?``. When the update
 matches zero rows the write conflicted (or the flow vanished); the caller
 gets :class:`FlowConflictError` carrying the latest revision so it can
-re-read (taskflow_summary) and retry, or :class:`FlowNotFoundError`.
+re-read (taskflow_summary) and retry, or :class:`FlowNotFoundError`. One
+deliberate exception: :func:`mark_flow_superseded` writes the lineage
+back-pointer without a revision check (see its docstring).
 """
 
 # allow: SIZE_OK — single store module for the task_flows table: schema DDL,
@@ -66,13 +69,16 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
     deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
+    session_id TEXT NOT NULL DEFAULT '',
+    resumed_from TEXT,
+    superseded_by TEXT
 );
 """
 
 _SELECT_COLUMNS_SQL = (
     f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
-    f"total_tokens, total_cost, token_budget, deadline_ts, session_id "
+    f"total_tokens, total_cost, token_budget, deadline_ts, session_id, "
+    f"resumed_from, superseded_by "
     f"FROM {TABLE_NAME}"
 )
 
@@ -105,6 +111,15 @@ _DEADLINE_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN deadline_ts REAL"
 # invisible to every session-scoped read; the system-level sweeps
 # (get_overdue_flows / get_waiting_flows) still see and finish them.
 _SESSION_ID_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+
+# Additive migration DDL for databases created before flow lineage. ``resumed_from``
+# names the flow a row continues (set on the SUCCESSOR); ``superseded_by`` names the
+# flow that replaced a row (set on the PREDECESSOR). Rows written before the columns,
+# and rows with no lineage, keep NULL in both — every reader treats NULL as "no link".
+_LINEAGE_COLUMN_DDL: tuple[str, ...] = (
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN resumed_from TEXT",
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN superseded_by TEXT",
+)
 
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
 # ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
@@ -209,6 +224,8 @@ def _row_to_flow(row: tuple) -> dict:
         token_budget,
         deadline_ts,
         session_id,
+        resumed_from,
+        superseded_by,
     ) = row
     return {
         "flow_id": flow_id,
@@ -222,6 +239,8 @@ def _row_to_flow(row: tuple) -> dict:
         "token_budget": int(token_budget or 0),
         "deadline_ts": float(deadline_ts) if deadline_ts is not None else None,
         "session_id": session_id or "",
+        "resumed_from": resumed_from or None,
+        "superseded_by": superseded_by or None,
     }
 
 
@@ -234,7 +253,12 @@ class _TaskFlowRepository(BaseSQLiteRepository):
         return (_CREATE_TABLE_SQL,)
 
     def _migration_ddls(self) -> tuple[str, ...]:
-        return (*_TOKEN_COLUMN_DDL, _DEADLINE_COLUMN_DDL, _SESSION_ID_COLUMN_DDL)
+        return (
+            *_TOKEN_COLUMN_DDL,
+            _DEADLINE_COLUMN_DDL,
+            _SESSION_ID_COLUMN_DDL,
+            *_LINEAGE_COLUMN_DDL,
+        )
 
     def _index_ddls(self) -> tuple[str, ...]:
         return _INDEX_DDL
@@ -258,11 +282,14 @@ async def create_flow(
     status: str = TaskFlowStatus.RUNNING.value,
     child_session_key: str | None = None,
     deadline_ts: float | None = None,
+    resumed_from: str | None = None,
 ) -> dict:
     """Insert a new flow at INITIAL_REVISION; FlowExistsError on duplicate id.
 
     ``session_id`` is required: every row is owned by exactly one session and
-    every session-scoped read filters on it.
+    every session-scoped read filters on it. ``resumed_from`` records lineage
+    (the predecessor flow this one continues); the matching ``superseded_by``
+    back-pointer is written by :func:`mark_flow_superseded`.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -293,6 +320,10 @@ async def create_flow(
         columns.append("deadline_ts")
         placeholders.append("?")
         params.append(float(deadline_ts))
+    if resumed_from:
+        columns.append("resumed_from")
+        placeholders.append("?")
+        params.append(resumed_from)
     try:
         async with _connect() as db:
             await db.execute(
@@ -321,6 +352,26 @@ async def get_flow(flow_id: str, session_id: str) -> dict | None:
     if row is None:
         return None
     return _row_to_flow(row)
+
+
+async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: str) -> bool:
+    """Stamp a predecessor flow's ``superseded_by`` back-pointer.
+
+    Lineage metadata, not flow state: the write is a plain session-scoped UPDATE
+    that deliberately does NOT bump ``expected_revision`` (a superseded predecessor
+    keeps its content, so a caller holding its revision is not invalidated — and
+    bumping would make the successor's create path able to lose a race it should
+    not have to run). Returns True when one row matched, False when the flow is
+    absent FOR THIS SESSION.
+    """
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET superseded_by = ? WHERE flow_id = ? AND session_id = ?",
+            (superseded_by, flow_id, session_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
 
 
 async def update_flow(
@@ -500,7 +551,9 @@ def get_active_flows_sync(session_id: str) -> list[dict]:
     """Synchronously read one session's non-terminal flows (stdlib sqlite3).
 
     Returns flows with status 'running' or 'waiting' owned by ``session_id``.
-    The SQL filter is the isolation boundary; callers no longer post-filter by
+    A superseded flow (``superseded_by`` set) is excluded even while its status
+    is still non-terminal: the caller declared it replaced. The SQL filter is
+    the isolation boundary; callers no longer post-filter by
     ``state['creator_session_key']``. Mirrors the sync read pattern of
     get_flow_sync(): threading.Lock-guarded table creation, connect-level busy
     timeout, failures logged and swallowed with an empty list return.
@@ -512,6 +565,7 @@ def get_active_flows_sync(session_id: str) -> list[dict]:
             cursor = conn.execute(
                 _SELECT_COLUMNS_SQL
                 + " WHERE session_id = ? AND status IN (?, ?)"
+                + " AND superseded_by IS NULL"
                 + " ORDER BY expected_revision DESC",
                 (session_id, TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
             )

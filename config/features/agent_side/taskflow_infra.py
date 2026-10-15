@@ -21,6 +21,11 @@ class TaskFlowInfraConfig(TypedDict):
     #: ``taskflow_create`` and ``taskflow_plan``. Finished / cancelled / failed
     #: flows do not count — they no longer hold a lane of planning.
     max_flows_per_session: int
+    #: How many step children ONE dispatch call may spawn at the same time. The
+    #: SUBAGENT lane is the global backpressure (over-limit children queue as
+    #: PENDING); this cap keeps a single dispatch wave from flooding it. 1
+    #: restores the historical one-at-a-time behaviour.
+    max_parallel_dispatch: int
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -38,4 +43,8 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     # past that, and a session that reaches it is accumulating plans instead of
     # closing them.
     "max_flows_per_session": 20,
+    # A wave spawns as one asyncio.gather, bounded here. Two is the graduated
+    # default (the lane cap is 8): a wave of N steps costs ceil(N / this) spawn
+    # rounds instead of N, and a slow spawn no longer serializes the wave.
+    "max_parallel_dispatch": 2,
 }

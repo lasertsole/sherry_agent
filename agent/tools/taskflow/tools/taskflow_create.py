@@ -20,6 +20,7 @@ async def taskflow_create(
     initial_state: dict | None = None,
     session_id: SessionId = "",
     deadline_hours: float | None = None,
+    resumed_from: str | None = None,
 ) -> str:
     """Create a durable task flow and return its initial revision.
 
@@ -29,6 +30,11 @@ async def taskflow_create(
 
     Pass deadline_hours to set an overall deadline (e.g. 24.0 for 24 hours);
     the sweeper marks the flow as failed once the deadline passes.
+
+    Pass resumed_from=<predecessor flow_id> when this flow REPLACES an earlier
+    one (e.g. the old flow went stale): the new flow records the lineage and the
+    predecessor is stamped superseded — it drops out of the active-flow reads
+    while remaining visible in the session board's history.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -36,6 +42,16 @@ async def taskflow_create(
     session_id = (session_id or "").strip()
     if not session_id:
         return "Error: session_id is required"
+    resumed_from = (resumed_from or "").strip() or None
+    if resumed_from == flow_id:
+        return f"Error: resumed_from cannot name the flow being created ('{flow_id}')"
+    if resumed_from is not None:
+        predecessor = await store_sqlite.get_flow(resumed_from, session_id)
+        if predecessor is None:
+            return (
+                f"Error: resumed_from flow '{resumed_from}' not found in this session. "
+                "Create without resumed_from, or name an existing flow_id."
+            )
 
     creator_key = requester_session_key(session_id)
     state = default_state(description, initial_state, creator_session_key=creator_key)
@@ -65,7 +81,11 @@ async def taskflow_create(
 
     try:
         flow = await store_sqlite.create_flow(
-            flow_id, state, session_id=session_id, deadline_ts=deadline_ts
+            flow_id,
+            state,
+            session_id=session_id,
+            deadline_ts=deadline_ts,
+            resumed_from=resumed_from,
         )
     except FlowExistsError:
         existing = await store_sqlite.get_flow(flow_id, session_id)
@@ -76,6 +96,16 @@ async def taskflow_create(
             f"Error: TaskFlow '{flow_id}' already exists (revision={revision}). "
             "Re-read it with taskflow_summary."
         )
+    lineage_text = ""
+    if resumed_from is not None:
+        marked = await store_sqlite.mark_flow_superseded(
+            resumed_from, flow_id, session_id=session_id
+        )
+        lineage_text = f", resumed_from={resumed_from}"
+        if not marked:
+            # The predecessor vanished between the pre-check and the write; the
+            # successor keeps its forward pointer, which is still true.
+            lineage_text += " (predecessor not found when stamping superseded_by)"
     deadline_text = (
         f", deadline={time.strftime('%Y-%m-%d %H:%M', time.localtime(deadline_ts))}"
         if deadline_ts
@@ -84,5 +114,5 @@ async def taskflow_create(
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow created: flow_id={flow['flow_id']}, status={flow['status']}, "
-        f"revision={flow['expected_revision']}{deadline_text}"
+        f"revision={flow['expected_revision']}{deadline_text}{lineage_text}"
     )

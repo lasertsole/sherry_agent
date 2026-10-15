@@ -41,6 +41,10 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
         f"description={state.get('description', '')}",
         f"steps: {len(steps)}",
     ]
+    if flow.get("resumed_from"):
+        lines.append(f"resumed_from: {flow['resumed_from']} (this flow continues that one)")
+    if flow.get("superseded_by"):
+        lines.append(f"superseded_by: {flow['superseded_by']} (replaced; not an active flow)")
     for step in steps:
         if isinstance(step, dict):
             depends_on = step.get("depends_on") or []

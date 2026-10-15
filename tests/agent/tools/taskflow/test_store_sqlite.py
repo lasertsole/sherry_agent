@@ -537,6 +537,8 @@ async def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "token_budget": "INTEGER",
         "deadline_ts": "REAL",
         "session_id": "TEXT",
+        "resumed_from": "TEXT",
+        "superseded_by": "TEXT",
     }
 
 
