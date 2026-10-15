@@ -17,8 +17,15 @@ class SubagentConfig(BaseModel):
     # queues over-limit runs (PENDING). Readable for backward compatibility only.
     max_concurrent: int = 8
     max_children_per_agent: int = 5
-    # 0 = no timeout (child agents may run indefinitely; background sweeps provide the safety net)
-    run_timeout_seconds: float = 0.0
+    # Lifetime spawn budget for one requesting session (process-lifetime, like
+    # the rest of the registry's live view). The concurrency cap is 5 AT A TIME;
+    # this bounds "finish a child, start the next" repeating forever.
+    max_total_spawns_per_session: int = 50
+    # Wall-clock ceiling for one child run (seconds). 0 = no timeout; the
+    # default is a real ceiling because the goal loop (5 turns x 60 iterations)
+    # is otherwise unbounded in TIME — a slow provider could run one child for
+    # hours. Callers override per spawn via sessions_spawn(run_timeout_seconds).
+    run_timeout_seconds: float = 600.0
     require_agent_id: bool = False
     allow_agents: list[str] = Field(default_factory=lambda: ["*"])
     default_cleanup: Literal["delete", "keep"] = "delete"

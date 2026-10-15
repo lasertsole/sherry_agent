@@ -365,3 +365,116 @@ async def test_cancelled_runner_joins_consumer_unwind(monkeypatch):
         "runner finished while its consumer was still unwinding "
         "(on_turn_finished never completed) - queue singleton poisoning window"
     )
+
+
+# ===========================================================================
+# The continuation gate wired to the REAL trigger: turn end -> directive
+# delivery -> the consecutive-continuation ceiling (agent e2e seam)
+# ===========================================================================
+
+
+@pytest.mark.integration
+class TestContinuationGateEndToEnd:
+    """The whole chain runs for real: the enforcer's turn-end hook, the
+    production ``maybe_trigger_auto_turn`` registration, and what the model
+    would actually receive (the injection text handed to generate)."""
+
+    SID = "sess-cap-e2e"
+
+    @pytest.fixture()
+    def gate(self, monkeypatch):
+        from agent.middlewares.todo_continuation import core as tc
+        from agent.tools.taskflow.registry import store_sqlite as flow_store
+        from agent.tools.todolist import stagnation_tracker as st
+        from agent.tools.todolist.registry import store_sqlite as todo_store
+
+        monkeypatch.setattr(
+            todo_store,
+            "get_todos_sync",
+            lambda session_id: [
+                {
+                    "content": "finish the report",
+                    "status": "pending",
+                    "priority": "high",
+                    "flow_id": None,
+                    "step_id": None,
+                }
+            ],
+        )
+        monkeypatch.setattr(flow_store, "get_active_flows_sync", lambda session_id: [])
+        st.reset(self.SID)
+        yield tc, st
+        st.reset(self.SID)
+
+    @pytest.mark.asyncio
+    async def test_the_gate_delivers_through_the_real_trigger_and_caps(self, monkeypatch, gate):
+        at = _mod()
+        tc, st = gate
+        from runtime import hooks
+
+        # The production wiring: the enforcer resolves this hook and calls it.
+        hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, at.maybe_trigger_auto_turn)
+        try:
+            _fake_detect(monkeypatch, at, {"busy": False, "reason": "idle"})
+            monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
+            monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+            monkeypatch.setattr(at, "enqueue_steering", _make_spy())
+            calls, started, finished = [], asyncio.Event(), asyncio.Event()
+            monkeypatch.setattr(
+                at, "async_generate", _fake_generate(calls, started, None, finished)
+            )
+
+            async def _drive(state: dict) -> None:
+                """Run one turn end and wait for the auto turn it armed.
+
+                The runner pops itself from ``_INFLIGHT`` when it finishes, so
+                the handle is taken before the first yield after the enforcer
+                returned (``maybe_trigger_auto_turn`` has zero awaits: the task
+                exists and has not started yet at that instant).
+                """
+                await tc.PlanContinuationEnforcer().aafter_agent(state)
+                runner = at._INFLIGHT.get(self.SID)
+                if runner is not None:
+                    await asyncio.wait_for(runner, timeout=10)
+
+            # Turn 1 — a real user turn ends with the plan still open.
+            await _drive({"session_id": self.SID})
+
+            assert len(calls) == 1 and calls[0][0] == self.SID
+            assert "[SYSTEM DIRECTIVE: TODO CONTINUATION]" in calls[0][1]
+            assert st.continuation_turns(self.SID) == 1
+            assert st.is_stopped(self.SID) is False
+
+            # The ceiling: the NEXT continuation turn spends the last turn.
+            monkeypatch.setattr(st, "continuation_cap", lambda: 1)
+            cont_state = {
+                "session_id": self.SID,
+                "messages": [
+                    HumanMessage(
+                        content=calls[0][1],
+                        metadata={"origin": "todo_continuation", "internal": True},
+                    )
+                ],
+            }
+            await _drive(cont_state)
+
+            assert len(calls) == 2
+            assert "[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]" in calls[1][1]
+            assert "(1/1 continuation turns)" in calls[1][1]
+            assert st.is_stopped(self.SID) is True
+
+            # Latched: the gate stays silent at the next turn end ...
+            await _drive(cont_state)
+            assert len(calls) == 2
+
+            # ... until a real user message resets the budget and the latch.
+            # (The user read the summary for two minutes: the pending cooldown
+            # from the previous injection has expired by the time they answer.)
+            st._last_inject_time[self.SID] = st._now() - 120.0
+            await _drive({"session_id": self.SID})
+
+            assert len(calls) == 3
+            assert "[SYSTEM DIRECTIVE: TODO CONTINUATION]" in calls[2][1]
+            assert st.is_stopped(self.SID) is False
+        finally:
+            hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)

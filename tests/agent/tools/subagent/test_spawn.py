@@ -91,13 +91,14 @@ class TestTargetPolicy:
 
 class TestPlan:
     def test_default_timeout(self):
-        assert resolve_run_timeout_seconds() == 0.0
+        """Unset = the config default, which is a real ceiling (600 s)."""
+        assert resolve_run_timeout_seconds() == 600.0
 
     def test_custom_timeout(self):
         assert resolve_run_timeout_seconds(600.0) == 600.0
 
     def test_invalid_timeout_uses_default(self):
-        assert resolve_run_timeout_seconds(-1) == 0.0
+        assert resolve_run_timeout_seconds(-1) == 600.0
 
     def test_split_model_ref_with_provider(self):
         provider, model = split_model_ref("openai/gpt-4")

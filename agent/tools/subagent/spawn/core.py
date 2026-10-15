@@ -29,12 +29,14 @@ from ..registry import register_run, get_run, mark_run_running
 from ..registry.read import count_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..registry.session_keys import normalize_session_key
+from ..registry.spawn_budget import total_spawns
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..capabilities import can_spawn_children, resolve_subagent_capabilities
 from .depth import (
     get_subagent_depth,
     validate_spawn_depth,
     validate_concurrent_children,
+    validate_total_spawns,
 )
 from .target_policy import validate_target_policy
 from .plan import (
@@ -233,6 +235,12 @@ def _validate_spawn_request(
 
     active_count = count_active_runs_readonly(requester_session_key)
     allowed, reason = validate_concurrent_children(active_count)
+    if not allowed:
+        return child_depth, SpawnResult(status="forbidden", error=reason)
+
+    # Lifetime budget: the concurrent cap bounds children running AT A TIME,
+    # this bounds "finish one, start the next" repeating without end.
+    allowed, reason = validate_total_spawns(total_spawns(requester_session_key))
     if not allowed:
         return child_depth, SpawnResult(status="forbidden", error=reason)
     return child_depth, None

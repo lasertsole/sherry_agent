@@ -634,3 +634,250 @@ class TestTodowriteAccounting:
         assert "[REMINDER: TODO TRACKING]" not in injected[0], (
             "the recovery directive carries its own todowrite guidance"
         )
+
+
+# ===========================================================================
+# The consecutive-continuation ceiling (turn-level hard cap)
+# ===========================================================================
+
+_STOP_MARKER = "[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]"
+
+
+def _continuation_turn_state(session_id: str = _SID) -> dict:
+    """A turn's state as it looks when the GATE's own directive drove it.
+
+    The injected directive is the last HumanMessage and carries the enforcer's
+    origin tag — which is exactly what makes the turn a continuation (and
+    therefore what must NOT reset the budget).
+    """
+    state = _state(session_id)
+    state["messages"] = [
+        HumanMessage(
+            content="[SYSTEM DIRECTIVE: TODO CONTINUATION] keep going",
+            metadata={"origin": "todo_continuation", "internal": True},
+        )
+    ]
+    return state
+
+
+class TestContinuationBudgetState:
+    """Pure tracker state: the counter, the latch, and reset()."""
+
+    def test_confirmed_injections_count_and_the_reset_clears(self):
+        sid = "s-budget"
+        st.reset(sid)
+        assert st.continuation_turns(sid) == 0
+        for _ in range(3):
+            st.mark_injected(sid)
+
+        assert st.continuation_turns(sid) == 3
+
+        st.reset_continuation_turns(sid)
+
+        assert st.continuation_turns(sid) == 0
+        assert st.is_stopped(sid) is False
+
+    def test_the_latch_rides_with_the_counter(self):
+        sid = "s-budget-latch"
+        st.reset(sid)
+        st.mark_stopped(sid)
+        assert st.is_stopped(sid) is True
+
+        st.reset_continuation_turns(sid)
+
+        assert st.is_stopped(sid) is False
+
+    def test_a_full_reset_clears_the_budget_too(self):
+        sid = "s-budget-full"
+        st.reset(sid)
+        st.mark_injected(sid)
+        st.mark_stopped(sid)
+
+        st.reset(sid)
+
+        assert st.continuation_turns(sid) == 0
+        assert st.is_stopped(sid) is False
+
+    def test_the_cap_comes_from_the_config(self):
+        from config.features import TODOLIST_INFRA
+
+        assert st.continuation_cap() == TODOLIST_INFRA["max_continuation_turns"]
+        assert st.continuation_cap() >= 1
+
+
+class TestContinuationCapEnforcement:
+    """The gate's turn-end behaviour around the ceiling."""
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_injection_counts_the_turn(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+        assert len(spy_auto_turn) == 1
+        assert st.continuation_turns(_SID) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_undelivered_directive_does_not_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No trigger registered (no server assembled) → nothing was delivered."""
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+        assert st.continuation_turns(_SID) == 0
+
+    @pytest.mark.asyncio
+    async def test_a_continuation_turn_keeps_the_count(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        st._continuation_turns[_SID] = 2
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+
+        assert len(spy_auto_turn) == 1
+        assert st.continuation_turns(_SID) == 3
+
+    @pytest.mark.asyncio
+    async def test_a_real_user_turn_resets_the_count_and_the_latch(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        st._continuation_turns[_SID] = 5
+        st.mark_stopped(_SID)
+
+        # A user turn (no continuation marker): the budget AND the latch clear,
+        # so the gate is free to act on the plan again.
+        await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+        assert st.continuation_turns(_SID) == 1, (
+            "reset to 0 by the user turn, +1 for this directive"
+        )
+        assert st.is_stopped(_SID) is False
+
+    @pytest.mark.asyncio
+    async def test_a_subagent_completion_turn_resets_the_count(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        """A completion is a NEW event, not a continuation — the budget restarts."""
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        st._continuation_turns[_SID] = 4
+        state = _state()
+        state["messages"] = [
+            HumanMessage(
+                content="[subagent:run-1] child finished",
+                metadata={"internal": True, "provenance": "subagent_completion"},
+            )
+        ]
+
+        await tc.PlanContinuationEnforcer().aafter_agent(state)
+
+        assert st.continuation_turns(_SID) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_cap_injects_the_stop_directive_and_latches(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        monkeypatch.setattr(st, "continuation_cap", lambda: 3)
+        st._continuation_turns[_SID] = 3
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+
+        assert len(spy_auto_turn) == 1
+        content = spy_auto_turn[0][1].content
+        assert _STOP_MARKER in content
+        assert "3/3 continuation turns" in content
+        assert "build api" in content
+        assert "stop" in content.lower()
+        # Same injector provenance as every other directive.
+        assert spy_auto_turn[0][1].metadata.get("origin") == "todo_continuation"
+        assert st.is_stopped(_SID) is True
+        # The stop directive itself was confirmed delivered → it counts.
+        assert st.continuation_turns(_SID) == 4
+
+    @pytest.mark.asyncio
+    async def test_the_latched_session_stays_silent(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        st._continuation_turns[_SID] = 4
+        st.mark_stopped(_SID)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+
+        assert spy_auto_turn == []
+        assert st.continuation_turns(_SID) == 4, "silence delivers nothing"
+
+    @pytest.mark.asyncio
+    async def test_the_cap_outranks_stagnation_recovery(
+        self, monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+    ) -> None:
+        """At the ceiling the stop directive wins; recovery would just extend it."""
+        todos = [_todo("build api", "pending")]
+        _patch_todos(monkeypatch, todos)
+        monkeypatch.setattr(st, "continuation_cap", lambda: 2)
+        st._continuation_turns[_SID] = 2
+        rows = [{"content": t["content"], "status": t["status"]} for t in todos]
+        for _ in range(6):  # saturate the stagnation streak
+            st.check_stagnation(_SID, rows)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+
+        assert len(spy_auto_turn) == 1
+        assert _STOP_MARKER in spy_auto_turn[0][1].content
+        assert _RECOVERY_MARKER not in spy_auto_turn[0][1].content
+
+    @pytest.mark.asyncio
+    async def test_a_refused_stop_directive_is_retried_not_latched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A trigger that raises leaves the latch open — the gate must retry."""
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        monkeypatch.setattr(st, "continuation_cap", lambda: 3)
+        st._continuation_turns[_SID] = 3
+        calls: list[str] = []
+
+        async def _refuse(session_key: str, injection: HumanMessage) -> object:
+            calls.append(session_key)
+            raise RuntimeError("session is busy")
+
+        hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _refuse)
+        try:
+            await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+        finally:
+            hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
+
+        assert calls, "the gate tried to deliver the stop directive"
+        assert st.is_stopped(_SID) is False, "a refused stop must stay retryable"
+        assert st.continuation_turns(_SID) == 3, "nothing was confirmed delivered"
+
+    @pytest.mark.asyncio
+    async def test_a_trigger_that_answers_busy_counts_as_no_delivery(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """BUSY / ALREADY_PENDING is a refusal, not a delivery (no phantom budget)."""
+        _patch_todos(monkeypatch, [_todo("build api", "pending")])
+        monkeypatch.setattr(st, "continuation_cap", lambda: 3)
+        st._continuation_turns[_SID] = 3
+
+        class _Refused:
+            outcome = "already_pending"
+
+        async def _refuse(session_key: str, injection: HumanMessage) -> object:
+            return _Refused()
+
+        hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _refuse)
+        try:
+            await tc.PlanContinuationEnforcer().aafter_agent(_continuation_turn_state())
+        finally:
+            hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
+
+        assert st.is_stopped(_SID) is False, "a refused stop must stay retryable"
+        assert st.continuation_turns(_SID) == 3
+        assert _SID not in st._last_inject_time, "a refusal must not arm the cooldown"

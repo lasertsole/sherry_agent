@@ -24,6 +24,12 @@ class TodoListInfraConfig(TypedDict):
     continuation_self_idle_wait_s: float
     #: Poll interval of that wait.
     continuation_self_idle_poll_s: float
+    #: Consecutive CONTINUATION turns before the enforcer stops injecting.
+    #: Counts the instructions ``mark_injected`` confirmed delivered (a failed
+    #: trigger does not count); a real user message or a subagent-completion
+    #: turn resets it. Hitting the cap injects one final "stop and summarize"
+    #: directive and the session then stays silent until the user speaks.
+    max_continuation_turns: int
 
 
 TODOLIST_INFRA: TodoListInfraConfig = {
@@ -37,4 +43,9 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "todo_write_nudge_turns": 10,
     "continuation_self_idle_wait_s": 30.0,
     "continuation_self_idle_poll_s": 0.5,
+    # Stagnation stops a stuck plan in ~5 turns (3 + 2 recoveries); the cap is
+    # 3x that, so a plan that KEEPS MAKING PROGRESS still has room — the shape
+    # stagnation cannot see is the "edits the plan every turn, never finishes"
+    # loop this ceiling exists for.
+    "max_continuation_turns": 15,
 }

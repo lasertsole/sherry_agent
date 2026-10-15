@@ -23,7 +23,11 @@ getTaskSummary).
 ## Tool overview
 
 - `taskflow_create(flow_id, description, initial_state)`: create a flow with
-  initial revision=1 and status running.
+  initial revision=1 and status running. Ceilings (refused as `Error:` text):
+  at most 20 steps per flow (`TASKFLOW_INFRA["max_steps_per_flow"]`) and at most
+  20 ACTIVE flows per session (`max_flows_per_session`; finished/cancelled flows
+  release their slot) — close flows with `taskflow_finish` / `taskflow_cancel`
+  before creating more.
 - `taskflow_run_task(flow_id, task, label, depends_on, expected_revision,
   validation_criteria, retry_policy, response_schema, expected_params,
   input_bindings, judge_criteria, judge_model, functional_role, step_model,
