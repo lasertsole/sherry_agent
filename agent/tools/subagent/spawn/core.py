@@ -158,6 +158,39 @@ def _resolve_functional_role(
         return FunctionalRole.GENERAL
 
 
+def _check_role_containment(
+    requester_session_key: str,
+    child_functional_role: FunctionalRole,
+) -> str | None:
+    """Reject cross-role spawning from a specialized parent.
+
+    MAIN (no run record) and general (``tools: inherit`` = every tool) impose no
+    restriction: every specialized role's whitelist is a subset of theirs, so no
+    escalation is possible. A specialized parent (researcher / executor /
+    reviewer / librarian) may only spawn children of the SAME functional role —
+    same role = same whitelist = the child can do exactly what the parent can.
+    Without this, a read-only researcher could hire a write-capable executor.
+
+    Returns the refusal text, or ``None`` when the spawn is allowed.
+    """
+    from ..registry import get_run_by_child_session_key
+
+    parent_run = get_run_by_child_session_key(requester_session_key)
+    if parent_run is None:
+        return None  # MAIN — the orchestrating root is not contained
+    parent_role = getattr(parent_run, "functional_role", FunctionalRole.GENERAL)
+    if parent_role == FunctionalRole.GENERAL:
+        return None  # inherit mode: every specialized whitelist is a subset
+    if child_functional_role == parent_role:
+        return None
+    return (
+        f"Capability containment: a {parent_role} subagent can only spawn "
+        f"{parent_role} children (requested {child_functional_role}). "
+        f'Pass functional_role="{parent_role}" for a same-role child; use a general '
+        "subagent or the main agent to spawn a different role."
+    )
+
+
 class SpawnResult:
     """Outcome of a spawn request — accepted, forbidden, or error.
 
@@ -567,6 +600,25 @@ async def spawn_subagent_direct(
     role_def: RoleDefinition | None = (
         load_role_definition(functional_role) if functional_role != FunctionalRole.GENERAL else None
     )
+
+    # --- Phase 4.6: capability containment (same-role derivation) ---
+    # Specialized role → same-role children only (see _check_role_containment).
+    # Refused here, before the model plan and the attachment materialization, and
+    # the isolated workspace a refusal may have cut is discarded like any other.
+    containment_error = _check_role_containment(requester_session_key, functional_role)
+    if containment_error is not None:
+        logger.warning(
+            "spawn refused: capability containment child_role={} requester={}",
+            functional_role,
+            requester_session_key,
+        )
+        if isolated_workspace is not None:
+            # A refused spawn must not leave its private copy behind: nothing
+            # will ever merge it (no run record).
+            from ..isolation import discard_isolated_workspace
+
+            discard_isolated_workspace(isolated_workspace.meta_dir)
+        return SpawnResult(status="forbidden", error=containment_error)
 
     # --- Phase 5: Model & thinking plan ---
     model_plan = resolve_model_and_thinking_plan(

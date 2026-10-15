@@ -170,3 +170,27 @@ class TestCache:
         invalidate_role_cache()
         refreshed = load_all_role_definitions()
         assert refreshed[FunctionalRole.EXECUTOR].description == "Overridden executor"
+
+
+class TestRoleBodiesDoNotOwnTheDepthRole:
+    """A breadth body must not declare spawn capability — the depth prompt owns it.
+
+    The executor body used to carry "Do NOT spawn further subagents (you are a
+    LEAF executor)". That sentence assumes the role is always at max depth, but
+    an executor at depth 1 IS an ORCHESTRATOR — whose prompt says "You MAY
+    spawn" while the body said the opposite. The depth prompt is the only place
+    that owns spawn capability, so a breadth body must stay silent about it.
+    """
+
+    def test_no_body_hardcodes_a_depth_role(self):
+        for role in FunctionalRole:
+            body = (get_roles_dir() / role.value / "AGENTS.md").read_text(encoding="utf-8")
+
+            assert "LEAF" not in body, role
+            assert "ORCHESTRATOR" not in body, role
+
+    def test_the_executor_body_keeps_its_other_exclusions(self):
+        body = (get_roles_dir() / "executor" / "AGENTS.md").read_text(encoding="utf-8")
+
+        assert "use researcher" in body and "use reviewer" in body
+        assert "Do NOT spawn" not in body

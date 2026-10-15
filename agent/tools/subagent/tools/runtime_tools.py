@@ -53,6 +53,16 @@ async def sessions_spawn_runtime_tool(
             "(e.g. large codebase refactors) — the minimum already covers most."
         ),
     ] = None,
+    functional_role: Annotated[
+        str | None,
+        Field(
+            description="Functional specialization of the child: general (full "
+            "access), researcher (read-only search), executor (write + run), "
+            "reviewer (read-only audit), librarian (read-only external-codebase "
+            "retrieval). Omit for the default. A specialized caller may only "
+            "spawn its own role."
+        ),
+    ] = None,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
 
@@ -83,6 +93,7 @@ async def sessions_spawn_runtime_tool(
         attachments=attach_dicts,
         expects_completion_message=True,
         run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
+        functional_role_hint=functional_role,
     )
 
     parts = [f"Subagent spawned: status={result.status}"]
