@@ -59,6 +59,19 @@ def _read_todos_sync(session_id: str) -> list[dict]:
     return provider.get_todos(session_id) if provider is not None else []
 
 
+#: Stable capability note appended to every system prompt: what a chat-side
+#: file mention looks like and how to reach the file. It belongs to the CACHED
+#: half of the prompt (the composer's ``@path`` chips are a UI convention, not
+#: live state), so it is a constant, not a per-turn reminder.
+FILE_REFERENCE_BLOCK = """## File References
+
+User messages may carry `@path` file references (e.g. `@./src/foo.py`, or a
+directory as `@./src/`) — the chat composer turns dragged or right-clicked
+workspace files into them. Paths are relative to the session's working
+directory; use `read_file` / `search_files` on the named path instead of
+guessing a file's content from its name."""
+
+
 def _build_todo_block(session_id: str) -> str:
     """Render the session todo list. Returns "" when empty or on any failure."""
     try:
@@ -430,7 +443,7 @@ def build_system_prompt(
     # keeps its builder above (``_build_todo_block`` etc.) — only the delivery
     # changed. This prompt is therefore safe to CACHE per session, which is
     # exactly what ``system_prompt_injection`` does.
-    parts = [*file_paths, skill_paths]
+    parts = [*file_paths, skill_paths, FILE_REFERENCE_BLOCK]
 
     # Join with blank-line separators, skipping any empty parts.
     return "\n\n".join(p for p in parts if p)

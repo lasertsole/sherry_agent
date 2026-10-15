@@ -145,7 +145,7 @@ export interface RightSidebarTab {
    * instance key, while the settings entries keep deduping on their empty
    * payload. The panel reads it back to key its own state.
    */
-  payload?: { path?: string; hash?: string; instance?: string };
+  payload?: { path?: string; hash?: string; instance?: string; url?: string };
 }
 
 let tabSeq = 0;
@@ -227,26 +227,31 @@ export const useRightSidebarStore = defineStore(
      * @param kind Panel kind to open.
      * @param payload The panel's identity: its `path` (and, for a commit diff, the
      *   `hash` it was opened from), plus an `instance` key for kinds allowed to
-     *   run several twins (the toolbox's browser / terminal).
+     *   run several twins (the toolbox's browser / terminal). A browser tab may
+     *   also carry the `url` it should open with (the file tree's "open in
+     *   browser" hands a local page over this way).
      * @param payload.path
      * @param payload.hash
      * @param payload.instance
+     * @param payload.url
      * @returns The tab id (the existing tab's id when it was reused).
      */
     function openTab(
       kind: RightSidebarPanelKind,
-      payload?: { path?: string; hash?: string; instance?: string }
+      payload?: { path?: string; hash?: string; instance?: string; url?: string }
     ): string {
       const path = payload?.path ?? null;
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
+      const url = payload?.url ?? null;
       const scope = SCOPE_BY_KIND[kind];
       const existing = tabs.value.find(
         tab =>
           tab.kind === kind &&
           (tab.payload?.path ?? null) === path &&
           (tab.payload?.hash ?? null) === hash &&
-          (tab.payload?.instance ?? null) === instance
+          (tab.payload?.instance ?? null) === instance &&
+          (tab.payload?.url ?? null) === url
       );
       if (existing) {
         activeTabId.value = existing.id;

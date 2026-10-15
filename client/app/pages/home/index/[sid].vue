@@ -417,6 +417,7 @@ import type { MessageItem } from '../type.ts';
 import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
+import type { FileMentionPayload } from '~/composables/use-file-mention';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -987,6 +988,19 @@ watch(
   { immediate: true }
 );
 
+/**
+ * A "add this file to the chat" request from the file tree (or a sidebar tab
+ * drag relayed the same way): insert the mention chip when the request names
+ * THIS instance's session — several sessions stay KeepAlive-cached, and the
+ * event is app-wide.
+ * @param request
+ */
+function onFileMentionRequest(request: unknown): void {
+  const payload = request as { sessionId?: string; payload?: FileMentionPayload } | undefined;
+  if (!payload?.payload?.path || payload.sessionId !== mySid) return;
+  chatInputBoxRef.value?.addFileMention?.(payload.payload);
+}
+
 // After mount, ensure character info is loaded (immediate already fired on KeepAlive restore; this is a fallback)
 onMounted(() => {
   if (sessionId.value) {
@@ -1001,6 +1015,10 @@ onMounted(() => {
   on('stream:reconnecting', onStreamReconnecting);
   on('stream:reconnected', onStreamReconnected);
   on('stream:reconnect:failed', onStreamReconnectFailed);
+  // The left sidebar's file tree has no reference to this composer, so its
+  // "Add to chat" asks over the bus; only the instance owning that session
+  // performs the insert.
+  on('chat:file-mention', onFileMentionRequest);
 });
 
 // Remove listeners on component unmount (KeepAlive cache slot evicted/destroyed) to avoid leaks
@@ -1009,6 +1027,7 @@ onUnmounted(() => {
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
+  off('chat:file-mention', onFileMentionRequest);
   // This instance's KeepAlive slot was evicted: release its persistent socket.
   releaseAgentSocket(mySid);
 });

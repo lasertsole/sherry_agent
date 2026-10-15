@@ -6,7 +6,10 @@
       :style="{ paddingLeft: `${depth * 12 + 8}px` }"
       :title="node.path"
       :data-test="`file-node-${node.path}`"
-      @click="onClick">
+      draggable="true"
+      @click="onClick"
+      @contextmenu.prevent="emit('menu', $event, node)"
+      @dragstart="onDragStart">
       <i
         v-if="node.type === 'dir'"
         class="pi pi-angle-right text-[0.6rem] text-gray-400 transition-transform"
@@ -34,13 +37,17 @@
         :session-id="sessionId"
         :loading-paths="loadingPaths"
         @toggle="child => emit('toggle', child)"
-        @open="child => emit('open', child)" />
+        @open="child => emit('open', child)"
+        @menu="(event, child) => emit('menu', event, child)" />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { TreeNode } from './ProjectFileTree.vue';
+// Only the TYPE crosses the module boundary: the composable's exports are
+// auto-imported (Nuxt/unimport), so the values stay bare symbols.
+import type { FileMentionPayload } from '~/composables/use-file-mention';
 
 const props = defineProps<{
   node: TreeNode;
@@ -52,11 +59,31 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'toggle', node: TreeNode): void;
   (e: 'open', node: TreeNode): void;
+  /** A row was right-clicked: the parent (which owns the one ContextMenu) shows the menu. */
+  (e: 'menu', event: Event, node: TreeNode): void;
 }>();
 
 /** Directories expand/collapse; files open in a viewer tab. */
 const onClick = (): void => {
   if (props.node.type === 'dir') emit('toggle', props.node);
   else emit('open', props.node);
+};
+
+/**
+ * Start a drag carrying the row as a file mention: the composer's drop handler
+ * reads the custom MIME (JSON payload) and falls back to the plain-text
+ * `@path` for any other drop target.
+ * @param event The dragstart event.
+ */
+const onDragStart = (event: DragEvent): void => {
+  const payload: FileMentionPayload = {
+    type: props.node.type === 'dir' ? 'dir' : 'file',
+    path: props.node.path,
+    name: props.node.name
+  };
+  if (!event.dataTransfer) return;
+  event.dataTransfer.setData(FILE_MENTION_MIME, JSON.stringify(payload));
+  event.dataTransfer.setData('text/plain', buildMentionText(payload));
+  event.dataTransfer.effectAllowed = 'copy';
 };
 </script>
