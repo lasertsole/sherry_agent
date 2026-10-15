@@ -376,6 +376,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 中止类回合错误（用户取消 / 超时，`stagnation_tracker.is_abort_error`）绝不续作；空列表或全部完成的列表会重置停滞追踪器。
 - 停滞处理（`agent/tools/todolist/stagnation_tracker.py`）：列表在多次尝试后仍未变化则进入恢复模式并注入 `_RECOVERY_PROMPT`；`is_in_cooldown` 限制重复注入；只有成功投递后才通过 `mark_injected` 记录触发。
+- **续跑预算**：`mark_injected` 同时给该 turn 计数，因此这个计数器是真正**投递成功**的连续续跑 turn 数（被 trigger 拒绝的指令——`busy` / `already_pending`——不计入，下一轮 turn 结束时重试；恢复指令同样计入）。达到 `TODOLIST_INFRA["max_continuation_turns"]`（15）时，强制器发出最后一条 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令、给会话上锁，并保持静默，直到出现一个不是它自己注入的 turn——真实用户消息，或子代理完成通知——才重置预算与锁。这条上限约束的是停滞检测看不见的形态：模型每轮都微改计划让快照一直在动。
 - Fail-open：任何异常都会记录日志，回合正常结束。
 - **todowrite 提醒**：钩子统计未调用 `todowrite` 的轮数（`stagnation_tracker.record_turn` / `record_todowrite`，本轮调用了 todowrite 即清零），超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后**追加** `[REMINDER: TODO TRACKING]` 块——这是快照式停滞检测唯一看不见的形态（推进 TaskFlow 会清零 streak，而 todo 列表在腐烂）。恢复模式自带更强的 todowrite 指引，不追加该提醒。
 

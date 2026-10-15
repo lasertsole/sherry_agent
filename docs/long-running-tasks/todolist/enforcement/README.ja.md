@@ -56,7 +56,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 turn 終了後に未完了 todo があれば、システムが自動的に継続メッセージを注入して LLM を引き戻します。モデルの自覚に依存しません。
 
-**主要定数**：`_MAX_STAGNATION = 3`（連続3回変化なし → 停止）、`_BASE_COOLDOWN_S = 2.0`（基本バックオフ）、`_MAX_COOLDOWN_S = 60.0`（最大バックオフ）、`_FAILURE_RESET_WINDOW_S = 300`（5分間失敗なし → リセット）、`_MAX_RECOVERY_ATTEMPTS = 2`（リカバリモード上限）。
+**主要定数**：`_MAX_STAGNATION = 3`（連続3回変化なし → 停止）、`_BASE_COOLDOWN_S = 2.0`（基本バックオフ）、`_MAX_COOLDOWN_S = 60.0`（最大バックオフ）、`_FAILURE_RESET_WINDOW_S = 300`（5分間失敗なし → リセット）、`_MAX_RECOVERY_ATTEMPTS = 2`（リカバリモード上限）、`_MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]`（15）——連続継続 turn の上限 → 最後の停止指令を1回注入してから沈黙。
 
 **ワークフロー**：
 
@@ -65,6 +65,11 @@ turn ends (no tool_call, agent loop exits)
   → Summarization.aafter_agent (rebuild system prompt with latest todos)
   → TodoContinuationEnforcer.aafter_agent
       → is_abort_error? → skip
+      → a turn the gate did not inject (user message / subagent completion)?
+        → reset the continuation budget
+      → incomplete plan? → no → reset() (+ the plan-extraction fork)
+      → budget spent (latched)? → silent, wait for a user message
+      → continuation turns >= 15? → STOP_PROMPT + latch → return
       → get_todos_sync(session_id) → filter incomplete
       → check_stagnation: snapshot compare, N consecutive no-change?
           → should_enter_recovery? → RECOVERY_PROMPT
@@ -82,7 +87,9 @@ turn ends (no tool_call, agent loop exits)
       → user message inside that wait → still busy at the cap → drop → reset()
 ```
 
-**ファイル**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行登録）。
+**継続バジェット**：`mark_injected`——すべての指令が trigger に受理された後に必ず通る唯一の点——はその turn もカウントするため、このカウンタは実際に配信された連続継続 turn 数そのものです（trigger に拒否された指令はカウントされず、次の turn 終了時に再試行されます。リカバリ指令もカウント対象です）。15 に達すると、強制器は最後の `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令を送り、セッションをラッチして、この強制器自身が注入していない turn——実際のユーザーメッセージ、または subagent 完了通知（新しいイベントであり継続ではない）——がカウンタとラッチをリセットするまで沈黙します。この上限は停滞検出が見逃す形（モデルが毎回わずかに計画を編集し——ステータスを1つ変え、step を1つ追加し——スナップショットを動かし続けるため streak が発火しない）をカバーします。
+
+**ファイル**：`stagnation_tracker.py`（~190 行）+ `todo_continuation/core.py`（~545 行）+ `agent/core.py`（~2 行登録）。
 
 ### E4: 遷移バリア — 二重保険
 

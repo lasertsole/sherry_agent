@@ -4,13 +4,20 @@
 
 > 설계 계층 자매편——역할 축, spawn 권한 가드, 4계층 완료 게이트: [docs/subagent/README.ko.md](../../../docs/subagent/README.ko.md)
 
+## 업데이트 노트 (2026-10-15)
+
+> 리소스 상한 보완 — wall-clock 타임아웃이 다시 유효해졌고 세션별 spawn 횟수에 상한이 생겼습니다:
+
+- **`run_timeout_seconds` 기본값 0.0 → 600.0 (10분)**: 자식이 시간적으로 무제한 실행되지 않습니다. `spawn`과 `steer`는 다시 자식의 `ainvoke`를 `asyncio.wait_for`로 감싸고 followup 타임아웃 검사도 활성화됩니다 (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`). sweeper의 2시간 stale 감지는 바깥 안전망으로 남습니다. 호출자는 `sessions_spawn(run_timeout_seconds=...)`로 spawn별 재정의할 수 있고 `0`은 여전히 "타임아웃 없음"입니다.
+- **신규 `max_total_spawns_per_session` (50)**: 세션 단위 누적 spawn 예산 (`registry/spawn_budget.py`, registry의 다른 라이브 뷰와 같은 프로세스 내 메모리). `max_children_per_agent` (5)는 동시에 실행되는 자식 수를, 이 항목은 "하나 끝내고 다음 시작"의 무한 반복 — 막힌 오케스트레이터가 빠지는 형태 — 을 제한합니다. `register_run`에서 카운트(등록에 도달한 spawn), spawn admission 게이트에서 검사, 세션 정리 시 삭제되며 프로세스 재시작 시 초기화됩니다.
+
 ## 업데이트 노트 (2026-09-05)
 
 > 서브에이전트 제한이 OpenClaw와 정렬되었습니다 (커밋 `794df0e..d200beb`):
 
 - **전역 동시성 상한 추가**: `max_concurrent = 8` — 처음에는 spawn 파이프라인에서 강제되어 초과 spawn은 `forbidden`을 반환했습니다. **전역 SUBAGENT lane으로 대체됨**: 초과 spawn은 이제 `PENDING`으로 대기하다 lane slot이 비면 시작합니다 (이 필드는 하위 호환용으로만 유지됩니다). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가 — 둘 다 `PENDING` run을 활성으로 계산합니다 (대기 중인 자식도 admission slot을 점유하므로).
 - **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
-- **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망.
+- **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망. (**2026-10-15 반전**: 기본값이 다시 600초 — 위 노트 참조.)
 - **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: 호출별 `max_concurrent` 오버라이드는 폐기됨 — 전역 동시성은 SUBAGENT lane이 대기열로 처리하므로, 전달해도 `DeprecationWarning`만 발생합니다 (값은 호출별로 적용·복원됨).
 - 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
@@ -56,6 +63,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   (* 와일드카드 지원)
   │     ├── depth = 부모 깊이 + 1, max_spawn_depth(2) 이하
   │     ├── 활성 자식 에이전트 수 < max_children_per_agent(5)
+  │     ├── 누적 spawn 수 < max_total_spawns_per_session(50)
   │     └── 런타임 격리: 런타임을 넘나드는 spawn은 거부됨
   │
   ├── 2. 소유권 및 능력 해석 (Ownership & Capability Resolution)
@@ -68,7 +76,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
   │     spawn/thinking.py)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
-  │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(0 = 타임아웃 없음)
+  │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(기본 600초, 0 = 타임아웃 없음)
   │
   ├── 4. 원본 라우팅 (Origin Routing)
   │     └── resolve_requester_origin_for_child(): 채널 / 계정 메타데이터
@@ -603,7 +611,7 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 
 매 확인에서 실행:
   1. 전체 run을 순회하고 살아 있는 미종료 run을 유지
-  2. run_timeout_seconds > 0이면 경과 시간이 그 값을 초과한 run을 플래그 (0 = 타임아웃 검사 비활성화)
+  2. run_timeout_seconds > 0(기본 600초)이면 경과 시간이 그 값을 초과한 run을 플래그 (0 = 타임아웃 검사 비활성화)
   3. 존재하면 → recover_orphaned_runs() 일괄 복구
 ```
 
@@ -937,7 +945,8 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_spawn_depth` | 2 | 최대 중첩 깊이 (하드 상한 2, 초과 불가) |
 | `max_concurrent` | 8 | 폐기된 레거시 전역 상한; SUBAGENT lane이 초과 spawn을 `PENDING`으로 대기시키고 forbidden을 반환하지 않음 |
 | `max_children_per_agent` | 5 | 에이전트별 최대 동시 자식 수 |
-| `run_timeout_seconds` | 0.0 | 자식 에이전트 실행 타임아웃 (0 = 타임아웃 없음, 백그라운드 스윕이 안전망) |
+| `max_total_spawns_per_session` | 50 | 요청 세션 하나가 누적으로 시작할 수 있는 spawn 수 (메모리 내; admission에서 검사, `register_run`에서 카운트, 세션 정리 시 삭제) |
+| `run_timeout_seconds` | 600.0 | 자식 에이전트 실행 타임아웃 (기본 10분; 0 = 타임아웃 없음, sweeper의 2시간 stale 감지가 바깥 안전망) |
 | `require_agent_id` | False | agent_id 필수 여부 |
 | `allow_agents` | `["*"]` | 허용 agent_id 화이트리스트 |
 | `default_cleanup` | "delete" | 기본 정리 정책 |

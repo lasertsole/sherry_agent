@@ -153,6 +153,8 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。如果 id 已被占用则抛出 `FlowExistsError`（返回错误字符串，含当前版本号以便重读）。
 
+资源上限（在此强制，超限返回 `Error:` 文本）：单个流最多 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）步；单个会话最多 `TASKFLOW_INFRA["max_flows_per_session"]`（20）个**活跃**流——只计 running/waiting，完成或取消的流会释放名额。`taskflow_plan` 在花费 planner 调用之前应用同一流数上限。
+
 ### taskflow_run_task
 
 ```python

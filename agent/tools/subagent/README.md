@@ -4,13 +4,20 @@
 
 > Design-level companion — role axes, spawn-privilege guards, and the four-layer completion gates: [docs/subagent/README.md](../../../docs/subagent/README.md)
 
+## Update Notes (2026-10-15)
+
+> Resource ceilings completed — the wall-clock timeout is real again and a session's spawn count is bounded:
+
+- **`run_timeout_seconds` default 0.0 → 600.0 (10 min)**: a child no longer runs unbounded in TIME. `spawn` and `steer` wrap the child's `ainvoke` in `asyncio.wait_for` again and the followup timeout check is active (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`); the sweeper's 2 h stale detection stays as the outer net. A caller still overrides per spawn via `sessions_spawn(run_timeout_seconds=...)`, and `0` still means "no timeout".
+- **New `max_total_spawns_per_session` (50)**: a per-session LIFETIME spawn budget (`registry/spawn_budget.py`, in-memory like the rest of the live registry). `max_children_per_agent` (5) bounds children running AT A TIME; this bounds "finish one child, start the next" repeating forever — the shape a stuck orchestrator loops on. Counted in `register_run` (a spawn that reached registration), checked in the spawn admission gate, dropped when the session is purged; a process restart starts clean.
+
 ## Update Notes (2026-09-05)
 
 > Subagent limits aligned with OpenClaw (commits `794df0e..d200beb`):
 
 - **Global concurrency cap added**: `max_concurrent = 8` — originally enforced in the spawn pipeline; excess spawns returned `forbidden` ("Global concurrent ..."). **Superseded by the global SUBAGENT lane**: over-limit spawns now queue as `PENDING` and start when a lane slot frees (the cap field is retained for backward compatibility only). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly` — both count `PENDING` runs as active, since a queued child still holds an admission slot.
 - **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
-- **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net.
+- **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net. (**Reversed on 2026-10-15**: the default is 600 s again — see the note above.)
 - **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: per-call `max_concurrent` override, now deprecated — global concurrency is queued by the SUBAGENT lane, so passing it only emits a `DeprecationWarning` (the value is still applied and restored per call).
 - All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
@@ -55,6 +62,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── target_policy: agent_id in allow_agents whitelist (wildcard *)
   │     ├── depth = parent_depth + 1, must be ≤ max_spawn_depth (2)
   │     ├── active children < max_children_per_agent (5)
+  │     ├── total spawns < max_total_spawns_per_session (50)
   │     └── runtime isolation: cross-runtime spawn rejected
   │
   ├── 2. Ownership & Capability Resolution
@@ -66,7 +74,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
   │     ├── thinking precedence: explicit → requester → target agent default
-  │     └── timeout: per-spawn override or run_timeout_seconds (0 = no timeout)
+  │     └── timeout: per-spawn override or run_timeout_seconds (default 600 s; 0 = no timeout)
   │
   ├── 4. Origin Routing
   │     └── resolve_requester_origin_for_child(): channel/account metadata
@@ -603,7 +611,7 @@ followup/core.py — loop at sweeper_interval_seconds × 2 (default 120 s)
 
 Each check executes:
   1. Iterate all runs; keep live unended runs
-  2. When run_timeout_seconds > 0, flag runs whose elapsed time exceeds it; 0 disables the timeout check
+  2. When run_timeout_seconds > 0 (the default, 600 s), flag runs whose elapsed time exceeds it; 0 disables the timeout check
   3. If any → recover_orphaned_runs() batch recovery
 ```
 
@@ -937,7 +945,8 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `max_spawn_depth` | 2 | Maximum nesting depth (hard cap 2, cannot exceed) |
 | `max_concurrent` | 8 | Deprecated legacy global cap; the SUBAGENT lane now queues over-limit spawns as `PENDING` instead of returning forbidden |
 | `max_children_per_agent` | 5 | Max concurrent children per agent |
-| `run_timeout_seconds` | 0.0 | Child agent execution timeout (0 = no timeout; background sweeps provide the safety net) |
+| `max_total_spawns_per_session` | 50 | Lifetime spawns one requesting session may start (in-memory; checked at admission, counted at `register_run`, dropped on session purge) |
+| `run_timeout_seconds` | 600.0 | Child agent execution timeout (default 10 min; 0 = no timeout, and the sweeper's 2 h stale detection stays the outer net) |
 | `require_agent_id` | False | Whether agent_id is mandatory |
 | `allow_agents` | `["*"]` | Allowed agent_id whitelist |
 | `default_cleanup` | "delete" | Default cleanup policy |

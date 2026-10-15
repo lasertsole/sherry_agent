@@ -56,7 +56,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 turn 종료 후 미완료 todo가 있으면 시스템이 자동으로 계속 메시지를 주입하여 LLM을 끌어옵니다. 모델의 자각에 의존하지 않습니다.
 
-**주요 상수**: `_MAX_STAGNATION = 3` (연속 3회 변화 없음 → 정지), `_BASE_COOLDOWN_S = 2.0` (기본 백오프), `_MAX_COOLDOWN_S = 60.0` (최대 백오프), `_FAILURE_RESET_WINDOW_S = 300` (5분간 실패 없음 → 리셋), `_MAX_RECOVERY_ATTEMPTS = 2` (복구 모드 상한).
+**주요 상수**: `_MAX_STAGNATION = 3` (연속 3회 변화 없음 → 정지), `_BASE_COOLDOWN_S = 2.0` (기본 백오프), `_MAX_COOLDOWN_S = 60.0` (최대 백오프), `_FAILURE_RESET_WINDOW_S = 300` (5분간 실패 없음 → 리셋), `_MAX_RECOVERY_ATTEMPTS = 2` (복구 모드 상한), `_MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]` (15) — 연속 계속 turn 상한 → 마지막 정지 지시를 한 번 주입한 뒤 침묵.
 
 **워크플로우**:
 
@@ -65,6 +65,11 @@ turn ends (no tool_call, agent loop exits)
   → Summarization.aafter_agent (rebuild system prompt with latest todos)
   → TodoContinuationEnforcer.aafter_agent
       → is_abort_error? → skip
+      → a turn the gate did not inject (user message / subagent completion)?
+        → reset the continuation budget
+      → incomplete plan? → no → reset() (+ the plan-extraction fork)
+      → budget spent (latched)? → silent, wait for a user message
+      → continuation turns >= 15? → STOP_PROMPT + latch → return
       → get_todos_sync(session_id) → filter incomplete
       → check_stagnation: snapshot compare, N consecutive no-change?
           → should_enter_recovery? → RECOVERY_PROMPT
@@ -82,7 +87,9 @@ turn ends (no tool_call, agent loop exits)
       → user message inside that wait → still busy at the cap → drop → reset()
 ```
 
-**파일**: `stagnation_tracker.py`(~90줄) + `todo_continuation/core.py`(~110줄) + `agent/core.py`(~2줄 등록).
+**계속 예산**: `mark_injected` — 모든 지시가 trigger에 수락된 뒤 반드시 지나는 유일한 지점 — 은 그 turn도 세므로, 이 카운터는 실제로 전달된 연속 계속 turn 수 그 자체입니다 (trigger가 거부한 지시는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). 15에 도달하면 강제기는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 보내고 세션을 래치한 뒤, 이 강제기가 스스로 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 알림 (새 이벤트이지 계속이 아님) — 이 카운터와 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 감지가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 — 상태 하나를 바꾸고 step 하나를 추가해 — 스냅샷을 계속 움직여 streak이 발화하지 않는 경우)를 커버합니다.
+
+**파일**: `stagnation_tracker.py`(~190줄) + `todo_continuation/core.py`(~545줄) + `agent/core.py`(~2줄 등록).
 
 ### E4: 전환 배리어 — 이중 보험
 

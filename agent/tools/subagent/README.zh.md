@@ -4,13 +4,20 @@
 
 > 设计层姊妹篇——角色轴、spawn 权限守卫与四层完成门禁：[docs/subagent/README.zh.md](../../../docs/subagent/README.zh.md)
 
+## 更新记录（2026-10-15）
+
+> 资源上限补齐——wall-clock 超时重新生效，每个会话的 spawn 次数有了上限：
+
+- **`run_timeout_seconds` 默认 0.0 → 600.0（10 分钟）**：子代理不再在时间上无限运行。`spawn` 与 `steer` 重新用 `asyncio.wait_for` 包裹子代理的 `ainvoke`，followup 超时检查重新生效（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）；sweeper 的 2 小时 stale 检测仍是外层兜底。调用方依旧可以通过 `sessions_spawn(run_timeout_seconds=...)` 逐次覆盖，`0` 仍然表示"无超时"。
+- **新增 `max_total_spawns_per_session`（50）**：按会话累计的 spawn 预算（`registry/spawn_budget.py`，与 registry 其余内存视图一样为进程内状态）。`max_children_per_agent`（5）限制的是同时运行的孩子数；这一项限制的是"完成一个再开一个"无限重复——卡住的编排器正是这样打转的。计数发生在 `register_run`（走到注册即算一次 spawn），检查在 spawn 准入闸门，会话被清除时随之丢弃；进程重启后清零。
+
 ## 更新记录（2026-09-05）
 
 > 子代理限制已对齐 OpenClaw（提交 `794df0e..d200beb`）：
 
 - **新增全局并发上限**：`max_concurrent = 8` —— 起初在 spawn 管线中强制执行，超限返回 `forbidden`（"Global concurrent ..."）。**已由全局 SUBAGENT lane 取代**：超限 spawn 现在以 `PENDING` 排队，待 lane 空出 slot 后开始执行（该字段仅为向后兼容保留）。registry 新增查询：`count_all_active_runs` / `count_all_active_runs_readonly` —— 两者都把 `PENDING` run 计入活跃，因为排队中的 child 仍占用准入名额。
 - **`max_spawn_depth` 默认 3 → 2，现为硬上限**：构造与赋值均拒绝 > 2；`delegate_task(max_spawn_depth=...)` 超限抛出 `ValueError`。深度树：MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
-- **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。
+- **`run_timeout_seconds` 默认 300 → 0.0（无超时）**：spawn 与 steer 直接调用子代理；followup 超时检查跳过；sweeper 的 2 小时 stale 检测仍是兜底。（**2026-10-15 已反转**：默认值恢复为 600 秒——见上方记录。）
 - **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：per-call `max_concurrent` 覆盖，现已被废弃 —— 全局并发由 SUBAGENT lane 排队，传入该参数只会发出 `DeprecationWarning`（值仍会按调用应用并恢复）。
 - 本目录文档（en/zh/ko/ja）及根 README 的全部配置表与图示已同步新默认值。
@@ -55,6 +62,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── target_policy：agent_id 必须在 allow_agents 白名单内（支持 * 通配）
   │     ├── depth = 父深度 + 1，不得超过 max_spawn_depth（2）
   │     ├── 活跃子 Agent 数 < max_children_per_agent（5）
+  │     ├── 累计 spawn 数 < max_total_spawns_per_session（50）
   │     └── 运行时隔离：跨运行时 spawn 会被拒绝
   │
   ├── 2. 所有权与能力解析（Ownership & Capability Resolution）
@@ -66,7 +74,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/thinking.py）
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
-  │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（0 = 无超时）
+  │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（默认 600 秒；0 = 无超时）
   │
   ├── 4. 来源路由（Origin Routing）
   │     └── resolve_requester_origin_for_child()：频道 / 账号元数据
@@ -599,7 +607,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 
 每轮执行：
   1. 遍历所有 run，保留存活未结束的 run
-  2. run_timeout_seconds > 0 时，标记运行时长超过它的 run；0 = 禁用该超时检查
+  2. run_timeout_seconds > 0（默认 600 秒）时，标记运行时长超过它的 run；0 = 禁用该超时检查
   3. 若存在 → recover_orphaned_runs() 批量恢复
 ```
 
@@ -933,7 +941,8 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_spawn_depth` | 2 | 最大嵌套深度（硬上限 2，不可超过） |
 | `max_concurrent` | 8 | 已废弃的旧全局上限；SUBAGENT lane 现在把超限 spawn 以 `PENDING` 排队而非返回 forbidden |
 | `max_children_per_agent` | 5 | 每 Agent 最大并发子 Agent 数 |
-| `run_timeout_seconds` | 0.0 | 子 Agent 执行超时（0 = 无超时，依赖 sweeper stale 检测兜底） |
+| `max_total_spawns_per_session` | 50 | 单个请求会话可累计发起的 spawn 数（内存态；准入时检查，`register_run` 时计数，会话清除时丢弃） |
+| `run_timeout_seconds` | 600.0 | 子 Agent 执行超时（默认 10 分钟；0 = 无超时，sweeper 的 2 小时 stale 检测仍是外层兜底） |
 | `require_agent_id` | False | 是否强制 agent_id |
 | `allow_agents` | `["*"]` | 允许的 agent_id 白名单 |
 | `default_cleanup` | "delete" | 默认清理策略 |

@@ -378,6 +378,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 中断クラスのターンエラー（ユーザーキャンセル / タイムアウト、`stagnation_tracker.is_abort_error`）では決して継続しません。空または全完了のリストは停滞トラッカーをリセットします。
 - 停滞処理（`agent/tools/todolist/stagnation_tracker.py`）：複数回の試行後もリストが変わらない場合は復帰モードに入り `_RECOVERY_PROMPT` を注入します。`is_in_cooldown` が繰り返し注入を抑制し、配信成功後にのみ `mark_injected` で記録します。
+- **継続バジェット**：`mark_injected` はその turn もカウントするため、このカウンタは実際に**配信された**連続継続 turn 数です（trigger に拒否された指令——`busy` / `already_pending`——はカウントされず、次の turn 終了時に再試行されます。リカバリ指令もカウント対象です）。`TODOLIST_INFRA["max_continuation_turns"]`（15）に達すると、ゲートは最後の `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令を配信し、セッションをラッチして、自分が注入していない turn——実際のユーザーメッセージ、または subagent 完了——がバジェットとラッチをリセットするまで沈黙します。これは停滞チェックが見逃す形（モデルが毎回わずかに計画を編集してスナップショットを動かし続ける場合）を制限します。
 - fail-open：例外はログに記録され、ターンは通常どおり終了します。
 - **todowrite ナッジ**: フックは `todowrite` を呼ばないターン数を数え（`stagnation_tracker.record_turn` / `record_todowrite`。そのターンに `todowrite` を呼べばリセット）、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` ブロックを**追記**します——スナップショット停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。リカバリモードは独自のより強い todowrite ガイダンスを持ち、ナッジは付きません。
 

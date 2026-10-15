@@ -153,6 +153,8 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 영속적 플로우를 `INITIAL_REVISION = 1`, 상태 `running`으로 생성. 플로우 id, 상태, 리비전을 반환. id가 이미 사용 중이면 `FlowExistsError` (현재 리비전을 포함한 에러 문자열 반환, 재조회 가능).
 
+리소스 상한 (여기서 강제, 초과 시 `Error:` 텍스트): 플로우당 최대 `TASKFLOW_INFRA["max_steps_per_flow"]` (20)단계, 세션당 최대 `TASKFLOW_INFRA["max_flows_per_session"]` (20)개의 **활성** 플로우 — running/waiting만 해당하며 완료/취소된 플로우는 슬롯을 반환합니다. `taskflow_plan`은 플래너 호출을 소비하기 전에 동일한 플로우 수 상한을 적용합니다.
+
 ### taskflow_run_task
 
 ```python

@@ -73,6 +73,8 @@ The constants most relevant to this document:
 | | `wait_all_default_timeout_seconds` | 300.0 |
 | | `wait_all_default_poll_interval_seconds` | 0.5 |
 | | `waiting_timeout_hours` | 24 |
+| | `max_steps_per_flow` | 20 |
+| | `max_flows_per_session` | 20 |
 | `MODEL_PRICING` (`infra_side/model_pricing.py`) | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
 | `MEMORY_FLUSH` (`agent_side/memory_flush.py`) | `enabled` | `MEMORY_FLUSH_ENABLED` (default 1) |

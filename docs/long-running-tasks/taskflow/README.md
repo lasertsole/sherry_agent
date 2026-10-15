@@ -153,6 +153,8 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. `FlowExistsError` if the id is already taken (returns an error string with the current revision for re-read).
 
+Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_INFRA["max_steps_per_flow"]` (20) steps per flow, and at most `TASKFLOW_INFRA["max_flows_per_session"]` (20) ACTIVE flows per session — running/waiting ones only, a finished or cancelled flow releases its slot. `taskflow_plan` applies the same flow ceiling before it spends a planner call.
+
 ### taskflow_run_task
 
 ```python

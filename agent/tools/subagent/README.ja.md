@@ -4,13 +4,20 @@
 
 > 設計レイヤの姉妹編——役割軸、spawn 権限ガード、四層の完了ゲート：[docs/subagent/README.ja.md](../../../docs/subagent/README.ja.md)
 
+## 更新ノート（2026-10-15）
+
+> リソース上限の補完——wall-clock タイムアウトが再び有効になり、セッションごとの spawn 回数に上限が付きました:
+
+- **`run_timeout_seconds` デフォルト 0.0 → 600.0（10 分）**：子エージェントが時間的に無制限に走ることはなくなりました。`spawn` と `steer` は再び子の `ainvoke` を `asyncio.wait_for` で包み、followup のタイムアウト検査も有効です（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）。sweeper の 2 時間 stale 検出は外側の安全網として残ります。呼び出し側は `sessions_spawn(run_timeout_seconds=...)` で spawn ごとに上書きでき、`0` は従来どおり「タイムアウトなし」です。
+- **新規 `max_total_spawns_per_session`（50）**：セッション単位の累積 spawn バジェット（`registry/spawn_budget.py`。registry の他のライブビューと同じくプロセス内メモリ）。`max_children_per_agent`（5）が同時に走る子の数、こちらは「1つ終えたら次を起動」の無限繰り返し——詰まったオーケストレーターが陥る形——を制限します。`register_run` でカウント（登録に到達した spawn が対象）、spawn の admission ゲートで検査、セッション破棄で削除され、プロセス再起動でクリアされます。
+
 ## 更新ノート（2026-09-05）
 
 > サブエージェント制限を OpenClaw に整合させました（コミット `794df0e..d200beb`）:
 
 - **グローバル同時実行上限を追加**: `max_concurrent = 8` — 当初は spawn パイプラインで強制し、超過 spawn は `forbidden` を返していました。**グローバル SUBAGENT lane に置き換え**: 超過 spawn は `PENDING` としてキューに入り、lane のスロットが空き次第開始します（このフィールドは後方互換のためだけに残っています）。registry に `count_all_active_runs` / `count_all_active_runs_readonly` を追加 — どちらも `PENDING` run をアクティブとして数えます（キュー内の子も admission スロットを占有するため）。
 - **`max_spawn_depth` デフォルト 3 → 2、ハード上限化**：2 超過の値は構築時と代入時の両方で拒否。`delegate_task(max_spawn_depth=...)` は上限超過で `ValueError` を送出。深度ツリー: MAIN(0) → ORCHESTRATOR(1) → LEAF(2)。
-- **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。
+- **`run_timeout_seconds` デフォルト 300 → 0.0（タイムアウトなし）**：spawn と steer は子を直接呼び出し。followup のタイムアウト検査はスキップ。sweeper の 2 時間 stale 検出が安全網。（**2026-10-15 に反転**：デフォルトは再び 600 秒——上のノート参照。）
 - **`archive_after_minutes` 1440 → 60**。
 - **`delegate_task`**：呼び出し毎の `max_concurrent` オーバーライドは非推奨 — グローバル同時実行は SUBAGENT lane がキューイングするため、渡すと `DeprecationWarning` を出すだけです（値は呼び出し毎に適用・復元されます）。
 - 本ドキュメント群（en/zh/ko/ja）とルート README の全設定テーブル・図を新デフォルト値に同期済み。
@@ -56,6 +63,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   （* ワイルドカード対応）
   │     ├── depth = 親の深さ + 1、max_spawn_depth（2）以下
   │     ├── アクティブな子エージェント数 < max_children_per_agent（5）
+  │     ├── 累積 spawn 数 < max_total_spawns_per_session（50）
   │     └── ランタイム分離：ランタイムをまたぐ spawn は拒否
   │
   ├── 2. 所有権と能力の解決（Ownership & Capability Resolution）
@@ -68,7 +76,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
   │     spawn/thinking.py）
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
-  │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（0 = タイムアウトなし）
+  │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（デフォルト 600 秒、0 = タイムアウトなし）
   │
   ├── 4. オリジンルーティング（Origin Routing）
   │     └── resolve_requester_origin_for_child()：チャネル / アカウントメタデータ
@@ -608,7 +616,7 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 
 各チェックで実行：
   1. 全 run を走査し、稼働中の未終了 run を保持
-  2. run_timeout_seconds > 0 のとき、経過時間がその値を超過する run をフラグ（0 = タイムアウトチェック無効）
+  2. run_timeout_seconds > 0（デフォルト 600 秒）のとき、経過時間がその値を超過する run をフラグ（0 = タイムアウトチェック無効）
   3. 存在すれば → recover_orphaned_runs() による一括復旧
 ```
 
@@ -942,7 +950,8 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_spawn_depth` | 2 | 最大ネスト深さ（ハード上限 2、超過不可） |
 | `max_concurrent` | 8 | 非推奨の旧グローバル上限。SUBAGENT lane が超過 spawn を `PENDING` としてキューに入れ、forbidden を返さなくなりました |
 | `max_children_per_agent` | 5 | エージェントあたりの最大同時子数 |
-| `run_timeout_seconds` | 0.0 | 子エージェント実行タイムアウト（0 = タイムアウトなし、バックグラウンドスイープが安全網） |
+| `max_total_spawns_per_session` | 50 | 1つの要求セッションが累積で開始できる spawn 数（メモリ内; admission で検査、`register_run` でカウント、セッション破棄で削除） |
+| `run_timeout_seconds` | 600.0 | 子エージェント実行タイムアウト（デフォルト 10 分; 0 = タイムアウトなし、sweeper の 2 時間 stale 検出が外側の安全網） |
 | `require_agent_id` | False | agent_id を必須にするか |
 | `allow_agents` | `["*"]` | 許可する agent_id ホワイトリスト |
 | `default_cleanup` | "delete" | 既定のクリーンアップポリシー |

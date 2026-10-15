@@ -377,6 +377,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 중단류 턴 오류(사용자 취소 / 타임아웃, `stagnation_tracker.is_abort_error`)는 절대 연속하지 않으며, 비어 있거나 전부 완료된 목록은 정체 추적기를 리셋합니다.
 - 정체 처리(`agent/tools/todolist/stagnation_tracker.py`): 여러 시도 후에도 목록이 변하지 않으면 복구 모드에 들어가 `_RECOVERY_PROMPT`를 주입합니다. `is_in_cooldown`이 반복 주입을 제한하고, 전달 성공 후에만 `mark_injected`로 기록합니다.
+- **계속 예산**: `mark_injected`가 그 turn도 세므로, 이 카운터는 실제로 **전달된** 연속 계속 turn 수입니다 (trigger가 거부한 지시 — `busy` / `already_pending` — 는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). `TODOLIST_INFRA["max_continuation_turns"]`(15)에 도달하면 게이트는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 전달하고 세션을 래치한 뒤, 자신이 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 — 이 예산과 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 검사가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 스냅샷을 계속 움직이는 경우)를 제한합니다.
 - fail-open: 예외는 로그로 남기고 턴은 정상 종료됩니다.
 - **todowrite 넛지**: 훅은 `todowrite`를 호출하지 않은 턴 수를 세고(`stagnation_tracker.record_turn` / `record_todowrite`, 그 턴에 `todowrite`를 호출하면 0으로), `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 블록을 **덧붙입니다** — 스냅샷 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다). 복구 모드는 자체의 더 강한 todowrite 안내를 가지며 넛지는 붙지 않습니다.
 

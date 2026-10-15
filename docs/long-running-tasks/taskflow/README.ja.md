@@ -153,6 +153,8 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 永続的フローを `INITIAL_REVISION = 1`、状態 `running` で作成。フロー id、状態、リビジョンを返します。id が既に使用中の場合 `FlowExistsError`（現在のリビジョンを含むエラー文字列を返し、再読み取り可能）。
 
+リソース上限（ここで強制、超過時は `Error:` テキスト）: フローあたり最大 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）ステップ、セッションあたり最大 `TASKFLOW_INFRA["max_flows_per_session"]`（20）の**アクティブ**フロー——running/waiting のみが対象で、完了・キャンセル済みフローはスロットを解放します。`taskflow_plan` はプランナー呼び出しを消費する前に同じフロー数上限を適用します。
+
 ### taskflow_run_task
 
 ```python
