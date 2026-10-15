@@ -175,6 +175,67 @@ class TestDeliverCompletionMessage:
             assert "killed" in msg.content
 
     @pytest.mark.asyncio
+    async def test_a_first_turn_timeout_points_at_the_transcript_reader(self):
+        """No partial result text → the checkpoint reader is the only lead."""
+        ctx = DeliveryContext(
+            requester_session_key="agent:main:session:user1",
+            child_session_key="agent:main:subagent:child",
+            task="test",
+            outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT),
+            run_id="r1",
+            is_requester_subagent=False,
+        )
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
+            await _deliver_completion_message(ctx)
+            msg = mock_bus.publish_internal.call_args[0][0]
+            assert "timed out" in msg.content
+            assert "sessions_messages" in msg.content
+            assert 'target_session_key="agent:main:subagent:child"' in msg.content
+            assert "Partial work may be available" in msg.content
+
+    @pytest.mark.asyncio
+    async def test_a_later_turn_timeout_keeps_its_partial_result_unhinted(self):
+        """A goal-loop turn timeout already carries the previous turn's text."""
+        ctx = DeliveryContext(
+            requester_session_key="agent:main:session:user1",
+            child_session_key="agent:main:subagent:child",
+            task="test",
+            result_text="everything worked up to the last step",
+            outcome=RunOutcome(status=RunOutcomeStatus.TIMEOUT),
+            run_id="r1",
+            is_requester_subagent=False,
+        )
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
+            await _deliver_completion_message(ctx)
+            msg = mock_bus.publish_internal.call_args[0][0]
+            assert "everything worked up to the last step" in msg.content
+            assert "sessions_messages" not in msg.content, (
+                "a partial result already answers the question — no pointer needed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_completed_run_is_never_hinted(self):
+        """The hint is timeout-only: a clean completion has nothing to recover."""
+        ctx = DeliveryContext(
+            requester_session_key="agent:main:session:user1",
+            child_session_key="agent:main:subagent:child",
+            task="test",
+            outcome=RunOutcome(status=RunOutcomeStatus.OK),
+            run_id="r1",
+            is_requester_subagent=False,
+        )
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
+            await _deliver_completion_message(ctx)
+            msg = mock_bus.publish_internal.call_args[0][0]
+            assert "sessions_messages" not in msg.content
+
+    @pytest.mark.asyncio
     async def test_completion_message_error(self):
         ctx = DeliveryContext(
             requester_session_key="agent:main:session:user1",

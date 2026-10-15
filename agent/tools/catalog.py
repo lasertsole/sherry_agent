@@ -75,6 +75,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "sessions_steer",
         "agents_list",
         "subagents_list",
+        "sessions_messages",
     ),
     "interaction": ("question",),
     "plan_mode": ("enter_plan_mode", "exit_plan_mode"),

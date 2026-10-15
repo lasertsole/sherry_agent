@@ -529,6 +529,15 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
         if len(text) > 4000:  # Truncate long results to prevent oversized messages
             text = text[:4000] + "\n... [truncated]"
         content_parts.append(f"Result:\n{text}")
+    elif ctx.outcome.status == "timeout":
+        # No partial result to show: the first turn timed out before any text
+        # was extracted. The child's checkpoint still holds its iterations, so
+        # point the caller at the reader instead of leaving it with nothing.
+        content_parts.append(
+            "Partial work may be available — use sessions_messages"
+            f'(target_session_key="{ctx.child_session_key}") to review what was '
+            "accomplished before the timeout."
+        )
     content_parts.append(
         "\nPlease review the sub-agent execution results above. Provide further instructions if needed."
     )

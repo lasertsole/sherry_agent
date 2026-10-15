@@ -26,6 +26,11 @@ class SubagentConfig(BaseModel):
     # is otherwise unbounded in TIME — a slow provider could run one child for
     # hours. Callers override per spawn via sessions_spawn(run_timeout_seconds).
     run_timeout_seconds: float = 600.0
+    # Bounds the LLM tool (sessions_spawn) clamps a model-provided timeout to:
+    # 10 min floor / 2 h ceiling. Internal callers (TaskFlow dispatch,
+    # delegate_task) bypass the clamp and are trusted to pass sensible values.
+    run_timeout_min_seconds: float = 600.0
+    run_timeout_max_seconds: float = 7200.0
     require_agent_id: bool = False
     allow_agents: list[str] = Field(default_factory=lambda: ["*"])
     default_cleanup: Literal["delete", "keep"] = "delete"

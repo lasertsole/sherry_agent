@@ -33,6 +33,11 @@ class ToolsTimeoutsConfig(TypedDict):
     skill_manage_max_skill_file_bytes: int
     file_tools_read_default_limit: int
     file_tools_read_max_limit: int
+    #: Token budget for ONE ``sessions_messages`` response (the subagent
+    #: checkpoint transcript) and for one message inside it. CJK-aware like the
+    #: read_file budget: the same number is the same context cost in any language.
+    session_messages_token_budget: int
+    session_messages_per_message_token_budget: int
     #: Token budget for ONE read_file response. The window is CJK-aware (CJK
     #: costs ~2 chars/token, ASCII ~4), so the same number means the same
     #: context cost in every language; 0 restores the pure line-count window.
@@ -78,6 +83,10 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "skill_manage_max_skill_file_bytes": 1_048_576,
     "file_tools_read_default_limit": 500,
     "file_tools_read_max_limit": 2000,
+    # The subagent-transcript reader: ~8 messages of 500 tokens each, the same
+    # order of magnitude as one read_file response.
+    "session_messages_token_budget": 4000,
+    "session_messages_per_message_token_budget": 500,
     "read_file_token_budget": 4000,
     "read_file_budget_ratio": 0.85,
     "file_tools_search_default_limit": 50,
