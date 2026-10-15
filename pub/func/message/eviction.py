@@ -175,6 +175,16 @@ def _build_evicted_content(content: str | list[Any], preview: str) -> str | list
     return [{"type": "text", "text": preview}, *non_text]
 
 
+#: CHAR budgets for :func:`_render_head_tail_clipped`, the fallback used when
+#: the plain line window cannot shrink a payload. Lines bound the shape, these
+#: bound the cost — the exact mirror of the ``_PREVIEW_*_BYTES`` set the
+#: file-on-disk preview uses: each kept line is capped, each side stops at its
+#: budget, so a newline-free blob previews to a few KB instead of being refused.
+_PREVIEW_HEAD_MAX_CHARS = 8_192
+_PREVIEW_LINE_MAX_CHARS = 2_048
+_PREVIEW_TAIL_MAX_CHARS = 8_192
+
+
 def _render_head_tail(content: str, head_n: int, tail_n: int) -> tuple[str, str, str, int]:
     lines = content.splitlines()
     head = "\n".join(lines[:head_n])
@@ -183,18 +193,96 @@ def _render_head_tail(content: str, head_n: int, tail_n: int) -> tuple[str, str,
     return head, midline, tail, len(lines)
 
 
-def build_preview(content: str, file_path: Path) -> str:
-    """Render the head/tail preview that replaces an evicted result."""
-    head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
-    tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
+def _take_preview_side(lines: list[str], limit_n: int, budget: int) -> tuple[list[str], bool]:
+    """Keep up to *limit_n* lines within *budget* chars, capping each line.
+
+    :returns: ``(kept, dropped)`` — ``dropped`` is True when a line was left out
+        or clipped, which is what decides the ``...`` separator.
+    """
+    kept: list[str] = []
+    used = 0
+    dropped = False
+    for line in lines:
+        if len(kept) >= limit_n or used >= budget:
+            dropped = True
+            break
+        if len(line) > _PREVIEW_LINE_MAX_CHARS:
+            line = line[:_PREVIEW_LINE_MAX_CHARS] + "\u2026"
+            dropped = True
+        kept.append(line)
+        used += len(line)
+    return kept, dropped
+
+
+def _render_head_tail_clipped(
+    content: str, head_n: int, tail_n: int
+) -> tuple[str, str, str, int, int]:
+    """Head/tail slices with per-line and per-side CHAR budgets.
+
+    The fallback for a payload the plain line window cannot shrink: with
+    ``head_n + tail_n`` lines or fewer the two windows OVERLAP, so that preview
+    reproduces the payload twice (a single newline-free line is the extreme).
+    Budgeting by characters instead keeps the preview a few KB whatever the
+    payload's shape.
+
+    :returns: ``(head, midline, tail, head_shown, tail_shown)``.
+    """
+    lines = content.splitlines()
+    if not lines:
+        return "", "", "", 0, 0
+    head_lines, head_dropped = _take_preview_side(lines, head_n, _PREVIEW_HEAD_MAX_CHARS)
+    tail_lines, tail_dropped = _take_preview_side(
+        list(reversed(lines)), tail_n, _PREVIEW_TAIL_MAX_CHARS
+    )
+    midline = "..." if (head_dropped or tail_dropped) else ""
+    return (
+        "\n".join(head_lines),
+        midline,
+        "\n".join(reversed(tail_lines)),
+        len(head_lines),
+        len(tail_lines),
+    )
+
+
+def _build_preview(template: str, content: str, head_n: int, tail_n: int, **fields) -> str:
+    """Render the smaller of the two previews: the line window, else the capped one.
+
+    The line window is preferred (it keeps whole lines, so the head reads like
+    the payload). It is skipped when it would not shrink the payload at all; the
+    capped renderer then applies. The caller's own ``len(preview) >= len(text)``
+    guard stays as the final net — with the capped budgets it only trips for a
+    payload barely over the threshold.
+    """
     head, midline, tail, line_count = _render_head_tail(content, head_n, tail_n)
-    return _PREVIEW_TEMPLATE.format(
-        path=str(file_path),
-        head_n=min(head_n, line_count),
-        tail_n=min(tail_n, line_count),
+    preview = template.format(
         head=head,
         midline=midline,
         tail=tail,
+        head_n=min(head_n, line_count),
+        tail_n=min(tail_n, line_count),
+        **fields,
+    )
+    if len(preview) < len(content):
+        return preview
+    head, midline, tail, head_shown, tail_shown = _render_head_tail_clipped(content, head_n, tail_n)
+    return template.format(
+        head=head,
+        midline=midline,
+        tail=tail,
+        head_n=head_shown,
+        tail_n=tail_shown,
+        **fields,
+    )
+
+
+def build_preview(content: str, file_path: Path) -> str:
+    """Render the head/tail preview that replaces an evicted result."""
+    return _build_preview(
+        _PREVIEW_TEMPLATE,
+        content,
+        TOOL_RESULT_EVICTION["preview_head_lines"],
+        TOOL_RESULT_EVICTION["preview_tail_lines"],
+        path=str(file_path),
         total_chars=len(content),
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )
@@ -211,16 +299,12 @@ def human_eviction_notice(file_path: str | Path) -> str:
 
 def build_human_preview(content: str, file_path: Path) -> str:
     """Render the head/tail preview that replaces an evicted human message."""
-    head_n = TOOL_RESULT_EVICTION["human_preview_head_lines"]
-    tail_n = TOOL_RESULT_EVICTION["human_preview_tail_lines"]
-    head, midline, tail, line_count = _render_head_tail(content, head_n, tail_n)
-    return _HUMAN_PREVIEW_TEMPLATE.format(
+    return _build_preview(
+        _HUMAN_PREVIEW_TEMPLATE,
+        content,
+        TOOL_RESULT_EVICTION["human_preview_head_lines"],
+        TOOL_RESULT_EVICTION["human_preview_tail_lines"],
         path=str(file_path),
-        head_n=min(head_n, line_count),
-        tail_n=min(tail_n, line_count),
-        head=head,
-        midline=midline,
-        tail=tail,
         total_chars=len(content),
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
         notice=human_eviction_notice(file_path),
@@ -241,9 +325,10 @@ def evict_human_message(msg: HumanMessage, session_id: str) -> HumanMessage | No
 
     ``None`` means "keep the original": human eviction is disabled, the text is
     at or under ``human_evict_threshold_chars``, the message already carries
-    ``lc_evicted_to``, the rendered preview would not be smaller than the
-    original (a single giant line, where head and tail both contain the whole
-    payload), the session id is unsafe, or the file write failed.
+    ``lc_evicted_to``, even the character-budgeted preview would not be smaller
+    than the original (see :func:`_build_preview` — with the capped budgets this
+    only trips for a payload barely over the threshold), the session id is
+    unsafe, or the file write failed.
 
     The returned copy keeps the **content and id unchanged** and only adds
     ``additional_kwargs["lc_evicted_to"]``. The graph's ``add_messages``
@@ -281,8 +366,9 @@ def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
 
     ``None`` means "keep the original": the tool is excluded, the result is at
     or under the threshold, the session id is unsafe, the message is already a
-    preview, or the preview would not be smaller than the original (a single
-    huge line, where head and tail both contain the whole payload).
+    preview, or even the character-budgeted preview would not be smaller than
+    the original (see :func:`_build_preview` — with the capped budgets this only
+    trips for a payload barely over the threshold).
 
     The replacement is produced with :meth:`ToolMessage.model_copy`, so the
     LangGraph message id and ``additional_kwargs`` (including the in-process

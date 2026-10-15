@@ -34,7 +34,8 @@
 - `excluded_tools`（8 个名字 —— `read_file`、`write_file`、`patch_file`、`search_files`、`list_files`、`memory`、`skill_view`、`skill_list`）原样通过：它们的载荷已在后端文件系统上或取回成本极低。`read_file` 另外走下面的切片路径。
 - 替换经 `ToolMessage.model_copy` 构造，消息 `id`、`tool_call_id`、`name`、`status` 与 `additional_kwargs` 全部存活 —— 配对、净化器与水位始终匹配同一条逻辑消息。
 - 多模态非文本块（图片/音频/视频）原样保留，只替换文本块。
-- 安全护栏：不安全的 `session_id`（空 / `.` / `..` / 含分隔符）跳过且不碰磁盘；已带 `[evicted to: …]` 标记的消息绝不二次驱逐；预览不会比原文更小（单行巨行）时跳过。
+- 安全护栏：不安全的 `session_id`（空 / `.` / `..` / 含分隔符）跳过且不碰磁盘；已带 `[evicted to: …]` 标记的消息绝不二次驱逐；预览不会比原文更小时跳过（有了下方的按字符上限回退，这只会发生在刚刚超过阈值的负载上）。
+- **行窗口缩不下去的负载回退到按字符预算的预览。** 普通窗口取 5 头 + 5 尾**行**，所以行数 ≤ 10 的负载——极端例子是无换行的单行（紧凑 JSON 响应体）——头尾窗口重叠、会把原文抄两遍。回退方案把每行截到 `_PREVIEW_LINE_MAX_CHARS`（2 048）、每侧截到 `_PREVIEW_HEAD/TAIL_MAX_CHARS`（8 192），正是盘上文件预览（`terminal` 的 fd 路径）早已使用的字节预算的镜像：50 000 字符的单行会得到约 4 300 字符的预览，于是它像其它超限结果一样被驱逐，而不是整段骑在上下文窗口里。
 
 预览格式（`pub/func/message/eviction.py`，`preview_head_lines = preview_tail_lines = 5`）：
 

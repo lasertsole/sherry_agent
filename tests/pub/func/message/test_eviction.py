@@ -108,11 +108,62 @@ class TestThresholdBoundary:
         assert path.name.startswith("c1_") and path.suffix == ".txt"
         assert load_evicted(path) == content
 
-    def test_single_giant_line_is_not_evicted(self, sessions_dir):
-        message = ToolMessage(content="x" * (THRESHOLD + 1), name="terminal", tool_call_id="c1")
+    def test_single_giant_line_is_evicted_with_a_capped_preview(self, sessions_dir):
+        """The line window cannot shrink it; the char-budgeted fallback does.
 
-        assert evict_tool_result(message, SID) is None
-        assert not sessions_dir.exists()
+        With ten or fewer lines the head and tail windows OVERLAP, so that
+        preview would reproduce the payload twice — the old behaviour refused
+        the eviction, and a newline-free blob then rode the context window in
+        full. The fallback caps each line and each side instead.
+        """
+        content = "x" * (THRESHOLD + 1)
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+
+        assert evicted is not None
+        assert len(evicted.content) < len(content)
+        # Both sides are present (more than one capped line) and the preview
+        # lands well under the eviction threshold itself.
+        assert eviction_module._PREVIEW_LINE_MAX_CHARS < len(evicted.content) < THRESHOLD
+        path = _eviction_path(evicted.content)
+        assert load_evicted(path) == content
+        assert f"[full content: {len(content)} chars, evicted at " in evicted.content
+
+    def test_a_few_very_long_lines_are_evicted_too(self, sessions_dir):
+        """Six lines is still inside the head+tail window (5 + 5)."""
+        content = "\n".join("z" * ((THRESHOLD // 6) + 1) for _ in range(6))
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+
+        assert evicted is not None
+        assert len(evicted.content) < len(content)
+        assert load_evicted(_eviction_path(evicted.content)) == content
+
+    def test_a_clipped_line_is_marked_and_the_midline_is_kept(self, sessions_dir):
+        content = "\n".join("z" * ((THRESHOLD // 6) + 1) for _ in range(6))
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+        assert evicted is not None
+
+        body = evicted.content.split("--- head", 1)[1]
+        assert "\u2026" in body, "a line cut by the char cap must say so"
+        assert "\n...\n" in evicted.content
+
+    def test_a_multiline_payload_still_uses_the_whole_line_window(self, sessions_dir):
+        """The fallback must not touch the ordinary case: whole lines, 5 + 5."""
+        lines = [f"{n:05d}-" + "y" * 95 for n in range(300)]
+        content = "\n".join(lines)
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+        assert evicted is not None
+
+        assert f"--- head (5 lines) ---\n{lines[0]}\n" in evicted.content
+        assert f"\n{lines[-1]}\n" in evicted.content
+        assert "\u2026" not in evicted.content
 
 
 class TestExcludedTools:
@@ -257,11 +308,18 @@ class TestHumanEviction:
         assert tagged is not None
         assert Path(tagged.additional_kwargs[EVICTED_TO_KEY]).name.startswith("human-")
 
-    def test_single_giant_line_is_not_evicted(self, sessions_dir):
-        message = HumanMessage(content="u" * (HUMAN_THRESHOLD + 1), id="h1")
+    def test_single_giant_line_is_still_offloaded(self, sessions_dir):
+        """Same fallback as the tool path: the state text is written, the tag set."""
+        content = "u" * (HUMAN_THRESHOLD + 1)
+        message = HumanMessage(content=content, id="h1")
 
-        assert evict_human_message(message, SID) is None
-        assert not sessions_dir.exists()
+        tagged = evict_human_message(message, SID)
+
+        assert tagged is not None
+        path = Path(tagged.additional_kwargs[EVICTED_TO_KEY])
+        assert load_evicted(path) == content
+        # The state text is untouched — only the model view is previewed later.
+        assert tagged.content == content
 
     @pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b", "../escape"])
     def test_unsafe_session_segment_skips_every_write(self, sessions_dir, bad):

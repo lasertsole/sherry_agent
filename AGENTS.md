@@ -105,7 +105,13 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
   │     ContextEviction wraps outside MessagePersistence: the raw result is
   │     persisted first, then replaced by an evicted-head/tail preview before it
-  │     reaches state; read_file results are sliced, never offloaded. Its
+  │     reaches state; read_file results are sliced, never offloaded. A payload
+  │     the 5+5-LINE window cannot shrink (ten lines or fewer — a single
+  │     newline-free line, i.e. a compact JSON body, is the extreme — has
+  │     overlapping windows and would be reproduced twice) falls back to a
+  │     CHAR-budgeted head/tail (per-line 2 048, per-side 8 192 — the mirror of
+  │     the fd path's byte budgets), so it is offloaded like any oversized
+  │     result instead of riding the window in full. Its
   │     before_model tags an oversized trailing HumanMessage (full text stays in
   │     state/MesMemory) and wrap_model_call truncates only the model view)
   │    ThinkingControl: per-session thinking control (client switch / level
