@@ -9,6 +9,8 @@
 > Resource ceilings completed — the wall-clock timeout is real again and a session's spawn count is bounded:
 
 - **`run_timeout_seconds` default 0.0 → 600.0 (10 min)**: a child no longer runs unbounded in TIME. `spawn` and `steer` wrap the child's `ainvoke` in `asyncio.wait_for` again and the followup timeout check is active (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`); the sweeper's 2 h stale detection stays as the outer net. A caller still overrides per spawn via `sessions_spawn(run_timeout_seconds=...)`, and `0` still means "no timeout".
+- **`sessions_spawn` exposes the timeout**: a `run_timeout_seconds` field (the model's own lever, next to the global default). The tool CLAMPS a model-provided value into `[run_timeout_min_seconds, run_timeout_max_seconds]` (600 s .. 7200 s) instead of rejecting it — a request for 60 s keeps the "short" intent at the 10-minute floor, 99999 lands at 2 h — and `None`/non-positive means "unset" (the global default applies). Internal callers (TaskFlow dispatch, `delegate_task`) bypass the clamp and keep their own bounds.
+- **New `sessions_messages` tool**: read a child session's checkpoint transcript by its `session_key` (the eighth runtime tool). It exists for the timeout/kill case — `Status: timed out` with no `Result:` used to leave the caller with nothing, while the child's checkpoint still held every tool call it made. The value is token-budgeted (4 000 tokens total, 500 per message) and gated on `spawned_by` / the run's completion owner, so only the session that spawned a child can read it.
 - **New `max_total_spawns_per_session` (50)**: a per-session LIFETIME spawn budget (`registry/spawn_budget.py`, in-memory like the rest of the live registry). `max_children_per_agent` (5) bounds children running AT A TIME; this bounds "finish one child, start the next" repeating forever — the shape a stuck orchestrator loops on. Counted in `register_run` (a spawn that reached registration), checked in the spawn admission gate, dropped when the session is purged; a process restart starts clean.
 
 ## Update Notes (2026-09-05)
@@ -74,7 +76,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
   │     ├── thinking precedence: explicit → requester → target agent default
-  │     └── timeout: per-spawn override or run_timeout_seconds (default 600 s; 0 = no timeout)
+  │     └── timeout: per-spawn override (tool input clamped to [600, 7200]) or
+  │           run_timeout_seconds (default 600 s; 0 = no timeout)
   │
   ├── 4. Origin Routing
   │     └── resolve_requester_origin_for_child(): channel/account metadata
@@ -332,6 +335,11 @@ Result:
 
 Please review the sub-agent execution results above. Provide further instructions if needed.
 ```
+
+A `timeout` status with an EMPTY `Result:` adds one line pointing at the transcript reader
+(`Partial work may be available — use sessions_messages(target_session_key="…") …`): a first-turn
+timeout extracts no text, but the child's checkpoint still holds its iterations. A later goal-loop
+turn timeout already carries the previous turn's text, so it is not hinted.
 
 Delivered as `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` via `get_event_bus().publish_internal()`.
 
@@ -612,12 +620,13 @@ followup/core.py — loop at sweeper_interval_seconds × 2 (default 120 s)
 Each check executes:
   1. Iterate all runs; keep live unended runs
   2. When run_timeout_seconds > 0 (the default, 600 s), flag runs whose elapsed time exceeds it; 0 disables the timeout check
+     (the `sessions_spawn` tool clamps its own input to [600, 7200]; this checker reads whatever the run resolved)
   3. If any → recover_orphaned_runs() batch recovery
 ```
 
 ### 9. LLM Tool Interface
 
-All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools()` (tools/runtime_tools.py) is the one registered in the host's `_MAIN_TOOLS_BUILDERS`; it constructs the full toolset with the caller's `session_id` injected via `InjectedState("session_id")`.
+All eight tools are built by builders in `tools/`. `build_subagent_runtime_tools()` (tools/runtime_tools.py) is the one registered in the host's `_MAIN_TOOLS_BUILDERS`; it constructs the full toolset with the caller's `session_id` injected via `InjectedState("session_id")`.
 
 #### sessions_spawn — Create Child Agent
 
@@ -633,6 +642,7 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
+| `run_timeout_seconds` | float\|None | None | Wall-clock timeout for this spawn (seconds). Default 600, clamped to [600, 7200]; a non-positive value means "unset" (global default) |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 
@@ -696,6 +706,24 @@ Recent:
 ```
 
 Active entries show run_id[:8], label, depth, role; recent entries show run_id[:8], label, outcome status. Active list is capped at 10, recent at 5; runtime is rendered as s/m/h.
+
+#### sessions_messages — Read a Child's Transcript
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `target_session_key` | str | required | The child's session key (the `session_key=` value the spawn returned) |
+| `limit` | int | 10 | How many recent messages to FETCH from the checkpoint, clamped to [1, 30] |
+| `query` | str\|None | None | Optional case-insensitive keyword filter over message text and tool calls |
+
+Reads the child's LangGraph checkpoint through `agent/state_port.py::read_messages` (the same
+`rand_str_to_int(session_key)` thread id the child wrote with) and renders a token-budgeted
+transcript: `[role] text tool_calls: name(k=v)` per message, 500 tokens per message, 4 000 tokens
+in total (`TOOLS_TIMEOUTS["session_messages_token_budget"]`). Use it after a timed-out or killed
+subagent to see what it actually did — which tools it called, what came back — before deciding to
+continue, re-plan, or report. The checkpoint survives the run: `_release_child_resources` only
+closes the child's connection, and child cleanup never calls `delete_thread_history` (only an HTTP
+`clear_session` purge does). Only the spawning session (or the run's completion owner) may read;
+`read_for_session`-style cross-session reads are refused with `not the spawning session`.
 
 ### 10. Programmatic API — delegate_task
 
@@ -866,7 +894,8 @@ agent/tools/subagent/
 │   ├── sessions_kill.py       sessions_kill tool
 │   ├── sessions_steer.py      sessions_steer tool
 │   ├── agents_list.py         agents_list tool
-│   └── subagents_list.py      subagents tool
+│   ├── subagents_list.py      subagents tool
+│   └── sessions_messages.py   sessions_messages tool (checkpoint transcript reader)
 │
 ├── hooks/                     Channel hooks
 │   ├── base.py                Hook protocol definition (SubagentStartEvent / SubagentStopEvent)
@@ -947,6 +976,8 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `max_children_per_agent` | 5 | Max concurrent children per agent |
 | `max_total_spawns_per_session` | 50 | Lifetime spawns one requesting session may start (in-memory; checked at admission, counted at `register_run`, dropped on session purge) |
 | `run_timeout_seconds` | 600.0 | Child agent execution timeout (default 10 min; 0 = no timeout, and the sweeper's 2 h stale detection stays the outer net) |
+| `run_timeout_min_seconds` | 600.0 | Floor the `sessions_spawn` tool clamps a model-provided timeout to |
+| `run_timeout_max_seconds` | 7200.0 | Ceiling for the same clamp (2 h) |
 | `require_agent_id` | False | Whether agent_id is mandatory |
 | `allow_agents` | `["*"]` | Allowed agent_id whitelist |
 | `default_cleanup` | "delete" | Default cleanup policy |

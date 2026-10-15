@@ -9,6 +9,8 @@
 > 资源上限补齐——wall-clock 超时重新生效，每个会话的 spawn 次数有了上限：
 
 - **`run_timeout_seconds` 默认 0.0 → 600.0（10 分钟）**：子代理不再在时间上无限运行。`spawn` 与 `steer` 重新用 `asyncio.wait_for` 包裹子代理的 `ainvoke`，followup 超时检查重新生效（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）；sweeper 的 2 小时 stale 检测仍是外层兜底。调用方依旧可以通过 `sessions_spawn(run_timeout_seconds=...)` 逐次覆盖，`0` 仍然表示"无超时"。
+- **`sessions_spawn` 暴露超时**：新增 `run_timeout_seconds` 字段（模型自己的旋钮，与全局默认并存）。工具把模型传入的值 **clamp** 到 `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）而不是拒绝——想要 60 秒的"短"意图落在 10 分钟下限，99999 落在 2 小时上限——`None`/非正值表示"未设"（走全局默认）。内部调用方（TaskFlow dispatch、`delegate_task`）绕过 clamp，保留自己的边界。
+- **新增 `sessions_messages` 工具**：按 `session_key` 读取子会话的 checkpoint 转录（第八个运行时工具）。它服务于超时/被 kill 的场景——`Status: timed out` 且没有 `Result:` 时调用方此前一无所获，而子代理的 checkpoint 里仍留着它调过的每一次工具调用。输出有 token 预算（总计 4 000、每条 500），并按 `spawned_by` / run 的完成归属鉴权：只有 spawn 该子代理的会话能读。
 - **新增 `max_total_spawns_per_session`（50）**：按会话累计的 spawn 预算（`registry/spawn_budget.py`，与 registry 其余内存视图一样为进程内状态）。`max_children_per_agent`（5）限制的是同时运行的孩子数；这一项限制的是"完成一个再开一个"无限重复——卡住的编排器正是这样打转的。计数发生在 `register_run`（走到注册即算一次 spawn），检查在 spawn 准入闸门，会话被清除时随之丢弃；进程重启后清零。
 
 ## 更新记录（2026-09-05）
@@ -74,7 +76,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │
   ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/thinking.py）
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
-  │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（默认 600 秒；0 = 无超时）
+  │     └── 超时：每次 spawn 可覆盖（工具输入 clamp 到 [600, 7200]），否则用
+  │           run_timeout_seconds（默认 600 秒；0 = 无超时）
   │
   ├── 4. 来源路由（Origin Routing）
   │     └── resolve_requester_origin_for_child()：频道 / 账号元数据
@@ -330,6 +333,8 @@ Result:
 
 Please review the sub-agent execution results above. Provide further instructions if needed.
 ```
+
+`timeout` 状态且 `Result:` 为空时会追加一行，指向转录读取器（`Partial work may be available — use sessions_messages(target_session_key="…") …`）：第一 turn 超时提取不到文本，但子代理的 checkpoint 仍保留着它的迭代记录。后续 goal-loop turn 超时已带上上一轮的文本，因此不加提示。
 
 以 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` 经 `get_event_bus().publish_internal()` 交付。
 
@@ -608,12 +613,13 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 每轮执行：
   1. 遍历所有 run，保留存活未结束的 run
   2. run_timeout_seconds > 0（默认 600 秒）时，标记运行时长超过它的 run；0 = 禁用该超时检查
+     （`sessions_spawn` 工具把自己的输入 clamp 到 [600, 7200]；本检查器只看 run 最终解析出的值）
   3. 若存在 → recover_orphaned_runs() 批量恢复
 ```
 
 ### 9. LLM 工具接口
 
-全部七个工具由 `tools/` 下的 builder 构建。`build_subagent_runtime_tools()`（tools/runtime_tools.py）是唯一注册进宿主 `_MAIN_TOOLS_BUILDERS` 的 builder；它通过 `InjectedState("session_id")` 注入调用方 `session_id` 并构建完整工具集。
+全部八个工具由 `tools/` 下的 builder 构建。`build_subagent_runtime_tools()`（tools/runtime_tools.py）是唯一注册进宿主 `_MAIN_TOOLS_BUILDERS` 的 builder；它通过 `InjectedState("session_id")` 注入调用方 `session_id` 并构建完整工具集。
 
 #### sessions_spawn — 创建子 Agent
 
@@ -629,6 +635,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer / librarian）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
+| `run_timeout_seconds` | float\|None | None | 本次 spawn 的墙钟超时（秒）。默认 600，clamp 到 [600, 7200]；非正值表示"未设"（走全局默认） |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 
@@ -692,6 +699,16 @@ Recent:
 ```
 
 活跃条目显示 run_id[:8]、label、depth、role；近期条目显示 run_id[:8]、label、outcome 状态。活跃列表上限 10 条，近期上限 5 条；运行时长以 s/m/h 渲染。
+
+#### sessions_messages — 读取子代理转录
+
+| 参数 | 类型 | 默认 | 说明 |
+|-----------|------|---------|-------------|
+| `target_session_key` | str | 必填 | 子代理的会话键（spawn 返回的 `session_key=` 值） |
+| `limit` | int | 10 | 从 checkpoint **取**多少条最新消息，clamp 到 [1, 30] |
+| `query` | str\|None | None | 可选的大小写不敏感关键词过滤（匹配消息文本与工具调用） |
+
+通过 `agent/state_port.py::read_messages` 读取子代理的 LangGraph checkpoint（与子代理写入时相同的 `rand_str_to_int(session_key)` 线程 id），渲染 token 预算化的转录：每条消息渲染为 `[role] text tool_calls: name(k=v)`，每条 500 token、总计 4 000 token（`TOOLS_TIMEOUTS["session_messages_token_budget"]`）。用于子代理超时或被 kill 之后查看它究竟做了什么——调了哪些工具、返回了什么——再决定继续、重规划还是汇报。checkpoint 在运行结束后依然存活：`_release_child_resources` 只关闭子代理的连接，子代理清理从不调用 `delete_thread_history`（只有 HTTP `clear_session` 清除会删）。只有 spawn 方（或 run 的完成归属方）能读；`read_for_session` 式的跨会话读取会被拒绝并给出 `not the spawning session`。
 
 ### 10. 编程 API — delegate_task
 
@@ -862,7 +879,8 @@ agent/tools/subagent/
 │   ├── sessions_kill.py       sessions_kill 工具
 │   ├── sessions_steer.py      sessions_steer 工具
 │   ├── agents_list.py         agents_list 工具
-│   └── subagents_list.py      subagents 工具
+│   ├── subagents_list.py      subagents 工具
+│   └── sessions_messages.py   sessions_messages 工具（checkpoint 转录读取）
 │
 ├── hooks/                     Channel hooks
 │   ├── base.py                Hook 协议定义（SubagentStartEvent / SubagentStopEvent）
@@ -943,6 +961,8 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_children_per_agent` | 5 | 每 Agent 最大并发子 Agent 数 |
 | `max_total_spawns_per_session` | 50 | 单个请求会话可累计发起的 spawn 数（内存态；准入时检查，`register_run` 时计数，会话清除时丢弃） |
 | `run_timeout_seconds` | 600.0 | 子 Agent 执行超时（默认 10 分钟；0 = 无超时，sweeper 的 2 小时 stale 检测仍是外层兜底） |
+| `run_timeout_min_seconds` | 600.0 | `sessions_spawn` 工具对模型所传超时值 clamp 的下限 |
+| `run_timeout_max_seconds` | 7200.0 | 同一 clamp 的上限（2 小时） |
 | `require_agent_id` | False | 是否强制 agent_id |
 | `allow_agents` | `["*"]` | 允许的 agent_id 白名单 |
 | `default_cleanup` | "delete" | 默认清理策略 |

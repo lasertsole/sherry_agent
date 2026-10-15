@@ -129,7 +129,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     from GPT, and the headroom scales per level via
   │     REASONING_BUDGET["thinking_budgets"]
   │
-  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
+  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(8)
   │         + file_tools + web_search + terminal + python_repl + question + ...
   │
   ├─ graph wrappers: apply_graph_wrappers(inner)
@@ -141,6 +141,14 @@ User message → Robyn WS → agent.core.built_agent() graph
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
+
+     spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
+     `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
+     callers bypass the clamp and keep their own bounds), and after a
+     timeout/kill whose completion notice has no Result the caller can pull the
+     child's transcript — `sessions_messages` reads its checkpoint by
+     session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
+     budgeted, spawner-only)
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on

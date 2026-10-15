@@ -9,6 +9,8 @@
 > リソース上限の補完——wall-clock タイムアウトが再び有効になり、セッションごとの spawn 回数に上限が付きました:
 
 - **`run_timeout_seconds` デフォルト 0.0 → 600.0（10 分）**：子エージェントが時間的に無制限に走ることはなくなりました。`spawn` と `steer` は再び子の `ainvoke` を `asyncio.wait_for` で包み、followup のタイムアウト検査も有効です（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）。sweeper の 2 時間 stale 検出は外側の安全網として残ります。呼び出し側は `sessions_spawn(run_timeout_seconds=...)` で spawn ごとに上書きでき、`0` は従来どおり「タイムアウトなし」です。
+- **`sessions_spawn` がタイムアウトを公開**：`run_timeout_seconds` フィールドを追加（グローバル既定と並ぶ、モデル自身のレバー）。ツールはモデルが渡した値を**拒否せず** `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）に clamp します——60 秒という「短く」の意図は 10 分の下限に、99999 は 2 時間の上限に落ち着く——`None`／非正値は「未設定」（グローバル既定を使う）です。内部呼び出し側（TaskFlow dispatch、`delegate_task`）は clamp を迂回し、独自の境界を保ちます。
+- **新規 `sessions_messages` ツール**：`session_key` で子セッションの checkpoint トランスクリプトを読む（8 番目のランタイムツール）。タイムアウト／kill の場面向けです——`Status: timed out` で `Result:` が無いとき、呼び出し側は何も得られませんでしたが、子エージェントの checkpoint には実行したすべてのツール呼び出しが残っています。出力は token 予算化（合計 4 000、1 メッセージ 500）され、`spawned_by`／run の完了オーナーで認可されるため、その子を spawn したセッションだけが読めます。
 - **新規 `max_total_spawns_per_session`（50）**：セッション単位の累積 spawn バジェット（`registry/spawn_budget.py`。registry の他のライブビューと同じくプロセス内メモリ）。`max_children_per_agent`（5）が同時に走る子の数、こちらは「1つ終えたら次を起動」の無限繰り返し——詰まったオーケストレーターが陥る形——を制限します。`register_run` でカウント（登録に到達した spawn が対象）、spawn の admission ゲートで検査、セッション破棄で削除され、プロセス再起動でクリアされます。
 
 ## 更新ノート（2026-09-05）
@@ -76,7 +78,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
   │     spawn/thinking.py）
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
-  │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（デフォルト 600 秒、0 = タイムアウトなし）
+  │     └── タイムアウト：spawn ごとの上書き（ツール入力は [600, 7200] に clamp）、
+  │           なければ run_timeout_seconds（デフォルト 600 秒、0 = タイムアウトなし）
   │
   ├── 4. オリジンルーティング（Origin Routing）
   │     └── resolve_requester_origin_for_child()：チャネル / アカウントメタデータ
@@ -334,6 +337,8 @@ Result:
 
 Please review the sub-agent execution results above. Provide further instructions if needed.
 ```
+
+`timeout` ステータスで `Result:` が空の場合、トランスクリプト読み取りツールを指す一行が追加されます（`Partial work may be available — use sessions_messages(target_session_key="…") …`）。最初のターンでタイムアウトするとテキストは抽出されませんが、子の checkpoint にはイテレーションが残っています。以降の goal-loop ターンのタイムアウトは前ターンのテキストを既に運ぶため、このヒントは付きません。
 
 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` として `get_event_bus().publish_internal()` 経由で配信されます。
 
@@ -617,12 +622,13 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 各チェックで実行：
   1. 全 run を走査し、稼働中の未終了 run を保持
   2. run_timeout_seconds > 0（デフォルト 600 秒）のとき、経過時間がその値を超過する run をフラグ（0 = タイムアウトチェック無効）
+     （`sessions_spawn` ツールは自身の入力を [600, 7200] に clamp します。このチェッカーは run が最終的に解決した値だけを見ます）
   3. 存在すれば → recover_orphaned_runs() による一括復旧
 ```
 
 ### 9. LLM ツールインターフェイス
 
-7 つのツールはすべて `tools/` 配下のビルダーが構築します。`build_subagent_runtime_tools()`（tools/runtime_tools.py）だけがホストの `_MAIN_TOOLS_BUILDERS` に登録されるビルダーで、`InjectedState("session_id")` 経由で呼び出し元の `session_id` を注入し、ツールセット全体を構築します。
+8 つのツールはすべて `tools/` 配下のビルダーが構築します。`build_subagent_runtime_tools()`（tools/runtime_tools.py）だけがホストの `_MAIN_TOOLS_BUILDERS` に登録されるビルダーで、`InjectedState("session_id")` 経由で呼び出し元の `session_id` を注入し、ツールセット全体を構築します。
 
 #### sessions_spawn — 子エージェントの作成
 
@@ -638,6 +644,7 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
 | `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer / librarian）。None は depth ベースの挙動を維持 |
 | `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
+| `run_timeout_seconds` | float\|None | None | この spawn の wall-clock タイムアウト（秒）。既定 600、clamp で [600, 7200]；非正値は「未設定」（グローバル既定） |
 
 戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 
@@ -701,6 +708,16 @@ Recent:
 ```
 
 アクティブ行は run_id[:8]、label、depth、role を表示。直近行は run_id[:8]、label、outcome 状態を表示。アクティブは最大 10 件、直近は 5 件。稼働時間は s/m/h 形式で表示します。
+
+#### sessions_messages — 子のトランスクリプトを読む
+
+| パラメータ | 型 | 既定 | 説明 |
+|-----------|------|---------|-------------|
+| `target_session_key` | str | 必須 | 子のセッションキー（spawn が返した `session_key=` の値） |
+| `limit` | int | 10 | checkpoint から**取得**する直近メッセージ数（clamp で [1, 30]） |
+| `query` | str\|None | None | 任意の大文字小文字を無視したキーワード絞り込み（メッセージ本文とツール呼び出しが対象） |
+
+`agent/state_port.py::read_messages` を通じて子の LangGraph checkpoint を読み（子が書き込んだのと同じ `rand_str_to_int(session_key)` スレッド id）、token 予算化されたトランスクリプトを描画します：各メッセージは `[role] text tool_calls: name(k=v)`、1 メッセージ 500 token・合計 4 000 token（`TOOLS_TIMEOUTS["session_messages_token_budget"]`）。タイムアウトや kill の後に、実際に何をしたか——どのツールを呼び、何が返ったか——を確認してから、継続・再計画・報告を判断するためのツールです。checkpoint は実行後も残ります：`_release_child_resources` は子の接続を閉じるだけで、子の cleanup は `delete_thread_history` を呼びません（削除するのは HTTP `clear_session` のパージのみ）。読めるのは spawn したセッション（または run の完了オーナー）だけです。`read_for_session` のようなクロスセッション読み取りは `not the spawning session` で拒否されます。
 
 ### 10. プログラマティック API — delegate_task
 
@@ -871,7 +888,8 @@ agent/tools/subagent/
 │   ├── sessions_kill.py       sessions_kill ツール
 │   ├── sessions_steer.py      sessions_steer ツール
 │   ├── agents_list.py         agents_list ツール
-│   └── subagents_list.py      subagents ツール
+│   ├── subagents_list.py      subagents ツール
+│   └── sessions_messages.py   sessions_messages ツール（checkpoint トランスクリプト読み取り）
 │
 ├── hooks/                     Channel hooks
 │   ├── base.py                フックプロトコル定義（SubagentStartEvent / SubagentStopEvent）
@@ -952,6 +970,8 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_children_per_agent` | 5 | エージェントあたりの最大同時子数 |
 | `max_total_spawns_per_session` | 50 | 1つの要求セッションが累積で開始できる spawn 数（メモリ内; admission で検査、`register_run` でカウント、セッション破棄で削除） |
 | `run_timeout_seconds` | 600.0 | 子エージェント実行タイムアウト（デフォルト 10 分; 0 = タイムアウトなし、sweeper の 2 時間 stale 検出が外側の安全網） |
+| `run_timeout_min_seconds` | 600.0 | `sessions_spawn` ツールがモデル入力のタイムアウトを clamp する下限 |
+| `run_timeout_max_seconds` | 7200.0 | 同じ clamp の上限（2 時間） |
 | `require_agent_id` | False | agent_id を必須にするか |
 | `allow_agents` | `["*"]` | 許可する agent_id ホワイトリスト |
 | `default_cleanup` | "delete" | 既定のクリーンアップポリシー |
