@@ -44,7 +44,10 @@ terminal / python_repl 跑了一条命令
 | 格式 | JSON Lines（每行一个 JSON 对象） |
 | 作用域 | Repo 级（跨所有 session 共享） |
 | 可变性 | Append-only — 已有行从不改写或删除 |
-| Session 隔离 | 读取时按 `session_id` 字段过滤实现 |
+| Session 隔离 | 读取时按 `session_id` 字段过滤实现；行携带的是**会话**键（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`），绝不是 plan / todo / flow id |
+| 多键读取 | `read_for_keys(keys)` 一次遍历文件、按键分组，并保持每个键自己的行序（陈旧性只在同一会话的行序列内推导） |
+| 坏行 | 无法解析的行被跳过并记一条警告——一行坏数据绝不能让整个账本读不出来 |
+| 写锁 | 追加持共享的 per-path 写锁（`file_write_lock`：进程内锁 + `flock`） |
 | 文件缺失 | `read_all()` 返回 `[]` — `data/` 目录在首次追加时创建 |
 
 文件故意保持 repo 级而非 session 级：它是跨 session 共享的 append-only 审计轨迹，那些 session 验证的是同一个计划。
@@ -177,7 +180,7 @@ def _is_stale(index, row, stale_events):
 
 ### 层级 3：per-flow（taskflow_finish Gate C）
 
-TaskFlow 关流为 DONE 前，Gate C 检查 flow 级 evidence：
+TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它每个已派发步的 `child_session_key` 加上 flow 的 `creator_session_key` 的并集（行按会话键存放，而一个 flow 横跨多个会话；从未派发过步的 flow 没有任何键，因此没有证据，放行）：
 
 | 条件 | 结果 |
 |------|------|

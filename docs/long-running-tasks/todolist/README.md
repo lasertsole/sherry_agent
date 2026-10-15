@@ -14,7 +14,7 @@
 - [Data Layer](data/README.md)
   - [Plan Files (workspace/sessions/<session_id>/plans/*.md)](data/README.md#plan-files-workspacesessionssession_idplansmd)
   - [Boulder State (src/data/boulder.json)](data/README.md#boulder-state-srcdataboulderjson)
-  - [Evidence Ledger](../evidence-ledger/README.md)
+  - [Evidence Ledger](../gates/evidence-ledger/README.md)
   - [todos.db — Session-Level TODO Storage](data/README.md#todosdb--session-level-todo-storage)
 - [Service Layer](#service-layer)
 - [Tool Layer](#tool-layer)
@@ -182,7 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../evidence-ledger/README.md).
+`agent/tools/todolist/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 

@@ -27,7 +27,7 @@
   - [会话连续性](memory/README.zh.md#-会话连续性)
   - [TaskFlow 自动恢复](memory/README.zh.md#-taskflow-自动恢复)
 - [判断门](gates/README.zh.md)
-- [证据账本](evidence-ledger/README.zh.md)
+- [证据账本](gates/evidence-ledger/README.zh.md)
 - [并发 Lane](lanes/README.zh.md)
 - [配置注册表](#-配置注册表)
 - [架构图](#-架构图)

@@ -47,7 +47,7 @@ With `judge_criteria` (or the legacy `validation_criteria`) on the step, `judge_
 
 Details that change behaviour:
 
-- **The evidence summary rides along.** With `STEP_JUDGE["evidence_aware"]` (default on) the prompt carries `collect_evidence_summary` for the flow — the child's recorded verification rows and their derived staleness (see [Evidence Ledger](../evidence-ledger/README.md)).
+- **The evidence summary rides along.** With `STEP_JUDGE["evidence_aware"]` (default on) the prompt carries `collect_evidence_summary` for the flow — the child's recorded verification rows and their derived staleness (see [Evidence Ledger](../gates/evidence-ledger/README.md)).
 - **Fail-open, always.** A model error or an unparseable response degrades to `pass`: an unreachable judge never blocks progress. The trade is explicit — the verdict is best-effort, so criteria compliance is never a hard guarantee.
 - **Settled steps only.** The judge runs when the step is actually settled (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and is judged on the eventual resume.
 - **Passing `validation_criteria` to `taskflow_resume` overrides** the stored value for that call — e.g. to tighten or correct it based on what the child actually did.
@@ -65,7 +65,7 @@ A step's `done` never means "the work is right" by itself. With **no** expectati
 | :--- | :--- | :--- |
 | **A — DAG completeness** | every step is `done` or `blocked` | `step(s) not done/blocked` |
 | **B — no unresolved steps** | no step is `failed`, `skipped`, `cancelled` or `blocked` | the offending steps by id, each with its recorded reason |
-| **C — evidence** | the flow's evidence carries no `FAIL` and no `[stale]` row (see [Evidence Ledger](../evidence-ledger/README.md)) | `failing verification evidence` / `stale evidence` |
+| **C — evidence** | the flow's evidence carries no `FAIL` and no `[stale]` row (see [Evidence Ledger](../gates/evidence-ledger/README.md)) | `failing verification evidence` / `stale evidence` |
 | **E — goal judge** | an auxiliary model judges whether the collected results satisfy the flow's `description` | a rejection that names `taskflow_replan` |
 
 Every gate is **fail-open**: an unreadable collector, a model error or an unparseable verdict passes rather than blocking a finish. Gate E runs only for a flow with a `description` and at least `GOAL_GATE["min_steps"]` (3) steps — a one- or two-step flow is already covered by the child-level [completion judge](../../subagent/README.md), and a second verdict on the same work is that overlap; `GOAL_GATE["enabled"]` is its master switch and `GOAL_GATE["max_result_chars"]` (4000) bounds each result handed to it.
@@ -74,7 +74,7 @@ Every gate is **fail-open**: an unreadable collector, a model error or an unpars
 
 This page owns the TaskFlow gates. The same "a claim is not a fact" rule recurs elsewhere, documented where it lives:
 
-- **[Evidence Ledger](../evidence-ledger/README.md)** — the recorded verification trail; its summary is Gate C's input *and* the StepJudge prompt's evidence section.
+- **[Evidence Ledger](../gates/evidence-ledger/README.md)** — the recorded verification trail; its summary is Gate C's input *and* the StepJudge prompt's evidence section.
 - **[Subagent completion gates](../../subagent/README.md)** — the per-child layers: the CompletionJudge goal loop (DONE / CONTINUE, bounded by `COMPLETION_JUDGE["goal_max_turns"]`, with the first call skipped when the child's ledger already shows a passing non-stale row) and the completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`, parent-side).
 - **[TodoList Enforcement](../todolist/enforcement/README.md)** — the plan side: the E1–E7 enforcement layers, including the turn-end continuation gate and its budget.
 - **Loop prevention** — [docs/loop-prevention](../../loop-prevention/README.md) collects the guards' altitude matrix (turn / step / subagent / pipeline) with the fail-open policy per layer.

@@ -27,7 +27,7 @@
   - [セッション継続性](memory/README.ja.md#-セッション継続性)
   - [TaskFlow 自動再開](memory/README.ja.md#-taskflow-自動再開)
 - [判定ゲート](gates/README.ja.md)
-- [エビデンス台帳](evidence-ledger/README.ja.md)
+- [エビデンス台帳](gates/evidence-ledger/README.ja.md)
 - [並行レーン](lanes/README.ja.md)
 - [設定レジストリ](#-設定レジストリ)
 - [アーキテクチャ図](#-アーキテクチャ図)

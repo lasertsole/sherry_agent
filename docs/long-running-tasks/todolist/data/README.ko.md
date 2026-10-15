@@ -68,7 +68,7 @@
 
 ### 증거 원장 (src/data/evidence-ledger.jsonl)
 
-한 줄에 JSON 객체 하나: 공유되는 추가 전용 검증 감사 트레일입니다. 쓰는 쪽은 `agent/tools/todolist/evidence_recorder.py`, 읽는 쪽은 `agent/tools/taskflow/evidence_collector.py`이며, 프로듀서·행 스키마·파생 스테일 규칙·요약 형식·이를 소비하는 게이트는 [증거 원장](../../evidence-ledger/README.ko.md)에 정리되어 있습니다.
+한 줄에 JSON 객체 하나: 공유되는 추가 전용 검증 감사 트레일입니다. 쓰는 쪽은 `agent/tools/todolist/evidence_recorder.py`, 읽는 쪽은 `agent/tools/taskflow/evidence_collector.py`이며, 프로듀서·행 스키마·파생 스테일 규칙·요약 형식·이를 소비하는 게이트는 [증거 원장](../../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### todos.db — 세션 수준 TODO 저장
 

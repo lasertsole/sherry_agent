@@ -77,7 +77,7 @@ One JSON object per line: the shared, append-only verification audit trail. It i
 `agent/tools/todolist/evidence_recorder.py` and read by
 `agent/tools/taskflow/evidence_collector.py`; the producers, row schemas, the derived-staleness
 rule, the summary format and the gates that consume it are documented in
-[Evidence Ledger](../../evidence-ledger/README.md).
+[Evidence Ledger](../../gates/evidence-ledger/README.md).
 
 ### todos.db — Session-Level TODO Storage
 

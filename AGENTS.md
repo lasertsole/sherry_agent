@@ -182,7 +182,9 @@ User message → Robyn WS → agent.core.built_agent() graph
       stale events; read side derives staleness (evidence_collector.py)
     · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      no FAIL/[stale] evidence, then Gate E's goal judge (only for a flow with a
+      the flow's AGGREGATED evidence (every dispatched step's child session +
+      the creator's; rows carry a session key, never a flow id) carrying no
+      FAIL/[stale], then Gate E's goal judge (only for a flow with a
       description and at least GOAL_GATE["min_steps"] = 3 steps)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence
@@ -1085,6 +1087,31 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_replan`).
+- a dispatch wave spawns CONCURRENTLY, bounded by
+  `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the historical
+  sequential behaviour) through `asyncio.gather` + a semaphore — the three
+  dispatch loops (`taskflow_dispatch`'s batch, `taskflow_resume`'s
+  auto-dispatch wave and `taskflow_wait_all`'s retry pass) all do. The SUBAGENT
+  lane is the global backpressure; this cap only decides how many spawn calls
+  are in flight at once. A partial wave failure persists every successful child
+  (via `update_flow_with_conflict_retry`, so a concurrent writer cannot drop a
+  spawned key) and names the failed step ids (`auto_dispatch_failed=…` on the
+  resume answer). `taskflow_resume`'s normal path also writes through that
+  CAS-retry: the `build_state` callback re-applies the ALREADY-DECIDED verdict +
+  result onto the freshly-read state and re-derives the unlock set from what was
+  actually persisted — two children completing at once both land, and the same
+  step is spawned exactly once. A superseded flow releases its per-session slot.
+- two nullable `task_flows` columns record flow lineage (`resumed_from` /
+  `superseded_by`, additive migration): `taskflow_create(resumed_from=…)` —
+  the CREATE path, since `taskflow_replan` rewrites in place and never forks —
+  writes the successor's forward pointer and stamps the predecessor's
+  back-pointer with a plain session-scoped UPDATE that deliberately does NOT bump
+  `expected_revision` (lineage is metadata). `get_active_flows_sync` excludes a
+  superseded flow even while it is still `running`; `get_all_flows_sync(all)`
+  and `taskflow_summary` still show it.
+- `_try_auto_resume_taskflow` only reports success when the resume answer is not
+  an `Error:` (the resume genuinely failed → an error log, not an info log; the
+  child's completion is still recorded, so nothing is lost).
 - tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
   (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
   negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`

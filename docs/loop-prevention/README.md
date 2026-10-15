@@ -238,7 +238,7 @@ thread.
 
 The ledger itself — the shared, append-only verification trail
 (`src/data/evidence-ledger.jsonl`) whose staleness is derived on read — has its own
-page: [Evidence Ledger](../long-running-tasks/evidence-ledger/README.md). What closes
+page: [Evidence Ledger](../long-running-tasks/gates/evidence-ledger/README.md). What closes
 the loop here is the gate that reads it:
 
 `taskflow_finish.py` gates the DONE transition on three checks, in order:

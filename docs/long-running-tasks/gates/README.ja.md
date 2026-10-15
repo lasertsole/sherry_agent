@@ -47,7 +47,7 @@
 
 挙動を変える細部：
 
-- **エビデンス要約が同乗します。** `STEP_JUDGE["evidence_aware"]`（既定オン）なら、プロンプトはそのフローの `collect_evidence_summary` を運びます — 子が記録した検証行と、そこから導出される陳腐性です（[エビデンス台帳](../evidence-ledger/README.ja.md)参照）。
+- **エビデンス要約が同乗します。** `STEP_JUDGE["evidence_aware"]`（既定オン）なら、プロンプトはそのフローの `collect_evidence_summary` を運びます — 子が記録した検証行と、そこから導出される陳腐性です（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照）。
 - **常にフェイルオープン。** モデルエラーやパース不能な応答は `pass` に降格します：到達不能な判定器が進行を妨げることはありません。代償は明示的で、判定はベストエフォートであり、基準の充足がハード保証になることはありません。
 - **確定したステップだけ。** 判定器はステップが実際に確定したときに走ります（`redispatched_key is None`）。リトライポリシーで再ディスパッチされたステップは基準を保持したまま、最終の resume で判定されます。
 - **`taskflow_resume` に `validation_criteria` を渡すと**その呼び出しの保存値を**上書き**します — 子が実際に何をしたかに基づいて締めたり正したりするためです。
@@ -65,7 +65,7 @@
 | :--- | :--- | :--- |
 | **A — DAG 完全性** | すべてのステップが `done` または `blocked` | `step(s) not done/blocked` |
 | **B — 未解決ステップなし** | `failed`・`skipped`・`cancelled`・`blocked` のステップが無い | 該当ステップを id で示し、記録された理由を添える |
-| **C — エビデンス** | フローのエビデンスに `FAIL` も `[stale]` 行も無い（[エビデンス台帳](../evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `stale evidence` |
+| **C — エビデンス** | フローのエビデンスに `FAIL` も `[stale]` 行も無い（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `stale evidence` |
 | **E — 目標判定** | 収集された結果がフローの `description` を満たすかを補助モデルが判定 | `taskflow_replan` を名指しする拒否 |
 
 すべてのゲートは**フェイルオープン**です：読めない collector、モデルエラー、パース不能な判定は完了を妨げず通過させます。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。
@@ -74,7 +74,7 @@
 
 このページが持つのは TaskFlow のゲートです。「申告は事実ではない」という規則は他所でも繰り返され、それぞれの場所に記録されています：
 
-- **[エビデンス台帳](../evidence-ledger/README.ja.md)** — 記録された検証トレイル。その要約は Gate C の入力であり、StepJudge プロンプトのエビデンス節でもあります。
+- **[エビデンス台帳](../gates/evidence-ledger/README.ja.md)** — 記録された検証トレイル。その要約は Gate C の入力であり、StepJudge プロンプトのエビデンス節でもあります。
 - **[サブエージェント完了ゲート](../../subagent/README.ja.md)** — 子レベルの層：CompletionJudge ゴールループ（DONE / CONTINUE、`COMPLETION_JUDGE["goal_max_turns"]` で有界。子の台帳が通過済みで陳腐化していない行を示すときは最初の呼び出しをスキップ）と完了 drain のプログラム的ゲート（`SubagentCompletionDrainMiddleware`、親側）。
 - **[TodoList 強制層](../todolist/enforcement/README.ja.md)** — 計画側：E1–E7 強制層（ターン終了時の継続ゲートとその予算を含む）。
 - **ループ防止** — [docs/loop-prevention](../../loop-prevention/README.ja.md) が各ガードの高度マトリクス（ターン／ステップ／サブエージェント／パイプライン）と層ごとのフェイルオープン方針をまとめています。

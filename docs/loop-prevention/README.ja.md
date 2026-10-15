@@ -213,7 +213,7 @@
 
 ### パイプラインレベル: 証跡台帳と完了ゲート
 
-台帳そのもの——共有の追記専用検証トレイル（`src/data/evidence-ledger.jsonl`）で、古さは読み取り時に導出されます——には専用ページがあります：[エビデンス台帳](../long-running-tasks/evidence-ledger/README.ja.md)。ここでループを閉じるのは、それを読むゲートです：
+台帳そのもの——共有の追記専用検証トレイル（`src/data/evidence-ledger.jsonl`）で、古さは読み取り時に導出されます——には専用ページがあります：[エビデンス台帳](../long-running-tasks/gates/evidence-ledger/README.ja.md)。ここでループを閉じるのは、それを読むゲートです：
 
 `taskflow_finish.py` は DONE 遷移を三つの検査で順にゲートします：
 

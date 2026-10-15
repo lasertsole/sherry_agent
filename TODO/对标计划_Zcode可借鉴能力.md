@@ -59,6 +59,7 @@
 ### 1.1 workflow journal 重放：四条差距逐一评估，仅血缘指针保留（首轮误判已修正）
 
 > **2026-10-14 深度评估后更新**：原四条差距经逐一分析，①②④ 不需要做（详见下文），③ 血缘指针已合并到 `计划_taskflow并行执行.md` §8。原独立的 `计划_workflow_journal重放.md` 已删除。
+> **2026-10-15 完成**：`计划_taskflow并行执行.md` 全量落地（Phase 0 并发缺陷修复、Phase 1-2 有界并发派发、Phase 3 血缘指针），计划文件已删除；设计文档见 `docs/long-running-tasks/taskflow/README.md`（Flow Lineage 一节）。
 
 **首轮写的**：「Sherry 进程重启后无法从中间步骤恢复，只能整个 task 重跑」——**这条是错的，已撤回**。
 
@@ -70,7 +71,7 @@
 |---|---|---|---|---|
 | ① | 已完成步骤是否重跑 | journal 短路（`settleCachedAsk`，不调 driver）+ `inputHash` 校验 | DONE 硬拒绝 re-dispatch + DONE 不可变 + replan 不重置 DONE + result 从 `state["results"]` 复用 | **不需要做**——DAG 结构已防止重跑 |
 | ② | 显式挂起 | `stop("user")` 实际 abort in-flight ask | `taskflow_cancel` 杀子 agent + `set_waiting` 暂停 flow | **不需要做**——PAUSED 不杀子 agent 无实际效果 |
-| ③ | 血缘指针 | `dwf_run.resumed_from` + `superseded_by` | 无 | **已合并到 `计划_taskflow并行执行.md` §8** |
+| ③ | 血缘指针 | `dwf_run.resumed_from` + `superseded_by` | `task_flows.resumed_from` + `superseded_by` | **✅ 已完成**（2026-10-15，`taskflow_create(resumed_from=…)` 写入，`docs/long-running-tasks/taskflow/` Flow Lineage） |
 | ④ | 步骤级结果缓存 | `cached` 事件标志 + `input_hash` 命中 | result 已在 `state["results"]` 被下游 `build_task_with_dep_results` 复用 | **不需要做**——result 复用已工作 |
 
 **① 不做的理由**：ZCode 是确定性脚本重放引擎——每次 resume 从头重跑脚本，journal 短路是唯一跳过已完成节点的方式。Sherry 是事件驱动 DAG——step 只在依赖满足时被 dispatch，DONE step 永远不会被再次 dispatch。四层已有防护：`taskflow_dispatch` 的 `dispatchable` 硬拒绝（`:92-98`）、`taskflow_update_steps` 的 DONE 不可变（`:123-133`）、`taskflow_replan` 只 re-block 非 DONE step（`:75-96`）、下游 `build_task_with_dep_results` 已从 `state["results"]` 拉取 DONE step 的 result（`_shared.py:174-214`）。`input_hash` 要短路的是"DONE step 被尝试 re-dispatch 且 input 没变"——但这个场景在 Sherry 里不会发生。
@@ -629,8 +630,8 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
 | ~~P3~~ | ~~1.1①④ input_hash 短路 + 步骤缓存~~ | 低-中 | 中 | 依赖原型验证 | **❌ 不做**（DAG 已防重跑） |
 | ~~P3~~ | ~~1.1② PAUSED 显式挂起~~ | 低 | 中 | — | **❌ 不做**（不杀子 agent 无效果） |
-| ~~P3~~ | ~~1.1③ 血缘指针~~ | 低 | 低 | 无 | **✅ 已合并到 `计划_taskflow并行执行.md` §8** |
-| **P3** | 1.2 taskflow 并行执行 | 中 | 高 | 依赖 1.1 | 未开工 |
+| ~~P3~~ | ~~1.1③ 血缘指针~~ | 低 | 低 | 无 | **✅ 已完成**（`resumed_from`/`superseded_by` + active 读过滤） |
+| ~~P3~~ | ~~1.2 taskflow 并行执行~~ | 中 | 高 | 依赖 1.1 | **✅ 已完成**（并发缺陷修复 + `max_parallel_dispatch` 有界并发 + 血缘；6 个并发/血缘测试文件） |
 | ~~P3~~ | ~~1.6 microcompact 独立通道~~ | 低 | 低 | 无 | **❌ 不做**（ContextEvictionMiddleware 已做工具结果落盘驱逐 + preemptive_truncate 已做预截断，重叠） |
 | ~~P3~~ | ~~6.2 OffPeak 低谷期~~ | 低 | 低 | 无 | **❌ 不做**（cron 系统已有降级背压 + skill 绑定；"低谷期跑"就是 cron 表达式，不需独立概念） |
 | **P3** | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型可先上 | 未开工 |
@@ -641,7 +642,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 2. ~~先核查再决策：4.4~~ → **已完成**（fd 直写已落地）
 3. ~~第二批（需设计）：5.1 + 2.3 一起做~~ → **2.3 已部分完成**（stable/dynamic 分离已做，wire 层分段 ❌ 不做）；5.1 仍待做
 4. ~~2.2 目录化作为 3.1 的前置~~ → **已完成**，3.1 guide 可开工
-5. ~~1.1 四条差距~~ → **①②④ 不做**；**③ 血缘指针已合并到 `计划_taskflow并行执行.md` §8**
+5. ~~1.1 四条差距~~ → **①②④ 不做**；**③ 血缘指针已完成**（随并行执行计划一起落地并退休）
 6. ~~1.5 完整锚点协议~~ → **不做**（trajectory ledger 已覆盖）；~~1.6 microcompact~~ → **不做**（ContextEviction 已覆盖）；~~2.3 续 wire 分段~~ → **不做**（概念分离已落地）；~~6.2 OffPeak~~ → **不做**（cron 已覆盖）；~~6.4 大窗口~~ → **非 ZCode 特性**（换模型即生效）
 7. **独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里
 
@@ -657,7 +658,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~1.1① input_hash 短路~~ | journal 短路 + inputHash 校验 | **❌ 不需要**（DAG 结构已防重跑：dispatchable 硬拒绝 + DONE 不可变 + replan 不重置 DONE + result 从 state["results"] 复用） |
 | ~~1.1② PAUSED 显式挂起~~ | stop("user") abort in-flight | **❌ 不需要**（PAUSED 不杀子 agent 无实际效果；已有 taskflow_cancel + set_waiting 覆盖） |
 | ~~1.1④ 步骤级结果缓存~~ | cached + input_hash 命中 | **❌ 不需要**（result 已在 state["results"] 被下游 build_task_with_dep_results 复用） |
-| ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **已合并到 `计划_taskflow并行执行.md` §8**（两列 additive migration，成本极低） |
+| ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **✅ 已完成**（2026-10-15：两列 additive migration + `taskflow_create(resumed_from=…)` 写入 + active 读过滤；见 `docs/long-running-tasks/taskflow/` Flow Lineage） |
 | ~~1.5 完整锚点协议~~ | 7 事件流恢复协议 | **❌ 不需要**（trajectory ledger 已覆盖最危险场景——tool_start/end per-call 可查；完整 delta 续传协议需前端协同，WS_STREAM 已有 4 次重试，边际收益低） |
 | ~~1.6 microcompact 独立通道~~ | 只清工具结果保留对话 | **❌ 不需要**（ContextEvictionMiddleware 已做工具结果落盘驱逐 20K 阈值 + head/tail 预览 + preemptive_truncate_ratio 0.7→0.5 预截断，本质重叠） |
 | ~~2.3 续：拆独立 message + cacheHint~~ | stable/dynamic wire 分段 | **❌ 不需要**（stable/dynamic 概念分离已落地——cached system prompt 持 stable + per-turn reminders 持 dynamic；131K 窗口下 wire 层缓存收益小，改跨层 seam + tests 成本不匹配） |

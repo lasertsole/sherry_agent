@@ -27,7 +27,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
   - [Session Continuity](memory/README.md#-session-continuity)
   - [TaskFlow Auto-Resume](memory/README.md#-taskflow-auto-resume)
 - [Judgement Gates](gates/README.md)
-- [Evidence Ledger](evidence-ledger/README.md)
+- [Evidence Ledger](gates/evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
 - [Configuration Registry](#-configuration-registry)
 - [Architecture Diagram](#-architecture-diagram)

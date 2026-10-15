@@ -19,6 +19,7 @@
 - [並列ステップ実行](#並列ステップ実行)
 - [べき等リジューム](#べき等リジューム)
 - [生成済み子エージェントを伴う競合リトライ](#生成済み子エージェントを伴う競合リトライ)
+- [フロー系譜](#フロー系譜)
 - [永続化と接続ライフサイクル](#永続化と接続ライフサイクル)
 - [既知の制限](#既知の制限)
 
@@ -148,12 +149,15 @@ blocked → ready → dispatched → done
 ### taskflow_create
 
 ```python
-async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None) -> str
+async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None,
+                         deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
 永続的フローを `INITIAL_REVISION = 1`、状態 `running` で作成。フロー id、状態、リビジョンを返します。id が既に使用中の場合 `FlowExistsError`（現在のリビジョンを含むエラー文字列を返し、再読み取り可能）。
 
-リソース上限（ここで強制、超過時は `Error:` テキスト）: フローあたり最大 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）ステップ、セッションあたり最大 `TASKFLOW_INFRA["max_flows_per_session"]`（20）の**アクティブ**フロー——running/waiting のみが対象で、完了・キャンセル済みフローはスロットを解放します。`taskflow_plan` はプランナー呼び出しを消費する前に同じフロー数上限を適用します。
+新しいフローが以前のフローを**置き換える**場合は `resumed_from=<前駆 flow_id>` を渡します：新フローは `resumed_from` を記録し、前駆には `superseded_by` が刻まれます——[フロー系譜](#フロー系譜)参照。未知の前駆は何かを作成する前に拒否され、自己参照も拒否されます。
+
+リソース上限（ここで強制、超過時は `Error:` テキスト）: フローあたり最大 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）ステップ、セッションあたり最大 `TASKFLOW_INFRA["max_flows_per_session"]`（20）の**アクティブ**フロー——running/waiting のみが対象で、完了・キャンセル済みフローはスロットを解放します（置き換えられたフローも同様）。`taskflow_plan` はプランナー呼び出しを消費する前に同じフロー数上限を適用します。
 
 ### taskflow_run_task
 
@@ -227,6 +231,7 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
 ) -> str
 ```
 
@@ -234,7 +239,7 @@ async def taskflow_resume(
 
 **実行順序** — ゲートは連結し、すべてステップ単位のオプトインです：`retry_policy`（分類された失敗、または `schema_validated=false` が、**判定呼び出しの前に**代替の子へ再ディスパッチ）→ `response_schema`（Tier 1、無料で検証。不一致は `schema_error` リトライ）→ `judge_criteria` / `validation_criteria`（Tier 2、補助 LLM の判定器）→ 呼び出し側が宣言する `step_outcome`（これらすべてに優先）。判定・予算・エビデンスを考慮した判定プロンプト・フェイルオープン規則・`done` の実際の意味は[判定ゲート](../gates/README.ja.md)にまとめています。
 
-**DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。**resume は新たに ready になったステップをディスパッチしません**——呼び出し側が `taskflow_dispatch` で明示的に行います。
+**DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。書き込みは競合リトライ時に既に確定した判定を新読みの状態へ再適用するため、2 つの子が同時に完了しても両方の結果が着地します（[生成済み子エージェントを伴う競合リトライ](#生成済み子エージェントを伴う競合リトライ)参照）。`auto_dispatch=True`（既定）では新たに ready になった波が直ちに有界の同時バッチで spawn されます——[自動ディスパッチの波](#自動ディスパッチの波taskflow_resume)参照。`auto_dispatch=False` ならアンロックのみで、呼び出し側が `taskflow_dispatch` で明示的に行います。
 ### taskflow_set_waiting
 
 ```python
@@ -355,7 +360,11 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ### バッチディスパッチ（`taskflow_dispatch`）
 
-全 spawn の前にバッチ全体を検証（全か無か）。共有の `_dispatch.dispatch_child` シームを通じて順次 spawn。バッチ途中の spawn 失敗時はバッチを停止し、成功した spawn を 1 回の `update_flow` で永続化。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。
+全 spawn の前にバッチ全体を検証（全か無か）。その後バッチは共有の `_dispatch.dispatch_child` シームを通じて**同時に** spawn し、同時実行数は `TASKFLOW_INFRA["max_parallel_dispatch"]`（既定 2：SUBAGENT レーンがグローバルな背圧であり、この上限は同時に何個の spawn 呼び出しが飛行中かを決めるだけ）で制限されます。1 つの spawn の失敗はもはや兄弟を中止させません——成功した子はすべて 1 回の `update_flow` で永続化され、失敗したステップ id はすべて応答に列挙されます（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` ヘルパーが新読みのステップリストに記録済みディスパッチステップペイロードを再適用し、`step_id` でマッチ——spawn 済み子エージェントが同時書き込みによるステップリスト書き換えで失われることはない。`max_parallel_dispatch = 1` は歴史的な順次動作を正確に再現します。
+
+### 自動ディスパッチの波（`taskflow_resume`）
+
+依存側をアンロックした resume はそれを自分で起動します（`auto_dispatch=True`、既定）：新たに ready になった波は同じシームと同じ `max_parallel_dispatch` 上限で同時に spawn し、spawn した子キーは CAS リトライ書き込み（`update_flow_with_conflict_retry`）で永続化されるため、同時書き込みがそれらを落とすことはできません。各ステップのディスパッチ方法は `taskflow_dispatch` と完全に同じです（タスクバインディング + 判定フィードバック）。失敗は報告されるだけで例外にはなりません：spawn できなかったステップは `ready` のまま残り、resume の応答に `auto_dispatch_failed=<step_id>: <error>` が付いて手動リトライできます。アンロック集合は**実際に永続化された**状態から導出されるため、2 つの完了が同じステップのアンロックを競合しても spawn は正確に 1 回です。
 
 ### 有界ポーリング待機（`taskflow_wait_all`）
 
@@ -385,6 +394,21 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 4. リトライ回数枯渇時：同様に全 child key を名指したエラーを返す。
 
 `build_state` コールバックは新フローと試行回数を受け取り、最新データに対して状態を再構築可能（例：現在のステップ数に基づき `step_id` を再割り当て）。
+
+---
+
+## フロー系譜
+
+`task_flows` の 2 つの NULL 許容列がフローの進化を記録します（`resumed_from TEXT`、`superseded_by TEXT`。トークン列と同じ追加マイグレーション方式——系譜以前のデータベースは次回オープン時に収束し、その行は NULL として読まれます）：
+
+| 列 | 書き込み時 | 意味 |
+| -- | ---------- | ---- |
+| `resumed_from` | フロー作成時（`taskflow_create(resumed_from=…)`） | このフローが引き継ぐ前駆 flow_id |
+| `superseded_by` | 後継の作成時、前駆に刻印 | このフローを置き換えた後継 flow_id |
+
+書き込み点は**作成**パスであり、`taskflow_replan` ではありません：replan はフローの残りステップを**その場で**再生成し（同一 `flow_id` に `update_flow_with_conflict_retry` を実行）、新しいフローを分岐しないため記録すべき系譜がありません。`taskflow_finish` はどちらの列にも触れません——完了は終端状態であり、置き換えではありません。
+
+帰結：`get_active_flows_sync` は置き換えられたフローを除外します（ステータスが `running`/`waiting` のままでも。継続エンフォーサー・進捗パネル・セッション単位のフロー数上限はすべてこの読み口を通ります）。一方 `get_all_flows_sync(session_id, "all")` は逆ポインタ付きで依然として表示します——履歴ビューはそれを保持します。`taskflow_summary` は両ポインタを描画します（`resumed_from: …`、`superseded_by: …`）。逆ポインタの書き込みは通常のセッションスコープ UPDATE で、`expected_revision` を**意図的に増やしません**：系譜はメタデータであり、前駆のリビジョンを保持する呼び出し側を無効化してはならないからです。
 
 ---
 

@@ -47,7 +47,7 @@
 
 会改变行为的细节：
 
-- **证据摘要在场。** 开启 `STEP_JUDGE["evidence_aware"]`（默认开）时，提示词里带着该流程的 `collect_evidence_summary`——子代理记录的验证行及其推导出的陈旧性（见[证据账本](../evidence-ledger/README.zh.md)）。
+- **证据摘要在场。** 开启 `STEP_JUDGE["evidence_aware"]`（默认开）时，提示词里带着该流程的 `collect_evidence_summary`——子代理记录的验证行及其推导出的陈旧性（见[证据账本](../gates/evidence-ledger/README.zh.md)）。
 - **一律 fail-open。** 模型出错或响应无法解析都降级为 `pass`：判别器不可达绝不阻塞进度。代价是明确的——判定是尽力而为，因此"满足验收标准"从不是硬保证。
 - **只判已结算的步骤。** 判别器在步骤确实结算时运行（`redispatched_key is None`）；按重试策略重新派发过的步骤保留其标准存储，在最终那次 resume 时才被判定。
 - **给 `taskflow_resume` 传 `validation_criteria` 会覆盖**当次调用用的存储值——例如依据子代理实际做了什么来收紧或纠正它。
@@ -65,7 +65,7 @@
 | :--- | :--- | :--- |
 | **A — DAG 完整性** | 每个步骤都是 `done` 或 `blocked` | `step(s) not done/blocked` |
 | **B — 无未决步骤** | 没有步骤是 `failed`、`skipped`、`cancelled` 或 `blocked` | 按 id 列出违规步骤，各自附上记录的理由 |
-| **C — 证据** | 流程证据中没有 `FAIL`、也没有 `[stale]` 行（见[证据账本](../evidence-ledger/README.zh.md)） | `failing verification evidence` / `stale evidence` |
+| **C — 证据** | 流程证据中没有 `FAIL`、也没有 `[stale]` 行（见[证据账本](../gates/evidence-ledger/README.zh.md)） | `failing verification evidence` / `stale evidence` |
 | **E — 目标判别** | 辅助模型判断收集到的结果是否满足流程的 `description` | 拒绝文本会点名 `taskflow_replan` |
 
 每道门都是 **fail-open**：collector 不可读、模型出错或判定无法解析都放行，而不是阻塞完成。Gate E 只在流程有 `description` 且步骤数达到 `GOAL_GATE["min_steps"]`（3）时才运行——一两步的流程已由子级[完成判别器](../../subagent/README.zh.md)覆盖，再对同一份工作给出第二个判定正是那处重叠；`GOAL_GATE["enabled"]` 是它的总开关，`GOAL_GATE["max_result_chars"]`（4000）限定交给它的每个结果。
@@ -74,7 +74,7 @@
 
 本页拥有的是 TaskFlow 的门。"声明不等于事实"这条规则在别处同样反复出现，各自记录在它所在的地方：
 
-- **[证据账本](../evidence-ledger/README.zh.md)**——记录的验证轨迹；它的摘要既是 Gate C 的输入，也是 StepJudge 提示词里的证据段。
+- **[证据账本](../gates/evidence-ledger/README.zh.md)**——记录的验证轨迹；它的摘要既是 Gate C 的输入，也是 StepJudge 提示词里的证据段。
 - **[子代理完成门](../../subagent/README.zh.md)**——子代理级的两层：CompletionJudge 目标循环（DONE / CONTINUE，由 `COMPLETION_JUDGE["goal_max_turns"]` 限界；当子代理的账本已显示一条通过且未陈旧的证据行时跳过首次调用），以及完成 drain 的程序化门（`SubagentCompletionDrainMiddleware`，父侧）。
 - **[TodoList 强制层](../todolist/enforcement/README.zh.md)**——计划侧：E1–E7 强制层，含回合结束续跑门及其预算。
 - **防循环**——[docs/loop-prevention](../../loop-prevention/README.zh.md)汇总了各防护的高度矩阵（回合 / 步骤 / 子代理 / 管线）与每层的 fail-open 策略。

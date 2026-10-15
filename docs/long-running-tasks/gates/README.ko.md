@@ -47,7 +47,7 @@
 
 동작을 바꾸는 세부사항:
 
-- **증거 요약이 동승합니다.** `STEP_JUDGE["evidence_aware"]`(기본 켜짐)이면 프롬프트가 그 플로우의 `collect_evidence_summary`를 싣습니다 — 자식이 기록한 검증 행과 거기서 파생된 스테일 여부입니다([증거 원장](../evidence-ledger/README.ko.md) 참조).
+- **증거 요약이 동승합니다.** `STEP_JUDGE["evidence_aware"]`(기본 켜짐)이면 프롬프트가 그 플로우의 `collect_evidence_summary`를 싣습니다 — 자식이 기록한 검증 행과 거기서 파생된 스테일 여부입니다([증거 원장](../gates/evidence-ledger/README.ko.md) 참조).
 - **항상 페일오픈.** 모델 오류나 파싱 불가능한 응답은 `pass`로 강등됩니다: 도달할 수 없는 판정기가 진행을 막지 않습니다. 대가는 명시적입니다 — 판정은 최선의 노력이며, 기준 충족은 결코 하드 보장이 아닙니다.
 - **확정된 스텝만.** 판정기는 스텝이 실제로 확정되었을 때 돕니다(`redispatched_key is None`). 재시도 정책으로 재디스패치된 스텝은 기준을 보존한 채 최종 resume에서 판정됩니다.
 - **`taskflow_resume`에 `validation_criteria`를 넘기면** 그 호출의 저장값을 **덮어씁니다** — 자식이 실제로 한 일에 따라 기준을 조이거나 바로잡기 위해서입니다.
@@ -65,7 +65,7 @@
 | :--- | :--- | :--- |
 | **A — DAG 완전성** | 모든 스텝이 `done` 또는 `blocked` | `step(s) not done/blocked` |
 | **B — 미해결 스텝 없음** | `failed`·`skipped`·`cancelled`·`blocked` 스텝이 없음 | 해당 스텝을 id로 지목하고 기록된 이유를 함께 제시 |
-| **C — 증거** | 플로우 증거에 `FAIL`도 `[stale]` 행도 없음([증거 원장](../evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `stale evidence` |
+| **C — 증거** | 플로우 증거에 `FAIL`도 `[stale]` 행도 없음([증거 원장](../gates/evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `stale evidence` |
 | **E — 목표 판정** | 수집된 결과가 플로우의 `description`을 충족하는지 보조 모델이 판정 | `taskflow_replan`을 지목하는 거부 |
 
 모든 게이트는 **페일오픈**입니다: 읽을 수 없는 collector, 모델 오류, 파싱 불가능한 판정은 완료를 막지 않고 통과시킵니다. Gate E는 `description`이 있고 스텝 수가 `GOAL_GATE["min_steps"]`(3) 이상인 플로우에서만 돕니다 — 한두 스텝짜리 플로우는 자식 층위 [완료 판정기](../../subagent/README.ko.md)가 이미 덮고 있고, 같은 작업에 두 번째 판정을 얹는 것이 바로 그 중복이기 때문입니다. `GOAL_GATE["enabled"]`가 마스터 스위치이고 `GOAL_GATE["max_result_chars"]`(4000)가 넘겨지는 각 결과의 창입니다.
@@ -74,7 +74,7 @@
 
 이 페이지가 소유하는 것은 TaskFlow의 게이트입니다. "주장은 사실이 아니다"라는 규칙은 다른 곳에서도 반복되며, 각자 있는 자리에 기록되어 있습니다:
 
-- **[증거 원장](../evidence-ledger/README.ko.md)** — 기록된 검증 트레일. 그 요약은 Gate C의 입력이자 StepJudge 프롬프트의 증거 절입니다.
+- **[증거 원장](../gates/evidence-ledger/README.ko.md)** — 기록된 검증 트레일. 그 요약은 Gate C의 입력이자 StepJudge 프롬프트의 증거 절입니다.
 - **[서브에이전트 완료 게이트](../../subagent/README.ko.md)** — 자식 층위의 두 겹: CompletionJudge 목표 루프(DONE / CONTINUE, `COMPLETION_JUDGE["goal_max_turns"]`로 유계; 자식의 원장이 통과·비스테일 행을 보이면 첫 호출을 건너뜀)와 완료 drain의 프로그램 게이트(`SubagentCompletionDrainMiddleware`, 부모 측).
 - **[TodoList 강제 계층](../todolist/enforcement/README.ko.md)** — 계획 측: E1–E7 강제 계층(턴 종료 연속 게이트와 그 예산 포함).
 - **루프 방지** — [docs/loop-prevention](../../loop-prevention/README.ko.md)가 가드들의 고도 매트릭스(턴 / 스텝 / 서브에이전트 / 파이프라인)와 계층별 페일오픈 정책을 모아 둡니다.

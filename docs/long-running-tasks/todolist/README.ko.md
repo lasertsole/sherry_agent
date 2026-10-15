@@ -14,7 +14,7 @@
 - [데이터 레이어](data/README.ko.md)
   - [계획 파일 (workspace/sessions/<session_id>/plans/*.md)](data/README.ko.md#계획-파일-workspacesessionssession_idplansmd)
   - [Boulder 상태 (src/data/boulder.json)](data/README.ko.md#boulder-상태-srcdataboulderjson)
-  - [증거 원장](../evidence-ledger/README.ko.md)
+  - [증거 원장](../gates/evidence-ledger/README.ko.md)
   - [todos.db — 세션 수준 TODO 저장](data/README.ko.md#todosdb--세션-수준-todo-저장)
 - [서비스 레이어](#서비스-레이어)
 - [도구 레이어](#도구-레이어)
@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../evidence-ledger/README.ko.md)에 정리되어 있습니다.
+`agent/tools/todolist/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### WS 푸시
 

@@ -44,7 +44,10 @@ terminal / python_repl runs a command
 | Format | JSON Lines (one JSON object per line) |
 | Scope | Repo-wide (shared across all sessions) |
 | Mutability | Append-only — existing lines are never rewritten or deleted |
-| Session isolation | Achieved by filtering on the `session_id` field at read time |
+| Session isolation | Achieved by filtering on the `session_id` field at read time; rows carry a SESSION key (the main session's id, or a child's `agent:{agent}:subagent:{uuid}`) — never a plan / todo / flow id |
+| Multi-key reads | `read_for_keys(keys)` groups one pass over the file by key, preserving each key's own order (staleness is derived within one session's sequence) |
+| Broken lines | A line that does not parse is skipped with one warning — a single torn line must never make the whole ledger unreadable |
+| Write lock | Appends take the shared per-path write lock (`file_write_lock`: in-process lock + `flock`) |
 | Missing file | `read_all()` returns `[]` — the `data/` directory is created on first append |
 
 The file deliberately stays repo-scoped, not session-scoped: it is the append-only audit trail shared across sessions that verify the same plan.
@@ -177,7 +180,7 @@ When `taskflow_resume` dispatches a step with acceptance criteria, it calls `jud
 
 ### Level 3: Per-flow (taskflow_finish Gate C)
 
-Before a taskflow can transition to DONE, Gate C checks flow-scoped evidence:
+Before a taskflow can transition to DONE, Gate C checks the flow's AGGREGATED evidence — the union of every dispatched step's `child_session_key` plus the flow's `creator_session_key`, because rows are keyed by session and a flow spans sessions (a flow that never dispatched a step has no keys, hence no evidence, and passes):
 
 | Condition | Result |
 |-----------|--------|

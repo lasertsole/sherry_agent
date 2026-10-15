@@ -19,6 +19,7 @@ Source of truth: `agent/tools/taskflow/tools/*.py`, `agent/tools/taskflow/regist
 - [Parallel Step Execution](#parallel-step-execution)
 - [Idempotent Resume](#idempotent-resume)
 - [Conflict Retry with Spawned Children](#conflict-retry-with-spawned-children)
+- [Flow Lineage](#flow-lineage)
 - [Persistence & Connection Lifecycle](#persistence--connection-lifecycle)
 - [Known Limitations](#known-limitations)
 
@@ -148,12 +149,15 @@ Steps without a `status` field are handled by `step_status()`: a step with a `ch
 ### taskflow_create
 
 ```python
-async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None) -> str
+async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None,
+                         deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
 Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. `FlowExistsError` if the id is already taken (returns an error string with the current revision for re-read).
 
-Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_INFRA["max_steps_per_flow"]` (20) steps per flow, and at most `TASKFLOW_INFRA["max_flows_per_session"]` (20) ACTIVE flows per session — running/waiting ones only, a finished or cancelled flow releases its slot. `taskflow_plan` applies the same flow ceiling before it spends a planner call.
+Pass `resumed_from=<predecessor flow_id>` when the flow REPLACES an earlier one: the new flow records `resumed_from` and the predecessor is stamped `superseded_by` — see [Flow Lineage](#flow-lineage). An unknown predecessor is refused before anything is created; a self-reference is refused too.
+
+Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_INFRA["max_steps_per_flow"]` (20) steps per flow, and at most `TASKFLOW_INFRA["max_flows_per_session"]` (20) ACTIVE flows per session — running/waiting ones only, a finished or cancelled flow releases its slot (a superseded one releases it too). `taskflow_plan` applies the same flow ceiling before it spends a planner call.
 
 ### taskflow_run_task
 
@@ -228,6 +232,7 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
 ) -> str
 ```
 
@@ -235,7 +240,7 @@ Injects a completed child session result into the flow state (idempotent). Appen
 
 **Order of operations** — the gates chain and every one is opt-in per step: `retry_policy` (a classified failure, or `schema_validated=false`, re-dispatches onto a replacement child **before** any judge call) → `response_schema` (Tier 1, validated for free; a miss is a `schema_error` retry) → `judge_criteria` / `validation_criteria` (Tier 2, the auxiliary-LLM judge) → a caller-declared `step_outcome`, which outranks them all. Verdicts, budgets, the evidence-aware judge prompt, the fail-open rules and what `done` really means are documented in [Judgement Gates](../gates/README.md).
 
-**DAG bookkeeping**: a successful gate marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`; a `failed` step leaves its dependents `blocked`, and a `skipped`/`cancelled` step cascades `skipped` into them. Returns the unlocked step ids. **Resume never spawns** newly-ready steps — the caller dispatches them explicitly via `taskflow_dispatch`.
+**DAG bookkeeping**: a successful gate marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`; a `failed` step leaves its dependents `blocked`, and a `skipped`/`cancelled` step cascades `skipped` into them. Returns the unlocked step ids. The write re-applies the already-decided verdict onto the freshly-read state on a conflict retry, so two children completing at the same moment both land (see [Conflict Retry with Spawned Children](#conflict-retry-with-spawned-children)). With `auto_dispatch=True` (the default) the newly-ready wave is spawned immediately in a bounded concurrent batch — see [Auto-Dispatch Wave](#auto-dispatch-wave-taskflow_resume); pass `auto_dispatch=False` to unlock only and dispatch explicitly via `taskflow_dispatch`.
 
 ### taskflow_set_waiting
 
@@ -371,7 +376,11 @@ Two tools enable parallel execution of independent steps:
 
 ### Batch Dispatch (`taskflow_dispatch`)
 
-Validates the entire batch before any spawn (all-or-nothing). Sequential spawn through the shared `_dispatch.dispatch_child` seam. A mid-batch spawn failure stops the batch and persists the successful spawns in ONE `update_flow` call. The `apply_dispatched_steps()` helper re-applys recorded dispatched-step payloads onto a freshly-read step list, matching by `step_id` — a spawned child is never lost to a concurrent writer that rewrote the step list.
+Validates the entire batch before any spawn (all-or-nothing). The batch then spawns CONCURRENTLY through the shared `_dispatch.dispatch_child` seam, bounded by `TASKFLOW_INFRA["max_parallel_dispatch"]` (2 by default: the SUBAGENT lane is the global backpressure, this cap only decides how many spawn calls are in flight at once). One spawn failing no longer aborts its siblings — every successful child is persisted in ONE `update_flow` call and every failed step id is named in the answer (`Error: dispatch failed for step_id(s) …; dispatched=[…]`). The `apply_dispatched_steps()` helper re-applys recorded dispatched-step payloads onto a freshly-read step list, matching by `step_id` — a spawned child is never lost to a concurrent writer that rewrote the step list. `max_parallel_dispatch = 1` restores the historical sequential behaviour exactly.
+
+### Auto-Dispatch Wave (`taskflow_resume`)
+
+A resume that unlocks dependents starts them itself (`auto_dispatch=True`, the default): the newly-ready wave spawns concurrently through the same seam and the same `max_parallel_dispatch` bound, and the spawned keys are persisted with the CAS-retried write (`update_flow_with_conflict_retry`) so a concurrent writer cannot drop them. Each step is dispatched exactly like `taskflow_dispatch` does it (task bindings + any judge feedback). Failures are reported, never raised: a step that could not spawn stays `ready` and the resume's answer carries `auto_dispatch_failed=<step_id>: <error>` for a manual retry. Because the unlock set is derived from what was actually PERSISTED, two completes racing to unlock the same step spawn it exactly once.
 
 ### Bounded-Poll Wait (`taskflow_wait_all`)
 
@@ -410,6 +419,21 @@ When a child session has ALREADY spawned but the optimistic-lock write loses the
 4. On exhaustion: same error, naming all child keys.
 
 The `build_state` callback receives a fresh flow and an attempt number, so it can rebuild state against the latest data (e.g., re-assigning `step_id` based on the current step count).
+
+---
+
+## Flow Lineage
+
+Two nullable columns on `task_flows` record how flows evolved (`resumed_from TEXT`, `superseded_by TEXT`, added by the same additive-migration pattern as the token columns — a pre-lineage database converges on its next open and its rows read NULL):
+
+| Column | Written when | Meaning |
+| ------ | ------------ | ------- |
+| `resumed_from` | flow creation (`taskflow_create(resumed_from=…)`) | the predecessor flow this one continues |
+| `superseded_by` | the successor's creation, stamped onto the predecessor | the flow that replaced this one |
+
+The writer is the CREATE path, not `taskflow_replan`: replan regenerates a flow's remaining steps IN PLACE (`update_flow_with_conflict_retry` on the same `flow_id`), so it never forks a new flow and has no lineage to record. `taskflow_finish` never touches either column — finishing is a terminal state, not a replacement.
+
+Consequences: `get_active_flows_sync` excludes a superseded flow even while its status is still `running`/`waiting` (the continuation enforcer, the progress panel and the per-session flow cap all read through it), while `get_all_flows_sync(session_id, "all")` still shows it with its back-pointer — the history view keeps it. `taskflow_summary` renders both pointers (`resumed_from: …`, `superseded_by: …`). The back-pointer write is a plain session-scoped UPDATE that deliberately does NOT bump `expected_revision`: lineage is metadata, so a caller holding the predecessor's revision is not invalidated.
 
 ---
 

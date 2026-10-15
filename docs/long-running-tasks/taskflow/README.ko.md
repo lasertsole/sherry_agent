@@ -19,6 +19,7 @@
 - [병렬 단계 실행](#병렬-단계-실행)
 - [멱등 리줌](#멱등-리줌)
 - [이미 생성된 자식 에이전트를 동반한 충돌 재시도](#이미-생성된-자식-에이전트를-동반한-충돌-재시도)
+- [플로우 계보](#플로우-계보)
 - [영속화와 연결 라이프사이클](#영속화와-연결-라이프사이클)
 - [알려진 제한 사항](#알려진-제한-사항)
 
@@ -148,12 +149,15 @@ blocked → ready → dispatched → done
 ### taskflow_create
 
 ```python
-async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None) -> str
+async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None,
+                         deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
 영속적 플로우를 `INITIAL_REVISION = 1`, 상태 `running`으로 생성. 플로우 id, 상태, 리비전을 반환. id가 이미 사용 중이면 `FlowExistsError` (현재 리비전을 포함한 에러 문자열 반환, 재조회 가능).
 
-리소스 상한 (여기서 강제, 초과 시 `Error:` 텍스트): 플로우당 최대 `TASKFLOW_INFRA["max_steps_per_flow"]` (20)단계, 세션당 최대 `TASKFLOW_INFRA["max_flows_per_session"]` (20)개의 **활성** 플로우 — running/waiting만 해당하며 완료/취소된 플로우는 슬롯을 반환합니다. `taskflow_plan`은 플래너 호출을 소비하기 전에 동일한 플로우 수 상한을 적용합니다.
+새 플로우가 이전 플로우를 **대체**할 때는 `resumed_from=<전임 flow_id>`를 전달합니다: 새 플로우는 `resumed_from`을 기록하고 전임자에는 `superseded_by`가 찍힙니다——[플로우 계보](#플로우-계보) 참조. 알 수 없는 전임자는 아무것도 생성하기 전에 거부되고, 자기 참조도 거부됩니다.
+
+리소스 상한 (여기서 강제, 초과 시 `Error:` 텍스트): 플로우당 최대 `TASKFLOW_INFRA["max_steps_per_flow"]` (20)단계, 세션당 최대 `TASKFLOW_INFRA["max_flows_per_session"]` (20)개의 **활성** 플로우 — running/waiting만 해당하며 완료/취소된 플로우는 슬롯을 반환합니다(대체된 플로우도 마찬가지). `taskflow_plan`은 플래너 호출을 소비하기 전에 동일한 플로우 수 상한을 적용합니다.
 
 ### taskflow_run_task
 
@@ -227,6 +231,7 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
 ) -> str
 ```
 
@@ -234,7 +239,7 @@ async def taskflow_resume(
 
 **실행 순서** — 게이트는 서로 연결되며 모두 단계 단위 선택입니다: `retry_policy`(분류된 실패 또는 `schema_validated=false`가 **판정 호출 전에** 대체 자식으로 재디스패치) → `response_schema`(Tier 1, 무료 검증; 불일치는 `schema_error` 재시도) → `judge_criteria` / `validation_criteria`(Tier 2, 보조 LLM 판정기) → 호출자가 선언한 `step_outcome`(이 모두에 우선). 판정·예산·증거 인식 판정 프롬프트·페일오픈 규칙·`done`의 실제 의미는 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
 
-**DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. **resume은 새로 ready가 된 단계를 디스패치하지 않습니다** — 호출자가 `taskflow_dispatch`로 명시적으로 처리합니다.
+**DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. 쓰기는 충돌 재시도 시 이미 확정된 판정을 새로 읽은 상태에 재적용하므로 두 자식이 동시에 완료해도 두 결과 모두 착지합니다([이미 생성된 자식 에이전트를 동반한 충돌 재시도](#이미-생성된-자식-에이전트를-동반한-충돌-재시도) 참조). `auto_dispatch=True`(기본)이면 새로 ready가 된 웨이브가 즉시 유계 동시 배치로 spawn됩니다——[자동 디스패치 웨이브](#자동-디스패치-웨이브-taskflow_resume) 참조. `auto_dispatch=False`면 언락만 하고 호출자가 `taskflow_dispatch`로 명시적으로 처리합니다.
 ### taskflow_set_waiting
 
 ```python
@@ -355,7 +360,11 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 ### 배치 디스패치 (`taskflow_dispatch`)
 
-모든 spawn 이전에 배치 전체를 검증(전부 아니면 전무). 공유 `_dispatch.dispatch_child` 시임을 통해 순차 spawn. 배치 중간 spawn 실패 시 배치를 중단하고 성공한 spawn을 1회 `update_flow`로 영속화. `apply_dispatched_steps()` 헬퍼가 신규 조회된 단계 리스트에 기록된 디스패치 단계 페이로드를 재적용하며, `step_id`로 매칭——spawn된 자식 에이전트가 동시 쓰기로 인한 단계 리스트 재작성에 의해 유실되지 않음.
+모든 spawn 이전에 배치 전체를 검증(전부 아니면 전무). 이후 배치는 공유 `_dispatch.dispatch_child` 시임을 통해 **동시에** spawn하며, 동시 실행 수는 `TASKFLOW_INFRA["max_parallel_dispatch"]`(기본 2: SUBAGENT 레인이 전역 배압이고, 이 상한은 동시에 몇 개의 spawn 호출이 비행 중인지만 결정)로 제한됩니다. 하나의 spawn 실패가 더 이상 형제 단계를 중단시키지 않습니다——성공한 자식은 모두 1회의 `update_flow`로 영속화되고, 실패한 단계 id는 모두 응답에 명시됩니다(`Error: dispatch failed for step_id(s) …; dispatched=[…]`). `apply_dispatched_steps()` 헬퍼가 신규 조회된 단계 리스트에 기록된 디스패치 단계 페이로드를 재적용하며, `step_id`로 매칭——spawn된 자식 에이전트가 동시 쓰기로 인한 단계 리스트 재작성에 의해 유실되지 않음. `max_parallel_dispatch = 1`은 역사적인 순차 동작을 정확히 복원합니다.
+
+### 자동 디스패치 웨이브 (`taskflow_resume`)
+
+의존 단계를 언락한 resume은 스스로 그것들을 시작합니다(`auto_dispatch=True`, 기본값): 새로 ready가 된 웨이브는 같은 시임과 같은 `max_parallel_dispatch` 상한으로 동시에 spawn하며, spawn된 자식 키는 CAS 재시도 쓰기(`update_flow_with_conflict_retry`)로 영속화되므로 동시 쓰기가 그것들을 떨어뜨릴 수 없습니다. 각 단계의 디스패치 방식은 `taskflow_dispatch`와 완전히 동일합니다(작업 바인딩 + 판정 피드백). 실패는 보고될 뿐 예외가 되지 않습니다: spawn하지 못한 단계는 `ready`로 남고 resume의 응답에 `auto_dispatch_failed=<step_id>: <error>`가 붙어 수동 재시도할 수 있습니다. 언락 집합은 **실제로 영속화된** 상태에서 도출되므로, 두 완료가 같은 단계의 언락을 경쟁해도 spawn은 정확히 한 번입니다.
 
 ### 유계 폴링 대기 (`taskflow_wait_all`)
 
@@ -385,6 +394,21 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 4. 재시도 횟수 소진 시: 동일하게 모든 child key를 명시한 에러 반환.
 
 `build_state` 콜백은 신규 플로우와 시도 횟수를 수신하여, 최신 데이터에 대해 상태를 재구성 가능(예: 현재 단계 수에 기반하여 `step_id` 재할당).
+
+---
+
+## 플로우 계보
+
+`task_flows`의 NULL 허용 컬럼 두 개가 플로우의 진화를 기록합니다(`resumed_from TEXT`, `superseded_by TEXT`. 토큰 컬럼과 동일한 추가 마이그레이션 방식——계보 이전 데이터베이스는 다음 오픈 시 수렴하며 그 행은 NULL로 읽힙니다):
+
+| 컬럼 | 기록 시점 | 의미 |
+| ---- | --------- | ---- |
+| `resumed_from` | 플로우 생성 시(`taskflow_create(resumed_from=…)`) | 이 플로우가 이어받는 전임 flow_id |
+| `superseded_by` | 후속 생성 시, 전임자에 각인 | 이 플로우를 대체한 후속 flow_id |
+
+기록 지점은 **생성** 경로이며 `taskflow_replan`이 아닙니다: replan은 플로우의 남은 단계를 **제자리에서** 재생성하고(동일 `flow_id`에 `update_flow_with_conflict_retry` 실행) 새 플로우를 분기하지 않으므로 기록할 계보가 없습니다. `taskflow_finish`는 두 컬럼 모두 건드리지 않습니다——완료는 종단 상태이지 대체가 아닙니다.
+
+귀결: `get_active_flows_sync`는 대체된 플로우를 제외합니다(상태가 여전히 `running`/`waiting`이어도——계속 엔포서, 진행 패널, 세션별 플로우 수 상한이 모두 이 읽기 지점을 통과합니다). 반면 `get_all_flows_sync(session_id, "all")`은 역포인터와 함께 여전히 표시합니다——이력 뷰는 그것을 유지합니다. `taskflow_summary`는 두 포인터를 렌더링합니다(`resumed_from: …`, `superseded_by: …`). 역포인터 쓰기는 일반 세션 스코프 UPDATE이며 `expected_revision`을 **의도적으로 올리지 않습니다**: 계보는 메타데이터이고, 전임자의 리비전을 보유한 호출자를 무효화해서는 안 되기 때문입니다.
 
 ---
 

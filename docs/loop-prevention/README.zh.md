@@ -209,7 +209,7 @@
 
 ### 管线级：证据账本与完成门
 
-账本本身——共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`），其陈旧性在读取时推导——已有独立页面：[证据账本](../long-running-tasks/evidence-ledger/README.zh.md)。这里闭合循环的是读取它的那道门：
+账本本身——共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`），其陈旧性在读取时推导——已有独立页面：[证据账本](../long-running-tasks/gates/evidence-ledger/README.zh.md)。这里闭合循环的是读取它的那道门：
 
 `taskflow_finish.py` 以三项检查、按顺序把守 DONE 转换：
 

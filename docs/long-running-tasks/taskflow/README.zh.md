@@ -19,6 +19,7 @@
 - [并行步骤执行](#并行步骤执行)
 - [幂等恢复](#幂等恢复)
 - [带已派生子代理的冲突重试](#带已派生子代理的冲突重试)
+- [血缘指针](#血缘指针)
 - [持久化与连接生命周期](#持久化与连接生命周期)
 - [已知限制](#已知限制)
 
@@ -148,12 +149,15 @@ blocked → ready → dispatched → done
 ### taskflow_create
 
 ```python
-async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None) -> str
+async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None,
+                         deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
 创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。如果 id 已被占用则抛出 `FlowExistsError`（返回错误字符串，含当前版本号以便重读）。
 
-资源上限（在此强制，超限返回 `Error:` 文本）：单个流最多 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）步；单个会话最多 `TASKFLOW_INFRA["max_flows_per_session"]`（20）个**活跃**流——只计 running/waiting，完成或取消的流会释放名额。`taskflow_plan` 在花费 planner 调用之前应用同一流数上限。
+当新流**取代**旧流时传 `resumed_from=<前驱 flow_id>`：新流记录 `resumed_from`，前驱被盖上 `superseded_by` —— 见[血缘指针](#血缘指针)。未知的前驱在创建任何东西之前就被拒绝；自引用同样被拒绝。
+
+资源上限（在此强制，超限返回 `Error:` 文本）：单个流最多 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）步；单个会话最多 `TASKFLOW_INFRA["max_flows_per_session"]`（20）个**活跃**流——只计 running/waiting，完成或取消的流会释放名额（被取代的流同样释放）。`taskflow_plan` 在花费 planner 调用之前应用同一流数上限。
 
 ### taskflow_run_task
 
@@ -227,6 +231,7 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
 ) -> str
 ```
 
@@ -234,7 +239,7 @@ async def taskflow_resume(
 
 **执行顺序** —— 各道门串联、且每个都按步骤可选：`retry_policy`（分类出的失败，或 `schema_validated=false`，在**任何判别调用之前**把步骤重新派发到替换子代理）→ `response_schema`（Tier 1，免费校验；未通过即 `schema_error` 重试）→ `judge_criteria` / `validation_criteria`（Tier 2，辅助 LLM 判别）→ 调用方声明的 `step_outcome`，它压倒以上全部。判定取值、预算、证据感知的判别提示词、fail-open 规则与 `done` 的真实含义，统一记录在[判断门](../gates/README.zh.md)。
 
-**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。**resume 永不派发**新就绪的步骤——由调用方显式 `taskflow_dispatch`。
+**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时新就绪的波次会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_resume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_dispatch`。
 ### taskflow_set_waiting
 
 ```python
@@ -355,7 +360,11 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ### 批量派发（`taskflow_dispatch`）
 
-在任何 spawn 之前验证整个批次（全有或全无）。通过共享 `_dispatch.dispatch_child` 接缝顺序 spawn。批量中途 spawn 失败时停止批量，并在一次 `update_flow` 调用中持久化已成功的 spawn。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。
+在任何 spawn 之前验证整个批次（全有或全无）。随后整个批次通过共享 `_dispatch.dispatch_child` 接缝**并发** spawn，并发上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 2：SUBAGENT 泳道才是全局背压，这个上限只决定同时有多少个 spawn 调用在途）。单个 spawn 失败不再中止兄弟步骤——每个成功的子代理都会在一次 `update_flow` 调用中持久化，每个失败的步骤 id 都会出现在应答里（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。`max_parallel_dispatch = 1` 精确还原历史上的顺序行为。
+
+### 自动派发波次（`taskflow_resume`）
+
+解锁了依赖者的 resume 会顺带把它们启动起来（`auto_dispatch=True`，默认值）：新就绪的波次通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn，且 spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_dispatch` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试。由于解锁集合来自**实际持久化**的状态，两个完成事件争抢解锁同一步骤时只会 spawn 一次。
 
 ### 有界轮询等待（`taskflow_wait_all`）
 
@@ -385,6 +394,21 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 4. 重试次数耗尽：同样返回错误，标明所有 child key。
 
 `build_state` 回调接收新流和尝试次数，可基于最新数据重建状态（例如根据当前步骤计数重新分配 `step_id`）。
+
+---
+
+## 血缘指针
+
+`task_flows` 上两个可空列记录流的演进（`resumed_from TEXT`、`superseded_by TEXT`，与 token 列相同的增量迁移模式——旧库在下次打开时收敛，其行读作 NULL）：
+
+| 列 | 写入时机 | 含义 |
+| -- | -------- | ---- |
+| `resumed_from` | 流创建时（`taskflow_create(resumed_from=…)`） | 本流延续的前驱 flow_id |
+| `superseded_by` | 后继创建时，盖到前驱上 | 取代本流的后继 flow_id |
+
+写入点是**创建**路径，而不是 `taskflow_replan`：replan 在**原地**重生成流的剩余步骤（对同一 `flow_id` 走 `update_flow_with_conflict_retry`），从不分叉新流，也就没有血缘可记。`taskflow_finish` 从不触碰这两列——完成是终态，不是取代。
+
+后果：`get_active_flows_sync` 会排除被取代的流，即便其状态仍是 `running`/`waiting`（续跑 enforcer、进度面板与会话级流数上限都走这个读口），而 `get_all_flows_sync(session_id, "all")` 仍会带着反向指针展示它——历史视图保留它。`taskflow_summary` 渲染两个指针（`resumed_from: …`、`superseded_by: …`）。反向指针的写入是普通的会话级 UPDATE，**刻意不递增** `expected_revision`：血缘是元数据，不能让持有前驱版本号的调用方失效。
 
 ---
 
