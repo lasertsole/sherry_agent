@@ -7,6 +7,8 @@ names a ``file_path`` contained in the row's ``command``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
 
 
@@ -21,26 +23,39 @@ def _is_stale(index: int, row: dict, stale_events: list[tuple[int, dict]]) -> bo
 
 def collect_evidence_summary(
     session_key: str | None = None,
-    flow_id: str | None = None,
+    session_keys: Iterable[str] | None = None,
 ) -> str | None:
     """Build a human-readable evidence summary for the judge prompt.
 
-    Callers scope by exactly one key: ``taskflow_resume`` passes
-    ``session_key`` (the step's child_session_key); ``taskflow_finish`` passes
-    ``flow_id``. Returns None when no evidence was recorded.
+    Scope by ONE key (``session_key`` — ``taskflow_resume`` passes the step's
+    ``child_session_key``, the completion drain passes the session) or by
+    several (``session_keys`` — ``taskflow_finish`` aggregates the flow's own
+    scope: every dispatched step's child session plus the flow's creator,
+    because evidence rows are keyed by session and a flow spans sessions).
+
+    Rows are grouped per session in ONE pass over the ledger and each group
+    keeps its own order: the staleness derivation compares a row with LATER
+    stale events of the SAME session, so groups are rendered side by side,
+    never interleaved. Returns None when no key has any evidence row.
     """
-    records = EvidenceLedger.for_session(session_key or flow_id or "default").list_records()
-    evidence_rows = [(i, r) for i, r in enumerate(records) if r.get("event") != "stale"]
-    stale_events = [(i, r) for i, r in enumerate(records) if r.get("event") == "stale"]
-    if not evidence_rows:
+    keys = [key for key in [session_key, *(session_keys or [])] if str(key or "").strip()]
+    ordered = list(dict.fromkeys(str(key) for key in keys))
+    if not ordered:
         return None
+    grouped = EvidenceLedger.read_for_keys(ordered)
 
     lines: list[str] = []
-    for index, row in evidence_rows:
-        status = row.get("status", "unknown")
-        icon = "pass" if status == "passed" else "FAIL" if status == "failed" else "?"
-        stale_tag = " [stale]" if _is_stale(index, row, stale_events) else ""
-        lines.append(
-            f"  [{icon}] {row.get('kind', 'unknown')}: `{row.get('command', '')}`{stale_tag}"
-        )
-    return "\n".join(lines)
+    for key in ordered:
+        records = grouped.get(key)
+        if not records:
+            continue
+        evidence_rows = [(i, r) for i, r in enumerate(records) if r.get("event") != "stale"]
+        stale_events = [(i, r) for i, r in enumerate(records) if r.get("event") == "stale"]
+        for index, row in evidence_rows:
+            status = row.get("status", "unknown")
+            icon = "pass" if status == "passed" else "FAIL" if status == "failed" else "?"
+            stale_tag = " [stale]" if _is_stale(index, row, stale_events) else ""
+            lines.append(
+                f"  [{icon}] {row.get('kind', 'unknown')}: `{row.get('command', '')}`{stale_tag}"
+            )
+    return "\n".join(lines) or None

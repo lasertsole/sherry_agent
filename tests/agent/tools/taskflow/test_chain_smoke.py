@@ -168,15 +168,20 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
     assert flow["state"]["steps"][0]["status"] == "done"
     assert len(dispatches) == 2, "resume must not spawn beyond the judge retry"
 
-    # Gate C reject (failing evidence) ...
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="failed")
+    # Gate C reject (failing evidence) — seeded under the STEP'S CHILD SESSION,
+    # which is the key every producer writes (evidence rows never carry a flow id).
+    ledger.for_session("agent:main:subagent:c2").append(
+        kind="test", command="pytest -q", status="failed"
+    )
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "failing verification evidence" in out, out
 
     # ... Gate C reject (stale evidence) ...
     _reset_ledger()
-    ledger.for_session(FLOW).append(kind="test", command="pytest foo.py", status="passed")
-    ledger.for_session(FLOW).mark_stale_for_path("foo.py")
+    ledger.for_session("agent:main:subagent:c2").append(
+        kind="test", command="pytest foo.py", status="passed"
+    )
+    ledger.for_session("agent:main:subagent:c2").mark_stale_for_path("foo.py")
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "stale evidence" in out, out
 

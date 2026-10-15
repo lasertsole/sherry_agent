@@ -4,7 +4,8 @@ The finish path is gated before the DONE transition:
 
 * Gate A — every step is done or blocked (none ready/dispatched);
 * Gate B — no step is blocked;
-* Gate C — flow-scoped evidence has no failing/stale rows;
+* Gate C — the flow's AGGREGATED evidence (its steps' child sessions plus the
+  creator's) has no failing/stale rows;
 
 The tests exercise both the pass and reject branches, the omitted-params path
 and the fail-open contract (an unavailable evidence
@@ -41,7 +42,12 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
 async def _seed_flow(steps: list[dict]) -> None:
     await store_sqlite.create_flow(
         FLOW,
-        {"description": "finish gate probe", "steps": steps, "results": []},
+        {
+            "description": "finish gate probe",
+            "steps": steps,
+            "results": [],
+            "creator_session_key": SESSION,
+        },
         session_id=SESSION,
     )
 
@@ -105,10 +111,14 @@ async def test_finish_rejected_when_step_blocked(isolated_db: Path, ledger: Evid
 # ---------------------------------------------------------------------------
 
 
+CHILD_A = "agent:main:subagent:child-a"
+CHILD_B = "agent:main:subagent:child-b"
+
+
 @pytest.mark.asyncio
 async def test_finish_succeeds_when_evidence_passes(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="passed")
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest -q", status="passed")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
@@ -117,8 +127,13 @@ async def test_finish_succeeds_when_evidence_passes(isolated_db: Path, ledger: E
 
 @pytest.mark.asyncio
 async def test_finish_rejected_when_evidence_failed(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="failed")
+    """The regression: evidence rows carry the STEP'S child session key.
+
+    The old test seeded rows under the flow id, a key no producer writes — the
+    gate looked up the same nonexistent key and always passed.
+    """
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest -q", status="failed")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
@@ -127,13 +142,48 @@ async def test_finish_rejected_when_evidence_failed(isolated_db: Path, ledger: E
 
 @pytest.mark.asyncio
 async def test_finish_rejected_when_evidence_stale(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest foo.py", status="passed")
-    ledger.for_session(FLOW).mark_stale_for_path("foo.py")
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest foo.py", status="passed")
+    ledger.for_session(CHILD_A).mark_stale_for_path("foo.py")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert "stale evidence" in out
+
+
+@pytest.mark.asyncio
+async def test_finish_aggregates_every_steps_child_session(
+    isolated_db: Path, ledger: EvidenceLedger
+):
+    """Two dispatched steps, one failing verification → the flow is rejected."""
+    await _seed_flow(
+        [
+            _step("s1", "done", child_session_key=CHILD_A),
+            _step("s2", "done", child_session_key=CHILD_B),
+        ]
+    )
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest a.py", status="passed")
+    ledger.for_session(CHILD_B).append(kind="lint", command="ruff b.py", status="failed")
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "failing verification evidence" in out
+    assert "ruff b.py" in out
+
+
+@pytest.mark.asyncio
+async def test_the_creators_own_verification_counts_too(
+    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
+):
+    """Rows under the flow's creator session are part of the flow's evidence."""
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest a.py", status="passed")
+    ledger.for_session(SESSION).append(kind="lint", command="ruff .", status="failed")
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "failing verification evidence" in out
+    assert "ruff ." in out
 
 
 # ---------------------------------------------------------------------------
