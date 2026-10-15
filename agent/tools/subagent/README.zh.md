@@ -9,6 +9,7 @@
 > 资源上限补齐——wall-clock 超时重新生效，每个会话的 spawn 次数有了上限：
 
 - **`run_timeout_seconds` 默认 0.0 → 600.0（10 分钟）**：子代理不再在时间上无限运行。`spawn` 与 `steer` 重新用 `asyncio.wait_for` 包裹子代理的 `ainvoke`，followup 超时检查重新生效（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）；sweeper 的 2 小时 stale 检测仍是外层兜底。调用方依旧可以通过 `sessions_spawn(run_timeout_seconds=...)` 逐次覆盖，`0` 仍然表示"无超时"。
+- **运行时 `sessions_spawn` 工具补上 `isolation`**（同一轮也把它现在守护的"只做一层"规则落了地）：模型可以请求隔离的 git worktree，而 cwd 已在某个隔离工作区内的 spawn 会复用那棵树，而不是切出"worktree 的 worktree"。此前该字段只存在于 build-time 类，整套隔离功能在模型侧都不可达。
 - **能力遏制（同角色派生）**：专用子代理（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn **同角色**的子代理。此前只读的 researcher 在 ORCHESTRATOR 深度可以雇一个可写的 executor 干活，因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，父代理的角色从不参与。同角色 = 同一 allow-list，升级路径就此消失；`MAIN` 与 `general`（inherit = 全部工具）不受限制，跨角色请求被**拒绝**并在错误文本里给出修法（`functional_role="<父角色>"`），绝不静默改角色。`functional_role` 现在也暴露在运行时 `sessions_spawn` 工具上，同角色 fan-out 才可表达。
 - **`sessions_spawn` 暴露超时**：新增 `run_timeout_seconds` 字段（模型自己的旋钮，与全局默认并存）。工具把模型传入的值 **clamp** 到 `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）而不是拒绝——想要 60 秒的"短"意图落在 10 分钟下限，99999 落在 2 小时上限——`None`/非正值表示"未设"（走全局默认）。内部调用方（TaskFlow dispatch、`delegate_task`）绕过 clamp，保留自己的边界。
 - **新增 `sessions_messages` 工具**：按 `session_key` 读取子会话的 checkpoint 转录（第八个运行时工具）。它服务于超时/被 kill 的场景——`Status: timed out` 且没有 `Result:` 时调用方此前一无所获，而子代理的 checkpoint 里仍留着它调过的每一次工具调用。输出有 token 预算（总计 4 000、每条 500），并按 `spawned_by` / run 的完成归属鉴权：只有 spawn 该子代理的会话能读。
@@ -505,7 +506,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 **能力遏制。** 专用角色（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn **同角色**的子代理：同角色 = 同一 allow-list = 子代理的能力恰好等于父代理。没有这条约束时，只读的 researcher 在 ORCHESTRATOR 深度可以 spawn 一个可写文件的 executor 替它写——因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，从不按父代理的过滤。`MAIN`（无 run 记录）与 `general`（inherit = 全部工具）不受限制——任何专用角色的 allow-list 都是它们的子集。跨角色请求会被拒绝（绝不静默改角色），错误文本直接给出出路：`Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
 
-**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。
+**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。模型实际调用的运行时工具携带 `functional_role`、`run_timeout_seconds` 与 `isolation`；此处其余字段属于 build-time 类。
 
 **配置**（`SubagentConfig`）：`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。角色解析在每次 spawn 时恒运行；不传 `functional_role` 时，spawn 行为**逐字节不变**——GENERAL 是恒等角色。
 

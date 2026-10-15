@@ -9,6 +9,11 @@
 > Resource ceilings completed — the wall-clock timeout is real again and a session's spawn count is bounded:
 
 - **`run_timeout_seconds` default 0.0 → 600.0 (10 min)**: a child no longer runs unbounded in TIME. `spawn` and `steer` wrap the child's `ainvoke` in `asyncio.wait_for` again and the followup timeout check is active (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`); the sweeper's 2 h stale detection stays as the outer net. A caller still overrides per spawn via `sessions_spawn(run_timeout_seconds=...)`, and `0` still means "no timeout".
+- **The runtime `sessions_spawn` tool gains `isolation`** (and, in the same sweep, records the
+  one-level rule it now protects): the model can ask for an isolated git worktree, and a spawn
+  whose cwd already sits inside one reuses that tree instead of cutting a worktree of a
+  worktree. Before this the field existed only on the build-time class, so the whole isolation
+  feature was unreachable from the model side.
 - **Capability containment (same-role derivation)**: a specialized child (`researcher` /
   `executor` / `reviewer` / `librarian`) may only spawn children of its OWN role. Until now a
   read-only researcher at ORCHESTRATOR depth could hire a write-capable executor, because a
@@ -517,7 +522,7 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 **Capability containment.** A specialized role (`researcher` / `executor` / `reviewer` / `librarian`) may only spawn children of its **own** role: same role = same allow-list = the child can do exactly what the parent can. Without this a read-only researcher at ORCHESTRATOR depth could spawn a write-capable executor and have the writing done on its behalf — a child's tools are the child's own role's, never a subset of the parent's. `MAIN` (no run record) and `general` (inherit = every tool) are unrestricted, since every specialized allow-list is a subset of theirs. A cross-role request is refused (never silently re-roled) with the way out named in the message: `Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
 
-**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget.
+**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget. The runtime tool the model calls carries `functional_role`, `run_timeout_seconds` and `isolation`; the remaining fields here are the build-time class's.
 
 **Configuration** (`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. Role resolution always runs on spawn; with no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
 

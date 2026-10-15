@@ -63,6 +63,17 @@ async def sessions_spawn_runtime_tool(
             "spawn its own role."
         ),
     ] = None,
+    isolation: Annotated[
+        bool,
+        Field(
+            description="Run the child in a private git worktree (a COPY of the "
+            "project) and merge its changed files back when it completes — use it "
+            "when parallel subagents would edit overlapping files. Conflicts are "
+            "reported, never silently overwritten. IGNORED when you are already "
+            "inside an isolated worktree (the child reuses your tree), and refused "
+            "with no project directory to copy."
+        ),
+    ] = False,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
 
@@ -94,6 +105,7 @@ async def sessions_spawn_runtime_tool(
         expects_completion_message=True,
         run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
         functional_role_hint=functional_role,
+        isolation=isolation,
     )
 
     parts = [f"Subagent spawned: status={result.status}"]
