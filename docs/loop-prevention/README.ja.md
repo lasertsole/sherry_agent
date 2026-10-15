@@ -213,7 +213,7 @@
 
 ### パイプラインレベル: 証跡台帳と完了ゲート
 
-証跡台帳は共有の追記専用検証トレイルです（`src/data/evidence-ledger.jsonl`、1 行 1 JSON オブジェクト）。`agent/tools/todolist/evidence_recorder.py` は `terminal` / `python_repl` から認識された検証コマンドを常時自動記録し（分類表は `EVIDENCE_LEDGER["verify_commands"]`）、`write_file` / `patch_file` は編集されたパスに `stale` イベントを常時追記します。`agent/tools/taskflow/evidence_collector.py` は読み取り時に古さを導出し（後続の `stale` 行が、ある行のコマンドに含まれるパスを指す場合）、判定器に見せる要約を描画します。
+台帳そのもの——共有の追記専用検証トレイル（`src/data/evidence-ledger.jsonl`）で、古さは読み取り時に導出されます——には専用ページがあります：[エビデンス台帳](../long-running-tasks/evidence-ledger/README.ja.md)。ここでループを閉じるのは、それを読むゲートです：
 
 `taskflow_finish.py` は DONE 遷移を三つの検査で順にゲートします：
 

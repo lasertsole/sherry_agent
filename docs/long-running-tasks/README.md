@@ -26,6 +26,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
   - [Tool Output Summarization](memory/README.md#-tool-output-summarization)
   - [Session Continuity](memory/README.md#-session-continuity)
   - [TaskFlow Auto-Resume](memory/README.md#-taskflow-auto-resume)
+- [Evidence Ledger](evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
 - [Configuration Registry](#-configuration-registry)
 - [Architecture Diagram](#-architecture-diagram)

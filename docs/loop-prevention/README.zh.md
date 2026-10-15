@@ -209,7 +209,7 @@
 
 ### 管线级：证据账本与完成门
 
-证据账本是共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`agent/tools/todolist/evidence_recorder.py` 恒自动记录来自 `terminal` / `python_repl` 的可识别验证命令（分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），且 `write_file` / `patch_file` 恒为被编辑路径追加一条 `stale` 事件。`agent/tools/taskflow/evidence_collector.py` 在读取时推导陈旧性（较晚的 `stale` 行点名了某行命令中包含的路径），并渲染给判别器看的摘要。
+账本本身——共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`），其陈旧性在读取时推导——已有独立页面：[证据账本](../long-running-tasks/evidence-ledger/README.zh.md)。这里闭合循环的是读取它的那道门：
 
 `taskflow_finish.py` 以三项检查、按顺序把守 DONE 转换：
 

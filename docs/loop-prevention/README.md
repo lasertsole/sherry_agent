@@ -236,15 +236,10 @@ thread.
 
 ### Pipeline level: evidence ledger & the finish gate
 
-The evidence ledger is the shared, append-only verification trail
-(`src/data/evidence-ledger.jsonl`, one JSON object per line).
-`agent/tools/todolist/evidence_recorder.py` always auto-records recognized
-verification commands from `terminal` / `python_repl` (the taxonomy lives in
-`EVIDENCE_LEDGER["verify_commands"]`), and `write_file` / `patch_file` always
-append a `stale` event for the edited path.
-`agent/tools/taskflow/evidence_collector.py` derives staleness on read (a
-later `stale` row naming a path contained in a row's command) and renders the
-summary shown to the judges.
+The ledger itself — the shared, append-only verification trail
+(`src/data/evidence-ledger.jsonl`) whose staleness is derived on read — has its own
+page: [Evidence Ledger](../long-running-tasks/evidence-ledger/README.md). What closes
+the loop here is the gate that reads it:
 
 `taskflow_finish.py` gates the DONE transition on three checks, in order:
 

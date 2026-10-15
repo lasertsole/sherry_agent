@@ -212,7 +212,7 @@
 
 ### 파이프라인 수준: 증거 원장과 완료 게이트
 
-증거 원장은 공유되는 추가 전용 검증 추적입니다(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나). `agent/tools/todolist/evidence_recorder.py`는 `terminal` / `python_repl`에서 인식된 검증 명령을 항상 자동 기록하며(분류표는 `EVIDENCE_LEDGER["verify_commands"]`), `write_file` / `patch_file`은 편집된 경로에 `stale` 이벤트를 항상 추가합니다. `agent/tools/taskflow/evidence_collector.py`는 읽기 시점에 스테일을 도출하고(나중의 `stale` 행이 어떤 행의 명령에 포함된 경로를 지목), 판정기에게 보여줄 요약을 렌더링합니다.
+원장 자체 — 공유되는 추가 전용 검증 추적(`src/data/evidence-ledger.jsonl`)이며 스테일은 읽기 시점에 파생됩니다 — 에는 전용 페이지가 있습니다: [증거 원장](../long-running-tasks/evidence-ledger/README.ko.md). 여기서 루프를 닫는 것은 이를 읽는 게이트입니다:
 
 `taskflow_finish.py`는 DONE 전환을 세 검사로 순서대로 게이트합니다:
 
