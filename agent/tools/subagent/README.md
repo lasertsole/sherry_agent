@@ -655,6 +655,7 @@ All eight tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
 | `run_timeout_seconds` | float\|None | None | Wall-clock timeout for this spawn (seconds). Default 600, clamped to [600, 7200]; a non-positive value means "unset" (global default) |
+| `isolation` | bool | False | Run the child in a private git worktree of the project and merge its changes back on completion (see `docs/file-safety/README.md`). IGNORED when the caller's cwd is already inside an isolated worktree — the child reuses that tree |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 

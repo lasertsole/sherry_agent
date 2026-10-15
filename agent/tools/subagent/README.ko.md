@@ -645,6 +645,7 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer / librarian); None이면 depth 기반 동작 유지 |
 | `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
 | `run_timeout_seconds` | float\|None | None | 이 spawn의 wall-clock 타임아웃(초). 기본 600, clamp로 [600, 7200]; 비양수는 "미설정"(전역 기본값) |
+| `isolation` | bool | False | 자식을 프로젝트의 전용 git worktree에서 실행하고 완료 시 변경을 병합합니다(`docs/file-safety/README.ko.md` 참조). 호출자 cwd가 이미 격리 워크스페이스 안이면 **무시**되고 자식은 그 트리를 재사용합니다 |
 
 반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 

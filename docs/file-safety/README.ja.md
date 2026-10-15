@@ -86,6 +86,8 @@
 
 `sessions_spawn(isolation=True)` は子にプロジェクトの **git worktree** を与えます（実装は `agent/tools/subagent/isolation/`、ワークスペースは `src/data/isolated/` 配下、子の cwd は `<workspace>/tree`、ブランチは `sherry/<run8>`）。子はそこで端から端まで働き——自らのツール、`terminal`、テスト——実行が終端に達したとき、完了メッセージの配達の前に announce フローがツリーをマージします（静かな子の仕事も同様にマージされます）。
 
+**一段だけ。** cwd がすでに隔離ワークスペースの中にある spawn は、そのツリーを再利用します：`isolation=True` はそこで無視され（info ログを 1 行）、拒否はされません。`max_spawn_depth` は 2 なので、その cwd は spawn を発行した ORCHESTRATOR のもので、そのツリー自体がすでにプロジェクトへマージされます——worktree の worktree はマージ・衝突面・CAS 検査を一段ずつ増やすだけで、隔離境界は増えません。判定は `isolated_workspaces_dir()` に対するパス検査（`_is_inside_isolated_worktree`、`spawn/core.py`）で、git コマンドは走らせないため git の可用性に依存しません。
+
 ベースラインは**ダーティな作業ツリー**です：`git stash create` がユーザーの未コミット変更を、ツリーを切る revision に変えます（stash スタックはそのまま）。したがって子はユーザーが実際に持っている内容を見ます——最後のコミットではなく、そこへ静かに巻き戻ることも決してありません。チェックアウトはコミット済みの内容しか運ばないため、残りは実行が `SUBAGENT_ISOLATION` の二つの表に従って物化します（プロジェクトの `.worktreeinclude` が追記でき、パスの次の行に `# wti=symlink|copy`）：
 
 - **シンボリックリンク**——共有されるマシン状態：`src/`、`workspace/memory`、`workspace/sessions`、`cron_jobs.json`、`skills/auto`、`client/node_modules`。全ツリーが一つの inode を共有し、それが SQLite の `-wal`/`-shm` の整合と、リンク越しに取ったロックが親の書き手を排除すること（正しい意味論）を成立させます；

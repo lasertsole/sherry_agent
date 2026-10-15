@@ -86,6 +86,8 @@
 
 `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 **git worktree**를 줍니다(구현은 `agent/tools/subagent/isolation/`, 워크스페이스는 `src/data/isolated/` 아래, 자식의 cwd는 `<workspace>/tree`, 브랜치는 `sherry/<run8>`). 자식은 그곳에서 처음부터 끝까지 일하고——자기 도구, `terminal`, 테스트——실행이 종단에 이르면 완료 메시지 전달 전에 announce 흐름이 트리를 병합합니다(조용한 자식의 작업도 마찬가지로 병합됩니다).
 
+**한 단계만.** cwd가 이미 격리 워크스페이스 안에 있는 spawn은 그 트리를 재사용합니다: `isolation=True`는 거기서 무시되고(info 로그 한 줄) 거부되지 않습니다. `max_spawn_depth`가 2이므로 그 cwd는 spawn을 요청한 ORCHESTRATOR의 것이고, 그 트리 자체가 이미 프로젝트로 병합됩니다——worktree의 worktree는 병합·충돌 면·CAS 검사를 한 단계씩 늘릴 뿐 격리 경계는 늘리지 않습니다. 판정은 `isolated_workspaces_dir()`에 대한 경로 검사(`_is_inside_isolated_worktree`, `spawn/core.py`)이며 git 명령을 실행하지 않으므로 git 사용 가능성에 의존하지 않습니다.
+
 베이스라인은 **더러운 작업 트리**입니다: `git stash create`가 사용자의 미커밋 변경을 트리를 자르는 revision으로 바꿉니다(stash 스택은 그대로). 따라서 자식은 사용자가 실제로 가진 내용을 봅니다——마지막 커밋이 아니라, 그리로 조용히 되돌아가는 일도 결코 없습니다. 체크아웃은 커밋된 내용만 나르므로, 나머지는 실행이 `SUBAGENT_ISOLATION` 두 표에 따라 물질화합니다(프로젝트의 `.worktreeinclude`가 덧붙일 수 있고, 경로 다음 줄에 `# wti=symlink|copy`):
 
 - **심볼릭 링크**——공유 기계 상태: `src/`, `workspace/memory`, `workspace/sessions`, `cron_jobs.json`, `skills/auto`, `client/node_modules`. 모든 트리가 inode 하나를 공유하며, 그것이 SQLite의 `-wal`/`-shm` 일관성과 링크를 통해 잡은 잠금이 부모 쪽 기록자를 배제하는 성질(올바른 의미론)을 성립시킵니다;

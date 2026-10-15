@@ -86,6 +86,8 @@
 
 `sessions_spawn(isolation=True)` 让子代理获得项目的 **git worktree**（实现见 `agent/tools/subagent/isolation/`，工作区位于 `src/data/isolated/`，子代理的 cwd 是 `<workspace>/tree`，分支为 `sherry/<run8>`）。子代理在那里端到端工作——它的工具、它的 `terminal`、它的测试——运行进入终态时由 announce 流程把树合并回去，发生在交付完成消息之前（静默的子代理同样合并）。
 
+**只做一层。** cwd 已经在某个隔离工作区里的 spawn 会直接复用那棵树：此时 `isolation=True` 被忽略（只打一条 info 日志），而不是拒绝。`max_spawn_depth` 为 2，所以那个 cwd 属于发起 spawn 的 ORCHESTRATOR，而它自己的树本来就会合并回项目——worktree 的 worktree 只会多一层合并、多一层冲突面、多一次 CAS 检查，却不新增任何隔离边界。检测是对 `isolated_workspaces_dir()` 的路径判断（`_is_inside_isolated_worktree`，`spawn/core.py`），不跑 git 命令，因此不依赖 git 可用性。
+
 基线是**脏工作区**：`git stash create` 把用户尚未提交的改动变成建树所用的 revision（stash 栈不受影响），因此子代理看到的是用户手里真实的内容——不是最后一次提交，也绝不会静默回退到它。检出只带已提交内容，其余由运行按 `SUBAGENT_ISOLATION` 两张表物化（项目的 `.worktreeinclude` 可以追加，路径下一行写 `# wti=symlink|copy`）：
 
 - **软链**——共享机器状态：`src/`、`workspace/memory`、`workspace/sessions`、`cron_jobs.json`、`skills/auto`、`client/node_modules`。所有树共用一个 inode，这正是 SQLite 的 `-wal`/`-shm` 保持一致、以及经链接取到的锁能排除父树写者的原因（这是正确语义）；

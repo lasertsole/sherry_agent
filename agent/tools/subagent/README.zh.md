@@ -641,6 +641,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer / librarian）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
 | `run_timeout_seconds` | float\|None | None | 本次 spawn 的墙钟超时（秒）。默认 600，clamp 到 [600, 7200]；非正值表示"未设"（走全局默认） |
+| `isolation` | bool | False | 让子代理在项目的一份私有 git worktree 里工作，完成时把改动合并回来（见 `docs/file-safety/README.zh.md`）。当调用方的 cwd 已在隔离工作区内时**被忽略**——子代理复用那棵树 |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 
