@@ -79,7 +79,7 @@ _PREVIEW_TEMPLATE = """\
 {tail}
 [full content: {total_chars} chars, evicted at {ts}]
 
-Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
+Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.{cut_note}]"""
 
 #: Same shape as ``_PREVIEW_TEMPLATE``, but for a payload that is ALREADY a file
 #: (the terminal tool's fd-direct-write stdout): the total is the file's byte
@@ -94,7 +94,7 @@ _FILE_PREVIEW_TEMPLATE = """\
 {tail}
 [full content: {total_bytes} bytes, evicted at {ts}]
 
-Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
+Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.{cut_note}]"""
 
 _HUMAN_PREVIEW_TEMPLATE = """\
 [evicted to: {path}]
@@ -175,33 +175,29 @@ def _build_evicted_content(content: str | list[Any], preview: str) -> str | list
     return [{"type": "text", "text": preview}, *non_text]
 
 
-#: CHAR budgets for :func:`_render_head_tail_clipped`, the fallback used when
-#: the plain line window cannot shrink a payload. Lines bound the shape, these
-#: bound the cost — the exact mirror of the ``_PREVIEW_*_BYTES`` set the
-#: file-on-disk preview uses: each kept line is capped, each side stops at its
-#: budget, so a newline-free blob previews to a few KB instead of being refused.
+#: CHAR budgets shared by BOTH preview renderers — the exact mirror of the
+#: ``_PREVIEW_*_BYTES`` set the file-on-disk preview uses: each kept line is
+#: capped, each side stops at its budget, so a newline-free blob previews to a
+#: few KB whatever the payload's shape. These are a HARD cap: the plain line
+#: window applies them too, because preferring "whole lines" without them let a
+#: payload that shrinks by one line still hand back a near-original-size preview
+#: with one giant line (or one giant line plus a few) riding it whole.
 _PREVIEW_HEAD_MAX_CHARS = 8_192
 _PREVIEW_LINE_MAX_CHARS = 2_048
 _PREVIEW_TAIL_MAX_CHARS = 8_192
 
 
-def _render_head_tail(content: str, head_n: int, tail_n: int) -> tuple[str, str, str, int]:
-    lines = content.splitlines()
-    head = "\n".join(lines[:head_n])
-    tail = "\n".join(lines[-tail_n:])
-    midline = "..." if len(lines) > head_n + tail_n else ""
-    return head, midline, tail, len(lines)
-
-
-def _take_preview_side(lines: list[str], limit_n: int, budget: int) -> tuple[list[str], bool]:
+def _take_preview_side(lines: list[str], limit_n: int, budget: int) -> tuple[list[str], bool, bool]:
     """Keep up to *limit_n* lines within *budget* chars, capping each line.
 
-    :returns: ``(kept, dropped)`` — ``dropped`` is True when a line was left out
-        or clipped, which is what decides the ``...`` separator.
+    :returns: ``(kept, dropped, clipped)`` — ``dropped`` is True when a line was
+        left out or clipped, which decides the ``...`` separator; ``clipped`` is
+        True only for a line cut IN THE MIDDLE (what the cut note reports).
     """
     kept: list[str] = []
     used = 0
     dropped = False
+    clipped = False
     for line in lines:
         if len(kept) >= limit_n or used >= budget:
             dropped = True
@@ -209,29 +205,37 @@ def _take_preview_side(lines: list[str], limit_n: int, budget: int) -> tuple[lis
         if len(line) > _PREVIEW_LINE_MAX_CHARS:
             line = line[:_PREVIEW_LINE_MAX_CHARS] + "\u2026"
             dropped = True
+            clipped = True
         kept.append(line)
         used += len(line)
-    return kept, dropped
+    return kept, dropped, clipped
 
 
-def _render_head_tail_clipped(
+def _render_head_tail(
     content: str, head_n: int, tail_n: int
-) -> tuple[str, str, str, int, int]:
-    """Head/tail slices with per-line and per-side CHAR budgets.
+) -> tuple[str, str, str, int, int, bool]:
+    """The head/tail line window, with the per-line and per-side CHAR budgets.
 
-    The fallback for a payload the plain line window cannot shrink: with
-    ``head_n + tail_n`` lines or fewer the two windows OVERLAP, so that preview
-    reproduces the payload twice (a single newline-free line is the extreme).
-    Budgeting by characters instead keeps the preview a few KB whatever the
-    payload's shape.
+    The line COUNT shapes the window (whole lines read like the payload) and the
+    budgets bound its cost: every line is capped at ``_PREVIEW_LINE_MAX_CHARS``
+    and each side stops at its own budget, so the preview is a few KB whatever
+    the payload looks like — one giant line included.
 
-    :returns: ``(head, midline, tail, head_shown, tail_shown)``.
+    A payload with ``head_n + tail_n`` lines or fewer has overlapping windows
+    (the head and the tail show the same lines), so the render can be LARGER
+    than the payload; ``_build_preview`` then hands back this render and the
+    caller's ``len(preview) >= len(text)`` net keeps the original message.
+
+    :returns: ``(head, midline, tail, head_shown, tail_shown, clipped)`` —
+        ``clipped`` is True when a shown line was cut in the middle.
     """
+    if not content:
+        return "", "", "", 0, 0, False
     lines = content.splitlines()
-    if not lines:
-        return "", "", "", 0, 0
-    head_lines, head_dropped = _take_preview_side(lines, head_n, _PREVIEW_HEAD_MAX_CHARS)
-    tail_lines, tail_dropped = _take_preview_side(
+    head_lines, head_dropped, head_clipped = _take_preview_side(
+        lines, head_n, _PREVIEW_HEAD_MAX_CHARS
+    )
+    tail_lines, tail_dropped, tail_clipped = _take_preview_side(
         list(reversed(lines)), tail_n, _PREVIEW_TAIL_MAX_CHARS
     )
     midline = "..." if (head_dropped or tail_dropped) else ""
@@ -241,36 +245,29 @@ def _render_head_tail_clipped(
         "\n".join(reversed(tail_lines)),
         len(head_lines),
         len(tail_lines),
+        head_clipped or tail_clipped,
     )
 
 
 def _build_preview(template: str, content: str, head_n: int, tail_n: int, **fields) -> str:
-    """Render the smaller of the two previews: the line window, else the capped one.
+    """Render the head/tail preview of *content* (per-line and per-side capped).
 
-    The line window is preferred (it keeps whole lines, so the head reads like
-    the payload). It is skipped when it would not shrink the payload at all; the
-    capped renderer then applies. The caller's own ``len(preview) >= len(text)``
-    guard stays as the final net — with the capped budgets it only trips for a
-    payload barely over the threshold.
+    The caps make the preview a few KB whatever the payload's shape, so a
+    minified single line cannot ride it whole. When the render is not smaller
+    than the payload (the overlapping-window shape) the caller's own
+    ``len(preview) >= len(text)`` net keeps the original message.
     """
-    head, midline, tail, line_count = _render_head_tail(content, head_n, tail_n)
-    preview = template.format(
-        head=head,
-        midline=midline,
-        tail=tail,
-        head_n=min(head_n, line_count),
-        tail_n=min(tail_n, line_count),
-        **fields,
+    head, midline, tail, head_shown, tail_shown, clipped = _render_head_tail(
+        content, head_n, tail_n
     )
-    if len(preview) < len(content):
-        return preview
-    head, midline, tail, head_shown, tail_shown = _render_head_tail_clipped(content, head_n, tail_n)
+    cut_note = "\n\n" + _MIDLINE_CUT_NOTE if clipped else ""
     return template.format(
         head=head,
         midline=midline,
         tail=tail,
         head_n=head_shown,
         tail_n=tail_shown,
+        cut_note=cut_note,
         **fields,
     )
 
@@ -293,7 +290,9 @@ def human_eviction_notice(file_path: str | Path) -> str:
     return (
         f"This user message exceeded the eviction threshold; its full text is at "
         f"'{file_path}'. Use read_file(file_path='{file_path}', offset=0, limit=100) "
-        f"to read the full content in chunks."
+        f"to read the full content in chunks. If it is one very long line, read_file "
+        f"shows only its head — use terminal (head -c / tail -c) or python_repl "
+        f"(slicing) for the rest."
     )
 
 
@@ -462,7 +461,7 @@ _PREVIEW_LINE_MAX_BYTES = 2_048
 _PREVIEW_TAIL_MAX_BYTES = 8_192
 
 
-def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str, int]:
+def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str, int, bool]:
     """Head/tail text of a file ON DISK, without loading it whole.
 
     The head is read line by line — each ``readline`` capped, the walk stopped
@@ -471,19 +470,34 @@ def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str
     bounded by those chunks whatever the file's size, so a 500 MB output (even
     a single newline-free line) costs the same as a 500 KB one.
 
-    :returns: ``(head, midline, tail, head_lines_kept)`` — ``midline`` is
-        ``"..."`` when the preview window did not reach the end of the file.
+    A line longer than ``_PREVIEW_LINE_MAX_BYTES`` is cut silently by that cap
+    (the chunk simply stops), and the tail window's first line is a fragment
+    whenever the backwards walk did not reach byte 0 — both are reported through
+    the returned ``cut`` flag so the preview can say so instead of letting a
+    mid-line cut read as a line ending.
+
+    :returns: ``(head, midline, tail, head_lines_kept, cut)`` — ``midline`` is
+        ``"..."`` when the preview window did not reach the end of the file,
+        ``cut`` is True when a shown line was cut in the middle.
     """
     head_lines: list[str] = []
     head_budget = _PREVIEW_HEAD_MAX_BYTES
+    cut = False
     try:
         with path.open("rb") as f:
             while len(head_lines) < head_n and head_budget > 0:
-                chunk = f.readline(min(_PREVIEW_LINE_MAX_BYTES, head_budget))
+                cap = min(_PREVIEW_LINE_MAX_BYTES, head_budget)
+                chunk = f.readline(cap)
                 if not chunk:
                     break
                 head_budget -= len(chunk)
                 head_lines.append(chunk.decode("utf-8", errors="replace").rstrip("\n"))
+                if len(chunk) >= cap and not chunk.endswith(b"\n"):
+                    # The line did not fit the cap… unless it ended exactly AT
+                    # it: the very next byte tells the two apart.
+                    if f.peek(1)[:1] != b"\n":
+                        cut = True
+                        break
     except OSError:
         logger.debug("eviction: preview source unreadable at its head", exc_info=True)
 
@@ -500,6 +514,13 @@ def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str
                 f.seek(pos)
                 buf = f.read(read_size) + buf
                 tail_lines = buf.decode("utf-8", errors="replace").splitlines()
+            if pos > 0:
+                # The backwards walk stopped inside the file, so the FIRST line
+                # of the tail buffer is a fragment (the byte before `pos` is not
+                # a newline — otherwise the buffer starts on a line boundary).
+                f.seek(pos - 1)
+                if f.read(1) != b"\n":
+                    cut = True
     except OSError:
         logger.debug("eviction: preview source unreadable at its tail", exc_info=True)
 
@@ -507,7 +528,19 @@ def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str
     tail = "\n".join(tail_lines[-tail_n:])[-_PREVIEW_TAIL_MAX_BYTES:]
     more = len(head_lines) >= head_n or (pos > 0 and len(tail_lines) >= tail_n)
     midline = "..." if more else ""
-    return head, midline, tail, len(head_lines)
+    return head, midline, tail, len(head_lines), cut
+
+
+#: Appended to a preview whose shown head/tail cut a line in the middle. The
+#: cut itself is invisible (a clipped line looks like a normal line ending), and
+#: the recovery advice differs from the normal one: ``read_file`` pages by LINE
+#: and cannot page inside one.
+_MIDLINE_CUT_NOTE = (
+    "One very long line was cut above (it does not fit the per-line preview "
+    "budget). `read_file` pages by line number and CANNOT read the rest of that "
+    "line — use `search_files` (regex with context), or `terminal` "
+    "(`head -c` / `tail -c` / `dd`) / `python_repl` (slicing) to reach it."
+)
 
 
 def build_file_preview(source: Path, file_path: Path) -> str:
@@ -519,7 +552,7 @@ def build_file_preview(source: Path, file_path: Path) -> str:
     """
     head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
     tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
-    head, midline, tail, _kept = _read_head_tail(source, head_n, tail_n)
+    head, midline, tail, _kept, cut = _read_head_tail(source, head_n, tail_n)
     try:
         total_bytes = source.stat().st_size
     except OSError:
@@ -532,5 +565,6 @@ def build_file_preview(source: Path, file_path: Path) -> str:
         midline=midline,
         tail=tail,
         total_bytes=total_bytes,
+        cut_note=f"\n\n{_MIDLINE_CUT_NOTE}" if cut else "",
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )

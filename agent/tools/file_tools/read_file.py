@@ -5,7 +5,10 @@ CJK-aware: CJK ~2 chars/token, ASCII ~4) and the caller's line ``limit`` — the
 stricter wins. The budget is what makes the same response cost the same context
 in every language: 2000 lines of English are ~20 000 tokens while 2000 lines of
 Chinese are ~50 000. The truncation point is always a line boundary, and a
-single line that alone blows the budget is clipped inside itself with a marker.
+single line that alone blows the budget is clipped inside itself with a marker —
+WHEREVER it sits in the page, so one minified line can never ride the response
+whole. ``offset`` counts LINES, so read_file cannot page inside a clipped line:
+the hint names the tools that can (search_files / terminal / python_repl).
 
 Read-before-write contract: a COMPLETE read (the first page, nothing truncated)
 licenses ``write_file`` to overwrite exactly this revision of the file — see
@@ -56,12 +59,17 @@ _READ_MAX_LIMIT = TOOLS_TIMEOUTS["file_tools_read_max_limit"]
 #: less) restores the pure line-count window.
 _TOKEN_BUDGET = TOOLS_TIMEOUTS["read_file_token_budget"]
 _BUDGET_RATIO = TOOLS_TIMEOUTS["read_file_budget_ratio"]
+#: HARD per-line ceiling: a line costing more than this is clipped wherever it
+#: sits, whatever the page budget says — even with the budget switched off. One
+#: minified line can therefore never ride the response whole.
+_LINE_TOKEN_CAP = TOOLS_TIMEOUTS["read_file_max_line_tokens"]
 _CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 _CHARS_PER_TOKEN_CJK = TOKEN_ESTIMATION["chars_per_token_cjk"]
 
 #: Marker put inside a single line that alone blows the whole budget (a
 #: minified bundle): the head of that line comes back clipped, so the response
-#: stays bounded instead of carrying one 500 MB "line" whole.
+#: stays bounded instead of carrying one 500 MB "line" whole. Applies to every
+#: line of the page, not only the first.
 _LINE_CLIP_MARKER = "...[{omitted} chars clipped]..."
 
 #: Answer for a re-read of a file this session already read in full and that
@@ -302,7 +310,15 @@ class ReadFileTool(BaseTool):
                 f"(showing {offset}-{shown_end} of {total_lines} lines"
             )
             if clipped:
-                hint += "; a single line longer than the whole budget was clipped"
+                # The one case read_file cannot page through itself: `offset`
+                # counts LINES, so the rest of a clipped line has no read_file
+                # address. Name the tools that do reach it.
+                hint += (
+                    "; one line alone exceeded the whole budget and was clipped"
+                    " — read_file cannot page INSIDE a line, so for that line's"
+                    " remainder use search_files (regex with context), or terminal"
+                    " (head -c / tail -c / dd) / python_repl (slicing)"
+                )
             if _TOKEN_BUDGET > 0:
                 hint += f", ~{int(spent_tokens)} tokens of the {_TOKEN_BUDGET} budget"
             result["hint"] = hint + ")"
@@ -314,17 +330,28 @@ class ReadFileTool(BaseTool):
         """The lines to return, bounded by BOTH the token budget and *limit*.
 
         The walk stops at a LINE boundary, so line numbers stay continuous (the
-        window may overshoot the budget by the line that crossed it). One line
-        that alone blows the whole budget is clipped inside itself with a
-        marker: the alternative is a minified 500 MB "line" riding the response
-        whole — and the ``clipped`` flag reports it so the caller knows the file
-        was NOT seen whole (no write license may ride this read). With the
-        budget switched off (0) this is the line-count window, byte-identical
-        to the historical behaviour.
+        window may overshoot the budget by the whole line that crossed it — that
+        line is itself capped, see below, so the page stays within roughly twice
+        the budget).
+
+        PER-LINE HARD CAP: a line that alone blows the page budget is clipped
+        inside itself with a marker — wherever it sits in the page, not just
+        first. (Clipping only the page's first line left the real hole: a
+        minified 500 MB "line" on line 2 rode the response WHOLE and pushed it
+        past every bound.) The ceiling is ``read_file_max_line_tokens``, which
+        applies even when the page budget is switched off. ``clipped`` reports
+        that a clip happened, so the caller knows the file was NOT seen whole
+        and no write license may ride this read. With the budget switched off
+        (0) this is the line-count window plus that per-line ceiling.
 
         :returns: ``(page_lines, spent_tokens, clipped)``.
         """
         target_tokens = _TOKEN_BUDGET * _BUDGET_RATIO if _TOKEN_BUDGET > 0 else float("inf")
+        # The per-line ceiling always applies; with the page budget on, the
+        # stricter of the two decides (the budget, normally).
+        per_line_cap = (
+            min(target_tokens, float(_LINE_TOKEN_CAP)) if _LINE_TOKEN_CAP > 0 else target_tokens
+        )
         page_lines: list[str] = []
         spent = 0.0
         clipped = False
@@ -333,11 +360,11 @@ class ReadFileTool(BaseTool):
                 break
             line = all_lines[index]
             cost = _line_token_cost(line)
-            if not page_lines and cost > target_tokens:
-                keep = _chars_for_tokens(line, target_tokens)
+            if cost > per_line_cap:
+                keep = _chars_for_tokens(line, per_line_cap)
                 omitted = len(line) - keep
                 page_lines.append(line[:keep] + _LINE_CLIP_MARKER.format(omitted=omitted))
-                spent = target_tokens
+                spent += per_line_cap
                 clipped = True
                 break
             page_lines.append(line)

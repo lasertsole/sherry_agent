@@ -53,6 +53,10 @@ class ToolsTimeoutsConfig(TypedDict):
     #: Fraction of the budget a page may spend (the rest absorbs the line that
     #: crosses the boundary, the line numbers and the JSON envelope).
     read_file_budget_ratio: float
+    #: HARD per-line ceiling, independent of the (switchable) page budget: one
+    #: line costing more than this is clipped even when the budget is off, so a
+    #: minified single-line file can never ride a page whole.
+    read_file_max_line_tokens: int
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
@@ -105,6 +109,10 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "session_messages_per_message_token_budget": 500,
     "read_file_token_budget": 4000,
     "read_file_budget_ratio": 0.85,
+    # HARD per-line ceiling, independent of the (switchable) page budget above:
+    # one line whose token cost exceeds this is clipped even when the budget is
+    # switched off, so a minified single-line file can never ride a page whole.
+    "read_file_max_line_tokens": 4000,
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,
