@@ -19,6 +19,7 @@ from .terminal_bg_tools import (
     build_terminal_bg_output_tool,
 )
 from .subagent import build_subagent_runtime_tools
+from .web_fetch import build_web_fetch_tool
 from .web_search import build_web_search_tool
 from .python_repl import build_python_repl_tool
 from .question import build_question_tool
@@ -52,6 +53,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_search_files_tool,
     build_memory_tool,
     build_web_search_tool,
+    build_web_fetch_tool,
     build_terminal_tool,
     build_terminal_bg_list_tool,
     build_terminal_bg_output_tool,

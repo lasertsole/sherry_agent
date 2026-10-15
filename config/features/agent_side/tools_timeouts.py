@@ -33,6 +33,14 @@ class ToolsTimeoutsConfig(TypedDict):
     skill_manage_max_skill_file_bytes: int
     file_tools_read_default_limit: int
     file_tools_read_max_limit: int
+    #: ``web_fetch``: wall-clock budget for one public fetch and for one local
+    #: (opt-in) fetch, the byte cap on either body, and the character cap on the
+    #: markdown handed back to the model. The context-eviction layer is the
+    #: second net for whatever still arrives oversized.
+    web_fetch_timeout_seconds: int
+    web_fetch_local_timeout_seconds: int
+    web_fetch_max_bytes: int
+    web_fetch_max_output_chars: int
     #: Token budget for ONE ``sessions_messages`` response (the subagent
     #: checkpoint transcript) and for one message inside it. CJK-aware like the
     #: read_file budget: the same number is the same context cost in any language.
@@ -83,6 +91,14 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "skill_manage_max_skill_file_bytes": 1_048_576,
     "file_tools_read_default_limit": 500,
     "file_tools_read_max_limit": 2000,
+    # web_fetch: public pages get 30 s (a slow origin is common), a local dev
+    # server 10 s (loopback either answers or is down); 10 MiB body cap matches
+    # the media pipeline's fetch, and 50 K output chars is the model-visible cap
+    # before eviction takes over.
+    "web_fetch_timeout_seconds": 30,
+    "web_fetch_local_timeout_seconds": 10,
+    "web_fetch_max_bytes": 10_485_760,
+    "web_fetch_max_output_chars": 50_000,
     # The subagent-transcript reader: ~8 messages of 500 tokens each, the same
     # order of magnitude as one read_file response.
     "session_messages_token_budget": 4000,
