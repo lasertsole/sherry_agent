@@ -108,7 +108,10 @@ async def _fetch_local(url: str) -> FetchResult:
             timeout=float(TOOLS_TIMEOUTS["web_fetch_local_timeout_seconds"]),
             follow_redirects=True,
             max_redirects=5,
-            verify=False,
+            # The opt-in local branch reaches only private/loopback addresses,
+            # whose dev services commonly serve a self-signed certificate; the
+            # operator asked for this surface with SHERRY_WEB_FETCH_ALLOW_LOCAL=1.
+            verify=False,  # nosec B501
         ) as client:
             response = await client.get(url)
             body = response.content
