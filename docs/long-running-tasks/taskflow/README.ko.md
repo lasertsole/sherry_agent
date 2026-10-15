@@ -107,7 +107,7 @@ blocked → ready → dispatched → done
 | `skipped`     | `step_outcome="skipped"` 선언, 또는 의존성이 스킵/취소됨 (스킵은 하위로 전파)    | (이 단계의 종단 상태)                                           |
 | `cancelled`   | 단계가 끝나기 전에 `taskflow_cancel`이 플로우를 취소                             | (이 단계의 종단 상태)                                           |
 
-> `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미인 "결과가 주입됨"으로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식도 `done`이 될 수 있습니다.
+> `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미인 "결과가 주입됨"으로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식도 `done`이 될 수 있습니다. 각 게이트가 무엇을 하는지 포함한 전체 규칙은 [판정 게이트](../gates/README.ko.md)에 있습니다.
 >
 > `failed`·`skipped`·`cancelled`는 모두 의존 단계를 언락하지 않습니다. `failed` 의존성은 의존 단계를 `blocked`로 남기고(실패를 조용히 건너뛰면 안 됩니다), `skipped`/`cancelled` 의존성은 `skipped`를 의존 단계로 전파해 죽은 가지가 그 자리에서 정리되게 합니다.
 
@@ -232,12 +232,7 @@ async def taskflow_resume(
 
 완료된 자식 세션 결과를 플로우 상태에 주입합니다(멱등). results에 `{child_session_key, result, result_hash, injected_at, step_id, schema_validated}`를 덧붙입니다(판명되면 `structured_result` / `step_outcome`도). 플로우가 `waiting`이면 `running`으로 되돌립니다.
 
-**실행 순서** (각 게이트는 단계 단위 선택이며 서로 연결됩니다):
-
-1. **실패 시 재시도** — 단계에 `retry_policy`가 있고 결과가 실패라면 결말을 짓지 않고 대체 자식으로 다시 디스패치합니다. 실패 신호는 분류된 결과 텍스트와 `schema_validated=false` 둘 다입니다. 선언한 schema에 구조가 맞지 않는 것은 텍스트 분류가 볼 수 없는 실패이며 여기서 재디스패치됩니다 — **판정기 호출보다 먼저**이므로 깨진 구조가 판정 토큰을 쓰지 않습니다.
-2. **Tier 1 — 구조.** 단계에 `response_schema`가 있으면 결과(호출자의 `structured_result`, 없으면 `result`를 JSON으로 파싱)를 대조하고 판정을 결과 항목에 기록합니다. 재시도 예산을 다 쓴 실패는 단계를 `failed`로 만들고 `fail_reason`에 schema 오류를 남깁니다. 통과하면 Tier 2로 이어집니다 — 구조가 맞다고 내용이 맞는 것은 아닙니다.
-3. **Tier 2 — 의미.** 단계에 `judge_criteria`(또는 기존 `validation_criteria`)가 있으면 auxiliary-LLM 판정기(`agent/tools/taskflow/step_judge.py`, 온도 0)가 결과(검증된 `structured_result`가 있으면 그것, 없으면 결과 텍스트)를 심사해 `pass` / `retry` / `block`을 돌려줍니다. `retry`는 공유 `_retry` 이음매로 재디스패치하며 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 `with_judge_feedback`으로 판정기 조언을 대체 태스크에 붙입니다. 예산 소진이나 `block` 판정은 단계를 이유와 함께 `blocked`로 만듭니다. 판정기는 플로우의 증거 요약을 보며 fail-open입니다 — 모델 오류나 해석 불가 응답은 `pass`로 퇴화합니다.
-4. **호출자 선언 결과.** `step_outcome`은 두 게이트보다 우선합니다: `failure`는 판정기를 부르지 않고 `failed`, `skipped`는 `skipped`, `success` / `partial`은 기록만 하며 게이트는 평소대로 돌아갑니다. 잘못된 값은 상태 변경 전에 거부됩니다.
+**실행 순서** — 게이트는 서로 연결되며 모두 단계 단위 선택입니다: `retry_policy`(분류된 실패 또는 `schema_validated=false`가 **판정 호출 전에** 대체 자식으로 재디스패치) → `response_schema`(Tier 1, 무료 검증; 불일치는 `schema_error` 재시도) → `judge_criteria` / `validation_criteria`(Tier 2, 보조 LLM 판정기) → 호출자가 선언한 `step_outcome`(이 모두에 우선). 판정·예산·증거 인식 판정 프롬프트·페일오픈 규칙·`done`의 실제 의미는 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
 
 **DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. **resume은 새로 ready가 된 단계를 디스패치하지 않습니다** — 호출자가 `taskflow_dispatch`로 명시적으로 처리합니다.
 ### taskflow_set_waiting
@@ -307,7 +302,9 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. 디스패치된 자식 세션은 계속 돌고, 플로우가 취소되기 전까지 `taskflow_resume`으로 결과를 전달할 수 있습니다.
 
-`finish`는 DONE 전환을 세 검사로 순서대로 지킵니다: **A** 모든 단계가 `done` 또는 `blocked`; **B** 미해결 단계를 남기지 않음 — `failed`·`skipped`·`cancelled` 단계는 id와 기록된 이유와 함께 보고되며(호출자의 결정이 필요합니다: resume·retry·cancel), `blocked`도 마찬가지입니다; **C** 플로우 증거(`agent/tools/taskflow/evidence_collector.py`)에 `FAIL`도 `[stale]` 행도 없음. 각 게이트는 fail-open이라 증거 수집기를 쓸 수 없으면 완료를 막지 않고 통과시킵니다. 옵트인 **Gate E**(`_goal_gate`)가 이어서 결과가 플로우의 `description`을 충족하는지 보조 모델에 묻습니다——플로우의 단계 수가 `GOAL_GATE["min_steps"]`(3) 이상일 때만 실행됩니다.
+`finish`는 DONE 전환을 네 검사로 순서대로 지킵니다——**A** 모든 단계가 `done` 또는 `blocked`; **B** 미해결 단계를 남기지 않음(`failed`·`skipped`·`cancelled`·`blocked`는 id와 기록된 이유와 함께 보고); **C** 플로우 증거에 `FAIL`도 `[stale]` 행도 없음; **E** 옵트인 목표 판정(플로우 단계 수가 `GOAL_GATE["min_steps"]`(3) 이상일 때만). 모든 게이트는 페일오픈이며, 거부 문구와 목표 게이트의 계약은 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
+
+
 
 `cancel`은 종단화 전에 아직 끝나지 않은 모든 단계를 `cancelled`(취소 이유 포함)로 만듭니다. 플로우가 끝난 뒤에도 단계 상태가 `ready` / `dispatched` / `blocked`를 주장하지 않게 하기 위해서입니다.
 ---
@@ -406,6 +403,6 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 ## 알려진 제한 사항
 
-- **`done` ≠ 성공**: 단계 `done`은 "결과가 주입되었고 **그 단계에 설정된 품질 게이트를 모두 통과했다**"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식이 `done`이 됩니다. 폐루프가 실패를 잡게 하려면 기대를 선언하거나(`response_schema` 검증은 판정기 호출 전에 무료로 실행됩니다) 결과를 선언하십시오. `failed`는 의존 단계를 막고, `retry_policy`는 예산이 남는 동안 종료된 자식을 재디스패치합니다(판정기는 `block` 판정이나 예산 소진 시 `blocked`를 붙입니다).
+- **`done` ≠ 성공**: 단계 `done`은 "결과가 주입되었고 **그 단계에 설정된 품질 게이트를 모두 통과했다**"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식이 `done`이 됩니다. 폐루프가 실패를 잡게 하려면 기대를 선언하거나(`response_schema` 검증은 판정기 호출 전에 무료로 실행됩니다) 결과를 선언하십시오. `failed`는 의존 단계를 막고, `retry_policy`는 예산이 남는 동안 종료된 자식을 재디스패치합니다(판정기는 `block` 판정이나 예산 소진 시 `blocked`를 붙입니다). 각 게이트가 무엇을 하는지 포함한 전체 규칙은 [판정 게이트](../gates/README.ko.md)에 있습니다.
 - **`taskflow_wait_all` 타임아웃은 유계 폴링**: 완료되지 않는 자식 세션이 자동으로 플로우를 실패시키지 않음. 타임아웃은 부분 보고서 반환.
 - **단계 id는 순차 할당**: 등록 시 `step-{len(steps)+1}` 할당. 단계가 동시에 추가되는 경우, id는 충돌 재시도 시 `build_state` 내에서 재계산.

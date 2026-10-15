@@ -26,6 +26,7 @@
   - [도구 출력 요약](memory/README.ko.md#-도구-출력-요약)
   - [세션 연속성](memory/README.ko.md#-세션-연속성)
   - [TaskFlow 자동 재개](memory/README.ko.md#-taskflow-자동-재개)
+- [판정 게이트](gates/README.ko.md)
 - [증거 원장](evidence-ledger/README.ko.md)
 - [동시성 레인](lanes/README.ko.md)
 - [설정 레지스트리](#-설정-레지스트리)

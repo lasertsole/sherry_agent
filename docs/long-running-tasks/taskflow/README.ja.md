@@ -107,7 +107,7 @@ blocked → ready → dispatched → done
 | `skipped`     | `step_outcome="skipped"` の宣言、または依存がスキップ/キャンセルされた（スキップは下流へ連鎖） | （このステップの終端状態）                                     |
 | `cancelled`   | ステップ完了前に `taskflow_cancel` がフローをキャンセル                          | （このステップの終端状態）                                     |
 
-> `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来どおり「結果が注入された」に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子でも `done` になり得ます。
+> `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来どおり「結果が注入された」に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子でも `done` になり得ます。 各ゲートが何をするかを含む完全な規則は[判定ゲート](../gates/README.ja.md)にあります。
 >
 > `failed`・`skipped`・`cancelled` はいずれも依存側をアンロックしません。`failed` の依存は依存側を `blocked` のまま残し（失敗を黙って飛ばしてはいけない）、`skipped`/`cancelled` の依存は `skipped` を依存側へ連鎖させ、死んだ枝をその場で決着させてフローを永遠に待たせません。
 
@@ -232,12 +232,7 @@ async def taskflow_resume(
 
 完了した子セッションの結果をフロー状態に注入します（冪等）。results に `{child_session_key, result, result_hash, injected_at, step_id, schema_validated}` を追記します（判明していれば `structured_result` / `step_outcome` も）。フローが `waiting` なら `running` に戻します。
 
-**実行順序**（各ゲートはステップ単位のオプトインで、連結されます）：
-
-1. **失敗時の再試行** —— ステップに `retry_policy` があり結果が失敗なら、決着させずに代替の子で再ディスパッチします。失敗シグナルは分類された結果テキストと `schema_validated=false` の両方です。宣言した schema に構造が合わないのはテキスト分類では見えない失敗で、ここで再ディスパッチされます——**判定器呼び出しより前**なので、壊れた構造が判定トークンを消費することはありません。
-2. **Tier 1 —— 構造。** ステップに `response_schema` があると、結果（呼び出し側の `structured_result`、無ければ `result` を JSON として解析）を照合し、判定を結果エントリに記録します。再試行予算を使い切った失敗はステップを `failed` にし、`fail_reason` に schema エラーを残します。通過した場合は Tier 2 へ進みます——構造が正しいことは内容が正しいことを意味しません。
-3. **Tier 2 —— 意味論。** ステップに `judge_criteria`（または旧来の `validation_criteria`）があると、auxiliary-LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果（検証済みの `structured_result` があればそれ、無ければ結果テキスト）を評し、`pass` / `retry` / `block` を返します。`retry` は共有 `_retry` の継ぎ目で再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して `with_judge_feedback` で判定器の助言を代替タスクに付けます。予算切れまたは `block` 判定は理由付きでステップを `blocked` にします。判定器はフローの証跡サマリを受け取り、fail-open です——モデルエラーや解析不能な応答は `pass` に退行します。
-4. **呼び出し側の宣言結果。** `step_outcome` は 2 つのゲートより優先されます：`failure` は判定器を呼ばずに `failed`、`skipped` は `skipped`、`success` / `partial` は記録のみでゲートは通常どおり走ります。不正な値は状態変更の前に拒否されます。
+**実行順序** — ゲートは連結し、すべてステップ単位のオプトインです：`retry_policy`（分類された失敗、または `schema_validated=false` が、**判定呼び出しの前に**代替の子へ再ディスパッチ）→ `response_schema`（Tier 1、無料で検証。不一致は `schema_error` リトライ）→ `judge_criteria` / `validation_criteria`（Tier 2、補助 LLM の判定器）→ 呼び出し側が宣言する `step_outcome`（これらすべてに優先）。判定・予算・エビデンスを考慮した判定プロンプト・フェイルオープン規則・`done` の実際の意味は[判定ゲート](../gates/README.ja.md)にまとめています。
 
 **DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。**resume は新たに ready になったステップをディスパッチしません**——呼び出し側が `taskflow_dispatch` で明示的に行います。
 ### taskflow_set_waiting
@@ -307,7 +302,9 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続け、フローがキャンセルされるまで `taskflow_resume` で結果を届けられます。
 
-`finish` は DONE への遷移を 3 つのチェックで順に守ります：**A** すべてのステップが `done` か `blocked`；**B** 未解決のステップを残さない——`failed`・`skipped`・`cancelled` のステップは id と記録された理由付きで報告され（呼び出し側の判断が必要です：resume・retry・cancel）、`blocked` も同様です；**C** フローの証跡（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` も `[stale]` 行もない。各ゲートは fail-open で、証跡コレクタが使えない場合は完了を妨げず通します。オプトインの **Gate E**（`_goal_gate`）が続いて、結果がフローの `description` を満たすかを補助モデルに問います——フローのステップ数が `GOAL_GATE["min_steps"]`（3）以上のときだけ実行されます。
+`finish` は DONE への遷移を 4 つのチェックで順に守ります——**A** すべてのステップが `done` か `blocked`；**B** 未解決ステップを残さない（`failed`・`skipped`・`cancelled`・`blocked` は id と記録された理由つきで報告）；**C** フローの証跡に `FAIL` も `[stale]` 行もない；**E** オプトインの目標判定（フローのステップ数が `GOAL_GATE["min_steps"]`（3）以上のときのみ）。すべてのゲートはフェイルオープンで、拒否理由と目標ゲートの契約は[判定ゲート](../gates/README.ja.md)にまとめています。
+
+
 
 `cancel` は終端化の前に、未完了のすべてのステップを `cancelled`（キャンセル理由付き）にします。フロー終了後もステップ状態が `ready` / `dispatched` / `blocked` を主張し続けないためです。
 ---
@@ -406,6 +403,6 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ## 既知の制限
 
-- **`done` ≠ 成功**：ステップ `done` は「結果が注入され、**かつそのステップに設定された品質ゲートをすべて通過した**」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来の意味に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子は `done` になります。閉ループに失敗を捕まえさせるには、期待を宣言する（`response_schema` の検証は判定器呼び出しより前で無料です）か結果を宣言します。`failed` は依存側をブロックし、`retry_policy` は予算が残る限り終了した子を再ディスパッチします（判定器は `block` 判定や予算枯渇で `blocked` を付けます）。
+- **`done` ≠ 成功**：ステップ `done` は「結果が注入され、**かつそのステップに設定された品質ゲートをすべて通過した**」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来の意味に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子は `done` になります。閉ループに失敗を捕まえさせるには、期待を宣言する（`response_schema` の検証は判定器呼び出しより前で無料です）か結果を宣言します。`failed` は依存側をブロックし、`retry_policy` は予算が残る限り終了した子を再ディスパッチします（判定器は `block` 判定や予算枯渇で `blocked` を付けます）。 各ゲートが何をするかを含む完全な規則は[判定ゲート](../gates/README.ja.md)にあります。
 - **`taskflow_wait_all` タイムアウトは有界ポーリング**：完了しない子セッションが自動的にフローを失敗させることはない。タイムアウトは部分レポートを返す。
 - **ステップ id は順次割当**：登録時に `step-{len(steps)+1}` を割当。ステップが並行して追加される場合、id は競合リトライ時に `build_state` 内で再計算。
