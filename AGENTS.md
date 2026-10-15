@@ -288,7 +288,25 @@ size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
 (`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs
-to that session, so it opens under 当前会话 like the commit diff). The sidebar's 工作目录 body stacks TWO collapsible sections —
+to that session, so it opens under 当前会话 like the commit diff). The tree stays
+READ-ONLY but its rows are actionable (ZCode's workspace-file-tree parity): one
+`<ContextMenu>` per tree (rows emit their right-click upward — a per-row popup
+would mount one hidden menu per file) offers Open / Open with (viewer, plus the
+system default app on the desktop build) / Open in the built-in browser (HTML
+files; the page is served from the read-only endpoint as a blob URL, so relative
+references inside it do not resolve) / Reveal in the file manager (desktop only,
+`@tauri-apps/plugin-opener`; the label follows the platform, and the web build
+hides the entry because a browser cannot reach the OS) / Copy absolute path /
+Copy relative path / Add to chat. A row is also `draggable`, and a file-viewer
+TAB is too: both publish a `text/x-sherry-file` JSON payload plus the plain-text
+`@./path`, and the composer's drop handler turns either into a mention chip
+(`use-file-mention.ts`: an atomic `<span contenteditable="false">` whose visible
+label is the icon + file name while `data-file-path` holds the `@path` the send
+extracts — `extractTextForSend` also feeds the draft model, so chips never leak
+their label into a message). "Add to chat" travels the app-wide mitt bus
+(`chat:file-mention` with the session id) from the left sidebar to the chat page,
+which relays it to the composer it owns; the agent learns the convention from a
+stable `## File References` block in the system prompt. The sidebar's 工作目录 body stacks TWO collapsible sections —
 文件树 and the read-only **Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
@@ -352,7 +370,18 @@ through `/bin/sh -c` there with a scrubbed environment, bounded by
 exit code instead of raising. It is a one-shot console, not a PTY — an interactive
 full-screen program has nothing to attach to — and it is NOT the agent's
 `terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
-human's own shell, loopback-only via the gateway). Both panels keep their state in
+human's own shell, loopback-only via the gateway). The browser panel's address bar
+suggests the persistent VISIT HISTORY: every navigation (iframe mode from
+`stores/toolbox.ts::navigate`, CDP mode from the `page` frame the server reports —
+the devtools frontend is excluded) records one row in the Dexie `browserVisits`
+table (`composables/use-browser-history.ts`, schema version 3), so the list
+survives a reload and an app restart. A repeat visit inside 30 s UPDATEs the
+newest row instead of appending (CDP reports several frames per navigation), the
+table is capped at 500 rows (oldest pruned), and the dropdown
+(`BrowserHistoryDropdown.vue`) matches URL or title case-insensitively, newest
+first, showing a favicon (hidden when it 404s), the relative age in the active
+language and a 当前会话 mark, with a clear action for the whole history.
+Both panels keep their state in
 `stores/toolbox.ts` because the sidebar unmounts an inactive panel.
 
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)

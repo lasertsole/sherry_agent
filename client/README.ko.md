@@ -140,13 +140,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
-│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
+│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드. 행 우클릭 메뉴: 열기 / 연결 프로그램 / 내장 브라우저로 열기 / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가)
 │   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
 │   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
-│   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다)
+│   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다). 주소창은 영속 방문 기록(Dexie, 재시작 후에도 유지)을 URL / 제목 퍼지 매칭으로 제안합니다
+│   │           ├── BrowserHistoryDropdown.vue # 주소창의 기록 드롭다운: 최근/추천 방문(favicon, 제목, 상대 시간)과 지우기 동작
 │   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행
-│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
+│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기. 컴포저로 드래그할 수 있고 드롭 시 @./path 멘션 chip 삽입, 행 우클릭 메뉴도 여기서 연결)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)

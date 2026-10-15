@@ -139,13 +139,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
-│   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels)
+│   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
-│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch)
+│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
+│   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
-│   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
+│   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file; draggable into the composer — the drop inserts an @./path mention chip — and the row's right-click menu is wired here)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
 │   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, language, ...)

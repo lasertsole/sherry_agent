@@ -140,13 +140,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
-│   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载）
+│   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
-│   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）
+│   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）。地址栏还会联想持久化的访问历史（Dexie，跨重启保留），按 URL / 标题模糊匹配
+│   │           ├── BrowserHistoryDropdown.vue # 地址栏的历史下拉：最近/匹配的访问记录（favicon、标题、相对时间）与清空操作
 │   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
-│   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
+│   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件；可拖拽进输入框——落下即插入 @./path 引用 chip——行右键菜单在此接线）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
