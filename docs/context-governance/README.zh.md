@@ -221,7 +221,7 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 - **`clear_session` 一次清除全部。** `server/service/session_cleanup_service.py::purge_session` 删除该会话的 MesMemory 行（连同 `persisted_message_ids` 水位一起删除）、checkpointer 历史，以及整个 `SESSIONS_DIR/<session_id>/` 文件夹 —— 因此 **`evicted/` 文件与 `plans/` 随会话一并删除**（`config/path.py::session_plans_dir` 记录了同样的整目录契约）。内存寄存器最后清理。
 - **驱逐只是模型视图压缩，绝不是删除。** 本页压缩的每份载荷要么归档在 MesMemory、要么全文留在图 state（人类消息）、要么在磁盘 `evicted/` 下 —— 且每份预览都带指针。
 - **`evicted/` 目录归会话所有，但没有垃圾回收。** 文件活到 `clear_session` 为止；没有逐消息 TTL。长会话 + 大量巨型工具结果会在 `workspace/sessions/<session_id>/evicted/` 下持续累积磁盘占用。
-- **单行巨行永不驱逐。** 当 head 与 tail 都会包含整份载荷时，预览不可能比原文更小，消息原样保留（工具路径与人类路径都是如此）。
+- **行窗口缩不下去的载荷回退到按字符预算的预览。** 行数 ≤ 10 时 5 头/5 尾窗口重叠、会把原文抄两遍（无换行的正文是极端情形）；回退方案改为把每行截到 2 048 字符、每侧截到 8 192，于是 50 000 字符的单行仍会以约 4 300 字符的预览被驱逐。`len(preview) >= len(text)` 守卫保留为最终兜底。
 - **`read_file` 切片不可从切片自身恢复 —— 这是设计。** 源文件才是恢复路径；提示明确告诉模型如何续读。只有文件缺失/被删才会失效。
 - **人类消息驱逐仅限尾部消息。** 巨型载荷之后如果还有另一个用户回合，它不会被重新检视；"只看最后一条"是刻意设计，避免重翻已定历史。
 - **尾部裁剪只有在尾部批次够大时才有用。** 若上下文被人类回合或非工具消息占满，则退化为既有路由；P1-2 是优化，不是保证。
