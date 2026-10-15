@@ -439,6 +439,24 @@ async def _reserve_swarm_group(
     return get_run(run.run_id) or run  # refresh after in-place update
 
 
+def _is_inside_isolated_worktree(path: str | None) -> bool:
+    """True when *path* is inside an isolated worktree directory.
+
+    Isolated worktrees live under ``isolated_workspaces_dir()/<slug>/tree/``, so
+    a ``relative_to`` check suffices — no git probing (which would also depend
+    on git being usable). A missing path is False.
+    """
+    if not path:
+        return False
+    from config.path import isolated_workspaces_dir
+
+    try:
+        Path(path).resolve().relative_to(isolated_workspaces_dir().resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _create_isolated_child_workspace(
     isolation: bool, cwd: str | None, child_session_key: str
 ) -> tuple[str | None, Any, SpawnResult | None]:
@@ -450,6 +468,23 @@ def _create_isolated_child_workspace(
     """
     if not isolation:
         return cwd, None, None
+
+    # NESTED isolation is downgraded, not refused: a spawn whose cwd already sits
+    # inside an isolated worktree reuses it. ``max_spawn_depth`` is 2, so that
+    # cwd belongs to the requesting ORCHESTRATOR — its worktree already merges
+    # back to the real project, and a worktree of a worktree would only add a
+    # second merge-back, a second conflict surface and a second CAS check for no
+    # additional isolation boundary. The model asked for isolation and gets it
+    # (the child is isolated from the project); it just is not double-isolated.
+    if _is_inside_isolated_worktree(cwd):
+        logger.info(
+            "spawn: isolation=True ignored for child {} — parent cwd {} is already an "
+            "isolated worktree; the child reuses it",
+            child_session_key,
+            cwd,
+        )
+        return cwd, None, None
+
     if not cwd:
         return (
             cwd,

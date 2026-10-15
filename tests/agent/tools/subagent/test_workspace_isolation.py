@@ -19,6 +19,7 @@ import json
 import os
 import stat
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -547,3 +548,95 @@ def _render_block(report) -> str:
     from agent.tools.subagent.announce.workspace_merge import _report_block
 
     return _report_block(report)
+
+
+class TestNestedIsolationIsDowngraded:
+    """A child spawned from INSIDE an isolated worktree reuses it.
+
+    ``max_spawn_depth`` is 2, so that cwd belongs to the requesting
+    ORCHESTRATOR: its worktree already merges back to the real project, and a
+    worktree of a worktree would add a second merge-back / conflict surface /
+    CAS check for no extra isolation. The flag is ignored (info log), never
+    refused — the model asked for isolation and the child gets it, it is simply
+    not double-isolated.
+    """
+
+    def test_the_detection_walks_the_workspaces_directory(self, project, monkeypatch):
+        from agent.tools.subagent.spawn.core import _is_inside_isolated_worktree
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        assert _is_inside_isolated_worktree(str(workspaces / "slug" / "tree")) is True
+        assert _is_inside_isolated_worktree(str(workspaces)) is True
+        assert _is_inside_isolated_worktree(str(project)) is False
+        assert _is_inside_isolated_worktree(str(project / "sub")) is False
+
+    def test_none_and_blank_are_not_worktrees(self):
+        from agent.tools.subagent.spawn.core import _is_inside_isolated_worktree
+
+        assert _is_inside_isolated_worktree(None) is False
+        assert _is_inside_isolated_worktree("") is False
+
+    def test_a_child_inside_a_parent_worktree_reuses_it(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            True, str(parent_tree), "agent:main:subagent:grandchild"
+        )
+
+        assert refusal is None
+        assert workspace is None, "no nested worktree may be created"
+        assert cwd == str(parent_tree)
+        assert not (workspaces / "agent:main:subagent:grandchild").exists()
+
+    def test_the_downgrade_logs_an_info_line(self, project):
+        from loguru import logger as loguru_logger
+
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        records: list[str] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record["message"]),
+            level="INFO",
+            format="{message}",
+        )
+        try:
+            _create_isolated_child_workspace(True, str(parent_tree), "kid-key")
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert any("isolation=True ignored" in line and "kid-key" in line for line in records)
+
+    def test_a_normal_parent_still_gets_a_worktree(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        _seed(project)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            True, str(project), "agent:main:subagent:child"
+        )
+
+        assert refusal is None
+        assert workspace is not None, "a normal parent is not downgraded"
+        assert cwd == str(workspace.tree)
+        assert Path(cwd) != project
+
+    def test_no_isolation_never_touches_the_workspaces_directory(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            False, str(parent_tree), "kid-key"
+        )
+
+        assert (cwd, workspace, refusal) == (str(parent_tree), None, None)
