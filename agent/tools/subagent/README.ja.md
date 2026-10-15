@@ -9,6 +9,7 @@
 > リソース上限の補完——wall-clock タイムアウトが再び有効になり、セッションごとの spawn 回数に上限が付きました:
 
 - **`run_timeout_seconds` デフォルト 0.0 → 600.0（10 分）**：子エージェントが時間的に無制限に走ることはなくなりました。`spawn` と `steer` は再び子の `ainvoke` を `asyncio.wait_for` で包み、followup のタイムアウト検査も有効です（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）。sweeper の 2 時間 stale 検出は外側の安全網として残ります。呼び出し側は `sessions_spawn(run_timeout_seconds=...)` で spawn ごとに上書きでき、`0` は従来どおり「タイムアウトなし」です。
+- **能力の封じ込め（同ロール派生）**：特化した子（`researcher` / `executor` / `reviewer` / `librarian`）は**自分のロール**の子しか spawn できません。これまで read-only の researcher は ORCHESTRATOR 深度で書き込み可能な executor を雇えました——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来て、父のロールは関与しないためです。同じロール = 同じ allow-list で昇格経路が消えます。`MAIN` と `general`（inherit = 全ツール）は無制限のままで、クロスロール要求は**拒否**され、エラー文が直し方（`functional_role="<父ロール>"`）を示します（黙って付け替えることはありません）。`functional_role` はランタイムの `sessions_spawn` ツールにも公開され、同ロールの fan-out が表現可能になりました。
 - **`sessions_spawn` がタイムアウトを公開**：`run_timeout_seconds` フィールドを追加（グローバル既定と並ぶ、モデル自身のレバー）。ツールはモデルが渡した値を**拒否せず** `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）に clamp します——60 秒という「短く」の意図は 10 分の下限に、99999 は 2 時間の上限に落ち着く——`None`／非正値は「未設定」（グローバル既定を使う）です。内部呼び出し側（TaskFlow dispatch、`delegate_task`）は clamp を迂回し、独自の境界を保ちます。
 - **新規 `sessions_messages` ツール**：`session_key` で子セッションの checkpoint トランスクリプトを読む（8 番目のランタイムツール）。タイムアウト／kill の場面向けです——`Status: timed out` で `Result:` が無いとき、呼び出し側は何も得られませんでしたが、子エージェントの checkpoint には実行したすべてのツール呼び出しが残っています。出力は token 予算化（合計 4 000、1 メッセージ 500）され、`spawned_by`／run の完了オーナーで認可されるため、その子を spawn したセッションだけが読めます。
 - **新規 `max_total_spawns_per_session`（50）**：セッション単位の累積 spawn バジェット（`registry/spawn_budget.py`。registry の他のライブビューと同じくプロセス内メモリ）。`max_children_per_agent`（5）が同時に走る子の数、こちらは「1つ終えたら次を起動」の無限繰り返し——詰まったオーケストレーターが陥る形——を制限します。`register_run` でカウント（登録に到達した spawn が対象）、spawn の admission ゲートで検査、セッション破棄で削除され、プロセス再起動でクリアされます。
@@ -71,9 +72,11 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 2. 所有権と能力の解決（Ownership & Capability Resolution）
   │     ├── resolve_spawn_ownership()：controller / completion-owner
   │     │   セッションキー（spawn/ownership.py）
-  │     └── resolve_subagent_capabilities(depth, max_depth)：
-  │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
-  │           depth ≥ max → LEAF/NONE（capabilities/core.py）
+  │     ├── resolve_subagent_capabilities(depth, max_depth)：
+  │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
+  │     │     depth ≥ max → LEAF/NONE（capabilities/core.py）
+  │     └── 能力の封じ込め：特化（functional）の親は**同じ機能ロール**しか
+  │         spawn できない——MAIN/general は無制限
   │
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
   │     spawn/thinking.py）
@@ -490,7 +493,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 |------------------|------|--------------|--------------------|
 | `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール）+ ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 書き込み可能な実装とコマンド実行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `librarian` | 読み取り専用の外部コードベース検索。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
@@ -505,6 +508,8 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 **システムプロンプト。** 非 `general` ロールは `<ROLE>` の特化行と、定義本文を運ぶ `## Role Instructions` セクションを注入します。
 
 **ツールポリシー。** ロールの `tools` 一覧は allow-list になります（既定の deny-list はクリア）。spawn ごとの `extra_tools` はその allow-list に加わりますが、どちらも無条件の `main_only` メタデータゲートと明示 deny-list の対象です。
+
+**能力の封じ込め。** 特化ロール（`researcher` / `executor` / `reviewer` / `librarian`）は**同じロール**の子だけを spawn できます：同じロール = 同じ allow-list = 子の能力は父とちょうど同じ。これがないと、read-only の researcher が ORCHESTRATOR 深度で書き込み可能な executor を spawn し、代わりに書かせられてしまいます——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来るのであって、父のロールで絞られることはありません。`MAIN`（run レコード無し）と `general`（inherit = 全ツール）は無制限です——特化ロールの allow-list はその部分集合だからです。クロスロール要求は拒否され（決して黙って付け替えられません）、エラー文が出口を示します：`Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
 
 **`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）；`goal_max_turns` は goal loop 予算を上書きします。
 

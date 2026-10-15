@@ -150,6 +150,12 @@ User message → Robyn WS → agent.core.built_agent() graph
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
 
+     Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
+     reviewer / librarian) may only spawn its own functional role (same role =
+     same tool allow-list; MAIN and general stay unrestricted), so a read-only
+     researcher cannot hire a write-capable executor — the refusal names the
+     way out and `functional_role` rides on the tool for a same-role fan-out
+
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
       taskflow_resume (json parse + validate_structured_output); a miss is a
