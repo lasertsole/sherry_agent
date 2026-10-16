@@ -33,6 +33,8 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 ステップが `response_schema` を宣言している場合、結果はパースされ（呼び出し側が `structured_result` を渡したならそれ、なければ結果テキスト）、そのスキーマで検証されます（`validate_structured_output`）：
 
 - **不一致**はエラーとともに `schema_validated=false` として記録され、失敗として扱われ、リトライ種別は `schema_error` です — 判定呼び出しは一切消費せず、リトライされなかった不一致はステップを `failed` にします。
+- **不一致はリトライに教えます。** schema の失敗は判定より前に短絡するため `judge_feedback` は空です。そこで置換子エージェントのタスクは検証器自身のメッセージ（`Your previous output failed schema validation: <フィールドパス, expected/got>.`）を `## Previous Attempt Feedback` として運び、子はステップの spawn 契約一式（`response_schema` → 構造化出力の要件、機能ロール、モデル上書き、実行タイムアウト）を継承します — schema も失敗理由も見えないリトライは推測するしかありません。
+- **形は生成時にも拘束されます。** ステップが `response_schema` を宣言すると、子エージェントは LangChain の `response_format` 付きで構築されます（生の schema は `AutoStrategy` に解決され、プロバイダーが対応していればネイティブな構造化出力、なければ構造化出力ツール呼び出しになります）。明らかな不一致はこの検証器ではなくモデルの側で止まり、schema 本文は子の system prompt にプロンプトレベルのフォールバックとして残り、この Tier 1 チェックは第二の網として残ります — プロバイダーのエッジケースや構造化出力ツールを呼ばないモデルは、ここで捕まります。`sessions_spawn` は同じ `output_schema` フィールドを公開するので、ツール駆動の子も同様に拘束できます。
 - **一致**は `structured_result` + `schema_validated=true` を保存し、Tier 2 へ進みます。構造だけで内容が正しいことは決して証明されません — これが第二層の存在理由そのものです。
 
 ### Tier 2 — 意味論（補助 LLM）

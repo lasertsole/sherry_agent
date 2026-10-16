@@ -166,7 +166,18 @@ User message → Robyn WS → agent.core.built_agent() graph
     · Tier 1 schema gate — a step's response_schema is validated on
       taskflow_resume (json parse + validate_structured_output); a miss is a
       retry signal ("schema_error") that never spends a judge call, and an
-      unretried miss marks the step failed
+      unretried miss marks the step failed. The retry carries the validator's
+      own message as its feedback (the judge never ran, so judge_feedback is
+      empty) and the replacement inherits the step's spawn contract
+      (_retry.step_spawn_kwargs → response_schema / functional_role /
+      step_model / step_timeout_seconds — every dispatch site passes it,
+      including the manual batch and the auto-dispatch wave). The shape is
+      ALSO enforced at generation time: the child agent is built with
+      create_agent(response_format=<schema>) (AutoStrategy: provider-native
+      structured output, else a structured-output tool call), the schema
+      text stays in the child's system prompt as the prompt-level fallback,
+      and sessions_spawn exposes the same output_schema field so a
+      tool-driven child can be constrained the same way
     · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a

@@ -33,6 +33,8 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 当步骤声明了 `response_schema`，结果会被解析（调用方传了 `structured_result` 就用它，否则用结果文本）并按该 schema 校验（`validate_structured_output`）：
 
 - **未通过**记为 `schema_validated=false` 连同错误，并按失败处理、重试类型为 `schema_error`——它永远不花判别调用，且未被重试的未通过会把步骤标成 `failed`。
+- **未通过会教会这次重试。** schema 失败在判别之前短路，所以 `judge_feedback` 为空；替换子代理的 task 因此带上校验器自己的消息（`Your previous output failed schema validation: <字段路径, expected/got>.`）作为 `## Previous Attempt Feedback`，同时子代理继承该步骤的整套 spawn 契约（`response_schema` → 它的结构化输出要求、功能角色、模型覆盖、运行超时）——看不到 schema 也看不到失败原因的重试只能靠猜。
+- **形状在生成时就已经被约束。** 步骤声明 `response_schema` 时，子代理构建会带上 LangChain 的 `response_format`（原始 schema 解析为 `AutoStrategy`：provider 支持时走原生结构化输出，否则走结构化输出 tool 调用），所以明显的漏项在模型那一层就被拦下，而不是等到这里的校验器。schema 文本仍留在子代理的 system prompt 里作为 prompt 级兜底，而本 Tier 1 校验保留为第二道网——provider 的边角情况、或从不调用结构化输出 tool 的模型，仍会在这里被抓住。`sessions_spawn` 暴露同一个 `output_schema` 字段，工具驱动的子代理也能被同样约束。
 - **通过**则存入 `structured_result` + `schema_validated=true`，继续进入 Tier 2。结构本身从不证明内容正确——这正是第二层存在的理由。
 
 ### Tier 2 — 语义（辅助 LLM）

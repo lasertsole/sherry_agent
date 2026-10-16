@@ -33,6 +33,8 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 스텝이 `response_schema`를 선언하면 결과를 파싱하고(호출자가 `structured_result`를 넘겼다면 그것, 아니면 결과 텍스트) 그 스키마로 검증합니다(`validate_structured_output`):
 
 - **불일치**는 오류와 함께 `schema_validated=false`로 기록되고 실패로 취급되며 재시도 유형은 `schema_error`입니다 — 판정 호출은 절대 쓰지 않고, 재시도되지 않은 불일치는 스텝을 `failed`로 만듭니다.
+- **불일치는 재시도에게 알려줍니다.** schema 실패는 판정보다 먼저 단락되므로 `judge_feedback`은 비어 있습니다. 그래서 대체 자식의 작업에는 검증기 자체의 메시지(`Your previous output failed schema validation: <필드 경로, expected/got>.`)가 `## Previous Attempt Feedback`으로 실리고, 자식은 스텝의 spawn 계약 일체(`response_schema` → 구조화 출력 요구, 기능 역할, 모델 재정의, 실행 타임아웃)를 상속합니다 — schema도 실패 이유도 볼 수 없는 재시도는 추측할 수밖에 없습니다.
+- **형태는 생성 시점에도 강제됩니다.** 스텝이 `response_schema`를 선언하면 자식 에이전트는 LangChain의 `response_format`과 함께 만들어집니다(원시 schema는 `AutoStrategy`로 해석되어, 공급자가 지원하면 네이티브 구조화 출력, 아니면 구조화 출력 도구 호출). 그래서 뚜렷한 불일치는 이 검증기가 아니라 모델 단계에서 멈춥니다. schema 본문은 자식의 system prompt에 프롬프트 수준 폴백으로 남고, 이 Tier 1 검사는 두 번째 그물로 남습니다 — 공급자 가장자리 사례나 구조화 출력 도구를 호출하지 않는 모델은 여기서 잡힙니다. `sessions_spawn`은 같은 `output_schema` 필드를 노출하므로 도구 기반 자식도 같은 방식으로 구속됩니다.
 - **일치**는 `structured_result` + `schema_validated=true`를 저장하고 Tier 2로 넘어갑니다. 구조만으로 내용이 옳다는 것이 증명되지 않습니다 — 그것이 두 번째 층이 존재하는 이유입니다.
 
 ### Tier 2 — 의미론(보조 LLM)
