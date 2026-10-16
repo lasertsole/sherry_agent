@@ -15,6 +15,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
   - [3. Per-path locks](#3-per-path-locks)
   - [4. Leftover sweep](#4-leftover-sweep)
 - [Read-before-write license](#-read-before-write-license)
+- [Git readiness before writes](#-git-readiness-before-writes)
 - [Isolated subagent workspaces (git worktrees)](#-isolated-subagent-workspaces-git-worktrees)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
 - [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
@@ -26,7 +27,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
 
 Every file tool shares one process with every subagent, and the tools are process-level singletons — so two writers on one path is a normal Tuesday, not a corner case. Without protection the failures are silent: the later writer overwrites the earlier edit and both report success, a reader catches a half-written file, a crash mid-write truncates the target.
 
-Six mechanisms answer that, in the order a write meets them:
+Seven mechanisms answer that, in the order a write meets them:
 
 1. `file_write_lock` — a per-path `threading.Lock`, then a cross-process `flock`.
 2. `atomic_write_text_no_follow` — same-directory temporary file, `fsync`, mode preservation, `os.replace`.
@@ -34,6 +35,7 @@ Six mechanisms answer that, in the order a write meets them:
 4. `write_file`'s read-before-write license — an existing file may only be overwritten by a session that has read it (§ next but one).
 5. `sweep_stale_temp_files` — a `kill -9` leftover is swept by the next write into that directory.
 6. Isolated subagent workspaces — an opt-in git worktree whose changes merge back under a lock, conflicts reported.
+7. The git-readiness gate — a bound project directory is made a git repository (or is refused) before anything writes into it (§ two sections down).
 
 ## 🧱 The Layers
 
@@ -63,6 +65,14 @@ The rule that surprises people: **lock files are never deleted.** The lock lives
 ### 4. Leftover sweep
 
 Only a hard kill between the temporary file's creation and the replace can leave a `.sherry-tmp-*.swp` behind; every failure path unlinks it. The next write into the same directory sweeps those older than 1 hour (`sweep_stale_temp_files`): a live writer's temporary file is seconds old, so the age threshold is what keeps the sweep away from it. The sweep never raises — a scan that cannot read the directory must not fail the write it precedes.
+
+## 🔒 Git readiness before writes
+
+A session with a **bound project directory** may only write into a git repository. The first write per resolved root probes `git rev-parse --is-inside-work-tree` — true for the repository root, a subdirectory of it, or a linked worktree, so an isolated subagent workspace never re-initializes — and runs a plain `git init` when the directory is not a repository yet. A failed init **refuses the write**: `write_file` and `patch_file` return an error tool result, `terminal` and `python_repl` return the message instead of running, and the message names the directory together with git's own reason. Writes without version control are exactly what the gate exists to prevent, so silently proceeding is not an option.
+
+All four write doors are gated, and the two execution tools are gated on EVERY call: a shell (`echo > f`, `cp`, `mv`) or Python (`open(path, 'w')`) writes without ever touching the file tools, and telling read commands from write commands would mean parsing shell syntax. The check is cached per RESOLVED ROOT (a project-directory switch misses the cache and re-probes; `clear_git_ready()` forces a re-check), a FAILED init is never cached — the next write retries — and the cost after the first check is one set lookup.
+
+A session with **no binding** is untouched: its writes resolve against the process default and behave exactly as before. `git init` uses git's own defaults — no `--bare`, no `--initial-branch`, no `user.name` / `user.email` handling (a later `git commit` fails until the user configures git, which is deliberately out of scope) and no automatic initial commit. Reads are never gated: `read_file`, `search_files` and a plain `cat` all work in a directory without a repository.
 
 ## 📖 Read-before-write license
 
@@ -159,6 +169,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 | `agent/tools/pub_base/path_lock.py` | In-process per-path lock registry |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecars, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | The read-before-write license registry |
+| `agent/tools/pub_base/git_ensure.py` | The git-readiness gate for the write path (probe, init, per-root cache) |
 | `agent/tools/subagent/isolation/worktree.py` | Dirty baseline, auto-init + deny list, worktree lifecycle |
 | `agent/tools/subagent/isolation/materialize.py` | Ignored / untracked path materialization |
 | `agent/tools/subagent/isolation/tree.py` | Workspace worktree, manifest, discard |

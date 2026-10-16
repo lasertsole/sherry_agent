@@ -1,7 +1,15 @@
 # 计划：写操作前确保 git 仓库就绪
 
 - 建档日期：2026-10-15
-- 状态：**计划（未开工）**
+- 状态：**已落地（2026-10-16）**
+
+> 落地记录：新增 `agent/tools/pub_base/git_ensure.py`（探测 / init / 缓存），四个写入
+> 入口全部接线（`write_file` / `patch_file` / `terminal` 的 `_run`+`_arun` /
+> `python_repl` 的 `_run`+`_arun`），18 个测试见 `tests/agent/tools/pub_base/test_git_ensure.py`
+> （含真实 `git init`、真实只读目录拒绝、真实 worktree 通过、四个工具各自的拒绝路径）。
+> 一处与计划的偏离：缓存**按解析后的根目录**为键（而非 session），所以项目目录切换天然
+> 未命中、不需要在 `runtime/session/project_dir.py` 里挂 `clear_git_ready` 调用——
+> 少一个跨层 import，也少一类缓存陈旧 bug；`clear_git_ready()` 仍保留供测试/显式重查。
 - 关联代码：`agent/tools/file_tools/write_file.py`、`agent/tools/file_tools/patch_file.py`、
   `agent/tools/terminal.py`、`agent/tools/python_repl.py`、
   `agent/tools/pub_base/path_utils.py::session_workspace_root`、
