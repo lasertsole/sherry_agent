@@ -38,6 +38,7 @@ EXPECTED_ORDER = [
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
     "Summarization",
+    "InvalidToolCallRepairMiddleware",
 ]
 
 

@@ -39,6 +39,10 @@ from .heartbeat_staleness import (
     HeartbeatStalenessConfig as HeartbeatStalenessConfig,
     HEARTBEAT_STALENESS as HEARTBEAT_STALENESS,
 )
+from .invalid_tool_call import (
+    InvalidToolCallConfig as InvalidToolCallConfig,
+    INVALID_TOOL_CALL as INVALID_TOOL_CALL,
+)
 from .repetition_guard import (
     RepetitionGuardConfig as RepetitionGuardConfig,
     REPETITION_GUARD as REPETITION_GUARD,

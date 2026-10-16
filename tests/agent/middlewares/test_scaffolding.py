@@ -212,6 +212,9 @@ class TestRoleAgnosticDesign:
             # working-directory notice to inject and no media intake of its own.
             "WorkspaceNoticeMiddleware",
             "MultimodalProcessor",
+            # Main-chain-only salvage path for calls whose JSON args failed to
+            # parse (children keep the plain drop for now).
+            "InvalidToolCallRepairMiddleware",
         }
         main_only = MAIN_REQUIRED_CLASSES - SUBAGENT_REQUIRED_CLASSES
         assert {cls.__name__ for cls in main_only} == expected_main_only

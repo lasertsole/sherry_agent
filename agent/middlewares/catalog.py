@@ -51,6 +51,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
     "Summarization",
+    "InvalidToolCallRepairMiddleware",
 )
 
 #: Entries a session config may turn OFF (each hook early-returns when disabled).

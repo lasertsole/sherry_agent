@@ -36,6 +36,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [InvalidToolCallRepairMiddleware](#invalidtoolcallrepairmiddleware)
   - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard と RepetitionGuardWrapper](#outputrepetitionguard-と-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
@@ -125,6 +126,11 @@ middleware = [
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
     ),
+    # wrap_model_call の最内層、生のモデル呼び出しに最も近い位置：
+    # JSON 引数の解析に失敗したツール呼び出しを修復し（そうしないとループは
+    # 呼び出しなしの最終回答と見なしてターンを終了させる）、修復不能な場合は
+    # モデルを一度だけ再呼び出しする。
+    InvalidToolCallRepairMiddleware(),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # コンパイル済みグラフは apply_graph_wrappers() がラップする（内側 → 外側）：
@@ -176,7 +182,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent`（リスト順）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                    |
 | `before_model`（リスト順）           | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（2 つのインジェクタはいずれもサニタイズ書き換えの後に位置するため、注入ターンでもメッセージが剥がされない）                                       |
-| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
+| `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
 | `after_model`（逆順）                | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない）                                                                                                                                                                                     |
 | `wrap_tool_call`（最外層 → 最内層）  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する）                                                                                                                                                                     |
@@ -654,6 +660,47 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 - **サービス層の診断：** ストリーム失敗時、`server/service/stream_diag.py` が
   チャンク数/バイト数と初回チャンクまでの時間を計上し、再スローされる例外に
   サマリを添付します — 上記のミドルウェアレベル復旧を補う可観測性です。
+
+### InvalidToolCallRepairMiddleware
+
+**モジュール:** `agent/middlewares/invalid_tool_call_repair/core.py` · **クラス:** `InvalidToolCallRepairMiddleware(AgentMiddleware)`
+**フック:** `wrap_model_call` / `awrap_model_call`
+
+**引数の JSON 解析に失敗したツール呼び出し**を救済します。`langchain_core` の
+`default_tool_parser` はそのような呼び出しを `AIMessage.invalid_tool_calls` に入れ
+（`args` は生の文字列、`error=None`）、`tool_calls` は空のままにします——エージェント
+ループは `tool_calls` だけでルーティングするため、「唯一の呼び出しが無効」なメッセージ
+は呼び出しなしの最終回答と見なされ、**ターンが黙って終了します**（SWE-bench 実行
+`20261017_003529`：モデルの `terminal` 呼び出しはシェルコマンドの引用符が欠けており、
+ターンは 14.7 秒で終了、編集ゼロ——それでいてモデル自身の本文は「続けて調べる」と
+書いていました）。
+
+`_build_middlewares` の**最後**に登録されます——つまり `wrap_model_call` の最内層、
+生のモデル呼び出しに最も近い位置です。したがってグラフ状態・checkpointer・
+`MessagePersistenceMiddleware` はすべて修復後のメッセージを見ます。外側の再試行
+（LLMRetry / Summarization T4-T5）はどれもこの層を再通過し、修復は冪等です。
+
+- **修復（構文のみ、`repair.py`）**：末尾の引用符なき文字列値
+  （`{"commands": cd /repo && git log}`）は**バイト単位で等価なまま**引用符を補い、
+  末尾カンマは文字列を認識して除去します。曖昧な形（途中の値が引用符なし、値が `{` /
+  `[` / `true` など JSON トークンで始まる、飲み込んだ値の中に `"k":` 形のキーがある）
+  はすべて拒否します。修復された呼び出しは元の `id`/`name` を保ったまま `tool_calls`
+  に加わるため、クライアントが既に受け取った `tool_start` フレームは実行結果と対になり、
+  ツールカードも自然に確定します。切断型の失敗（`finish_reason` が `length` /
+  `max_tokens`）は `MaxTokensBoostMiddleware` に委ねます——そこでの正しい回復は予算を
+  上げた再呼び出しであり、引用符の補完ではありません。
+- **再送（上限つき）**：修復が失敗し有効な呼び出しが残っていないとき——ターンが終了
+  してしまう唯一の形——修正用の `HumanMessage` を**今回のリクエストにだけ**追記して
+  モデルを再呼び出しします（`request.override`、state には入れず、永続化もしない）。
+  上限は `INVALID_TOOL_CALL["resend_max_retries"]`（2、0 で無効）。再送前に
+  `MaxTokensBoostMiddleware` と同じ方法でストリーミング callbacks を外すため、
+  回復したトークンが二重に配信されることはありません。
+- **ゲートを迂回しない**：修復された呼び出しは通常どおり `wrap_tool_call` チェーン全体
+  （ToolGuardrails / PathGuard / HITL / sandbox）を通ります。
+- **常時有効**：`scaffolding._MAIN_REQUIRED` の一員です（プリセット-ミドルウェア画面では
+  ロック表示）。修復できない項目は WARNING ログ（生の args プレビューは
+  `INVALID_TOOL_CALL["log_args_chars"]` で上限）に出し、`invalid_tool_call` trajectory
+  イベントとして記録します。
 
 ### ThinkingControlMiddleware
 

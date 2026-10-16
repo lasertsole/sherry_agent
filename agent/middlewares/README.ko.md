@@ -36,6 +36,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [InvalidToolCallRepairMiddleware](#invalidtoolcallrepairmiddleware)
   - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
@@ -124,6 +125,11 @@ middleware = [
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
     ),
+    # wrap_model_call의 최내곽, 원시 모델 호출에 가장 가까운 위치:
+    # JSON 인자 파싱에 실패한 도구 호출을 복구한다(그렇지 않으면 루프가
+    # 호출 없는 최종 답변으로 보고 턴을 종료한다). 복구 불가 시 모델을
+    # 한 번만 재호출한다.
+    InvalidToolCallRepairMiddleware(),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # 컴파일된 그래프는 apply_graph_wrappers()가 래핑합니다 (안쪽 → 바깥쪽):
@@ -175,7 +181,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (리스트 순서)        | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                       |
 | `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
-| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
+| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
 | `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
 | `wrap_tool_call` (최외곽 → 최내곽)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
@@ -653,6 +659,46 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **서비스 계층 진단:** 스트림 실패 시 `server/service/stream_diag.py`가
   청크/바이트 수와 첫 청크까지의 시간을 집계해 재발생되는 예외에 요약을 덧붙입니다 —
   위의 미들웨어 수준 복구를 보완하는 관측성입니다.
+
+### InvalidToolCallRepairMiddleware
+
+**모듈:** `agent/middlewares/invalid_tool_call_repair/core.py` · **클래스:** `InvalidToolCallRepairMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+**인자(JSON) 파싱에 실패한 도구 호출**을 구제합니다. `langchain_core`의
+`default_tool_parser`는 그런 호출을 `AIMessage.invalid_tool_calls`에 넣고(`args`는 원본
+문자열, `error=None`) `tool_calls`는 비워 둡니다——에이전트 루프는 `tool_calls`만 보고
+라우팅하므로, "유일한 호출이 무효"인 메시지는 호출 없는 최종 답변으로 보여 **턴이 조용히
+끝납니다**(SWE-bench 실행 `20261017_003529`: 모델의 `terminal` 호출은 셸 명령에 따옴표가
+빠져 있었고, 턴은 14.7초 만에 종료되고 편집은 0건이었습니다. 그런데도 모델 자신의 본문은
+"계속 확인하겠다"고 말하고 있었습니다).
+
+`_build_middlewares`의 **마지막**에 등록됩니다——즉 `wrap_model_call`의 최내곽, 원시 모델
+호출에 가장 가까운 위치입니다. 따라서 그래프 상태, checkpointer,
+`MessagePersistenceMiddleware`가 모두 복구된 메시지를 봅니다. 모든 바깥 재시도
+(LLMRetry / Summarization T4-T5)가 이 계층을 다시 통과하며, 복구는 멱등입니다.
+
+- **복구(구문만, `repair.py`)**: 끝의 따옴표 없는 문자열 값
+  (`{"commands": cd /repo && git log}`)은 **바이트 단위로 동일하게** 따옴표를 붙이고,
+  꼬리 쉼표는 문자열을 인식해 제거합니다. 모호한 형태(중간 값이 따옴표 없음, 값이 `{` /
+  `[` / `true` 같은 JSON 토큰으로 시작, 삼켜진 값 안에 `"k":` 형태 키가 존재)는 모두
+  거부합니다. 복구된 호출은 원래 `id`/`name`을 유지한 채 `tool_calls`에 들어가므로,
+  클라이언트가 이미 받은 `tool_start` 프레임이 실행 결과와 짝을 이루고 도구 카드가
+  정리됩니다. 잘림형 실패(`finish_reason`이 `length` / `max_tokens`)는
+  `MaxTokensBoostMiddleware`에 맡깁니다——거기서의 올바른 복구는 예산을 올린 재호출이지
+  따옴표 보정이 아닙니다.
+- **재전송(상한 있음)**: 복구가 실패하고 유효한 호출이 남지 않았을 때——턴이 끝나버리는
+  유일한 형태——수정용 `HumanMessage`를 **이번 요청에만** 덧붙여 모델을 재호출합니다
+  (`request.override`, state에 넣지 않고 영속화도 하지 않음). 상한은
+  `INVALID_TOOL_CALL["resend_max_retries"]`(2, 0이면 비활성). 재전송 전에는
+  `MaxTokensBoostMiddleware`와 같은 방식으로 스트리밍 callbacks를 제거하므로 복구된
+  토큰이 두 번 전송되지 않습니다.
+- **어떤 게이트도 우회하지 않음**: 복구된 호출은 여느 호출과 같이 `wrap_tool_call`
+  체인 전체(ToolGuardrails / PathGuard / HITL / sandbox)를 통과합니다.
+- **상시 켜짐**: `scaffolding._MAIN_REQUIRED`의 일원입니다(프리셋-미들웨어 화면에서 잠금
+  표시). 복구할 수 없는 항목은 WARNING 로그(원본 args 미리보기는
+  `INVALID_TOOL_CALL["log_args_chars"]`로 상한)와 `invalid_tool_call` trajectory 이벤트로
+  기록됩니다.
 
 ### ThinkingControlMiddleware
 

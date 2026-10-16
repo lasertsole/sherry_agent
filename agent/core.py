@@ -35,6 +35,7 @@ from .middlewares import (
     MaxTokensBoostMiddleware,
     MessagePersistenceMiddleware,
     LLMRetryMiddleware,
+    InvalidToolCallRepairMiddleware,
     validate_required_middleware,
     _MAIN_REQUIRED,
 )
@@ -345,6 +346,15 @@ def _build_middlewares(
             main_llm_context_window=main_llm_context_window,
             trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
         ),
+        # Registered LAST = the innermost wrap_model_call layer, closest to the
+        # raw model call: a tool call whose arguments fail JSON parsing
+        # ("invalid tool call") is repaired BEFORE the agent loop routes on
+        # ``tool_calls``, so state / checkpointer / MessagePersistence all see
+        # the repaired message and a turn no longer ends silently on a syntax
+        # miss; the resend stage re-calls the model for the unrepairable case.
+        # Every outer retry (LLMRetry / Summarization T4-T5) re-enters this
+        # layer, and it is idempotent (a strict parse succeeds untouched).
+        InvalidToolCallRepairMiddleware(),
     ]
 
 

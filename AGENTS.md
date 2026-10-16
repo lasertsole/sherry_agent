@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (75 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (76 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -71,7 +71,23 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     The old auxiliary-LLM fallback for the 20-100 char request-phrasing window was
   │     removed by the over-engineering audit; a short JA/KO request with no keyword is
   │     no longer armed — the conservative direction, fail-open to "not a task")
-  │    → MessagePersistence → LLMRetry → Summarization → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload. The gate is BOUNDED by a consecutive-continuation ceiling: `mark_injected` counts every CONFIRMED delivery (a `busy`/`already_pending` answer from the trigger counts as none and is retried next turn end), and at `TODOLIST_INFRA["max_continuation_turns"]` (15) the gate delivers one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive and latches the session silent until a turn it did NOT inject — a real user message, or a subagent completion — resets the counter and the latch)
+  │    → MessagePersistence → LLMRetry → Summarization → InvalidToolCallRepair → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload. The gate is BOUNDED by a consecutive-continuation ceiling: `mark_injected` counts every CONFIRMED delivery (a `busy`/`already_pending` answer from the trigger counts as none and is retried next turn end), and at `TODOLIST_INFRA["max_continuation_turns"]` (15) the gate delivers one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive and latches the session silent until a turn it did NOT inject — a real user message, or a subagent completion — resets the counter and the latch)
+  │    (InvalidToolCallRepair is registered LAST = the innermost wrap_model_call
+  │     layer, closest to the raw model call: a tool call whose `arguments` fail
+  │     JSON parsing arrives as `AIMessage.invalid_tool_calls` with `tool_calls`
+  │     empty, and the loop — which routes on `tool_calls` only — used to treat
+  │     the message as a call-less final answer and END the turn silently
+  │     (SWE-bench 20261017_003529: the django instance ended after 14.7 s with
+  │     zero edits). The layer repairs the syntax (quote-only, byte-identical
+  │     tail value; refuses ambiguous shapes; truncation-shaped misses are left
+  │     to MaxTokensBoost) and re-attaches the call with its original id so the
+  │     already-streamed `tool_start` frame pairs with the result; when nothing
+  │     is repairable AND no valid call remains it re-calls the model with a
+  │     corrective HumanMessage appended to the REQUEST only, bounded by
+  │     `INVALID_TOOL_CALL["resend_max_retries"]`, stripping streaming callbacks
+  │     like MaxTokensBoost does. Repaired calls still pass every wrap_tool_call
+  │     gate; the middleware is in `scaffolding._MAIN_REQUIRED` and the attempt
+  │     is logged + recorded as an `invalid_tool_call` trajectory event)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
   │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
@@ -644,7 +660,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
   `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
-  build now fails without them (`scaffolding._MAIN_REQUIRED`, 14 entries) and the service
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 15 entries) and the service
   rejects a payload naming one. Together with `system_prompt_injection`,
   `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
   membership and order never change.
@@ -991,9 +1007,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 48 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/agent_side/` | 49 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
 | `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 75 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 76 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |

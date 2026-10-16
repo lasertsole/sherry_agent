@@ -36,6 +36,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [InvalidToolCallRepairMiddleware](#invalidtoolcallrepairmiddleware)
   - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
@@ -125,6 +126,11 @@ middleware = [
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
     ),
+    # the innermost wrap_model_call layer, closest to the raw model call:
+    # repairs tool calls whose JSON arguments failed to parse (the loop would
+    # otherwise see a call-less message and end the turn), and re-calls the
+    # model once for the unrepairable case.
+    InvalidToolCallRepairMiddleware(),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # the compiled graph is then wrapped by apply_graph_wrappers() (innermost →
@@ -176,7 +182,7 @@ Differences vs the main agent:
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent` (list order)               | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                                                                                         |
 | `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
-| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
+| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
 | `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
 | `wrap_tool_call` (outermost → innermost)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
@@ -655,6 +661,47 @@ and the IterationBudget is charged once per outer model call.
   `server/service/stream_diag.py` counts chunks/bytes and time-to-first-chunk
   and appends the summary to the re-raised exception — complementary
   observability to the middleware-level recovery above.
+
+### InvalidToolCallRepairMiddleware
+
+**Module:** `agent/middlewares/invalid_tool_call_repair/core.py` · **Class:** `InvalidToolCallRepairMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call`
+
+Salvages **tool calls whose arguments failed to parse as JSON**. `langchain_core`'s
+`default_tool_parser` files such a call into `AIMessage.invalid_tool_calls` (the raw
+string as `args`, `error=None`) and leaves `tool_calls` empty — and the agent loop
+routes on `tool_calls` only, so a message whose ONLY call is invalid looks like a
+call-less final answer and **the turn ends silently** (SWE-bench run `20261017_003529`:
+the model's `terminal` call had an unquoted shell command, the turn ended after 14.7 s
+with zero edits, and the model's own text said it would continue).
+
+Registered LAST in `_build_middlewares` — the innermost `wrap_model_call` layer,
+closest to the raw model call — so the graph state, the checkpointer and
+`MessagePersistenceMiddleware` all see the REPAIRED message; every outer retry
+(LLMRetry / Summarization T4-T5) re-enters this layer and the repair is idempotent.
+
+- **Repair (syntax-only, `repair.py`)**: a trailing unquoted string value
+  (`{"commands": cd /repo && git log}`) is re-quoted **byte for byte**; trailing
+  commas are dropped string-aware; ambiguous shapes (an unquoted middle value, a
+  JSON-token start such as `{` / `[` / `true`, key-like tokens inside the swallowed
+  value) are refused. The repaired call keeps its original `id`/`name` and joins
+  `tool_calls`, so the `tool_start` frame the client already received pairs with the
+  execution result and the tool card settles. Truncation-shaped misses
+  (`finish_reason` in `length` / `max_tokens`) are left to
+  `MaxTokensBoostMiddleware` — the boosted re-call, not a quote fix, is the right
+  recovery there.
+- **Resend (bounded)**: when repair fails and no valid call remains — the only shape
+  where the turn would end — the model is re-called with a corrective
+  `HumanMessage` appended to the REQUEST only (`request.override`, never state,
+  never persistence), bounded by `INVALID_TOOL_CALL["resend_max_retries"]` (2;
+  0 disables). The streaming callbacks are stripped for the retry exactly like
+  `MaxTokensBoostMiddleware` does, so the recovered tokens are not streamed twice.
+- **Never bypasses a gate**: repaired calls go through the full `wrap_tool_call`
+  chain (ToolGuardrails / PathGuard / HITL / sandbox) like any other call.
+- **Always-on**: a member of `scaffolding._MAIN_REQUIRED` (the per-session
+  middleware tab shows it locked); unrepairable entries are logged (WARNING, the
+  raw-args preview capped by `INVALID_TOOL_CALL["log_args_chars"]`) and recorded as
+  an `invalid_tool_call` trajectory event.
 
 ### ThinkingControlMiddleware
 

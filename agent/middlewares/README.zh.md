@@ -36,6 +36,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [InvalidToolCallRepairMiddleware](#invalidtoolcallrepairmiddleware)
   - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
@@ -123,6 +124,10 @@ middleware = [
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
     ),
+    # wrap_model_call 的最内层，最贴近原始模型调用：
+    # 修复参数 JSON 解析失败的工具调用（否则循环会把消息当成无调用的终答、
+    # 直接结束回合），并对无法修复的情形重呼一次模型。
+    InvalidToolCallRepairMiddleware(),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # 编译后的图再交给 apply_graph_wrappers() 包装（由内到外）：
@@ -174,7 +179,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `before_agent`（列表顺序）           | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                      |
 | `before_model`（列表顺序）           | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离）                                                                             |
-| `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware 最贴近 LLM；Summarization 被 LLMRetry 从外部包住其 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序）                | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库）                                                                                                                                                                 |
 | `wrap_tool_call`（最外层 → 最内层）  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
 | `after_agent`（逆序）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合）                                                                                                                                             |
@@ -646,6 +651,41 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   环境变量 / 8192 默认值），因此第一层 boost base 已经从膨胀后的输出上限起步。
 - **服务层诊断：** 流失败时，`server/service/stream_diag.py` 统计块数/字节数与
   首块耗时，并把摘要附加到重新抛出的异常上——是对上述中间件级恢复的补充观测。
+
+### InvalidToolCallRepairMiddleware
+
+**模块：** `agent/middlewares/invalid_tool_call_repair/core.py` · **类：** `InvalidToolCallRepairMiddleware(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call`
+
+抢救**参数无法解析为 JSON 的工具调用**。`langchain_core` 的 `default_tool_parser`
+把这类调用放进 `AIMessage.invalid_tool_calls`（`args` 为原始字符串、`error=None`），
+`tool_calls` 保持为空——而 agent 循环只按 `tool_calls` 路由，于是「唯一调用是无效调用」
+的消息看起来就像无调用的终答，**回合静默结束**（SWE-bench 运行 `20261017_003529`：
+模型的 `terminal` 调用把 shell 命令漏了引号，回合在 14.7 秒后结束、零改动，而模型自己
+的正文还写着「接下来我要继续查」）。
+
+本中间件注册在 `_build_middlewares` 的**最后一位**——即 `wrap_model_call` 的最内层、
+最贴近原始模型调用——因此图状态、checkpointer 与 `MessagePersistenceMiddleware`
+看到的都是修复后的消息；所有外层重试（LLMRetry / Summarization T4-T5）都会再次进入
+本层，且修复是幂等的。
+
+- **修复（纯语法，`repair.py`）**：尾部未加引号的字符串值
+  （`{"commands": cd /repo && git log}`）按**逐字节**等价补引号；尾逗号做字符串感知的
+  剔除；有歧义的形态（中间值缺引号、值以 `{` / `[` / `true` 这类 JSON token 开头、
+  被吞入的值里还有形如 `"k":` 的键）一律拒绝。修复后的调用保留原 `id`/`name` 并加入
+  `tool_calls`，因此客户端已收到的 `tool_start` 帧能与执行结果配对、工具卡自愈。
+  截断形态的失败（`finish_reason` 为 `length` / `max_tokens`）留给
+  `MaxTokensBoostMiddleware`——那里正确的恢复是提升预算后的重呼，不是补引号。
+- **重发（有界）**：修复失败且已经没有有效调用时——即回合将要终止的唯一形态——
+  以追加一条纠正性 `HumanMessage` 的方式重呼模型；该消息只进**本次请求**
+  （`request.override`，不进 state、不落库），上限 `INVALID_TOOL_CALL["resend_max_retries"]`
+  （2；0 为关闭）。重发前剥离流式 callbacks，与 `MaxTokensBoostMiddleware` 同法，
+  恢复出的 token 不会向客户端二次推流。
+- **不绕过任何门**：修复后的调用照常走完整 `wrap_tool_call` 链
+  （ToolGuardrails / PathGuard / HITL / sandbox）。
+- **常开**：属于 `scaffolding._MAIN_REQUIRED`（预设-中间件页显示为锁定）；无法修复的
+  条目打 WARNING 日志（原始 args 预览上限 `INVALID_TOOL_CALL["log_args_chars"]`）并
+  记一条 `invalid_tool_call` trajectory 事件。
 
 ### ThinkingControlMiddleware
 

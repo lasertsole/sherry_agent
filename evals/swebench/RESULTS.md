@@ -65,10 +65,41 @@ auxiliary 为 glm-5.3-flash）。实例集合、窗口与 auxiliary 模型均不
 本次是 HARD 切片在 1M 窗口下的首份记录。运行日志同时确认 1M 已生效
 （`usable=984000`，压缩门槛随窗口放大；django 全程估算 <8k，未触发压缩）。
 
-### 待决策的修复方向（本次未实施）
+### 修复方向（已实施，见下节）
 
 1. 模型调用后加一道检查：终答带 `invalid_tool_calls` 时不当终答处理——把解析错误作为
    一条消息喂回模型（限定重试次数），要求它重新发出合法 JSON 的调用；
 2. 至少把 `invalid_tool_calls` 记进日志与 trajectory（今天它是静默的）；
 3. `terminal.commands` 这类「大段自由文本」参数天然容易坏 JSON——重审其参数形状或
    在提示词中强调转义要求，以降低触发率。
+
+以上方向 1、2 已落地为
+`agent/middlewares/invalid_tool_call_repair/`（语法修复 + 有界重发 + 日志/trajectory
+事件；方向 3 未做）。
+
+---
+
+## 20261017_014328 — HARD 切片复跑（修复后验证）
+
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard`（**不**更新 baseline）
+- 条件与上一轮一致：同两实例、同一 `deepseek/deepseek-flash`、1M 窗口；
+  harness 自检 `True / True`
+- 结果：**`resolved 1/2`（resolve_rate 0.5）**，无 invalid run、无超时、无 provider 报错
+
+| 实例 | 判定 | FAIL_TO_PASS | PASS_TO_PASS | 时长 | 工具调用 | 改动文件 |
+|---|---|---|---|---|---|---|
+| django__django-17051 | ✓ **解决** | 全过 | 全过 | 137.6s | 46 | `django/db/models/query.py`、`docs/ref/models/querysets.txt` |
+| sympy__sympy-20639 | ✗ | 仍失败 | 全过 | 117.7s | 27 | `sympy/printing/pretty/pretty.py` |
+
+- **因果证据**：本轮日志出现且仅出现一次修复记录——
+
+  `[InvalidToolCallRepair] session=evals-swe-django__django-17051-591edd repaired tool call call_00_cYbcqk30bwY1avvix4ZX6223 (terminal) after a JSON parse failure`
+
+  ——正是上一轮「零改动」那类被丢弃的调用形态（未加引号的 `terminal` 参数）。修复后调用
+  执行、回合继续：django 从「14.7s、零改动、5 个判据全败」变为「137.6s、46 次调用、
+  两个文件改动、判据全过」。
+- sympy 未被修复路径影响（其调用本来就合法）：117.7s / 27 次调用，仍为真实能力差距
+  （判据测试未过、PASS_TO_PASS 未破坏）。
+- `baseline.json` 保持 20261017_003529 的记录（本复跑用于对照）。若要把 1/2 记为新基线，
+  重跑时加 `--update-baseline` 即可。
+
