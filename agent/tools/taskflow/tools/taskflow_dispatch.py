@@ -21,7 +21,13 @@ from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
 from ..registry import store_sqlite
 from . import _dispatch
-from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
+from ._retry import (
+    is_redispatch,
+    normalize_policy,
+    step_retry_count,
+    step_spawn_kwargs,
+    with_judge_feedback,
+)
 from agent.tools.pub_base import SessionId
 from ._shared import (
     build_task_with_bindings,
@@ -134,6 +140,10 @@ async def taskflow_dispatch(
                 task=task_text,
                 requester_session_key=requester_key,
                 label=None,
+                # The step's own spawn contract rides along (schema, role, model,
+                # timeout): a step registered by taskflow_plan / update_steps must
+                # reach its child with the same configuration run_task would give.
+                **step_spawn_kwargs(step),
             )
         except Exception as exc:  # tool boundary: report; the other spawns stand
             return sid, None, exc

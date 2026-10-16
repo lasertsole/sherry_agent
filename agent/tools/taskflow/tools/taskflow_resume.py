@@ -30,6 +30,7 @@ from ._retry import (
     should_retry_failure,
     spawn_replacement,
     step_retry_count,
+    step_spawn_kwargs,
     wait_before_retry,
     with_judge_feedback,
 )
@@ -198,15 +199,28 @@ async def taskflow_resume(
         ):
             requester_key = requester_key_for_retry(state, session_id)
             await wait_before_retry(policy)
+            # Tier 1 short-circuits BEFORE the judge, so ``judge_feedback`` is
+            # empty on a schema failure — the replacement would be re-spawned
+            # with the bare task and would have to guess what was wrong. Hand it
+            # the validator's own message (field path + expected/got), which is
+            # exactly the correction it needs.
+            if schema_validated is False and schema_error:
+                feedback = (
+                    f"Your previous output failed schema validation: {schema_error}. "
+                    "Ensure your output is valid JSON matching the required response_schema."
+                )
+            else:
+                feedback = str(step.get("judge_feedback") or "")
             try:
                 redispatched_key = await spawn_replacement(
                     with_judge_feedback(
                         build_task_with_bindings(
                             build_task_with_dep_results(step, steps, results), step, steps, results
                         ),
-                        str(step.get("judge_feedback") or ""),
+                        feedback,
                     ),
                     requester_key,
+                    **step_spawn_kwargs(step),
                 )
             except Exception as exc:
                 retry_text = (
@@ -278,6 +292,7 @@ async def taskflow_resume(
                                 judge_result.feedback,
                             ),
                             requester_key,
+                            **step_spawn_kwargs(step),
                         )
                     except Exception as exc:  # tool boundary: block instead of raising
                         step["status"] = str(StepStatus.BLOCKED)
@@ -512,6 +527,11 @@ async def _auto_dispatch_ready(
                 task=task_text,
                 requester_session_key=requester_key,
                 label=None,
+                # The wave's steps carry their own spawn contract; a step that
+                # went ready without run_task (taskflow_plan / update_steps) must
+                # still reach its child with the schema / role / model / timeout
+                # the step declares.
+                **step_spawn_kwargs(step),
             )
         except Exception as exc:  # the flow advances without this step; report it
             logger.warning(

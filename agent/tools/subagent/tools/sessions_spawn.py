@@ -80,6 +80,15 @@ class SessionsSpawnSchema(BaseModel):
         "Raise it for complex tasks (e.g. large codebase refactors); "
         "the minimum already covers most tasks.",
     )
+    output_schema: dict | None = Field(
+        default=None,
+        description="Optional JSON Schema that constrains the subagent's final "
+        "output. When provided, the subagent is forced to produce JSON matching "
+        "this schema (through the model provider's native structured output, or a "
+        "structured-output tool call where the provider lacks one). Use for tasks "
+        "that must return machine-readable data (analysis reports, extraction "
+        "results); omit for free-form text.",
+    )
 
 
 class SessionsSpawnTool(BaseTool):
@@ -113,6 +122,7 @@ class SessionsSpawnTool(BaseTool):
         cwd: str | None = None,
         isolation: bool = False,
         run_timeout_seconds: float | None = None,
+        output_schema: dict | None = None,
     ) -> str:
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
@@ -153,6 +163,7 @@ class SessionsSpawnTool(BaseTool):
             extra_tools=extra_tools,
             isolation=isolation,
             run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
+            output_schema=output_schema,
         )
 
         parts = [f"Subagent spawned: status={result.status}"]

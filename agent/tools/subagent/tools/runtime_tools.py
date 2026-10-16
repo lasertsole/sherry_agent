@@ -74,6 +74,16 @@ async def sessions_spawn_runtime_tool(
             "with no project directory to copy."
         ),
     ] = False,
+    output_schema: Annotated[
+        dict | None,
+        Field(
+            description="Optional JSON Schema constraining the subagent's FINAL "
+            "output. When given, the child must produce JSON matching it (the "
+            "provider's native structured output where supported, else a "
+            "structured-output tool call). Use for tasks that must return "
+            "machine-readable data; omit for free-form text."
+        ),
+    ] = None,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
 
@@ -106,6 +116,7 @@ async def sessions_spawn_runtime_tool(
         run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
         functional_role_hint=functional_role,
         isolation=isolation,
+        output_schema=output_schema,
     )
 
     parts = [f"Subagent spawned: status={result.status}"]

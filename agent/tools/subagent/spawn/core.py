@@ -1208,6 +1208,7 @@ async def _execute_subagent_scoped(
             model_profile=model_profile,
             extra_tools=extra_tools,
             session_id=run.child_session_key,
+            output_schema=output_schema,
         )
 
         messages = [HumanMessage(content=user_message)]
@@ -1497,6 +1498,7 @@ async def _build_child_agent(
     model_profile: dict[str, str] | None = None,
     extra_tools: list[str] | None = None,
     session_id: str = "",
+    output_schema: dict | None = None,
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
@@ -1524,6 +1526,13 @@ async def _build_child_agent(
 
     Args:
         system_prompt: System prompt for the child agent.
+        output_schema: Optional JSON Schema constraining the child's FINAL
+            output. It is enforced at generation time through LangChain's
+            ``response_format`` (a raw schema resolves to ``AutoStrategy``: the
+            provider's native structured output where supported, else a
+            structured-output tool call), while ``build_structured_output_prompt``
+            keeps the schema in the system prompt as the prompt-level fallback
+            and Tier 1 re-validates on resume. ``None`` = free-form output.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
         tool_deny: Explicit deny-list (an empty list is authoritative — it means the
@@ -1569,6 +1578,12 @@ async def _build_child_agent(
         checkpointer=child_checkpointer,
         tools=final_tools,
         middleware=child_middleware,
+        # Structured output as a CONSTRAINT, not a request: a raw schema makes
+        # LangChain auto-pick the provider's native structured output (or a
+        # structured-output tool where the provider lacks one). The schema text
+        # in the system prompt stays as guidance, and Tier 1 still re-validates
+        # the delivered result — this layer just stops the obvious misses.
+        response_format=output_schema if output_schema else None,
     )
 
     # Wrap with RepetitionGuardWrapper, mirroring the main agent
