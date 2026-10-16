@@ -634,7 +634,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P3~~ | ~~1.2 taskflow 并行执行~~ | 中 | 高 | 依赖 1.1 | **✅ 已完成**（并发缺陷修复 + `max_parallel_dispatch` 有界并发 + 血缘；6 个并发/血缘测试文件） |
 | ~~P3~~ | ~~1.6 microcompact 独立通道~~ | 低 | 低 | 无 | **❌ 不做**（ContextEvictionMiddleware 已做工具结果落盘驱逐 + preemptive_truncate 已做预截断，重叠） |
 | ~~P3~~ | ~~6.2 OffPeak 低谷期~~ | 低 | 低 | 无 | **❌ 不做**（cron 系统已有降级背压 + skill 绑定；"低谷期跑"就是 cron 表达式，不需独立概念） |
-| **P3** | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型可先上 | 未开工 |
+| ~~P3~~ | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型 | **Step 1 已完成**（2026-10-16：PostToolUse / PostToolUseFailure / Stop 只读派发 + 默认关总开关；Step 2 信任门 / Step 3 updatedInput 待做，见 `计划_2.1_用户可配生命周期Hook.md`） |
 | ❌ | 桌面端 / CUA | — | 很高 | 见第七节 | — |
 
 **建议起手顺序**（2026-10-14 更新）：
