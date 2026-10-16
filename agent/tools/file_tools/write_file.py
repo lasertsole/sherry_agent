@@ -31,6 +31,7 @@ from langchain_community.tools.file_management import WriteFileTool
 from langchain_community.tools.file_management.write import WriteFileInput
 
 from agent.tools.pub_base import SessionId
+from agent.tools.pub_base import ensure_git_for_writes
 from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
@@ -160,6 +161,14 @@ class FormattedWriteFileTool(WriteFileTool):
         root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
+
+        # A session with a BOUND project directory writes into a git tree or not
+        # at all: the first write initializes a missing repository and a failed
+        # init refuses the write (see pub_base/git_ensure). An unbound session is
+        # untouched.
+        git_ok, git_error = ensure_git_for_writes(session_id)
+        if not git_ok:
+            return tool_error(git_error)
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)

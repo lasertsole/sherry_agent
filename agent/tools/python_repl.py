@@ -36,6 +36,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 from config.path import ROOT_DIR
 from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base import (
+    ensure_git_for_writes,
     SessionId,
     _extract_session_id,
     resolve_tool_session_id,
@@ -259,6 +260,12 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
+        # A bound project directory must be a git repository before code runs:
+        # python can write files (open(path, 'w')) without touching the file
+        # tools, so the gate cannot live only in write_file / patch_file.
+        git_ok, git_error = ensure_git_for_writes(resolve_tool_session_id(session_id, run_manager))
+        if not git_ok:
+            return git_error
         session_cwd = _resolve_session_cwd(run_manager, session_id)
         result, ran_sandboxed = _run_with_timeout(
             query,
@@ -283,6 +290,10 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
+        # Same gate as the sync path (see its comment).
+        git_ok, git_error = ensure_git_for_writes(resolve_tool_session_id(session_id, run_manager))
+        if not git_ok:
+            return git_error
         session_cwd = _resolve_session_cwd(run_manager, session_id)
         result, ran_sandboxed = await asyncio.to_thread(
             _run_with_timeout,
