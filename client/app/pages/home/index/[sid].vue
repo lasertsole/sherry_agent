@@ -1028,6 +1028,9 @@ onUnmounted(() => {
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
   off('chat:file-mention', onFileMentionRequest);
+  // Cancel this page's pending draft-write debounce timers (the slice lives in
+  // this component's closure; an orphaned timer would fire into a dead page).
+  drafts.dispose();
   // This instance's KeepAlive slot was evicted: release its persistent socket.
   releaseAgentSocket(mySid);
 });
