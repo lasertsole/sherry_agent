@@ -66,6 +66,12 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "curator.archive_after_days": 90,
     "curator.consolidate": True,
     "curator.prune_builtins": True,
+    # User-configurable lifecycle hooks (agent/middlewares/user_hooks): the
+    # master switch for the ``hooks`` section's commands. OFF by default and
+    # registered here so the 应用配置 panel can flip it and the shipped
+    # sherry.jsonc stays complete; the per-event hook LISTS are read by
+    # ``load_sherry_hooks`` (they are lists of objects, not scalars).
+    "hooks.enabled": False,
 }
 
 SHERRY_SETTING_KEYS: tuple[str, ...] = tuple(SHERRY_SETTING_DEFAULTS)
@@ -82,6 +88,7 @@ _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 _BOOL_KEYS = frozenset(
     {
         "heartbeat.enabled",
+        "hooks.enabled",
         "curator.enabled",
         "curator.consolidate",
         "curator.prune_builtins",
@@ -153,6 +160,103 @@ def load_sherry_list_setting(key: str) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+#: Lifecycle-hook event vocabulary (``hooks.<Event>`` in sherry.jsonc). The
+#: parser accepts all of them so a config written ahead of the implementation
+#: validates; the dispatcher serves the Step-1 subset and logs the rest.
+HOOK_EVENTS: tuple[str, ...] = (
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "Stop",
+    "UserPromptSubmit",
+    "SessionStart",
+)
+
+#: Fields one hook entry may carry (anything else is ignored).
+_HOOK_ENTRY_KEYS: frozenset[str] = frozenset({"command", "matcher", "timeout_ms", "blocking"})
+
+
+def load_sherry_hooks() -> dict[str, Any]:
+    """Load the ``hooks`` section of ``sherry.jsonc``, validated.
+
+    Shape::
+
+        {"enabled": false, "PostToolUse": [{"command": ..., "matcher": "*",
+                                            "timeout_ms": 5000, "blocking": false}]}
+
+    Each entry needs a non-empty ``command`` (a string; split with
+    ``shlex.split`` at dispatch time, never a shell) and defaults
+    ``matcher="*"`` / ``timeout_ms=USER_HOOKS["default_timeout_ms"]`` /
+    ``blocking=False``. ``timeout_ms`` is clamped to
+    ``USER_HOOKS["max_timeout_ms"]`` and at most
+    ``USER_HOOKS["max_hooks_per_event"]`` entries survive per event — extras
+    are dropped with a warning.
+
+    Fail-soft like the rest of this module: a missing key/file, a non-dict
+    value or an entry without a usable command is skipped, never raised — the
+    application must boot on a half-edited config. Returns
+    ``{"enabled": bool, <Event>: [spec, ...]}`` with the events that carry at
+    least one usable spec; an absent/disabled section yields ``{"enabled": False}``.
+    """
+    from config.features import USER_HOOKS
+
+    try:
+        data = json5.loads(SHERRY_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"enabled": False}
+    if not isinstance(data, dict):
+        return {"enabled": False}
+    section = data.get("hooks")
+    if not isinstance(section, dict):
+        return {"enabled": False}
+
+    result: dict[str, Any] = {"enabled": section.get("enabled") is True}
+    for event in HOOK_EVENTS:
+        raw_entries = section.get(event)
+        if not isinstance(raw_entries, list):
+            continue
+        specs: list[dict[str, Any]] = []
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                continue
+            command = raw.get("command")
+            if not isinstance(command, str) or not command.strip():
+                continue
+            matcher = raw.get("matcher")
+            timeout = raw.get("timeout_ms")
+            try:
+                timeout_ms = (
+                    int(timeout) if timeout is not None else USER_HOOKS["default_timeout_ms"]
+                )
+            except (TypeError, ValueError):
+                timeout_ms = USER_HOOKS["default_timeout_ms"]
+            timeout_ms = max(1, min(timeout_ms, USER_HOOKS["max_timeout_ms"]))
+            specs.append(
+                {
+                    "command": command.strip(),
+                    "matcher": matcher.strip() if isinstance(matcher, str) else "*",
+                    "timeout_ms": timeout_ms,
+                    "blocking": raw.get("blocking") is True,
+                    "unknown_keys": sorted(set(raw) - _HOOK_ENTRY_KEYS),
+                }
+            )
+        if len(specs) > USER_HOOKS["max_hooks_per_event"]:
+            # Lazy loguru import, the pattern config/path.py uses: the config
+            # layer must stay importable before the logging sinks exist.
+            from loguru import logger
+
+            logger.warning(
+                "sherry.jsonc hooks.{}: {} entries declared, only the first {} are kept",
+                event,
+                len(specs),
+                USER_HOOKS["max_hooks_per_event"],
+            )
+            specs = specs[: USER_HOOKS["max_hooks_per_event"]]
+        if specs:
+            result[event] = specs
+    return result
 
 
 def get_sherry_setting(key: str) -> Any:

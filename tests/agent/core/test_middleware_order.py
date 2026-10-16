@@ -23,6 +23,7 @@ EXPECTED_ORDER = [
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",
+    "UserHooksMiddleware",
     "ContextEvictionMiddleware",
     "ToolCallNormalize",
     "PathGuard",

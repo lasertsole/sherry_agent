@@ -60,5 +60,32 @@
 
     // Whether to clean up usage records for built-in skills / 是否清理内置技能的使用记录
     "prune_builtins": true
+  },
+
+  // User-configurable lifecycle hooks (Step 1: read-only dispatch).
+  // Each entry is a command (split with shlex, NO shell) that receives one JSON
+  // payload on stdin and may print an optional JSON outcome on stdout; a
+  // non-JSON stdout is a successful run. Events dispatched today:
+  // PostToolUse / PostToolUseFailure (toolName, toolCallId, result/error preview,
+  // durationMs) and Stop (responsePreview, toolCallCount). PreToolUse /
+  // UserPromptSubmit / SessionStart are accepted by the parser but NOT
+  // dispatched in this build (blocking hooks need a trust gate).
+  // OFF by default: hooks execute commands, so enabling them is a deliberate act.
+  // 用户可配生命周期 Hook（Step 1：只读派发）。每条目是一个命令（shlex 拆分，
+  // 不经 shell），通过 stdin 收到一份 JSON，可在 stdout 返回可选 JSON 结果；
+  // 非 JSON 输出视为成功。当前派发 PostToolUse / PostToolUseFailure / Stop；
+  // PreToolUse 等已能解析但本版不派发（阻断型需要信任门）。默认关闭。
+  "hooks": {
+    // Master switch / 总开关
+    "enabled": false
+
+    // Example entries (uncomment to use):
+    // 示例（取消注释即可用）：
+    // ,"PostToolUse": [
+    //   { "command": "python ~/.sherry/hooks/audit_tool.py", "matcher": "write_*|patch_file", "timeout_ms": 5000 }
+    // ],
+    // ,"Stop": [
+    //   { "command": "curl -s -X POST http://localhost:9999/turn-done --data-binary @-", "matcher": "*", "timeout_ms": 3000 }
+    // ]
   }
 }

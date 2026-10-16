@@ -23,6 +23,10 @@ from .untrusted_output import (
     UntrustedOutputConfig as UntrustedOutputConfig,
     UNTRUSTED_OUTPUT as UNTRUSTED_OUTPUT,
 )
+from .user_hooks import (
+    UserHooksConfig as UserHooksConfig,
+    USER_HOOKS as USER_HOOKS,
+)
 from .redaction import (
     RedactionConfig as RedactionConfig,
     REDACTION as REDACTION,

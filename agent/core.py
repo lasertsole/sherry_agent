@@ -39,6 +39,7 @@ from .middlewares import (
     _MAIN_REQUIRED,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
+from .middlewares.user_hooks import UserHooksMiddleware
 from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
 from .middlewares.tool_selection import ToolSelectionMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -287,6 +288,13 @@ def _build_middlewares(
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         ToolGuardrails(),
+        # User-configurable lifecycle hooks (sherry.jsonc ``hooks``): registered
+        # directly after the guardrails so a guardrail-BLOCKED call never reaches
+        # a hook, and OUTER relative to the approval/persistence layers so
+        # PostToolUse observes the result the model will see. Read-only events
+        # (PostToolUse / PostToolUseFailure / Stop); OFF unless the config enables
+        # it, and a no-op without hooks.
+        UserHooksMiddleware(),
         # Registered directly after ToolGuardrails, i.e. OUTER relative
         # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
         # chain (first registered = outermost). MessagePersistence

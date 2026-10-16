@@ -36,6 +36,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",
+    "UserHooksMiddleware",
     "ContextEvictionMiddleware",
     "ToolCallNormalize",
     "PathGuard",
@@ -59,6 +60,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
 GATEABLE_MIDDLEWARES: frozenset[str] = frozenset(
     {
         "PlanContinuationEnforcer",
+        "UserHooksMiddleware",
         "TaskIntentMiddleware",
         "DynamicReminderMiddleware",
         "SubagentCompletionDrainMiddleware",

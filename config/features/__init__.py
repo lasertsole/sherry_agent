@@ -96,6 +96,8 @@ from .agent_side import (
     PtcConfig as PtcConfig,
     ToolGuardrailsConfig as ToolGuardrailsConfig,
     ToolResultEvictionConfig as ToolResultEvictionConfig,
+    UserHooksConfig as UserHooksConfig,
+    USER_HOOKS as USER_HOOKS,
     ToolsTimeoutsConfig as ToolsTimeoutsConfig,
     assert_max_token_valid as assert_max_token_valid,
 )

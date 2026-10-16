@@ -188,16 +188,17 @@ def test_a_repository_wide_search_completes_inside_the_budget(monkeypatch):
     answer that is honest and incomplete. The rg engine finishes the same
     traversal, so the result carries no truncation markers at all.
 
-    The budget is raised for this case on purpose: the measured cost of a
-    repo-wide scan here is ~2.6s against the shipped 5s budget (~3.3s under
-    pytest), so the default would make this test a load detector rather than an
-    engine check. It also scans the *live* repository, whose ``logs/output``
-    grows with every session — hence the loose wall-clock bound (a real
-    regression, a hang or an order-of-magnitude slowdown, still fails), and the
-    Python walk's own default-budget behaviour is pinned by
+    The budget is raised for this case on purpose: the shipped 5s default would
+    make this test a load detector rather than an engine check. It also scans
+    the *live* repository, whose data dirs grow with every session (a 226 MB
+    ``mes_memory.db``, the logs, the checkpoints) — on this host's PRoot
+    filesystem the traversal is pure I/O wait (measured 1m50 wall against 1.6s
+    of CPU), so the budget is sized well above that and the wall-clock bound
+    stays loose: a real regression, a hang or an order-of-magnitude slowdown
+    still fails, and the Python walk's own default-budget behaviour is pinned by
     ``test_search_bounds.py``.
     """
-    monkeypatch.setitem(TOOLS_TIMEOUTS, "file_tools_search_time_budget_s", 60.0)
+    monkeypatch.setitem(TOOLS_TIMEOUTS, "file_tools_search_time_budget_s", 240.0)
     # Assembled at runtime: a literal here would be found in this very file,
     # which is inside the tree being searched.
     pattern = "zzz_" + "no_such_symbol_" + "zzz"
@@ -210,4 +211,4 @@ def test_a_repository_wide_search_completes_inside_the_budget(monkeypatch):
     assert "scan_truncated" not in result, result
     assert "scan_stop_reason" not in result, result
     assert "truncated" not in result, result
-    assert elapsed < 120.0, f"a repo-wide scan took {elapsed:.1f}s"
+    assert elapsed < 300.0, f"a repo-wide scan took {elapsed:.1f}s"

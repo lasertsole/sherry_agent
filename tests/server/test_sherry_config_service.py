@@ -27,6 +27,11 @@ SAMPLE = """// app settings
     "archive_after_days": 90,
     "consolidate": true,
     "prune_builtins": true
+  },
+  // hooks: the master switch; the per-event hook lists are read by
+  // load_sherry_hooks (lists of objects), not by this scalar service.
+  "hooks": {
+    "enabled": false
   }
 }
 """
