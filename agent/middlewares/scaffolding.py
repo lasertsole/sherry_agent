@@ -116,6 +116,11 @@ _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(HeartbeatStaleness, ()),
     RequiredMiddlewareEntry(ToolCallNormalize, ()),
     RequiredMiddlewareEntry(MaxTokensBoostMiddleware, ()),
+    # Invalid tool-call salvage — the same silent-drop failure mode as the main
+    # chain: a child whose only call failed JSON parsing ends its invocation on
+    # a narration (the completion judge may continue it, but the call itself is
+    # gone and no edit happens).
+    RequiredMiddlewareEntry(InvalidToolCallRepairMiddleware, ()),
 )
 
 

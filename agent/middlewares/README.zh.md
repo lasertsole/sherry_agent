@@ -156,6 +156,9 @@ middleware = [
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
+    # 无效工具调用抢救：这里同样是最内层 wrap（子代理唯一调用解析失败时，
+    # 过去会以一段旁白结束本次调用）；ainvoke 意味着重发不剥离 callbacks。
+    InvalidToolCallRepairMiddleware(),
 ]
 # 子图以同样方式包装：
 child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
@@ -171,6 +174,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - `MaxTokensBoostMiddleware` 走非流式路径：子会话通过
   `ainvoke` 运行，因此子会话 id 永远不会置上 `is_stream_turn` 标志。
+- `InvalidToolCallRepairMiddleware` 同样在子链中运行（与主链一样位于最内层），
+  出于相同原因走非流式路径：子会话的 `is_stream_turn` 从不置位，重发不剥离 callbacks。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
 ### 每回合的实际执行顺序（主 Agent）
@@ -683,9 +688,10 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   恢复出的 token 不会向客户端二次推流。
 - **不绕过任何门**：修复后的调用照常走完整 `wrap_tool_call` 链
   （ToolGuardrails / PathGuard / HITL / sandbox）。
-- **常开**：属于 `scaffolding._MAIN_REQUIRED`（预设-中间件页显示为锁定）；无法修复的
-  条目打 WARNING 日志（原始 args 预览上限 `INVALID_TOOL_CALL["log_args_chars"]`）并
-  记一条 `invalid_tool_call` trajectory 事件。
+- **常开，两条链**：属于 `scaffolding._MAIN_REQUIRED`（预设-中间件页显示为锁定）与
+  `scaffolding._SUBAGENT_REQUIRED`（子代理同样把它放在最内层）。无法修复的条目打
+  WARNING 日志（原始 args 预览上限 `INVALID_TOOL_CALL["log_args_chars"]`）并记一条
+  `invalid_tool_call` trajectory 事件。
 
 ### ThinkingControlMiddleware
 

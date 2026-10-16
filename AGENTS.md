@@ -86,8 +86,10 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     corrective HumanMessage appended to the REQUEST only, bounded by
   │     `INVALID_TOOL_CALL["resend_max_retries"]`, stripping streaming callbacks
   │     like MaxTokensBoost does. Repaired calls still pass every wrap_tool_call
-  │     gate; the middleware is in `scaffolding._MAIN_REQUIRED` and the attempt
-  │     is logged + recorded as an `invalid_tool_call` trajectory event)
+  │     gate; the middleware is in `scaffolding._MAIN_REQUIRED` AND
+  │     `scaffolding._SUBAGENT_REQUIRED` (children carry it innermost too — their
+  │     chain has no LLMRetry, so the resend re-calls the child's model directly),
+  │     and the attempt is logged + recorded as an `invalid_tool_call` event)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
   │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about

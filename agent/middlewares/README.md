@@ -159,6 +159,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
+    # invalid tool-call salvage: innermost wrap layer here too (a child's
+    # only call failing JSON parsing used to end its invocation on a
+    # narration); ainvoke means the resend never strips callbacks.
+    InvalidToolCallRepairMiddleware(),
 ]
 # the child graph is wrapped the same way:
 child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
@@ -174,6 +178,9 @@ Differences vs the main agent:
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
+- `InvalidToolCallRepairMiddleware` runs in the child chain too (innermost,
+  like the main chain) and takes the non-streaming path for the same reason:
+  a child's `is_stream_turn` is never set, so the resend never strips callbacks.
 - When a child session finishes, the spawn code deletes the six `OutputRepetitionGuard` state keys (`SESSION_STATE_KEYS`) from `state_register_mem` in its `finally` block.
 
 ### Effective Per-Turn Order (main agent)
@@ -698,10 +705,12 @@ closest to the raw model call — so the graph state, the checkpointer and
   `MaxTokensBoostMiddleware` does, so the recovered tokens are not streamed twice.
 - **Never bypasses a gate**: repaired calls go through the full `wrap_tool_call`
   chain (ToolGuardrails / PathGuard / HITL / sandbox) like any other call.
-- **Always-on**: a member of `scaffolding._MAIN_REQUIRED` (the per-session
-  middleware tab shows it locked); unrepairable entries are logged (WARNING, the
-  raw-args preview capped by `INVALID_TOOL_CALL["log_args_chars"]`) and recorded as
-  an `invalid_tool_call` trajectory event.
+- **Always-on, in both chains**: a member of `scaffolding._MAIN_REQUIRED` (the
+  per-session middleware tab shows it locked) and of
+  `scaffolding._SUBAGENT_REQUIRED` (children carry it as the innermost wrap layer
+  too). Unrepairable entries are logged (WARNING, the raw-args preview capped by
+  `INVALID_TOOL_CALL["log_args_chars"]`) and recorded as an `invalid_tool_call`
+  trajectory event.
 
 ### ThinkingControlMiddleware
 

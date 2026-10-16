@@ -1297,6 +1297,7 @@ def _build_child_middlewares(
     """
     from agent.middlewares import (
         HeartbeatStaleness,
+        InvalidToolCallRepairMiddleware,
         IterationBudget,
         MaxTokensBoostMiddleware,
         Summarization,
@@ -1337,6 +1338,11 @@ def _build_child_middlewares(
         MaxTokensBoostMiddleware(),
         ToolCallNormalize(),
         HeartbeatStaleness(),
+        # Invalid tool-call salvage (syntax repair + bounded resend): registered
+        # LAST = innermost wrap layer, mirroring the main chain — the repaired
+        # message is what routes the child's loop. The resend path never strips
+        # callbacks here for the same reason as MaxTokensBoost above.
+        InvalidToolCallRepairMiddleware(),
     ]
 
 

@@ -159,6 +159,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
+    # 無効なツール呼び出しの救済：ここでも最内層の wrap（子の唯一の呼び出しが
+    # JSON 解析に失敗すると、以前はナレーションでこの呼び出しが終わっていた）。
+    # ainvoke のため再送で callbacks は外れません。
+    InvalidToolCallRepairMiddleware(),
 ]
 # 子グラフも同様にラップ：
 child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
@@ -174,6 +178,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - `MaxTokensBoostMiddleware` は非ストリーミング経路を取ります。子は
   `ainvoke` で実行されるため、子セッション id に `is_stream_turn` フラグが立つことはありません。
+- `InvalidToolCallRepairMiddleware` は子チェーンでも動作します（メインチェーンと同様に最内層）。
+  同じ理由で非ストリーミング経路を取ります：子セッションの `is_stream_turn` は設定されないため、
+  再送で callbacks は外れません。
 - 子セッション終了時、spawn コードは `finally` ブロックで `state_register_mem` から `OutputRepetitionGuard` の 6 つの状態キー（`SESSION_STATE_KEYS`）を削除します。
 
 ### ターンごとの実効順序（メインエージェント）
@@ -697,8 +704,9 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
   回復したトークンが二重に配信されることはありません。
 - **ゲートを迂回しない**：修復された呼び出しは通常どおり `wrap_tool_call` チェーン全体
   （ToolGuardrails / PathGuard / HITL / sandbox）を通ります。
-- **常時有効**：`scaffolding._MAIN_REQUIRED` の一員です（プリセット-ミドルウェア画面では
-  ロック表示）。修復できない項目は WARNING ログ（生の args プレビューは
+- **常時有効、両チェーン**：`scaffolding._MAIN_REQUIRED`（プリセット-ミドルウェア画面では
+  ロック表示）と `scaffolding._SUBAGENT_REQUIRED`（子も最内層に持つ）の一員です。
+  修復できない項目は WARNING ログ（生の args プレビューは
   `INVALID_TOOL_CALL["log_args_chars"]` で上限）に出し、`invalid_tool_call` trajectory
   イベントとして記録します。
 

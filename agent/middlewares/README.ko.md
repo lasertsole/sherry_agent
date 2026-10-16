@@ -158,6 +158,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
+    # 무효 도구 호출 구제: 여기서도 최내곽 wrap(자식의 유일한 호출이 JSON 파싱에
+    # 실패하면 예전에는 나레이션으로 이 호출이 끝났음). ainvoke이므로
+    # 재전송은 callbacks를 제거하지 않습니다.
+    InvalidToolCallRepairMiddleware(),
 ]
 # 자식 그래프도 같은 방식으로 래핑:
 child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
@@ -173,6 +177,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - `MaxTokensBoostMiddleware`는 비스트리밍 경로를 탑니다. 자식은
   `ainvoke`로 실행되므로 자식 세션 id에는 `is_stream_turn` 플래그가 절대 설정되지 않습니다.
+- `InvalidToolCallRepairMiddleware`는 자식 체인에서도 동작합니다(메인 체인과 마찬가지로 최내곽).
+  같은 이유로 비스트리밍 경로를 탑니다: 자식 세션의 `is_stream_turn`은 설정되지 않으므로
+  재전송은 callbacks를 제거하지 않습니다.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
 ### 턴별 실제 실행 순서 (메인 에이전트)
@@ -695,10 +702,10 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
   토큰이 두 번 전송되지 않습니다.
 - **어떤 게이트도 우회하지 않음**: 복구된 호출은 여느 호출과 같이 `wrap_tool_call`
   체인 전체(ToolGuardrails / PathGuard / HITL / sandbox)를 통과합니다.
-- **상시 켜짐**: `scaffolding._MAIN_REQUIRED`의 일원입니다(프리셋-미들웨어 화면에서 잠금
-  표시). 복구할 수 없는 항목은 WARNING 로그(원본 args 미리보기는
-  `INVALID_TOOL_CALL["log_args_chars"]`로 상한)와 `invalid_tool_call` trajectory 이벤트로
-  기록됩니다.
+- **상시 켜짐, 두 체인**: `scaffolding._MAIN_REQUIRED`(프리셋-미들웨어 화면에서 잠금
+  표시)와 `scaffolding._SUBAGENT_REQUIRED`(자식도 최내곽에 보유)의 일원입니다. 복구할 수
+  없는 항목은 WARNING 로그(원본 args 미리보기는 `INVALID_TOOL_CALL["log_args_chars"]`로
+  상한)와 `invalid_tool_call` trajectory 이벤트로 기록됩니다.
 
 ### ThinkingControlMiddleware
 
