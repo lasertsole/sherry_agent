@@ -42,7 +42,8 @@ def _install_vertexai_stub() -> None:
     now (the harness is their only consumer) — run this suite with
     ``uv run --group evals python evals/evals.py graph_rag``.
     """
-    import langchain_community.chat_models  # noqa: F401  (parent package must init first)
+    # Eval-only dependency (the `evals` group): unresolved in the default env.
+    import langchain_community.chat_models  # noqa: F401  # pyright: ignore[reportMissingImports]
 
     module = types.ModuleType("langchain_community.chat_models.vertexai")
 
@@ -144,10 +145,13 @@ async def _collect_samples(work_dir: Path) -> list[dict[str, str | list[str]]]:
 def main() -> None:
     """Run the full eval: pipeline collection + RAGAS scoring + JSON report."""
     from models import build_auxiliary_llm, build_embed_model
-    from ragas import EvaluationDataset, evaluate
-    from ragas.embeddings import LangchainEmbeddingsWrapper
-    from ragas.llms import LangchainLLMWrapper
-    from ragas.metrics import (
+
+    # The `evals` dependency group (see pyproject.toml) — these are unresolved in
+    # the default environment on purpose: run with `uv run --group evals`.
+    from ragas import EvaluationDataset, evaluate  # pyright: ignore[reportMissingImports]
+    from ragas.embeddings import LangchainEmbeddingsWrapper  # pyright: ignore[reportMissingImports]
+    from ragas.llms import LangchainLLMWrapper  # pyright: ignore[reportMissingImports]
+    from ragas.metrics import (  # pyright: ignore[reportMissingImports]
         AnswerRelevancy,
         ContextPrecision,
         Faithfulness,
