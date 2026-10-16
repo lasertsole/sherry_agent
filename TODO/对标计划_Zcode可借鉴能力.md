@@ -1,6 +1,6 @@
 # 对标计划: Zcode 可借鉴能力
 
-> **状态**: 持续更新（2026-10-14 第三轮核验：6 项已完成、2 项部分完成、7 项经评估不需要做、1 项已合并）
+> **状态**: 持续更新（2026-10-17 第四轮：**1.2 taskflow 并行执行全量落地**（含三个并发缺陷修复与血缘指针）、**2.1 Hooks Step 1 落地**（只读三事件，Step 2/3 待做）；此前 2026-10-14 第三轮核验：6 项已完成、2 项部分完成、7 项经评估不需要做、1 项已合并）
 > **创建日期**: 2026-09-30（2026-09-30 第二轮源码核验后重写）
 > **最近更新**: 2026-10-14 — §1.1 四条差距逐一评估（①②④ 不做、③ 合并）；新增 §1.6/§1.5 完整协议/§2.3 续/§6.2 四项不做（附理由）；§6.4 重定位为非 ZCode 特性
 > **对标对象**: Zcode v3.14.4（Electron 桌面端 + `apps/zcode-cli`），本机 `/usr/bin/zcode`、`~/.zcode/`、源码树 `/home/honor/Desktop/project/ZCode`
@@ -33,7 +33,7 @@
 | 主 agent 工具数 | 34 [落盘实测，rollout 工具数组] | 36（`build_main_tools()`）[实测] | 平 |
 | 工具并发上限 | 10（批内，`toolConcurrency.maxConcurrency`）[源码确认] | 25 槽位（main 12 / subagent 8 / nudge 4 / nested 1）[实测] | **Sherry**（语义分 lane） |
 | 会话级 token 硬预算 | ✅ `session_target.token_budget` [落盘实测] | ❌ [实测] | **Zcode** |
-| 用户可配生命周期 hook | ✅ 7 事件 [源码确认] | ❌ [实测] | **Zcode** |
+| 用户可配生命周期 hook | ✅ 7 事件 [源码确认] | 🔨 Step 1 已落地（PostToolUse / PostToolUseFailure / Stop 只读派发，总开关默认关）[实测，2026-10-17 更新] | **Zcode 仍领先**（可阻断 / 可改 input / 更多事件） |
 | 结构化上下文注入目录 | ✅ 27 个 `system-reminder` 源 [源码确认] | ✅ `reminder_catalog` 统一目录 + 30K 预算 [实测，2026-10-14 新增] | **平**（Sherry 已补齐） |
 | Prompt 缓存分段 | ✅ `stable` / `dynamic` + `cacheHint` [源码确认] | 🔨 stable/dynamic 已分离（cached system prompt vs per-turn reminders），未拆独立 message [实测，2026-10-14 更新] | **Zcode 仍领先**（wire 层分段） |
 | turn 内联输入（`guide`） | ✅ 3 种投递语义 [源码确认] | ❌（2 种）[实测] | **Zcode** |
@@ -84,15 +84,29 @@
 
 ---
 
-### 1.2 taskflow 并行执行（需先修并发缺陷，再并行化 dispatch）
+### 1.2 ✅ taskflow 并行执行（**已落地，2026-10-16**）
 
 **Zcode 做法** [源码确认]：`Caps { maxConcurrency }` 在 run 提交时固定并持久化到 `dwf_run.caps_max_concurrency`，之后可通过 `WorkflowEngine.setMaxConcurrency`（`engine.ts:579-589`）**热调**。上限公式 `max(1, min(16, availableParallelism() - 2))`，外加按 `provider/model` 分桶的进程级 governor。
 
-**Sherry 现状** [实测]：taskflow **无并发维度**——DAG 的可并行 step 是顺序 dispatch 的，只有 subagent 内部并发受 SUBAGENT lane（8）约束。三个 dispatch 入口全是 `for sid in ...: await _dispatch.dispatch_child(...)` 顺序循环（`taskflow_dispatch.py:116-144`、`taskflow_resume.py::_auto_dispatch_ready:456-485`、`taskflow_wait_all.py::_retry_settled_steps:143-169`）。每个 `dispatch_child` 返回后子 agent 是后台 asyncio task（lane 已支持 8 并发），但 spawn 调用本身是串行的。waves 系统（`waves.py::compute_waves`）只是进度面板的 reporting view——**dispatch 代码不读 wave 输出**。
+**落地结果** [实测，2026-10-16]：三个 dispatch 入口全部改为 `asyncio.gather` 并发 spawn，由
+`TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 **2**，灰度起步；设为 1 精确还原顺序行为）的信号量限流；
+SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：成功的全部持久化（一次
+`update_flow_with_conflict_retry`）、失败的点名报告。下面的三个并发缺陷同批修复，血缘指针
+（1.1③）随本项一起落地。
 
-**差距**：taskflow 里两个互不依赖的 step 无法并行 spawn。
+**落地位置**：`agent/tools/taskflow/tools/{taskflow_dispatch,taskflow_resume,taskflow_wait_all}.py`、
+`config/features/agent_side/taskflow_infra.py`、`agent/tools/todolist/evidence_ledger.py`；
+测试 `tests/agent/tools/taskflow/{test_concurrent_resume,test_concurrent_dispatch,test_no_double_dispatch,test_parallel_dispatch_failure,test_evidence_concurrent,test_lineage}.py`；
+设计文档 `docs/long-running-tasks/taskflow/`（四语 "Auto-Dispatch Wave" + "Flow Lineage" 两节）。
 
-#### 前置：必须先修的并发缺陷（否则并行 dispatch 会丢数据）
+**与原计划的偏差（均已写进 docs）**：血缘指针的写入点是 **create 路径**
+（`taskflow_create(resumed_from=…)` 盖前驱的 `superseded_by`），因为 `taskflow_replan` 是原地重写、从不分叉新流。
+计划文件 `计划_taskflow并行执行.md` 与 `计划_证据链修正.md` 均已退休；下方「并发缺陷 / 实施计划 /
+测试」三块是**落地前的设计原文**，保留作设计依据（全部已执行）。
+
+**原差距（存档）**：taskflow 里两个互不依赖的 step 无法并行 spawn。
+
+#### 前置：并发缺陷（**已修，2026-10-16**；下方为当时的核验原文）
 
 [源码确认 + 实测，2026-10-14 深度核验]
 
@@ -119,7 +133,7 @@
 - `taskflow_resume` 返回 success 字符串或 `Error:` 字符串，`_try_auto_resume_taskflow` 都 `return True`
 - error 被 log 但不传播 → announce pipeline 认为成功了
 
-#### 实施计划
+#### 实施计划（**已全部执行完毕**，下方为当时的计划原文，保留作设计依据）
 
 **Phase 0：修复并发缺陷（不做这步就并行 = 丢数据）**
 
@@ -145,7 +159,7 @@
 | 2a | `config/features/agent_side/taskflow_infra.py` | 新增 `max_parallel_dispatch: int`（默认 2，灰度起步；上限不超过 `subagent_max_concurrent`） |
 | 2b | dispatch 入口 | 加 `asyncio.Semaphore(max_parallel_dispatch)` 限制单次 dispatch 调用的并发 spawn 数（lane 系统已提供全局背压，但 per-dispatch-call 信号量防止单次 dispatch 炸 50 个子 agent） |
 
-**Phase 3：测试**
+**Phase 3：测试**（已落地，文件名见上方「落地位置」）
 
 | 测试 | 场景 |
 |---|---|
@@ -234,7 +248,7 @@ stream_recovery_anchor_created → stream_recovery_started → anchor_selected
 
 ## 二、扩展点（Zcode 最值得学的工程化部分）
 
-### 2.1 ⭐ 用户可配生命周期 Hook（7 事件）
+### 2.1 🔨 用户可配生命周期 Hook（**Step 1 已落地 2026-10-16**；Step 2 / Step 3 待做）
 
 **Zcode 做法** [源码确认] `contracts/src/hooks/index.ts:7-15`：
 ```
@@ -274,6 +288,19 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 **收益**：这是 Sherry 作为**自托管**产品最缺的能力——用户想定制自己的策略，现在只能改 Python 源码。
 
 **风险**：**高**。阻塞型 hook 是执行路径上的用户代码，安全设计必须从第一天就有信任门 + 超时 + 熔断 + 审计，不能像 Zcode 那样「先无条件执行再说」。
+
+**Step 1 落地结果** [实测，2026-10-16]：`agent/middlewares/user_hooks/` 派发
+`PostToolUse` / `PostToolUseFailure`（`toolName` / `toolCallId` / 有界结果·错误预览 / `durationMs`）与
+`Stop`（`responsePreview` / `toolCallCount`）——只读，不能阻断 / 改 input / 注入上下文。配置在
+`sherry.jsonc` 的 `hooks` 段（`config/sherry_settings.py::load_sherry_hooks` 校验），总开关
+`hooks.enabled` **默认关**（入库的配置不得自行让 agent 执行命令——这是对原计划「列了就跑」的安全修正）；
+子进程 `shlex` 拆分不经 shell、环境擦洗、每 hook 超时并 kill、stdout 有上限且按可选 JSON 解析
+（非 JSON = 成功）、载荷只带预览、失败只记日志不阻断回合。注册在 `ToolGuardrails` 之后且
+`GATEABLE`（预设-中间件可关）。测试 `tests/agent/middlewares/test_user_hooks.py`（20 例）。
+
+**Step 2 / Step 3 未做，阻塞点**：Step 2 的信任门依赖仓库里**不存在**的 workspace-trust 概念；
+Step 3 的「幂等变换」约束没有判定机制。两者连同既有设计留在 `计划_2.1_用户可配生命周期Hook.md`
+（该计划**未删**，Step 1 部分标为已落地）。
 
 ---
 
@@ -637,14 +664,14 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P3~~ | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型 | **Step 1 已完成**（2026-10-16：PostToolUse / PostToolUseFailure / Stop 只读派发 + 默认关总开关；Step 2 信任门 / Step 3 updatedInput 待做，见 `计划_2.1_用户可配生命周期Hook.md`） |
 | ❌ | 桌面端 / CUA | — | 很高 | 见第七节 | — |
 
-**建议起手顺序**（2026-10-14 更新）：
+**建议起手顺序**（2026-10-14 更新；**2026-10-17**：1.2 与 2.1 的 Step 1 已完成，见上表）：
 1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；1.3 + 3.2 仍待做
 2. ~~先核查再决策：4.4~~ → **已完成**（fd 直写已落地）
 3. ~~第二批（需设计）：5.1 + 2.3 一起做~~ → **2.3 已部分完成**（stable/dynamic 分离已做，wire 层分段 ❌ 不做）；5.1 仍待做
 4. ~~2.2 目录化作为 3.1 的前置~~ → **已完成**，3.1 guide 可开工
 5. ~~1.1 四条差距~~ → **①②④ 不做**；**③ 血缘指针已完成**（随并行执行计划一起落地并退休）
 6. ~~1.5 完整锚点协议~~ → **不做**（trajectory ledger 已覆盖）；~~1.6 microcompact~~ → **不做**（ContextEviction 已覆盖）；~~2.3 续 wire 分段~~ → **不做**（概念分离已落地）；~~6.2 OffPeak~~ → **不做**（cron 已覆盖）；~~6.4 大窗口~~ → **非 ZCode 特性**（换模型即生效）
-7. **独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里
+7. ~~**独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里~~ → **两者都已按独立立项交付**：6.1 WebFetch ✅（SSRF 复用 + 本地 opt-in）；2.1 Hooks Step 1 ✅（只读三事件 + 默认关总开关），Step 2 的信任门 / Step 3 的 updatedInput 仍待做（阻塞点见 2.1 节）
 
 ---
 
@@ -652,6 +679,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 
 对标后确认 Sherry 已具备或更优，记录以免重复讨论。
 **2026-10-14 更新**：新增 6 项已完成项 + 7 项经评估不需要做的项 + 1 项已合并。
+**2026-10-17 更新**：1.2 taskflow 并行执行（含并发缺陷 + 血缘）与 2.1 Hooks Step 1 已落地，对应行已在上表标记。
 
 | 能力 | Zcode | Sherry 结论 |
 | --- | --- | --- |
