@@ -2,13 +2,13 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> [长任务](../README.zh.md)的一部分：从"结果回来了"到"这个步骤/流程算完成"之间的每一道门——调用方声明的结局、失败分类器、Tier 1 schema 门、辅助 LLM 的 StepJudge，以及 `taskflow_finish` 的 A–E——以及它们之间的优先级。
+> [长任务](../README.zh.md)的一部分：从"结果回来了"到"这个步骤/流程算完成"之间的每一道门——调用方声明的结局、Tier 1 schema 门、失败分类器、辅助 LLM 的 StepJudge，以及 `taskflow_finish` 的 A–E——以及它们之间的优先级。
 
 声明不等于事实。子代理说"做完了"，引擎必须判断这句话有没有含义。两个层级、每个边界一次判定：
 
 | 层级 | 问题 | 门 |
 | :--- | :--- | :--- |
-| **步骤**（`taskflow_resume`） | 这个结果满足调用方要求了吗？ | 声明的 `step_outcome` → 失败分类器 → Tier 1 schema → Tier 2 StepJudge |
+| **步骤**（`taskflow_resume`） | 这个结果满足调用方要求了吗？ | 声明的 `step_outcome` → Tier 1 schema → 失败分类器 → Tier 2 StepJudge |
 | **流程**（`taskflow_finish`） | 这个 DAG 真的完成了吗？ | A DAG 完整性 → B 未决步骤 → C 证据 → E 目标判别 |
 
 **代码来源：** `agent/tools/taskflow/tools/taskflow_resume.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`agent/tools/taskflow/tools/_retry.py`、`agent/tools/taskflow/step_judge.py`、`agent/tools/taskflow/evidence_collector.py`、`config/features/agent_side/step_judge.py`、`config/features/agent_side/goal_gate.py`。以下每个常量、判定与拒绝文本都逐条对照该代码核验过。
@@ -21,10 +21,10 @@
 
 ### 0. 失败检测——这到底算不算失败？
 
-两个信号，任一成立即对该结果按"失败"处理：
+Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该结果是失败分类器消费的两个信号之一——另一个是结果文本：
 
+- **结构。** `schema_validated=false`（Tier 1 的产出）是文本分类看不见的失败，并且在这里就重新派发——**在任何判别调用之前**，所以结构破损永远不会花掉判别器的 token。
 - **结果文本。** `classify_failure`（`_retry.py`）是对模式表做小写子串扫描，并预先剔除被否定的措辞（`cannot connect` 不能被读成连接失败）。措辞落在模式表之外的失败不会被捕获——分类器是启发式，不是判决。
-- **结构。** `schema_validated=false`（见 Tier 1）是文本分类看不见的失败，并且在这里就重新派发——**在任何判别调用之前**，所以结构破损永远不会花掉判别器的 token。
 
 带 `retry_policy` 的步骤会把分类出的失败重新派发到一个替换子代理上，而不是就此结算，直到策略预算用尽。`taskflow_wait_all` 无法分类一个没有返回文本的死掉子代理，所以只要预算还剩就一律消耗一份。没有配置策略 = 失败被记录、步骤就此结算（除非调用方另有所述，即 `failed`）。
 

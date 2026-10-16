@@ -2,13 +2,13 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> [장시간 작업](../README.ko.md)의 일부: "결과가 돌아왔다"에서 "이 스텝/플로우는 완료"까지의 모든 게이트 — 호출자가 선언한 결말, 실패 분류기, Tier 1 스키마 게이트, 보조 LLM인 StepJudge, `taskflow_finish`의 A–E — 그리고 그들 사이의 우선순위.
+> [장시간 작업](../README.ko.md)의 일부: "결과가 돌아왔다"에서 "이 스텝/플로우는 완료"까지의 모든 게이트 — 호출자가 선언한 결말, Tier 1 스키마 게이트, 실패 분류기, 보조 LLM인 StepJudge, `taskflow_finish`의 A–E — 그리고 그들 사이의 우선순위.
 
 주장은 사실이 아닙니다. 자식 서브에이전트가 "완료했습니다"라고 말해도, 그것이 의미가 있는지 판단하는 것은 엔진입니다. 경계마다 한 번씩, 두 층위로 판정합니다:
 
 | 층위 | 질문 | 게이트 |
 | :--- | :--- | :--- |
-| **스텝**(`taskflow_resume`) | 이 결과가 호출자의 요구를 충족했는가? | 선언된 `step_outcome` → 실패 분류기 → Tier 1 스키마 → Tier 2 StepJudge |
+| **스텝**(`taskflow_resume`) | 이 결과가 호출자의 요구를 충족했는가? | 선언된 `step_outcome` → Tier 1 스키마 → 실패 분류기 → Tier 2 StepJudge |
 | **플로우**(`taskflow_finish`) | 이 DAG가 실제로 끝났는가? | A DAG 완전성 → B 미해결 스텝 → C 증거 → E 목표 판정 |
 
 **소스 코드:** `agent/tools/taskflow/tools/taskflow_resume.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_retry.py`, `agent/tools/taskflow/step_judge.py`, `agent/tools/taskflow/evidence_collector.py`, `config/features/agent_side/step_judge.py`, `config/features/agent_side/goal_gate.py`. 아래의 모든 상수·판정·거부 문구는 이 코드와 대조해 검증했습니다.
@@ -21,10 +21,10 @@
 
 ### 0. 실패 감지 — 애초에 실패인가?
 
-두 신호가 있고, 어느 하나만 성립해도 그 결과는 "실패"로 취급됩니다:
+Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_validated`를 산출합니다. 그 결과는 실패 분류기가 소비하는 두 신호 중 하나입니다 — 다른 하나는 결과 텍스트:
 
+- **구조.** `schema_validated=false`(Tier 1의 출력)는 텍스트 분류가 볼 수 없는 실패이며 여기서 재디스패치됩니다 — **판정 호출 전**이므로 깨진 형태가 판정 토큰을 쓰지 않습니다.
 - **결과 텍스트.** `classify_failure`(`_retry.py`)는 패턴 표에 대한 소문자 부분 문자열 스캔이며, 부정된 표현을 미리 제거합니다(`cannot connect`를 연결 실패로 읽으면 안 됩니다). 패턴 표 밖의 표현으로 된 실패는 잡히지 않습니다 — 분류기는 휴리스틱이지 판정이 아닙니다.
-- **구조.** `schema_validated=false`(Tier 1 참조)는 텍스트 분류가 볼 수 없는 실패이며 여기서 재디스패치됩니다 — **판정 호출 전**이므로 깨진 형태가 판정 토큰을 쓰지 않습니다.
 
 `retry_policy`를 가진 스텝은 분류된 실패를 확정하지 않고 대체 자식에게 재디스패치합니다(정책 예산이 남아 있는 동안). `taskflow_wait_all`은 텍스트를 반환하지 않은 죽은 자식을 분류할 수 없으므로 예산이 남아 있으면 항상 하나를 소비합니다. 정책이 없으면 실패를 기록하고 스텝은 확정됩니다(호출자가 달리 말하지 않았다면 `failed`).
 

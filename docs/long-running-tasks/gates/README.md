@@ -2,13 +2,13 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Part of [Long-Running Tasks](../README.md): every gate between "a result came back" and "this step / flow is done" — the caller's declared outcome, the failure classifier, the Tier 1 schema gate, the auxiliary-LLM StepJudge, and `taskflow_finish`'s A–E — plus the precedence between them.
+> Part of [Long-Running Tasks](../README.md): every gate between "a result came back" and "this step / flow is done" — the caller's declared outcome, the Tier 1 schema gate, the failure classifier, the auxiliary-LLM StepJudge, and `taskflow_finish`'s A–E — plus the precedence between them.
 
 A claim is not a fact. A child subagent says "done"; the engine has to decide whether that means anything. Two levels of decision, one per boundary:
 
 | Level | Question | Gates |
 | :--- | :--- | :--- |
-| **Step** (`taskflow_resume`) | Did this result satisfy what the caller asked for? | declared `step_outcome` → failure classifier → Tier 1 schema → Tier 2 StepJudge |
+| **Step** (`taskflow_resume`) | Did this result satisfy what the caller asked for? | declared `step_outcome` → Tier 1 schema → failure classifier → Tier 2 StepJudge |
 | **Flow** (`taskflow_finish`) | Is this DAG actually finished? | A DAG completeness → B unresolved steps → C evidence → E goal judge |
 
 **Source of truth:** `agent/tools/taskflow/tools/taskflow_resume.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_retry.py`, `agent/tools/taskflow/step_judge.py`, `agent/tools/taskflow/evidence_collector.py`, `config/features/agent_side/step_judge.py`, `config/features/agent_side/goal_gate.py`. Every constant, verdict and rejection text below was verified against that code.
@@ -21,10 +21,10 @@ A claim is not a fact. A child subagent says "done"; the engine has to decide wh
 
 ### 0. Failure detection — is this a failure at all?
 
-Two signals, either one makes the result a failure for the retry policy:
+Tier 1 schema validation runs **first** (see below) and produces `schema_validated`. That result is one of two signals the failure classifier consumes — the other is the result text:
 
+- **The structure.** `schema_validated=false` (Tier 1's output) is a failure text classification cannot see, and it re-dispatches here — **before** any judge call, so a broken shape never spends judge tokens.
 - **The result text.** `classify_failure` (`_retry.py`) is a lowercased substring scan over a pattern table, with the negated phrasings pre-stripped (`cannot connect` must not read as a connection failure). A failure phrased outside the table is not caught — the classifier is a heuristic, not a verdict.
-- **The structure.** `schema_validated=false` (see Tier 1) is a failure text classification cannot see, and it re-dispatches here — **before** any judge call, so a broken shape never spends judge tokens.
 
 A step carrying a `retry_policy` re-dispatches a classified failure onto a replacement child instead of settling it, while the policy's budget lasts. `taskflow_wait_all` cannot classify a dead child that returned no text, so it always consumes retry budget while one remains. No policy configured = the failure is recorded and the step settles (`failed` unless the caller said otherwise).
 

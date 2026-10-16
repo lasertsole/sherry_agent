@@ -2,13 +2,13 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> [長時間タスク](../README.ja.md)の一部：「結果が返ってきた」から「このステップ／フローは完了」までのすべてのゲート — 呼び出し側が宣言する結末、失敗分類器、Tier 1 スキーマゲート、補助 LLM の StepJudge、`taskflow_finish` の A–E — と、それらの優先順位。
+> [長時間タスク](../README.ja.md)の一部：「結果が返ってきた」から「このステップ／フローは完了」までのすべてのゲート — 呼び出し側が宣言する結末、Tier 1 スキーマゲート、失敗分類器、補助 LLM の StepJudge、`taskflow_finish` の A–E — と、それらの優先順位。
 
 申告は事実ではありません。子サブエージェントが「完了しました」と言っても、意味があるかどうかを決めるのはエンジンです。境界ごとに二つのレベルで判定します：
 
 | レベル | 問い | ゲート |
 | :--- | :--- | :--- |
-| **ステップ**（`taskflow_resume`） | この結果は呼び出し側の要求を満たしたか？ | 宣言された `step_outcome` → 失敗分類器 → Tier 1 スキーマ → Tier 2 StepJudge |
+| **ステップ**（`taskflow_resume`） | この結果は呼び出し側の要求を満たしたか？ | 宣言された `step_outcome` → Tier 1 スキーマ → 失敗分類器 → Tier 2 StepJudge |
 | **フロー**（`taskflow_finish`） | この DAG は本当に完成したか？ | A DAG 完全性 → B 未解決ステップ → C エビデンス → E 目標判定 |
 
 **ソースコード:** `agent/tools/taskflow/tools/taskflow_resume.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`agent/tools/taskflow/tools/_retry.py`、`agent/tools/taskflow/step_judge.py`、`agent/tools/taskflow/evidence_collector.py`、`config/features/agent_side/step_judge.py`、`config/features/agent_side/goal_gate.py`。以下の定数・判定・拒否文言はすべてこのコードに対して検証済みです。
@@ -21,10 +21,10 @@
 
 ### 0. 失敗検出 — そもそもこれは失敗なのか？
 
-二つの信号があり、どちらか一方でその結果は「失敗」として扱われます：
+Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validated` を産出します。その結果は失敗分類器が消費する二つの信号の一つです — もう一つは結果テキスト：
 
+- **構造。** `schema_validated=false`（Tier 1 の出力）はテキスト分類が見られない失敗で、ここで再ディスパッチされます — **判定呼び出しの前**なので、壊れた形が判定トークンを消費することはありません。
 - **結果テキスト。** `classify_failure`（`_retry.py`）はパターン表に対する小文字の部分文字列走査で、否定された言い回しを事前に除去します（`cannot connect` を接続失敗と読んではいけません）。パターン表にない言い回しの失敗は捕捉されません — 分類器はヒューリスティックであり判定ではありません。
-- **構造。** `schema_validated=false`（Tier 1 参照）はテキスト分類が見られない失敗で、ここで再ディスパッチされます — **判定呼び出しの前**なので、壊れた形が判定トークンを消費することはありません。
 
 `retry_policy` を持つステップは、分類された失敗を決着させずに代替の子サブエージェントへ再ディスパッチします（ポリシーの予算が続く限り）。`taskflow_wait_all` はテキストを返さなかった死んだ子を分類できないため、予算が残っている限り必ず一つ消費します。ポリシー未設定＝失敗を記録してステップは確定します（呼び出し側が別段の指示をしていなければ `failed`）。
 
