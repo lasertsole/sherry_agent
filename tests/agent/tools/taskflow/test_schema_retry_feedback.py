@@ -1,4 +1,4 @@
-"""Judgement-gate corrections on the retry path (plan 判断门修正 gaps A + B).
+"""Judgement-gate corrections on the retry path (schema feedback + spawn contract).
 
 Gap A — a Tier 1 schema failure short-circuits BEFORE the judge, so the step's
 ``judge_feedback`` is empty and the replacement child used to be re-spawned
