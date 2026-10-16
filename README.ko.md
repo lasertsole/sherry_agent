@@ -96,7 +96,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 | **웹 검색** | langchain-tavily(Tavily API) + 자체 호스팅 SearXNG를 대체 백엔드로 사용, Tavily 실패 시 자동 폴백 |
 | **웹 fetch** | `web_fetch`는 http(s) URL 하나를 markdown으로 읽습니다: 공개 페이지는 SSRF 가드·DNS 피닝·홉별 리다이렉트 검사를 거치고, 로컬/개발 서버 주소는 명시 스위치(`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`)가 필요합니다 |
 | **코드 검색** | ripgrep(`ripgrep-bin` 으로 의존성과 함께 설치), 순수 Python 스캔이 항상 대비하는 폴백 |
-| **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-community + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
+| **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-classic + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
 | **구조화 출력** | instructor, json_repair |
 | **평가(Evaluation)** | RAGAS(그래프 RAG 품질 지표) + 자체 샌드박스 평가 프레임워크(`evals/`) |
 | **MCP** | langchain-mcp-adapters(`plugins/mcp_server/`에서 서버 구성) |

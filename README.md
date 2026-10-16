@@ -97,7 +97,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 | **Web Search** | langchain-tavily (Tavily API) + a self-hosted SearXNG instance as the alternative backend, with automatic Tavily→SearXNG fallback |
 | **Web Fetch** | `web_fetch` reads ONE http(s) URL as markdown: SSRF-guarded, DNS-pinned and per-hop-redirect-checked for public pages, with an opt-in switch (`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`) for local/dev-server addresses |
 | **Code Search** | ripgrep, installed with the dependencies (`ripgrep-bin`), with the pure-Python scan as the always-available fallback |
-| **LLM Providers** | langchain-openai, langchain-deepseek, langchain-community + a 20+ provider registry (OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM, and more) |
+| **LLM Providers** | langchain-openai, langchain-deepseek, langchain-classic + a 20+ provider registry (OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM, and more) |
 | **Structured Output** | instructor, json_repair |
 | **Evaluation** | RAGAS (graph-RAG quality metrics) + a homegrown sandboxed suite runner (`evals/`) |
 | **MCP** | langchain-mcp-adapters (servers configured in `plugins/mcp_server/`) |

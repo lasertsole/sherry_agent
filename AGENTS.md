@@ -1040,7 +1040,11 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 `tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
 
 `evals/` sits beside the pytest tree: a homegrown, sandboxed framework with seven
-registered suites (`uv run python evals/evals.py [suite]`). `swebench` is the
+registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag` suite
+needs the eval-only dependency group — `uv run --group evals python
+evals/evals.py graph_rag` — because `ragas` (and the `langchain-community` it
+hard-imports) is the harness's only consumer and stays out of the shipped
+runtime closure). `swebench` is the
 EXTERNAL benchmark — SWE-bench_Lite instances run through the same harness with
 the instance's own verdict (pinned base commit + a per-instance `uv venv
 --python 3.11` with the checkout installed; the agent sees only the problem
@@ -1098,6 +1102,14 @@ to the suite is the version-controlled reference (threshold + model id).
   FAILED init is never cached — the next write retries. `git init` uses git's
   own defaults: no `--bare`, no `--initial-branch`, no user.name/email
   handling, no auto-commit.
+- the three tool classes that used to inherit from the archived
+  `langchain-community` / `langchain-experimental` base classes
+  (``FormattedWriteFileTool``, ``SafeShellTool``, ``TimedPythonREPLTool``) are
+  re-based on plain `BaseTool` with the schemas reproduced locally — the field
+  names, descriptions, required sets and the `str -> [str]` commands
+  normalization are byte-identical, pinned by
+  `tests/agent/tools/test_tool_schema_goldens.py` (which also asserts those
+  modules no longer import the archived packages at all)
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). Its fuzzy ladder (`pub_base/text_matcher.py`, 11 strategies, first match wins) strips a copied snippet's line numbers (`N|` / `N: ` / `N<tab>`) and unescapes `\uXXXX` before the fuzzy ones, refuses `replace_all=True` for the lossy `BROAD_MATCHERS` (a global replace must not land on a lookalike), re-indents a fuzzy replacement to the file's own indentation and rewrites its straight quotes into the region's curly ones (only when the region uses that kind exclusively — mixed code/prose keeps straight quotes).
 - `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.

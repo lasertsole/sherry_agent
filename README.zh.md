@@ -96,7 +96,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 | **联网搜索** | langchain-tavily（Tavily API）+ 自托管 SearXNG 作为备选后端，Tavily 失效时自动降级 |
 | **网页读取** | `web_fetch` 把单个 http(s) URL 读成 markdown：公网页面走 SSRF 防护、DNS pinning 与逐跳重定向复检；本地/开发服务器地址需要显式开关（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`） |
 | **代码搜索** | ripgrep，随依赖一并安装（`ripgrep-bin`）；纯 Python 扫描始终作为兜底 |
-| **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
+| **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-classic + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
 | **结构化输出** | instructor、json_repair |
 | **评估（Evaluation）** | RAGAS（图谱 RAG 质量指标）+ 自建沙箱化评估框架（`evals/`） |
 | **MCP** | langchain-mcp-adapters（在 `plugins/mcp_server/` 中配置服务器） |
