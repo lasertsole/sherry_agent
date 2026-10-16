@@ -896,7 +896,7 @@ agent = create_agent(
         PathGuard(),  # path-argument screening
         HeartbeatStaleness(),  # stuck-turn watchdog
         HumanInTheLoop(HITLConfig()),  # approval gates
-        Summarization(  # context compaction (innermost)
+        Summarization(  # context compaction (inner, above InvalidToolCallRepair)
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

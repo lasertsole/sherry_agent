@@ -100,7 +100,7 @@ Ordering guarantees (verified in `agent/core.py`, list order = registration orde
 |---|---|
 | `before_agent` (list order) | `MultimodalProcessor` runs **before** the model loop, so P1-9 tagging always sees the final text with media hints already merged |
 | `before_model` (list order) | P1-9 tag runs before `ToolCallNormalize` / `SubagentCompletionDrainMiddleware` |
-| `wrap_model_call` (outermost → innermost) | ContextEviction (P1-9 view replacement) → … → Summarization (innermost, closest to the LLM) |
+| `wrap_model_call` (outermost → innermost) | ContextEviction (P1-9 view replacement) → … → Summarization → InvalidToolCallRepairMiddleware (innermost, closest to the LLM) |
 | `after_model` (reverse order) | `MessagePersistenceMiddleware` is the **first** hook after the model — the AI message is persisted before HITL strips denied tool calls or raises `GraphInterrupt` |
 | `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence (innermost)** — the raw result is flushed first, the preview is swapped in on the way out |
 

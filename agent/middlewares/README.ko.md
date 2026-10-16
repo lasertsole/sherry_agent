@@ -887,7 +887,7 @@ agent = create_agent(
         PathGuard(),  # 경로 인자 스크리닝
         HeartbeatStaleness(),  # 멈춘 턴 워치독
         HumanInTheLoop(HITLConfig()),  # 승인 게이트
-        Summarization(  # 컨텍스트 압축 (최내곽)
+        Summarization(  # 컨텍스트 압축 (안쪽, InvalidToolCallRepair 바깥)
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

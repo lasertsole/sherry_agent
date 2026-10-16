@@ -97,7 +97,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 |---|---|
 | `before_agent`(리스트 순) | `MultimodalProcessor`가 모델 루프 **전에** 돌므로 P1-9 태깅은 항상 미디어 힌트가 병합된 최종 텍스트를 본다 |
 | `before_model`(리스트 순) | P1-9 태깅이 `ToolCallNormalize` / `SubagentCompletionDrainMiddleware`보다 먼저 |
-| `wrap_model_call`(바깥→안) | ContextEviction(P1-9 뷰 대체) → … → Summarization(가장 안쪽, LLM에 가장 가까움) |
+| `wrap_model_call`(바깥→안) | ContextEviction(P1-9 뷰 대체) → … → Summarization → InvalidToolCallRepairMiddleware(가장 안쪽, LLM에 가장 가까움) |
 | `after_model`(역순) | `MessagePersistenceMiddleware`가 모델 이후 **첫** 훅 — HITL이 거부된 도구 호출을 벗겨내거나 `GraphInterrupt`를 올리기 전에 AI 메시지가 영속화된다 |
 | `wrap_tool_call`(바깥→안) | IterationBudget → ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence(가장 안쪽)** — 원본 결과가 먼저 플러시되고 나가는 길에 프리뷰로 교체된다 |
 

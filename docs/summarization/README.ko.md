@@ -34,7 +34,7 @@
 - `before_agent` / `abefore_agent`(`core.py:399` / `core.py:403`) — **T1 사전 점검**
 - `wrap_model_call` / `awrap_model_call`(`core.py:413` / `core.py:495`) — **T2 디스패치, T3 응답 후 재확인, T4/T5 에러 복구 링**
 
-미들웨어 체인에서는 **가장 안쪽 — LLM에 가장 가까운** 위치에 놓입니다. 압축이 발동되면 히스토리는 항상 다음 모양이 됩니다:
+미들웨어 체인에서는 `LLMRetryMiddleware` 바로 안쪽에 놓이며, 그 안쪽을 감싸는 것은 `InvalidToolCallRepairMiddleware`뿐입니다——LLM에 가장 가까운 것은 그쪽입니다. 압축이 발동되면 히스토리는 항상 다음 모양이 됩니다:
 
 ```
 HumanMessage("What did we do so far?")

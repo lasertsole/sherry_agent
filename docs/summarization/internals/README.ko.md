@@ -173,8 +173,8 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 등록 지점
 
 ```python
-# agent/core.py:324 — 메인 에이전트 (Summarization은 마지막 미들웨어:
-# 가장 안쪽 wrap 레이어, LLM에 가장 가까움)
+# agent/core.py:324 — 메인 에이전트 (최내곽 wrap 레이어는
+# InvalidToolCallRepairMiddleware. Summarization은 LLMRetry 바로 안쪽)
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,

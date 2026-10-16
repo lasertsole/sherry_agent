@@ -173,8 +173,8 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 登録箇所
 
 ```python
-# agent/core.py:324 — メインエージェント（Summarization は最後のミドルウェア:
-# 最も内側の wrap レイヤ、LLM に最も近い）
+# agent/core.py:324 — メインエージェント（最内層の wrap は
+# InvalidToolCallRepairMiddleware。Summarization は LLMRetry のすぐ内側）
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,

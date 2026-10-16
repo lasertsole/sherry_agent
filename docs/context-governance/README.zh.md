@@ -96,7 +96,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|
 | `before_agent`（列表顺序） | `MultimodalProcessor` 在模型循环**之前**运行，因此 P1-9 打标总能见到媒体提示已合并的最终文本 |
 | `before_model`（列表顺序） | P1-9 打标先于 `ToolCallNormalize` / `SubagentCompletionDrainMiddleware` |
-| `wrap_model_call`（外→内） | ContextEviction（P1-9 视图替换）→ … → Summarization（最内层，最靠近 LLM） |
+| `wrap_model_call`（外→内） | ContextEviction（P1-9 视图替换）→ … → Summarization → InvalidToolCallRepairMiddleware（最内层，最靠近 LLM） |
 | `after_model`（逆序） | `MessagePersistenceMiddleware` 是模型之后的**第一个**钩子 —— AI 消息先落库，然后 HITL 才会剥离被拒工具调用或抛出 `GraphInterrupt` |
 | `wrap_tool_call`（外→内） | IterationBudget → ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence（最内层）** —— 原始结果先刷盘，往外传递时才换成预览 |
 

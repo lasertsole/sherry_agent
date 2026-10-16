@@ -893,7 +893,7 @@ agent = create_agent(
         PathGuard(),  # パス引数のスクリーニング
         HeartbeatStaleness(),  # スタックターンのウォッチドッグ
         HumanInTheLoop(HITLConfig()),  # 承認ゲート
-        Summarization(  # コンテキスト圧縮（最内層）
+        Summarization(  # コンテキスト圧縮（内側、InvalidToolCallRepair の外）
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

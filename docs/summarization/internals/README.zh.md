@@ -173,8 +173,8 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 注册点
 
 ```python
-# agent/core.py:324 — 主 agent（Summarization 是最后一个中间件：
-# 最内层 wrap，离 LLM 最近）
+# agent/core.py:324 — 主 agent（最内层 wrap 是
+# InvalidToolCallRepairMiddleware；Summarization 紧挨 LLMRetry 内侧）
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,

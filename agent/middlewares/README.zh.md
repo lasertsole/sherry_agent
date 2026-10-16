@@ -868,7 +868,7 @@ agent = create_agent(
         PathGuard(),  # 路径参数筛查
         HeartbeatStaleness(),  # 卡死回合看门狗
         HumanInTheLoop(HITLConfig()),  # 审批门控
-        Summarization(  # 上下文压缩（最内层）
+        Summarization(  # 上下文压缩（内层，InvalidToolCallRepair 之外）
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,

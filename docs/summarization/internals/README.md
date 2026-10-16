@@ -173,8 +173,8 @@ Main agent only (`need_update_system_prompt=True`): after a compression the midd
 ## 📌 Registration Sites
 
 ```python
-# agent/core.py:324 — main agent (Summarization is the LAST middleware:
-# innermost wrap layer, closest to the LLM)
+# agent/core.py:324 — main agent (the innermost wrap layer is
+# InvalidToolCallRepairMiddleware; Summarization sits directly inside LLMRetry)
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,
