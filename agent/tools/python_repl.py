@@ -30,7 +30,7 @@ import json
 import textwrap
 import subprocess
 from loguru import logger
-from langchain_experimental.tools import PythonREPLTool
+from langchain_core.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 
 from config.path import ROOT_DIR
@@ -233,24 +233,32 @@ def _run_with_timeout(
     return result["out"] or "(no output)", ran_sandboxed
 
 
-class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
-    name: str = "python_repl"
-    """PythonREPLTool with a timeout on each execution.
+class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
+    """A Python REPL that runs each call in a sandboxed, time-limited subprocess.
 
-    The tool name is declared HERE, like every other tool in the codebase
-    (a factory-side ``tool.name = ...`` silently lost the name if a caller
-    ever constructed the class directly).
-
-    Uses subprocess to run code in an isolated Python process and kills it
-    on timeout — clean, no leakage, works on Windows.
-
-    Note: ``PythonREPLTool`` defines NO explicit ``args_schema``, so
-    ``tool_call_schema`` (including ``sandbox``) is derived from the ``_run``
-    signature below — the opposite mechanism from terminal's ShellTool
-    args_schema subclassing.
+    Re-based on ``BaseTool``: the former ``PythonREPLTool`` parent came from the
+    archived ``langchain-experimental`` and contributed nothing this tool did
+    not already replace — its ``_run`` ran in-process through ``python_repl``
+    (which upstream itself now calls superseded by sandboxes), while this tool
+    spawns a subprocess through the repo's own sandbox.
     """
 
-    tool_call_schema: ClassVar[Any] = class_or_instance_schema(PythonREPLTool)
+    name: str = "python_repl"
+    # The DESCRIPTION is upstream PythonREPLTool's sentence verbatim: the model
+    # has always been shown it, and the migration must not change the surface.
+    description: str = (
+        "A Python shell. Use this to execute python commands. Input should be a "
+        "valid python command. If you want to see the output of a value, you "
+        "should print it out with `print(...)`."
+    )
+
+    # ``args_schema`` stays unset: the tool_call_schema (query + sandbox) is
+    # derived from the ``_run`` signature below. Pinned byte-for-byte by
+    # ``tests/agent/tools/test_tool_schema_goldens.py``.
+    #
+    #: CLASS-level access keeps working through the same descriptor the terminal
+    #: tool uses (langchain-core's ``tool_call_schema`` is an instance property).
+    tool_call_schema: ClassVar[Any] = class_or_instance_schema(BaseTool)
 
     def _run(
         self,

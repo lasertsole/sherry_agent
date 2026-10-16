@@ -2,13 +2,10 @@
 
 Sandbox-hardening additions (see docs/sandbox/README.md):
 
-- ``SafeShellInput`` subclass: the ``sandbox`` flag is exposed to the LLM via
-  an explicit ``args_schema`` override (ShellTool declares args_schema
-  explicitly, so signature-only changes never propagate — the schema must be
-  subclassed). The ClassVar ``tool_call_schema`` is assigned through the
-  shared factory ``class_or_instance_schema(ShellTool)`` (pub_base/
-  schema_utils.py), so it can be read from the class too (langchain_core
-  1.4.7 defines it as a bare instance ``@property``).
+- ``SafeShellInput``: the LLM-facing schema (``commands`` + the ``sandbox`` /
+  ``run_in_background`` / ``timeout`` additions), wired as ``args_schema`` so
+  the model sees exactly this surface (frozen by
+  ``tests/agent/tools/test_tool_schema_goldens.py``).
 - ``sandbox`` parameter on ``_run``/``_arun`` (langchain injects schema fields
   by name), with scope/policy guards: ``caller_scope != "main"`` +
   ``sandbox=False`` is denied outright; ``SANDBOX_POLICY=required`` +
@@ -45,14 +42,14 @@ import asyncio
 from pathlib import Path
 import re
 import subprocess
+import warnings
 from typing import Any, ClassVar
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import override
 from config import ROOT_DIR
 from config.features import TERMINAL_BG, TOOLS_TIMEOUTS
-from langchain_community.tools import ShellTool
-from langchain_community.tools.shell.tool import ShellInput
+from langchain_core.tools import BaseTool
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.tools import ToolException
 
@@ -149,10 +146,37 @@ _SENSITIVE_FILE_PATTERNS = [
 ]
 
 
-class SafeShellInput(ShellInput):
-    """ShellInput + the ``sandbox`` flag, visible to the LLM."""
+class SafeShellInput(BaseModel):
+    """The LLM-facing terminal schema.
 
+    ``commands`` reproduces ``langchain_community``'s ``ShellInput`` verbatim —
+    the field text and the ``str -> [str]`` before-validator, which the HITL
+    layer relies on reading ``args.get("commands")`` — because the model sees
+    this schema and that package is archived.
+    ``tests/agent/tools/test_tool_schema_goldens.py`` freezes the surface.
+
+    The validator keeps upstream's warning text on purpose: three test modules
+    filter on it by that exact string, and the migration's bar is an unchanged
+    surface.
+    """
+
+    commands: str | list[str] = Field(
+        ..., description="List of shell commands to run. Deserialized using json.loads"
+    )
+
+    #: Runtime-injected; excluded from the model-facing schema.
     session_id: SessionId = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_commands(cls, values: Any) -> Any:
+        """Wrap a bare string into a one-element list (upstream semantics)."""
+        if isinstance(values, dict):
+            commands = values.get("commands")
+            if not isinstance(commands, list):
+                values["commands"] = [commands]
+            warnings.warn("The shell tool has no safeguards by default. Use at your own risk.")
+        return values
 
     sandbox: bool = Field(
         default=True,
@@ -182,17 +206,29 @@ class SafeShellInput(ShellInput):
     )
 
 
-class SafeShellTool(SandboxGuardMixin, ShellTool):
+class SafeShellTool(SandboxGuardMixin, BaseTool):
+    """Run shell commands (sandbox-wrapped, session-scoped cwd).
+
+    Re-based on ``BaseTool``: the former ``ShellTool`` parent came from the
+    archived ``langchain-community`` and contributed nothing this tool did not
+    already replace (its ``_run`` delegated to a ``BashProcess``, its ``process``
+    / ``ask_human_input`` fields went unused). The model-facing surface is
+    unchanged — pinned by ``tests/agent/tools/test_tool_schema_goldens.py``.
     """
+
     name: str = "terminal"
-    description: str = "Run shell commands in a sandboxed workspace."
-    """
+    # The DESCRIPTION deliberately stays upstream's sentence ("Run shell commands
+    # on this Linux machine."): it is what the model has always been shown, and
+    # the migration must not change the tool surface.
+    description: str = "Run shell commands on this Linux machine."
 
-    tool_call_schema: ClassVar[Any] = class_or_instance_schema(ShellTool)
-
-    # ShellTool sets args_schema=ShellInput EXPLICITLY — signature-only changes
-    # never propagate; the subclass must be wired here.
     args_schema: type[BaseModel] = SafeShellInput
+
+    #: CLASS-level ``SafeShellTool.tool_call_schema`` must keep working:
+    #: langchain-core defines it as a bare instance ``@property``, so the
+    #: descriptor synthesizes a throwaway instance and forwards to ``BaseTool``'s
+    #: getter (which derives the schema from ``args_schema`` above).
+    tool_call_schema: ClassVar[Any] = class_or_instance_schema(BaseTool)
 
     # Legacy fallback working directory. Commands now resolve their cwd from the
     # session (``_resolve_cwd``); this field is only consulted when no session is

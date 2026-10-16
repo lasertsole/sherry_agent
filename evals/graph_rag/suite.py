@@ -36,7 +36,11 @@ def _install_vertexai_stub() -> None:
     That module was removed from langchain-community (superseded by the
     langchain-google-vertexai partner package). ragas only references the class
     in a provider factory this project never selects, so an inert stand-in is
-    sufficient and the project's pinned langchain-community stays untouched.
+    sufficient.
+
+    ragas AND langchain-community both live in the ``evals`` dependency group
+    now (the harness is their only consumer) — run this suite with
+    ``uv run --group evals python evals/evals.py graph_rag``.
     """
     import langchain_community.chat_models  # noqa: F401  (parent package must init first)
 
