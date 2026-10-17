@@ -169,6 +169,9 @@ async def test_prestart_gate_ignores_own_inflight_turn_starts(monkeypatch):
 
     ws = _Socket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
     calls, started, finished, cancelled = [], asyncio.Event(), asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(
         at, "async_generate", _fake_generate(calls, started, None, finished, cancelled)

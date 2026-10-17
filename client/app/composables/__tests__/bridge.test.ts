@@ -264,20 +264,47 @@ describe('sendChatMessage (browser WebSocket)', () => {
     }
   });
 
-  it('rejects immediately with midStream error when the socket closes after chunks (never resends)', async () => {
-    // Case B: the stream broke after chunks were received — content is already on screen, resending would duplicate it, so it must fail immediately
-    const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, () => {});
-    const ws = FakeWebSocket.instances[0]!;
-    ws.open();
-    ws.frame({ event: 'chunk', session_id: 's1', content: 'partial', type: 'text' });
-    ws.closeFromServer();
-    await expect(promise).rejects.toMatchObject({
-      name: 'StreamInterruptedError',
-      midStream: true
-    });
-    // Never reconnect/resend: still only the original single socket, and the payload was sent exactly once
-    expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(ws.sent).toHaveLength(1);
+  it('resumes a mid-stream turn instead of resending it (no duplicate content)', async () => {
+    // Stream-resume contract: the server keeps the turn running after the
+    // socket dies, so the client reconnects and asks for a TEXT SNAPSHOT. The
+    // generation payload is never re-sent (that would replay the turn).
+    vi.useFakeTimers();
+    try {
+      const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, () => {});
+      const ws = FakeWebSocket.instances[0]!;
+      ws.open();
+      ws.frame({ event: 'chunk', session_id: 's1', content: 'partial', type: 'text' });
+      ws.closeFromServer();
+
+      // The send stays pending while the socket reconnects (no immediate reject).
+      let settled = false;
+      void promise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      vi.advanceTimersByTime(1000);
+      const resumed = FakeWebSocket.instances[1]!;
+      resumed.open();
+      const frames = resumed.sent.map(raw => JSON.parse(raw));
+      // Snapshot request only — the generation payload appears exactly once, on
+      // the ORIGINAL socket.
+      expect(frames).toEqual([{ type: 'resume_stream', session_id: 's1', content: {} }]);
+      expect(ws.sent).toHaveLength(1);
+
+      // The snapshot reply ends the reconnect flow; the turn finishes normally.
+      resumed.frame({ event: 'stream_resume', session_id: 's1', content: { status: 'ok', text: 'partial+more' } });
+      resumed.frame({ event: 'done', session_id: 's1', message_ids: [] });
+      await expect(promise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

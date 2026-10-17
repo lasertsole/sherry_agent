@@ -159,6 +159,41 @@ export function useChatStream(deps: ChatStreamDeps) {
   const onStreamReconnected = () => {
     reconnectState.value = null;
   };
+  /**
+   * Stream-resume snapshot (`resume_stream` reply, emitted by the socket).
+   *
+   * `ok` carries the running turn's authoritative accumulated text: REPLACE
+   * the turn's tail AI text with it — never append. Buffered deltas are
+   * flushed first because the snapshot already contains them; frames are never
+   * replayed, so nothing can be duplicated. A non-ok status means there is no
+   * running turn: refetch the persisted transcript for `ended`/`unknown`;
+   * `gone` (deleted / never persisted) stays quiet.
+   * @param event
+   */
+  const onStreamResumed = (event: unknown) => {
+    const payload = (typeof event === 'object' && event !== null ? event : {}) as {
+      sessionId?: string;
+      status?: string;
+      text?: string;
+    };
+    if (payload.sessionId && payload.sessionId !== mySid) return;
+    if (payload.status === 'ok') {
+      chunks.flushPendingText?.();
+      const turn = streamingTurn.value;
+      const rows = chatMessages.value;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        if (row && row.role === CHAT_ROLE.AI && row.turn_num === turn) {
+          row.content = payload.text ?? '';
+          break;
+        }
+      }
+      return;
+    }
+    if (payload.status !== 'gone') {
+      void loadSessionHistory(mySid);
+    }
+  };
   const onStreamReconnectFailed = () => {
     reconnectState.value = null;
   };
@@ -798,6 +833,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     clearQueueBadge,
     onStreamReconnecting,
     onStreamReconnected,
-    onStreamReconnectFailed
+    onStreamReconnectFailed,
+    onStreamResumed
   };
 }

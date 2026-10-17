@@ -53,6 +53,7 @@ from server.service.session_settings_service import promote_pending_settings
 from server.service.stream_driver import StreamDriver
 from server.service.stream_diag import public_error_text
 from server.service.trajectory_store import turn_start_event, turn_scope
+from runtime.session.ws_push import broadcast_to_session
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
 
@@ -212,9 +213,10 @@ def _parse_payload_text(payload: str) -> str:
 async def _send_turn_error(session_id: str, route: str, content: str) -> None:
     """Route an error frame: ws → socket, other routes → registered router."""
     if route == "ws":
-        await _send_ws(
-            get_websocket_by_session_id(session_id),
+        await broadcast_to_session(
+            session_id,
             {"event": "error", "session_id": session_id, "content": content},
+            warn_prefix="TurnRunner: ws send failed",
         )
         return
     router = _OUTBOUND_ROUTERS.get(route)
@@ -631,7 +633,9 @@ class _WsTurnStreamDriver(StreamDriver):
     """
 
     async def send_frame(self, payload: dict[str, Any]) -> None:
-        await _send_ws(self.websocket, payload)
+        # Same fan-out contract as the resume path: every live socket of the
+        # session receives each frame exactly once, never a replay.
+        await broadcast_to_session(self.session_id, payload)
 
     async def check_interrupt(self) -> dict[str, Any] | None:
         return await get_pending_interrupt(self.session_id)

@@ -35,11 +35,9 @@ class FakeStateDB:
         return True
 
 
-class _NoWebsocket:
-    """relation_register double: the fail-open push path finds no socket."""
-
-    def get_websocket_by_session_id(self, session_id: str) -> None:
-        return None
+async def _no_broadcast(session_id: str, payload: dict, **_kwargs) -> int:
+    """Fail-open broadcast double: no socket is ever bound."""
+    return 0
 
 
 @pytest.fixture()
@@ -61,7 +59,7 @@ class TestTodoServicePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
 
         await TodoService.update_todos(
             "sess-1",
@@ -80,7 +78,7 @@ class TestTodoServicePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
         ref = "workspace/sessions/sess-new/plans/auth.md"
 
         await TodoService.update_todos("sess-new", [{"content": "a", "position": 0}], plan_ref=ref)
@@ -95,7 +93,7 @@ class TestTodoServicePlanRef:
         monkeypatch: pytest.MonkeyPatch,
     ):
         fake_state.set_state("sess-1", "plan_ref", "workspace/sessions/sess-1/plans/old.md")
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
 
         await TodoService.update_todos("sess-1", [{"content": "a", "position": 0}])
 
@@ -111,7 +109,7 @@ class TestTodoServicePlanRef:
         monkeypatch: pytest.MonkeyPatch,
     ):
         fake_state.set_state("sess-1", "plan_ref", "workspace/sessions/sess-1/plans/old.md")
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
 
         await TodoService.update_todos("sess-1", [{"content": "a", "position": 0}], plan_ref="")
 
@@ -170,7 +168,7 @@ class TestTodowritePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
         monkeypatch.setattr(todowrite_module, "_reminded_sessions", {"sess-chain"})
 
         await _todowrite().coroutine(
@@ -192,7 +190,7 @@ class TestTodowritePlanRef:
         monkeypatch: pytest.MonkeyPatch,
     ):
         fake_state.set_state("sess-keep", "plan_ref", "workspace/sessions/sess-keep/plans/keep.md")
-        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        monkeypatch.setattr(service_module, "broadcast_to_session", _no_broadcast)
         monkeypatch.setattr(todowrite_module, "_reminded_sessions", {"sess-keep"})
 
         await _todowrite().coroutine(

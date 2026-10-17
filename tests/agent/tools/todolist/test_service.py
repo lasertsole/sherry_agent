@@ -40,14 +40,19 @@ class _FakeWS:
         self._sent.append(text)
 
 
-class _FakeRelationRegister:
-    """Minimal relation_register double returning a preset websocket."""
+def _fake_broadcast(ws: _FakeWS | None):
+    """Minimal broadcast double delivering to a preset websocket."""
 
-    def __init__(self, ws: _FakeWS | None) -> None:
-        self._ws = ws
+    async def _broadcast(session_id: str, payload: dict, **_kwargs) -> int:
+        if ws is None:
+            return 0
+        try:
+            await ws.send_text(json.dumps(payload, ensure_ascii=False))
+        except Exception:  # noqa: BLE001 — the real broadcast swallows per-socket failures
+            return 0
+        return 1
 
-    def get_websocket_by_session_id(self, session_id: str) -> _FakeWS | None:
-        return self._ws
+    return _broadcast
 
 
 def _load_flow_returning(flow_id: str, step_id: str, status: str):
@@ -110,7 +115,7 @@ async def test_update_todos_persists_and_pushes_one_todo_updated_frame(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
     sent: list[str] = []
-    monkeypatch.setattr(service, "relation_register", _FakeRelationRegister(_FakeWS(sent)))
+    monkeypatch.setattr(service, "broadcast_to_session", _fake_broadcast(_FakeWS(sent)))
 
     result = await TodoService.update_todos("sess-1", [{"content": "a", "position": 0}])
 
@@ -318,7 +323,7 @@ async def test_plain_completed_todo_is_never_blocked(
 async def test_no_websocket_registered_does_not_raise(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(service, "relation_register", _FakeRelationRegister(None))
+    monkeypatch.setattr(service, "broadcast_to_session", _fake_broadcast(None))
 
     result = await TodoService.update_todos("sess-1", [{"content": "a"}])
 
@@ -330,8 +335,8 @@ async def test_ws_send_error_is_swallowed(isolated_db: Path, monkeypatch: pytest
     sent: list[str] = []
     monkeypatch.setattr(
         service,
-        "relation_register",
-        _FakeRelationRegister(_FakeWS(sent, fail=True)),
+        "broadcast_to_session",
+        _fake_broadcast(_FakeWS(sent, fail=True)),
     )
 
     result = await TodoService.update_todos("sess-1", [{"content": "a"}])

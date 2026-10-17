@@ -16,11 +16,10 @@ a client that misses the frame still shows the truth.
 
 from __future__ import annotations
 
-import json
 
 from loguru import logger
 
-from runtime.session.relation_register import relation_register
+from runtime.session.ws_push import broadcast_to_session
 
 __all__ = ["SEARCH_FALLBACK_EVENT", "push_search_fallback"]
 
@@ -40,9 +39,6 @@ async def push_search_fallback(session_id: str, backend: str, reason: str) -> No
     if not session_id:
         return
     try:
-        websocket = relation_register.get_websocket_by_session_id(session_id)
-        if websocket is None:
-            return
         payload = {
             "event": SEARCH_FALLBACK_EVENT,
             "session_id": session_id,
@@ -53,6 +49,6 @@ async def push_search_fallback(session_id: str, backend: str, reason: str) -> No
                 "message": fallback_message(backend, reason),
             },
         }
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        await broadcast_to_session(session_id, payload, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 — a push failure must never surface
         logger.warning("Failed to push search_backend_fallback for session {}: {}", session_id, e)

@@ -225,8 +225,10 @@ async def test_push_sends_the_frame_to_the_sessions_websocket(
     from agent.tools.taskflow import progress_push
 
     socket = _FakeWebSocket()
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        progress_push.relation_register, "get_websocket_by_session_id", lambda sid: socket
+        ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [socket]
     )
     monkeypatch.setattr(
         progress_push.store_sqlite,
@@ -247,9 +249,9 @@ async def test_push_sends_the_frame_to_the_sessions_websocket(
 async def test_push_is_a_quiet_no_op_without_a_socket(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent.tools.taskflow import progress_push
 
-    monkeypatch.setattr(
-        progress_push.relation_register, "get_websocket_by_session_id", lambda sid: None
-    )
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [])
     called: list[str] = []
     monkeypatch.setattr(
         progress_push.store_sqlite, "get_active_flows_sync", lambda sid: called.append(sid) or []
@@ -270,8 +272,10 @@ async def test_push_swallows_a_failing_socket(monkeypatch: pytest.MonkeyPatch) -
         async def send_text(self, text: str) -> None:
             raise RuntimeError("socket gone")
 
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        progress_push.relation_register, "get_websocket_by_session_id", lambda sid: _Boom()
+        ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [_Boom()]
     )
     monkeypatch.setattr(progress_push.store_sqlite, "get_active_flows_sync", lambda sid: [])
 
@@ -294,8 +298,6 @@ async def test_a_real_step_update_pushes_a_frame(
     import importlib
     import json
 
-    from agent.tools.taskflow import progress_push
-
     update_mod = importlib.import_module("agent.tools.taskflow.tools.taskflow_update_steps")
     from agent.tools.taskflow.registry import store_sqlite
 
@@ -308,8 +310,10 @@ async def test_a_real_step_update_pushes_a_frame(
         status="running",
     )
     socket = _FakeWebSocket()
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        progress_push.relation_register, "get_websocket_by_session_id", lambda sid: socket
+        ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [socket]
     )
 
     result = await update_mod.taskflow_update_steps.coroutine(

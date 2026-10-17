@@ -170,6 +170,12 @@ async def test_takeover_user_input_mid_turn_does_not_cancel(monkeypatch):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _RecordingSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
     spy = _make_spy()
     monkeypatch.setattr(at, "enqueue_steering", spy)
     # RED/GREEN compat: the old module exposes the takeover poll interval, the
@@ -217,6 +223,9 @@ async def test_send_text_closed_socket_tolerated_and_delivered(monkeypatch):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _ClosedFirstSendSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
     monkeypatch.setattr(at, "enqueue_steering", _make_spy())
     calls, started, finished, cancelled = [], asyncio.Event(), asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(
@@ -251,6 +260,9 @@ async def test_inflight_observable_by_detect_state_during_turn(monkeypatch):
     _fake_detect(monkeypatch, at, {"busy": False, "reason": "idle"})
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [])
     monkeypatch.setattr(at, "enqueue_steering", _make_spy())
     calls, started, block, finished, cancelled = (
         [],

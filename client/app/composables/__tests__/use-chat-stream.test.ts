@@ -593,3 +593,56 @@ describe('useChatStream busy reconcile triggers', () => {
     expect(removeSpy.mock.calls.some(c => c[0] === 'visibilitychange')).toBe(true);
   });
 });
+
+describe('useChatStream — stream-resume snapshot', () => {
+  it('replaces the turn text with the snapshot instead of appending it', () => {
+    const harness = makeHarness();
+    // One active turn whose AI bubble already holds the pre-disconnect text.
+    harness.chatMessages.value.push({
+      session_id: 's1',
+      role: CHAT_ROLE.AI,
+      content: 'abc',
+      id: -2,
+      turn_num: 1,
+      timestamp: 't'
+    } as MessageItem);
+    harness.streamingTurn.value = 1;
+
+    harness.stream.onStreamResumed({ sessionId: 's1', status: 'ok', text: 'abcdef' });
+
+    const rows = harness.chatMessages.value;
+    // Exactly one row, REPLACED — the snapshot is authoritative, nothing is
+    // appended/duplicated and no extra message is created.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.content).toBe('abcdef');
+  });
+
+  it('refetches for ended and stays quiet for gone', () => {
+    const harness = makeHarness();
+    const load = vi.mocked(harness.deps.loadSessionHistory);
+
+    harness.stream.onStreamResumed({ sessionId: 's1', status: 'ended' });
+    expect(load).toHaveBeenCalledWith('s1');
+
+    load.mockClear();
+    harness.stream.onStreamResumed({ sessionId: 's1', status: 'gone' });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('ignores a snapshot addressed to another session', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value.push({
+      session_id: 's1',
+      role: CHAT_ROLE.AI,
+      content: 'abc',
+      id: -2,
+      turn_num: 1,
+      timestamp: 't'
+    } as MessageItem);
+    harness.streamingTurn.value = 1;
+
+    harness.stream.onStreamResumed({ sessionId: 'other', status: 'ok', text: 'zzz' });
+
+    expect(harness.chatMessages.value[0]!.content).toBe('abc');
+  });
+});

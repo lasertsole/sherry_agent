@@ -16,12 +16,12 @@ client recovers the panel with one round trip and no separate endpoint:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from loguru import logger
 
 from runtime.session.relation_register import relation_register
+from runtime.session.ws_push import broadcast_to_session
 
 from .registry import store_sqlite
 from .waves import STATUS_ORDER, compute_waves, steps_of
@@ -94,14 +94,17 @@ async def push_taskflow_progress(session_id: str) -> None:
     if not session_id:
         return
     try:
-        websocket = relation_register.get_websocket_by_session_id(session_id)
-        if websocket is None:
+        # Quiet no-op before the (store-reading) payload build: with no live
+        # viewer there is nothing to fan out to. A socket that connects between
+        # this check and the send simply misses this frame — it gets the same
+        # payload from its own ``taskflow_refresh`` snapshot on connect.
+        if not relation_register.get_websockets_by_session_id(session_id):
             return
         payload = {
             "event": TASKFLOW_UPDATED_EVENT,
             "session_id": session_id,
             "content": progress_payload(session_id),
         }
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        await broadcast_to_session(session_id, payload, ensure_ascii=False)
     except Exception as e:  # noqa: BLE001 — a push failure must never surface
         logger.warning("Failed to push taskflow_updated for session {}: {}", session_id, e)

@@ -81,11 +81,9 @@ class FakeStateDB:
         return True
 
 
-class _FakeRelationRegister:
-    """Fail-open websocket registry double: no socket for any session."""
-
-    def get_websocket_by_session_id(self, session_id: str) -> None:
-        return None
+async def _no_broadcast(session_id: str, payload: dict, **_kwargs) -> int:
+    """Fail-open broadcast double: no socket for any session."""
+    return 0
 
 
 class _RecordingMiddleware(AgentMiddleware):
@@ -246,7 +244,7 @@ def prompt_env(
     monkeypatch.setattr("runtime.state_register_db", FakeStateDB())
 
     # The WS push is fail-open: no registered socket.
-    monkeypatch.setattr(todo_service, "relation_register", _FakeRelationRegister())
+    monkeypatch.setattr(todo_service, "broadcast_to_session", _no_broadcast)
 
     # Continuity end-state files -> tmp dir.
     import context_engine.session_continuity as continuity

@@ -266,6 +266,9 @@ async def test_user_input_no_longer_cancels_turn(monkeypatch, tmp_path):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _FakeWebSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
     block = asyncio.Event()
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, block, finished))
@@ -305,6 +308,9 @@ async def test_normal_turn_sends_chunk_and_done(monkeypatch):
     monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
     ws = _FakeWebSocket()
     monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: ws)
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(ws_push.relation_register, "get_websockets_by_session_id", lambda sid: [ws])
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
 

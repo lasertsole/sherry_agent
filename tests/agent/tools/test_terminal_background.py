@@ -167,8 +167,8 @@ class TestWatcher:
         relation_mod = importlib.import_module("runtime.session.relation_register")
         monkeypatch.setattr(
             relation_mod.relation_register,
-            "get_websocket_by_session_id",
-            lambda session_id: _Socket(),
+            "get_websockets_by_session_id",
+            lambda session_id: [_Socket()],
         )
         hooks_mod = importlib.import_module("runtime.hooks")
 

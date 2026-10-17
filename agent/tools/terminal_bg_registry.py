@@ -17,7 +17,6 @@ notification step is fail-open — losing a notice must never lose the task.
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -163,11 +162,8 @@ class BackgroundTaskRegistry:
     async def _push_exit_notification(self, task: BackgroundTask) -> None:
         """Best-effort WS frame (same shape/pattern as the TaskFlow progress push)."""
         try:
-            from runtime.session.relation_register import relation_register
+            from runtime.session.ws_push import broadcast_to_session
 
-            websocket = relation_register.get_websocket_by_session_id(task.session_id)
-            if websocket is None:
-                return
             payload = {
                 "event": "terminal_bg_exit",
                 "session_id": task.session_id,
@@ -177,7 +173,7 @@ class BackgroundTaskRegistry:
                     "command": task.command,
                 },
             }
-            await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+            await broadcast_to_session(task.session_id, payload, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001 - a dead socket must not matter
             logger.debug("background task {}: WS push failed: {}", task.task_id, exc)
 

@@ -893,6 +893,22 @@ def message_exists(session_id: str, message_id: int) -> bool:
     return row is not None
 
 
+def session_has_messages(session_id: str) -> bool:
+    """Whether the session has any persisted message row (cheap existence probe).
+
+    Used by the stream-resume handler to distinguish "the turn ended while the
+    client was away" (rows exist -> the client refetches) from "there is nothing
+    to resume" (a deleted or never-used session).
+    """
+    with _shared_db():
+        row = (
+            _shared_db()
+            .execute("SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (session_id,))
+            .fetchone()
+        )
+    return row is not None
+
+
 def delete_messages_by_session(session_id: str) -> int:
     """Delete all messages belonging to a session from the SQLite store.
 

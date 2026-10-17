@@ -50,6 +50,7 @@ export type AgentWsEventType =
   | 'done'
   | 'error'
   | 'stopped'
+  | 'stream_resume'
   | 'hitl_request'
   | 'queued'
   | 'todo_updated'

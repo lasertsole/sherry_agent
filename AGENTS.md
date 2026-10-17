@@ -971,6 +971,35 @@ mobile emulation reports its own scale, measured 393x852 -> 554x1200); 打开调
 on browser actions — the panel IS the human's window on the same page (ZCode
 parity); the external-path HITL gate still covers `terminal`/skills.
 
+## Stream Broadcast & Reconnect Resume (`runtime/session/ws_push.py`)
+
+Every streamed frame fans out to **all live sockets of the session** at send
+time (`runtime/session/ws_push.py::broadcast_to_session`, called by the two
+`StreamDriver.send_frame` sites and the ~14 push sites: turn errors, taskflow
+progress, todo pushes, web-search fallback, background-terminal exits, subagent
+events, heartbeat/cron pseudo-sessions). The registry keeps a per-session bag
+(`relation_register.session_id_to_websocket_ids`, 1:N, ordered) plus the 1:1
+"newest socket" view; a failed send prunes only that socket. **There is no
+replay log and no per-client queue**: each frame reaches each socket exactly
+once, and a socket that connects mid-turn receives only frames produced after
+its registration.
+
+A viewer that drops mid-turn reconnects and sends `{"type": "resume_stream"}`
+on the agent socket; the handler replies **on that socket only** with a text
+snapshot (`active_turn_snapshot` → the engine's accumulated `ai_text`) plus one
+of `ok` / `ended` (history exists → refetch) / `gone` (deleted or never
+persisted → nothing to fetch) / `unknown` (fail-open). The client REPLACES its
+turn text with the snapshot (buffered deltas are flushed first) — it never
+appends replayed frames, so no connection can see duplicated content. Every emitted
+frame also carries a per-turn monotonic `seq`, and the snapshot carries the seq it
+was read at — the resumed client drops frames at or below that watermark, closing
+the race between "snapshot read" and "an in-flight frame lands after the reply".
+Because
+the turn keeps running when its last viewer disconnects (the socket release no
+longer cancels it), the reconnect resumes the SAME turn. Inbound frames are
+also checked against the socket's registered session (`_frame_session_allowed`)
+so one session's socket can never read another's.
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
