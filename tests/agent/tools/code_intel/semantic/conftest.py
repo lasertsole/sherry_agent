@@ -1,6 +1,6 @@
 """Fake embedding / reranker backends for the hermetic semantic-search tests.
 
-The real bge-m3 GGUF is a 634 MB download and the reranker may be unavailable,
+The real Jina v2 Base Code ONNX model is a 612 MB download and the reranker may be unavailable,
 so unit and hermetic e2e tests inject deterministic fakes. The fakes model the
 production contract (``embed_documents`` / ``embed_query`` / ``rank``) with a
 stable bag-of-tokens embedding, so cosine ordering is meaningful and

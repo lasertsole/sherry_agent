@@ -116,10 +116,10 @@ beforeEach(() => {
 describe('ConfigPanel per-area saving', () => {
   it('hides the footer on the env tab (each item saves on its own) but keeps it elsewhere', async () => {
     const { wrapper, vm } = await mountWithEnvTab();
-    // Env tab: no footer 保存/取消 — the other group's own button and the
+    // Env tab: no footer 保存/取消 — each non-model group card and the
     // model panels' 保存/应用 replace them.
     expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);
-    // handleSave is the env-area handler behind that other-group button.
+    // handleSave is the env-area handler behind each non-model group button.
     expect(typeof (wrapper.vm as unknown as { handleSave?: unknown }).handleSave).toBe('function');
 
     // Background tab: the shared footer is back.

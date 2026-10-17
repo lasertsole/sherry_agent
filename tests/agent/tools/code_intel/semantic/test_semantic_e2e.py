@@ -36,7 +36,7 @@ def _tools(sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig, **k
     )
 
 
-def test_tool_surface_has_five_researcher_tools(
+def test_tool_surface_has_five_when_code_embedder_is_injected(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
     tools = _tools(sample_repo, index_db, intel_config)

@@ -34,7 +34,7 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 
-from agent.middlewares.todo_continuation.core import TodoContinuationEnforcer, _build_status_block
+from agent.middlewares.todo_continuation.core import PlanContinuationEnforcer, _build_status_block
 from agent.tools.memory import MemoryStore
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
@@ -469,7 +469,7 @@ class TestTodolistFullPipeline:
             tools, sid, [{"content": "finish the report", "status": "pending", "priority": "high"}]
         )
 
-        result = await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
+        result = await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
 
         assert result is None
         assert len(spy_auto_turn) == 1
@@ -644,7 +644,7 @@ class TestTodolistFullPipeline:
         # Every todo is done, but the flow it was tracking was never closed: the
         # plan gate still fires — for the FLOW, whose steps are all settled while
         # its status is still running (the todo half alone would have gone quiet).
-        await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
+        await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
         assert len(spy_auto_turn) == 1
         assert "still open" in spy_auto_turn[0][1].content
 
@@ -652,7 +652,7 @@ class TestTodolistFullPipeline:
         spy_auto_turn.clear()
         finished = await flow_tools["taskflow_finish"].coroutine(flow_id=flow_id, session_id=sid)
         assert finished.startswith("TaskFlow finished"), finished
-        await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
+        await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 
         # Memory flush: fake extraction LLM, real MEMORY.md write.
@@ -733,7 +733,7 @@ class TestTodolistMiddlewareIntegration:
         sid = "e2e-cooldown"
         await _write_todos(tools, sid, [{"content": "keep working", "status": "pending"}])
 
-        enforcer = TodoContinuationEnforcer()
+        enforcer = PlanContinuationEnforcer()
         await enforcer.aafter_agent({"session_id": sid})
         await enforcer.aafter_agent({"session_id": sid})
 

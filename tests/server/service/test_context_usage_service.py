@@ -8,6 +8,8 @@ import pytest
 from server.service import context_usage_service as service
 from server.trigger.http import context_usage as http
 
+pytestmark = [pytest.mark.unit]
+
 
 class _FakeRequest:
     """Minimal Robyn-request double: only ``query_params`` is read."""
