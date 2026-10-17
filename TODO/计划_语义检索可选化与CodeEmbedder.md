@@ -1,7 +1,7 @@
 # 计划：code-intel 语义检索可选化（仅 CodeEmbedder）
 
 - 建档日期：2026-10-18
-- 状态：**计划（未开工）**
+- 状态：**计划（未开工；Qwen3 CodeEmbedder spike 已完成，未达标）**
 - 用户前提（本计划的硬边界）：
   - **BGE 只用于文本语义**：`context_engine/embeddings`、multimodal RAG、通用文本检索继续用 BGE。
   - **code-intel 的语义层不使用 BGE**。没有 CodeEmbedder 时，语义层关闭；有 CodeEmbedder 且配置/许可/探针通过时才启用。
@@ -176,6 +176,38 @@ class CodeEmbedderProfile(TypedDict):
 - 测试：fake embedder 单测（不联网）、index model 失效、维度不匹配、探针失败；
   真实模型 benchmark 是手动脚本，不进 CI。
 - 预计 1–2 人日（含下载/验证）。
+
+#### P2 spike 结果（2026-10-18，本仓库实测）
+
+对象：`Qwen3-Embedding-0.6B-Q8_0.gguf`（Apache-2.0，639 MB）vs 现有 bge-m3。
+语料：70 个 chunk（10 个带 docstring 的目标函数 + 60 个同域干扰项）；纯代码对照使用
+`without-doc`（docstring 从 header 和 body 都删掉）。查询：10 条英文 + 10 条中文（目标函数的
+行为转述，不含函数名）。指标为 cosine 排序后的 hit@1 / hit@3 / MRR。
+
+| 编码方式 | 模型 | en hit@1 / hit@3 / MRR | zh hit@1 / hit@3 / MRR |
+| --- | --- | --- | --- |
+| per-text（逐条，避免 last-token padding） | BGE | 0.30 / 0.70 / 0.470 | 0.30 / 0.60 / 0.431 |
+| per-text | Qwen3 | 0.30 / 0.60 / 0.493 | **0.20 / 0.40 / 0.372** |
+| batch（文档和查询都按批；不是生产 query 单条） | BGE | 0.70 / 0.90 / 0.800 | 0.60 / 0.70 / 0.720 |
+| batch | Qwen3 | 0.30 / 0.60 / 0.460* | 0.40 / 0.60 / 0.506* |
+
+样本只有 10 个目标、10 条英文 + 10 条中文查询，且 batch 行把 query 也批处理了（生产 query 是
+单条），所以这些数字只用于方向性判断，不是生产环境的绝对指标；per-text 两行是同一协议下的
+受控对比。
+
+\* Qwen3 的 batch 结果不可作为质量结论：它要求 last-token pooling，批内不同长度文本的
+padding 会污染向量；同一批数据改为 per-text 后质量明显变化。生产若用 Qwen3，必须逐条编码
+或做左 padding。Qwen3 batch 的 160 个 embedding 还耗时 **49 分钟**（BGE 约 5 分钟），
+per-text 70+20 也约 1.7× BGE。
+
+**结论：Qwen3-Embedding-0.6B 未达到计划门槛（代码查询相对 BGE 提升 ≥10%）。**
+- 纯代码 per-text：Qwen3 的 en MRR 略高（0.493 vs 0.470），但 zh 明显更低
+  （0.372 vs 0.431），且两者 hit@1 都是 0.30；batch 下 BGE 明显更强。
+- Qwen3 是“通用、代码能力较强”，不是 code-specific；本轮不能据此判断 Jina v2 base code /
+  CodeRankEmbed 等真正的 code-specific 模型。
+- 因此**不把 Qwen3 加入 auto**；语义层保持默认关闭，BGE 仍只服务文本语义。
+- 若继续 P2，下一轮只测真正的 code-specific 候选（Jina v2 base code / CodeRankEmbed，
+  英文 query；中文查询需额外验证），仍按同一 A/B 门槛；不达标就停止投入语义层。
 
 ### P3（可选，暂不做）
 
