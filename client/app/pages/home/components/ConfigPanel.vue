@@ -180,8 +180,8 @@
                 v-for="group in modelTabGroups"
                 :key="group.name">
                 <!-- Model groups: profile manager (list + parameters + save/apply);
-                       the remaining plain groups (browser switches etc.) stay a key/value card.
-                       LANGSMITH and `other` moved to the App Config tab. -->
+                       any remaining plain network group stays a key/value card.
+                       LANGSMITH, SHERRY_BROWSER and `other` moved to App Config. -->
                 <LlmModelManager
                   v-if="group.kind !== 'plain' && group.name !== 'other'"
                   :group="group.name"
@@ -440,10 +440,10 @@ const envHasChanges = computed(() =>
   envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
 
-// LANGSMITH (from .network) and the catch-all `other` (from .env) are application
-// settings, not model settings: the App Config tab renders them, while the
-// Model Config tab keeps only the model/network groups.
-const MOVED_TO_APP_CONFIG = new Set(['LANGSMITH', 'other']);
+// LANGSMITH + SHERRY_BROWSER (from .network) and the catch-all `other` (from
+// .env) are application settings, not model settings: the App Config tab
+// renders them, while the Model Config tab keeps only the model/network groups.
+const MOVED_TO_APP_CONFIG = new Set(['LANGSMITH', 'SHERRY_BROWSER', 'other']);
 const modelTabGroups = computed(() => envGroups.value.filter(group => !MOVED_TO_APP_CONFIG.has(group.name)));
 const appConfigGroups = computed(() => envGroups.value.filter(group => MOVED_TO_APP_CONFIG.has(group.name)));
 const groupHasChanges = (group: SourcedEnvGroup): boolean =>

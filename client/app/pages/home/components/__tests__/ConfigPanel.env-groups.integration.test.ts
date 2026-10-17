@@ -1,14 +1,11 @@
 /**
- * The env panel renders a group by its declared KIND (backend-mocked).
+ * The settings panel renders a group by its declared KIND (backend-mocked).
  *
- * The 模型配置 tab merges three files: the model families come from `.models`
- * (GET /models-config), the browser / tracing groups from `.network`
- * (GET /network-config) and the rest from `.env` (GET /env). Model groups
- * (MAIN_LLM, EMBEDDING, …) render the provider/model/api_key profile manager,
- * everything else is a plain key/value card — the browser feature's switches
- * (`SHERRY_BROWSER_*`) are the first plain group that is NOT the catch-all
- * `other`, so the renderer must key off `kind` — not off "the name is not
- * other".
+ * The 模型配置 tab merges the model families from `.models` (GET
+ * /models-config) and the remaining `.network` groups (GET /network-config).
+ * LANGSMITH and SHERRY_BROWSER (from `.network`) plus the `.env` catch-all
+ * `other` moved to the 应用配置 tab, still as key/value cards. Model groups
+ * (MAIN_LLM, EMBEDDING, …) render the provider/model/api_key profile manager.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -105,14 +102,15 @@ beforeEach(() => {
 });
 
 describe('ConfigPanel env groups', () => {
-  it('renders a plain group (the browser switches) as key/value rows', async () => {
+  it('renders the moved browser switches as key/value rows in App Config', async () => {
     const wrapper = await mountEnvTab();
 
-    const plain = wrapper.get('[data-test="env-group-SHERRY_BROWSER"]');
+    const plain = wrapper.get('[data-test="app-config-group-SHERRY_BROWSER"]');
     expect(plain.text()).toContain('SHERRY_BROWSER_AGENT_ENABLED');
     expect(plain.text()).toContain('SHERRY_BROWSER_HEADLESS');
     // No model-profile manager inside a plain group.
     expect(wrapper.findAll('[data-test="model-profile-SHERRY_BROWSER"]')).toHaveLength(0);
+    expect(wrapper.find('[data-test="env-group-SHERRY_BROWSER"]').exists()).toBe(false);
   });
 
   it('still gives a model group its profile manager', async () => {
@@ -123,10 +121,11 @@ describe('ConfigPanel env groups', () => {
     expect(wrapper.findAll('[data-test="env-group-MAIN_LLM"]')).toHaveLength(0);
   });
 
-  it('moves LANGSMITH and the .env catch-all to App Config', async () => {
+  it('moves LANGSMITH, SHERRY_BROWSER and the .env catch-all to App Config', async () => {
     const wrapper = await mountEnvTab();
 
     expect(wrapper.find('[data-test="env-group-LANGSMITH"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="env-group-SHERRY_BROWSER"]').exists()).toBe(false);
     expect(wrapper.find('[data-test="env-group-other"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="app-config-group-LANGSMITH"]').text()).toContain('LANGSMITH_TRACING');
     expect(wrapper.get('[data-test="app-config-group-other"]').text()).toContain('SHERRY_AUTH_ENABLED');
