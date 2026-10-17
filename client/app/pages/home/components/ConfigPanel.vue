@@ -171,17 +171,17 @@
               <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
             </div>
 
-            <template v-else-if="envGroups.length === 0">
-              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+            <template v-else-if="modelTabGroups.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noModelGroups') }}</p>
             </template>
 
             <template v-else>
               <template
-                v-for="group in envGroups"
+                v-for="group in modelTabGroups"
                 :key="group.name">
                 <!-- Model groups: profile manager (list + parameters + save/apply);
-                       everything else (the catch-all "other", the browser feature's
-                       switches) stays a plain key/value card. -->
+                       the remaining plain groups (browser switches etc.) stay a key/value card.
+                       LANGSMITH and `other` moved to the App Config tab. -->
                 <LlmModelManager
                   v-if="group.kind !== 'plain' && group.name !== 'other'"
                   :group="group.name"
@@ -236,16 +236,14 @@
             </p>
 
             <div
-              v-if="sherryLoadError"
+              v-if="sherryLoadError || envLoadError"
               class="flex">
-              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">
+                {{ sherryLoadError || envLoadError }}
+              </p>
             </div>
 
-            <template v-else-if="sherryEntries.length === 0">
-              <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
-            </template>
-
-            <template v-else>
+            <template v-if="sherryEntries.length">
               <div
                 v-for="entry in sherryEntries"
                 :key="entry.key"
@@ -257,6 +255,50 @@
                   class="w-full font-mono text-xs"
                   autocomplete="off"
                   spellcheck="false" />
+              </div>
+            </template>
+            <p
+              v-else-if="appConfigGroups.length === 0"
+              class="m-0 text-sm text-gray-400">
+              {{ t('config.sherry.noConfigFile') }}
+            </p>
+
+            <!-- Application settings that live outside sherry.jsonc: LANGSMITH
+                 comes from .network, `other` is the .env catch-all. Each keeps
+                 its own source writer through the env-group save path. -->
+            <template v-if="appConfigGroups.length">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.sherry.movedHint') }}
+              </p>
+              <div
+                v-for="group in appConfigGroups"
+                :key="group.name"
+                class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                :data-test="`app-config-group-${group.name}`">
+                <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  {{ group.name }}
+                </p>
+                <div
+                  v-for="entry in group.entries"
+                  :key="entry.key"
+                  class="flex flex-col gap-1">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                  <InputText
+                    v-model="entry.value"
+                    :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                    class="w-full font-mono text-xs"
+                    autocomplete="off"
+                    spellcheck="false" />
+                </div>
+                <div class="mt-1 flex justify-start">
+                  <Button
+                    :label="t('config.save')"
+                    icon="pi pi-save"
+                    size="small"
+                    :loading="saving"
+                    :disabled="!groupHasChanges(group)"
+                    @click="handleSave" />
+                </div>
               </div>
             </template>
           </div>
@@ -397,6 +439,15 @@ async function onCodeEmbedderAction(): Promise<void> {
 const envHasChanges = computed(() =>
   envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
+
+// LANGSMITH (from .network) and the catch-all `other` (from .env) are application
+// settings, not model settings: the App Config tab renders them, while the
+// Model Config tab keeps only the model/network groups.
+const MOVED_TO_APP_CONFIG = new Set(['LANGSMITH', 'other']);
+const modelTabGroups = computed(() => envGroups.value.filter(group => !MOVED_TO_APP_CONFIG.has(group.name)));
+const appConfigGroups = computed(() => envGroups.value.filter(group => MOVED_TO_APP_CONFIG.has(group.name)));
+const groupHasChanges = (group: SourcedEnvGroup): boolean =>
+  group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]);
 
 // ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
 const llmProfiles = useLlmProfilesStore();
@@ -593,7 +644,10 @@ watch(
       void loadEnvConfig();
       void refreshCodeEmbedderStatus();
     }
-    if (tab === 2) void loadSherryConfig();
+    if (tab === 2) {
+      void loadEnvConfig();
+      void loadSherryConfig();
+    }
   },
   // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
   { flush: 'post' }
@@ -1030,6 +1084,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
+        "noModelGroups": "暂无模型配置项。",
         "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
         "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
       },
@@ -1037,6 +1092,7 @@ onBeforeUnmount(onHide);
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+        "movedHint": "以下设置来自 .network / .env。",
         "noConfigFile": "未找到 sherry.jsonc 文件。"
       },
       "cron": {
@@ -1338,6 +1394,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "Failed to save model config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
+        "noModelGroups": "No model settings.",
         "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
         "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
       },
@@ -1345,6 +1402,7 @@ onBeforeUnmount(onHide);
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+        "movedHint": "The settings below come from .network / .env.",
         "noConfigFile": "No sherry.jsonc file found."
       },
       "cron": {
@@ -1646,6 +1704,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "モデル設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
+        "noModelGroups": "モデル設定はありません。",
         "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
         "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
@@ -1653,6 +1712,7 @@ onBeforeUnmount(onHide);
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+        "movedHint": "以下の設定は .network / .env に由来します。",
         "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
       },
       "cron": {
@@ -1954,6 +2014,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "모델 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
+        "noModelGroups": "모델 설정이 없습니다.",
         "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
         "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
@@ -1961,6 +2022,7 @@ onBeforeUnmount(onHide);
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
+        "movedHint": "아래 설정은 .network / .env에서 가져옵니다.",
         "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
       },
       "cron": {

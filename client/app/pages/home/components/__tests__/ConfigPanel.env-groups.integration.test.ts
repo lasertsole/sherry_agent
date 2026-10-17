@@ -26,6 +26,18 @@ const envState = vi.hoisted(() => {
         { key: 'SHERRY_BROWSER_AGENT_ENABLED', value: '1', value_edited: false },
         { key: 'SHERRY_BROWSER_HEADLESS', value: '1', value_edited: false }
       ]
+    },
+    {
+      name: 'LANGSMITH',
+      kind: 'plain',
+      entries: [{ key: 'LANGSMITH_TRACING', value: 'false', value_edited: false }]
+    }
+  ];
+  const envGroups: EnvGroup[] = [
+    {
+      name: 'other',
+      kind: 'plain',
+      entries: [{ key: 'SHERRY_AUTH_ENABLED', value: '0', value_edited: false }]
     }
   ];
   const modelGroups: EnvGroup[] = [
@@ -35,11 +47,11 @@ const envState = vi.hoisted(() => {
       entries: [{ key: 'MAIN_LLM_NAME', value: 'deepseek-flash', value_edited: false }]
     }
   ];
-  return { modelGroups, networkGroups };
+  return { modelGroups, networkGroups, envGroups };
 });
 
 vi.mock('@/composables/env', () => ({
-  readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
+  readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.envGroups })),
   readModelsConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.modelGroups })),
   readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.networkGroups })),
   writeEnvConfig: vi.fn(async () => true),
@@ -109,5 +121,14 @@ describe('ConfigPanel env groups', () => {
     // A model group renders through the profile manager, never as a plain card.
     expect(wrapper.findAll('[data-test="model-profile-MAIN_LLM"]').length).toBeGreaterThan(0);
     expect(wrapper.findAll('[data-test="env-group-MAIN_LLM"]')).toHaveLength(0);
+  });
+
+  it('moves LANGSMITH and the .env catch-all to App Config', async () => {
+    const wrapper = await mountEnvTab();
+
+    expect(wrapper.find('[data-test="env-group-LANGSMITH"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="env-group-other"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="app-config-group-LANGSMITH"]').text()).toContain('LANGSMITH_TRACING');
+    expect(wrapper.get('[data-test="app-config-group-other"]').text()).toContain('SHERRY_AUTH_ENABLED');
   });
 });
