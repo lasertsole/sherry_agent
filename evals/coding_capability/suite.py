@@ -432,7 +432,13 @@ def _coding_preset_payload() -> dict[str, Any]:
     if dropped:  # the service's own rule: a required tool cannot be disabled
         raise RuntimeError(f"the coding preset would drop required tools: {sorted(dropped)}")
     available = {entry["name"] for entry in skills_catalog()}
-    wanted = set(REQUIRED_SKILLS) | {"code-wiki", "taskflow", "ulw-execute", "todolist"}
+    wanted = set(REQUIRED_SKILLS) | {
+        "bugfix-contract",
+        "code-wiki",
+        "taskflow",
+        "ulw-execute",
+        "todolist",
+    }
     return {
         "tools": tools,
         "middlewares_disabled": [],

@@ -116,3 +116,43 @@ auxiliary 为 glm-5.3-flash）。实例集合、窗口与 auxiliary 模型均不
 - `baseline.json` 保持 20261017_003529 的记录（本复跑用于对照）。若要把 1/2 记为新基线，
   重跑时加 `--update-baseline` 即可。
 
+---
+
+## 20261017_025620 — HARD 切片第二次复跑：**2/2 全过**
+
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard`（不更新 baseline）
+- 本轮新增的配置（都在报告里可复核）：`bugfix-contract` 技能进入评估技能面
+  （`agent_config.skills`）；评估 workspace 的运行守则附加了环境说明附录
+  （persona 摘要覆盖该文件）——声明「terminal 可直连公网（curl 可用）、web_search 无后端、
+  checkout 是浅克隆」，并给出「修 bug 先合成契约、网络可达时先查上游是否已有修复」的规则。
+- 结果：**`resolved 2/2`（resolve_rate 1.0）**，无 invalid run
+
+| 实例 | 判定 | FAIL_TO_PASS | PASS_TO_PASS | 时长 | 工具调用 |
+|---|---|---|---|---|---|
+| django__django-17051 | ✓ | 5/5 pass | 37/37 pass | 73.9s | 29 |
+| sympy__sympy-20639 | ✓ | 2/2 pass | 139/139 pass | 707.3s | 35 |
+
+（逐测试结果来自本轮新增的 `judge_tests` 结构化字段；`judge_detail` 原文保留。）
+
+- **sympy 的过法：联网查到上游修复，补丁与 gold patch 逐字节一致**。transcript 证据链：
+  1. `git log` 只显示一条提交（浅克隆）→ 转向网络；
+  2. `curl` GitHub 搜索 API（`total_count: 1`，命中 `sympy/sympy#17616`——本实例 PR
+     修复的正主）；
+  3. 拉取并阅读该 PR（"I have the exact upstream fix… apply it"），中途还明确识别了
+     旧测试 `test_issue_6285` 断言的就是被抱怨的旧行为（"the test that the upstream PR
+     also updated"）；
+  4. 产出的 diff 与 gold patch 逐字节一致（`_print_nth_root(base, root)` 度数渲染 +
+     `(e.is_Rational or d.is_Symbol)` 条件）。
+- **哪个杠杆起作用了**：`skill_view` 调用数 = **0** —— `bugfix-contract` 技能**没有被加载**；
+  起作用的是环境说明附录里「terminal 有网 + 先查上游修复」这条规则（agent 的 AI 消息
+  「Let me check the upstream fix」→「I have the exact upstream fix」）。技能保留（通用方法学，
+  留给不联网/无上游可查的场景），但本轮数据不能归因于它。
+- **探针读数的一个诚实注脚**：报告里 `environment.web` 为
+  `{"http_code": "403", "terminal_egress": false}` —— 这是**跑完后**的探针；agent 在运行期间
+  的 GitHub 请求把未认证限流（60 次/小时）耗尽，报告期再探即 403。运行内的可达性由
+  transcript 的 200 响应证明，字段本身反映的是"报告时刻的瞬时状态"。
+- 对照汇总：`003529`（修复前，0/2）→ `014328`（invalid-call 修复后，1/2）→
+  `025620`（技能面 + 网络附录，2/2）。三份报告的 `model` / `persona` / `environment`
+  字段记录了各自的环境，可直接对比。
+
+

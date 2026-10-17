@@ -61,6 +61,75 @@ issue in the library source.
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
 
+#: Appended to the neutral working rules for the swebench arm ONLY (the
+#: coding-capability baseline keeps the untouched neutral rules so its pinned
+#: threshold stays comparable). It records this harness's environment facts —
+#: probed, not assumed: terminal egress reaches the public internet directly,
+#: the search tool has no backend, and the checkout is a shallow clone — plus
+#: the pointer to the contract-first workflow. The persona digest in the report
+#: covers this file, so the configuration of any run stays auditable.
+_SWEBENCH_AGENTS_APPENDIX = """
+
+## Environment and workflow notes (this evaluation arm)
+
+- Network: the `terminal` tool reaches the public internet directly (a
+  `curl -m 5` is a safe probe). `web_search` has no backend configured here.
+- The checkout is a shallow clone at a single commit: `git log` shows no
+  future commits; an upstream fix can only be found over the network.
+- Bug-fix tasks: synthesize the behavior contract before patching — see the
+  `bugfix-contract` skill. When the network is reachable, check the project's
+  issue tracker / upstream history for an existing fix before inventing one.
+"""
+
+
+def _append_agents_appendix(workspace: Path) -> None:
+    """Append the swebench arm's environment notes to the seeded rules file."""
+    rules = workspace / "AGENTS.md"
+    rules.write_text(
+        rules.read_text(encoding="utf-8") + _SWEBENCH_AGENTS_APPENDIX, encoding="utf-8"
+    )
+
+
+def _probe_web() -> dict[str, Any]:
+    """Probe this run's network reachability (bounded, best-effort)."""
+    probe = {
+        "probe_host": "api.github.com",
+        "terminal_egress": False,
+        "http_code": None,
+        "search_backend": None,
+    }
+    # One retry: the host's egress can hiccup transiently.
+    for _attempt in range(2):
+        try:
+            completed = subprocess.run(
+                [
+                    "curl",
+                    "-m",
+                    "6",
+                    "-sS",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "https://api.github.com/zen",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=12,
+            )
+            code = (completed.stdout or "").strip()
+            probe["http_code"] = code or None
+            probe["terminal_egress"] = completed.returncode == 0 and code.startswith("2")
+            if probe["terminal_egress"]:
+                break
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if os.getenv("TAVILY_API_KEY", "").strip():
+        probe["search_backend"] = "tavily"
+    elif os.getenv("SEARXNG_URL", "").strip():
+        probe["search_backend"] = "searxng"
+    return probe
+
 
 def main() -> None:
     """Run the spike, re-executing in a clean interpreter when needed."""
@@ -119,6 +188,7 @@ def _run(
         return 3
 
     harness._seed_persona(eval_workspace)
+    _append_agents_appendix(eval_workspace)
     harness.init_agent()
     main_tools = harness._main_tool_names()
     missing = sorted(
@@ -192,6 +262,9 @@ def _run(
         },
         "model": {**harness._model_info(), "thinking_enabled": False},
         "agent_config": harness._coding_preset_payload(),
+        # This run's probed network reality (default-off philosophy: the record
+        # says what was reachable; nothing was switched on for it).
+        "environment": {"web": _probe_web()},
         "persona": harness._persona_evidence(results[0]["id"] if results else None),
         "isolation": harness._isolation_evidence(live_workspace, live_sessions, eval_workspace),
         "harness_self_check": {k: ok for k, (ok, _) in self_check.items()},
@@ -246,8 +319,8 @@ def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
             if not instances.apply_patch(instance, instance.test_patch):
                 checks[instance.instance_id] = (False, "the test patch does not apply")
                 continue
-            ok_f2p, out_f2p = instances.run_tests(instance, fail_to_pass)
-            ok_p2p, out_p2p = instances.run_tests(instance, pass_to_pass)
+            ok_f2p, out_f2p, _ = instances.run_tests(instance, fail_to_pass)
+            ok_p2p, out_p2p, _ = instances.run_tests(instance, pass_to_pass)
             checks[instance.instance_id] = (
                 ok_f2p and ok_p2p,
                 f"FAIL_TO_PASS ok={ok_f2p}\n{out_f2p}\nPASS_TO_PASS ok={ok_p2p}\n{out_p2p}",
@@ -323,10 +396,12 @@ async def _run_instance(
     (results_dir / f"diff-{instance.instance_id}.patch").write_text(agent_diff, encoding="utf-8")
 
     ok_f2p = ok_p2p = False
+    f2p_tests: list[dict[str, Any]] = []
+    p2p_tests: list[dict[str, Any]] = []
     test_patch_applied = instances.apply_patch(instance, instance.test_patch)
     if test_patch_applied:
-        ok_f2p, out_f2p = instances.run_tests(instance, fail_to_pass)
-        ok_p2p, out_p2p = instances.run_tests(instance, pass_to_pass)
+        ok_f2p, out_f2p, f2p_tests = instances.run_tests(instance, fail_to_pass)
+        ok_p2p, out_p2p, p2p_tests = instances.run_tests(instance, pass_to_pass)
         resolved = ok_f2p and ok_p2p
         detail = f"FAIL_TO_PASS ok={ok_f2p}\n{out_f2p}\nPASS_TO_PASS ok={ok_p2p}\n{out_p2p}"
     else:
@@ -346,6 +421,12 @@ async def _run_instance(
         "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
         "test_patch_applied": test_patch_applied,
         "judge_detail": detail[-3000:],
+        # Structured per-test outcomes (observability — the verdict above is the
+        # exit code's; this field makes near-misses like "same contract point,
+        # N asserts" visible instead of a truncated text blob).
+        "judge_tests": (
+            {"fail_to_pass": f2p_tests, "pass_to_pass": p2p_tests} if test_patch_applied else None
+        ),
         "duration_s": duration_s,
         "tool_calls": drive["tool_calls"],
         "resumes": drive["resumes"],

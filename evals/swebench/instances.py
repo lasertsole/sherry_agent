@@ -39,6 +39,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 #: SWE-bench_Lite test split, served by the HuggingFace datasets server
 #: (public, no token; 300 rows, 100 per page).
@@ -365,12 +366,109 @@ def revert(instance: Instance) -> None:
     _run(["git", "clean", "-qfd"], cwd=instance.repo_dir)
 
 
+# ---------------------------------------------------------------------------
+# Per-test outcome extraction — report observability, never the verdict
+# ---------------------------------------------------------------------------
+
+#: pytest failure-section header (``______ test_name ______``).
+_PYTEST_SECTION_RE = re.compile(r"^_{3,}\s*(?P<name>\S+)\s*_{3,}$")
+
+#: pytest short-summary lines (``FAILED path::name - AssertionError: ...``).
+_PYTEST_FAILED_RE = re.compile(r"^(?:FAILED|ERROR)\s+(?P<node>\S+)(?:\s+-\s+(?P<note>.*))?$", re.M)
+
+#: django unittest block headers (``FAIL: name (dotted.path)``).
+_DJANGO_FAILED_RE = re.compile(r"^(?:FAIL|ERROR):\s+(?P<name>\S+?)(?:\s+\((?P<path>[^)]+)\))?$")
+
+
+def _pytest_outcomes(output: str, node_ids: list[str]) -> list[dict[str, Any]]:
+    """Per-test outcomes for a pytest run (failures from the short summary)."""
+    failed: set[str] = set()
+    notes: dict[str, str] = {}
+    for match in _PYTEST_FAILED_RE.finditer(output):
+        node = match.group("node")
+        failed.add(node)
+        note = (match.group("note") or "").strip()
+        if note:
+            notes.setdefault(node, note[:200])
+
+    # First ``E ... assert ...`` line of each failure section, keyed by header.
+    assert_lines: dict[str, str] = {}
+    current: str | None = None
+    for line in output.splitlines():
+        header = _PYTEST_SECTION_RE.match(line)
+        if header:
+            current = header.group("name")
+            continue
+        if current and line.startswith("E ") and "assert" in line:
+            assert_lines.setdefault(current, line[2:].strip()[:200])
+
+    outcomes: list[dict[str, Any]] = []
+    for node in node_ids:
+        if node in failed:
+            # The failure section's first ``E assert`` line is richer than the
+            # short-summary note (which pytest truncates); fall back to the note.
+            detail = (
+                assert_lines.get(node)
+                or next(
+                    (v for k, v in assert_lines.items() if node.endswith(k) or k.endswith(node)),
+                    None,
+                )
+                or notes.get(node)
+            )
+            outcomes.append({"id": node, "outcome": "fail", "first_assert": detail})
+        else:
+            outcomes.append({"id": node, "outcome": "pass", "first_assert": None})
+    return outcomes
+
+
+def _django_outcomes(output: str, node_ids: list[str]) -> list[dict[str, Any]]:
+    """Per-test outcomes for a django runner run (failures from FAIL/ERROR blocks)."""
+    failed: dict[str, str | None] = {}
+    current: str = ""
+    for line in output.splitlines():
+        match = _DJANGO_FAILED_RE.match(line)
+        if match:
+            path = match.group("path") or ""
+            name = match.group("name") or ""
+            current = f"{path}.{name}" if path and not path.endswith(f".{name}") else (path or name)
+            failed.setdefault(current, None)
+            continue
+        if current and failed.get(current) is None and "AssertionError" in line:
+            failed[current] = line.strip()[:200]
+
+    outcomes: list[dict[str, Any]] = []
+    for node in node_ids:
+        if node in failed:
+            outcomes.append({"id": node, "outcome": "fail", "first_assert": failed[node]})
+        else:
+            outcomes.append({"id": node, "outcome": "pass", "first_assert": None})
+    return outcomes
+
+
+def parse_test_outcomes(
+    instance: Instance, output: str, node_ids: list[str]
+) -> list[dict[str, Any]]:
+    """Structured per-test results for the report (``judge_tests``).
+
+    A test absent from the failure summary counts as passed — the VERDICT comes
+    from the runner's exit code, this field only makes near-misses visible.
+    """
+    if instance.judge_mode == "django":
+        return _django_outcomes(output, node_ids)
+    return _pytest_outcomes(output, node_ids)
+
+
 def run_tests(
     instance: Instance, node_ids: list[str], timeout_s: float = 1800.0
-) -> tuple[bool, str]:
-    """Run the given test ids with the instance's own interpreter and runner."""
+) -> tuple[bool, str, list[dict[str, Any]]]:
+    """Run the given test ids with the instance's own interpreter and runner.
+
+    Returns ``(ok, tail, outcomes)``: the exit-code verdict, the bounded output
+    tail (``judge_detail``), and the structured per-test outcomes
+    (``judge_tests``) parsed from the full output.
+    """
     if not node_ids:
-        return True, "(no tests)"
+        return True, "(no tests)", []
     if instance.judge_mode == "django":
         argv = [str(instance.python_exe), "tests/runtests.py", "--verbosity", "1", *node_ids]
     else:
@@ -396,8 +494,10 @@ def run_tests(
         text=True,
         timeout=timeout_s,
     )
-    tail = (completed.stdout + completed.stderr).strip()[-3000:]
-    return completed.returncode == 0, tail
+    output = completed.stdout + completed.stderr
+    tail = output.strip()[-3000:]
+    outcomes = parse_test_outcomes(instance, output, node_ids)
+    return completed.returncode == 0, tail, outcomes
 
 
 def changed_paths(instance: Instance) -> list[str]:
