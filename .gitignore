@@ -62,6 +62,9 @@ skills/plugins/*.state.json
 /wiki/
 **/wiki/
 /graphify-out/
+# Obsidian's per-vault config — created when the checkout or wiki/ is opened
+# as a vault; machine-local state, never project source.
+.obsidian/
 skills/skills_snapshot.json
 .omo/
 static/
