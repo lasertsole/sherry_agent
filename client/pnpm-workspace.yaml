@@ -6,3 +6,7 @@ allowBuilds:
 overrides:
   'qs@<6.16.0': '>=6.16.0'
   'svgo@>=4.0.0 <4.1.0': '>=4.1.0'
+  # katex: transitive via @eslint/markdown > micromark-extension-math (still
+  # declares ^0.16); forced to the patched line for GHSA-238p-pmpm-9mq7. Only
+  # the markdown lint chain touches it, never the app bundle.
+  katex: ^0.18.2
