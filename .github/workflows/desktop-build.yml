@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: rm -rf client/src-tauri/sherry-backend build/pyinstaller
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}
           path: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.archive }}
@@ -175,7 +175,7 @@ jobs:
         working-directory: client
         run: pnpm tauri build
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tauri-installer-${{ matrix.platform }}
           path: |
