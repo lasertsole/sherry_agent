@@ -15,10 +15,12 @@ The contract pinned here:
 * a clean merge removes the whole workspace.
 """
 
+import asyncio
 import json
 import os
 import stat
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -547,3 +549,179 @@ def _render_block(report) -> str:
     from agent.tools.subagent.announce.workspace_merge import _report_block
 
     return _report_block(report)
+
+
+class TestNestedIsolationIsDowngraded:
+    """A child spawned from INSIDE an isolated worktree reuses it.
+
+    ``max_spawn_depth`` is 2, so that cwd belongs to the requesting
+    ORCHESTRATOR: its worktree already merges back to the real project, and a
+    worktree of a worktree would add a second merge-back / conflict surface /
+    CAS check for no extra isolation. The flag is ignored (info log), never
+    refused — the model asked for isolation and the child gets it, it is simply
+    not double-isolated.
+    """
+
+    def test_the_detection_walks_the_workspaces_directory(self, project, monkeypatch):
+        from agent.tools.subagent.spawn.core import _is_inside_isolated_worktree
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        assert _is_inside_isolated_worktree(str(workspaces / "slug" / "tree")) is True
+        assert _is_inside_isolated_worktree(str(workspaces)) is True
+        assert _is_inside_isolated_worktree(str(project)) is False
+        assert _is_inside_isolated_worktree(str(project / "sub")) is False
+
+    def test_none_and_blank_are_not_worktrees(self):
+        from agent.tools.subagent.spawn.core import _is_inside_isolated_worktree
+
+        assert _is_inside_isolated_worktree(None) is False
+        assert _is_inside_isolated_worktree("") is False
+
+    def test_a_child_inside_a_parent_worktree_reuses_it(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            True, str(parent_tree), "agent:main:subagent:grandchild"
+        )
+
+        assert refusal is None
+        assert workspace is None, "no nested worktree may be created"
+        assert cwd == str(parent_tree)
+        assert not (workspaces / "agent:main:subagent:grandchild").exists()
+
+    def test_the_downgrade_logs_an_info_line(self, project):
+        from loguru import logger as loguru_logger
+
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        records: list[str] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record["message"]),
+            level="INFO",
+            format="{message}",
+        )
+        try:
+            _create_isolated_child_workspace(True, str(parent_tree), "kid-key")
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert any("isolation=True ignored" in line and "kid-key" in line for line in records)
+
+    def test_a_normal_parent_still_gets_a_worktree(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        _seed(project)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            True, str(project), "agent:main:subagent:child"
+        )
+
+        assert refusal is None
+        assert workspace is not None, "a normal parent is not downgraded"
+        assert cwd == str(workspace.tree)
+        assert Path(cwd) != project
+
+    def test_no_isolation_never_touches_the_workspaces_directory(self, project):
+        from agent.tools.subagent.spawn.core import _create_isolated_child_workspace
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        cwd, workspace, refusal = _create_isolated_child_workspace(
+            False, str(parent_tree), "kid-key"
+        )
+
+        assert (cwd, workspace, refusal) == (str(parent_tree), None, None)
+
+
+class TestRuntimeToolExposesIsolation:
+    """The model-facing spawn tool carries ``isolation`` — the guard's premise.
+
+    Before this, only the build-time class had the field, so the one-level rule
+    above protected nothing the model could reach.
+    """
+
+    def test_the_schema_documents_the_flag_and_the_downgrade(self):
+        from agent.tools.subagent.tools.runtime_tools import sessions_spawn_runtime_tool
+
+        props = sessions_spawn_runtime_tool.args_schema.model_json_schema()["properties"]
+
+        assert "isolation" in props
+        description = props["isolation"]["description"]
+        assert "git worktree" in description
+        assert "IGNORED" in description, "the one-level rule must be model-visible"
+        assert props["isolation"]["default"] is False
+
+    @pytest.mark.asyncio
+    async def test_the_tool_forwards_isolation_to_the_pipeline(self, monkeypatch):
+        from agent.tools.subagent.spawn.core import SpawnResult
+        from agent.tools.subagent.tools import runtime_tools
+
+        seen: dict = {}
+
+        async def _fake(**kwargs) -> SpawnResult:
+            seen.update(kwargs)
+            return SpawnResult(
+                status="accepted", run_id="r1", child_session_key="agent:main:subagent:x"
+            )
+
+        import agent.tools.subagent.spawn as spawn_pkg
+        import agent.tools.subagent.spawn.privilege as privilege
+
+        monkeypatch.setattr(spawn_pkg, "spawn_subagent_direct", _fake)
+        monkeypatch.setattr(privilege, "check_spawn_permission", lambda session_id: (True, ""))
+
+        await runtime_tools.sessions_spawn_runtime_tool.coroutine(
+            task="do it", session_id="s1", isolation=True
+        )
+
+        assert seen["isolation"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_tool_driven_spawn_inside_a_worktree_is_downgraded(self, project, monkeypatch):
+        """End to end through the tool: the child lands in the SAME tree."""
+        from agent.tools.subagent.registry import clear as clear_registry
+        from agent.tools.subagent.spawn import runtime_isolation
+        from agent.tools.subagent.spawn import core as spawn_core
+        from agent.tools.subagent.tools.runtime_tools import sessions_spawn_runtime_tool
+
+        workspaces = Path(os.environ["SHERRY_ISOLATED_WORKSPACES_DIR"])
+        parent_tree = workspaces / "parent-slug" / "tree"
+        parent_tree.mkdir(parents=True)
+
+        captured: dict = {}
+
+        async def _fake_lane(**kwargs) -> None:
+            captured.update(kwargs)
+
+        monkeypatch.setattr(spawn_core, "_execute_subagent_with_lane", _fake_lane)
+        # The caller runs inside its own isolated worktree: that is what the real
+        # inheritance resolver returns for an isolated parent session.
+        monkeypatch.setattr(
+            runtime_isolation,
+            "resolve_spawned_workspace_inheritance",
+            lambda requester_session_key, agent_id: str(parent_tree),
+        )
+
+        try:
+            out = await sessions_spawn_runtime_tool.coroutine(
+                task="do it", session_id="isolated-parent", isolation=True
+            )
+            # The lane dispatch is fire-and-forget: let the task start.
+            await asyncio.sleep(0.05)
+            assert "status=accepted" in out, out
+        finally:
+            clear_registry()
+
+        run = captured["run"]
+        assert run.spawned_cwd == str(parent_tree), "the child reuses the parent tree"
+        assert not (workspaces / "agent:main:subagent:isolated-parent").exists()

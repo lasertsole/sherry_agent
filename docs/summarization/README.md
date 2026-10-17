@@ -34,7 +34,7 @@ Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/s
 - `before_agent` / `abefore_agent` (`core.py:399` / `core.py:403`) — **T1 preflight**
 - `wrap_model_call` / `awrap_model_call` (`core.py:413` / `core.py:495`) — **T2 dispatch, T3 post-response re-check, T4/T5 error-recovery ring**
 
-In the middleware chain it sits **innermost — closest to the LLM**. When compression fires, the history always ends up in the shape:
+In the middleware chain it sits directly under `LLMRetryMiddleware`; only `InvalidToolCallRepairMiddleware` wraps it from the inside — that one is closest to the LLM. When compression fires, the history always ends up in the shape:
 
 ```
 HumanMessage("What did we do so far?")

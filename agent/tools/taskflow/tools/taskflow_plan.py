@@ -16,6 +16,7 @@ from langchain_core.tools import tool
 from loguru import logger
 
 from agent.tools.pub_base import SessionId
+from config.features import TASKFLOW_INFRA
 
 from ..config import StepStatus
 from ..registry import store_sqlite
@@ -129,6 +130,15 @@ async def taskflow_plan(
         return (
             f"Error: flow_id '{flow_id}' already exists "
             f"(status={existing['status']}); pass another flow_id"
+        )
+
+    # Refuse BEFORE spending a planner call: the flow could not be created anyway.
+    active_flows = store_sqlite.get_active_flows_sync(session_id)
+    if len(active_flows) >= TASKFLOW_INFRA["max_flows_per_session"]:
+        return (
+            f"Error: session already has {len(active_flows)} active flows "
+            f"(max {TASKFLOW_INFRA['max_flows_per_session']}). Finish or cancel existing "
+            "flows before planning a new one."
         )
 
     from models import build_auxiliary_llm

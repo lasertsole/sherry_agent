@@ -46,6 +46,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import type { ThinkingLevel } from '~/composables/bridge/session';
 
 const props = defineProps<{ sessionId: string }>();
 
@@ -53,18 +54,25 @@ const { t } = useI18n();
 /** Per-session thinking control store (hydrated from the backend). */
 const store = useThinkingStore();
 
-const levels: Array<'low' | 'high' | 'max'> = ['low', 'high', 'max'];
+/**
+ * The picker's options: the session's model-declared levels (clamp order) —
+ * the unified seven-level selector. The on/off switch stays for models whose
+ * backend mode is `on_off` AND whose level list is the bare `off`.
+ */
+const levels = computed(() => store.availableLevels(props.sessionId));
+
+/** Whether the unified level picker replaces the switch for this session. */
+const unified = computed(() => levels.value.length > 1);
 
 /** Popup list of the current mode's options, opened by the collapsed trigger. */
 const thinkMenu = ref();
 
 /** Current value of the session's thinking control (bool for on_off, level for levels). */
 const currentValue = computed(() => store.current(props.sessionId));
-const currentLevel = computed(() =>
-  currentValue.value === 'low' || currentValue.value === 'high' || currentValue.value === 'max'
-    ? currentValue.value
-    : 'high'
-);
+const currentLevel = computed<ThinkingLevel>(() => {
+  const value = currentValue.value;
+  return typeof value === 'string' ? (value as ThinkingLevel) : value ? 'high' : 'off';
+});
 const thinkingOn = computed(() => currentValue.value === true);
 
 /**
@@ -72,15 +80,15 @@ const thinkingOn = computed(() => currentValue.value === true);
  * mirroring the level picker for switch-style models.
  */
 const triggerLabel = computed(() =>
-  store.mode === 'levels'
+  unified.value || store.mode === 'levels'
     ? t(`thinkingToggle.${currentLevel.value}`)
     : t(`thinkingToggle.${thinkingOn.value ? 'on' : 'off'}`)
 );
 
 /** Menu items for the active mode; the current option carries a check marker. */
 const menuItems = computed(() => {
-  if (store.mode === 'levels') {
-    return levels.map(lvl => ({
+  if (unified.value || store.mode === 'levels') {
+    return levels.value.map(lvl => ({
       label: t(`thinkingToggle.${lvl}`),
       icon: currentLevel.value === lvl ? 'pi pi-check' : undefined,
       command: () => handleLevel(lvl)
@@ -100,6 +108,7 @@ const menuItems = computed(() => {
 const pending = computed(() => store.isPending(props.sessionId));
 
 const active = computed(() => {
+  if (unified.value) return currentLevel.value !== 'off';
   if (store.mode === 'levels') return true; // always-think models are always on
   return thinkingOn.value;
 });
@@ -126,7 +135,7 @@ const handleOnOff = (enabled: boolean) => {
  * Select an explicit thinking level (levels mode).
  * @param lvl
  */
-const handleLevel = (lvl: 'low' | 'high' | 'max') => {
+const handleLevel = (lvl: ThinkingLevel) => {
   store.setValue(props.sessionId, lvl);
 };
 
@@ -142,9 +151,11 @@ const toggleMenu = (event: Event) => {
  * Mobile: cycle on_off → off/on; levels → low → high → max → low.
  */
 const cycleMobile = () => {
-  if (store.mode === 'levels') {
-    const next = currentLevel.value === 'low' ? 'high' : currentLevel.value === 'high' ? 'max' : 'low';
-    store.setValue(props.sessionId, next);
+  if (unified.value || store.mode === 'levels') {
+    const options = levels.value;
+    const index = options.indexOf(currentLevel.value);
+    const next = options[(index + 1) % options.length] ?? options[0];
+    if (next) store.setValue(props.sessionId, next);
     return;
   }
   store.setValue(props.sessionId, !thinkingOn.value);
@@ -157,8 +168,11 @@ const cycleMobile = () => {
     "thinkingToggle": {
       "a11y": "控制模型思考能力",
       "pending": "下一轮生效",
+      "minimal": "最低",
       "low": "低",
+      "medium": "中",
       "high": "高",
+      "xhigh": "超高",
       "max": "最高",
       "on": "开启",
       "off": "关闭"
@@ -168,8 +182,11 @@ const cycleMobile = () => {
     "thinkingToggle": {
       "a11y": "Toggle model thinking",
       "pending": "Applies next turn",
+      "minimal": "Minimal",
       "low": "Low",
+      "medium": "Medium",
       "high": "High",
+      "xhigh": "Extra High",
       "max": "Max",
       "on": "On",
       "off": "Off"
@@ -179,8 +196,11 @@ const cycleMobile = () => {
     "thinkingToggle": {
       "a11y": "モデルの思考モードを切り替え",
       "pending": "次のターンで反映",
+      "minimal": "最小",
       "low": "低",
+      "medium": "中",
       "high": "高",
+      "xhigh": "超高",
       "max": "最大",
       "on": "オン",
       "off": "オフ"
@@ -190,8 +210,11 @@ const cycleMobile = () => {
     "thinkingToggle": {
       "a11y": "모델 생각 모드 전환",
       "pending": "다음 턴에 적용",
+      "minimal": "최소",
       "low": "낮음",
+      "medium": "중간",
       "high": "높음",
+      "xhigh": "특상",
       "max": "최대",
       "on": "켜기",
       "off": "끄기"

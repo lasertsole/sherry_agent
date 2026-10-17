@@ -173,12 +173,28 @@ class TestTaggingGate:
         assert update is None
         assert len(list(evicted_dir.iterdir())) == 1
 
-    def test_single_giant_line_is_not_tagged(self, isolated_db, isolated_sessions, sid):
-        middleware = ContextEvictionMiddleware()
-        message = HumanMessage(content="u" * (THRESHOLD + 1), id="h1")
+    def test_single_giant_line_is_tagged_with_a_capped_preview(
+        self, isolated_db, isolated_sessions, sid
+    ):
+        """The char-budgeted fallback also covers the human path.
 
-        assert middleware.before_model(_state(sid, [message]), None) is None
-        assert not (isolated_sessions / sid).exists()
+        The line window cannot shrink a newline-free payload (its head and tail
+        windows overlap), which used to leave the message untagged — and
+        therefore untruncated in the model view. Now it is offloaded like any
+        other oversized text: the file gets the full payload, the state text
+        stays untouched, only the view is previewed.
+        """
+        middleware = ContextEvictionMiddleware()
+        text = "u" * (THRESHOLD + 1)
+        message = HumanMessage(content=text, id="h1")
+
+        update = middleware.before_model(_state(sid, [message]), None)
+
+        assert update is not None
+        tagged = update["messages"][0]
+        path = Path(tagged.additional_kwargs[EVICTED_TO_KEY])
+        assert path.read_text(encoding="utf-8") == text
+        assert tagged.content == text
 
     def test_missing_session_id_returns_none(self, isolated_db, isolated_sessions):
         middleware = ContextEvictionMiddleware()

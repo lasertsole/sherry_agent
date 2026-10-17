@@ -162,7 +162,7 @@ export interface PresetCatalogFacts {
 export const CODING_DISABLED_TOOLS: readonly string[] = ['memory'];
 
 /** Skills 编程助手 keeps besides the required chain (the work flow tools). */
-export const CODING_SKILLS: readonly string[] = ['code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
+export const CODING_SKILLS: readonly string[] = ['bugfix-contract', 'code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
 
 /** Tool groups 情感陪伴 keeps OFF entirely: the orchestration surfaces. */
 export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];

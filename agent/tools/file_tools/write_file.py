@@ -24,13 +24,13 @@ import stat
 from pathlib import Path
 from typing import override
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from langchain_core.callbacks import CallbackManagerForToolRun
-from langchain_community.tools.file_management import WriteFileTool
-from langchain_community.tools.file_management.write import WriteFileInput
+from langchain_core.tools import BaseTool
 
 from agent.tools.pub_base import SessionId
+from agent.tools.pub_base import ensure_git_for_writes
 from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
@@ -55,9 +55,20 @@ from agent.tools.pub_base import (
 from agent.tools.todolist.evidence_recorder import invalidates_evidence
 
 
-class FormattedWriteFileInput(WriteFileInput):
-    """WriteFileInput plus the runtime-injected session id (not LLM-facing)."""
+class FormattedWriteFileInput(BaseModel):
+    """The LLM-facing write schema (three fields) plus the injected session id.
 
+    The three fields reproduce ``langchain_community``'s ``WriteFileInput``
+    verbatim — same names, same descriptions, same required set — because the
+    model sees this schema. That package is archived, so the shape lives here
+    now; ``tests/agent/tools/test_tool_schema_goldens.py`` freezes it.
+    """
+
+    file_path: str = Field(description="name of file")
+    text: str = Field(description="text to write to file")
+    append: bool = Field(default=False, description="Whether to append to an existing file.")
+
+    #: Runtime-injected; excluded from the model-facing schema.
     session_id: SessionId = ""
 
 
@@ -133,8 +144,8 @@ def _existing_text_encoding(resolved: Path) -> str | None:
     return sniff_text_encoding(data)
 
 
-class FormattedWriteFileTool(WriteFileTool):
-    """WriteFileTool that auto-formats .py files with autopep8."""
+class FormattedWriteFileTool(BaseTool):
+    """Write a file to disk, auto-formatting .py content with autopep8."""
 
     #: Declared on the class like every other tool (the factory used to assign
     #: it, so constructing the class directly produced a nameless tool).
@@ -160,6 +171,14 @@ class FormattedWriteFileTool(WriteFileTool):
         root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
+
+        # A session with a BOUND project directory writes into a git tree or not
+        # at all: the first write initializes a missing repository and a failed
+        # init refuses the write (see pub_base/git_ensure). An unbound session is
+        # untouched.
+        git_ok, git_error = ensure_git_for_writes(session_id)
+        if not git_ok:
+            return tool_error(git_error)
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -323,10 +342,8 @@ class FormattedWriteFileTool(WriteFileTool):
         return await asyncio.to_thread(self._core, file_path, text, append, session_id)
 
 
-def build_write_file_tool() -> WriteFileTool:
-    tool = FormattedWriteFileTool(
-        root_dir="/"  # containment is enforced by resolve_project_path / resolve_external_path
-    )
+def build_write_file_tool() -> BaseTool:
+    tool = FormattedWriteFileTool()
     tool.handle_tool_error = True
     tool.metadata = {"idempotent": False}
     return tool

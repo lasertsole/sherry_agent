@@ -108,11 +108,62 @@ class TestThresholdBoundary:
         assert path.name.startswith("c1_") and path.suffix == ".txt"
         assert load_evicted(path) == content
 
-    def test_single_giant_line_is_not_evicted(self, sessions_dir):
-        message = ToolMessage(content="x" * (THRESHOLD + 1), name="terminal", tool_call_id="c1")
+    def test_single_giant_line_is_evicted_with_a_capped_preview(self, sessions_dir):
+        """The line window cannot shrink it; the char-budgeted fallback does.
 
-        assert evict_tool_result(message, SID) is None
-        assert not sessions_dir.exists()
+        With ten or fewer lines the head and tail windows OVERLAP, so that
+        preview would reproduce the payload twice — the old behaviour refused
+        the eviction, and a newline-free blob then rode the context window in
+        full. The fallback caps each line and each side instead.
+        """
+        content = "x" * (THRESHOLD + 1)
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+
+        assert evicted is not None
+        assert len(evicted.content) < len(content)
+        # Both sides are present (more than one capped line) and the preview
+        # lands well under the eviction threshold itself.
+        assert eviction_module._PREVIEW_LINE_MAX_CHARS < len(evicted.content) < THRESHOLD
+        path = _eviction_path(evicted.content)
+        assert load_evicted(path) == content
+        assert f"[full content: {len(content)} chars, evicted at " in evicted.content
+
+    def test_a_few_very_long_lines_are_evicted_too(self, sessions_dir):
+        """Six lines is still inside the head+tail window (5 + 5)."""
+        content = "\n".join("z" * ((THRESHOLD // 6) + 1) for _ in range(6))
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+
+        assert evicted is not None
+        assert len(evicted.content) < len(content)
+        assert load_evicted(_eviction_path(evicted.content)) == content
+
+    def test_a_clipped_line_is_marked_and_the_midline_is_kept(self, sessions_dir):
+        content = "\n".join("z" * ((THRESHOLD // 6) + 1) for _ in range(6))
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+        assert evicted is not None
+
+        body = evicted.content.split("--- head", 1)[1]
+        assert "\u2026" in body, "a line cut by the char cap must say so"
+        assert "\n...\n" in evicted.content
+
+    def test_a_multiline_payload_still_uses_the_whole_line_window(self, sessions_dir):
+        """The fallback must not touch the ordinary case: whole lines, 5 + 5."""
+        lines = [f"{n:05d}-" + "y" * 95 for n in range(300)]
+        content = "\n".join(lines)
+        message = ToolMessage(content=content, name="terminal", tool_call_id="c1", id="t1")
+
+        evicted = evict_tool_result(message, SID)
+        assert evicted is not None
+
+        assert f"--- head (5 lines) ---\n{lines[0]}\n" in evicted.content
+        assert f"\n{lines[-1]}\n" in evicted.content
+        assert "\u2026" not in evicted.content
 
 
 class TestExcludedTools:
@@ -257,11 +308,18 @@ class TestHumanEviction:
         assert tagged is not None
         assert Path(tagged.additional_kwargs[EVICTED_TO_KEY]).name.startswith("human-")
 
-    def test_single_giant_line_is_not_evicted(self, sessions_dir):
-        message = HumanMessage(content="u" * (HUMAN_THRESHOLD + 1), id="h1")
+    def test_single_giant_line_is_still_offloaded(self, sessions_dir):
+        """Same fallback as the tool path: the state text is written, the tag set."""
+        content = "u" * (HUMAN_THRESHOLD + 1)
+        message = HumanMessage(content=content, id="h1")
 
-        assert evict_human_message(message, SID) is None
-        assert not sessions_dir.exists()
+        tagged = evict_human_message(message, SID)
+
+        assert tagged is not None
+        path = Path(tagged.additional_kwargs[EVICTED_TO_KEY])
+        assert load_evicted(path) == content
+        # The state text is untouched — only the model view is previewed later.
+        assert tagged.content == content
 
     @pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b", "../escape"])
     def test_unsafe_session_segment_skips_every_write(self, sessions_dir, bad):
@@ -363,6 +421,66 @@ class TestFilePreview:
         preview = build_file_preview(missing, missing)
 
         assert "[full content: 0 bytes," in preview
+
+    def test_a_mid_line_cut_is_called_out_with_the_tools_that_reach_it(self, tmp_path: Path):
+        # A giant line is cut silently by the per-line cap; without a note the
+        # cut reads as an ordinary line ending and the model would ask
+        # read_file for the rest — which pages by LINE and cannot reach it.
+        preview = self._preview(tmp_path, b"x" * 40_000)
+
+        assert "One very long line was cut above" in preview
+        assert "search_files" in preview
+        assert "terminal" in preview and "python_repl" in preview
+
+    def test_a_line_ending_exactly_at_the_cap_is_not_reported_as_cut(self, tmp_path: Path):
+        # readline(cap) returns a full-cap chunk with no newline even when the
+        # line ended right there; the note must not fire on that shape.
+        line = b"y" * eviction_module._PREVIEW_LINE_MAX_BYTES
+        preview = self._preview(tmp_path, line + b"\n" + b"short\n")
+
+        assert "One very long line was cut above" not in preview
+
+    def test_a_partial_first_tail_line_is_reported_too(self, tmp_path: Path):
+        # The tail window starts mid-file, so its FIRST shown line is a fragment
+        # whenever the walk stopped inside a line. The head here is all short
+        # lines, so the note can only have come from the tail check.
+        payload = b"".join(f"head-{n}\n".encode() for n in range(1, 7))
+        payload += b"x" * 40_000 + b"\n" + b"tail-a\ntail-b\n"
+        preview = self._preview(tmp_path, payload)
+
+        assert "One very long line was cut above" in preview
+
+    def test_a_normal_preview_carries_no_cut_note(self, tmp_path: Path):
+        data = b"".join(f"line-{n}\n".encode() for n in range(1, 21))
+
+        preview = self._preview(tmp_path, data)
+
+        assert "One very long line was cut above" not in preview
+        assert "chunks.]" in preview, "the plain notice tail stays byte-identical"
+
+    def test_a_giant_line_among_many_lines_cannot_ride_the_preview_whole(self, tmp_path: Path):
+        # The old hole on this path: the line window preferred "whole lines" with
+        # no per-line cap, so a payload that shrank at all still handed back a
+        # near-original-size preview with the giant line riding it.
+        source = tmp_path / "mixed.txt"
+        content = "x" * 6_000 + "\n" + "".join(f"row-{n:02d}-{'y' * 30}\n" for n in range(40))
+
+        preview = build_preview(content, source)
+
+        assert len(preview) < 4_000, f"the preview must be a few KB (got {len(preview)})"
+        assert len(preview) < len(content) / 2, "and a real shrink, not a near-copy"
+        assert "\u2026" in preview, "the giant line is shown clipped"
+        assert "One very long line was cut above" in preview
+        assert "search_files" in preview
+
+    def test_the_in_memory_preview_notes_an_over_long_line_too(self, tmp_path: Path):
+        source = tmp_path / "big.txt"
+        content = "head\n" + "x" * 40_000 + "\ntail\n"
+
+        preview = build_preview(content, source)
+
+        assert "One very long line was cut above" in preview
+        assert "python_repl" in preview
 
 
 class TestReadFileSelfBudgetedSlice:

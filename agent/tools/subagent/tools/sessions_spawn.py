@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
 from ..spawn import spawn_subagent_direct
+from ..spawn.plan import clamp_run_timeout_seconds
 from ..spawn.privilege import check_spawn_permission
 
 
@@ -71,6 +72,23 @@ class SessionsSpawnSchema(BaseModel):
         "silently overwritten). Use when parallel subagents would edit overlapping "
         "files; requires a project directory to copy.",
     )
+    run_timeout_seconds: float | None = Field(
+        default=None,
+        description="Wall-clock timeout for this subagent in seconds. "
+        "Default 600 (10 min), min 600, max 7200 (2 h). "
+        "Values outside [600, 7200] are clamped to the nearest bound. "
+        "Raise it for complex tasks (e.g. large codebase refactors); "
+        "the minimum already covers most tasks.",
+    )
+    output_schema: dict | None = Field(
+        default=None,
+        description="Optional JSON Schema that constrains the subagent's final "
+        "output. When provided, the subagent is forced to produce JSON matching "
+        "this schema (through the model provider's native structured output, or a "
+        "structured-output tool call where the provider lacks one). Use for tasks "
+        "that must return machine-readable data (analysis reports, extraction "
+        "results); omit for free-form text.",
+    )
 
 
 class SessionsSpawnTool(BaseTool):
@@ -103,6 +121,8 @@ class SessionsSpawnTool(BaseTool):
         extra_tools: list[str] | None = None,
         cwd: str | None = None,
         isolation: bool = False,
+        run_timeout_seconds: float | None = None,
+        output_schema: dict | None = None,
     ) -> str:
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
@@ -142,6 +162,8 @@ class SessionsSpawnTool(BaseTool):
             functional_role_hint=functional_role,
             extra_tools=extra_tools,
             isolation=isolation,
+            run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
+            output_schema=output_schema,
         )
 
         parts = [f"Subagent spawned: status={result.status}"]

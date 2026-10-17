@@ -34,7 +34,7 @@
 - `before_agent` / `abefore_agent`（`core.py:399` / `core.py:403`）—— **T1 预检**
 - `wrap_model_call` / `awrap_model_call`（`core.py:413` / `core.py:495`）—— **T2 派发、T3 响应后复检、T4/T5 错误恢复环**
 
-在中间件链中它位于**最内层 —— 离 LLM 最近**。压缩发生后，历史始终呈现如下形态：
+在中间件链中它紧挨 `LLMRetryMiddleware` 内侧；只有 `InvalidToolCallRepairMiddleware` 在它内侧——后者最贴近 LLM。压缩发生后，历史始终呈现如下形态：
 
 ```
 HumanMessage("What did we do so far?")

@@ -393,66 +393,17 @@ class TestFourLanguageRules:
 # LLM fallback (first arming only, uncertain window only, fail-open)
 # ============================================================================
 
-#: 22 chars: inside the fallback window, request phrasing ("して"), no keyword.
+#: 22 chars: the old LLM-fallback window — request phrasing ("して"), no keyword.
 _UNCERTAIN = "この表示、なんとかしてほしいなと思ってます"
 
 
-class TestLlmFallbackWindow:
-    @pytest.mark.parametrize(
-        ("message", "expected"),
-        [
-            (_UNCERTAIN, True),  # window + request phrasing, no keyword
-            ("直して", False),  # shorter than the window: the rules decided
-            ("この列の意味について教えていただけますでしょうか", False),  # no request phrasing
-            ("What does this column mean?", False),  # question pattern is decisive
-            ("こんにちは、今日はいい天気ですね", False),  # chat pattern is decisive
-            ("x" * 101, False),  # longer than the window: length decided
-        ],
-    )
-    def test_only_the_uncertain_window_asks_for_help(self, message, expected):
-        assert ti._should_try_llm(message) is expected
+class TestRulesOnly:
+    """Detection is rules-only: the LLM fallback layer was removed."""
 
     @pytest.mark.asyncio
-    async def test_the_fallback_asks_the_model_and_arms(self, monkeypatch):
-        calls: list[str] = []
-
-        async def _fake_classify(content: str) -> bool:
-            calls.append(content)
-            return True
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _fake_classify)
-
-        out = await ti.TaskIntentMiddleware().abefore_model(
-            _state(HumanMessage(content=_UNCERTAIN))
-        )
-
-        assert calls == [_UNCERTAIN], "the fallback must ask exactly once"
-        assert out is not None and ti._TASK_STEERING_PROMPT in out["messages"][0].content
-        assert "s-e7" in ti._armed_sessions
-
-    @pytest.mark.asyncio
-    async def test_a_question_in_the_window_never_reaches_the_model(self, monkeypatch):
-        calls: list[str] = []
-
-        async def _fake_classify(content: str) -> bool:
-            calls.append(content)
-            return True
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _fake_classify)
-
-        out = await ti.TaskIntentMiddleware().abefore_model(
-            _state(HumanMessage(content="What does this column mean?"))
-        )
-
-        assert calls == [] and out is None
-
-    @pytest.mark.asyncio
-    async def test_the_model_declining_means_no_steering(self, monkeypatch):
-        async def _fake_classify(_content: str) -> bool:
-            return False
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _fake_classify)
-
+    async def test_the_leftover_window_is_not_a_task(self):
+        # No keyword, under the length fallback: rules say no, and nothing
+        # consults a model any more — the conservative direction.
         out = await ti.TaskIntentMiddleware().abefore_model(
             _state(HumanMessage(content=_UNCERTAIN))
         )
@@ -460,103 +411,21 @@ class TestLlmFallbackWindow:
         assert out is None and "s-e7" not in ti._armed_sessions
 
     @pytest.mark.asyncio
-    async def test_an_armed_session_stays_rule_only(self, monkeypatch):
-        mw = ti.TaskIntentMiddleware()
-        first = await mw.abefore_model(_state(HumanMessage(content=_TASK)))
-        assert first is not None and ti._TASK_STEERING_PROMPT in first["messages"][0].content
-
-        calls: list[str] = []
-
-        async def _fake_classify(content: str) -> bool:
-            calls.append(content)
-            return True
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _fake_classify)
-
-        # An uncertain JA message on the armed session: rules say no, and the
-        # fallback must NOT run (it is a first-arming-only cost).
-        later = await mw.abefore_model(_state(HumanMessage(content=_UNCERTAIN)))
-        assert later is None and calls == []
-
-        # A rule-positive message still gets the short reminder.
-        reminded = await mw.abefore_model(_state(HumanMessage(content="バグを修正して")))
-        assert reminded is not None
-        assert reminded["messages"][0].content == ti._TASK_STEERING_REMINDER
-        assert calls == []
-
-    @pytest.mark.asyncio
-    async def test_no_session_id_keeps_the_fallback_off(self, monkeypatch):
-        calls: list[str] = []
-
-        async def _fake_classify(content: str) -> bool:
-            calls.append(content)
-            return True
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _fake_classify)
-
-        # No session id means no ledger entry to arm, so the one-shot guarantee
-        # does not hold and the call path stays rule-only.
-        out = await ti.TaskIntentMiddleware().abefore_model(
-            _state(HumanMessage(content=_UNCERTAIN), session_id="")
-        )
-
-        assert out is None and calls == []
-
-
-class TestLlmFallbackFailOpen:
-    @pytest.mark.asyncio
-    async def test_a_broken_model_returns_false(self, monkeypatch):
+    async def test_no_auxiliary_model_is_ever_consulted(self, monkeypatch):
         import models
 
-        def _boom(**_kwargs):
-            raise RuntimeError("no auxiliary model configured")
+        def _boom(**_kwargs):  # pragma: no cover - must not run
+            raise AssertionError("task-intent must not call the auxiliary model")
 
         monkeypatch.setattr(models, "build_auxiliary_llm", _boom)
 
-        assert await ti._llm_classify_intent(_UNCERTAIN) is False
-
-    @pytest.mark.asyncio
-    async def test_a_failing_classification_never_blocks_the_turn(self, monkeypatch):
-        async def _boom(_content: str) -> bool:
-            raise RuntimeError("model exploded")
-
-        monkeypatch.setattr(ti, "_llm_classify_intent", _boom)
-
-        # The middleware's own exception boundary keeps the turn alive.
+        # Both a rule-positive and a rule-inconclusive message stay modelless.
+        armed = await ti.TaskIntentMiddleware().abefore_model(_state(HumanMessage(content=_TASK)))
+        assert armed is not None and ti._TASK_STEERING_PROMPT in armed["messages"][0].content
         assert (
             await ti.TaskIntentMiddleware().abefore_model(_state(HumanMessage(content=_UNCERTAIN)))
             is None
         )
-
-    @pytest.mark.asyncio
-    async def test_a_work_request_answer_classifies_as_task(self, monkeypatch):
-        import models
-
-        class _Response:
-            content = "work_request"
-
-        class _FakeLlm:
-            async def ainvoke(self, _messages):
-                return _Response()
-
-        monkeypatch.setattr(models, "build_auxiliary_llm", lambda **_kwargs: _FakeLlm())
-
-        assert await ti._llm_classify_intent(_UNCERTAIN) is True
-
-    @pytest.mark.asyncio
-    async def test_prose_instead_of_a_category_is_not_a_task(self, monkeypatch):
-        import models
-
-        class _Response:
-            content = "This message looks like a casual conversation to me."
-
-        class _FakeLlm:
-            async def ainvoke(self, _messages):
-                return _Response()
-
-        monkeypatch.setattr(models, "build_auxiliary_llm", lambda **_kwargs: _FakeLlm())
-
-        assert await ti._llm_classify_intent(_UNCERTAIN) is False
 
 
 # ============================================================================

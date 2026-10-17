@@ -69,10 +69,11 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 
 ### 7. ⚙️ ランタイム・並行性・セッション制御
 - **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される
-- **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く
+- **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く。行の右クリックメニューは 開く / 別のアプリで開く / 内蔵ブラウザーで開く（HTML）/ ファイルマネージャーで表示 / 絶対・相対パスのコピー / チャットに追加 を提供し、行（またはファイルビューアのタブ）はコンポーザーへドラッグできる — どちらの経路もメッセージに載るのは `@./path` メンション chip だけで、ファイル内容は決して載らない（ファイルはエージェント自身が読む）
 - **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は `browser_*` ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは 8 個のメイン専用ツール（navigate / snapshot / click / type / press / scroll / screenshot / evaluate、最後の 1 つは `SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
-- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
+- **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
+- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_create(resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の追加列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
 - **TaskFlow の進捗ウェーブ** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): フローのステップは最長経路の DAG レベルにまとめられ、フローティング進捗パネルに表示される（表示専用 — スケジューラは依然として各ステップの `depends_on` ごとに解錠する。未知の依存は無視され、閉路は `cyclic` と表示された末尾のウェーブに置かれる）。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
 - **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
 - **セッションごとのモデルと思考**: `PUT /sessions/thinking` と `PUT /sessions/model` は単一セッションの思考トグルとメインモデルを上書きする（ログインが有効な場合、クライアントは単回限りの `GET /auth/ws-ticket` を先取りする）。思考制御ミドルウェアはそれに基づいてリクエストモデルを `build_main_llm(thinking=...)` のバリアントに差し替え、セッションに明示的な選択がなければ環境変数の既定値へフォールバックする
@@ -93,8 +94,9 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 | **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
 | **ドキュメント解析** | mineru-vl-utils |
 | **Web 検索** | langchain-tavily（Tavily API）＋セルフホストの SearXNG を代替バックエンドとして利用（Tavily 失敗時は自動的にフォールバック） |
+| **Web 取得** | `web_fetch` は 1 つの http(s) URL を markdown として読みます：公開ページは SSRF ガード・DNS ピン留め・ホップごとのリダイレクト検査を通し、ローカル/開発サーバーのアドレスは明示スイッチ（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`）が必要です |
 | **コード検索** | ripgrep（依存関係と一緒に入る `ripgrep-bin`）。純 Python 走査が常時のフォールバック |
-| **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
+| **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-classic + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
 | **構造化出力** | instructor、json_repair |
 | **評価（Evaluation）** | RAGAS（グラフ RAG 品質指標）+ 自製サンドボックス評価フレームワーク（`evals/`） |
 | **MCP** | langchain-mcp-adapters（`plugins/mcp_server/` でサーバーを設定） |
@@ -131,6 +133,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
 │       ├── mcp_plugin.py   # MCP ツール統合
 │       ├── web_search.py   # Web 検索ツール（Tavily）
+│       ├── web_fetch.py    # URL 取得ツール（markdown、公開＋任意のローカル）
 │       ├── python_repl.py  # Python コード実行
 │       ├── terminal.py     # ターミナルコマンド実行
 │       ├── memory.py       # メモリ閲覧ツール
@@ -181,7 +184,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
-├── evals/                  # 評価フレームワーク（dispatcher + 5 スイート）
+├── evals/                  # 評価フレームワーク（dispatcher + 7 スイート）
 │   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
 │   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
@@ -469,8 +472,12 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
 | `session_memory` | セッションメモリスタックの 6 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、セマンティック検索ランキング |
 | `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
+| `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
+| `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
 
 すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。
+
+`coding_capability` と `swebench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
 
 ---
 

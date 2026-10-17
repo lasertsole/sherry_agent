@@ -14,7 +14,7 @@
 - [Data Layer](data/README.md)
   - [Plan Files (workspace/sessions/<session_id>/plans/*.md)](data/README.md#plan-files-workspacesessionssession_idplansmd)
   - [Boulder State (src/data/boulder.json)](data/README.md#boulder-state-srcdataboulderjson)
-  - [Evidence Ledger (src/data/evidence-ledger.jsonl)](data/README.md#evidence-ledger-srcdataevidence-ledgerjsonl)
+  - [Evidence Ledger](../gates/evidence-ledger/README.md)
   - [todos.db — Session-Level TODO Storage](data/README.md#todosdb--session-level-todo-storage)
 - [Service Layer](#service-layer)
 - [Tool Layer](#tool-layer)
@@ -182,25 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` is an append-only JSONL ledger (`src/data/evidence-ledger.jsonl`, one JSON object per line). `append` + `read_all` remain the whole storage contract; session-scoped views read the same shared file:
-
-```python
-class EvidenceLedger:
-    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
-
-    @classmethod
-    def append(cls, entry: dict) -> None: ...          # one JSON line + UTC stamp
-    @classmethod
-    def read_all(cls) -> list[dict]: ...
-    @classmethod
-    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
-    @classmethod
-    def read_for_session(cls, session_key: str) -> list[dict]: ...
-    @classmethod
-    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
-```
-
-Staleness is derived, never stored: `mark_stale_for_path` appends a `{"event": "stale", "file_path": …}` row, and the read side treats an evidence row as stale when a later stale event names a path contained in its `command`. `agent/tools/todolist/evidence_recorder.py` wires this into the tools (fail-open, errors swallowed): `terminal` / `python_repl` always append a row for recognized verification commands (the taxonomy lives in `EVIDENCE_LEDGER["verify_commands"]`) and `write_file` / `patch_file` always append a stale event for the edited path. `agent/tools/taskflow/evidence_collector.py` renders the summary shown to the judges and to the `taskflow_finish` evidence gate.
+`agent/tools/todolist/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 

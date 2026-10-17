@@ -77,7 +77,7 @@ def _request(messages, session_id):
 
 
 def _disable_nudges(monkeypatch):
-    monkeypatch.setattr(summarization_module, "_schedule_compression_nudges", lambda *a: None)
+    monkeypatch.setattr(summarization_module, "_schedule_memory_review", lambda *a: None)
     monkeypatch.setattr(summarization_module, "_schedule_compression_todo_update", lambda *a: None)
 
 

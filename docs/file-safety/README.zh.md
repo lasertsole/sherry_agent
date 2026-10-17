@@ -15,6 +15,7 @@
   - [3. 按路径锁](#3-按路径锁)
   - [4. 残留清扫](#4-残留清扫)
 - [先读后写许可证](#-先读后写许可证)
+- [写操作前的 git 就绪](#-写操作前的-git-就绪)
 - [隔离子代理工作区（git worktree）](#-隔离子代理工作区git-worktree)
 - [备选方案与实测](#%EF%B8%8F-备选方案与实测)
 - [资源文件与编码](#%EF%B8%8F-资源文件与编码)
@@ -26,7 +27,7 @@
 
 所有文件工具与全部子 Agent 共享同一个进程，而工具又是进程级单例——所以"同一路径两个写者"是家常便饭而非边角情况。没有保护时，故障是静默的：后写者覆盖先写的编辑、两边都报告成功；读者读到半写文件；写到一半崩溃把目标截断。
 
-六种机制按一次写入遇到它们的顺序回应这些问题：
+七种机制按一次写入遇到它们的顺序回应这些问题：
 
 1. `file_write_lock`——按路径的 `threading.Lock`，然后跨进程 `flock`。
 2. `atomic_write_text_no_follow`——同目录临时文件、`fsync`、权限保留、`os.replace`。
@@ -34,6 +35,7 @@
 4. `write_file` 的先读后写许可证——已存在的文件只能被读过它的会话覆盖（见下文对应小节）。
 5. `sweep_stale_temp_files`——`kill -9` 的残留由下一次写入该目录时清扫。
 6. 隔离子代理工作区——可选的 git worktree，改动在锁下合并回主树，冲突被如实报告。
+7. 写前 git 就绪门——绑定的项目目录先成为 git 仓库（否则拒绝写入），然后才允许写入（见下两节）。
 
 ## 🧱 各层机制
 
@@ -64,6 +66,14 @@
 
 只有在临时文件创建到 replace 之间被硬杀，才可能留下 `.sherry-tmp-*.swp`；其余每个失败路径都会 unlink 它。下一次写入同一目录时会清扫其中超过 1 小时的残留（`sweep_stale_temp_files`）：活着的写者的临时文件只有几秒寿命，年龄阈值正是用来与它保持距离的。清扫从不抛异常——一次读不动目录的扫描绝不能让它所服务的那次写入失败。
 
+## 🔒 写操作前的 git 就绪
+
+绑定**项目目录**的会话，只能写入 git 仓库。每个解析出的根目录的**首次**写入会探测 `git rev-parse --is-inside-work-tree`——仓库根、其子目录、或链接的 worktree 都算通过（所以隔离子代理工作区不会被重复 init）——不是仓库时执行一次朴素的 `git init`。init 失败**拒绝写入**：`write_file` 与 `patch_file` 返回错误结果，`terminal` 与 `python_repl` 直接返回该消息而不执行；消息里带上目录与 git 自己的失败原因。没有版本控制的写入正是这道门要阻止的事，静默放行不是一个选项。
+
+四个写入入口都被门控，两个执行类工具是**每次调用**都门控：shell（`echo > f`、`cp`、`mv`）和 Python（`open(path, 'w')`）都能绕开文件工具写文件，而区分读命令与写命令意味着解析 shell 语法。检查结果按**解析后的根目录**缓存（切换项目目录会未命中并重新探测；`clear_git_ready()` 可强制重查），**失败的 init 从不缓存**——下次写入会重试——首次检查之后的开销只是一次集合查找。
+
+**未绑定**的会话完全不受影响：写入仍按进程默认根解析，行为与从前一致。`git init` 用 git 自身默认值——不加 `--bare`、不加 `--initial-branch`、不处理 `user.name` / `user.email`（用户没配置 git 时后续 `git commit` 会失败，这被有意排除在范围之外），也不自动提交。读操作永不被门控：`read_file`、`search_files` 与普通 `cat` 在没有仓库的目录里照常工作。
+
 ## 📖 先读后写许可证
 
 `write_file` 是盲覆盖：它从不读取目标，因此没有可带入 CAS 的 revision，可能摧毁本会话从未见过内容。`read_state.py` 补上缺失的前置条件——一张进程内的 `(会话, 解析后路径) → revision` 映射，只由两种事件喂给：
@@ -85,6 +95,8 @@
 ## 🌱 隔离子代理工作区（git worktree）
 
 `sessions_spawn(isolation=True)` 让子代理获得项目的 **git worktree**（实现见 `agent/tools/subagent/isolation/`，工作区位于 `src/data/isolated/`，子代理的 cwd 是 `<workspace>/tree`，分支为 `sherry/<run8>`）。子代理在那里端到端工作——它的工具、它的 `terminal`、它的测试——运行进入终态时由 announce 流程把树合并回去，发生在交付完成消息之前（静默的子代理同样合并）。
+
+**只做一层。** cwd 已经在某个隔离工作区里的 spawn 会直接复用那棵树：此时 `isolation=True` 被忽略（只打一条 info 日志），而不是拒绝。`max_spawn_depth` 为 2，所以那个 cwd 属于发起 spawn 的 ORCHESTRATOR，而它自己的树本来就会合并回项目——worktree 的 worktree 只会多一层合并、多一层冲突面、多一次 CAS 检查，却不新增任何隔离边界。检测是对 `isolated_workspaces_dir()` 的路径判断（`_is_inside_isolated_worktree`，`spawn/core.py`），不跑 git 命令，因此不依赖 git 可用性。
 
 基线是**脏工作区**：`git stash create` 把用户尚未提交的改动变成建树所用的 revision（stash 栈不受影响），因此子代理看到的是用户手里真实的内容——不是最后一次提交，也绝不会静默回退到它。检出只带已提交内容，其余由运行按 `SUBAGENT_ISOLATION` 两张表物化（项目的 `.worktreeinclude` 可以追加，路径下一行写 `# wti=symlink|copy`）：
 
@@ -149,6 +161,7 @@
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |
+| `agent/tools/pub_base/git_ensure.py` | 写路径的 git 就绪门（探测、init、按根缓存） |
 | `agent/tools/subagent/isolation/worktree.py` | 脏基线、auto-init 与拒入清单、worktree 生命周期 |
 | `agent/tools/subagent/isolation/materialize.py` | 忽略/未跟踪路径物化 |
 | `agent/tools/subagent/isolation/tree.py` | 工作区 worktree、清单、销毁 |

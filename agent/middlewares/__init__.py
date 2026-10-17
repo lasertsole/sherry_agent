@@ -24,6 +24,9 @@ from .media_pipeline import MultimodalProcessor as MultimodalProcessor
 from .workspace_notice import WorkspaceNoticeMiddleware as WorkspaceNoticeMiddleware
 from .tool_selection import ToolSelectionMiddleware as ToolSelectionMiddleware
 from .humanInTheLoop import HumanInTheLoop as HumanInTheLoop, HITLConfig as HITLConfig
+from .invalid_tool_call_repair import (
+    InvalidToolCallRepairMiddleware as InvalidToolCallRepairMiddleware,
+)
 
 from . import llm_capability_cache as llm_capability_cache
 

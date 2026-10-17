@@ -267,7 +267,7 @@ def test_a_disabled_session_skips_the_compression_nudges(monkeypatch):
         def get_running_loop():
             raise RuntimeError("no loop")
 
-    scheduled = nudges.schedule_compression_nudges(SESSION, [])
+    scheduled = nudges.schedule_memory_review(SESSION, [])
 
     assert scheduled is False
     assert ran == []

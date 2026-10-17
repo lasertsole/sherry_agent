@@ -40,7 +40,8 @@
           :session-id="sessionId"
           :loading-paths="loadingPaths"
           @toggle="toggleNode"
-          @open="openFile" />
+          @open="openFile"
+          @menu="openRowMenu" />
         <p
           v-if="truncated"
           class="m-0 px-2 py-1 text-xs text-gray-400 dark:text-gray-500">
@@ -53,6 +54,13 @@
         </p>
       </template>
     </div>
+
+    <!-- One menu for the whole tree: rows emit right-clicks upward (a per-row
+         popup would mount one hidden ContextMenu per file). -->
+    <ContextMenu
+      ref="rowMenuRef"
+      :model="rowMenuItems"
+      data-test="file-tree-context-menu" />
   </div>
 </template>
 
@@ -60,8 +68,15 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ProjectTreeEntry } from '~/composables/bridge';
+import type { FileTreeMenuItem, FileTreeMenuNode } from '~/composables/use-file-tree-menu';
 import FileTreeNode from './FileTreeNode.vue';
 import { logUtil } from '~/utils/log';
+import {
+  canUseDesktopFileActions,
+  desktopPlatform,
+  openPathWithSystemApp,
+  revealPathInFileManager
+} from '~/utils/desktop-file-actions';
 
 /** A tree row: one entry plus its (lazily loaded) children. */
 export interface TreeNode extends ProjectTreeEntry {
@@ -155,6 +170,99 @@ async function toggleNode(node: TreeNode): Promise<void> {
 function openFile(node: TreeNode): void {
   if (node.type !== 'file') return;
   rightSidebar.openTab('fileViewer', { path: node.path });
+}
+
+/** Items the row ContextMenu renders (rebuilt per right-click). */
+const rowMenuItems = ref<FileTreeMenuItem[]>([]);
+const rowMenuRef = useTemplateRef<{ show: (event: Event) => void }>('rowMenuRef');
+
+/**
+ * The "Reveal in file manager" label follows the platform, like ZCode's row
+ * menu does (Finder / Explorer / file manager).
+ */
+const revealLabel = computed(() => {
+  const platform = desktopPlatform();
+  if (platform === 'macos') return t('projectFiles.revealMac');
+  if (platform === 'windows') return t('projectFiles.revealWindows');
+  return t('projectFiles.reveal');
+});
+
+/**
+ * Copy a string and report the outcome (the clipboard helper never throws).
+ * @param text
+ */
+async function copyAndToast(text: string): Promise<void> {
+  const ok = await copyTextToClipboard(text);
+  if (ok) toastSuccess(t('projectFiles.copied'));
+  else toastError(t('projectFiles.copyFailed'));
+}
+
+/**
+ * Open an HTML file in the built-in browser panel.
+ *
+ * A frame cannot load `file://` (and the desktop webview's CSP refuses frames
+ * altogether), so the page is served from the read-only file endpoint and
+ * handed to the iframe as a blob URL. Relative references inside the page
+ * (CSS/JS) therefore do not resolve — the panel's blank state names the
+ * limitation, and "Open with the system application" is the full-fidelity
+ * alternative on the desktop build.
+ * @param node
+ */
+async function openInBuiltInBrowser(node: TreeNode): Promise<void> {
+  try {
+    const file = await fetchProjectFile(props.sessionId, node.path);
+    const url = URL.createObjectURL(new Blob([file.content], { type: 'text/html' }));
+    rightSidebar.openTab('browser', { instance: `file#${Date.now()}`, url });
+  } catch (e) {
+    toastError(t('projectFiles.openInBrowserFailed'), e instanceof Error ? e.message : String(e));
+  }
+}
+
+/**
+ * Show the row's context menu (one ContextMenu for the whole tree).
+ * @param event The row's contextmenu event (anchors the popup).
+ * @param node The right-clicked row.
+ */
+function openRowMenu(event: Event, node: TreeNode): void {
+  const row: FileTreeMenuNode = { type: node.type, path: node.path, name: node.name };
+  rowMenuItems.value = buildFileTreeMenu({
+    node: row,
+    sessionId: props.sessionId,
+    rootPath: rootLabel.value,
+    desktop: canUseDesktopFileActions(),
+    labels: {
+      open: t('projectFiles.open'),
+      openWith: t('projectFiles.openWith'),
+      openInViewer: t('projectFiles.openInViewer'),
+      openWithSystem: t('projectFiles.openWithSystem'),
+      openInBrowser: t('projectFiles.openInBrowser'),
+      reveal: revealLabel.value,
+      copyAbsolutePath: t('projectFiles.copyAbsolutePath'),
+      copyRelativePath: t('projectFiles.copyRelativePath'),
+      addToChat: t('projectFiles.addToChat')
+    },
+    open: () => {
+      if (node.type === 'dir') void toggleNode(node);
+      else openFile(node);
+    },
+    openSystem: () => {
+      void openPathWithSystemApp(absolutePathOf(rootLabel.value, node.path));
+    },
+    openBrowser: () => {
+      void openInBuiltInBrowser(node);
+    },
+    reveal: () => {
+      void revealPathInFileManager(absolutePathOf(rootLabel.value, node.path)).then(ok => {
+        if (!ok) toastError(t('projectFiles.revealFailed'));
+      });
+    },
+    copy: text => void copyAndToast(text),
+    addToChat: () => {
+      requestFileMention(props.sessionId, mentionPayloadOf(row));
+      toastInfo(t('projectFiles.addedToChat'));
+    }
+  });
+  rowMenuRef.value?.show(event);
 }
 
 /** Re-root whenever the session's project directory changes (turn boundary). */

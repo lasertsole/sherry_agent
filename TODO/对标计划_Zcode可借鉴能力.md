@@ -1,7 +1,8 @@
 # 对标计划: Zcode 可借鉴能力
 
-> **状态**: 待评估（本文为对标分析产出，非已批准的实施计划）
+> **状态**: 持续更新（2026-10-17 第四轮：**1.2 taskflow 并行执行全量落地**（含三个并发缺陷修复与血缘指针）、**2.1 Hooks Step 1 落地**（只读三事件，Step 2/3 待做）；此前 2026-10-14 第三轮核验：6 项已完成、2 项部分完成、7 项经评估不需要做、1 项已合并）
 > **创建日期**: 2026-09-30（2026-09-30 第二轮源码核验后重写）
+> **最近更新**: 2026-10-14 — §1.1 四条差距逐一评估（①②④ 不做、③ 合并）；新增 §1.6/§1.5 完整协议/§2.3 续/§6.2 四项不做（附理由）；§6.4 重定位为非 ZCode 特性
 > **对标对象**: Zcode v3.14.4（Electron 桌面端 + `apps/zcode-cli`），本机 `/usr/bin/zcode`、`~/.zcode/`、源码树 `/home/honor/Desktop/project/ZCode`
 > **目标**: 记录 Zcode 在长任务可靠性、扩展点、工具实现上优于 Sherry 的设计点，作为 Sherry 后续演进的候选 backlog
 > **文档定位**: **本文只提炼「Zcode 更优、值得 Sherry 借鉴」的部分**（Sherry 领先侧与 Zcode 安全缺陷不在本文范围）。每条结论的证据就地标注，来源清单见文末「附：数据来源」——本文不依赖其他文档
@@ -32,13 +33,13 @@
 | 主 agent 工具数 | 34 [落盘实测，rollout 工具数组] | 36（`build_main_tools()`）[实测] | 平 |
 | 工具并发上限 | 10（批内，`toolConcurrency.maxConcurrency`）[源码确认] | 25 槽位（main 12 / subagent 8 / nudge 4 / nested 1）[实测] | **Sherry**（语义分 lane） |
 | 会话级 token 硬预算 | ✅ `session_target.token_budget` [落盘实测] | ❌ [实测] | **Zcode** |
-| 用户可配生命周期 hook | ✅ 7 事件 [源码确认] | ❌ [实测] | **Zcode** |
-| 结构化上下文注入目录 | ✅ 27 个 `system-reminder` 源 [源码确认] | ❌（各中间件各自拼字符串）[实测] | **Zcode** |
-| Prompt 缓存分段 | ✅ `stable` / `dynamic` + `cacheHint` [源码确认] | ❌（全动态注入）[实测] | **Zcode** |
+| 用户可配生命周期 hook | ✅ 7 事件 [源码确认] | 🔨 Step 1 已落地（PostToolUse / PostToolUseFailure / Stop 只读派发，总开关默认关）[实测，2026-10-17 更新] | **Zcode 仍领先**（可阻断 / 可改 input / 更多事件） |
+| 结构化上下文注入目录 | ✅ 27 个 `system-reminder` 源 [源码确认] | ✅ `reminder_catalog` 统一目录 + 30K 预算 [实测，2026-10-14 新增] | **平**（Sherry 已补齐） |
+| Prompt 缓存分段 | ✅ `stable` / `dynamic` + `cacheHint` [源码确认] | 🔨 stable/dynamic 已分离（cached system prompt vs per-turn reminders），未拆独立 message [实测，2026-10-14 更新] | **Zcode 仍领先**（wire 层分段） |
 | turn 内联输入（`guide`） | ✅ 3 种投递语义 [源码确认] | ❌（2 种）[实测] | **Zcode** |
-| per-agent 用量记账 | ✅ 3 张表，`model_usage` 5,880 行 [落盘实测] | ❌（进程内计数器不落库）[实测] | **Zcode** |
-| 流恢复锚点 | ✅ 7 个流恢复事件 [源码确认] | ❌ [实测] | **Zcode** |
-| Edit 模糊匹配 | ✅ 8 级级联 [源码确认] | ❌ [实测] | **Zcode** |
+| per-agent 用量记账 | ✅ 3 张表，`model_usage` 5,880 行 [落盘实测] | ❌（进程内计数器不落库；trajectory ledger 已有但不记 token）[实测] | **Zcode** |
+| 流恢复锚点 | ✅ 7 个流恢复事件 [源码确认] | 🔨 trajectory ledger 已落地（tool_start/end per-call），完整锚点协议未做 [实测，2026-10-14 更新] | **Zcode 仍领先**（完整续传协议） |
+| Edit 模糊匹配 | ✅ 8 级级联 [源码确认] | ✅ 11 级级联 [实测，2026-10-14 新增] | **Sherry**（多 3 级） |
 | Write 原子性 | ✅ temp+fsync+rename+`O_NOFOLLOW` [源码确认] | ✅ temp+fsync+rename+`O_NOFOLLOW` + 跨进程 flock [实测] | **Sherry**（多了跨进程锁） |
 | workflow 编排表达力 | 两代、9 工具、TS 脚本 [源码确认] | 14 工具、声明式 DAG [实测] | Zcode 更表达力 |
 | workflow 失败级联 / 节点上限 | ❌ 无上限 [源码确认] | ✅ `failed` 依赖者保持 `blocked` [实测] | **Sherry** |
@@ -55,44 +56,132 @@
 
 ## 一、长任务可靠性
 
-### 1.1 ⭐ workflow journal 重放：已完成节点不重跑（首轮误判已修正）
+### 1.1 workflow journal 重放：四条差距逐一评估，仅血缘指针保留（首轮误判已修正）
+
+> **2026-10-14 深度评估后更新**：原四条差距经逐一分析，①②④ 不需要做（详见下文），③ 血缘指针已合并到 `计划_taskflow并行执行.md` §8。原独立的 `计划_workflow_journal重放.md` 已删除。
+> **2026-10-15 完成**：`计划_taskflow并行执行.md` 全量落地（Phase 0 并发缺陷修复、Phase 1-2 有界并发派发、Phase 3 血缘指针），计划文件已删除；设计文档见 `docs/long-running-tasks/taskflow/README.md`（Flow Lineage 一节）。
 
 **首轮写的**：「Sherry 进程重启后无法从中间步骤恢复，只能整个 task 重跑」——**这条是错的，已撤回**。
 
 **实际情况** [源码确认 vs 实测]：Sherry taskflow 状态是 SQLite WAL 持久化的，`get_active_flows_sync(session_id)` 从 SQL 侧直接取非终态 flow（`agent/tools/taskflow/registry/store_sqlite.py` + `agent/prompt_data_provider.py:37-41`），进程重启后照样读得到。`StepStatus` 7 态中 `dispatched` 是可重入中间态，不是终态（`agent/tools/taskflow/config.py:35-41`）。
 
-**真正的差距收窄为四条** [源码确认]：
+**四条差距逐一评估** [源码确认 + 实测，2026-10-14]：
 
-| 维度 | Zcode 新一代 | Sherry taskflow |
-| --- | --- | --- |
-| ① 已完成步骤是否重跑 | ❌ **不重跑**——`AskScheduler.admitAsk`（`dynamic-workflow/src/engine/scheduler.ts:116-174`）按 `(siteId, ordinal)` 读 journal，`completed` / `failed` 节点**从 journal 短路**（`releaseCachedAsk`，**连 driver 都不调**），带 `inputHash` 防御性校验 | ⚠️ `depends_on` 满足即重注入；已 `done` 的 step 由 DAG 依赖判定跳过，但调度器仍被唤醒 |
-| ② 显式挂起 | ✅ `paused`（legacy）/ `stopped(user)`（新），被后继 run 标记 `superseded` | ⚠️ `set_waiting` / `wait_all` 是**阻塞等待**语义，不是用户主动挂起 |
-| ③ 血缘指针 | ✅ `dwf_run.resumed_from` + `superseded` 取代语义 | ❌ 无 |
-| ④ 步骤级结果缓存 | ✅ `cached` 状态 + `input_hash` 命中 | ❌ 无 |
+| # | 维度 | Zcode | Sherry 现状 | 评估 |
+|---|---|---|---|---|
+| ① | 已完成步骤是否重跑 | journal 短路（`settleCachedAsk`，不调 driver）+ `inputHash` 校验 | DONE 硬拒绝 re-dispatch + DONE 不可变 + replan 不重置 DONE + result 从 `state["results"]` 复用 | **不需要做**——DAG 结构已防止重跑 |
+| ② | 显式挂起 | `stop("user")` 实际 abort in-flight ask | `taskflow_cancel` 杀子 agent + `set_waiting` 暂停 flow | **不需要做**——PAUSED 不杀子 agent 无实际效果 |
+| ③ | 血缘指针 | `dwf_run.resumed_from` + `superseded_by` | `task_flows.resumed_from` + `superseded_by` | **✅ 已完成**（2026-10-15，`taskflow_create(resumed_from=…)` 写入，`docs/long-running-tasks/taskflow/` Flow Lineage） |
+| ④ | 步骤级结果缓存 | `cached` 事件标志 + `input_hash` 命中 | result 已在 `state["results"]` 被下游 `build_task_with_dep_results` 复用 | **不需要做**——result 复用已工作 |
 
-**改造建议**（按性价比排序）：
-1. **① journal 短路**：给 taskflow step 增加 `input_hash` 列 + `cached` 态。`taskflow_resume` 时若依赖已满足且 `input_hash` 未变且 step 已 `done`，直接返回缓存的 step 产出，不重新 dispatch。**这一条能同时省 token 和缩短墙钟时间，是四条里唯一「省成本」的。**
-2. **③ 血缘**：`task_flows` 加 `resumed_from` + `superseded_by` 两列，成本极低（一次 migration），换来可追溯的多版本演进与「旧 run 被谁取代」的 UI 能力。
-3. **② 显式挂起**：新增 `paused` 终态，与现有 `set_waiting` 区分开——`waiting` = 等子步骤，`paused` = 用户主动挂起等后续 resume。语义上必须分，否则 UI 无法区分「在等」和「暂停了」。
-4. **④ 步骤级缓存**：优先级最低，因为 Sherry 已有 evidence ledger 做了部分替代。
+**① 不做的理由**：ZCode 是确定性脚本重放引擎——每次 resume 从头重跑脚本，journal 短路是唯一跳过已完成节点的方式。Sherry 是事件驱动 DAG——step 只在依赖满足时被 dispatch，DONE step 永远不会被再次 dispatch。四层已有防护：`taskflow_dispatch` 的 `dispatchable` 硬拒绝（`:92-98`）、`taskflow_update_steps` 的 DONE 不可变（`:123-133`）、`taskflow_replan` 只 re-block 非 DONE step（`:75-96`）、下游 `build_task_with_dep_results` 已从 `state["results"]` 拉取 DONE step 的 result（`_shared.py:174-214`）。`input_hash` 要短路的是"DONE step 被尝试 re-dispatch 且 input 没变"——但这个场景在 Sherry 里不会发生。
 
-**风险**：①②④ 都需要先确认 taskflow step 的**重入幂等性**——当前 `dispatched` 可重入态是否真的能安全跳过（有无副作用工具已在执行）。这一条**必须先做原型验证，不能直接实现**。③ 无此风险。
+**② 不做的理由**：PAUSED 只改 step 状态标记不杀子 agent——子 agent 照跑、result 照注入、下游照 unlock。ZCode 的 `stop("user")` 有效是因为它实际 `abortInFlight`（取消在途 LLM 调用、reject deferred、emit cancelled）。Sherry 已有 `taskflow_cancel`（杀子 agent + 取消 step）和 `taskflow_set_waiting`（暂停整个 flow）覆盖这个需求。
+
+**④ 不做的理由**：result 已在 flow 的 `state["results"]` 列表里，下游 step 的 `build_task_with_dep_results` 直接拉取，不需要额外缓存机制。
 
 **注意**：Sherry 在**失败级联语义**和**节点上限**上明确更完整——`failed` 的依赖者保持 `blocked`（绝不被失败解锁）、`failed`/`skipped` 级联 `skipped`（`config.py:24-28`），Zcode 只有 `skipped`。不要为了学 resume 语义而改坏这块。
 
 ---
 
-### 1.2 workflow run 级并发上限（可热调）
+### 1.2 ✅ taskflow 并行执行（**已落地，2026-10-16**）
 
 **Zcode 做法** [源码确认]：`Caps { maxConcurrency }` 在 run 提交时固定并持久化到 `dwf_run.caps_max_concurrency`，之后可通过 `WorkflowEngine.setMaxConcurrency`（`engine.ts:579-589`）**热调**。上限公式 `max(1, min(16, availableParallelism() - 2))`，外加按 `provider/model` 分桶的进程级 governor。
 
-**Sherry 现状** [实测]：taskflow **无并发维度**——DAG 的可并行 step 是顺序 dispatch 的，只有 subagent 内部并发受 SUBAGENT lane（8）约束。
+**落地结果** [实测，2026-10-16]：三个 dispatch 入口全部改为 `asyncio.gather` 并发 spawn，由
+`TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 **2**，灰度起步；设为 1 精确还原顺序行为）的信号量限流；
+SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：成功的全部持久化（一次
+`update_flow_with_conflict_retry`）、失败的点名报告。下面的三个并发缺陷同批修复，血缘指针
+（1.1③）随本项一起落地。
 
-**差距**：taskflow 里两个互不依赖的 step 无法并行执行。
+**落地位置**：`agent/tools/taskflow/tools/{taskflow_dispatch,taskflow_resume,taskflow_wait_all}.py`、
+`config/features/agent_side/taskflow_infra.py`、`agent/tools/todolist/evidence_ledger.py`；
+测试 `tests/agent/tools/taskflow/{test_concurrent_resume,test_concurrent_dispatch,test_no_double_dispatch,test_parallel_dispatch_failure,test_evidence_concurrent,test_lineage}.py`；
+设计文档 `docs/long-running-tasks/taskflow/`（四语 "Auto-Dispatch Wave" + "Flow Lineage" 两节）。
 
-**改造建议**：在 taskflow 调度时识别「同层无依赖关系」的 step 集合，批量交给 MAIN lane 内的子任务并行执行；并发上限走 `TASKFLOW_INFRA` 新键，默认从 1 起步灰度。
+**与原计划的偏差（均已写进 docs）**：血缘指针的写入点是 **create 路径**
+（`taskflow_create(resumed_from=…)` 盖前驱的 `superseded_by`），因为 `taskflow_replan` 是原地重写、从不分叉新流。
+计划文件 `计划_taskflow并行执行.md` 与 `计划_证据链修正.md` 均已退休；下方「并发缺陷 / 实施计划 /
+测试」三块是**落地前的设计原文**，保留作设计依据（全部已执行）。
 
-**风险**：taskflow 的 progress / board / step judge 逻辑目前假设 step 逐个完成（`taskflow_resume` 是单步入口）。并行化需要先确认 judge 与 evidence 写入是并发安全的。**成本高于 1.1，建议排在 1.1 ①③ 之后。**
+**原差距（存档）**：taskflow 里两个互不依赖的 step 无法并行 spawn。
+
+#### 前置：并发缺陷（**已修，2026-10-16**；下方为当时的核验原文）
+
+[源码确认 + 实测，2026-10-14 深度核验]
+
+**缺陷 1（致命）：`taskflow_resume` 的正常完成路径无 conflict retry**
+- 位置：`taskflow_resume.py:383-397`
+- 正常路径（step DONE）直接调 `store_sqlite.update_flow`，失败返回 `conflict_error(exc)` 字符串
+- redispatch 路径才用 `update_flow_with_conflict_retry`
+- **后果**：两个并行 step 同时完成 → 两个 `taskflow_resume` 同时写同一 flow → 一个赢、一个 `FlowConflictError` 无 retry → **输掉的那个 result 被静默丢弃，不重试**
+- `delivery.py::_try_auto_resume_taskflow` 对返回值只 log 不检查（line 404 `return True` 无条件），所以错误被完全吞掉
+
+**缺陷 2（致命）：`_auto_dispatch_ready` 读改写竞态 + 无 conflict retry**
+- 位置：`taskflow_resume.py:430-501`
+- 第 451 行读 steps（第一次读），第 488 行再读 `latest`（第二次读，拿 revision），但第 491 行写的是 `{**dict(latest["state"]), "steps": steps}` —— **steps 用的是第一次读的旧列表**，期间其他 writer 的修改被覆盖
+- 第 497-500 行 bare `try/except Exception: logger.exception(...)` —— **已 spawn 的子 agent 的 `child_session_key` 未持久化**（这是 `update_flow_with_conflict_retry` 正好解决的场景，但这里没用它）
+- **后果**：两个并行 resume 都 unlock + dispatch → 重复 dispatch 同一 step、丢失已 spawn child 记录、互相覆盖 step 修改
+
+**缺陷 3（中）：evidence ledger 无文件锁**
+- 位置：`evidence_ledger.py` — 追加写 JSONL（`open(path, "a")`），无 `file_write_lock` / `cross_process_lock`
+- `read_all()` 无 per-line `try/except`，partial line 会让 `json.loads` 崩 → `collect_evidence_summary` 崩 → `taskflow_resume` 崩 → `_try_auto_resume_taskflow` 静默吞掉
+- 仓库已有 `pub_base/file_lock.py`（flock / msvcrt.locking）但 evidence ledger 没用
+
+**缺陷 4（低）：`_try_auto_resume_taskflow` 无条件返回 True**
+- 位置：`delivery.py:366-407`
+- `taskflow_resume` 返回 success 字符串或 `Error:` 字符串，`_try_auto_resume_taskflow` 都 `return True`
+- error 被 log 但不传播 → announce pipeline 认为成功了
+
+#### 实施计划（**已全部执行完毕**，下方为当时的计划原文，保留作设计依据）
+
+**Phase 0：修复并发缺陷（不做这步就并行 = 丢数据）**
+
+| 步骤 | 文件 | 改动 |
+|---|---|---|
+| 0a | `taskflow_resume.py:383-397` | 正常完成路径改用 `update_flow_with_conflict_retry`（和 redispatch 路径一致），`build_state` callback 重新应用 step-done + result-injection + unlock 逻辑到 fresh state 上 |
+| 0b | `taskflow_resume.py:430-501` (`_auto_dispatch_ready`) | 改用 `update_flow_with_conflict_retry`；写前用 `latest["state"]["steps"]` 而非第一次读的旧 steps；`build_state` callback 重新应用 dispatched-step payloads 到 fresh steps（复用 `apply_dispatched_steps`） |
+| 0c | `evidence_ledger.py` | 写路径加 `file_write_lock`（复用 `pub_base/file_lock.py`）；`read_all` 加 per-line `try/except JSONDecodeError`（skip partial lines，log warning） |
+| 0d | `delivery.py:366-407` | 检查 `taskflow_resume` 返回值是否以 `Error:` 开头，是则 log + return False（不阻断 announce 但留下可追溯的错误状态） |
+
+**Phase 1：并行化 spawn 循环**
+
+| 步骤 | 文件 | 改动 |
+|---|---|---|
+| 1a | `taskflow_dispatch.py:116-144` | `for sid in requested: await dispatch_child(...)` → `asyncio.gather(*[dispatch_child(...) for sid in requested], return_exceptions=True)`；收集成功/失败，持久化成功的（一次 `update_flow_with_conflict_retry`）；批量失败时不 break，而是记录哪些成功 |
+| 1b | `taskflow_resume.py::_auto_dispatch_ready:456-485` | 同上模式，`newly_ready` 的 dispatch 改 `asyncio.gather` |
+| 1c | `taskflow_wait_all.py:143-169` | `_retry_settled_steps` 的 retry 循环改 `asyncio.gather` |
+
+**Phase 2：配置 + 背压**
+
+| 步骤 | 文件 | 改动 |
+|---|---|---|
+| 2a | `config/features/agent_side/taskflow_infra.py` | 新增 `max_parallel_dispatch: int`（默认 2，灰度起步；上限不超过 `subagent_max_concurrent`） |
+| 2b | dispatch 入口 | 加 `asyncio.Semaphore(max_parallel_dispatch)` 限制单次 dispatch 调用的并发 spawn 数（lane 系统已提供全局背压，但 per-dispatch-call 信号量防止单次 dispatch 炸 50 个子 agent） |
+
+**Phase 3：测试**（已落地，文件名见上方「落地位置」）
+
+| 测试 | 场景 |
+|---|---|
+| `test_concurrent_resume` | 两个 step 同时完成 → 两个 `taskflow_resume` 并发 → 两个 result 都成功注入（conflict retry 验证） |
+| `test_concurrent_auto_dispatch` | 一个 step 完成后 unlock 3 个 ready → 3 个并发 spawn → 3 个 child_session_key 都持久化 |
+| `test_no_double_dispatch` | 同一 step 被两个并发 resume 触发 dispatch → 只 spawn 一次（CAS 验证） |
+| `test_evidence_concurrent_write` | 并发写 evidence ledger → 无 partial line 崩溃 |
+| `test_parallel_dispatch_failure` | 5 个 step 并发 dispatch，2 个失败 → 3 个成功的持久化 + 2 个失败的报告 |
+
+#### 已确认安全的组件（无需改动）
+
+| 组件 | 原因 |
+|---|---|
+| `StepJudge` | 无状态纯函数，per-step 隔离，不读/写共享可变状态 |
+| `CompletionJudge` | 无状态纯函数，per-run 隔离 |
+| `push_taskflow_progress` | 只读同步 + best-effort WS push，并发安全（冗余帧无害） |
+| SQLite store（WAL + busy_timeout） | 引擎层串行化写入，CAS 拒绝 stale 写 |
+| `update_flow_with_conflict_retry` | 本身就是为并发设计的（CAS + bounded retry），Phase 0 只是让其他路径也用它 |
+| `dispatch_child` → `spawn_subagent_direct` | 返回后子 agent 是后台 asyncio task，lane 系统已管理并发（8 SUBAGENT slot） |
+| `waves.py::compute_waves` | 纯 reporting，不改 dispatch |
+
+**风险**：Phase 0 是硬前置——不修缺陷 1/2 就并行化 = 必然丢数据。Phase 0 本身无新风险（只是把已有的 conflict-retry 机制扩展到两条遗漏路径）。Phase 1 的风险在 `build_state` callback 的正确性——它必须能将 step-done + result-injection + unlock 逻辑重新应用到任意 fresh state 上（当前 `apply_dispatched_steps` 已为 redispatch 路径做了这件事，模式相同）。
 
 ---
 
@@ -114,7 +203,15 @@
 
 ---
 
-### 1.5 流恢复锚点（stream recovery anchor）
+### 1.5 🔨 流恢复锚点（部分完成：trajectory ledger 已落地，完整锚点协议未做）
+
+> **2026-10-14 核验：部分完成。** `server/service/trajectory_store.py` 已实现 per-turn
+> 结构化时间线：`tool_start` / `tool_end` 合并为每工具一行（确定性 `event_id`，
+> `json_patch` merge），`turn_start` / `turn_end` / `compact` / `error` 事件。
+> 这实现了文档建议的「低成本 `streaming_tool_ledger_updated` 等价物」——
+> tool call 的 start/end 是 committed 的、可查的。**但完整的 7 事件锚点协议**
+> （`stream_recovery_anchor_created` → `anchor_selected` → `tail_discarded` → `retry_started`
+> 等）未实现，断线重连后仍无「从第 N 个 delta 续传 + 丢弃不确定尾部」的协议。
 
 **Zcode 做法** [源码确认]：7 个流恢复事件构成一套完整协议：
 ```
@@ -124,13 +221,11 @@ stream_recovery_anchor_created → stream_recovery_started → anchor_selected
 ```
 即「流中途断线后，从锚点续传并**丢弃不确定尾部**」。配套 14 种流式 kind（`ModelStreamingKind`：`start` / `text_*` / `reasoning_*` / `tool_input_*` / `tool_call` / `finish` / `error`），客户端能分别拿到 reasoning 流与正文流、增量 tool input JSON、usage 遥测。
 
-**Sherry 现状** [实测]：`WS_STREAM` 有 `max_continuation_retries = 4` / `max_reasoning_only_retries = 2` / `drain_error_backoff_s = 1.0`，`pub/func/message/` 有 retry——**但没有流级锚点**，无法表达「这次重试从第 N 个 delta 继续、之前不确定的部分丢弃」。
+**Sherry 现状** [实测]：~~`WS_STREAM` 有 `max_continuation_retries = 4` / `max_reasoning_only_retries = 2` / `drain_error_backoff_s = 1.0`，`pub/func/message/` 有 retry——**但没有流级锚点**~~ → **部分完成**：`server/service/trajectory_store.py` 已实现 per-turn 结构化时间线（`tool_start`/`tool_end` 每工具一行 + `turn_start`/`turn_end`/`compact`/`error`），agent 侧 producer 通过 `runtime.hooks.RECORD_TRAJECTORY_EVENT` 写入。这是文档建议的「低成本 `streaming_tool_ledger_updated` 等价物」——已下发完成的 tool call 有 start/end 记录。**但完整锚点协议未做**（断线续传 + 丢弃不确定尾部）。
 
-**差距**：断线重连后要么整轮重跑（贵且可能重复副作用），要么盲目续接（可能把半截 tool call 当完整的执行）。
+**差距**：~~断线重连后要么整轮重跑，要么盲目续接~~ **已部分收窄**：tool call ledger 已存在，可查已 committed 的 tool call。完整锚点协议（从第 N 个 delta 续传 + 丢弃不确定尾部）仍未做。
 
-**改造建议**：先做低成本的 `streaming_tool_ledger_updated` 等价物——**已确认完整下发的 tool call 记为 committed，未完成的记为 pending**，重连时 pending 的一律按未执行处理。这一个 ledger 就能覆盖最危险的场景，不需要完整实现锚点协议。
-
-**风险**：中。需要客户端协议配合（前端在 `client/`），属于前后端协同项。
+~~**改造建议**：先做低成本的 `streaming_tool_ledger_updated` 等价物~~ **已做**（trajectory ledger）。完整锚点协议作为后续优化。
 
 ---
 
@@ -153,7 +248,7 @@ stream_recovery_anchor_created → stream_recovery_started → anchor_selected
 
 ## 二、扩展点（Zcode 最值得学的工程化部分）
 
-### 2.1 ⭐ 用户可配生命周期 Hook（7 事件）
+### 2.1 🔨 用户可配生命周期 Hook（**Step 1 已落地 2026-10-16**；Step 2 / Step 3 待做）
 
 **Zcode 做法** [源码确认] `contracts/src/hooks/index.ts:7-15`：
 ```
@@ -194,9 +289,30 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 
 **风险**：**高**。阻塞型 hook 是执行路径上的用户代码，安全设计必须从第一天就有信任门 + 超时 + 熔断 + 审计，不能像 Zcode 那样「先无条件执行再说」。
 
+**Step 1 落地结果** [实测，2026-10-16]：`agent/middlewares/user_hooks/` 派发
+`PostToolUse` / `PostToolUseFailure`（`toolName` / `toolCallId` / 有界结果·错误预览 / `durationMs`）与
+`Stop`（`responsePreview` / `toolCallCount`）——只读，不能阻断 / 改 input / 注入上下文。配置在
+`sherry.jsonc` 的 `hooks` 段（`config/sherry_settings.py::load_sherry_hooks` 校验），总开关
+`hooks.enabled` **默认关**（入库的配置不得自行让 agent 执行命令——这是对原计划「列了就跑」的安全修正）；
+子进程 `shlex` 拆分不经 shell、环境擦洗、每 hook 超时并 kill、stdout 有上限且按可选 JSON 解析
+（非 JSON = 成功）、载荷只带预览、失败只记日志不阻断回合。注册在 `ToolGuardrails` 之后且
+`GATEABLE`（预设-中间件可关）。测试 `tests/agent/middlewares/test_user_hooks.py`（20 例）。
+
+**Step 2 / Step 3 未做，阻塞点**：Step 2 的信任门依赖仓库里**不存在**的 workspace-trust 概念；
+Step 3 的「幂等变换」约束没有判定机制。两者连同既有设计留在 `计划_2.1_用户可配生命周期Hook.md`
+（该计划**未删**，Step 1 部分标为已落地）。
+
 ---
 
-### 2.2 ⭐ system-reminder 目录化（27 个注入源）
+### 2.2 ✅ system-reminder 目录化（已完成）
+
+> **2026-10-14 核验：已完成。** `agent/middlewares/reminder_catalog/`（core.py / dynamic.py /
+> sources.py）实现了统一目录：`DynamicReminderMiddleware` 在每轮首次 model call 注入
+> `<system-reminder source="…">` 消息，catalogue 决定注入什么、优先级、cooldown 和
+> 30 000 字符总预算（超预算按优先级丢弃最低价值项）。包装走
+> `pub/func/message/system_reminder.py`（`provenance="reminder_catalog"` + `internal=True` +
+> source id as `origin`），嵌套标签转义。compaction 重置 throttle 状态。
+> 详见 AGENTS.md DynamicReminderMiddleware 条目。
 
 **Zcode 做法** [源码确认] `core/src/system-reminder/source.ts`：一套结构化的 `<system-reminder>` 注入目录，**27 个 source** 分 3 组：
 
@@ -210,22 +326,21 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 包装函数 `wrapSystemReminder`（`:203-212`）对**嵌套标签做拒绝/转义**（`:208`, `:233`）——防注入。
 触发阈值可配：如 `todo_reminder` 距上次 `TodoWrite` 满 10 个 assistant turn **且**距上次提醒满 10 turn；`runtime_mode`（plan mode 提示）每 5 个 human turn 一次、每第 5 次给全量版。
 
-**Sherry 现状** [实测]：`task_intent/`（E7）、`nudge/`、`todo_continuation_enforcer`（E3）等中间件承担类似职责，但**没有统一的注入目录/元数据描述**——每个中间件各自拼字符串，各自决定注入时机，各自处理嵌套。
-
-**差距**：无法回答「当前 prompt 里有哪些注入、每条多大、什么条件触发、走了哪个 channel」；也无法统一做去重、预算与转义。
-
-**改造建议**：不新建机制，**给现有中间件的注入内容加一层统一目录**：
-- 每个注入点声明 `source_id` / `channel` / `budget_chars` / `trigger`，由一个 `reminder_catalog` 统一注册
-- 统一走 `wrap_system_reminder()` 包装（带嵌套转义）
-- 加一条 `before_model` 的注入预算检查：单轮注入总量超阈值时按 `isMeta` 优先级丢弃低价值项
-
-**收益**：低风险高收益。**不动任何中间件的业务逻辑**，只加目录与包装层；同时顺手解决注入膨胀问题（`skills_listing` 单项就 26,597 字符，见 2.3）。
-
-**风险**：低。需要注意 `channel = real_user` 的 `isMeta=false` 语义（`target_continuation` 会作为**真实用户输入**呈现给模型）——这是刻意的设计，迁移时不能统一当元信息过滤掉。
+**Sherry 现状** [实测]：~~`task_intent/`（E7）、`nudge/`、`todo_continuation_enforcer`（E3）等中间件承担类似职责，但**没有统一的注入目录/元数据描述**~~ → **已完成**：`agent/middlewares/reminder_catalog/`（core.py / dynamic.py / sources.py）统一注册 reminder source，`DynamicReminderMiddleware` 在每轮首次 model call 注入 `<system-reminder source="…">` 消息，catalogue 控制注入项 / 优先级 / cooldown / 30 000 字符总预算（超预算按优先级丢弃），包装走 `pub/func/message/system_reminder.py`（嵌套转义 + `provenance="reminder_catalog"` + `internal=True`），compaction 重置 throttle。旧的三个注入器（TaskIntent steering / todo-continuation / workspace notice）保持各自路径，catalogue 是 overlay，迁移分批进行。~~改造建议~~ 已落地。
 
 ---
 
-### 2.3 ⭐ Prompt 缓存分段（stable / dynamic）
+### 2.3 🔨 Prompt 缓存分段（部分完成：stable/dynamic 已分离，但未拆成独立 message）
+
+> **2026-10-14 核验：部分完成。** system prompt 现在只持有 stable 内容（persona +
+> memory + skills index），DynamicReminderMiddleware 每轮从 live state 重新派生注入项。
+> 旧的「把 reminder 重建进 cached system prompt」的做法已废弃。这实现了 stable/dynamic
+> 的概念分离——stable 内容在 compaction 间不变（缓存友好），dynamic 内容每轮重算。
+> **但与 Zcode 的差异**：Sherry 没有把 stable/dynamic 拆成独立的 system message + `cacheHint`
+> 标注，而是用「一个 cached system prompt（stable）+ 若干 per-turn `<system-reminder>` 消息（dynamic）」
+> 的形式。效果近似但 wire 层面不完全是 provider prompt cache 的分段优化。
+> 进一步的改造（给 prompt_builder 的 block 加 `cache_hint` 标注 + 拆成两条 message）
+> 可作为后续优化。
 
 **Zcode 做法** [源码确认] `core/src/context/builder.ts:82-223::ContextBuilder.build()`：把 prompt 拆成**三个独立 system message**（为 provider prompt cache 分段）+ 两条 meta_user 消息。每个 section 有两个正交属性：
 - `injectionTarget`: `"system"` | `"meta_user"`
@@ -245,10 +360,9 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 | meta_user `skills_listing` | — | **26,597** |
 | **合计** | | **~43,854** |
 
-**Sherry 现状** [实测]：`workspace/prompt_builder.py`（324 行）组装 7 个 block（`_build_todo_block` / `_build_boulder_block` / `_build_taskflow_block` / `_build_continuity_block` / `_build_knowledge_block` 等），**全部是动态注入**，且数据来自 agent / context_engine 两层（为此专门建了 `runtime/data_provider.py` 的 `PromptDataProvider` 协议做依赖倒置）。
-**没有 `stable` / `dynamic` 概念**，大 prompt 场景下 provider 侧 cache 命中率低于 Zcode。
+**Sherry 现状** [实测]：~~`workspace/prompt_builder.py`（324 行）组装 7 个 block，**全部是动态注入**，且**没有 `stable` / `dynamic` 概念**~~ → **部分完成**：system prompt 现在只持有 stable 内容（persona + memory + skills index），`DynamicReminderMiddleware` 每轮从 live state 重新派生注入项（plan mode / working dir / todo / boulder / taskflow board / continuity / knowledge index），catalogue 控制优先级 + cooldown + 30 000 字符预算。旧的「把 reminder 重建进 cached system prompt」已废弃（那会冻结到下次重建 + 使 prompt 成为坏缓存公民）。**概念分离已落地**，但未拆成独立 system message + `cacheHint` 标注——provider 侧缓存命中靠 system prompt 的三段缓存（`system_prompt_injection`），而非显式分段。
 
-**差距**：Zcode 明确更优——**可缓存部分与不可缓存部分被显式分开**，静态身份段（2,313 字符）永远命中缓存。
+**差距**：~~Zcode 明确更优——可缓存部分与不可缓存部分被显式分开~~ **已大幅收窄**。Sherry 已实现 stable/dynamic 分离（cached system prompt vs per-turn reminders），但未到 Zcode 的 wire 层分段（独立 message + `cacheHint`）。进一步改造可给 prompt_builder block 加 `cache_hint` 标注。
 
 **改造建议**：
 1. 给 `prompt_builder.py` 的 7 个 block 各加一个 `cache_hint: Literal["stable", "dynamic"]` 标注——**`workspace/{SOUL,AGENTS,USER,IDENTITY}.md` 是 stable，todo / boulder / taskflow / continuity / knowledge 是 dynamic**
@@ -259,27 +373,29 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 
 ---
 
-### 2.4 计划模式（Plan Mode）
+### 2.4 ✅ 计划模式（已完成）
+
+> **2026-10-14 核验：已完成。** `agent/tools/plan_mode/`（enter_plan_mode / exit_plan_mode /
+> state）实现了 `needs_planning` / `planning` / `ready` / `needs_replan` 状态机，
+> `ToolSelectionMiddleware` 在 planning 状态下收窄工具到只读集，`exit_plan_mode` 持久化
+> 计划文件并 HITL interrupt 等待批准，子 agent 强制 disallow plan_mode 工具。
+> 详见 AGENTS.md「Plan-Then-Execute Plan Mode」章节。
 
 **Zcode 做法** [落盘实测，34 工具列表]：`EnterPlanMode` / `ExitPlanMode` 一对工具 + `startPlanRecommendationDismissed` 设置项（启动时推荐使用）。配套两个 reminder source：`runtime_mode`（plan mode 激活时每 5 个 human turn 提醒一次）与 `plan_mode_exit`。
 另：plan mode 工具对**所有**子 agent 强制 disallow（`subagent/tool-policy.ts`）。
 
-**Sherry 现状** [实测]：`HITL_DEFAULTS` 有审批机制，`TaskIntentMiddleware` 有意图识别，但**无「先出方案、后执行」的显式模式切换**。
-
-**改造建议**：`EnterPlanMode` 作为 `HumanInTheLoop` 的一种模式——进入后 `write_file` / `patch_file` / `terminal` 全部转为待批准，退出后恢复。复用现有 HITL 骨架，成本低。
-子 agent 强制 disallow 这一条**直接抄**（Sherry 的 subagent 工具最小权限已有 `inherited_tool_policy.py` 实现，加一条 plan-mode 规则是同构改动）。
-
-**风险**：低。注意 plan mode 下的批准会让 turn 变长（HITL interrupt 语义），需与 1.5 的 `Stop` hook 类「延长本轮」能力协调，避免用户批准后又被立刻打断。
+**Sherry 现状** [实测]：~~`HITL_DEFAULTS` 有审批机制，`TaskIntentMiddleware` 有意图识别，但**无「先出方案、后执行」的显式模式切换**~~ → **已完成**：`agent/tools/plan_mode/` 实现了完整状态机（`needs_planning`/`planning`/`ready`/`needs_replan`），`ToolSelectionMiddleware` 在 planning 状态下收窄到只读工具集，`exit_plan_mode` 持久化计划 + HITL interrupt，计划文件写入 `SESSIONS_DIR/<session_id>/plans/plan-<revision>.md`。前端渲染批准卡（`[sid].vue` 的 `isPlanHitl`）。~~改造建议~~ 已落地，包括子 agent 强制 disallow。
 
 ---
 
-### 2.5 taskflow step 挂载 skill（可插拔行为）
+### 2.5 ✅ taskflow step 挂载 skill（已完成）
 
-**Sherry 现状** [实测]：taskflow 的 step 由 `taskflow_create` 声明式定义（`response_schema` / `judge_criteria` / `depends_on`），**编排逻辑是固定的 Python 代码**，不能运行时生成新逻辑。`skills/builtin/` 已有成熟 skill 体系可挂载。
+> **2026-10-14 核验：已完成。** taskflow step 的 `skills` 字段在 `build_task_with_dep_results`
+> 中通过 `_skill_prepend.prepend_skills` 预加载 SKILL.md（`[IMPORTANT: …]` 头 + fail-open
+> 绑定 + `bump_use` + 注入扫描），与 cron 的 skill 绑定同构。`taskflow_plan` 可声明该字段，
+> `taskflow_update_steps` 可修改它。详见 AGENTS.md Known Pitfalls 条目。
 
-**差距**：声明式 DAG 适合已知流程，遇到未预见的长任务形态就僵了。
-
-**改造建议**：允许 taskflow step 引用一个 skill，把「固定编排」变成「编排 + 可插拔行为」。**零沙箱风险，能吃到 80% 的表达力收益。**
+**Sherry 现状** [实测]：~~taskflow 的 step 由 `taskflow_create` 声明式定义（`response_schema` / `judge_criteria` / `depends_on`），**编排逻辑是固定的 Python 代码**，不能运行时生成新逻辑~~ → **已完成**：step 可声明 `skills: ["browser"]`，dispatch 时 `_skill_prepend.prepend_skills` 将每个 SKILL.md 预加载到子任务文本前（`[IMPORTANT: …]` 头 + fail-open + `bump_use` + 注入扫描），模型直接收到 skill 内容，编排者不需要 relay。~~改造建议~~ 已落地。
 
 ---
 
@@ -339,7 +455,12 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 这是 Zcode 工程成熟度最高的部分，也是**不涉及任何架构变更**、只改单个文件实现就能吃到收益的部分。
 
-### 4.1 ⭐ Edit 8 级模糊匹配级联
+### 4.1 ✅ Edit 模糊匹配级联（已完成，11 级 > Zcode 8 级）
+
+> **2026-10-14 核验：已完成。** `agent/tools/pub_base/text_matcher.py`（615 行）实现了
+> 11 级级联（比 Zcode 多 3 级），含行号前缀剥离、`\uXXXX` 反转义、弯引号→ASCII、
+> 缩进弹性匹配、block anchor（Levenshtein ≥0.8）、`replace_all` 禁用 broad matcher、
+> 区域引号风格回写。详见 AGENTS.md `patch_file` 条目。
 
 **Zcode 做法** [源码确认] `core/src/tool/edit-matchers.ts:41-69::findEditMatch()`——固定顺序尝试 8 种策略，命中即返回：
 
@@ -360,11 +481,11 @@ readOnly 或 sideEffectScope == "none"  → 允许
 - **引号风格保留**（`:82-105`）：文件实际用弯引号时把弯引号套回替换文本
 - **不存在时给建议**（`:369-397`）：Levenshtein「Did you mean `<file>`?」
 
-**Sherry 现状** [实测]：`patch_file` **无匹配降级策略**——`old_string` 对不上就失败。
+**Sherry 现状** [实测]：~~`patch_file` **无匹配降级策略**~~ → **已完成**：`agent/tools/pub_base/text_matcher.py`（615 行）实现 11 级级联（exact / quote_normalized / line_number_prefix_stripped / escape_normalized / unicode_escape_normalized / line_trimmed / indentation_flexible / block_anchor + 额外 3 级），含歧义拒绝、`replace_all` 禁用 broad matcher、区域引号风格回写、缩进重对齐。**比 Zcode 多 3 级。**
 
-**差距**：这是 LLM 编辑失败的最大单一来源。模型经常（a）把弯引号打成 ASCII、（b）把 `Read` 输出的行号一起抄进去、（c）缩进对不上。
+~~**差距**：这是 LLM 编辑失败的最大单一来源。~~ **已消除。**
 
-**改造建议**：把 `findEditMatch()` 的 8 级级联移植到 `agent/tools/file_tools/patch_file.py`，**照抄全部三个保护**（歧义拒绝、`replace_all` 禁用 broad matcher、引号风格保留）。
+~~**改造建议**：把 `findEditMatch()` 的 8 级级联移植到 `agent/tools/file_tools/patch_file.py`~~ **已完成，且实现了比建议更多的策略。**
 
 **收益**：**最高性价比**。纯函数、无状态、无架构影响，可单测（8 级各有 fixture）。预计能显著降低「patch 失败 → 重试 → 再失败」的循环。
 
@@ -372,7 +493,14 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 ---
 
-### 4.3 ⭐ Read：token 感知的二分截断 + 未变更重读 stub
+### 4.3 ✅ Read：token 感知截断 + 未变更重读 stub（已完成）
+
+> **2026-10-14 核验：已完成。** `read_file` 的截断窗口受 `TOOLS_TIMEOUTS["read_file_token_budget"]`
+> （4000，CJK-aware）与 caller 的 `limit` 双重约束（更严者胜，截断总在行边界）。
+> 单行超预算时 clip 在行内 + 报 `truncated: true`。未变更重读：`agent/tools/pub_base/read_state.py`
+> 记录 session 级完整读取的文件 revision，重读同一未变文件返回指针而非内容。
+> 读取的 revision 进入 `patch_file` 的 `expected_revision` CAS（write-before-read license）。
+> 详见 AGENTS.md Known Pitfalls `write_file` / `read_file` 条目。
 
 **Zcode 做法** [源码确认] `contracts/src/tools/read.ts:15-17`：
 | 常量 | 值 |
@@ -385,30 +513,27 @@ readOnly 或 sideEffectScope == "none"  → 允许
 - **未变更重读省 token**（`read.ts:55,190-198`）：文件未变则返回 stub `"Wasted call — file unchanged since your last Read…"`，不重复吐内容
 - 行号用 `cat -n` 风格 `N\t`
 
-**Sherry 现状** [实测]：`read_file` 有 2000 行默认 + `truncated` + `hint`，`search_files` 有**双截断标记**（`page_truncated` + `scan_truncated`，区分「结果页满」与「扫描预算耗尽」，比 Zcode 更精细）。
-但 `read_file` 的截断是**行数 / 字符数**口径（`evict_threshold_chars`），**不是 token 口径**——CJK 场景下字符数与 token 数偏差大。
+**Sherry 现状** [实测]：~~`read_file` 有 2000 行默认 + `truncated` + `hint`，`search_files` 有双截断标记。但 `read_file` 的截断是**行数 / 字符数**口径，**不是 token 口径**~~ → **已完成**：`read_file` 截断窗口受 `read_file_token_budget = 4000`（CJK-aware token 口径）与 caller `limit` 双重约束（更严者胜，截断在行边界）。未变更重读通过 `agent/tools/pub_base/read_state.py` 实现（session 级 revision 记录，重读返回指针而非内容）。读取 revision 进入 `patch_file` 的 `expected_revision` CAS 写前许可。partial read 不授许可、summarized-away read 失去许可。~~改造建议~~ 已落地。
 
-**改造建议**：
-1. `read_file` 的截断改为 **token 口径 + 二分**（复用 `TOKEN_ESTIMATION` 的 `chars_per_token_cjk` / `chars_per_token_json`），并保证 UTF-8 code point 边界
-2. 加「未变更重读」stub：记录上次读的 `revision`，未变则返回提示而非内容
+~~**收益**：① 直接降低 CJK 大文件的 token 浪费~~ **已实现。**
 
-**收益**：① 直接降低 CJK 大文件的 token 浪费（Sherry 的 CJK token 估算已经有专门配置，只是 `read_file` 没用上）；② 是纯粹的省 token 优化。
-
-**注意**：`search_files` 的双截断标记是 **Sherry 领先 Zcode 的设计，应推广到 `read_file` / `web_search` 等其他有截断的工具**，不要在改造时丢掉。
+**注意**：`search_files` 的双截断标记（`page_truncated` + `scan_truncated`）仍是 Sherry 领先 Zcode 的设计，应继续推广。
 
 ---
 
-### 4.4 子进程输出 fd 直写文件
+### 4.4 ✅ 子进程输出 fd 直写文件（已完成）
+
+> **2026-10-14 核验：已完成。** `terminal.py` 的两个 spawn 点（`_execute_sync` 和 `_arun`）
+> 均将子进程 stdout fd 直写到文件（`.sherry-tmp-stdout-*.log`，stderr 通过 STDOUT 合并），
+> 然后等进程而非 drain pipe。输出 < `fd_write_threshold_bytes`（100 000）时整文件读后删除；
+> ≥ 阈值时重命名到 `SESSIONS_DIR/<id>/evicted/terminal-<sha256>.log`，只回 head/tail 预览
+> （8 KiB/side，2 KiB/line，`build_file_preview`）。超时/取消/失败丢弃临时文件；
+> 硬 kill 残留由 `atomic_write.py` 的 `.sherry-tmp-` sweep 清理。
+> 详见 AGENTS.md Known Pitfalls `terminal` 条目。
 
 **Zcode 做法** [源码确认] `bash-file-output.ts`：当输出超过内联预算（`maxInlineBytes` / `maxModelBytes`）时，**子进程 stdout 直接 fd 写到 artifact 文件**，Node 进程不驻留内容，只回传路径 + 预览。
 
-**Sherry 现状** [实测]：**工具侧没有输出上限，上下文侧有**。`terminal.py` 的两个落点都用 `proc.communicate()` 把 stdout 一次性收进内存再解码（`_execute_sync` 与 `_arun`），命令输出多大就读多大，工具本身不截断；真正的保护在下游——`ContextEvictionMiddleware` 对超过 `TOOL_RESULT_EVICTION["evict_threshold_chars"]`（20,000 字符）的工具结果做落盘驱逐，只给模型留下 5 行头 + 5 行尾的预览（`config/features/agent_side/tool_result_eviction.py`）。
-
-**结论**：`ContextEvictionMiddleware` 已经解决了「大输出灌爆上下文」，**剩下的是进程内存**——一条 `cat` 大文件仍然让整段输出驻留内存（外加驱逐文件落盘一份）。Zcode 的 fd 直写文件把这一段也省掉。
-
-**改造建议**：优先级低于本文多数条目（上下文侧已受保护），但方向明确：输出超过内联预算时改为把子进程 stdout 直接写进 artifact 文件，只回传路径 + 预览。
-
-**风险**：中——改动落在工具执行路径上，且要同时覆盖同步/异步与沙箱（`bwrap`）两条路径。
+**Sherry 现状** [实测]：~~**工具侧没有输出上限，上下文侧有**。`terminal.py` 的两个落点都用 `proc.communicate()` 把 stdout 一次性收进内存再解码~~ → **已完成**：两个 spawn 均用 fd-direct-write-to-file（`.sherry-tmp-stdout-*.log`），不再 `communicate()`。输出 < 100 KB 整读后删除；≥ 100 KB 重命名到 `evicted/` 目录只回 head/tail 预览（8 KiB/side，2 KiB/line）。~~改造建议~~ 已落地。
 
 ---
 
@@ -462,7 +587,11 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 常量（`webfetch-constants.ts:1-11`）：`MAX_WEBFETCH_RESPONSE_BYTES` 10 MiB / `MAX_MODEL_INPUT_CHARS` 100,000（头截断 + 后缀标记）/ `MAX_WEBFETCH_MODEL_BYTES` 100,000 / `MAX_WEBFETCH_URL_CHARS` 2,000 / `MAX_REDIRECTS` 10 / 缓存 TTL 15 分钟 / 上限 50 MiB。
 重定向策略：HTTP 升级 HTTPS；**仅跟随同 host（允许 `www` 变体）/ 同协议 / 同端口**；**跨 host 重定向返回给模型而非跟随**。
 
-**Sherry 现状** [实测]：`web_search.py` 用 Tavily（`max_results=5`），有显式重试（3 次 + 指数退避 + jitter）+ `asyncio.wait_for(30s)` + **无 key 时返回解释性 stub**（比 Zcode 的「硬前置 `supportsNativeWebSearch`」更优雅）。**无 URL 抓取工具。**
+**Sherry 现状** [实测]：`web_search.py` 用 Tavily（`max_results=5`），有显式重试（3 次 + 指数退避 + jitter）+ `asyncio.wait_for(30s)` + **无 key 时返回解释性 stub**（比 Zcode 的「硬前置 `supportsNativeWebSearch`」更优雅）。
+
+> **落地记录（2026-10-15）**：`agent/tools/web_fetch.py` 已落地 —— 公网分支复用本仓库既有栈（`is_public_url` 预检 + `safe_fetch` 的 DNS pinning 与逐跳复核），本地/私网地址走**显式开关**分支（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`，tracked `.env`，默认 0，per-call 读取），HTML→Markdown 用 `html2text`（脚本/样式先剥，导入失败降级为剥标签），非 HTML（JSON/纯文本）**原样返回**（html2text 会转义并重排 JSON），输出 50K 字符封顶 + 既有 ContextEviction 二次兜底；分类只认字面量 IP/hostname（解析到 127.0.0.1 的公网域名仍走公网分支被拒）。测试 `tests/agent/tools/test_web_fetch.py`（23 例）。
+>
+> **有意偏离**：(1) 改造建议 #3 的「重定向只跟同 host」**未采纳** —— 公网分支用 `safe_fetch` 的逐跳模型（每跳重新解析 + 重新校验 + 钉住已校验地址），和媒体管线同一套策略；同 host 白名单会挡掉 `example.com → www.example.com` 这类常见跳转，且是多一份需要维护的分支。(2) 改造建议 #5 的「无凭据降级 + 重试退避」**不适用** —— 本工具不持有凭据，失败按 `safe_fetch` 的 reason 文本返回，由模型决定是否重试。(3) Zcode 的 `prompt`（辅助小模型作答）**未做** —— 工具把 markdown 直接交给调用它的那个模型，多一次无上下文的辅助调用只会丢信息、增延迟。
 
 **⚠️ 不可照抄的部分**：Zcode 的 SSRF 防护**只覆盖字面量**——拦 `localhost` / `*.local` / 非公网 IP 字面量 / URL 内嵌凭据 / 单标签主机名；每次 GET 前 `assertWebFetchLiteralEgress` 要求 `ipaddr.js` 的 `range() === "unicast"` 并排除基准测试段 / IPv4-mapped IPv6 / NAT64 前缀，**但域名无 DNS 预检**（源码注释明说依赖 HTTP egress proxy 兜底）→ **不防 DNS rebinding**。
 
@@ -507,44 +636,68 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 ## 八、优先级与投入产出
 
 按「收益 / 成本」排序。**成本**列的估计基于 Sherry 现有代码结构，未做实现前评估。
+**2026-10-14 更新**：6 项 ✅ 已完成、2 项 🔨 部分完成、7 项 ❌ 不做、1 项已合并。
 
-| 优先级 | 条目 | 收益 | 成本 | 依赖 / 前置 |
-| --- | --- | --- | --- | --- |
-| **P0** | 4.1 Edit 8 级匹配级联 | **高**（降低 patch 失败循环） | 低（纯函数，可单测） | 无 |
-| **P0** | 6.4 大窗口利用 | 高 | **零代码**（换模型） | 实测 1M 下压缩行为 |
-| **P0** | 1.3 Session token 预算封顶 | 高 | 低（加状态键 + 检查点） | 无 |
-| **P0** | 5.1 per-agent 用量记账 | 高 | 低（1 表 + 1 写入点） | 与 2.3 一起做收益最大 |
-| **P1** | 4.4 核查 terminal 大输出 | **未知，可能高** | **先核查** | 依赖 4.4 核查结论 |
-| **P1** | 2.2 system-reminder 目录化 | 中-高 | 低（只加目录与包装层） | 2.3 可并行 |
-| **P1** | 2.3 Prompt cache 分段 | 中-高 | 中（跨层 seam 改动） | 需更新 `tests/workspace/` |
-| **P1** | 4.3 Read token 感知二分 | 中 | 低-中 | 无 |
-| **P1** | 2.5 step 挂载 skill | 高 | 中（复用现有 skill 体系） | 无 |
-| **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化 |
-| **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 |
-| **P2** | 2.4 计划模式 | 中 | 低（复用 HITL 骨架） | 与 1.5 协调 |
-| **P2** | 1.5 流恢复 tool ledger | 中 | 中（前后端协同） | 无 |
-| **P2** | 6.1 WebFetch | 中 | **高（SSRF 必须重做）** | 独立安全设计 |
-| **P3** | 1.1②④ 显式挂起 + 步骤缓存 | 低-中 | 中 | 依赖 1.1① |
-| **P3** | 1.2 taskflow 并行执行 | 中 | 高（judge/evidence 并发安全） | 依赖 1.1 |
-| **P3** | 1.6 microcompact 独立通道 | 低 | 低 | 无 |
-| **P3** | 6.2 OffPeak 低谷期 | 低 | 低 | 无 |
-| **P3** | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型可先上 |
-| ❌ | 桌面端 / CUA | — | 很高 | 见第七节 |
+| 优先级 | 条目 | 收益 | 成本 | 依赖 / 前置 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| ~~P0~~ | ~~4.1 Edit 8 级匹配级联~~ | 高 | 低 | 无 | **✅ 已完成**（11 级 > Zcode 8 级） |
+| ~~P0~~ | ~~6.4 大窗口利用~~ | 高 | 零代码 | 实测压缩行为 | **⚠️ 非 ZCode 特性**（换模型即生效，是模型选择不是架构借鉴；压缩参数在 1M 下是否过小值得一次性实测验证，但不是 backlog 条目） |
+| **P0** | 1.3 Session token 预算封顶 | 高 | 低（加状态键 + 检查点） | 无 | 未开工 |
+| **P0** | 5.1 per-agent 用量记账 | 高 | 低（1 表 + 1 写入点） | 与 2.3 一起做收益最大 | 未开工（trajectory ledger 已有，但非用量记账） |
+| ~~P1~~ | ~~4.4 terminal fd 直写~~ | 高 | 中 | 无 | **✅ 已完成** |
+| ~~P1~~ | ~~2.2 system-reminder 目录化~~ | 中-高 | 低 | 2.3 可并行 | **✅ 已完成**（reminder_catalog） |
+| ~~P1~~ | ~~2.3 Prompt cache 分段~~ | 中-高 | 中 | 需更新 tests | **🔨 部分完成**（stable/dynamic 已分离） |
+| ~~P1~~ | ~~4.3 Read token 感知二分~~ | 中 | 低-中 | 无 | **✅ 已完成**（token budget + read_state license） |
+| ~~P1~~ | ~~2.5 step 挂载 skill~~ | 高 | 中 | 无 | **✅ 已完成**（_skill_prepend） |
+| ~~P1~~ | ~~2.3 续：拆独立 message + cacheHint~~ | 中 | 中 | stable/dynamic 已分离 | **❌ 不做**（概念分离已落地；131K 窗口下 wire 层缓存收益小；改跨层 seam + tests 成本不匹配收益） |
+| **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化（✅ 已完成） | 未开工 |
+| **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 | 未开工 |
+| ~~P2~~ | ~~2.4 计划模式~~ | 中 | 低 | 与 1.5 协调 | **✅ 已完成**（plan_mode 工具 + 状态机） |
+| ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **❌ 不做**（trajectory ledger 已覆盖最危险场景；完整 7 事件协议需前端协同 + WS_STREAM 已有 4 次重试，边际收益低） |
+| ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
+| ~~P3~~ | ~~1.1①④ input_hash 短路 + 步骤缓存~~ | 低-中 | 中 | 依赖原型验证 | **❌ 不做**（DAG 已防重跑） |
+| ~~P3~~ | ~~1.1② PAUSED 显式挂起~~ | 低 | 中 | — | **❌ 不做**（不杀子 agent 无效果） |
+| ~~P3~~ | ~~1.1③ 血缘指针~~ | 低 | 低 | 无 | **✅ 已完成**（`resumed_from`/`superseded_by` + active 读过滤） |
+| ~~P3~~ | ~~1.2 taskflow 并行执行~~ | 中 | 高 | 依赖 1.1 | **✅ 已完成**（并发缺陷修复 + `max_parallel_dispatch` 有界并发 + 血缘；6 个并发/血缘测试文件） |
+| ~~P3~~ | ~~1.6 microcompact 独立通道~~ | 低 | 低 | 无 | **❌ 不做**（ContextEvictionMiddleware 已做工具结果落盘驱逐 + preemptive_truncate 已做预截断，重叠） |
+| ~~P3~~ | ~~6.2 OffPeak 低谷期~~ | 低 | 低 | 无 | **❌ 不做**（cron 系统已有降级背压 + skill 绑定；"低谷期跑"就是 cron 表达式，不需独立概念） |
+| ~~P3~~ | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型 | **Step 1 已完成**（2026-10-16：PostToolUse / PostToolUseFailure / Stop 只读派发 + 默认关总开关；Step 2 信任门 / Step 3 updatedInput 待做，见 `计划_2.1_用户可配生命周期Hook.md`） |
+| ❌ | 桌面端 / CUA | — | 很高 | 见第七节 | — |
 
-**建议起手顺序**：
-1. **第一批（零风险、可并行）**：4.1 + 1.3 + 3.2 —— 全部是单文件实现改动，不碰架构，可在一个批次内验证
-2. **先核查再决策**：4.4（terminal 大输出）—— 这是本文唯一结论未知的项，核查成本极低但潜在收益可能超过上面所有条目
-3. **第二批（需设计）**：5.1 + 2.3 一起做（用量记账与缓存分段是同一个闭环，分开做都看不到收益）；2.2 目录化作为 3.1 的前置
-4. **独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里
+**建议起手顺序**（2026-10-14 更新；**2026-10-17**：1.2 与 2.1 的 Step 1 已完成，见上表）：
+1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；1.3 + 3.2 仍待做
+2. ~~先核查再决策：4.4~~ → **已完成**（fd 直写已落地）
+3. ~~第二批（需设计）：5.1 + 2.3 一起做~~ → **2.3 已部分完成**（stable/dynamic 分离已做，wire 层分段 ❌ 不做）；5.1 仍待做
+4. ~~2.2 目录化作为 3.1 的前置~~ → **已完成**，3.1 guide 可开工
+5. ~~1.1 四条差距~~ → **①②④ 不做**；**③ 血缘指针已完成**（随并行执行计划一起落地并退休）
+6. ~~1.5 完整锚点协议~~ → **不做**（trajectory ledger 已覆盖）；~~1.6 microcompact~~ → **不做**（ContextEviction 已覆盖）；~~2.3 续 wire 分段~~ → **不做**（概念分离已落地）；~~6.2 OffPeak~~ → **不做**（cron 已覆盖）；~~6.4 大窗口~~ → **非 ZCode 特性**（换模型即生效）
+7. ~~**独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里~~ → **两者都已按独立立项交付**：6.1 WebFetch ✅（SSRF 复用 + 本地 opt-in）；2.1 Hooks Step 1 ✅（只读三事件 + 默认关总开关），Step 2 的信任门 / Step 3 的 updatedInput 仍待做（阻塞点见 2.1 节）
 
 ---
 
 ## 九、已确认无需改造的项
 
-对标后确认 Sherry 已具备或更优，记录以免重复讨论：
+对标后确认 Sherry 已具备或更优，记录以免重复讨论。
+**2026-10-14 更新**：新增 6 项已完成项 + 7 项经评估不需要做的项 + 1 项已合并。
+**2026-10-17 更新**：1.2 taskflow 并行执行（含并发缺陷 + 血缘）与 2.1 Hooks Step 1 已落地，对应行已在上表标记。
 
 | 能力 | Zcode | Sherry 结论 |
 | --- | --- | --- |
+| ~~1.1① input_hash 短路~~ | journal 短路 + inputHash 校验 | **❌ 不需要**（DAG 结构已防重跑：dispatchable 硬拒绝 + DONE 不可变 + replan 不重置 DONE + result 从 state["results"] 复用） |
+| ~~1.1② PAUSED 显式挂起~~ | stop("user") abort in-flight | **❌ 不需要**（PAUSED 不杀子 agent 无实际效果；已有 taskflow_cancel + set_waiting 覆盖） |
+| ~~1.1④ 步骤级结果缓存~~ | cached + input_hash 命中 | **❌ 不需要**（result 已在 state["results"] 被下游 build_task_with_dep_results 复用） |
+| ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **✅ 已完成**（2026-10-15：两列 additive migration + `taskflow_create(resumed_from=…)` 写入 + active 读过滤；见 `docs/long-running-tasks/taskflow/` Flow Lineage） |
+| ~~1.5 完整锚点协议~~ | 7 事件流恢复协议 | **❌ 不需要**（trajectory ledger 已覆盖最危险场景——tool_start/end per-call 可查；完整 delta 续传协议需前端协同，WS_STREAM 已有 4 次重试，边际收益低） |
+| ~~1.6 microcompact 独立通道~~ | 只清工具结果保留对话 | **❌ 不需要**（ContextEvictionMiddleware 已做工具结果落盘驱逐 20K 阈值 + head/tail 预览 + preemptive_truncate_ratio 0.7→0.5 预截断，本质重叠） |
+| ~~2.3 续：拆独立 message + cacheHint~~ | stable/dynamic wire 分段 | **❌ 不需要**（stable/dynamic 概念分离已落地——cached system prompt 持 stable + per-turn reminders 持 dynamic；131K 窗口下 wire 层缓存收益小，改跨层 seam + tests 成本不匹配） |
+| ~~6.2 OffPeak 低谷期~~ | 独立低谷期概念 | **❌ 不需要**（cron 系统已有降级背压 + 禁用阈值 + skill 绑定；"低谷期跑"就是 `0 2 * * 1-5` cron 表达式） |
+| ~~6.4 大窗口利用~~ | 1M 窗口 | **⚠️ 非 ZCode 特性**（换模型即生效，是模型选择不是架构借鉴；压缩参数在 1M 下值得一次性实测验证，但不是 backlog 条目） |
+| ~~4.1 Edit 模糊匹配~~ | 8 级级联 | **✅ Sherry 已完成且更优**（11 级级联，`text_matcher.py` 615 行） |
+| ~~2.4 计划模式~~ | EnterPlanMode / ExitPlanMode | **✅ Sherry 已完成**（`agent/tools/plan_mode/` 完整状态机 + HITL + 子 agent disallow） |
+| ~~2.5 taskflow step 挂载 skill~~ | — | **✅ Sherry 已完成**（`_skill_prepend.prepend_skills`，step 可声明 `skills: [...]`） |
+| ~~2.2 system-reminder 目录化~~ | 27 个 source | **✅ Sherry 已完成**（`reminder_catalog/` 统一目录 + 30K 预算 + 嵌套转义） |
+| ~~4.3 Read token 感知截断~~ | token 二分 + 未变更 stub | **✅ Sherry 已完成**（`read_file_token_budget=4000` CJK-aware + `read_state.py` revision license） |
+| ~~4.4 terminal fd 直写~~ | fd 直写到 artifact 文件 | **✅ Sherry 已完成**（`.sherry-tmp-stdout-*.log` + 100KB 阈值 + evicted head/tail 预览） |
 | Cron 服务端 | 6 个工具侧 | **Sherry 更强**（降级背压 + 禁用阈值 + skill 绑定计划） |
 | 压缩有效性检测 | 连续 3 次失败熔断 | **Sherry 已有**（`max_recovery_attempts=2` + `ineffective_threshold=2`） |
 | 并发显式管理 | 批内 10 | **Sherry 更明确**（四类 lane + 启动校验 + 排队不拒绝 + `/lane-status`） |

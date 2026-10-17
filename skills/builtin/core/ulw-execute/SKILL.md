@@ -42,7 +42,8 @@ Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
 
 Phase 4: Verify and record evidence
   -> 5 gates (see the Sisyphus contract)
-  -> Evidence is written to src/data/evidence-ledger.jsonl
+  -> Run the verification commands (pytest / ruff / build): the system records
+     every recognized one to src/data/evidence-ledger.jsonl automatically
 
 Phase 5: Mark progress
   -> Edit the plan checkbox: - [ ] -> - [x]

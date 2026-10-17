@@ -69,10 +69,11 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 
 ### 7. ⚙️ 运行时、并发与会话控制
 - **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录
-- **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框
+- **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框。行的右键菜单提供 打开 / 打开方式 / 用内置浏览器打开（HTML）/ 在文件管理器中显示 / 复制绝对或相对路径 / 添加到聊天；行（或文件查看器标签）还可拖入输入框——两种方式都只往消息里插入 `@./path` 引用 chip，绝不带文件内容：文件由 agent 自己读取
 - **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 `browser_*` 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过 8 个仅主代理可用的工具（navigate / snapshot / click / type / press / scroll / screenshot / evaluate，最后一个还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
-- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
+- **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，可按会话关闭- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
+- **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_create(resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列增量迁移）；被取代的流退出 active 读取，但仍留在看板上
 - **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
 - **工具耗时**：每次工具调用仅在工具返回时被计时一次（使用 `time.monotonic()`，下限钳制为 0），由消息持久化包装器完成，写入 `ToolMessage.additional_kwargs["tool_duration_ms"]` 并持久化到 `messages.tool_duration_ms`；实时卡片在运行中显示计时器，结束后显示实测值。按设计，审批等待和排队时间不计入该窗口
 - **会话级模型与思考**：`PUT /sessions/thinking` 与 `PUT /sessions/model` 为单个会话覆盖思考开关和主模型（启用登录时，客户端会预取一次性使用的 `GET /auth/ws-ticket`），思考控制中间件据此将请求模型替换为 `build_main_llm(thinking=...)` 变体——会话没有显式选择时回退到环境变量默认值
@@ -93,8 +94,9 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 | **本地推理** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT 模型）、FunASR（STT） |
 | **文档解析** | mineru-vl-utils |
 | **联网搜索** | langchain-tavily（Tavily API）+ 自托管 SearXNG 作为备选后端，Tavily 失效时自动降级 |
+| **网页读取** | `web_fetch` 把单个 http(s) URL 读成 markdown：公网页面走 SSRF 防护、DNS pinning 与逐跳重定向复检；本地/开发服务器地址需要显式开关（`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`） |
 | **代码搜索** | ripgrep，随依赖一并安装（`ripgrep-bin`）；纯 Python 扫描始终作为兜底 |
-| **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
+| **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-classic + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
 | **结构化输出** | instructor、json_repair |
 | **评估（Evaluation）** | RAGAS（图谱 RAG 质量指标）+ 自建沙箱化评估框架（`evals/`） |
 | **MCP** | langchain-mcp-adapters（在 `plugins/mcp_server/` 中配置服务器） |
@@ -131,6 +133,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
 │       ├── mcp_plugin.py   # MCP 工具集成
 │       ├── web_search.py   # 联网搜索工具（Tavily）
+│       ├── web_fetch.py    # 网页读取工具（markdown；公网 + 可选本地）
 │       ├── python_repl.py  # Python 代码执行
 │       ├── terminal.py     # 终端命令执行
 │       ├── memory.py       # 记忆查看工具
@@ -181,7 +184,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │
-├── evals/                  # 评估框架（dispatcher + 5 个套件）
+├── evals/                  # 评估框架（dispatcher + 7 个套件）
 │   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
 │   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
@@ -469,8 +472,12 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
 | `session_memory` | 会话内存栈的 6 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、语义搜索排序 |
 | `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
+| `coding_capability` | 真实主 agent 在一小批自设计编码任务上的表现，每道题由该任务仓库自己的 pytest 运行判定——是基线，不是外部基准 |
+| `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
+
+`coding_capability` 与 `swebench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
 
 ---
 

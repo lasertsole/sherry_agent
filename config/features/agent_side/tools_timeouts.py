@@ -33,6 +33,19 @@ class ToolsTimeoutsConfig(TypedDict):
     skill_manage_max_skill_file_bytes: int
     file_tools_read_default_limit: int
     file_tools_read_max_limit: int
+    #: ``web_fetch``: wall-clock budget for one public fetch and for one local
+    #: (opt-in) fetch, the byte cap on either body, and the character cap on the
+    #: markdown handed back to the model. The context-eviction layer is the
+    #: second net for whatever still arrives oversized.
+    web_fetch_timeout_seconds: int
+    web_fetch_local_timeout_seconds: int
+    web_fetch_max_bytes: int
+    web_fetch_max_output_chars: int
+    #: Token budget for ONE ``sessions_messages`` response (the subagent
+    #: checkpoint transcript) and for one message inside it. CJK-aware like the
+    #: read_file budget: the same number is the same context cost in any language.
+    session_messages_token_budget: int
+    session_messages_per_message_token_budget: int
     #: Token budget for ONE read_file response. The window is CJK-aware (CJK
     #: costs ~2 chars/token, ASCII ~4), so the same number means the same
     #: context cost in every language; 0 restores the pure line-count window.
@@ -40,6 +53,10 @@ class ToolsTimeoutsConfig(TypedDict):
     #: Fraction of the budget a page may spend (the rest absorbs the line that
     #: crosses the boundary, the line numbers and the JSON envelope).
     read_file_budget_ratio: float
+    #: HARD per-line ceiling, independent of the (switchable) page budget: one
+    #: line costing more than this is clipped even when the budget is off, so a
+    #: minified single-line file can never ride a page whole.
+    read_file_max_line_tokens: int
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
@@ -78,8 +95,24 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "skill_manage_max_skill_file_bytes": 1_048_576,
     "file_tools_read_default_limit": 500,
     "file_tools_read_max_limit": 2000,
+    # web_fetch: public pages get 30 s (a slow origin is common), a local dev
+    # server 10 s (loopback either answers or is down); 10 MiB body cap matches
+    # the media pipeline's fetch, and 50 K output chars is the model-visible cap
+    # before eviction takes over.
+    "web_fetch_timeout_seconds": 30,
+    "web_fetch_local_timeout_seconds": 10,
+    "web_fetch_max_bytes": 10_485_760,
+    "web_fetch_max_output_chars": 50_000,
+    # The subagent-transcript reader: ~8 messages of 500 tokens each, the same
+    # order of magnitude as one read_file response.
+    "session_messages_token_budget": 4000,
+    "session_messages_per_message_token_budget": 500,
     "read_file_token_budget": 4000,
     "read_file_budget_ratio": 0.85,
+    # HARD per-line ceiling, independent of the (switchable) page budget above:
+    # one line whose token cost exceeds this is clipped even when the budget is
+    # switched off, so a minified single-line file can never ride a page whole.
+    "read_file_max_line_tokens": 4000,
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,

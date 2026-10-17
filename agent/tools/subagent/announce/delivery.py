@@ -395,11 +395,23 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
             result=result_text,
             session_id=run.child_session_key,
         )
+        first_line = answer.splitlines()[0] if answer else ""
+        if isinstance(answer, str) and answer.startswith("Error:"):
+            # The flow refused the resume (conflict exhausted, not found, ...).
+            # The result is still delivered to the session; the caller is told
+            # the auto-resume did NOT land, so the answer is not silently gone.
+            logger.warning(
+                "TaskFlow auto-resume failed for run {}: flow={} -> {}",
+                run.run_id,
+                flow_id,
+                first_line,
+            )
+            return False
         logger.info(
             "TaskFlow auto-resume for run {}: flow={} -> {}",
             run.run_id,
             flow_id,
-            answer.splitlines()[0] if answer else "",
+            first_line,
         )
         return True
     except Exception:
@@ -529,6 +541,15 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
         if len(text) > 4000:  # Truncate long results to prevent oversized messages
             text = text[:4000] + "\n... [truncated]"
         content_parts.append(f"Result:\n{text}")
+    elif ctx.outcome.status == "timeout":
+        # No partial result to show: the first turn timed out before any text
+        # was extracted. The child's checkpoint still holds its iterations, so
+        # point the caller at the reader instead of leaving it with nothing.
+        content_parts.append(
+            "Partial work may be available — use sessions_messages"
+            f'(target_session_key="{ctx.child_session_key}") to review what was '
+            "accomplished before the timeout."
+        )
     content_parts.append(
         "\nPlease review the sub-agent execution results above. Provide further instructions if needed."
     )

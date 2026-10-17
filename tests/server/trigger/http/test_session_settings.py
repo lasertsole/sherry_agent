@@ -660,3 +660,140 @@ def test_thinking_clear_parks_while_a_turn_runs(registers, monkeypatch):
     # The running turn keeps its value; the clear lands on the next turn.
     assert mem.data[("s14", "llm_thinking_enabled")] is True
     assert mem.data[("s14", "llm_thinking_enabled_pending")] == {"value": None}
+
+
+# ----------------------------------------------------------------------
+# custom thinking mapping (the advanced wire-override panel)
+# ----------------------------------------------------------------------
+
+
+def _wire_custom_http(monkeypatch):
+    monkeypatch.setattr(
+        session_settings_http,
+        "apply_custom_thinking_mapping",
+        service.apply_custom_thinking_mapping,
+    )
+    monkeypatch.setattr(
+        session_settings_http, "get_custom_thinking_mapping", service.get_custom_thinking_mapping
+    )
+
+
+_MAPPING = {
+    "wire_field": "extra_body.custom.think",
+    "wire_format": "custom",
+    "level_map": {"off": "none", "low": "lite", "high": "full"},
+}
+
+
+def test_custom_mapping_roundtrip_and_clear(registers, monkeypatch):
+    _wire_custom_http(monkeypatch)
+    put = asyncio.run(
+        session_settings_http.put_thinking_custom_handler(
+            _FakeRequest(body={"session_id": "sc", "mapping": _MAPPING})
+        )
+    )
+    assert put.status_code == 200
+
+    got = asyncio.run(
+        session_settings_http.get_thinking_custom_handler(
+            _FakeRequest(query_params={"session_id": "sc"})
+        )
+    )
+    assert got.status_code == 200
+    assert '"high": "full"' in got.description
+
+    cleared = asyncio.run(
+        session_settings_http.put_thinking_custom_handler(
+            _FakeRequest(body={"session_id": "sc", "mapping": None})
+        )
+    )
+    assert cleared.status_code == 200
+    assert (
+        asyncio.run(
+            session_settings_http.get_thinking_custom_handler(
+                _FakeRequest(query_params={"session_id": "sc"})
+            )
+        ).description.count('"mapping": null')
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"wire_format": "custom", "level_map": {"high": "full"}},  # wire_field required
+        {"wire_field": "Extra.Body", "level_map": {"high": "full"}},  # bad charset
+        {"wire_field": "a.b.c.d.e", "level_map": {"high": "full"}},  # too deep
+        {"wire_field": "extra_body.x", "wire_format": "nonsense", "level_map": {"high": "full"}},
+        {"wire_field": "extra_body.x", "level_map": {"turbo": "yes"}},  # unknown level key
+        {"wire_field": "extra_body.x", "level_map": {"high": "bad value!"}},  # bad value
+        {"wire_field": "extra_body.x", "level_map": {"high": None}},  # nothing declared
+        {"wire_field": "extra_body.x", "level_map": {}, "thinking_budgets": {"high": 0}},
+        {"wire_field": "extra_body.x", "level_map": {}, "thinking_budgets": {"xhigh": 10}},
+    ],
+)
+def test_put_rejects_bad_custom_mappings(registers, monkeypatch, mapping):
+    _wire_custom_http(monkeypatch)
+    resp = asyncio.run(
+        session_settings_http.put_thinking_custom_handler(
+            _FakeRequest(body={"session_id": "sc", "mapping": mapping})
+        )
+    )
+    assert resp.status_code == 400, mapping
+
+
+def test_custom_mapping_parks_while_a_turn_runs(registers, monkeypatch):
+    _wire_custom_http(monkeypatch)
+    _wire_queue(monkeypatch, [])
+    monkeypatch.setattr(service, "is_session_busy", lambda sid: True)
+
+    resp = asyncio.run(
+        session_settings_http.put_thinking_custom_handler(
+            _FakeRequest(body={"session_id": "s6", "mapping": _MAPPING})
+        )
+    )
+
+    assert resp.status_code == 200 and '"pending": true' in resp.description
+    mem, _db = registers
+    assert ("s6", "custom_thinking_mapping") not in mem.data
+    assert (
+        mem.data[("s6", "custom_thinking_mapping_pending")]["value"]["level_map"]["high"] == "full"
+    )
+
+
+def test_the_middleware_reads_the_custom_mapping(monkeypatch):
+    """The control's variant carries the mapping into build_main_llm."""
+    from agent.middlewares.thinking_control import ThinkingControlMiddleware
+    from agent.middlewares.thinking_control.core import current_session_model_config
+    from runtime import state_register_mem
+
+    # The middleware reads the RUNTIME register (the fake above is the
+    # service's own seam), so drive that one and clean up after.
+    state_register_mem.set_state("s7", "custom_thinking_mapping", _MAPPING)
+    seen: dict = {}
+
+    def _fake_build(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("models.build_main_llm", _fake_build)
+
+    class _ModelRequest:
+        def __init__(self) -> None:
+            self.model = object()
+            self.state = {"session_id": "s7"}
+
+        def override(self, **kwargs):
+            self.model = kwargs.get("model", self.model)
+            return self
+
+    try:
+        mw = ThinkingControlMiddleware()
+        mw._maybe_swap(_ModelRequest())
+
+        assert seen["custom_mapping"]["level_map"]["high"] == "full"
+        # The published descriptor carries it too, so the memory review's
+        # rebuild reproduces the same request body (prefix-cache parity).
+        assert current_session_model_config("s7")["custom_mapping"]["level_map"]["high"] == "full"
+    finally:
+        state_register_mem.clear_session("s7")

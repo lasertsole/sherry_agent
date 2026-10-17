@@ -14,7 +14,7 @@
 - [データレイヤー](data/README.ja.md)
   - [計画ファイル (workspace/sessions/<session_id>/plans/*.md)](data/README.ja.md#計画ファイル-workspacesessionssession_idplansmd)
   - [Boulder 状態 (src/data/boulder.json)](data/README.ja.md#boulder-状態-srcdataboulderjson)
-  - [エビデンス台帳 (src/data/evidence-ledger.jsonl)](data/README.ja.md#エビデンス台帳-srcdataevidence-ledgerjsonl)
+  - [エビデンス台帳](../gates/evidence-ledger/README.ja.md)
   - [todos.db — セッションレベル TODO ストレージ](data/README.ja.md#todosdb--セッションレベル-todo-ストレージ)
 - [サービスレイヤー](#サービスレイヤー)
 - [ツールレイヤー](#ツールレイヤー)
@@ -172,25 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` は append-only の JSONL 台帳（`src/data/evidence-ledger.jsonl`、1 行 1 JSON オブジェクト）です。`append` + `read_all` がストレージ契約のすべてであり、セッションスコープのビューは同じ共有ファイルを読みます：
-
-```python
-class EvidenceLedger:
-    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
-
-    @classmethod
-    def append(cls, entry: dict) -> None: ...          # 1 行の JSON + UTC タイムスタンプ
-    @classmethod
-    def read_all(cls) -> list[dict]: ...
-    @classmethod
-    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
-    @classmethod
-    def read_for_session(cls, session_key: str) -> list[dict]: ...
-    @classmethod
-    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
-```
-
-staleness は保存ではなく導出されます：`mark_stale_for_path` は `{"event": "stale", "file_path": …}` 行を追記し、読み取り側は、後続の stale イベントがその `command` に含まれるパスを名指しした場合にのみ、その evidence 行を stale とみなします。`agent/tools/todolist/evidence_recorder.py` がこれをツールに配線します（フェイルオープン、例外は握りつぶし）：`terminal` / `python_repl` は認識した検証コマンドの行を常時追記し（分類表は `EVIDENCE_LEDGER["verify_commands"]`）、`write_file` / `patch_file` は編集されたパスの stale イベントを常時追記します。`agent/tools/taskflow/evidence_collector.py` は判定器と `taskflow_finish` の evidence ゲートに表示する要約を描画します。
+`agent/tools/todolist/evidence_ledger.py` は検証監査トレイルを支える append-only の JSONL ストア（`src/data/evidence-ledger.jsonl`）です：`append` + `read_all` がストレージ契約のすべてで、セッションスコープのビューは同じ共有ファイルを読みます。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
 
 ### WS プッシュ
 

@@ -12,6 +12,7 @@ from collections import OrderedDict
 
 from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord
+from . import spawn_budget
 
 # threading.Lock is the correct primitive here (not asyncio.Lock): the registry
 # is touched from the event loop AND from sweeper/persist threads, and every
@@ -97,9 +98,15 @@ def size() -> int:
 
 
 def clear() -> None:
-    """Remove all run records from memory."""
+    """Remove all run records from memory.
+
+    The per-session spawn budget is derived from what the registry has seen, so
+    it is wiped with it — a cleared in-memory view carries no history to budget
+    against (and test suites that clear between cases get a fresh budget).
+    """
     with _lock:
         _runs.clear()
+    spawn_budget.clear_all()
 
 
 def find_by_child_session_key(child_session_key: str) -> SubagentRunRecord | None:

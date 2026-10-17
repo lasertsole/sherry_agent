@@ -1,10 +1,11 @@
-"""Unit tests for the compression-time plan-extraction / memory-review trigger.
+"""Unit tests for the plan-extraction trigger and the memory-review dispatch.
 
 Covers:
-- ``_detect_todo_all_complete`` — the four decision branches (no todos /
-  first all-complete fire / already-fired / not-all-complete reset).
-- ``schedule_compression_nudges`` — per-compression memory-review dispatch,
-  lock semantics, and plan-extraction dispatch.
+- ``_detect_todo_all_complete`` — the decision branches (no todos / first
+  all-complete fire / already-fired fingerprint / not-all-complete reset).
+- ``schedule_memory_review`` — per-compression memory-review dispatch and
+  lock semantics. Plan extraction no longer rides this path (it forks on plan
+  completion — see ``tests/agent/middlewares/test_plan_extraction_trigger.py``).
 - ``system_prompt_injection`` — the ``@dynamic_prompt`` middleware does not
   override the after-agent hooks (nudge dispatch moved to the compression
   pipeline).
@@ -26,7 +27,7 @@ from agent.middlewares.summarization import nudges as nudge_mod
 from agent.middlewares.summarization.nudges import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
-    schedule_compression_nudges,
+    schedule_memory_review,
 )
 from agent.tools.todolist.knowledge.identity import fallback_plan_name
 
@@ -78,11 +79,11 @@ def _nudge_spies(monkeypatch) -> list[tuple]:
     async def _memory(session_id, system_prompt, messages):
         calls.append(("memory", session_id, system_prompt))
 
-    async def _plan(session_id, system_prompt, messages):
-        calls.append(("plan", session_id, system_prompt))
+    async def _plan(session_id):
+        calls.append(("plan", session_id))
 
     monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
-    monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", _plan)
+    monkeypatch.setattr(nudge_mod, "_run_plan_extraction", _plan)
     return calls
 
 
@@ -107,9 +108,18 @@ class TestDetectTodoAllComplete:
         assert _detect_todo_all_complete("sess-first") is True
         assert fake_state_db.get_state("sess-first", _PLAN_EXTRACTION_FIRED_KEY, False) is True
 
-    def test_already_fired_returns_false(self, monkeypatch, fake_state_db):
-        _patch_todos(monkeypatch, [{"status": "completed"}])
+    def test_already_fired_with_an_unchanged_plan_returns_false(self, monkeypatch, fake_state_db):
+        todos = [{"status": "completed", "id": "t1", "content": "a"}]
+        _patch_todos(monkeypatch, todos)
         fake_state_db.set_state("sess-fired", _PLAN_EXTRACTION_FIRED_KEY, True)
+        # The fired flag alone is no longer enough: the fingerprint of what was
+        # extracted has to match the current plan (that is what catches an
+        # in-place edit of a completed todo — see the trigger suite).
+        fake_state_db.set_state(
+            "sess-fired",
+            nudge_mod._PLAN_SNAPSHOT_HASH_KEY,
+            nudge_mod._plan_snapshot_hash(todos),
+        )
         assert _detect_todo_all_complete("sess-fired") is False
 
     def test_not_all_complete_resets_fired(self, monkeypatch, fake_state_db):
@@ -120,7 +130,7 @@ class TestDetectTodoAllComplete:
 
 
 # ---------------------------------------------------------------------------
-# schedule_compression_nudges (compression-time trigger)
+# schedule_memory_review (compression-time trigger)
 # ---------------------------------------------------------------------------
 
 
@@ -132,7 +142,7 @@ class TestScheduleCompressionNudges:
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        scheduled = schedule_compression_nudges("sess-first", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-first", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is True
@@ -146,9 +156,9 @@ class TestScheduleCompressionNudges:
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        first = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        first = schedule_memory_review("sess-twice", [HumanMessage("hi")])
         await _settle()
-        second = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        second = schedule_memory_review("sess-twice", [HumanMessage("hi")])
         await _settle()
 
         assert first is True
@@ -159,21 +169,19 @@ class TestScheduleCompressionNudges:
         ]
 
     @pytest.mark.asyncio
-    async def test_plan_extraction_dispatches_when_todos_complete(
+    async def test_a_finished_plan_still_does_not_dispatch_the_fork(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
+        """Compaction is memory-only: the plan fork belongs to the completion hook."""
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_PLAN_EXTRACTION_ENABLED", True)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
 
-        scheduled = schedule_compression_nudges("sess-plan", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-plan", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is True
-        assert calls == [
-            ("memory", "sess-plan", "sys-prompt"),
-            ("plan", "sess-plan", "sys-prompt"),
-        ]
+        assert calls == [("memory", "sess-plan", "sys-prompt")]
 
     @pytest.mark.asyncio
     async def test_lock_skips_dispatch(
@@ -188,7 +196,7 @@ class TestScheduleCompressionNudges:
         )
         fake_state_mem.set_state("sess-locked", nudge_mod._NUDGE_MEMORY_LOCK_KEY, True)
 
-        scheduled = schedule_compression_nudges("sess-locked", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-locked", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is False
@@ -204,7 +212,7 @@ class TestScheduleCompressionNudges:
             lambda session_id: detect_calls.append(session_id) or True,
         )
 
-        scheduled = schedule_compression_nudges("sess-sync", [HumanMessage("hi")])
+        scheduled = schedule_memory_review("sess-sync", [HumanMessage("hi")])
 
         assert scheduled is False
         assert calls == []
@@ -308,7 +316,7 @@ class TestBuildPlanContext:
 
 
 # ---------------------------------------------------------------------------
-# _nudge_plan_extraction (plan-context injection + fail-open)
+# _run_plan_extraction (plan-context injection + fail-open)
 # ---------------------------------------------------------------------------
 
 
@@ -326,19 +334,24 @@ class _FailingAgent:
         raise RuntimeError("llm down")
 
 
-class TestNudgePlanExtraction:
+class TestRunPlanExtraction:
+    """The fork: plan context in, prompt rendered, lock released, fail-open."""
+
     @pytest.mark.asyncio
-    async def test_injects_plan_context_and_renders_both_parts(self, monkeypatch):
+    async def test_injects_plan_context_and_renders_both_parts(self, monkeypatch, prompt_stub):
         prompts: list[str] = []
 
-        async def _create_nudge_agent(system_prompt):
+        async def _create_plan_extraction_agent(system_prompt):
             return _CapturingAgent(prompts)
 
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
+        monkeypatch.setattr(
+            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
+        )
         monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
+        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
 
-        await nudge_mod._nudge_plan_extraction("sess-prompt", "sys", [HumanMessage("hi")])
+        await nudge_mod._run_plan_extraction("sess-prompt")
 
         assert len(prompts) == 1
         prompt = prompts[0]
@@ -347,32 +360,42 @@ class TestNudgePlanExtraction:
         assert "## Part 2: Skill Library Update" in prompt
 
     @pytest.mark.asyncio
-    async def test_agent_failure_is_swallowed_and_lock_released(self, monkeypatch):
-        async def _create_nudge_agent(system_prompt):
+    async def test_agent_failure_is_swallowed_and_lock_released(self, monkeypatch, prompt_stub):
+        async def _create_plan_extraction_agent(system_prompt):
             return _FailingAgent()
 
         fake_state = _FakeStateRegister()
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
+        monkeypatch.setattr(
+            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
+        )
         monkeypatch.setattr(nudge_mod, "state_register_mem", fake_state)
+        fake_db = _FakeStateRegister()
+        monkeypatch.setattr(nudge_mod, "state_register_db", fake_db)
 
-        await nudge_mod._nudge_plan_extraction("sess-fail", "sys", [])
+        await nudge_mod._run_plan_extraction("sess-fail")
 
         assert (
             fake_state.get_state("sess-fail", nudge_mod._PLAN_EXTRACTION_LOCK_KEY, False) is False
         )
+        assert fake_db.get_state("sess-fail", nudge_mod._PLAN_SNAPSHOT_HASH_KEY, "") == "", (
+            "a failed pass must not claim the plan was extracted"
+        )
 
     @pytest.mark.asyncio
-    async def test_no_plan_context_skips_the_agent(self, monkeypatch):
+    async def test_no_plan_context_skips_the_agent(self, monkeypatch, prompt_stub):
         prompts: list[str] = []
 
-        async def _create_nudge_agent(system_prompt):
+        async def _create_plan_extraction_agent(system_prompt):
             return _CapturingAgent(prompts)
 
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {})
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
+        monkeypatch.setattr(
+            nudge_mod, "_create_plan_extraction_agent", _create_plan_extraction_agent
+        )
         monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
+        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
 
-        await nudge_mod._nudge_plan_extraction("sess-nocontext", "sys", [])
+        await nudge_mod._run_plan_extraction("sess-nocontext")
 
         assert prompts == []

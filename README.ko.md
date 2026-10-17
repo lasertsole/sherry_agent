@@ -69,10 +69,11 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 
 ### 7. ⚙️ 런타임, 동시성 및 세션 제어
 - **프로젝트 디렉터리 바인딩** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): 모든 세션에는 프로젝트 디렉터리가 있으며, 도구는 이를 기준으로 상대 경로를 해석한다 — 세션 바인딩 → `SHERRY_PROJECT_DIR` → `sherry.jsonc`의 `project_dir` → `ROOT_DIR`. `PUT /sessions/project`로 바인딩하거나(`null`로) 해제하며, 턴 도중에 내린 선택은 보류되었다가 턴 경계에서 승격된다. 루트는 **호출마다** 해석되고 캐시되지 않으므로, 프로세스 레벨 도구 싱글턴이 어떤 세션을 첫 호출자의 디렉터리에 고정시키는 일이 없다. 서브에이전트는 생성 시 부모의 바인딩을 상속하고 시작 시점의 루트에 고정된다. 프롬프트에는 유효한 루트를 밝히는 `## Current Working Directory` 블록이 추가된다
-- **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다
+- **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다. 행 우클릭 메뉴는 열기 / 연결 프로그램 / 내장 브라우저로 열기(HTML) / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가를 제공하고, 행(또는 파일 뷰어 탭)은 컴포저로 드래그할 수 있다 — 어느 경로든 메시지에 실리는 것은 `@./path` 멘션 chip뿐이며 파일 내용은 절대 실리지 않는다(파일은 에이전트가 직접 읽는다)
 - **에이전트 제어 브라우저(CDP)** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 명시적으로 켜기 전에는 꺼져 있음(`SHERRY_BROWSER_AGENT_ENABLED=1` 과 재시작) — 꺼져 있으면 `browser_*` 도구가 등록되지 않고, 모든 `/browser/*` 경로가 404를 답하며, Chromium도 실행되지 않는다. 켜면 메인 에이전트가 8개의 메인 전용 도구(navigate / snapshot / click / type / press / scroll / screenshot / evaluate, 마지막은 `SHERRY_BROWSER_ALLOW_EVALUATE=1`도 필요)로 루프백 실 Chromium을 조작하고, 툴박스의 브라우저 패널이 두 번째 CDP 클라이언트로 같은 페이지를 시청한다(`/browser/ws` 스크린캐스트 + 입력). 디버그 포트는 백엔드 프로세스를 벗어나지 않는다
-- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `NUDGE`(nudge/영속화 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + nudge`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
+- **사용자 수명 주기 훅** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc`의 `hooks` 섹션으로 운영자가 제공한 명령을 턴에 연결합니다 — `PostToolUse` / `PostToolUseFailure`(`toolName`, `toolCallId`, 유계 결과/오류 프리뷰, `durationMs`)와 `Stop`(`responsePreview`, `toolCallCount`). 설계상 읽기 전용이라 훅은 감사·알림·계측만 하고 도구를 차단하거나 인자를 바꾸거나 컨텍스트를 주입할 수 없습니다. 기본 비활성(추적되는 설정 파일이 스스로 명령을 실행하게 두지 않음). 명령은 `shlex`로 분리(셸 없음), 환경은 scrub, 훅별 타임아웃이 프로세스를 kill하며, stdout은 상한을 두고 선택적 JSON으로 파싱합니다(비 JSON 출력 = 성공). 도구 가드레일 뒤에 등록되며 세션 단위로 끌 수 있습니다- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `NUDGE`(nudge/영속화 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + nudge`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
 - **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
+- **병렬 단계 디스패치와 플로우 계보** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): 디스패치 웨이브는 동시에 spawn하며, `TASKFLOW_INFRA["max_parallel_dispatch"]`(2; 1이면 순차 동작 복원)로 제한된다 — 웨이브 일부가 실패해도 spawn된 자식은 모두 영속화되고 실패한 단계 id는 개별적으로 명시된다. 두 자식이 동시에 완료해도 두 결과 모두 착지한다(resume의 쓰기가 `update_flow_with_conflict_retry`를 통해 확정된 판정을 재적용하므로 결과가 충돌로 유실되거나 같은 단계가 두 번 spawn되는 일이 없다). `taskflow_create(resumed_from=…)`는 플로우 계보(`resumed_from` / `superseded_by` 추가 컬럼)를 기록하며, 대체된 플로우는 active 읽기에서 빠지되 보드에는 남는다
 - **TaskFlow 진행 웨이브** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): 흐름의 단계들을 최장 경로 DAG 레벨로 묶어 플로팅 진행 패널에 표시한다(표시 전용 — 스케줄러는 여전히 각자의 `depends_on`에 따라 단계별 해제를 유지한다. 알 수 없는 의존성은 무시되고, 사이클은 `cyclic`로 표시된 마지막 웨이브에 놓인다). 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
 - **도구 소요 시간**: 모든 도구 호출은 도구 반환 시점에 한 번만 측정된다(`time.monotonic()` 사용, 0으로 클램프), 메시지 영속화 래퍼가 이를 처리해 `ToolMessage.additional_kwargs["tool_duration_ms"]`에 기록하고 `messages.tool_duration_ms`에 영속화한다. 실시간 카드는 실행 중 티커를, 종료 후에는 측정값을 보여준다. 설계상 승인 대기 시간과 대기열 시간은 이 측정 구간에 포함되지 않는다
 - **세션별 모델 및 사고**: `PUT /sessions/thinking`과 `PUT /sessions/model`이 단일 세션의 사고 토글과 메인 모델을 재정의한다(로그인이 활성화된 경우 클라이언트는 단회용 `GET /auth/ws-ticket`을 미리 가져온다). 사고 제어 미들웨어는 이에 맞춰 요청 모델을 `build_main_llm(thinking=...)` 변수로 교체하며, 세션에 명시적 선택이 없으면 환경 변수 기본값으로 폴백한다
@@ -93,8 +94,9 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 | **로컬 추론** | llama-cpp-python(GGUF: bge-m3 embedding, bge-reranker-v2-m3 reranker, auxiliary/ITTT/VTTT 모델), FunASR(STT) |
 | **문서 파싱** | mineru-vl-utils |
 | **웹 검색** | langchain-tavily(Tavily API) + 자체 호스팅 SearXNG를 대체 백엔드로 사용, Tavily 실패 시 자동 폴백 |
+| **웹 fetch** | `web_fetch`는 http(s) URL 하나를 markdown으로 읽습니다: 공개 페이지는 SSRF 가드·DNS 피닝·홉별 리다이렉트 검사를 거치고, 로컬/개발 서버 주소는 명시 스위치(`SHERRY_WEB_FETCH_ALLOW_LOCAL=1`)가 필요합니다 |
 | **코드 검색** | ripgrep(`ripgrep-bin` 으로 의존성과 함께 설치), 순수 Python 스캔이 항상 대비하는 폴백 |
-| **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-community + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
+| **LLM 프로바이더** | langchain-openai, langchain-deepseek, langchain-classic + 20개 이상 프로바이더 레지스트리(OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM 등) |
 | **구조화 출력** | instructor, json_repair |
 | **평가(Evaluation)** | RAGAS(그래프 RAG 품질 지표) + 자체 샌드박스 평가 프레임워크(`evals/`) |
 | **MCP** | langchain-mcp-adapters(`plugins/mcp_server/`에서 서버 구성) |
@@ -131,6 +133,7 @@ EMA_AI_agent/
 │       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
 │       ├── mcp_plugin.py   # MCP 도구 통합
 │       ├── web_search.py   # 웹 검색 도구(Tavily)
+│       ├── web_fetch.py    # URL 읽기 도구(markdown; 공개 + 선택적 로컬)
 │       ├── python_repl.py  # Python 코드 실행
 │       ├── terminal.py     # 터미널 명령 실행
 │       ├── memory.py       # 메모리 확인 도구
@@ -181,7 +184,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │
-├── evals/                  # 평가 프레임워크(dispatcher + 5개 스위트)
+├── evals/                  # 평가 프레임워크(dispatcher + 7개 스위트)
 │   ├── evals.py            # 스위트 러너: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
 │   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
@@ -469,8 +472,12 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
 | `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
 | `nudge_extraction` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
+| `coding_capability` | 실제 메인 agent를 소규모 자체 설계 코딩 작업 세트로 평가하고, 각 작업은 해당 저장소 자체의 pytest 실행으로 판정——베이스라인이며 외부 벤치마크가 아님 |
+| `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. agent는 문제 설명만 봄) |
 
 모든 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기가 임시 샌드박스로 리디렉션됨), 리포트를 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 리포트는 절대 커밋되지 않습니다.
+
+`coding_capability`와 `swebench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
 
 ---
 

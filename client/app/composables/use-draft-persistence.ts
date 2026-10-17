@@ -38,6 +38,8 @@ export interface DraftPersistence {
   isDraftTurnActive: (turnNum: number) => boolean;
   /** Remove a turn's draft registration after the server successfully persists. */
   untrackDraftTurn: (sid: string, turnNum: number) => void;
+  /** Destroy the slice on component unmount: cancel every pending debounce timer and clear the registries. */
+  dispose: () => void;
 }
 
 /**
@@ -170,6 +172,21 @@ export function useDraftPersistence(chatMessages: Ref<MessageItem[]>): DraftPers
     void had; // keep ref for clarity
   };
 
+  /**
+   * Destroy the slice on component unmount: cancel every pending debounce timer
+   * and clear the registries.
+   *
+   * A pending text-append write is DROPPED, never flushed: unmount can be a
+   * session deletion (whose flow clears the session's drafts first), where a
+   * late write would resurrect an orphan draft row. Everything already
+   * committed to IndexedDB stays there.
+   */
+  const dispose = () => {
+    for (const timer of draftDebounceTimers.values()) clearTimeout(timer);
+    draftDebounceTimers.clear();
+    activeDraftTurns.clear();
+  };
+
   return {
     allocateTempId,
     activeTurns,
@@ -179,6 +196,7 @@ export function useDraftPersistence(chatMessages: Ref<MessageItem[]>): DraftPers
     removeDraftTurn,
     trackDraftTurn,
     isDraftTurnActive,
-    untrackDraftTurn
+    untrackDraftTurn,
+    dispose
   };
 }

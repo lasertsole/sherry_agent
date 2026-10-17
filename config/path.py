@@ -87,7 +87,20 @@ STATIC_DIR = APP_HOME / "static"
 TEMP_DIR = APP_HOME / "temp"
 
 MODELS_DIR = APP_HOME / "models"
-WORKSPACE_DIR = APP_HOME / "workspace"
+#: The workspace root: persona files (AGENTS.md / SOUL.md / USER.md / ROLE.md),
+#: per-session directories, plan knowledge and the memory markdown tree.
+#:
+#: ``SHERRY_WORKSPACE_DIR`` overrides it for an ISOLATED run — the eval harness
+#: points it at a throwaway directory so a measurement run never reads or writes
+#: the live persona / sessions (and every derived path below follows, which is
+#: the per-instance state isolation the coding-capability plan asks for). Like
+#: every other override it must be set BEFORE this module is first imported
+#: (the constant is computed once); unset, the value is byte-for-byte the
+#: historical ``APP_HOME / "workspace"``.
+_WORKSPACE_OVERRIDE = os.environ.get("SHERRY_WORKSPACE_DIR", "").strip()
+WORKSPACE_DIR = (
+    Path(_WORKSPACE_OVERRIDE).expanduser() if _WORKSPACE_OVERRIDE else APP_HOME / "workspace"
+)
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 # Plan-extraction knowledge namespace (Tier-1 prompt injection + Tier-2 tool

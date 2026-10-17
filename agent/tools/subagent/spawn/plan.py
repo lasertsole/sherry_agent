@@ -10,6 +10,21 @@ def resolve_run_timeout_seconds(timeout: float | None = None) -> float:
     return get_config().run_timeout_seconds
 
 
+def clamp_run_timeout_seconds(timeout: float | None) -> float | None:
+    """Clamp a MODEL-provided wall-clock timeout to the configured bounds.
+
+    Only the LLM tool's input is clamped: ``resolve_run_timeout_seconds`` is the
+    shared resolver for TaskFlow dispatch, steer and the followup sweep, and a
+    clamp there would silently cut off callers with their own intent.
+    ``None`` / non-positive reads as "not set" and stays ``None``, which the
+    resolver turns into the global default.
+    """
+    if timeout is None or timeout <= 0:
+        return None
+    config = get_config()
+    return max(config.run_timeout_min_seconds, min(config.run_timeout_max_seconds, timeout))
+
+
 def resolve_configured_subagent_run_timeout_seconds(
     run_timeout_seconds: float | None = None,
 ) -> float:

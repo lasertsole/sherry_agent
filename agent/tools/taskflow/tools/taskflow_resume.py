@@ -9,6 +9,7 @@ result text classifies as a failure allowed by ``retry_on``, the step is
 re-dispatched instead of marked done - the failure result is still recorded.
 """
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -16,12 +17,11 @@ from typing import Any
 from langchain_core.tools import tool
 from loguru import logger
 
-from config.features import STEP_JUDGE
+from config.features import STEP_JUDGE, TASKFLOW_INFRA
 from agent.tools.subagent.swarm.collector import validate_structured_output
 from ..config import StepOutcome, StepStatus, TaskFlowStatus
 from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
-from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ..step_judge import StepVerdict, judge_step_result
 from ._retry import (
     apply_redispatch,
@@ -30,14 +30,15 @@ from ._retry import (
     should_retry_failure,
     spawn_replacement,
     step_retry_count,
+    step_spawn_kwargs,
     wait_before_retry,
     with_judge_feedback,
 )
 from agent.tools.pub_base import SessionId
 from ._shared import (
+    apply_dispatched_steps,
     build_task_with_bindings,
     build_task_with_dep_results,
-    conflict_error,
     is_terminal,
     not_found_error,
     requester_session_key,
@@ -198,15 +199,28 @@ async def taskflow_resume(
         ):
             requester_key = requester_key_for_retry(state, session_id)
             await wait_before_retry(policy)
+            # Tier 1 short-circuits BEFORE the judge, so ``judge_feedback`` is
+            # empty on a schema failure — the replacement would be re-spawned
+            # with the bare task and would have to guess what was wrong. Hand it
+            # the validator's own message (field path + expected/got), which is
+            # exactly the correction it needs.
+            if schema_validated is False and schema_error:
+                feedback = (
+                    f"Your previous output failed schema validation: {schema_error}. "
+                    "Ensure your output is valid JSON matching the required response_schema."
+                )
+            else:
+                feedback = str(step.get("judge_feedback") or "")
             try:
                 redispatched_key = await spawn_replacement(
                     with_judge_feedback(
                         build_task_with_bindings(
                             build_task_with_dep_results(step, steps, results), step, steps, results
                         ),
-                        str(step.get("judge_feedback") or ""),
+                        feedback,
                     ),
                     requester_key,
+                    **step_spawn_kwargs(step),
                 )
             except Exception as exc:
                 retry_text = (
@@ -278,6 +292,7 @@ async def taskflow_resume(
                                 judge_result.feedback,
                             ),
                             requester_key,
+                            **step_spawn_kwargs(step),
                         )
                     except Exception as exc:  # tool boundary: block instead of raising
                         step["status"] = str(StepStatus.BLOCKED)
@@ -311,9 +326,7 @@ async def taskflow_resume(
                 judge_text = f"\n  judge: PASS {judge_result.reason}"
         else:
             step["status"] = str(StepStatus.DONE)
-    newly_ready = unlock_dependents(steps)
-    state["steps"] = steps
-    counts = steps_summary(steps)
+    newly_ready: list[str] = []
 
     # Resuming a waiting flow returns it to running; a running flow stays running.
     new_status = (
@@ -380,21 +393,65 @@ async def taskflow_resume(
         if updated is None:
             return error
     else:
-        try:
-            updated = await store_sqlite.update_flow(
-                flow_id,
-                revision,
-                session_id=session_id,
-                state=state,
-                wait=None,
-                status=new_status,
-                total_tokens=total_tokens,
-                total_cost=total_cost,
-            )
-        except FlowConflictError as exc:
-            return conflict_error(exc)
-        except FlowNotFoundError:
-            return not_found_error(flow_id)
+        # The verdict above was decided against the FIRST read, but the write
+        # must survive a concurrent writer: a parallel step of the same flow
+        # finishing at the same moment rewrites the step list, and a plain
+        # ``update_flow`` would lose this result to the conflict. The callback
+        # re-applies the ALREADY-DECIDED outcome (never re-running the judge or
+        # the retry spawn) onto whatever the fresh state holds, then re-derives
+        # the unlock set from it — the ids the persisted state actually carries.
+        decided_fields = (
+            {
+                key: step[key]
+                for key in (
+                    "status",
+                    "fail_reason",
+                    "block_reason",
+                    "skip_reason",
+                    "validation_criteria",
+                )
+                if key in step
+            }
+            if step is not None
+            else {}
+        )
+        unlocked_from_persisted: dict[str, list[str]] = {}
+
+        def build_state(fresh_flow: dict, _attempt: int) -> dict:
+            fresh_state = dict(fresh_flow["state"])
+            fresh_steps = list(fresh_state.get("steps") or [])
+            fresh_results = list(fresh_state.get("results") or [])
+            if step_id is not None:
+                target = next((s for s in fresh_steps if s.get("step_id") == step_id), None)
+                if target is not None:
+                    target.update(decided_fields)
+            if not any(
+                isinstance(r, dict) and r.get("result_hash") == result_hash_value
+                for r in fresh_results
+            ):
+                fresh_results.append(result_record)
+            unlocked_from_persisted["ids"] = unlock_dependents(fresh_steps)
+            fresh_state["steps"] = fresh_steps
+            fresh_state["results"] = fresh_results
+            return fresh_state
+
+        updated, error = await update_flow_with_conflict_retry(
+            flow_id,
+            revision,
+            flow,
+            build_state,
+            child_keys=[child_session_key] if child_session_key else [],
+            session_id=session_id,
+            update_kwargs={
+                "wait": None,
+                "status": new_status,
+                "total_tokens": total_tokens,
+                "total_cost": total_cost,
+            },
+        )
+        if updated is None:
+            return error
+        newly_ready = unlocked_from_persisted.get("ids", newly_ready)
 
     # Auto-dispatch the wave this resume just unlocked: without it every step
     # completion costs the AI two extra turns (resume + dispatch), which is the
@@ -407,7 +464,7 @@ async def taskflow_resume(
             flow_id, newly_ready, session_id
         )
         updated = await store_sqlite.get_flow(flow_id, session_id) or updated
-        counts = steps_summary(list((updated["state"] or {}).get("steps") or []))
+    counts = steps_summary(list((updated["state"] or {}).get("steps") or []))
 
     counts_text = ",".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
     unlocked_text = ",".join(newly_ready)
@@ -453,11 +510,11 @@ async def _auto_dispatch_ready(
     by_id = {step.get("step_id"): step for step in steps}
     requester_key = requester_session_key(session_id)
 
-    for sid in newly_ready:
+    async def _spawn_one(sid: str) -> tuple[str, str | None, str | None, str]:
+        """Spawn one step's child; never raises — the failure is a string."""
         step = by_id.get(sid)
         if step is None:
-            failures.append(f"{sid}: unknown step")
-            continue
+            return sid, None, f"{sid}: unknown step", ""
         feedback = str(step.get("judge_feedback") or "").strip()
         task_text = with_judge_feedback(
             build_task_with_bindings(
@@ -470,34 +527,73 @@ async def _auto_dispatch_ready(
                 task=task_text,
                 requester_session_key=requester_key,
                 label=None,
+                # The wave's steps carry their own spawn contract; a step that
+                # went ready without run_task (taskflow_plan / update_steps) must
+                # still reach its child with the schema / role / model / timeout
+                # the step declares.
+                **step_spawn_kwargs(step),
             )
         except Exception as exc:  # the flow advances without this step; report it
             logger.warning(
                 "taskflow auto-dispatch failed for step {} of flow {}: {}", sid, flow_id, exc
             )
-            failures.append(f"{sid}: {type(exc).__name__}: {exc}")
+            return sid, None, f"{sid}: {type(exc).__name__}: {exc}", feedback
+        return sid, child_key, None, feedback
+
+    # The wave spawns CONCURRENTLY, bounded by ``max_parallel_dispatch`` (the
+    # SUBAGENT lane is the global backpressure; this cap keeps one dispatch call
+    # from flooding it). Results are collected in the caller's order.
+    semaphore = asyncio.Semaphore(max(1, int(TASKFLOW_INFRA["max_parallel_dispatch"])))
+
+    async def _bounded(sid: str) -> tuple[str, str | None, str | None, str]:
+        async with semaphore:
+            return await _spawn_one(sid)
+
+    spawned = await asyncio.gather(*(_bounded(sid) for sid in newly_ready))
+
+    records: list[dict] = []
+    for sid, child_key, failure, feedback in spawned:
+        if failure is not None or child_key is None:
+            failures.append(failure or f"{sid}: dispatch returned no child key")
             continue
         if feedback:
-            step.pop("judge_feedback", None)
-        step["status"] = str(StepStatus.DISPATCHED)
-        step["child_session_key"] = child_key
-        step["dispatched_at"] = time.time()
+            by_id[sid].pop("judge_feedback", None)
+        records.append(
+            {
+                "step_id": sid,
+                "status": str(StepStatus.DISPATCHED),
+                "child_session_key": child_key,
+                "dispatched_at": time.time(),
+            }
+        )
         dispatched.append(sid)
 
-    if dispatched:
-        try:
-            latest = await store_sqlite.get_flow(flow_id, session_id)
-            if latest is not None:
-                await store_sqlite.update_flow(
-                    flow_id,
-                    latest["expected_revision"],
-                    session_id=session_id,
-                    state={**dict(latest["state"]), "steps": steps},
-                )
-        except Exception:
+    if records:
+        # Persist through the CAS-retry helper: the children are ALREADY alive,
+        # so a concurrent writer must not be able to drop their keys — the
+        # callback re-applies the records onto the fresh step list instead.
+        def build_state(fresh_flow: dict, _attempt: int) -> dict:
+            fresh_state = dict(fresh_flow["state"])
+            fresh_steps = list(fresh_state.get("steps") or [])
+            fresh_state["steps"] = apply_dispatched_steps(fresh_steps, records)
+            return fresh_state
+
+        updated, error = await update_flow_with_conflict_retry(
+            flow_id,
+            flow["expected_revision"],
+            flow,
+            build_state,
+            child_keys=[str(record.get("child_session_key") or "") for record in records],
+            session_id=session_id,
+        )
+        if updated is None:
             # The children ARE running; the dispatch record failed. A later
             # resume / dispatch pass reconciles the bookkeeping.
-            logger.exception("taskflow auto-dispatch state write failed for flow {}", flow_id)
+            logger.error(
+                "taskflow auto-dispatch state write failed for flow {}: {}", flow_id, error
+            )
+            if error:
+                failures.append(error)
     return dispatched, failures
 
 

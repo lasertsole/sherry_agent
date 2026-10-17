@@ -49,7 +49,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 메시지 영속화는 압축 경로 밖에서 동작합니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. compact는 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
 
-**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰(`_nudge_memory`)는 압축마다 디스패치됩니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장하며, 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
+**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_memory_review`): 메시지를 실제로 버리는 압축마다 메모리 리뷰(`_nudge_memory`)가 디스패치되며, 넘겨받는 것은 바로 그 버려질 슬라이스입니다. **cache_warm** 방식으로 실행됩니다——해당 턴이 사용한 모델 구성에 원문 그대로, 세션의 시스템 프롬프트와 도구 면을 갖춰 보내므로 프리픽스 절단이 그대로 프리픽스 캐시 적중이 됩니다(`NUDGE["memory_review_mode"] = "digest"`면 접음). NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 플랜 추출은 이 경로에 없습니다——플랜 완료 시 `PlanContinuationEnforcer.aafter_agent`에서 fork합니다(단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장).
 
 **절단점 선택**(`_determine_cutoff`, compression.py:277): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, compression.py:70)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(compression.py:311)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입의 `_plan_model_call`에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
@@ -173,8 +173,8 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 등록 지점
 
 ```python
-# agent/core.py:324 — 메인 에이전트 (Summarization은 마지막 미들웨어:
-# 가장 안쪽 wrap 레이어, LLM에 가장 가까움)
+# agent/core.py:324 — 메인 에이전트 (최내곽 wrap 레이어는
+# InvalidToolCallRepairMiddleware. Summarization은 LLMRetry 바로 안쪽)
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,

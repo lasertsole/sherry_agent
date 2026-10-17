@@ -140,6 +140,25 @@ async def _retry_settled_steps(
     redispatches: list[tuple[dict, str]] = []
     exhausted: list[dict] = []
     lines: list[str] = []
+    retryable = [action for action in actions if action["action"] != "exhausted"]
+
+    # The whole wave re-dispatches CONCURRENTLY, bounded by
+    # ``max_parallel_dispatch``: every backoff runs at the same time, so a wave
+    # of five waits one retry delay instead of five, and one failed spawn never
+    # aborts the others. The report keeps the caller's action order.
+    semaphore = asyncio.Semaphore(max(1, int(TASKFLOW_INFRA["max_parallel_dispatch"])))
+
+    async def _redispatch_one(action: dict) -> tuple[dict, str | None, Exception | None]:
+        async with semaphore:
+            try:
+                await wait_before_retry(action["policy"])
+                return action, await spawn_replacement(action["task"], requester_key), None
+            except Exception as exc:  # tool boundary: report, never raise
+                return action, None, exc
+
+    outcomes = await asyncio.gather(*(_redispatch_one(action) for action in retryable))
+    by_action = {id(action): (new_key, exc) for action, new_key, exc in outcomes}
+
     for action in actions:
         if action["action"] == "exhausted":
             exhausted.append(action)
@@ -150,14 +169,12 @@ async def _retry_settled_steps(
             )
             continue
         policy = action["policy"]
-        await wait_before_retry(policy)
-        try:
-            new_key = await spawn_replacement(action["task"], requester_key)
-        except Exception as exc:
-            # Tool boundary: a failed replacement spawn is reported, never raised.
+        new_key, exc = by_action.get(id(action), (None, None))
+        if exc is not None or new_key is None:
+            failure = exc or RuntimeError("replacement spawn returned no child key")
             lines.append(
                 f"retry: re-dispatch FAILED for step_id={action['step_id']} "
-                f"({type(exc).__name__}: {exc})"
+                f"({type(failure).__name__}: {failure})"
             )
             continue
         redispatches.append((action, new_key))

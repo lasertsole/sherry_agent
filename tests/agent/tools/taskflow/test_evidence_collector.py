@@ -77,10 +77,67 @@ def test_session_scope_isolates_evidence(ledger_path):
     assert "ruff b.py" not in summary
 
 
-def test_flow_id_used_as_scope(ledger_path):
-    EvidenceLedger.for_session("flow-9").append(kind="test", command="pytest -q", status="passed")
+class TestMultiKeyScope:
+    """A flow's evidence is the AGGREGATE of the sessions that did its work.
 
-    summary = collect_evidence_summary(flow_id="flow-9")
+    Evidence rows carry a session key, never a flow id, so the flow-level
+    consumer passes the session keys of its steps (plus its creator) instead of
+    looking a flow up as if it were a session.
+    """
 
-    assert summary is not None
-    assert "pytest -q" in summary
+    def test_several_keys_are_aggregated(self, ledger_path):
+        EvidenceLedger.for_session("child-a").append(
+            kind="test", command="pytest a.py", status="passed"
+        )
+        EvidenceLedger.for_session("child-b").append(
+            kind="test", command="pytest b.py", status="failed"
+        )
+
+        summary = collect_evidence_summary(session_keys=["child-a", "child-b"])
+
+        assert summary is not None
+        assert "pytest a.py" in summary
+        assert "pytest b.py" in summary
+
+    def test_unknown_keys_are_skipped_and_all_unknown_is_none(self, ledger_path):
+        EvidenceLedger.for_session("child-a").append(
+            kind="test", command="pytest a.py", status="passed"
+        )
+
+        assert collect_evidence_summary(session_keys=["child-a", "ghost"]) is not None
+        assert collect_evidence_summary(session_keys=["ghost", " "]) is None
+
+    def test_staleness_never_crosses_sessions(self, ledger_path):
+        """A stale event in one child must not mark another child's row stale."""
+        EvidenceLedger.for_session("child-a").append(
+            kind="test", command="pytest foo.py", status="passed"
+        )
+        EvidenceLedger.for_session("child-b").append(
+            kind="test", command="pytest foo.py", status="passed"
+        )
+        EvidenceLedger.for_session("child-b").mark_stale_for_path("foo.py")
+
+        summary = collect_evidence_summary(session_keys=["child-a", "child-b"])
+
+        assert summary is not None
+        # Exactly one of the two identical commands is stale (child-b's).
+        assert summary.count("pytest foo.py") == 2
+        assert summary.count("[stale]") == 1
+
+    def test_one_pass_over_the_ledger(self, ledger_path, monkeypatch):
+        """Keys are aggregated in ONE read, not one read per key."""
+        EvidenceLedger.for_session("child-a").append(
+            kind="test", command="pytest a.py", status="passed"
+        )
+        calls: list[int] = []
+        real_read_all = EvidenceLedger.read_all.__func__
+
+        def _counting_read_all(cls):
+            calls.append(1)
+            return real_read_all(cls)
+
+        monkeypatch.setattr(EvidenceLedger, "read_all", classmethod(_counting_read_all))
+
+        assert collect_evidence_summary(session_keys=["child-a", "child-b", "child-c"])
+
+        assert len(calls) == 1

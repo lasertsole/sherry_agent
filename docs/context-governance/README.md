@@ -100,7 +100,7 @@ Ordering guarantees (verified in `agent/core.py`, list order = registration orde
 |---|---|
 | `before_agent` (list order) | `MultimodalProcessor` runs **before** the model loop, so P1-9 tagging always sees the final text with media hints already merged |
 | `before_model` (list order) | P1-9 tag runs before `ToolCallNormalize` / `SubagentCompletionDrainMiddleware` |
-| `wrap_model_call` (outermost → innermost) | ContextEviction (P1-9 view replacement) → … → Summarization (innermost, closest to the LLM) |
+| `wrap_model_call` (outermost → innermost) | ContextEviction (P1-9 view replacement) → … → Summarization → InvalidToolCallRepairMiddleware (innermost, closest to the LLM) |
 | `after_model` (reverse order) | `MessagePersistenceMiddleware` is the **first** hook after the model — the AI message is persisted before HITL strips denied tool calls or raises `GraphInterrupt` |
 | `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence (innermost)** — the raw result is flushed first, the preview is swapped in on the way out |
 
@@ -225,7 +225,7 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 - **`clear_session` removes everything at once.** `server/service/session_cleanup_service.py::purge_session` deletes the session's MesMemory rows (which drops the `persisted_message_ids` watermark with them), the checkpointer history, and the whole `SESSIONS_DIR/<session_id>/` folder — so **`evicted/` files and `plans/` are deleted together with the session** (`config/path.py::session_plans_dir` documents the same wholesale contract). The in-memory registers are cleared last.
 - **Eviction is a model-view reduction, never a deletion.** Every payload this page shrinks is either archived in MesMemory, present in full in graph state (human messages), or on disk under `evicted/` — and every preview carries a pointer to it.
 - **The `evicted/` directory is session-owned but not garbage-collected.** Files live until `clear_session`; there is no per-message TTL. Long sessions with many huge tool results can accumulate disk usage under `workspace/sessions/<session_id>/evicted/`.
-- **A single giant line is never evicted.** When the head and tail would both contain the whole payload, the preview cannot be smaller than the original, and the message is left untouched (tool path and human path both).
+- **A payload the line window cannot shrink falls back to a char-budgeted preview.** With ten lines or fewer the 5-head/5-tail window overlaps and would reproduce the payload twice (a newline-free body is the extreme); the fallback caps each line (2 048 chars) and each side (8 192) instead, so a 50 000-char single line still evicts to a ~4 300-char preview. The `len(preview) >= len(text)` guard stays as the final net.
 - **`read_file` slices are not recoverable from the slice itself — by design.** The source file is the recovery path; the notice tells the model exactly how to continue. Only a missing/deleted file defeats it.
 - **Human eviction is limited to the trailing message.** A huge payload followed by another user turn is not re-examined; the gate is deliberately "last message only" to avoid revisiting settled history.
 - **The tail clip only helps when the trailing batch is large.** A transcript whose context is consumed by human turns or by non-tool messages degrades to the existing routes; P1-2 is an optimization, not a guarantee.

@@ -18,6 +18,7 @@ from ..types.functional_role import FunctionalRole
 from ..types.lifecycle import outcome_to_ended_reason
 from ..config import get_config
 from . import memory
+from . import spawn_budget
 from . import store_sqlite
 
 
@@ -103,6 +104,11 @@ def register_run(
         attachments_dir=attachments_dir,
         attachments_root_dir=attachments_root_dir,
     )
+
+    # Count the ACCEPTED spawn against the initiating session (``spawned_by`` —
+    # the same key the admission check read); the admission check itself also
+    # runs for attempts that never reach registration, so it cannot count.
+    spawn_budget.increment_spawn_count(spawned_by or requester_session_key)
 
     memory.set_run(run)
     # Persist immediately so a restart can restore this run (register-time state).

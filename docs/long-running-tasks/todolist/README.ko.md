@@ -14,7 +14,7 @@
 - [데이터 레이어](data/README.ko.md)
   - [계획 파일 (workspace/sessions/<session_id>/plans/*.md)](data/README.ko.md#계획-파일-workspacesessionssession_idplansmd)
   - [Boulder 상태 (src/data/boulder.json)](data/README.ko.md#boulder-상태-srcdataboulderjson)
-  - [증거 원장 (src/data/evidence-ledger.jsonl)](data/README.ko.md#증거-원장-srcdataevidence-ledgerjsonl)
+  - [증거 원장](../gates/evidence-ledger/README.ko.md)
   - [todos.db — 세션 수준 TODO 저장](data/README.ko.md#todosdb--세션-수준-todo-저장)
 - [서비스 레이어](#서비스-레이어)
 - [도구 레이어](#도구-레이어)
@@ -172,25 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py`는 append-only JSONL 원장(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나)입니다. `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다:
-
-```python
-class EvidenceLedger:
-    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
-
-    @classmethod
-    def append(cls, entry: dict) -> None: ...          # 한 줄 JSON + UTC 타임스탬프
-    @classmethod
-    def read_all(cls) -> list[dict]: ...
-    @classmethod
-    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
-    @classmethod
-    def read_for_session(cls, session_key: str) -> list[dict]: ...
-    @classmethod
-    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
-```
-
-staleness는 저장되지 않고 파생됩니다: `mark_stale_for_path`는 `{"event": "stale", "file_path": …}` 행을 덧붙이고, 읽기 측은 이후 stale 이벤트가 해당 evidence 행의 `command`에 포함된 경로를 지명할 때만 그 행을 stale로 봅니다. `agent/tools/todolist/evidence_recorder.py`가 이를 도구에 배선합니다(페일오픈, 예외 삼킴): `terminal` / `python_repl`은 인식된 검증 명령의 행을 항상 덧붙이고(분류표는 `EVIDENCE_LEDGER["verify_commands"]`), `write_file` / `patch_file`은 편집된 경로의 stale 이벤트를 항상 덧붙입니다. `agent/tools/taskflow/evidence_collector.py`는 판정기와 `taskflow_finish` evidence 게이트에 표시되는 요약을 렌더링합니다.
+`agent/tools/todolist/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### WS 푸시
 

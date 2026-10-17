@@ -11,6 +11,7 @@ let storeApi: {
   hydrate: ReturnType<typeof vi.fn>;
   setValue: ReturnType<typeof vi.fn>;
   isPending: ReturnType<typeof vi.fn>;
+  availableLevels: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
@@ -19,7 +20,9 @@ beforeEach(() => {
     current: vi.fn(() => false),
     hydrate: vi.fn(),
     setValue: vi.fn(),
-    isPending: vi.fn(() => false)
+    isPending: vi.fn(() => false),
+    // on/off sessions: the model declares no level list -> the switch stays.
+    availableLevels: vi.fn(() => ['off'])
   };
   vi.stubGlobal(
     'useThinkingStore',
@@ -96,6 +99,7 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
 
   it('collapsed picker shows only the current level until clicked', async () => {
     storeApi.mode = 'levels';
+    storeApi.availableLevels = vi.fn(() => ['low', 'high', 'max']);
     storeApi.current.mockReturnValue('high');
     const wrapper = mount(ThinkingToggle, {
       props: { sessionId: 'sid-1' },
@@ -115,6 +119,7 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
 
   it('pushes level selections through store.setValue', async () => {
     storeApi.mode = 'levels';
+    storeApi.availableLevels = vi.fn(() => ['low', 'high', 'max']);
     storeApi.current.mockReturnValue('high');
     const wrapper = mount(ThinkingToggle, {
       props: { sessionId: 'sid-1' },
@@ -128,6 +133,7 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
 
   it('allows switching while a turn is running (parked for the next turn)', async () => {
     storeApi.mode = 'levels';
+    storeApi.availableLevels = vi.fn(() => ['low', 'high', 'max']);
     storeApi.current.mockReturnValue('high');
     storeApi.isPending.mockReturnValue(true);
     const wrapper = mount(ThinkingToggle, {
@@ -147,6 +153,7 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
 
   it('mobile button cycles levels for always-think models', async () => {
     storeApi.mode = 'levels';
+    storeApi.availableLevels = vi.fn(() => ['low', 'high', 'max']);
     storeApi.current.mockReturnValue('high');
     const wrapper = mount(ThinkingToggle, {
       props: { sessionId: 'sid-1' },
@@ -154,6 +161,22 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
     });
     await wrapper.find('button.block').trigger('click');
     expect(storeApi.setValue).toHaveBeenCalledWith('sid-1', 'max');
+  });
+
+  it('renders the unified picker with only the backend-declared levels', async () => {
+    storeApi.mode = 'on_off';
+    storeApi.current = vi.fn(() => 'medium');
+    storeApi.availableLevels = vi.fn(() => ['off', 'low', 'medium', 'high', 'max']);
+    const wrapper = mount(ThinkingToggle, {
+      props: { sessionId: 'sid-1' },
+      global: { stubs }
+    });
+    await wrapper.find('button.trigger').trigger('click');
+
+    const labels = wrapper.findAll('button.lvl').map(b => b.text());
+    expect(labels).toEqual(['关闭', '低', '中', '高', '最高']);
+    expect(labels).not.toContain('最低');
+    expect(labels).not.toContain('超高');
   });
 
   it('hides the clock hint when nothing is parked', () => {

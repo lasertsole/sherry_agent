@@ -125,12 +125,12 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 |---|----|--------|------------|--------------------------|
 | 1 | 子実行 | 完了判定器 + goal loop（`spawn/completion_judge.py`） | タスク、最新応答、証跡サマリ；予算 `goal_max_turns`（既定 `5`） | モデルエラー / 解析不能 → `done` |
 | 2 | ステップ | TaskFlow ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `validation_criteria`（無ければ判定器を呼ばない） | モデルエラー / 解析不能 → `pass` |
-| 3 | フロー | `taskflow_finish` のゲート A–D（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状態とフロー証跡；ゲート D には `todo` と `plan_path` も必要 | 台帳が読めない / 検証器エラー → 通す |
+| 3 | フロー | `taskflow_finish` のゲート A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状態とフロー証跡 | 台帳が読めない → 通す |
 | 4 | 親ターン | 完了 drain のプログラム的ゲート（`agent/middlewares/subagent_completion_drain/`） | セッションの検証証跡サマリ | 参照失敗 → ゲートを省略 |
 
 **第 2 層——ステップ判定器。** `taskflow_resume` が子結果を注入した後、`validation_criteria` を持つステップは `PASS` / `RETRY` / `BLOCK` と判定されます。`RETRY` はステップのリトライ回数が `STEP_JUDGE["max_retries"]`（既定 `2`）未満なら判定器のフィードバック付きで再ディスパッチし、予算を使い切るとステップをブロックします。判定基準は判定器の入力でありスイッチではありません——基準を持たないステップが判定器に送られることはありません。
 
-**第 3 層——フローゲート。** `taskflow_finish` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ず、そして——呼び出し元が `todo` と `plan_path` の両方を渡した場合に限り——ゲート D が `SisyphusVerifier` を通過すること。ゲート D の連携はスイッチではなく入力です：それが無ければ完了に独立した判定は無く、省略されたゲートは静かなままです。
+**第 3 層——フローゲート。** `taskflow_finish` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ません（加えて、`description` を持つフローのステップ数が `GOAL_GATE["min_steps"]` 以上のときだけ走るオプトインの Gate E 目標判定）。
 
 **第 4 層——親ターンゲート。** drain が待機中の完了キャリアを注入するとき、親セッションの証跡も検査します。キャリアはそのまま注入され、セッションに合格証跡が無ければ検証必須メッセージがその後ろに追記されます。この検査は無条件で——どの設定でも無効化できず——証跡参照自体が利用不能なときにのみフェイルオープンします。
 
@@ -140,7 +140,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 
 | サブシステム | この境界を越えるもの | 詳細 |
 |--------------|----------------------|------|
-| TaskFlow エンジン | ステップディスパッチ、`validation_criteria`、`aggregate_deps`、フローゲート A–D | [長期タスク](../long-running-tasks/README.ja.md) |
+| TaskFlow エンジン | ステップディスパッチ、`validation_criteria`、`aggregate_deps`、フローゲート A–C（+ Gate E） | [長期タスク](../long-running-tasks/README.ja.md) |
 | 暴走ループ防止 | 完了ゲート、判定器予算、drain と announce の再試行挙動 | [暴走ループ防止](../loop-prevention/README.ja.md) |
 | コンテキストエンジン | MesMemory に永続化されるのは完了キャリアのみ；子のトランスクリプトは checkpoint のみ | [Context Engine README](../../context_engine/README.ja.md) |
 | ランタイムレーン | `SUBAGENT` レーンが同時子実行を制限；超過 spawn は `PENDING` で待機 | [暴走ループ防止](../loop-prevention/README.ja.md) |
@@ -180,7 +180,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 - すべての判定器は設計上フェイルオープンです：到達不能または解析不能な判定器は `done` / `pass` として確定します。可用性が厳格さに優先します——詰まった判定器が実行を閉じ込めてはなりません。
 - `goal_max_turns` が `1` の子は単一ターンとなり、その spawn では完了判定器が呼ばれません。
 - 呼び出し時の権限ガードが支えるのは `sessions_spawn` です；`sessions_yield` は組み立て時の剥がしのみに依存します。
-- ゲート D は `todo` と `plan_path` の両方が揃ったときだけ有効です；その連携が無ければ `taskflow_finish` に独立した完了判定はありません。
+- 旧ゲート D（呼び出し側が `todo` + `plan_path` を渡したときに `SisyphusVerifier` を起動）は過剰工学の監査で削除されました：その連携を要求するプロンプトは無く、渡す経路もありませんでした。Sisyphus 契約はオーケストレータのドクトリンとして `skills/builtin/core/ulw-execute/SKILL.md` に残っています。
 - 親ターンゲートは構造化台帳ではなく、テキストの証跡サマリとその `FAIL` / `[stale]` マーカーに基づいて推論します。
 - `aggregate_deps` は生の依存結果を連結するだけで要約しません。そのため巨大な結果はディスパッチされるタスクテキストを膨らませます。
 - 子コンテキストの独立は設計上の固定事項です：親トランスクリプトを継承するモードは存在しません。

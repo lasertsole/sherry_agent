@@ -1,8 +1,8 @@
 """Runtime-injected subagent tools for the main agent.
 
-These 7 tools expose the subagent system's LLM interfaces (``sessions_spawn``,
+These 8 tools expose the subagent system's LLM interfaces (``sessions_spawn``,
 ``sessions_yield``, ``sessions_send``, ``sessions_kill``, ``sessions_steer``,
-``agents_list``, ``subagents_list``) so that ``session_id`` is injected at
+``agents_list``, ``subagents_list``, ``sessions_messages``) so that ``session_id`` is injected at
 **runtime** via LangGraph's ``InjectedState("session_id")`` instead of being
 bound at build time.
 
@@ -21,9 +21,11 @@ Design notes
   programmatic/bind-time use.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from langchain_core.tools import BaseTool, tool
+from pydantic import Field
+
 from agent.tools.pub_base import SessionId
 
 
@@ -42,13 +44,55 @@ async def sessions_spawn_runtime_tool(
     thinking: str | None = None,
     cleanup: Literal["delete", "keep"] = "delete",
     attachments: list[dict] | None = None,
+    run_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            description="Wall-clock timeout for this subagent in seconds. "
+            "Default 600 (10 min), min 600, max 7200 (2 h); a value outside that "
+            "range is clamped to the nearest bound. Raise it for complex tasks "
+            "(e.g. large codebase refactors) — the minimum already covers most."
+        ),
+    ] = None,
+    functional_role: Annotated[
+        str | None,
+        Field(
+            description="Functional specialization of the child: general (full "
+            "access), researcher (read-only search), executor (write + run), "
+            "reviewer (read-only audit), librarian (read-only external-codebase "
+            "retrieval). Omit for the default. A specialized caller may only "
+            "spawn its own role."
+        ),
+    ] = None,
+    isolation: Annotated[
+        bool,
+        Field(
+            description="Run the child in a private git worktree (a COPY of the "
+            "project) and merge its changed files back when it completes — use it "
+            "when parallel subagents would edit overlapping files. Conflicts are "
+            "reported, never silently overwritten. IGNORED when you are already "
+            "inside an isolated worktree (the child reuses your tree), and refused "
+            "with no project directory to copy."
+        ),
+    ] = False,
+    output_schema: Annotated[
+        dict | None,
+        Field(
+            description="Optional JSON Schema constraining the subagent's FINAL "
+            "output. When given, the child must produce JSON matching it (the "
+            "provider's native structured output where supported, else a "
+            "structured-output tool call). Use for tasks that must return "
+            "machine-readable data; omit for free-form text."
+        ),
+    ] = None,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
 
     The subagent runs independently; results are delivered on completion.
     Use for complex or time-consuming tasks that can run on their own.
+    Pass run_timeout_seconds to raise the 10-minute default for long tasks.
     """
     from ..spawn import spawn_subagent_direct
+    from ..spawn.plan import clamp_run_timeout_seconds
     from ..spawn.privilege import check_spawn_permission
 
     allowed, reason = check_spawn_permission(session_id)
@@ -69,6 +113,10 @@ async def sessions_spawn_runtime_tool(
         cleanup=cleanup,
         attachments=attach_dicts,
         expects_completion_message=True,
+        run_timeout_seconds=clamp_run_timeout_seconds(run_timeout_seconds),
+        functional_role_hint=functional_role,
+        isolation=isolation,
+        output_schema=output_schema,
     )
 
     parts = [f"Subagent spawned: status={result.status}"]
@@ -83,6 +131,50 @@ async def sessions_spawn_runtime_tool(
     if result.error:
         parts.append(f"error={result.error}")
     return ", ".join(parts)
+
+
+@tool("sessions_messages")
+async def sessions_messages_runtime_tool(
+    target_session_key: Annotated[
+        str,
+        Field(
+            description="The session key of the subagent whose messages to read "
+            "(the session_key= value returned by sessions_spawn, or named in a "
+            "timed-out completion notice)."
+        ),
+    ],
+    session_id: SessionId = "",
+    limit: Annotated[
+        int,
+        Field(
+            description="How many recent messages to fetch from the subagent's "
+            "checkpoint (default 10, clamped to [1, 30]). The output is "
+            "token-budgeted regardless — this bounds the fetch, not the display."
+        ),
+    ] = 10,
+    query: Annotated[
+        str | None,
+        Field(
+            description="Optional case-insensitive keyword filter: only messages "
+            "whose text or tool calls contain it are returned."
+        ),
+    ] = None,
+) -> str:
+    """Read a subagent session's message history by its session key.
+
+    Use after a timed-out or killed subagent to review its partial work (tool
+    calls, tool results, AI reasoning) before deciding whether to continue,
+    re-plan, or report to the user. The key is the session_key= value the
+    spawn returned.
+    """
+    from .sessions_messages import read_session_transcript
+
+    return await read_session_transcript(
+        caller_session_id=session_id,
+        target_session_key=target_session_key,
+        limit=limit,
+        query=query,
+    )
 
 
 @tool("sessions_yield")
@@ -279,6 +371,7 @@ sessions_kill_runtime_tool.metadata = {"scope": "main_only", "idempotent": False
 sessions_steer_runtime_tool.metadata = {"scope": "main_only", "idempotent": False}
 agents_list_runtime_tool.metadata = {"idempotent": True}
 subagents_list_runtime_tool.metadata = {"idempotent": True}
+sessions_messages_runtime_tool.metadata = {"idempotent": True}
 
 
 _SUBAGENT_RUNTIME_TOOLS: list[BaseTool] = [
@@ -289,11 +382,12 @@ _SUBAGENT_RUNTIME_TOOLS: list[BaseTool] = [
     sessions_steer_runtime_tool,
     agents_list_runtime_tool,
     subagents_list_runtime_tool,
+    sessions_messages_runtime_tool,
 ]
 
 
 def build_subagent_runtime_tools() -> list[BaseTool]:
-    """Build and return the 7 runtime-injected subagent tools.
+    """Build and return the 8 runtime-injected subagent tools.
 
     Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. ``session_id`` is
     injected per-invocation from the current LangGraph state.

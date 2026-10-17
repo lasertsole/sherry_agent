@@ -1,10 +1,13 @@
-"""Order contract for the middleware pipeline assembled by ``built_agent()``.
+"""Order contract for the middleware pipelines assembled by the agent builders.
 
 The middleware list order is load-bearing: LangChain executes ``after_model``
 nodes in reverse registration order and ``wrap_model_call`` layers
 outermost-first. This pins the exact sequence produced by
-``agent.core._build_middlewares`` through the real ``built_agent`` path, so a
-builder refactor cannot silently reorder hooks.
+``agent.core._build_middlewares`` through the real ``built_agent`` path, and
+the child sequence produced by
+``agent/tools/subagent/spawn/core.py::_build_child_middlewares`` (whose
+docstring defers to "the subagent side of the middleware-order tests" — this
+is that side), so a builder refactor cannot silently reorder hooks.
 """
 
 from typing import Any
@@ -12,6 +15,7 @@ from typing import Any
 import pytest
 
 from agent import core as agent_core
+from agent.tools.subagent.spawn.core import _build_child_middlewares
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -23,6 +27,7 @@ EXPECTED_ORDER = [
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",
+    "UserHooksMiddleware",
     "ContextEvictionMiddleware",
     "ToolCallNormalize",
     "PathGuard",
@@ -37,7 +42,28 @@ EXPECTED_ORDER = [
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
     "Summarization",
+    "InvalidToolCallRepairMiddleware",
 ]
+
+#: Child-chain order (``_build_child_middlewares``). Leaner by design — no
+#: HITL / eviction / persistence / path guard / LLM retry / task layer (see the
+#: builder's docstring) — and ``InvalidToolCallRepairMiddleware`` is LAST there
+#: too, mirroring the main chain's innermost-wrap position.
+SUBAGENT_EXPECTED_ORDER = [
+    "Summarization",
+    "IterationBudget",
+    "ToolGuardrails",
+    "OutputRepetitionGuard",
+    "MaxTokensBoostMiddleware",
+    "ToolCallNormalize",
+    "HeartbeatStaleness",
+    "InvalidToolCallRepairMiddleware",
+]
+
+
+def test_subagent_middleware_order_is_pinned() -> None:
+    chain = _build_child_middlewares(auxiliary_llm=None, main_llm_context_window=131_072)
+    assert [type(mw).__name__ for mw in chain] == SUBAGENT_EXPECTED_ORDER
 
 
 class _NamedMiddleware:

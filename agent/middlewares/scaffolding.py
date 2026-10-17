@@ -33,6 +33,7 @@ from loguru import logger
 from .context_eviction import ContextEvictionMiddleware
 from .heartbeat_staleness import HeartbeatStaleness
 from .humanInTheLoop import HumanInTheLoop
+from .invalid_tool_call_repair import InvalidToolCallRepairMiddleware
 from .iteration_budget import IterationBudget
 from .llm_retry import LLMRetryMiddleware
 from .max_tokens_boost import MaxTokensBoostMiddleware
@@ -93,6 +94,10 @@ _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     # Multimodal preprocessing — uploaded media must be persisted and paired with
     # the native/skill path; a turn without it loses the attachments.
     RequiredMiddlewareEntry(MultimodalProcessor, ()),
+    # Invalid tool-call salvage — a tool call whose arguments fail JSON parsing
+    # otherwise never reaches the ToolNode, and a turn whose ONLY call is
+    # invalid ends silently (SWE-bench 20261017_003529: zero edits produced).
+    RequiredMiddlewareEntry(InvalidToolCallRepairMiddleware, ()),
 )
 
 # ---------------------------------------------------------------------------
@@ -111,6 +116,11 @@ _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(HeartbeatStaleness, ()),
     RequiredMiddlewareEntry(ToolCallNormalize, ()),
     RequiredMiddlewareEntry(MaxTokensBoostMiddleware, ()),
+    # Invalid tool-call salvage — the same silent-drop failure mode as the main
+    # chain: a child whose only call failed JSON parsing ends its invocation on
+    # a narration (the completion judge may continue it, but the call itself is
+    # gone and no edit happens).
+    RequiredMiddlewareEntry(InvalidToolCallRepairMiddleware, ()),
 )
 
 

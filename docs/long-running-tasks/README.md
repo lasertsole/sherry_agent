@@ -26,6 +26,8 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
   - [Tool Output Summarization](memory/README.md#-tool-output-summarization)
   - [Session Continuity](memory/README.md#-session-continuity)
   - [TaskFlow Auto-Resume](memory/README.md#-taskflow-auto-resume)
+- [Judgement Gates](gates/README.md)
+- [Evidence Ledger](gates/evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
 - [Configuration Registry](#-configuration-registry)
 - [Architecture Diagram](#-architecture-diagram)
@@ -54,13 +56,13 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 | Part | Contents |
 | :--- | :--- |
-| `config/features/agent_side/` | **44** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
+| `config/features/agent_side/` | **49** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
 | `config/features/infra_side/` | **27** infra-side config modules (server, login, queues, skills, context engine, runtime, web search, model pricing) |
 | `config/features/_env.py` | The single shared env helper |
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **71 feature objects** — 44 agent-side + 27 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **76 feature objects** — 49 agent-side + 27 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -73,6 +75,8 @@ The constants most relevant to this document:
 | | `wait_all_default_timeout_seconds` | 300.0 |
 | | `wait_all_default_poll_interval_seconds` | 0.5 |
 | | `waiting_timeout_hours` | 24 |
+| | `max_steps_per_flow` | 20 |
+| | `max_flows_per_session` | 20 |
 | `MODEL_PRICING` (`infra_side/model_pricing.py`) | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
 | `MEMORY_FLUSH` (`agent_side/memory_flush.py`) | `enabled` | `MEMORY_FLUSH_ENABLED` (default 1) |
@@ -238,7 +242,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 | `test_step_judge.py` | StepJudge response parsing, verdict coercion, fail-open to `pass`, prompt assembly |
 | `test_resume_with_judge.py` | `taskflow_resume` + judge: pass/retry/block, retry-feedback injection, budget exhaustion, fail-open |
 | `test_evidence_collector.py` | evidence summary rendering for judge prompts; staleness derived from later `stale` rows |
-| `test_finish_gate.py` | finish gates A–D: DAG completeness, blocked steps, failing/stale evidence, `SisyphusVerifier` |
+| `test_finish_gate.py` | finish gates A–C: DAG completeness, blocked steps, failing/stale evidence |
 | `test_chain_smoke.py` | integrated judge → retry-feedback → goal-loop → finish-gate smoke against a stub auxiliary LLM |
 | `test_taskflow_list.py` | session board rendering, status filters, last-activity timestamp |
 | `test_index_audit.py` | SQLite index upgrade path and query-plan audit |
@@ -265,7 +269,7 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **The pre-compression memory flush is latent.** Production instantiations of `Summarization` (main agent and subagent) do not pass `memory_store` / `llm_factory`, so the flush does not run until a call site wires them; the code is implemented and tested but currently inert.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 71.** The config registry holds 71 feature objects (44 agent-side + 27 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS` and `WEB_SEARCH_CONFIG` (its env-sourced defaults are covered by a dedicated builder test).
+- **Registry size is 76.** The config registry holds 76 feature objects (49 agent-side + 27 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS` and `WEB_SEARCH_CONFIG` (its env-sourced defaults are covered by a dedicated builder test).
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.

@@ -34,7 +34,7 @@
 - `before_agent` / `abefore_agent`（`core.py:399` / `core.py:403`）—— **T1 事前点検**
 - `wrap_model_call` / `awrap_model_call`（`core.py:413` / `core.py:495`）—— **T2 ディスパッチ、T3 応答後の再確認、T4/T5 エラー復帰リング**
 
-ミドルウェアチェーンでは**最も内側 —— LLM に最も近い**位置に置かれます。圧縮が発動すると、履歴は常に次の形になります:
+ミドルウェアチェーンでは `LLMRetryMiddleware` のすぐ内側に位置し、その内側を包むのは `InvalidToolCallRepairMiddleware` だけです——LLM に最も近いのはそちらです。圧縮が発動すると、履歴は常に次の形になります:
 
 ```
 HumanMessage("What did we do so far?")

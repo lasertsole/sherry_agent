@@ -86,7 +86,9 @@ class TestPromptGuidance:
         assert "target: 'facts'" in prompt
         assert "{facts_limit}" in prompt
         assert "{facts_block}" in prompt
-        assert "'<module>-notes' skill" in prompt
+        # Skill extraction is the plan-completion pass's job — the review prompt
+        # carries no skill guidance at all (its tool face cannot touch skills).
+        assert "skill" not in prompt.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -124,10 +126,10 @@ class TestFactsRendering:
                 prompts.append(input["messages"][-1].content)
                 return {"messages": [AIMessage(content="nothing")]}
 
-        async def _create(system_prompt, allowed_metadata_key=None, tools=None):
+        async def _create(session_id, system_prompt):
             return _CapturingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _create)
 
         await nudge_mod._nudge_memory("sess-review", "sys", [HumanMessage("hi")])
 
@@ -137,7 +139,7 @@ class TestFactsRendering:
         assert "(FACTS.md is empty)" not in prompts[0]
 
     @pytest.mark.asyncio
-    async def test_nudge_plan_extraction_prompt_carries_facts_context(self, monkeypatch):
+    async def test_plan_extraction_prompt_carries_facts_context(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
         monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
         monkeypatch.setattr(
@@ -152,12 +154,17 @@ class TestFactsRendering:
                 prompts.append(input["messages"][-1].content)
                 return {"messages": [AIMessage(content="done")]}
 
-        async def _create(system_prompt, allowed_metadata_key=None, tools=None):
+        async def _create(system_prompt):
             return _CapturingAgent()
 
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", _create)
+        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
+        monkeypatch.setattr(
+            "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
+            lambda session_id: "sys",
+        )
 
-        await nudge_mod._nudge_plan_extraction("sess-plan-facts", "sys", [HumanMessage("hi")])
+        await nudge_mod._run_plan_extraction("sess-plan-facts")
 
         assert len(prompts) == 1
         assert "KNOWN-FACT: test_auth_17 needs network" in prompts[0]
@@ -223,9 +230,20 @@ def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
         monkeypatch.setattr(pub_base, name, lambda *a, **k: None)
     monkeypatch.setattr(pub_base, "is_background_review", lambda: False)
 
-    monkeypatch.setattr("models.build_main_llm", lambda: _stub_model(tool_call))
+    # Plan extraction builds its agent on the AUXILIARY model; the memory review
+    # rebuilds the session's main-model configuration (cache-warm), so both seams
+    # get the stub.
+    monkeypatch.setattr("models.build_auxiliary_llm", lambda **kwargs: _stub_model(tool_call))
+    monkeypatch.setattr(
+        nudge_mod, "_build_session_model", lambda session_id: _stub_model(tool_call)
+    )
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_skill_manage_tool()])
     monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
+    monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
+    monkeypatch.setattr(
+        "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
+        lambda session_id: "sys",
+    )
     monkeypatch.setattr(
         nudge_mod,
         "_build_plan_context",
@@ -254,7 +272,7 @@ class TestModuleNotesBehavior:
             },
         )
 
-        await nudge_mod._nudge_plan_extraction("sess-notes-create", "sys", [HumanMessage("hi")])
+        await nudge_mod._run_plan_extraction("sess-notes-create")
 
         skill_md = env.auto_dir / "auth-module-notes" / "SKILL.md"
         assert skill_md.exists()
@@ -285,7 +303,7 @@ class TestModuleNotesBehavior:
             },
         )
 
-        await nudge_mod._nudge_plan_extraction("sess-notes-patch", "sys", [HumanMessage("hi")])
+        await nudge_mod._run_plan_extraction("sess-notes-patch")
 
         skill_dirs = sorted(p.name for p in env.auto_dir.iterdir() if p.is_dir())
         assert skill_dirs == ["auth-module-notes"]

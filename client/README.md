@@ -127,9 +127,10 @@ client/
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
-│   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
+│   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch, or the model-declared level picker incl. off, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
+│   │           ├── ThinkingCustomMappingPanel.vue # Advanced per-session custom thinking wire mapping (escape hatch for unsupported providers)
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
@@ -138,13 +139,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
-│   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels)
+│   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
-│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch)
+│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
+│   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
-│   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
+│   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file; draggable into the composer — the drop inserts an @./path mention chip — and the row's right-click menu is wired here)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
 │   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, language, ...)
@@ -280,25 +282,25 @@ app.vue (root: toast layer, connection banner, locale restore)
 
 `bridge.ts` provides a unified API that works in both Tauri desktop and browser modes. All backend access flows through it (or through `fetchApi` in `requestApi.ts`):
 
-| API                                                                                                | Description                                                                                    |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
-| `sendChatMessage(request, onChunk)`                                                                | Convenience wrapper around `streamChatMessage`                                                 |
-| `stopChatMessage(sessionId)`                                                                       | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame)                                  |
-| `resumeHitl(sessionId, decision, ...)`                                                             | Resume a paused HITL agent over a fresh WebSocket                                              |
-| `clearSession(sessionId)`                                                                          | Clear session state (`session_clear` IPC or `DELETE /sessions`)                                |
-| `getHistory(sessionId, lastTurnCount)`                                                             | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | Background subagent task management                                                            |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | System prompt files CRUD                                                                       |
-| `readMemory` / `writeMemory`                                                                       | Long-term memory files (`workspace/memory/*`)                                                  |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | Cron job management                                                                            |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | Skill management                                                                               |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | Channel settings                                                                               |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | Auto-skill curator control                                                                     |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | Backend log reading + live `/logs/ws` stream                                                   |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig` (`env.ts`) | Backend config-file read/update (`GET/PUT /env`, `/models-config`, `/network-config`)           |
-| `checkHealth()`                                                                                    | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
+| API                                                                                                                                   | Description                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                               | Streaming agent chat; returns `{ controller, promise }` (Tauri Events or `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                                                   | Convenience wrapper around `streamChatMessage`                                                 |
+| `stopChatMessage(sessionId)`                                                                                                          | Stop ongoing generation (`agent_stop` IPC or WS `stop` frame)                                  |
+| `resumeHitl(sessionId, decision, ...)`                                                                                                | Resume a paused HITL agent over a fresh WebSocket                                              |
+| `clearSession(sessionId)`                                                                                                             | Clear session state (`session_clear` IPC or `DELETE /sessions`)                                |
+| `getHistory(sessionId, lastTurnCount)`                                                                                                | Retrieve history (`session_history` IPC or `GET /n_turns_history_messages`)                    |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                     | Background subagent task management                                                            |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                          | System prompt files CRUD                                                                       |
+| `readMemory` / `writeMemory`                                                                                                          | Long-term memory files (`workspace/memory/*`)                                                  |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                    | `workspace/HEARTBEAT.md` (always direct HTTP)                                                  |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                    | Cron job management                                                                            |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                            | Skill management                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                         | Channel settings                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                      | Auto-skill curator control                                                                     |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                      | Backend log reading + live `/logs/ws` stream                                                   |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig` (`env.ts`) | Backend config-file read/update (`GET/PUT /env`, `/models-config`, `/network-config`)          |
+| `checkHealth()`                                                                                                                       | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
 
 Browser-mode chat streaming details:
 

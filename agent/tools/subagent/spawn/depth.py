@@ -43,6 +43,22 @@ def validate_concurrent_children(current_count: int) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_total_spawns(current_count: int) -> tuple[bool, str]:
+    """Check whether the requesting session has spent its lifetime spawn budget.
+
+    Concurrent-child admission says nothing about the "finish one, start the
+    next" loop; ``registry.spawn_budget`` counts every accepted spawn and this
+    is the ceiling that stops the repetition.
+    """
+    config = get_config()
+    if current_count >= config.max_total_spawns_per_session:
+        return (
+            False,
+            f"Total spawns {current_count} already at max {config.max_total_spawns_per_session}",
+        )
+    return True, ""
+
+
 def validate_global_concurrent(current_count: int) -> tuple[bool, str]:
     """[DEPRECATED] Global concurrency is now queued by the SUBAGENT lane.
 

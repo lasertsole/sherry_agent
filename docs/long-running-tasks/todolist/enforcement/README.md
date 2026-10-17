@@ -69,6 +69,7 @@ The most critical enforcement layer: **does not rely on model self-discipline**.
 - `_MAX_COOLDOWN_S = 60.0` — max backoff
 - `_FAILURE_RESET_WINDOW_S = 300` — 5min no failures → reset
 - `_MAX_RECOVERY_ATTEMPTS = 2` — recovery mode cap
+- `_MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]` (15) — consecutive continuation turns → one final stop directive, then silence
 
 **Workflow**:
 
@@ -77,6 +78,11 @@ turn ends (no tool_call, agent loop exits)
   → Summarization.aafter_agent (rebuild system prompt with latest todos)
   → TodoContinuationEnforcer.aafter_agent
       → is_abort_error? → skip
+      → a turn the gate did not inject (user message / subagent completion)?
+        → reset the continuation budget
+      → incomplete plan? → no → reset() (+ the plan-extraction fork)
+      → budget spent (latched)? → silent, wait for a user message
+      → continuation turns >= 15? → STOP_PROMPT + latch → return
       → get_todos_sync(session_id) → filter incomplete
       → check_stagnation: snapshot compare, N consecutive no-change?
           → should_enter_recovery? → RECOVERY_PROMPT
@@ -94,7 +100,9 @@ turn ends (no tool_call, agent loop exits)
       → user message inside that wait → still busy at the cap → drop → reset()
 ```
 
-**Files**: `stagnation_tracker.py` (~90 lines) + `todo_continuation/core.py` (~110 lines) + `agent/core.py` (~2 lines registration).
+**The continuation budget**: `mark_injected` — the one point every directive passes through after the trigger accepted it — also counts the turn, so the counter is the number of consecutive continuation turns actually delivered (a directive the trigger refused is not counted and is retried at the next turn end; recovery directives count too). At 15 the enforcer sends one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive, latches the session, and stays silent until a turn the gate did not itself inject — a real user message, or a subagent completion (a new event, not a continuation) — resets the counter and the latch. This covers the shape stagnation cannot see: a plan the model keeps editing just enough (one status flip, one added step) to keep the snapshot moving, so the streak never trips.
+
+**Files**: `stagnation_tracker.py` (~190 lines) + `todo_continuation/core.py` (~545 lines) + `agent/core.py` (~2 lines registration).
 
 ### E4: Transition Barrier — Dual Insurance
 

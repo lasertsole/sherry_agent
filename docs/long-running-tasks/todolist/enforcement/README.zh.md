@@ -69,6 +69,7 @@ turn 结束后如果有未完成 todo，系统自动注入续作消息把 LLM �
 - `_MAX_COOLDOWN_S = 60.0`（最大退避）
 - `_FAILURE_RESET_WINDOW_S = 300`（5 分钟无失败 → 重置）
 - `_MAX_RECOVERY_ATTEMPTS = 2`（恢复模式上限）
+- `_MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]`（15）——连续续作 turn 上限 → 注入最后一条停止指令后静默
 
 **工作流程**：
 
@@ -77,6 +78,11 @@ turn ends (no tool_call, agent loop exits)
   → Summarization.aafter_agent (rebuild system prompt with latest todos)
   → TodoContinuationEnforcer.aafter_agent
       → is_abort_error? → skip
+      → a turn the gate did not inject (user message / subagent completion)?
+        → reset the continuation budget
+      → incomplete plan? → no → reset() (+ the plan-extraction fork)
+      → budget spent (latched)? → silent, wait for a user message
+      → continuation turns >= 15? → STOP_PROMPT + latch → return
       → get_todos_sync(session_id) → filter incomplete
       → check_stagnation: snapshot compare, N consecutive no-change?
           → should_enter_recovery? → RECOVERY_PROMPT
@@ -94,7 +100,9 @@ turn ends (no tool_call, agent loop exits)
       → user message inside that wait → still busy at the cap → drop → reset()
 ```
 
-**文件**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行注册）。
+**续作预算**：`mark_injected`——每条指令在 trigger 接受后必经的唯一节点——同时给该 turn 计数，因此这个计数器就是真正投递成功的连续续作 turn 数（被 trigger 拒绝的指令不计入，下一轮 turn 结束时重试；恢复指令同样计入）。到 15 时，强制器发出最后一条 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令、给会话上锁，并保持静默，直到出现一个不是本强制器注入的 turn——真实用户消息，或子代理完成通知（那是新事件，不是续作）——才重置计数器与锁。这条上限覆盖停滞检测看不见的形态：模型每轮都微改计划（改一个状态、加一个 step）让快照一直在动，streak 永远不触发。
+
+**文件**：`stagnation_tracker.py`（~190 行）+ `todo_continuation/core.py`（~545 行）+ `agent/core.py`（~2 行注册）。
 
 ### E4: 转换屏障 — 双保险
 

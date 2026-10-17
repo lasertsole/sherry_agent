@@ -391,7 +391,12 @@ class TestRealChild:
         a = tool._run([f"head -c {_BIG_BYTES} /dev/zero | tr '\\0' 'a'"], session_id=_SID)
         b = tool._run([f"head -c {_BIG_BYTES} /dev/zero | tr '\\0' 'b'"], session_id=_SID)
 
-        names = {Path(line.split("[evicted to: ", 1)[1].rstrip("]")).name for line in (a, b)}
+        # Parse the HEADER line only: the preview body may carry a cut note
+        # whose own punctuation would confuse a whole-payload split.
+        names = set()
+        for payload in (a, b):
+            header = payload.splitlines()[0]
+            names.add(Path(header.split("[evicted to: ", 1)[1].rstrip("]")).name)
         assert len(names) == 2, "the name hashes the content, so two outputs cannot collide"
 
 

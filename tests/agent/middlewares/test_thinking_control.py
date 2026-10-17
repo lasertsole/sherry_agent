@@ -31,7 +31,14 @@ def fake_build(monkeypatch):
     """Stub build_main_llm so no real LLM client is constructed."""
     calls: list[dict] = []
 
-    def _fake_build(temperature=None, *, thinking=None, thinking_level=None, thinking_floor=False):
+    def _fake_build(
+        temperature=None,
+        *,
+        thinking=None,
+        thinking_level=None,
+        thinking_floor=False,
+        custom_mapping=None,
+    ):
         calls.append({"thinking": thinking, "level": thinking_level, "floor": thinking_floor})
         tag = (
             f"level:{thinking_level}"
@@ -80,12 +87,24 @@ def test_unset_flag_passes_request_through(sid):
 
 
 def test_non_flag_values_pass_through(sid):
-    for junk in ("true", 1, "off", "medium"):
+    # Unknown tokens only: every level spelling in the seven-level enum IS a
+    # valid control value now (pinned by the level tests below).
+    for junk in ("true", 1, "turbo", "highest"):
         state_register_mem.set_state(sid, _FLAG_KEY, junk)
         mw = ThinkingControlMiddleware()
         request = _make_request()
         _, _, seen = _run(mw, request)
         assert all(m is request.model for m in seen), junk
+
+
+def test_every_level_token_swaps_a_level_variant(sid):
+    # The full seven-level enum is accepted; each token keys its own variant.
+    for token in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
+        state_register_mem.set_state(sid, _FLAG_KEY, token)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+        _, _, seen = _run(mw, request)
+        assert all(m.tag == f"level:{token}" for m in seen), token
 
 
 def test_bool_flag_swaps_model_both_paths(sid):
@@ -235,6 +254,7 @@ def fake_profile_build(monkeypatch):
         api_key=None,
         base_url=None,
         temperature=None,
+        custom_mapping=None,
         thinking=None,
         thinking_level=None,
         thinking_floor=False,
@@ -360,3 +380,100 @@ class TestModelOverride:
         assert out == ("ok", "profile:kimi-k2|thinking=False(floor=True)")
         assert fake_profile_build[-1]["model"] == "kimi-k2"
         assert fake_profile_build[-1]["floor"] is True
+
+
+class TestAppliedConfigPublication:
+    """The rebuildable config the memory review forks on (prefix-cache seam)."""
+
+    def test_the_applied_config_is_published_for_the_swap(self, sid, fake_profile_build):
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        state_register_mem.set_state(sid, _FLAG_KEY, "max")
+        mw = ThinkingControlMiddleware(temperature=0.8)
+
+        _run(mw, _make_request())
+
+        assert current_session_model_config(sid) == {
+            "override": _PROFILE,
+            "thinking_kwargs": {"thinking_level": "max"},
+            "temperature": 0.8,
+            "custom_mapping": None,
+        }
+
+    def test_the_env_default_is_published_when_no_control_is_set(
+        self, sid, fake_build, fake_profile_build
+    ):
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        mw = ThinkingControlMiddleware(temperature=0.8)
+        _run(mw, _make_request())
+
+        assert current_session_model_config(sid) == {
+            "override": None,
+            "thinking_kwargs": {},
+            "temperature": 0.8,
+            "custom_mapping": None,
+        }
+
+    def test_clearing_the_controls_replaces_the_stale_config(self, sid, fake_profile_build):
+        """A cleared control must not leave the previous variant published."""
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+        _run(mw, _make_request())
+
+        state_register_mem.delete_state(sid, _MODEL_KEY)
+        _run(mw, _make_request())
+
+        config = current_session_model_config(sid)
+        assert config is not None and config["override"] is None
+        assert config["thinking_kwargs"] == {}
+
+    def test_a_build_failure_publishes_the_env_default(self, sid, monkeypatch):
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+
+        def _boom(**kwargs):
+            raise RuntimeError("gateway unreachable")
+
+        monkeypatch.setattr(models, "build_main_llm_for_profile", _boom)
+        mw = ThinkingControlMiddleware()
+        _run(mw, _make_request())
+
+        config = current_session_model_config(sid)
+        assert config is not None and config["override"] is None
+
+    def test_a_report_is_read_only(self, sid, fake_profile_build):
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+        _run(mw, _make_request())
+
+        config = current_session_model_config(sid)
+        config["override"] = "mutated"
+
+        assert current_session_model_config(sid)["override"] == _PROFILE
+
+    def test_the_floor_retry_publishes_the_floor_config(self, sid, fake_profile_build):
+        from agent.middlewares.thinking_control.core import current_session_model_config
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        state_register_mem.set_state(sid, _FLAG_KEY, False)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+
+        def failing_then_recording(r):
+            if r.model.tag == "profile:kimi-k2|thinking=False(floor=False)":
+                raise _AlwaysThinkRejectionError()
+            return "ok"
+
+        mw.wrap_model_call(request, failing_then_recording)
+
+        config = current_session_model_config(sid)
+        assert config is not None
+        assert config["thinking_kwargs"] == {"thinking": False, "thinking_floor": True}
+        assert config["override"] == _PROFILE

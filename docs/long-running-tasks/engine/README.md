@@ -282,26 +282,8 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths). At resume time a criteria-bearing step is **judged by an auxiliary LLM** (`agent/tools/taskflow/step_judge.py`, temperature 0) against those criteria:
+`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths); at resume time a criteria-bearing step is judged by the auxiliary-LLM step judge (`agent/tools/taskflow/step_judge.py`, `pass` / `retry` / `block`, fail-open). The whole gate stack — the failure classifier, the Tier 1 schema gate, the judge's budget and evidence-aware prompt, `step_outcome` precedence, and what `done` really means — is documented in [Judgement Gates](../gates/README.md).
 
-```python
-# agent/tools/taskflow/step_judge.py:28-31
-class StepVerdict(StrEnum):
-    PASS = "pass"
-    RETRY = "retry"
-    BLOCK = "block"
-```
-
-- `pass` marks the step `done` and unlocks dependents.
-- `retry` re-dispatches the step through the shared `_retry` seam, reusing the step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and appending the judge's guidance to the replacement task via `with_judge_feedback` (`## Previous Attempt Feedback`). An exhausted budget marks the step `blocked`.
-- `block` marks the step `blocked` with the judge's reason.
-
-The judge is shown the flow's evidence summary (`agent/tools/taskflow/evidence_collector.py`) and is **fail-open**: a model error or an unparseable response degrades to `pass`. Steps without criteria keep the old path — they are marked `done`, and when `validation_criteria` was stored the response still echoes a trailing `validation_criteria: …`. Two guardrails matter:
-
-- Passing `validation_criteria` to `taskflow_resume` **overrides** the stored value (for example to tighten or correct it based on what the child actually did).
-- The judge runs only when the step is actually settled (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and is judged on the eventual resume.
-
-The orchestrator (the main-agent model) still owns flow-level decisions, but a criteria-bearing step no longer needs the model to catch an unmet criterion: the judge can `block` it or spend the retry budget on a fresh attempt.
 
 ## 📊 Progress Report
 

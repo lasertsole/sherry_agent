@@ -146,6 +146,10 @@ export const useToolboxStore = defineStore('toolbox', () => {
 
   /**
    * Navigate to an address (dropping any forward history, like a browser).
+   *
+   * Every navigation also feeds the persistent visit history (Dexie, see
+   * ``use-browser-history``); the CDP branch records the same way when the
+   * server reports the page.
    * @param key The panel's identity.
    * @param input Raw address-bar text.
    */
@@ -158,6 +162,7 @@ export const useToolboxStore = defineStore('toolbox', () => {
       ...browser.value,
       [key]: { ...current, url, history, index: history.length - 1 }
     };
+    void recordBrowserVisit(key, url);
   }
 
   /**

@@ -128,9 +128,10 @@ client/
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
-│   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
+│   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关，或按模型声明档位（含关闭）的选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
+│   │           ├── ThinkingCustomMappingPanel.vue # 会话级自定义思考 wire 映射（高级；适配内置格式未覆盖的 provider）
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
@@ -139,13 +140,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
-│   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载）
+│   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
-│   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）
+│   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）。地址栏还会联想持久化的访问历史（Dexie，跨重启保留），按 URL / 标题模糊匹配
+│   │           ├── BrowserHistoryDropdown.vue # 地址栏的历史下拉：最近/匹配的访问记录（favicon、标题、相对时间）与清空操作
 │   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
-│   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
+│   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件；可拖拽进输入框——落下即插入 @./path 引用 chip——行右键菜单在此接线）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
@@ -280,25 +282,25 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 `bridge.ts` 提供在 Tauri 桌面与浏览器两种模式下均可工作的统一 API。所有后端访问都经由它（或经 `requestApi.ts` 中的 `fetchApi`）：
 
-| API                                                                                                | 说明                                                                                   |
-| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
-| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage` 的便捷封装                                                         |
-| `stopChatMessage(sessionId)`                                                                       | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧）                                 |
-| `resumeHitl(sessionId, decision, ...)`                                                             | 通过新建 WebSocket 恢复暂停的 HITL 智能体                                              |
-| `clearSession(sessionId)`                                                                          | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`）                              |
-| `getHistory(sessionId, lastTurnCount)`                                                             | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 后台子智能体任务管理                                                                   |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 系统提示词文件 CRUD                                                                    |
-| `readMemory` / `writeMemory`                                                                       | 长期记忆文件（`workspace/memory/*`）                                                   |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | 定时任务管理                                                                           |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 技能管理                                                                               |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 通道设置                                                                               |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自动技能 curator 控制                                                                  |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | 后端配置文件读取/更新（`GET/PUT /env`、`/models-config`、`/network-config`）              |
-| `checkHealth()`                                                                                    | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
+| API                                                                                                                                    | 说明                                                                                   |
+| -------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                                | 流式智能体聊天；返回 `{ controller, promise }`（Tauri Events 或 `/sessions/agent/ws`） |
+| `sendChatMessage(request, onChunk)`                                                                                                    | `streamChatMessage` 的便捷封装                                                         |
+| `stopChatMessage(sessionId)`                                                                                                           | 停止正在进行的生成（`agent_stop` IPC 或 WS `stop` 帧）                                 |
+| `resumeHitl(sessionId, decision, ...)`                                                                                                 | 通过新建 WebSocket 恢复暂停的 HITL 智能体                                              |
+| `clearSession(sessionId)`                                                                                                              | 清空会话状态（`session_clear` IPC 或 `DELETE /sessions`）                              |
+| `getHistory(sessionId, lastTurnCount)`                                                                                                 | 获取历史（`session_history` IPC 或 `GET /n_turns_history_messages`）                   |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                      | 后台子智能体任务管理                                                                   |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                           | 系统提示词文件 CRUD                                                                    |
+| `readMemory` / `writeMemory`                                                                                                           | 长期记忆文件（`workspace/memory/*`）                                                   |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                     | `workspace/HEARTBEAT.md`（始终走 HTTP）                                                |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                     | 定时任务管理                                                                           |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                             | 技能管理                                                                               |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                          | 通道设置                                                                               |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                       | 自动技能 curator 控制                                                                  |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                       | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | 后端配置文件读取/更新（`GET/PUT /env`、`/models-config`、`/network-config`）           |
+| `checkHealth()`                                                                                                                        | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
 
 浏览器模式聊天流细节：
 
@@ -342,7 +344,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 | `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | 技能管理                           |
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | Curator 审查与设置                 |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | 通道开关与配置                     |
-| `/env`、`/models-config`、`/network-config`                                                        | GET / PUT                | 后端配置文件读取/更新             |
+| `/env`、`/models-config`、`/network-config`                                                      | GET / PUT                | 后端配置文件读取/更新              |
 | `/model-config`                                                                                  | GET                      | 模型配置与有效性                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | 日志文件列表与尾部读取             |
 | `/logs/ws`                                                                                       | WS                       | 实时日志流                         |

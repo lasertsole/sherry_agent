@@ -128,9 +128,10 @@ client/
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
-│   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
+│   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글, 또는 모델이 선언한 레벨 픽커(off 포함), 다음 턴부터 적용)
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
 │   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(모델 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
+│   │           ├── ThinkingCustomMappingPanel.vue # 세션별 사용자 지정 사고 wire 매핑(고급, 미지원 제공자용)
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
@@ -139,13 +140,14 @@ client/
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
-│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
+│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드. 행 우클릭 메뉴: 열기 / 연결 프로그램 / 내장 브라우저로 열기 / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가)
 │   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
 │   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
-│   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다)
+│   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다). 주소창은 영속 방문 기록(Dexie, 재시작 후에도 유지)을 URL / 제목 퍼지 매칭으로 제안합니다
+│   │           ├── BrowserHistoryDropdown.vue # 주소창의 기록 드롭다운: 최근/추천 방문(favicon, 제목, 상대 시간)과 지우기 동작
 │   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행
-│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
+│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기. 컴포저로 드래그할 수 있고 드롭 시 @./path 멘션 chip 삽입, 행 우클릭 메뉴도 여기서 연결)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)
@@ -249,7 +251,7 @@ client/
 | **E2E repro**             | [@playwright/test](https://playwright.dev/) ^1.62                                                     | 개발 서버 대상 repro 테스트(Desktop Edge)                                |
 | **Lint / 포맷**           | ESLint ^10(flat config) + Prettier                                                                    | 코드 품질                                                                |
 | **타입 체크**             | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                             | `pnpm typecheck`                                                         |
-| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(백엔드 프로세스 + 최초 다운로드)                                 |
+| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(백엔드 프로세스 + 최초 다운로드)                                |
 
 ### 주요 설정
 
@@ -280,25 +282,25 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 
 `bridge.ts`는 Tauri 데스크톱과 브라우저 두 모드 모두에서 작동하는 통합 API를 제공합니다. 모든 백엔드 접근은 이것(또는 `requestApi.ts`의 `fetchApi`)을 통해 이루어집니다:
 
-| API                                                                                                | 설명                                                                                           |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 스트리밍 에이전트 채팅; `{ controller, promise }` 반환(Tauri Events 또는 `/sessions/agent/ws`) |
-| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage`의 편의 래퍼                                                                |
-| `stopChatMessage(sessionId)`                                                                       | 진행 중인 생성 중지(`agent_stop` IPC 또는 WS `stop` 프레임)                                    |
-| `resumeHitl(sessionId, decision, ...)`                                                             | 새 WebSocket으로 일시 중지된 HITL 에이전트 재개                                                |
-| `clearSession(sessionId)`                                                                          | 세션 상태 클리어(`session_clear` IPC 또는 `DELETE /sessions`)                                  |
-| `getHistory(sessionId, lastTurnCount)`                                                             | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`)                      |
-| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 백그라운드 서브에이전트 작업 관리                                                              |
-| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 시스템 프롬프트 파일 CRUD                                                                      |
-| `readMemory` / `writeMemory`                                                                       | 장기 메모리 파일(`workspace/memory/*`)                                                         |
-| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`(항상 직접 HTTP)                                                       |
-| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron 작업 관리                                                                                 |
-| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 스킬 관리                                                                                      |
-| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 채널 설정                                                                                      |
-| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 자동 스킬 curator 제어                                                                         |
-| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림                                                    |
-| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`(`env.ts`) | 백엔드 설정 파일 읽기/업데이트(`GET/PUT /env`, `/models-config`, `/network-config`)              |
-| `checkHealth()`                                                                                    | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`)                              |
+| API                                                                                                                                  | 설명                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                                                              | 스트리밍 에이전트 채팅; `{ controller, promise }` 반환(Tauri Events 또는 `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                                                  | `streamChatMessage`의 편의 래퍼                                                                |
+| `stopChatMessage(sessionId)`                                                                                                         | 진행 중인 생성 중지(`agent_stop` IPC 또는 WS `stop` 프레임)                                    |
+| `resumeHitl(sessionId, decision, ...)`                                                                                               | 새 WebSocket으로 일시 중지된 HITL 에이전트 재개                                                |
+| `clearSession(sessionId)`                                                                                                            | 세션 상태 클리어(`session_clear` IPC 또는 `DELETE /sessions`)                                  |
+| `getHistory(sessionId, lastTurnCount)`                                                                                               | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`)                      |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`                                    | 백그라운드 서브에이전트 작업 관리                                                              |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`                                         | 시스템 프롬프트 파일 CRUD                                                                      |
+| `readMemory` / `writeMemory`                                                                                                         | 장기 메모리 파일(`workspace/memory/*`)                                                         |
+| `readHeartbeat` / `writeHeartbeat`                                                                                                   | `workspace/HEARTBEAT.md`(항상 직접 HTTP)                                                       |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob`                                   | cron 작업 관리                                                                                 |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`                                           | 스킬 관리                                                                                      |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                                                        | 채널 설정                                                                                      |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                                                     | 자동 스킬 curator 제어                                                                         |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                                                     | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림                                                    |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`(`env.ts`) | 백엔드 설정 파일 읽기/업데이트(`GET/PUT /env`, `/models-config`, `/network-config`)            |
+| `checkHealth()`                                                                                                                      | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`)                              |
 
 브라우저 모드 채팅 스트리밍 세부 사항:
 
@@ -342,7 +344,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 | `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | 스킬 관리                                  |
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
-| `/env`, `/models-config`, `/network-config`                                                       | GET / PUT                | 백엔드 설정 파일 읽기/업데이트               |
+| `/env`, `/models-config`, `/network-config`                                                      | GET / PUT                | 백엔드 설정 파일 읽기/업데이트             |
 | `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                        |
 | `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
 | `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
