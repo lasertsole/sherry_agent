@@ -127,6 +127,8 @@ extend-exclude = [
     ".playwright-mcp",
     "docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
     "TODO",             # hand-written plan notes (same rationale as docs)
+    "wiki",             # generated Obsidian code-map vault
+    "graphify-out",     # generated code-graph output
 ]
 
 [tool.ruff.lint]
@@ -169,6 +171,8 @@ exclude = [
     "**/__pycache__",    # restate pyright default: bytecode caches
     "**/node_modules",   # restate pyright default
     "docs",
+    "wiki",
+    "graphify-out",
     ".omo",
     ".playwright-mcp",
     "**/vendored_raganything/**",

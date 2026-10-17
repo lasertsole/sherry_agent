@@ -80,8 +80,9 @@ COLLECT_SUBMODULES = (
 )
 
 #: Static analysers that only a subagent feature needs; excluding them keeps the
-#: bundle from dragging every tree-sitter grammar's sources in twice.
-EXCLUDES = ("tkinter", "matplotlib", "IPython", "jupyter", "pytest", "pandas.tests")
+#: bundle from dragging every tree-sitter grammar's sources in twice. ``tests``
+#: is also excluded so PyInstaller can never pull the repository's suite in.
+EXCLUDES = ("tkinter", "matplotlib", "IPython", "jupyter", "pytest", "tests", "pandas.tests")
 
 
 def installer_version() -> str:
@@ -165,6 +166,20 @@ def main() -> int:
     write_version_marker(APP_DIR, version)
     # Ship the doc with the artifact (PyInstaller wiped the directory).
     shutil.copy2(ROOT / "packaging" / "README.md", APP_DIR / "README.md")
+    # Release hygiene: the frozen tree must not carry the repo's test suite,
+    # docs, or generated wiki. The same guard runs in the desktop workflow for
+    # the SPA; see packaging/check_release.py.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from check_release import audit_backend  # local import: this file is a script
+
+    leaks = audit_backend(APP_DIR)
+    if leaks:
+        print("refusing: the release tree contains tests/docs/wiki payload:", file=sys.stderr)
+        for leak in leaks[:50]:
+            print(f"  {leak}", file=sys.stderr)
+        if len(leaks) > 50:
+            print(f"  … and {len(leaks) - 50} more", file=sys.stderr)
+        return 1
     total = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file())
     print(f"ok: {exe} ({total / (1024**3):.2f} GiB, VERSION={version})")
     return 0

@@ -56,7 +56,12 @@ logs/*.log
 /workspace/memory/MEMORY.md
 skills/auto
 skills/plugins/*.state.json
+# Generated code-map wiki (root Obsidian vault; the ** form also covers
+# per-project generated wikis) and the graphify code graph — regenerated, never
+# committed. See packaging/check_release.py for the release-artifact guard.
+/wiki/
 **/wiki/
+/graphify-out/
 skills/skills_snapshot.json
 .omo/
 static/

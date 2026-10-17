@@ -67,6 +67,32 @@ cd client && pnpm tauri build
   ships nor downloads one and runs the checkout's `python -m server` when
   `EMA_AUTO_START_BACKEND` asks for it.
 
+## Release hygiene (no tests, docs or wiki)
+
+Both halves are audited before they are uploaded. `packaging/check_release.py`
+fails the build when a shipped tree contains:
+
+- a `tests/`, `docs/`, `wiki/` or `__tests__/` directory (any depth outside
+  PyInstaller's `_internal` dependency payload);
+- a `test_*.py` file, or a colocated `*.test.*` / `*.spec.*` frontend test file;
+- a Markdown file in the SPA (`client/.output/public`), whose payload is code
+  and assets only.
+
+`build_backend.py` runs the backend half itself after freezing; the desktop
+workflow runs both halves explicitly before compression/upload:
+
+```bash
+uv run --no-sync python packaging/check_release.py backend client/src-tauri/sherry-backend
+python3 packaging/check_release.py frontend client/.output/public
+```
+
+Two exemptions are deliberate. Third-party tests under `_internal` are not this
+repository's suite, and the multimodal_rag skill ships two documented manual
+import utilities named `rag_import*_test.py`; neither is a test suite. The
+shipped `packaging/README.md` and `skills/**/SKILL.md` are functional assets,
+not project documentation. The Docker image applies the same boundary through
+`.dockerignore`.
+
 ## The archive layout contract
 
 The archive holds the tree's **contents at its root** (`cd sherry-backend &&
