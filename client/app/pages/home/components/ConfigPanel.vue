@@ -100,6 +100,71 @@
               {{ t('config.env.restartHint') }}
             </p>
 
+            <!-- Optional code-intel embedder: OFF until the operator downloads it here. -->
+            <div
+              class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+              data-test="code-embedder">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="m-0 text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    {{ t('config.codeEmbedder.title') }}
+                  </p>
+                  <p class="m-0 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('config.codeEmbedder.hint') }}
+                  </p>
+                  <p class="m-0 mt-1 text-xs text-gray-400">
+                    {{ codeEmbedder?.profile ?? 'jina-embeddings-v2-base-code' }} ·
+                    {{ formatCodeEmbedderSize(codeEmbedder?.size_bytes ?? 641517466) }} ·
+                    {{ codeEmbedder?.license ?? 'Apache-2.0' }}
+                  </p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="codeEmbedder?.enabled"
+                    :label="t('config.codeEmbedder.disable')"
+                    size="small"
+                    severity="secondary"
+                    text
+                    :loading="codeEmbedderBusy"
+                    @click="onCodeEmbedderAction" />
+                  <Button
+                    v-else
+                    :label="
+                      codeEmbedder?.state === 'downloading'
+                        ? t('config.codeEmbedder.downloading')
+                        : codeEmbedder?.files_ready
+                          ? t('config.codeEmbedder.enable')
+                          : t('config.codeEmbedder.download')
+                    "
+                    icon="pi pi-download"
+                    size="small"
+                    :loading="codeEmbedderBusy || codeEmbedder?.state === 'downloading'"
+                    :disabled="codeEmbedder?.state === 'downloading'"
+                    @click="onCodeEmbedderAction" />
+                </div>
+              </div>
+              <p
+                v-if="codeEmbedderError"
+                class="m-0 text-xs text-red-600 dark:text-red-400">
+                {{ codeEmbedderError }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.state === 'error'"
+                class="m-0 text-xs text-red-600 dark:text-red-400">
+                {{ codeEmbedder.error }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.enabled"
+                class="m-0 text-xs text-emerald-600 dark:text-emerald-400">
+                {{ t('config.codeEmbedder.enabled') }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.files_ready"
+                class="m-0 text-xs text-amber-600 dark:text-amber-400">
+                {{ t('config.codeEmbedder.downloaded') }}
+              </p>
+            </div>
+
             <div
               v-if="envLoadError"
               class="flex">
@@ -236,6 +301,7 @@ import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
+import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
@@ -267,6 +333,65 @@ const envLoadError = ref('');
 
 /** Whether the env config has already been loaded (avoids duplicate GETs) */
 const envLoaded = ref(false);
+
+// ── Optional code-intel embedder (code semantic search) ─────
+// Off until the operator downloads it from this panel; the backend writes an
+// opt-in marker only after the download completes.
+const codeEmbedder = ref<CodeEmbedderStatus | null>(null);
+const codeEmbedderBusy = ref(false);
+const codeEmbedderError = ref('');
+let codeEmbedderPoll: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Human-readable model size (the status payload is bytes).
+ * @param bytes
+ */
+function formatCodeEmbedderSize(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+function stopCodeEmbedderPoll(): void {
+  if (codeEmbedderPoll) {
+    clearInterval(codeEmbedderPoll);
+    codeEmbedderPoll = null;
+  }
+}
+
+function startCodeEmbedderPoll(): void {
+  if (codeEmbedderPoll) return;
+  codeEmbedderPoll = setInterval(() => void refreshCodeEmbedderStatus(), 1500);
+}
+
+async function refreshCodeEmbedderStatus(): Promise<void> {
+  try {
+    const status = await fetchCodeEmbedderStatus();
+    if (status) codeEmbedder.value = status;
+    codeEmbedderError.value = '';
+    if (status?.state === 'downloading') startCodeEmbedderPoll();
+    else stopCodeEmbedderPoll();
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to read code embedder status:', e);
+    codeEmbedderError.value = t('config.codeEmbedder.loadError');
+    stopCodeEmbedderPoll();
+  }
+}
+
+/** Download+enable, or disable an already-enabled code embedder. */
+async function onCodeEmbedderAction(): Promise<void> {
+  codeEmbedderBusy.value = true;
+  codeEmbedderError.value = '';
+  try {
+    const status = codeEmbedder.value?.enabled ? await disableCodeEmbedder() : await startCodeEmbedderDownload();
+    if (status) codeEmbedder.value = status;
+    if (status?.state === 'downloading') startCodeEmbedderPoll();
+    else stopCodeEmbedderPoll();
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Code embedder action failed:', e);
+    codeEmbedderError.value = t('config.codeEmbedder.actionError');
+  } finally {
+    codeEmbedderBusy.value = false;
+  }
+}
 
 /** Computes whether the env config has changes (used for canSave and save decisions) */
 const envHasChanges = computed(() =>
@@ -464,7 +589,10 @@ const resetSherryState = () => {
 watch(
   activeTab,
   tab => {
-    if (tab === 1) void loadEnvConfig();
+    if (tab === 1) {
+      void loadEnvConfig();
+      void refreshCodeEmbedderStatus();
+    }
     if (tab === 2) void loadSherryConfig();
   },
   // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
@@ -680,6 +808,9 @@ const saveDialogSettings = async () => {
 const onHide = () => {
   activeTab.value = 0;
   backgroundOpacityValue.value = backgroundOpacity.value;
+  stopCodeEmbedderPoll();
+  codeEmbedder.value = null;
+  codeEmbedderError.value = '';
   // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
   resetEnvState();
   resetSherryState();
@@ -694,6 +825,18 @@ onBeforeUnmount(onHide);
 {
   "zh": {
     "config": {
+      "codeEmbedder": {
+        "title": "代码语义检索模型",
+        "hint": "默认不启用。下载 Jina v2 Base Code（612 MB）后自动启用；BGE 仍只用于文本语义。",
+        "download": "下载并启用",
+        "downloading": "下载中…",
+        "enable": "启用",
+        "enabled": "已启用",
+        "downloaded": "已下载，待启用",
+        "disable": "停用",
+        "loadError": "读取代码语义模型状态失败",
+        "actionError": "操作失败，请查看后端日志"
+      },
       "agent": {
         "tabs": {
           "tools": "工具",
@@ -990,6 +1133,18 @@ onBeforeUnmount(onHide);
   },
   "en": {
     "config": {
+      "codeEmbedder": {
+        "title": "Code semantic search model",
+        "hint": "Off by default. Download Jina v2 Base Code (612 MB) to enable it; BGE remains text-only.",
+        "download": "Download & enable",
+        "downloading": "Downloading…",
+        "enable": "Enable",
+        "enabled": "Enabled",
+        "downloaded": "Downloaded, not enabled",
+        "disable": "Disable",
+        "loadError": "Failed to read the code embedder status",
+        "actionError": "Action failed; check the backend log"
+      },
       "agent": {
         "tabs": {
           "tools": "Tools",
@@ -1286,6 +1441,18 @@ onBeforeUnmount(onHide);
   },
   "ja": {
     "config": {
+      "codeEmbedder": {
+        "title": "コードセマンティック検索モデル",
+        "hint": "既定では無効です。Jina v2 Base Code（612 MB）をダウンロードすると有効になります。BGE はテキスト専用のままです。",
+        "download": "ダウンロードして有効化",
+        "downloading": "ダウンロード中…",
+        "enable": "有効化",
+        "enabled": "有効",
+        "downloaded": "ダウンロード済み（未有効）",
+        "disable": "無効化",
+        "loadError": "コード埋め込みモデルの状態を取得できませんでした",
+        "actionError": "操作に失敗しました。バックエンドログを確認してください"
+      },
       "agent": {
         "tabs": {
           "tools": "ツール",
@@ -1582,6 +1749,18 @@ onBeforeUnmount(onHide);
   },
   "ko": {
     "config": {
+      "codeEmbedder": {
+        "title": "코드 시맨틱 검색 모델",
+        "hint": "기본적으로 꺼져 있습니다. Jina v2 Base Code(612 MB)를 다운로드하면 활성화됩니다. BGE는 텍스트 전용으로 유지됩니다.",
+        "download": "다운로드 및 활성화",
+        "downloading": "다운로드 중…",
+        "enable": "활성화",
+        "enabled": "활성화됨",
+        "downloaded": "다운로드됨(비활성)",
+        "disable": "비활성화",
+        "loadError": "코드 임베딩 모델 상태를 읽지 못했습니다",
+        "actionError": "작업 실패; 백엔드 로그를 확인하세요"
+      },
       "agent": {
         "tabs": {
           "tools": "도구",

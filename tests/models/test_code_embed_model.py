@@ -38,8 +38,14 @@ def test_availability_checks_size_and_tokenizer(tmp_path: Path, monkeypatch) -> 
     onnx.write_bytes(b"abc")
     monkeypatch.setattr(code_core, "_WEIGHT_DIR", weight_dir)
     monkeypatch.setattr(code_core, "_TOKENIZER_DIR", tokenizer_dir)
+    monkeypatch.setattr(code_core, "_ENABLED_MARKER", weight_dir / ".enabled")
 
     assert code_pkg.code_embedder_available(PROFILE) is True
+    assert code_pkg.code_embedder_enabled(PROFILE) is False
+    code_pkg.enable_code_embedder(PROFILE)
+    assert code_pkg.code_embedder_enabled(PROFILE) is True
+    code_pkg.disable_code_embedder()
+    assert code_pkg.code_embedder_enabled(PROFILE) is False
     onnx.write_bytes(b"ab")
     assert code_pkg.code_embedder_available(PROFILE) is False
     onnx.write_bytes(b"abc")

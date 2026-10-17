@@ -63,6 +63,28 @@ def test_semantic_layer_can_be_disabled(
     ]
 
 
+def test_default_auto_stays_off_without_the_opt_in_marker(
+    sample_repo: Path,
+    index_db: Path,
+    intel_config: CodeIntelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent.tools.code_intel.tools.code_embedder_enabled", lambda profile: False)
+    tools = build_code_intel_tools(
+        "sess-auto-off",
+        config=intel_config,
+        semantic_config=CodeIntelSemanticConfig(**CODE_INTEL_SEMANTIC),
+        root=sample_repo,
+        db_path=str(index_db),
+    )
+    assert [tool.name for tool in tools] == [
+        "explore",
+        "callers",
+        "callees",
+        "impact",
+    ]
+
+
 def test_bge_is_not_a_code_intel_embedder(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:

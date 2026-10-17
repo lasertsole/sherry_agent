@@ -1279,7 +1279,10 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `models/embed_model/code/`) the tool is absent and no model/index is touched.
   The Jina backend is lazy (`onnxruntime` + `RobertaTokenizerFast`, mean pooling);
   switching profiles purges the old `code_embeddings` rows, including legacy
-  `bge-m3` rows, so no BGE vector can be scored.
+  `bge-m3` rows, so no BGE vector can be scored. It is OFF by default: merely
+  having the files is not enough — the 模型配置 panel downloads the model and
+  writes the opt-in marker (`GET /code-embedder/status`, `POST /code-embedder/download`,
+  `DELETE /code-embedder` disables; the download runs in a background thread).
 - truncation is budgeted in TOKENS, CJK-aware (`pub/func/message/token_truncation.py`):
   tool outputs, tool args, the summary body, the aggressive pass and every
   SummaryDoc list item go through `truncate_by_tokens` (`evicted_refs` is exempt —

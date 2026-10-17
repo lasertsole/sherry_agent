@@ -31,7 +31,7 @@ from config.features.agent_side import (
     CodeIntelSemanticConfig,
 )
 from config.path import CODE_INTEL_DIR
-from models.embed_model.code import build_code_embed_model, code_embedder_available
+from models.embed_model.code import build_code_embed_model, code_embedder_enabled
 
 from .roots import index_db_for_root, resolve_root, root_for_call
 
@@ -290,7 +290,7 @@ def _semantic_enabled(cfg: CodeIntelSemanticConfig, embed_model: object | None) 
     if embed_model is not None:
         return True
     if mode == "auto":
-        return code_embedder_available(profile)
+        return code_embedder_enabled(profile)
     return mode == "on"
 
 

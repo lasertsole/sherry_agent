@@ -149,7 +149,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 语义搜索嵌入的是第 1 层的符号表，而不是切分任意行窗口，因此每个向量恰好描述一个函数、方法或类。`agent/tools/code_intel/semantic/chunker.py` 用一条标明符号及其位置的头行加上符号体构建分块（读取失败时回退到已存快照）；`agent/tools/code_intel/semantic/indexer.py` 持有 `code_embeddings` 表；`agent/tools/code_intel/semantic/search.py` 按余弦排序并可选重排。
 
-索引天然增量：先刷新符号索引，删除符号已不存在的嵌入，并只为没有向量的符号生成嵌入。写入以 16 个分块为一批（可配置），单次构建最多嵌入 1000 个分块、每文件最多 60 个、每个最多 2000 字符。向量以 `array('d')` 二进制块存入 `code_embeddings` 表，该表同时保存 `model` 名与 `dim`；发现存储的模型变化或维度冲突时，会在同一次调用中清空索引并重建，未完成的索引可续跑，因为已嵌入的符号会被跳过。code-intel 语义层是可选且仅限 code embedder：使用 `models/embed_model/code/` 下的 `jina-embeddings-v2-base-code`（ONNX，768d，Apache-2.0）；BGE 仍只用于文本语义（memory/RAG），这里永远不会使用。只有 `CODE_INTEL_SEMANTIC` 启用了合法 profile 时，才会注册 `semantic_code_search`。
+索引天然增量：先刷新符号索引，删除符号已不存在的嵌入，并只为没有向量的符号生成嵌入。写入以 16 个分块为一批（可配置），单次构建最多嵌入 1000 个分块、每文件最多 60 个、每个最多 2000 字符。向量以 `array('d')` 二进制块存入 `code_embeddings` 表，该表同时保存 `model` 名与 `dim`；发现存储的模型变化或维度冲突时，会在同一次调用中清空索引并重建，未完成的索引可续跑，因为已嵌入的符号会被跳过。code-intel 语义层是可选且仅限 code embedder：使用 `models/embed_model/code/` 下的 `jina-embeddings-v2-base-code`（ONNX，768d，Apache-2.0）；BGE 仍只用于文本语义（memory/RAG），这里永远不会使用。只有 `CODE_INTEL_SEMANTIC` 启用了合法 profile 时，才会注册 `semantic_code_search`。它默认关闭；在「模型配置」里主动下载模型会写入启用标记并启用（`GET /code-embedder/status`、`POST /code-embedder/download`，`DELETE /code-embedder` 停用）。
 
 搜索会自愈索引：嵌入查询、用纯 Python 余弦相似度对全部已存分块排序、保留 40 个候选池，并在配置了重排器时交给既有的 `models.build_reranker_model`。最终返回默认 `code_intel_semantic_default_top_k`（5）条，最多 20 条。失败开放状态在载荷中显式可见：没有任何已索引嵌入时提示先构建索引；查询模型不可用时返回 `degraded` 消息；未配置重排器时静默保持余弦顺序并令 `reranked=false`；索引与查询维度不匹配时要求重建，而不是对无意义的向量打分。
 

@@ -30,6 +30,9 @@ from config.features.agent_side import CODE_INTEL_SEMANTIC, CodeEmbedderProfile
 _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 _TOKENIZER_DIR = _MODEL_DIR / "tokenizer"
+#: The user's explicit opt-in. ``auto`` stays OFF until the 模型配置 download
+#: completes and writes this marker; merely having the files is not enough.
+_ENABLED_MARKER = _WEIGHT_DIR / ".enabled"
 
 
 def _profile(profile: CodeEmbedderProfile | None = None) -> CodeEmbedderProfile:
@@ -54,8 +57,9 @@ def _onnx_path(profile: CodeEmbedderProfile) -> Path:
 def code_embedder_available(profile: CodeEmbedderProfile | None = None) -> bool:
     """True when every model/tokenizer file exists at the expected size.
 
-    No network, no model load: ``auto`` uses this to stay off on a fresh install
-    until the code embedder has been provisioned.
+    This is the *provisioned* check (used by status and the live smoke); the
+    semantic layer's ``auto`` mode additionally requires the user opt-in marker,
+    see :func:`code_embedder_enabled`.
     """
     try:
         cfg = _profile(profile)
@@ -65,6 +69,25 @@ def code_embedder_available(profile: CodeEmbedderProfile | None = None) -> bool:
     if not onnx.is_file() or onnx.stat().st_size != int(cfg["size_bytes"]):
         return False
     return all((_TOKENIZER_DIR / name).is_file() for name in cfg["tokenizer_files"])
+
+
+def code_embedder_enabled(profile: CodeEmbedderProfile | None = None) -> bool:
+    """True only after the user downloaded the model (the opt-in marker)."""
+    return code_embedder_available(profile) and _ENABLED_MARKER.is_file()
+
+
+def enable_code_embedder(profile: CodeEmbedderProfile | None = None) -> None:
+    """Write the explicit enable marker (after a successful download)."""
+    cfg = _profile(profile)
+    if not code_embedder_available(cfg):
+        raise RuntimeError("code embedder files are incomplete; download it first")
+    _ENABLED_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    _ENABLED_MARKER.write_text(cfg["name"], encoding="utf-8")
+
+
+def disable_code_embedder() -> None:
+    """Remove the opt-in marker; ``auto`` turns OFF until a new download."""
+    _ENABLED_MARKER.unlink(missing_ok=True)
 
 
 def download_code_embedder(profile: CodeEmbedderProfile | None = None) -> Path:
@@ -206,7 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
     path = download_code_embedder()
-    logger.info("code embedder ready: {}", path)
+    enable_code_embedder()
+    logger.info("code embedder ready and enabled: {}", path)
     return 0
 
 
