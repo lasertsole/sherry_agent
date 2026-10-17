@@ -484,7 +484,13 @@ def test_the_push_is_a_noop_without_a_session_or_a_socket(
     asyncio.run(web_search_push.push_search_fallback("", "searxng", "tavily_error"))
     asyncio.run(web_search_push.push_search_fallback("sess-1", "searxng", "tavily_error"))
 
-    assert calls == ["sess-1"], "an empty session id must not even look the socket up"
+    # The patch is on the SHARED relation register, so an unrelated module's
+    # push (a background-task exit watcher left over from another test) can land
+    # in this list too — assert the invariants, not an exact call list:
+    # an empty session id never reaches the lookup, and the real one does.
+
+    assert "" not in calls, "an empty session id must not even look the socket up"
+    assert "sess-1" in calls
 
 
 def test_a_send_failure_never_reaches_the_search(monkeypatch: pytest.MonkeyPatch) -> None:

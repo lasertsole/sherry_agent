@@ -271,26 +271,8 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` は空白除去後に非空の `validation_criteria` をステップへ保存します（`blocked` と `dispatched` の両書き込み経路）。再開時、基準を持つステップは**補助 LLM**（`agent/tools/taskflow/step_judge.py`、温度 0）によってその基準に照らして審査されます：
+`taskflow_run_task` は空白除去後に非空の `validation_criteria` をステップへ保存します（`blocked` と `dispatched` の両書き込み経路）。再開時、基準を持つステップは補助 LLM のステップ判定器（`agent/tools/taskflow/step_judge.py`、`pass` / `retry` / `block`、フェイルオープン）が審査します。ゲートのスタック全体——失敗分類器、Tier 1 スキーマゲート、判定器の予算とエビデンスを考慮したプロンプト、`step_outcome` の優先順位、そして `done` が実際に意味するもの——は[判定ゲート](../gates/README.ja.md)にまとめています。
 
-```python
-# agent/tools/taskflow/step_judge.py:28-31
-class StepVerdict(StrEnum):
-    PASS = "pass"
-    RETRY = "retry"
-    BLOCK = "block"
-```
-
-- `pass` はステップを `done` にして後続をアンロックします。
-- `retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback`（`## Previous Attempt Feedback`）で代替タスクに追加します。予算を使い切ったステップは `blocked` になります。
-- `block` は判定器の理由とともにステップを `blocked` にします。
-
-判定器にはこのフローの evidence 要約（`agent/tools/taskflow/evidence_collector.py`）が渡され、**フェイルオープン**です：モデルエラーや解析不能な応答は `pass` に劣化します。基準を持たないステップは従来の経路のままです — `done` にされ、`validation_criteria` が保存されていれば応答末尾に `validation_criteria: …` をエコーします。重要なガードレールは 2 つです：
-
-- `taskflow_resume` に `validation_criteria` を渡すと保存値が**上書き**されます（例えば子が実際に行った内容に基づいて基準を厳しくしたり訂正したりするため）。
-- 判定器はステップが実際に確定した場合（`redispatched_key is None`）にのみ動作します；再試行ポリシーで再ディスパッチされたステップは基準を保存したままにし、最終的な再開時に審査されます。
-
-オーケストレータ（メインエージェントモデル）は引き続きフロー全体の判断を担いますが、基準を持つステップでは未達基準をモデルが拾う必要はもうありません：判定器がそのステップを `block` にするか、再試行予算で新しい試行に回します。
 
 ## 📊 進捗レポート
 

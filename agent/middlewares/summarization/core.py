@@ -226,22 +226,21 @@ def _schedule_compression_todo_update(session_id: str, discarded_messages: Seque
         logger.exception("compression todo update scheduling failed (fail-open)")
 
 
-def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> None:
-    """Fire-and-forget the compression-time nudge decision (never blocks/raises).
+def _schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Any]) -> None:
+    """Fire-and-forget the compression-time memory review (never blocks/raises).
 
-    Memory review and plan extraction moved here from the middleware's
-    after-agent hook:
-    the scheduler dispatches the memory review on every compression, evaluates
-    the plan-extraction single-fire flag, and dispatches under the NUDGE lane
-    when no nudge is already in flight. Call-time import keeps the nudges
-    module out of the summarization module-load graph.
+    The review moved here from the middleware's after-agent hook and is handed
+    the messages about to be DISCARDED — the facts worth keeping are in those,
+    and the whole conversation would sit within a few thousand tokens of the
+    window. Call-time import keeps the nudges module out of the summarization
+    module-load graph.
     """
     try:
-        from agent.middlewares.summarization.nudges import schedule_compression_nudges
+        from agent.middlewares.summarization.nudges import schedule_memory_review
 
-        schedule_compression_nudges(session_id, messages)
+        schedule_memory_review(session_id, messages_to_summarize)
     except Exception:
-        logger.exception("compression nudge scheduling failed (fail-open)")
+        logger.exception("memory review scheduling failed (fail-open)")
 
 
 # Message persistence is not this middleware's job: every model boundary
@@ -345,7 +344,7 @@ class Summarization(
         messages_to_summarize,
     ) -> None:
         """Dispatch the compression-time nudges through the core module globals."""
-        _schedule_compression_nudges(session_id, original_messages)
+        _schedule_memory_review(session_id, messages_to_summarize)
         _schedule_compression_todo_update(session_id, messages_to_summarize)
 
     def _rebuild_system_prompt(self, session_id: str) -> str:

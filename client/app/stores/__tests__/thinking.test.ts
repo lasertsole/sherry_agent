@@ -23,6 +23,28 @@ describe('stores/thinking', () => {
     expect(store.current('sid-1')).toBe(false);
   });
 
+  it('availableLevels() mirrors the backend-declared levels', async () => {
+    const store = useThinkingStore();
+    // Before hydration the picker falls back to the full seven.
+    expect(store.availableLevels('sid-lv')).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+    bridge.fetchThinkingState.mockResolvedValueOnce({
+      mode: 'levels',
+      enabled: null,
+      level: 'low',
+      levels: ['low', 'high', 'max']
+    });
+    await store.hydrate('sid-lv');
+    expect(store.availableLevels('sid-lv')).toEqual(['low', 'high', 'max']);
+  });
+
+  it('a seven-level choice round-trips through setValue', async () => {
+    const store = useThinkingStore();
+    bridge.setThinkingValue.mockResolvedValueOnce({ pending: false });
+    await store.setValue('sid-seven', 'xhigh');
+    expect(bridge.setThinkingValue).toHaveBeenCalledWith('sid-seven', 'xhigh');
+    expect(store.current('sid-seven')).toBe('xhigh');
+  });
+
   it('hydrate() mirrors a boolean choice for on_off models', async () => {
     const store = useThinkingStore();
     bridge.fetchThinkingState.mockResolvedValueOnce({

@@ -29,12 +29,14 @@ from ..registry import register_run, get_run, mark_run_running
 from ..registry.read import count_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..registry.session_keys import normalize_session_key
+from ..registry.spawn_budget import total_spawns
 from ..session.cleanup import delete_subagent_session_for_cleanup
 from ..capabilities import can_spawn_children, resolve_subagent_capabilities
 from .depth import (
     get_subagent_depth,
     validate_spawn_depth,
     validate_concurrent_children,
+    validate_total_spawns,
 )
 from .target_policy import validate_target_policy
 from .plan import (
@@ -156,6 +158,39 @@ def _resolve_functional_role(
         return FunctionalRole.GENERAL
 
 
+def _check_role_containment(
+    requester_session_key: str,
+    child_functional_role: FunctionalRole,
+) -> str | None:
+    """Reject cross-role spawning from a specialized parent.
+
+    MAIN (no run record) and general (``tools: inherit`` = every tool) impose no
+    restriction: every specialized role's whitelist is a subset of theirs, so no
+    escalation is possible. A specialized parent (researcher / executor /
+    reviewer / librarian) may only spawn children of the SAME functional role —
+    same role = same whitelist = the child can do exactly what the parent can.
+    Without this, a read-only researcher could hire a write-capable executor.
+
+    Returns the refusal text, or ``None`` when the spawn is allowed.
+    """
+    from ..registry import get_run_by_child_session_key
+
+    parent_run = get_run_by_child_session_key(requester_session_key)
+    if parent_run is None:
+        return None  # MAIN — the orchestrating root is not contained
+    parent_role = getattr(parent_run, "functional_role", FunctionalRole.GENERAL)
+    if parent_role == FunctionalRole.GENERAL:
+        return None  # inherit mode: every specialized whitelist is a subset
+    if child_functional_role == parent_role:
+        return None
+    return (
+        f"Capability containment: a {parent_role} subagent can only spawn "
+        f"{parent_role} children (requested {child_functional_role}). "
+        f'Pass functional_role="{parent_role}" for a same-role child; use a general '
+        "subagent or the main agent to spawn a different role."
+    )
+
+
 class SpawnResult:
     """Outcome of a spawn request — accepted, forbidden, or error.
 
@@ -233,6 +268,12 @@ def _validate_spawn_request(
 
     active_count = count_active_runs_readonly(requester_session_key)
     allowed, reason = validate_concurrent_children(active_count)
+    if not allowed:
+        return child_depth, SpawnResult(status="forbidden", error=reason)
+
+    # Lifetime budget: the concurrent cap bounds children running AT A TIME,
+    # this bounds "finish one, start the next" repeating without end.
+    allowed, reason = validate_total_spawns(total_spawns(requester_session_key))
     if not allowed:
         return child_depth, SpawnResult(status="forbidden", error=reason)
     return child_depth, None
@@ -398,6 +439,24 @@ async def _reserve_swarm_group(
     return get_run(run.run_id) or run  # refresh after in-place update
 
 
+def _is_inside_isolated_worktree(path: str | None) -> bool:
+    """True when *path* is inside an isolated worktree directory.
+
+    Isolated worktrees live under ``isolated_workspaces_dir()/<slug>/tree/``, so
+    a ``relative_to`` check suffices — no git probing (which would also depend
+    on git being usable). A missing path is False.
+    """
+    if not path:
+        return False
+    from config.path import isolated_workspaces_dir
+
+    try:
+        Path(path).resolve().relative_to(isolated_workspaces_dir().resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _create_isolated_child_workspace(
     isolation: bool, cwd: str | None, child_session_key: str
 ) -> tuple[str | None, Any, SpawnResult | None]:
@@ -409,6 +468,23 @@ def _create_isolated_child_workspace(
     """
     if not isolation:
         return cwd, None, None
+
+    # NESTED isolation is downgraded, not refused: a spawn whose cwd already sits
+    # inside an isolated worktree reuses it. ``max_spawn_depth`` is 2, so that
+    # cwd belongs to the requesting ORCHESTRATOR — its worktree already merges
+    # back to the real project, and a worktree of a worktree would only add a
+    # second merge-back, a second conflict surface and a second CAS check for no
+    # additional isolation boundary. The model asked for isolation and gets it
+    # (the child is isolated from the project); it just is not double-isolated.
+    if _is_inside_isolated_worktree(cwd):
+        logger.info(
+            "spawn: isolation=True ignored for child {} — parent cwd {} is already an "
+            "isolated worktree; the child reuses it",
+            child_session_key,
+            cwd,
+        )
+        return cwd, None, None
+
     if not cwd:
         return (
             cwd,
@@ -559,6 +635,25 @@ async def spawn_subagent_direct(
     role_def: RoleDefinition | None = (
         load_role_definition(functional_role) if functional_role != FunctionalRole.GENERAL else None
     )
+
+    # --- Phase 4.6: capability containment (same-role derivation) ---
+    # Specialized role → same-role children only (see _check_role_containment).
+    # Refused here, before the model plan and the attachment materialization, and
+    # the isolated workspace a refusal may have cut is discarded like any other.
+    containment_error = _check_role_containment(requester_session_key, functional_role)
+    if containment_error is not None:
+        logger.warning(
+            "spawn refused: capability containment child_role={} requester={}",
+            functional_role,
+            requester_session_key,
+        )
+        if isolated_workspace is not None:
+            # A refused spawn must not leave its private copy behind: nothing
+            # will ever merge it (no run record).
+            from ..isolation import discard_isolated_workspace
+
+            discard_isolated_workspace(isolated_workspace.meta_dir)
+        return SpawnResult(status="forbidden", error=containment_error)
 
     # --- Phase 5: Model & thinking plan ---
     model_plan = resolve_model_and_thinking_plan(
@@ -862,6 +957,12 @@ async def _run_goal_loop(
     CONTINUE injects the judge's continuation prompt as the next human turn.
     Fail-open (judge errors => DONE) so it cannot trap the subagent. Returns the
     latest result text and an outcome only when the budget ran out.
+
+    The judge's FIRST call is skipped when the child's opening turn already
+    cleared the bar on its own: a non-empty result plus at least one passing,
+    non-stale evidence row in the child's ledger (``_first_turn_self_evident``).
+    The point: a simple spawn should not pay an auxiliary LLM call for a verdict
+    the ledger already carries.
     """
     from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 
@@ -869,10 +970,17 @@ async def _run_goal_loop(
 
     turns_used = 1
     while True:
+        evidence_summary = collect_evidence_summary(session_key=run.child_session_key)
+        if turns_used == 1 and _first_turn_self_evident(result_text, evidence_summary):
+            logger.debug(
+                "CompletionJudge skipped for run {}: first turn carries passing evidence",
+                run.run_id,
+            )
+            return result_text, None
         judge_result = await judge_completion(
             task_text=user_message,
             last_response=result_text or "",
-            evidence_summary=collect_evidence_summary(session_key=run.child_session_key),
+            evidence_summary=evidence_summary,
         )
         if judge_result.verdict == CompletionVerdict.DONE:
             return result_text, None
@@ -888,6 +996,21 @@ async def _run_goal_loop(
         agent_result = await invoke([HumanMessage(content=judge_result.continuation_prompt)])
         result_text = _extract_result_text(agent_result)
         turns_used += 1
+
+
+def _first_turn_self_evident(result_text: str | None, evidence_summary: str | None) -> bool:
+    """True when the opening turn needs no judge: result + passing evidence.
+
+    The summary format is the evidence collector's (``[pass]`` / ``[FAIL]`` /
+    ``?`` per row, `` [stale]`` suffixed): a pass exists, nothing failed, and
+    nothing went stale. Any read failure returns False — the shortcut must
+    never suppress a judge on incomplete information (fail towards judging).
+    """
+    if not (result_text or "").strip():
+        return False
+    if not evidence_summary or "[pass]" not in evidence_summary:
+        return False
+    return "FAIL" not in evidence_summary and "[stale]" not in evidence_summary
 
 
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
@@ -1085,6 +1208,7 @@ async def _execute_subagent_scoped(
             model_profile=model_profile,
             extra_tools=extra_tools,
             session_id=run.child_session_key,
+            output_schema=output_schema,
         )
 
         messages = [HumanMessage(content=user_message)]
@@ -1116,6 +1240,17 @@ async def _execute_subagent_scoped(
         # Goal loop: the completion judge reviews every turn; CONTINUE injects its
         # continuation prompt as the next human turn until DONE or the budget is
         # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
+        # The master switch is read HERE, at the funnel every execution path
+        # passes through (spawn, steer, direct calls): disabled ends the loop
+        # whatever budget the caller resolved.
+        from config.features import COMPLETION_JUDGE as _CJ
+
+        if not _CJ.get("enabled", True):
+            if goal_max_turns > 1:
+                logger.debug(
+                    "CompletionJudge disabled: run {} executes without a goal loop", run.run_id
+                )
+            goal_max_turns = 1
         if goal_max_turns > 1:
             result_text, budget_outcome = await _run_goal_loop(
                 run, user_message, result_text, _invoke, goal_max_turns
@@ -1162,6 +1297,7 @@ def _build_child_middlewares(
     """
     from agent.middlewares import (
         HeartbeatStaleness,
+        InvalidToolCallRepairMiddleware,
         IterationBudget,
         MaxTokensBoostMiddleware,
         Summarization,
@@ -1202,6 +1338,11 @@ def _build_child_middlewares(
         MaxTokensBoostMiddleware(),
         ToolCallNormalize(),
         HeartbeatStaleness(),
+        # Invalid tool-call salvage (syntax repair + bounded resend): registered
+        # LAST = innermost wrap layer, mirroring the main chain — the repaired
+        # message is what routes the child's loop. The resend path never strips
+        # callbacks here for the same reason as MaxTokensBoost above.
+        InvalidToolCallRepairMiddleware(),
     ]
 
 
@@ -1363,6 +1504,7 @@ async def _build_child_agent(
     model_profile: dict[str, str] | None = None,
     extra_tools: list[str] | None = None,
     session_id: str = "",
+    output_schema: dict | None = None,
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
@@ -1390,6 +1532,13 @@ async def _build_child_agent(
 
     Args:
         system_prompt: System prompt for the child agent.
+        output_schema: Optional JSON Schema constraining the child's FINAL
+            output. It is enforced at generation time through LangChain's
+            ``response_format`` (a raw schema resolves to ``AutoStrategy``: the
+            provider's native structured output where supported, else a
+            structured-output tool call), while ``build_structured_output_prompt``
+            keeps the schema in the system prompt as the prompt-level fallback
+            and Tier 1 re-validates on resume. ``None`` = free-form output.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
         tool_deny: Explicit deny-list (an empty list is authoritative — it means the
@@ -1435,6 +1584,12 @@ async def _build_child_agent(
         checkpointer=child_checkpointer,
         tools=final_tools,
         middleware=child_middleware,
+        # Structured output as a CONSTRAINT, not a request: a raw schema makes
+        # LangChain auto-pick the provider's native structured output (or a
+        # structured-output tool where the provider lacks one). The schema text
+        # in the system prompt stays as guidance, and Tier 1 still re-validates
+        # the delivered result — this layer just stops the obvious misses.
+        response_format=output_schema if output_schema else None,
     )
 
     # Wrap with RepetitionGuardWrapper, mirroring the main agent

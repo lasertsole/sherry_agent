@@ -75,10 +75,11 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "sessions_steer",
         "agents_list",
         "subagents_list",
+        "sessions_messages",
     ),
     "interaction": ("question",),
     "plan_mode": ("enter_plan_mode", "exit_plan_mode"),
-    "web": ("web_search",),
+    "web": ("web_search", "web_fetch"),
     "browser": (
         "browser_navigate",
         "browser_snapshot",

@@ -22,6 +22,7 @@ _BASE_COOLDOWN_S = TODOLIST_INFRA["stagnation_base_cooldown_s"]
 _MAX_COOLDOWN_S = TODOLIST_INFRA["stagnation_max_cooldown_s"]
 _FAILURE_RESET_WINDOW_S = TODOLIST_INFRA["stagnation_failure_reset_window_s"]
 _MAX_RECOVERY_ATTEMPTS = TODOLIST_INFRA["stagnation_max_recovery_attempts"]
+_MAX_CONTINUATION_TURNS = TODOLIST_INFRA["max_continuation_turns"]
 
 # per-session state
 _stagnation_count: dict[str, int] = {}
@@ -34,6 +35,15 @@ _recovery_attempts: dict[str, int] = {}  # session_id → recovery attempts used
 #: snapshot changes) while the TODO list quietly rots: this counter is the only
 #: signal for that shape.
 _turns_since_todowrite: dict[str, int] = {}
+#: Consecutive continuation turns whose directive was CONFIRMED delivered
+#: (``mark_injected`` only runs after the trigger accepted it). A real user
+#: message — or a subagent-completion turn, which is a new event, not a
+#: continuation — resets it back to zero.
+_continuation_turns: dict[str, int] = {}
+#: Set once the cap is reached: the enforcer stops injecting until a real user
+#: message resets the session. Without it the stop directive's own turn would
+#: be seen as "plan still incomplete" and get another directive.
+_stopped: dict[str, bool] = {}
 
 
 def _now() -> float:
@@ -82,8 +92,45 @@ def is_in_cooldown(session_id: str) -> bool:
 
 
 def mark_injected(session_id: str) -> None:
-    """Record the current time as the last injection."""
+    """Record a CONFIRMED injection: timestamp it and count the turn.
+
+    This is the one chokepoint every continuation/recovery/stop directive
+    passes through after the trigger accepted it, so the count here is the
+    live number of consecutive continuation turns — a failed trigger never
+    increments it (that turn simply retries next turn).
+    """
     _last_inject_time[session_id] = _now()
+    _continuation_turns[session_id] = _continuation_turns.get(session_id, 0) + 1
+
+
+def continuation_turns(session_id: str) -> int:
+    """Consecutive continuation turns delivered for this session."""
+    return _continuation_turns.get(session_id, 0)
+
+
+def continuation_cap() -> int:
+    """The configured consecutive-continuation ceiling."""
+    return _MAX_CONTINUATION_TURNS
+
+
+def is_stopped(session_id: str) -> bool:
+    """True once the cap was hit: no more injections until a user message."""
+    return _stopped.get(session_id, False)
+
+
+def mark_stopped(session_id: str) -> None:
+    """Latch the cap for this session (the stop directive was delivered)."""
+    _stopped[session_id] = True
+
+
+def reset_continuation_turns(session_id: str) -> None:
+    """Reset the continuation counter + stop latch (a real user turn arrived).
+
+    Deliberately does NOT touch the stagnation/recovery state: the model may
+    still be in the same stall, and the user's message does not prove progress.
+    """
+    _continuation_turns.pop(session_id, None)
+    _stopped.pop(session_id, None)
 
 
 def should_enter_recovery(session_id: str) -> bool:
@@ -122,6 +169,8 @@ def reset(session_id: str) -> None:
     _last_failure_time.pop(session_id, None)
     _recovery_attempts.pop(session_id, None)
     _turns_since_todowrite.pop(session_id, None)
+    _continuation_turns.pop(session_id, None)
+    _stopped.pop(session_id, None)
 
 
 def is_abort_error(error: Exception) -> bool:

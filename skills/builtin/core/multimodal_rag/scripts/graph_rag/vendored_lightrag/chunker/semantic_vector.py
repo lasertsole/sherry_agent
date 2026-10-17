@@ -1,6 +1,7 @@
 """Semantic vector chunking — the ``"V"`` strategy.
 
-Wraps LangChain's :class:`SemanticChunker` (from ``langchain-experimental``)
+Wraps the vendored :class:`SemanticChunker` (``semantic_chunker.py``,
+carried over from the archived ``langchain-experimental`` 0.4.2)
 which splits text by sentence embeddings: it first segments the input into
 sentences, embeds each sentence (in adjacent windows of ``buffer_size``),
 and finds breakpoints where the cosine distance between consecutive
@@ -29,27 +30,18 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from graph_rag.vendored_lightrag.constants import DEFAULT_SENTENCE_SPLIT_REGEX
 from graph_rag.vendored_lightrag.utils import EmbeddingFunc, Tokenizer, logger
 
-if TYPE_CHECKING:
-    from langchain_experimental.text_splitter import (
-        SemanticChunker as SemanticChunkerType,
-    )
-else:
-    SemanticChunkerType = Any
+from langchain_core.embeddings import Embeddings
 
-try:
-    from langchain_core.embeddings import Embeddings
-    from langchain_experimental.text_splitter import SemanticChunker
-
-    _LANGCHAIN_EXPERIMENTAL_AVAILABLE = True
-except ImportError:
-    _LANGCHAIN_EXPERIMENTAL_AVAILABLE = False
-    Embeddings = object  # type: ignore[assignment,misc]
-    SemanticChunker = None  # type: ignore[assignment]
+# The semantic chunker is vendored in this tree: ``langchain-experimental`` is
+# archived upstream and no longer a dependency, so the class moved in with us
+# (see ``semantic_chunker.py`` for provenance). The ``V`` strategy therefore
+# always has its implementation — no optional-import branch to degrade through.
+from .semantic_chunker import SemanticChunker
 
 
 class _AsyncEmbeddingFuncAdapter(Embeddings):
@@ -115,7 +107,7 @@ def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
 
 
 def _semantic_groups_with_spans(
-    splitter: SemanticChunkerType,
+    splitter: SemanticChunker,
     text: str,
 ) -> list[tuple[str, int, int]]:
     """Mirror SemanticChunker grouping while keeping original source spans.
@@ -127,11 +119,13 @@ def _semantic_groups_with_spans(
         (``sentence_split_regex``, ``breakpoint_threshold_type``, ``min_chunk_size``,
         ``number_of_chunks``, ``_calculate_sentence_distances``,
         ``_threshold_from_clusters``, ``_calculate_breakpoint_threshold``). Verified
-        byte-for-byte against ``langchain-experimental`` 0.3.2–0.4.x (the range pinned
-        in ``pyproject.toml``: ``langchain-experimental>=0.3.2,<1``). If that pin is
-        widened, re-verify against the new upstream ``split_text`` —
-        the upstream ``test_chunker_semantic_vector.py`` has a drift guard that
-        compares this mirror's grouping to the live ``splitter.split_text`` output.
+        byte-for-byte against ``langchain-experimental`` 0.3.2–0.4.x, and the
+        class is now VENDORED in this tree (``semantic_chunker.py``, upstream
+        0.4.2, MIT) — the pin is gone, so this mirror and that class move
+        together and can no longer drift apart.
+        ``tests/skills/builtin/core/multimodal_rag/test_semantic_chunker_parity.py``
+        pins both against chunk lists captured from the upstream class before it
+        was removed.
     """
     single_sentences_list = re.split(splitter.sentence_split_regex, text)
     spans = _sentence_spans(text, single_sentences_list)
@@ -250,12 +244,6 @@ async def chunking_by_semantic_vector(
             content,
             chunk_token_size,
             chunk_overlap_token_size=0,
-        )
-
-    if not _LANGCHAIN_EXPERIMENTAL_AVAILABLE:
-        raise ImportError(
-            "langchain-experimental is required for the 'V' chunking "
-            "strategy; install with `pip install langchain-experimental>=0.3.2`."
         )
 
     loop = asyncio.get_running_loop()

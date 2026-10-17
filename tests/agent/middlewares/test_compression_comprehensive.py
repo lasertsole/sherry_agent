@@ -1707,9 +1707,7 @@ class TestAsyncPathOffloadsBlockingStores:
             spy("resolve_active_plan", lambda session_id: None),
         )
         # fire-and-forget background work, not part of this contract
-        monkeypatch.setattr(
-            summarization_module, "_schedule_compression_nudges", lambda *a, **k: None
-        )
+        monkeypatch.setattr(summarization_module, "_schedule_memory_review", lambda *a, **k: None)
         monkeypatch.setattr(
             summarization_module, "_schedule_compression_todo_update", lambda *a, **k: None
         )

@@ -24,7 +24,6 @@ You are an EXECUTOR subagent worker.
 
 - Do NOT use for research-only tasks (use researcher)
 - Do NOT use for code review (use reviewer)
-- Do NOT spawn further subagents (you are a LEAF executor)
 
 ## Output
 

@@ -14,7 +14,7 @@
 - [数据层](data/README.zh.md)
   - [计划文件 (workspace/sessions/<session_id>/plans/*.md)](data/README.zh.md#计划文件-workspacesessionssession_idplansmd)
   - [Boulder 状态 (src/data/boulder.json)](data/README.zh.md#boulder-状态-srcdataboulderjson)
-  - [证据账本 (src/data/evidence-ledger.jsonl)](data/README.zh.md#证据账本-srcdataevidence-ledgerjsonl)
+  - [证据账本](../gates/evidence-ledger/README.zh.md)
   - [todos.db — 会话级 TODO 存储](data/README.zh.md#todosdb--会话级-todo-存储)
 - [服务层](#服务层)
 - [工具层](#工具层)
@@ -174,25 +174,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` 是 append-only 的 JSONL 账本（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`append` + `read_all` 仍是全部存储契约；会话级视图读取同一份共享文件：
-
-```python
-class EvidenceLedger:
-    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
-
-    @classmethod
-    def append(cls, entry: dict) -> None: ...          # 一行 JSON + UTC 时间戳
-    @classmethod
-    def read_all(cls) -> list[dict]: ...
-    @classmethod
-    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
-    @classmethod
-    def read_for_session(cls, session_key: str) -> list[dict]: ...
-    @classmethod
-    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
-```
-
-陈旧性是推导出来的、从不写入：`mark_stale_for_path` 追加一行 `{"event": "stale", "file_path": …}`，读取侧认定某条证据行陈旧，当且仅当更晚的 stale 事件命名了其 `command` 中包含的路径。`agent/tools/todolist/evidence_recorder.py` 把它接入工具（失败开放、吞掉异常）：`terminal` / `python_repl` 恒为识别出的验证命令追加一行（分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），`write_file` / `patch_file` 恒为被编辑路径追加 stale 事件。`agent/tools/taskflow/evidence_collector.py` 渲染给判别器与 `taskflow_finish` 证据门查看的摘要。
+`agent/tools/todolist/evidence_ledger.py` 是验证审计轨迹背后的 append-only JSONL 存储（`src/data/evidence-ledger.jsonl`）：`append` + `read_all` 就是全部存储契约，会话级视图读取同一份共享文件。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
 
 ### WS 推送
 

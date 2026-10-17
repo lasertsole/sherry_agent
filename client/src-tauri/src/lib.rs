@@ -40,6 +40,11 @@ pub fn run() {
         // Native folder picker for the project-directory chip (registered here,
         // granted in capabilities/default.json as dialog:allow-open only).
         .plugin(tauri_plugin_dialog::init())
+        // The file tree's desktop-only actions: reveal a project file in the
+        // OS file manager and open it with the system's default application.
+        // Granted narrowly in capabilities/default.json (reveal + open-path
+        // only, no open-url / no generic shell).
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus the existing window when a second instance is launched.

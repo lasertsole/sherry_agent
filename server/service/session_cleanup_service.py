@@ -102,6 +102,17 @@ async def purge_session(session_id: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to terminate background terminal tasks for {session_id}: {e}")
 
+    # (3.6) The session's sub-agent spawn budget (in-memory, keyed by the
+    # prefixed main-session key). Dropped with the session so a re-created id
+    # starts from a clean budget.
+    try:
+        from agent.tools.subagent.registry.session_keys import denormalize_session_key
+        from agent.tools.subagent.registry.spawn_budget import reset_spawn_count
+
+        reset_spawn_count(denormalize_session_key(session_id))
+    except Exception as e:
+        logger.warning(f"Failed to reset the subagent spawn budget for {session_id}: {e}")
+
     # (4) Session folder under the sessions directory.
     path = Path(_session_folder(session_id))
     if path.exists() and path.is_dir():

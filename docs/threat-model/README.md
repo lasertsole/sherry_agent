@@ -155,7 +155,7 @@ heuristic:
 | Prompt-injection scanner, untrusted-output fence | Detection and labelling | A model can be argued past a fence; a pattern can be phrased around |
 | Secret redaction, identifier pseudonyms, control-sequence stripping | Hygienic rewriting of text at an output boundary | They only remove what their rules recognise, and the raw value usually still exists upstream |
 | Path guard, HITL allowlists, shell blocklists | Deny rules for known-bad shapes | Deny rules are incomplete by construction |
-| Env scrubbing, lane limits, iteration budgets | Blast-radius reduction | They assume the child itself is not the attacker's code path |
+| Env scrubbing, lane limits, iteration budgets, spawn / continuation budgets, run timeouts | Blast-radius reduction | They assume the child itself is not the attacker's code path |
 
 Operating consequences we accept and state plainly:
 

@@ -61,13 +61,16 @@ def test_disabled_variant_explicitly_disables_glm_thinking(zhipu_gateway_env):
 def test_floor_variant_pins_minimum_level(zhipu_gateway_env):
     cfg = main_llm_module._variant_client_config(enabled=False, thinking_floor=True)
     assert _reasoning_keys(cfg) == {"extra_body": {"thinking": {"type": "low"}}}
-    assert cfg["max_tokens"] == 8192 + REASONING_BUDGET["non_anthropic_default_thinking_budget"]
+    # The floor IS a level ("minimal"): its headroom comes from the per-level
+    # table, which is smaller than a plain ON (the floor thinks less).
+    assert cfg["max_tokens"] == 8192 + REASONING_BUDGET["thinking_budgets"]["minimal"]
 
 
 def test_level_variant_pins_explicit_level(zhipu_gateway_env):
     cfg = main_llm_module._variant_client_config(enabled=True, level="max")
     assert _reasoning_keys(cfg) == {"extra_body": {"thinking": {"type": "max"}}}
-    assert cfg["max_tokens"] == 8192 + REASONING_BUDGET["non_anthropic_default_thinking_budget"]
+    # An explicit level scales the headroom through the per-level table.
+    assert cfg["max_tokens"] == 8192 + REASONING_BUDGET["thinking_budgets"]["max"]
 
 
 def test_disabled_variant_is_param_free_for_default_off_providers(monkeypatch):

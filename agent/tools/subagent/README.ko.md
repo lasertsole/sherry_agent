@@ -4,13 +4,24 @@
 
 > 설계 계층 자매편——역할 축, spawn 권한 가드, 4계층 완료 게이트: [docs/subagent/README.ko.md](../../../docs/subagent/README.ko.md)
 
+## 업데이트 노트 (2026-10-15)
+
+> 리소스 상한 보완 — wall-clock 타임아웃이 다시 유효해졌고 세션별 spawn 횟수에 상한이 생겼습니다:
+
+- **`run_timeout_seconds` 기본값 0.0 → 600.0 (10분)**: 자식이 시간적으로 무제한 실행되지 않습니다. `spawn`과 `steer`는 다시 자식의 `ainvoke`를 `asyncio.wait_for`로 감싸고 followup 타임아웃 검사도 활성화됩니다 (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`). sweeper의 2시간 stale 감지는 바깥 안전망으로 남습니다. 호출자는 `sessions_spawn(run_timeout_seconds=...)`로 spawn별 재정의할 수 있고 `0`은 여전히 "타임아웃 없음"입니다.
+- **런타임 `sessions_spawn` 도구에 `isolation` 추가** (같은 정리에서 그것이 지키는 "한 단계만" 규칙도 문서화): 모델이 격리 git worktree를 요청할 수 있고, cwd가 이미 격리 워크스페이스 안에 있는 spawn은 worktree의 worktree를 만들지 않고 그 트리를 재사용합니다. 이전에는 이 필드가 build-time 클래스에만 있어 격리 기능 전체가 모델 쪽에서 도달 불가능했습니다.
+- **능력 봉쇄(같은 역할 파생)**: 전문화된 자식(`researcher` / `executor` / `reviewer` / `librarian`)은 **자기 역할**의 자식만 spawn할 수 있습니다. 지금까지 read-only researcher는 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 고용할 수 있었습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오고 부모 역할은 관여하지 않기 때문입니다. 같은 역할 = 같은 allow-list라서 승격 경로가 사라집니다. `MAIN`과 `general`(inherit = 모든 도구)은 무제한이며, 교차 역할 요청은 **거부**되고 오류 문구가 해법(`functional_role="<부모 역할>"`)을 알려줍니다(조용히 바뀌지 않습니다). `functional_role`이 런타임 `sessions_spawn` 도구에도 노출되어 같은 역할 fan-out이 표현 가능해졌습니다.
+- **`sessions_spawn`가 타임아웃을 노출**: `run_timeout_seconds` 필드를 추가했습니다(전역 기본값과 나란히 있는 모델 자신의 레버). 도구는 모델이 넘긴 값을 **거부하지 않고** `[run_timeout_min_seconds, run_timeout_max_seconds]`(600초 .. 7200초)로 clamp합니다——60초라는 "짧게" 의도는 10분 하한에, 99999는 2시간 상한에 안착합니다——`None`/비양수는 "미설정"(전역 기본값 사용)입니다. 내부 호출자(TaskFlow dispatch, `delegate_task`)는 clamp를 우회하고 자체 경계를 유지합니다.
+- **신규 `sessions_messages` 도구**: `session_key`로 자식 세션의 checkpoint 트랜스크립트를 읽습니다(여덟 번째 런타임 도구). 타임아웃/kill 상황을 위한 것입니다——`Status: timed out`이고 `Result:`가 없으면 호출자는 아무것도 얻지 못했지만, 자식의 checkpoint에는 실행한 모든 도구 호출이 남아 있습니다. 출력은 token 예산화(총 4 000, 메시지당 500)되고 `spawned_by`/run의 완료 소유자로 인가되므로, 그 자식을 spawn한 세션만 읽을 수 있습니다.
+- **신규 `max_total_spawns_per_session` (50)**: 세션 단위 누적 spawn 예산 (`registry/spawn_budget.py`, registry의 다른 라이브 뷰와 같은 프로세스 내 메모리). `max_children_per_agent` (5)는 동시에 실행되는 자식 수를, 이 항목은 "하나 끝내고 다음 시작"의 무한 반복 — 막힌 오케스트레이터가 빠지는 형태 — 을 제한합니다. `register_run`에서 카운트(등록에 도달한 spawn), spawn admission 게이트에서 검사, 세션 정리 시 삭제되며 프로세스 재시작 시 초기화됩니다.
+
 ## 업데이트 노트 (2026-09-05)
 
 > 서브에이전트 제한이 OpenClaw와 정렬되었습니다 (커밋 `794df0e..d200beb`):
 
 - **전역 동시성 상한 추가**: `max_concurrent = 8` — 처음에는 spawn 파이프라인에서 강제되어 초과 spawn은 `forbidden`을 반환했습니다. **전역 SUBAGENT lane으로 대체됨**: 초과 spawn은 이제 `PENDING`으로 대기하다 lane slot이 비면 시작합니다 (이 필드는 하위 호환용으로만 유지됩니다). registry에 `count_all_active_runs` / `count_all_active_runs_readonly` 쿼리 추가 — 둘 다 `PENDING` run을 활성으로 계산합니다 (대기 중인 자식도 admission slot을 점유하므로).
 - **`max_spawn_depth` 기본값 3 → 2, 하드 상한화**: 2 초과 값은 생성과 할당 모두에서 거부; `delegate_task(max_spawn_depth=...)`는 상한 초과 시 `ValueError` 발생. 깊이 트리: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
-- **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망.
+- **`run_timeout_seconds` 기본값 300 → 0.0 (타임아웃 없음)**: spawn과 steer는 자식을 직접 호출; followup 타임아웃 검사는 건너뜀; sweeper의 2시간 stale 감지가 안전망. (**2026-10-15 반전**: 기본값이 다시 600초 — 위 노트 참조.)
 - **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: 호출별 `max_concurrent` 오버라이드는 폐기됨 — 전역 동시성은 SUBAGENT lane이 대기열로 처리하므로, 전달해도 `DeprecationWarning`만 발생합니다 (값은 호출별로 적용·복원됨).
 - 이 문서들(en/zh/ko/ja)과 루트 README의 모든 설정 테이블과 다이어그램이 새 기본값으로 동기화되었습니다.
@@ -56,19 +67,23 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   (* 와일드카드 지원)
   │     ├── depth = 부모 깊이 + 1, max_spawn_depth(2) 이하
   │     ├── 활성 자식 에이전트 수 < max_children_per_agent(5)
+  │     ├── 누적 spawn 수 < max_total_spawns_per_session(50)
   │     └── 런타임 격리: 런타임을 넘나드는 spawn은 거부됨
   │
   ├── 2. 소유권 및 능력 해석 (Ownership & Capability Resolution)
   │     ├── resolve_spawn_ownership(): controller / completion-owner
   │     │   세션 키 (spawn/ownership.py)
-  │     └── resolve_subagent_capabilities(depth, max_depth):
-  │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
-  │           depth ≥ max → LEAF/NONE (capabilities/core.py)
+  │     ├── resolve_subagent_capabilities(depth, max_depth):
+  │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
+  │     │     depth ≥ max → LEAF/NONE (capabilities/core.py)
+  │     └── 능력 봉쇄: 전문화(functional) 부모는 **같은 기능 역할**만
+  │         spawn 가능——MAIN/general은 무제한
   │
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
   │     spawn/thinking.py)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
-  │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(0 = 타임아웃 없음)
+  │     └── 타임아웃: spawn별 재정의 가능(도구 입력은 [600, 7200]으로 clamp),
+  │           없으면 run_timeout_seconds(기본 600초, 0 = 타임아웃 없음)
   │
   ├── 4. 원본 라우팅 (Origin Routing)
   │     └── resolve_requester_origin_for_child(): 채널 / 계정 메타데이터
@@ -325,6 +340,8 @@ Result:
 Please review the sub-agent execution results above. Provide further instructions if needed.
 ```
 
+`timeout` 상태에서 `Result:`가 비어 있으면 트랜스크립트 리더를 가리키는 한 줄이 추가됩니다(`Partial work may be available — use sessions_messages(target_session_key="…") …`). 첫 턴 타임아웃은 텍스트를 추출하지 못하지만 자식의 checkpoint에는 이터레이션이 남아 있습니다. 이후 goal-loop 턴 타임아웃은 이전 턴의 텍스트를 이미 담고 있으므로 이 힌트가 붙지 않습니다.
+
 `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` 형태로 `get_event_bus().publish_internal()` 경유로 전달됩니다.
 
 `announce/completion_message.py`가 구축하는 완료 캐리어 `HumanMessage`는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다. 웹 클라이언트는 origin 태그가 붙은 메시지를 일반 사용자 말풍선 대신 가운데 정렬된 흐린 시스템 카드(i18n 키 `chat.backgroundMessage`)로 렌더링합니다.
@@ -473,7 +490,7 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 |------------------|------|--------------|----------------|
 | `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `librarian` | 읽기 전용 외부 코드베이스 검색. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
@@ -489,7 +506,9 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 **도구 정책.** 역할의 `tools` 목록은 allow-list가 됩니다(기본 deny-list는 비워짐). spawn별 `extra_tools`는 그 allow-list에 합류하지만, 둘 다 무조건적인 `main_only` 메타데이터 게이트와 명시적 deny-list의 적용을 받습니다.
 
-**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다.
+**능력 봉쇄.** 전문화 역할(`researcher` / `executor` / `reviewer` / `librarian`)은 **같은 역할**의 자식만 spawn할 수 있습니다: 같은 역할 = 같은 allow-list = 자식의 능력은 부모와 정확히 같습니다. 이 규칙이 없으면 read-only researcher가 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 spawn해 대신 쓰게 할 수 있습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오며, 부모 역할로 걸러지지 않습니다. `MAIN`(run 레코드 없음)과 `general`(inherit = 모든 도구)은 무제한입니다——전문화 역할의 allow-list는 그 부분집합이기 때문입니다. 교차 역할 요청은 거부되며(결코 조용히 바뀌지 않습니다) 오류 문구가 출구를 알려줍니다: `Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+
+**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다. 모델이 호출하는 런타임 도구가 가진 것은 `functional_role`·`run_timeout_seconds`·`isolation`이며, 여기 나머지는 build-time 클래스의 것입니다.
 
 **설정**(`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. 역할 해석은 모든 spawn에서 항상 실행됩니다; `functional_role`을 전달하지 않는 spawn 동작은 **바이트 단위로 불변** — GENERAL은 항등 역할입니다.
 
@@ -603,13 +622,14 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 
 매 확인에서 실행:
   1. 전체 run을 순회하고 살아 있는 미종료 run을 유지
-  2. run_timeout_seconds > 0이면 경과 시간이 그 값을 초과한 run을 플래그 (0 = 타임아웃 검사 비활성화)
+  2. run_timeout_seconds > 0(기본 600초)이면 경과 시간이 그 값을 초과한 run을 플래그 (0 = 타임아웃 검사 비활성화)
+     (`sessions_spawn` 도구는 자신의 입력을 [600, 7200]으로 clamp합니다. 이 검사기는 run이 최종적으로 해석한 값만 봅니다)
   3. 존재하면 → recover_orphaned_runs() 일괄 복구
 ```
 
 ### 9. LLM 도구 인터페이스
 
-7개 도구는 모두 `tools/` 아래의 빌더가 구축합니다. `build_subagent_runtime_tools()` (tools/runtime_tools.py)만이 호스트의 `_MAIN_TOOLS_BUILDERS`에 등록된 빌더로, `InjectedState("session_id")`를 통해 호출자의 `session_id`를 주입하고 전체 도구셋을 구축합니다.
+8개 도구는 모두 `tools/` 아래의 빌더가 구축합니다. `build_subagent_runtime_tools()` (tools/runtime_tools.py)만이 호스트의 `_MAIN_TOOLS_BUILDERS`에 등록된 빌더로, `InjectedState("session_id")`를 통해 호출자의 `session_id`를 주입하고 전체 도구셋을 구축합니다.
 
 #### sessions_spawn — 자식 에이전트 생성
 
@@ -625,6 +645,8 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
 | `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer / librarian); None이면 depth 기반 동작 유지 |
 | `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
+| `run_timeout_seconds` | float\|None | None | 이 spawn의 wall-clock 타임아웃(초). 기본 600, clamp로 [600, 7200]; 비양수는 "미설정"(전역 기본값) |
+| `isolation` | bool | False | 자식을 프로젝트의 전용 git worktree에서 실행하고 완료 시 변경을 병합합니다(`docs/file-safety/README.ko.md` 참조). 호출자 cwd가 이미 격리 워크스페이스 안이면 **무시**되고 자식은 그 트리를 재사용합니다 |
 
 반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 
@@ -688,6 +710,16 @@ Recent:
 ```
 
 활성 항목은 run_id[:8], label, depth, role을 표시합니다. 최근 항목은 run_id[:8], label, outcome 상태를 표시합니다. 활성 목록은 최대 10개, 최근은 5개이며, 가동 시간은 s/m/h로 렌더링됩니다.
+
+#### sessions_messages — 자식 트랜스크립트 읽기
+
+| 파라미터 | 타입 | 기본값 | 설명 |
+|-----------|------|---------|-------------|
+| `target_session_key` | str | 필수 | 자식의 세션 키(spawn이 반환한 `session_key=` 값) |
+| `limit` | int | 10 | checkpoint에서 **가져올** 최근 메시지 수(clamp로 [1, 30]) |
+| `query` | str\|None | None | 선택적 대소문자 무시 키워드 필터(메시지 본문과 도구 호출 대상) |
+
+`agent/state_port.py::read_messages`를 통해 자식의 LangGraph checkpoint를 읽고(자식이 기록한 것과 같은 `rand_str_to_int(session_key)` 스레드 id), token 예산화된 트랜스크립트를 렌더링합니다: 각 메시지는 `[role] text tool_calls: name(k=v)`, 메시지당 500 token·총 4 000 token(`TOOLS_TIMEOUTS["session_messages_token_budget"]`). 타임아웃이나 kill 이후에 실제로 무엇을 했는지——어떤 도구를 호출했고 무엇이 돌아왔는지——확인한 뒤 계속·재계획·보고를 결정하기 위한 도구입니다. checkpoint는 실행 후에도 남습니다: `_release_child_resources`는 자식의 연결을 닫을 뿐이고 자식 cleanup은 `delete_thread_history`를 호출하지 않습니다(삭제하는 것은 HTTP `clear_session` 퍼지뿐). 읽을 수 있는 것은 spawn한 세션(또는 run의 완료 소유자)뿐입니다. `read_for_session` 같은 교차 세션 읽기는 `not the spawning session`으로 거부됩니다.
 
 ### 10. 프로그래매틱 API — delegate_task
 
@@ -858,7 +890,8 @@ agent/tools/subagent/
 │   ├── sessions_kill.py       sessions_kill 도구
 │   ├── sessions_steer.py      sessions_steer 도구
 │   ├── agents_list.py         agents_list 도구
-│   └── subagents_list.py      subagents 도구
+│   ├── subagents_list.py      subagents 도구
+│   └── sessions_messages.py   sessions_messages 도구(checkpoint 트랜스크립트 읽기)
 │
 ├── hooks/                     Channel hooks
 │   ├── base.py                훅 프로토콜 정의(SubagentStartEvent / SubagentStopEvent)
@@ -937,7 +970,10 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `max_spawn_depth` | 2 | 최대 중첩 깊이 (하드 상한 2, 초과 불가) |
 | `max_concurrent` | 8 | 폐기된 레거시 전역 상한; SUBAGENT lane이 초과 spawn을 `PENDING`으로 대기시키고 forbidden을 반환하지 않음 |
 | `max_children_per_agent` | 5 | 에이전트별 최대 동시 자식 수 |
-| `run_timeout_seconds` | 0.0 | 자식 에이전트 실행 타임아웃 (0 = 타임아웃 없음, 백그라운드 스윕이 안전망) |
+| `max_total_spawns_per_session` | 50 | 요청 세션 하나가 누적으로 시작할 수 있는 spawn 수 (메모리 내; admission에서 검사, `register_run`에서 카운트, 세션 정리 시 삭제) |
+| `run_timeout_seconds` | 600.0 | 자식 에이전트 실행 타임아웃 (기본 10분; 0 = 타임아웃 없음, sweeper의 2시간 stale 감지가 바깥 안전망) |
+| `run_timeout_min_seconds` | 600.0 | `sessions_spawn` 도구가 모델 입력 타임아웃을 clamp하는 하한 |
+| `run_timeout_max_seconds` | 7200.0 | 같은 clamp의 상한(2시간) |
 | `require_agent_id` | False | agent_id 필수 여부 |
 | `allow_agents` | `["*"]` | 허용 agent_id 화이트리스트 |
 | `default_cleanup` | "delete" | 기본 정리 정책 |

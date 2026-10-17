@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
+from agent.tools.pub_base import ensure_git_for_writes
 from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
@@ -144,6 +145,12 @@ class PatchFileTool(BaseTool):
         root, resolved, error = resolve_tool_path(file_path, session_id, "patch file")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
+
+        # Same gate as write_file: a bound project directory must be a git repo
+        # before the patch lands (file_write_lock / CAS follow).
+        git_ok, git_error = ensure_git_for_writes(session_id)
+        if not git_ok:
+            return tool_error(git_error)
 
         if not resolved.exists():
             return tool_error(f"File not found: {display_path(resolved, root)}")

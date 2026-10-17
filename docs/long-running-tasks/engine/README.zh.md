@@ -271,26 +271,8 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）。在恢复时，携带标准的步骤会由**辅助 LLM**（`agent/tools/taskflow/step_judge.py`，温度 0）按这些标准审查：
+`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）；恢复时，携带标准的步骤由辅助 LLM 步骤判别器（`agent/tools/taskflow/step_judge.py`，`pass` / `retry` / `block`，fail-open）审查。整条门的栈——失败分类器、Tier 1 schema 门、判别器的预算与证据感知提示词、`step_outcome` 优先级，以及 `done` 到底是什么含义——统一记录在[判断门](../gates/README.zh.md)。
 
-```python
-# agent/tools/taskflow/step_judge.py:28-31
-class StepVerdict(StrEnum):
-    PASS = "pass"
-    RETRY = "retry"
-    BLOCK = "block"
-```
-
-- `pass` 把步骤标记为 `done` 并解锁后继。
-- `retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback`（`## Previous Attempt Feedback`）把判别器指引附加到替换任务；预算耗尽的步骤标记为 `blocked`。
-- `block` 依据判别器原因把步骤标记为 `blocked`。
-
-判别器会看到本流的证据摘要（`agent/tools/taskflow/evidence_collector.py`），且**失败开放**：模型报错或响应无法解析时降级为 `pass`。没有标准的步骤仍走旧路径——直接标记 `done`，且当存有 `validation_criteria` 时响应仍会在末尾回显 `validation_criteria: …`。有两条护栏值得注意：
-
-- 向 `taskflow_resume` 传入 `validation_criteria` 会**覆盖**已存值（例如根据子 Agent 实际所做的工作收紧或修正它）。
-- 判别器仅在步骤真正落定（`redispatched_key is None`）时运行；在重试策略下被重新派发的步骤会保留其标准，并在最终恢复时接受判别。
-
-编排者（主 Agent 模型）仍掌管 flow 级决策，但携带标准的步骤不再依赖模型去发现未满足的标准：判别器可以将其 `block`，或者用重试预算再试一次。
 
 ## 📊 进度报告
 

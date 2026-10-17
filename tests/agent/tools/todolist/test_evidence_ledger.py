@@ -136,3 +136,101 @@ def test_mark_stale_ignores_prior_stale_events(tmp_path, monkeypatch: pytest.Mon
 
     assert EvidenceLedger.for_session("s1").mark_stale_for_path("foo.py") == 1
     assert len(EvidenceLedger.read_all()) == 3
+
+
+class TestLedgerRobustness:
+    """The write lock and the tolerant read: concurrent appends stay whole."""
+
+    def _redirect(self, tmp_path, monkeypatch) -> Path:
+        ledger = tmp_path / "robust.jsonl"
+        monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(ledger))
+        return ledger
+
+    def test_append_takes_the_shared_write_lock(self, tmp_path, monkeypatch):
+        """The lock is wired in: two processes must not interleave a line."""
+        from agent.tools.todolist import evidence_ledger as module
+
+        held: list[Path] = []
+
+        class _SpyLock:
+            def __init__(self, target: Path):
+                held.append(Path(target))
+
+            def __enter__(self):
+                return None
+
+            def __exit__(self, *_exc) -> bool:
+                return False
+
+        monkeypatch.setattr(module, "file_write_lock", _SpyLock)
+        ledger = self._redirect(tmp_path, monkeypatch)
+
+        EvidenceLedger.append({"kind": "test", "command": "pytest -q", "status": "passed"})
+
+        assert held == [ledger]
+
+    def test_a_broken_line_is_skipped_with_a_warning(self, tmp_path, monkeypatch):
+        from loguru import logger as loguru_logger
+
+        ledger = self._redirect(tmp_path, monkeypatch)
+        ledger.write_text(
+            '{"kind": "test", "command": "pytest -q", "status": "passed"}\n'
+            '{"kind": "lint", "comma\n'  # torn by an old, unlocked writer
+            '{"kind": "build", "command": "make", "status": "passed"}\n',
+            encoding="utf-8",
+        )
+
+        records: list[str] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record["message"]), level="WARNING"
+        )
+        try:
+            rows = EvidenceLedger.read_all()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        assert [row["kind"] for row in rows] == ["test", "build"]
+        assert any("unparsable line" in line for line in records)
+
+    def test_concurrent_appends_never_tear_a_line(self, tmp_path, monkeypatch):
+        """Two threads appending at once: every line parses, none is lost."""
+        import threading
+
+        self._redirect(tmp_path, monkeypatch)
+        writers = 2
+        per_writer = 25
+        barrier = threading.Barrier(writers)
+
+        def _write(index: int) -> None:
+            barrier.wait()
+            for n in range(per_writer):
+                EvidenceLedger.append({"kind": "test", "writer": index, "n": n})
+
+        threads = [threading.Thread(target=_write, args=(i,)) for i in range(writers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        rows = EvidenceLedger.read_all()
+
+        assert len(rows) == writers * per_writer
+        assert len({(row["writer"], row["n"]) for row in rows}) == writers * per_writer
+
+    def test_read_for_keys_groups_in_file_order(self, tmp_path, monkeypatch):
+        self._redirect(tmp_path, monkeypatch)
+        EvidenceLedger.for_session("a").append(kind="test", command="pytest a1", status="passed")
+        EvidenceLedger.for_session("b").append(kind="test", command="pytest b1", status="passed")
+        EvidenceLedger.for_session("a").append(kind="test", command="pytest a2", status="passed")
+
+        grouped = EvidenceLedger.read_for_keys(["a", "b", "ghost"])
+
+        assert set(grouped) == {"a", "b"}
+        assert [row["command"] for row in grouped["a"]] == ["pytest a1", "pytest a2"]
+        assert [row["command"] for row in grouped["b"]] == ["pytest b1"]
+
+    def test_read_for_keys_with_no_keys_reads_nothing(self, tmp_path, monkeypatch):
+        self._redirect(tmp_path, monkeypatch)
+        EvidenceLedger.append({"kind": "test", "command": "pytest -q", "status": "passed"})
+
+        assert EvidenceLedger.read_for_keys(["", "   "]) == {}

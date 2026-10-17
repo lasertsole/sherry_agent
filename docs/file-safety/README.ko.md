@@ -15,6 +15,7 @@
   - [3. 경로별 잠금](#3-경로별-잠금)
   - [4. 잔여 파일 청소](#4-잔여-파일-청소)
 - [읽기 우선 라이선스](#-읽기-우선-라이선스)
+- [쓰기 전 git 준비](#-쓰기-전-git-준비)
 - [격리 서브에이전트 워크스페이스 (git worktree)](#-격리-서브에이전트-워크스페이스-git-worktree)
 - [대안과 실측](#%EF%B8%8F-대안과-실측)
 - [리소스 파일과 인코딩](#%EF%B8%8F-리소스-파일과-인코딩)
@@ -26,7 +27,7 @@
 
 모든 파일 도구는 모든 서브 Agent와 같은 프로세스를 공유하고, 도구는 프로세스 수준 싱글턴입니다——즉 "한 경로에 두 명의 쓰는 자"는 예외가 아니라 일상입니다. 보호가 없으면 실패는 조용합니다: 나중에 쓴 쪽이 앞선 편집을 덮어쓰고 둘 다 성공을 보고합니다. 읽는 쪽은 반쯤 쓰인 파일을 붙잡습니다. 쓰는 도중의 크래시는 대상을 잘라냅니다.
 
-여섯 가지 장치가 쓰기가 마주치는 순서대로 이에 답합니다:
+일곱 가지 장치가 쓰기가 마주치는 순서대로 이에 답합니다:
 
 1. `file_write_lock`——경로별 `threading.Lock`, 이어서 프로세스 간 `flock`.
 2. `atomic_write_text_no_follow`——같은 디렉터리의 임시 파일, `fsync`, 모드 보존, `os.replace`.
@@ -34,6 +35,7 @@
 4. `write_file`의 읽기 우선 라이선스——이미 있는 파일은 그것을 읽은 세션만 덮어쓸 수 있습니다(아래 해당 절).
 5. `sweep_stale_temp_files`——`kill -9`가 남긴 것은 그 디렉터리에 대한 다음 쓰기가 청소합니다.
 6. 격리 서브에이전트 워크스페이스——선택적 git worktree로, 변경은 잠금 아래 병합되고 충돌은 보고됩니다.
+7. 쓰기 전 git 준비 게이트——바인딩된 프로젝트 디렉터리는 쓰기 전에 git 저장소가 됩니다(안 되면 거부)(두 절 아래 참조).
 
 ## 🧱 각 계층
 
@@ -64,6 +66,14 @@
 
 임시 파일 생성과 replace 사이에 하드 킬된 경우에만 `.sherry-tmp-*.swp`가 남을 수 있습니다. 나머지 모든 실패 경로는 그것을 unlink합니다. 같은 디렉터리에 대한 다음 쓰기가 1시간을 넘긴 잔여를 청소합니다(`sweep_stale_temp_files`): 살아 있는 쓰는 자의 임시 파일은 몇 초밖에 살지 않으며, 나이 임계값이 바로 그것과 거리를 두기 위한 장치입니다. 청소는 결코 예외를 던지지 않습니다——디렉터리를 읽지 못하는 스캔이, 그것이 앞서는 쓰기를 실패시켜서는 안 됩니다.
 
+## 🔒 쓰기 전 git 준비
+
+**프로젝트 디렉터리**를 바인딩한 세션은 git 저장소 안에만 쓸 수 있습니다. 해석된 루트마다 **첫** 쓰기가 `git rev-parse --is-inside-work-tree`를 확인하고——저장소 루트, 그 하위 디렉터리, 링크된 worktree 모두 참이라 격리 서브에이전트 워크스페이스가 두 번 init되지 않습니다——아직 저장소가 아니면 평범한 `git init`을 실행합니다. init이 실패하면 **쓰기를 거부**합니다: `write_file`과 `patch_file`은 오류 결과를 반환하고, `terminal`과 `python_repl`은 실행하지 않고 그 메시지를 반환합니다. 메시지에는 디렉터리와 git 자체의 실패 이유가 들어갑니다. 버전 관리 없는 쓰기가 바로 이 게이트가 막으려는 대상이며, 조용히 진행하는 것은 선택지가 아닙니다.
+
+네 개의 쓰기 입구가 모두 게이트되고, 두 실행 도구는 **호출마다** 게이트됩니다: 셸(`echo > f`, `cp`, `mv`)과 Python(`open(path, 'w')`)은 파일 도구를 거치지 않고 쓸 수 있기 때문입니다. 읽기 명령과 쓰기 명령을 구분하려면 셸 문법을 해석해야 합니다. 검사 결과는 **해석된 루트 단위**로 캐시되고(프로젝트 디렉터리를 바꾸면 캐시 미스로 다시 탐색합니다. `clear_git_ready()`로 강제 재검사할 수 있습니다), **실패한 init은 절대 캐시되지 않습니다**——다음 쓰기가 재시도합니다——첫 검사 이후 비용은 집합 조회 한 번입니다.
+
+**바인딩 없는** 세션은 전혀 영향받지 않습니다: 쓰기는 프로세스 기본 루트로 해석되어 이전과 똑같이 동작합니다. `git init`은 git 자체 기본값을 씁니다——`--bare` 없음, `--initial-branch` 없음, `user.name` / `user.email` 처리 없음(사용자가 git을 설정하기 전까지 이후 `git commit`은 실패하지만 이는 의도적으로 범위 밖입니다), 자동 커밋도 없음. 읽기는 게이트되지 않습니다: `read_file`, `search_files`, 평범한 `cat`은 저장소 없는 디렉터리에서도 그대로 동작합니다.
+
 ## 📖 읽기 우선 라이선스
 
 `write_file`은 눈감고 덮어쓰는 도구입니다: 대상을 읽지 않으므로 CAS에 실어 갈 revision이 없고, 이 세션이 한 번도 본 적 없는 내용을 파괴할 수 있었습니다. `read_state.py`가 빠져 있던 전제 조건을 공급합니다——프로세스 내의 `(세션, 해석된 경로) → revision` 매핑이며, 먹이는 두 사건뿐입니다:
@@ -85,6 +95,8 @@
 ## 🌱 격리 서브에이전트 워크스페이스 (git worktree)
 
 `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 **git worktree**를 줍니다(구현은 `agent/tools/subagent/isolation/`, 워크스페이스는 `src/data/isolated/` 아래, 자식의 cwd는 `<workspace>/tree`, 브랜치는 `sherry/<run8>`). 자식은 그곳에서 처음부터 끝까지 일하고——자기 도구, `terminal`, 테스트——실행이 종단에 이르면 완료 메시지 전달 전에 announce 흐름이 트리를 병합합니다(조용한 자식의 작업도 마찬가지로 병합됩니다).
+
+**한 단계만.** cwd가 이미 격리 워크스페이스 안에 있는 spawn은 그 트리를 재사용합니다: `isolation=True`는 거기서 무시되고(info 로그 한 줄) 거부되지 않습니다. `max_spawn_depth`가 2이므로 그 cwd는 spawn을 요청한 ORCHESTRATOR의 것이고, 그 트리 자체가 이미 프로젝트로 병합됩니다——worktree의 worktree는 병합·충돌 면·CAS 검사를 한 단계씩 늘릴 뿐 격리 경계는 늘리지 않습니다. 판정은 `isolated_workspaces_dir()`에 대한 경로 검사(`_is_inside_isolated_worktree`, `spawn/core.py`)이며 git 명령을 실행하지 않으므로 git 사용 가능성에 의존하지 않습니다.
 
 베이스라인은 **더러운 작업 트리**입니다: `git stash create`가 사용자의 미커밋 변경을 트리를 자르는 revision으로 바꿉니다(stash 스택은 그대로). 따라서 자식은 사용자가 실제로 가진 내용을 봅니다——마지막 커밋이 아니라, 그리로 조용히 되돌아가는 일도 결코 없습니다. 체크아웃은 커밋된 내용만 나르므로, 나머지는 실행이 `SUBAGENT_ISOLATION` 두 표에 따라 물질화합니다(프로젝트의 `.worktreeinclude`가 덧붙일 수 있고, 경로 다음 줄에 `# wti=symlink|copy`):
 
@@ -152,6 +164,7 @@
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |
+| `agent/tools/pub_base/git_ensure.py` | 쓰기 경로의 git 준비 게이트(탐색·init·루트 단위 캐시) |
 | `agent/tools/subagent/isolation/worktree.py` | 더러운 베이스라인, auto-init과 거부 목록, worktree 수명주기 |
 | `agent/tools/subagent/isolation/materialize.py` | 무시·미추적 경로 물질화 |
 | `agent/tools/subagent/isolation/tree.py` | 워크스페이스 worktree, 매니페스트, 폐기 |

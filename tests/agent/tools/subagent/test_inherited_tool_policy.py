@@ -165,8 +165,8 @@ class TestDefensiveMetadataHandling:
 
 
 class TestRuntimeToolIdempotencyMetadata:
-    """The 7 runtime subagent tools declare guardrail idempotency metadata:
-    5 mutating tools ``False`` (never hash their results), the 2 list tools
+    """The 8 runtime subagent tools declare guardrail idempotency metadata:
+    5 mutating tools ``False`` (never hash their results), the 3 read-only tools
     ``True``; the ``main_only`` scope tag survives the metadata merge."""
 
     @staticmethod
@@ -188,7 +188,7 @@ class TestRuntimeToolIdempotencyMetadata:
 
     def test_list_runtime_tools_declare_idempotent_true(self):
         tools = self._runtime_tools()
-        for name in ("agents_list", "subagents_list"):
+        for name in ("agents_list", "subagents_list", "sessions_messages"):
             assert tools[name].metadata["idempotent"] is True, name
 
     def test_main_only_scope_survives_idempotency_merge(self):

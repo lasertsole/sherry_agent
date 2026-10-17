@@ -34,6 +34,15 @@ class StateKey(StrEnum):
     # keeps its variant, then promoted to the live key when the turn ends.
     LLM_THINKING_ENABLED_PENDING = "llm_thinking_enabled_pending"
 
+    # Per-session CUSTOM thinking wire mapping (the advanced panel): overrides
+    # the declarative per-model map so any provider can be adapted without a
+    # code change. ``{wire_field, wire_format, level_map, thinking_budgets}``;
+    # absent = the built-in maps apply.
+    CUSTOM_THINKING_MAPPING = "custom_thinking_mapping"
+    # Choice made mid-turn: parked so the running turn keeps its wire mapping;
+    # promoted at the turn boundary (the same park/promote twin as thinking).
+    CUSTOM_THINKING_MAPPING_PENDING = "custom_thinking_mapping_pending"
+
     # Per-session main-model override (client UI → /sessions/model): the
     # profile descriptor {id, label, provider, model, base_url, api_key} the
     # session runs on, or absent = follow the env-configured main LLM. The
@@ -117,6 +126,11 @@ class StateKey(StrEnum):
 
     NUDGE_PLAN_EXTRACTION_LOCK = "nudge_plan_extraction_lock"
     NUDGE_PLAN_EXTRACTION_FIRED = "nudge_plan_extraction_fired"
+    # The todo-snapshot fingerprint (id + content + status + plan_ref, hashed) at
+    # the last SUCCESSFUL plan extraction. Plan completion alone cannot dedupe:
+    # the once-per-cycle fired flag misses a plan whose completed todos were
+    # edited in place, so a changed fingerprint triggers the re-extraction.
+    NUDGE_PLAN_SNAPSHOT_HASH = "nudge_plan_snapshot_hash"
     NUDGE_REVIEW_MEMORY_LOCK = "nudge_review_memory_lock"
     COMPRESSION_TODO_UPDATE_LOCK = "compression_todo_update_lock"
     PLAN_REF = "plan_ref"

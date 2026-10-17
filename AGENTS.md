@@ -27,35 +27,35 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 
 ## Directory Structure
 
-| Directory | Purpose | Key entry point |
-|---|---|---|
-| `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
-| `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
-| `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
-| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector) | `agent/tools/taskflow/config.py` |
-| `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
-| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
-| `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
-| `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
-| `agent/state_port.py` | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API) | `agent/state_port.py` |
-| `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
-| `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
-| `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (71 TypedDicts) | `config/features/__init__.py` |
-| `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
-| `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
-| `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
-| `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
-| `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
-| `runtime/` | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py` |
-| `runtime/hooks.py` | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server` | `runtime/hooks.py` |
-| `runtime/data_provider.py` | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent` | `runtime/data_provider.py` |
-| `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
-| `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf) | `tests/run_tests_split.py` |
-| `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
-| `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
-| `docs/context-governance/` | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering) | `docs/context-governance/README.md` |
-| `scripts/` | Dev tooling (git hooks, maintenance scripts) | `scripts/hooks/` |
+| Directory                            | Purpose                                                                                                                                                                              | Key entry point                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| `agent/`                             | Agent core: middleware chain, tools, subagent system, checkpointer                                                                                                                   | `agent/core.py::built_agent()`                       |
+| `agent/middlewares/`                 | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence)                                                                       | `agent/middlewares/__init__.py`                      |
+| `agent/tools/`                       | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...)                                                                                                         | `agent/tools/__init__.py::build_main_tools()`        |
+| `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
+| `agent/tools/todolist/`              | Session-scoped todo planning layer + append-only evidence ledger/recorder                                                                                                            | `agent/tools/todolist/service.py`                    |
+| `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
+| `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
+| `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
+| `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
+| `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
+| `config/features/`                   | Per-object feature config (76 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
+| `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
+| `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
+| `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
+| `models/`                            | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
+| `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
+| `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
+| `runtime/lane/`                      | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`)                                                                                                        | `runtime/lane/core.py`                               |
+| `tests/`                             | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf)                                                                                             | `tests/run_tests_split.py`                           |
+| `skills/`                            | SKILL.md skill system (builtin/auto/plugins)                                                                                                                                         | `skills/loader.py::scan_skills()`                    |
+| `docs/`                              | VitePress documentation site                                                                                                                                                         | `docs/long-running-tasks/README.md`                  |
+| `docs/context-governance/`           | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering)                                                                                            | `docs/context-governance/README.md`                  |
+| `scripts/`                           | Dev tooling (git hooks, maintenance scripts)                                                                                                                                         | `scripts/hooks/`                                     |
 
 ## Architecture
 
@@ -66,13 +66,30 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
-  │    (TaskIntent's intent detection is TWO layers: four-language rules — EN/ZH/JA/KO
-  │     keywords plus question/chat patterns, then a length fallback over 100 chars —
-  │     and an auxiliary-LLM classification that runs ONLY for first arming, ONLY in the
-  │     20-100 char window with request phrasing (してください / 해줘 / please / 帮我) and no
-  │     keyword; armed sessions and session-less calls stay rule-only, and every failure
-  │     path is fail-open to "not a task")
-  │    → MessagePersistence → LLMRetry → Summarization → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload)
+  │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
+  │     keywords plus question/chat patterns, then a length fallback over 100 chars.
+  │     The old auxiliary-LLM fallback for the 20-100 char request-phrasing window was
+  │     removed by the over-engineering audit; a short JA/KO request with no keyword is
+  │     no longer armed — the conservative direction, fail-open to "not a task")
+  │    → MessagePersistence → LLMRetry → Summarization → InvalidToolCallRepair → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload. The gate is BOUNDED by a consecutive-continuation ceiling: `mark_injected` counts every CONFIRMED delivery (a `busy`/`already_pending` answer from the trigger counts as none and is retried next turn end), and at `TODOLIST_INFRA["max_continuation_turns"]` (15) the gate delivers one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive and latches the session silent until a turn it did NOT inject — a real user message, or a subagent completion — resets the counter and the latch)
+  │    (InvalidToolCallRepair is registered LAST = the innermost wrap_model_call
+  │     layer, closest to the raw model call: a tool call whose `arguments` fail
+  │     JSON parsing arrives as `AIMessage.invalid_tool_calls` with `tool_calls`
+  │     empty, and the loop — which routes on `tool_calls` only — used to treat
+  │     the message as a call-less final answer and END the turn silently
+  │     (SWE-bench 20261017_003529: the django instance ended after 14.7 s with
+  │     zero edits). The layer repairs the syntax (quote-only, byte-identical
+  │     tail value; refuses ambiguous shapes; truncation-shaped misses are left
+  │     to MaxTokensBoost) and re-attaches the call with its original id so the
+  │     already-streamed `tool_start` frame pairs with the result; when nothing
+  │     is repairable AND no valid call remains it re-calls the model with a
+  │     corrective HumanMessage appended to the REQUEST only, bounded by
+  │     `INVALID_TOOL_CALL["resend_max_retries"]`, stripping streaming callbacks
+  │     like MaxTokensBoost does. Repaired calls still pass every wrap_tool_call
+  │     gate; the middleware is in `scaffolding._MAIN_REQUIRED` AND
+  │     `scaffolding._SUBAGENT_REQUIRED` (children carry it innermost too — their
+  │     chain has no LLMRetry, so the resend re-calls the child's model directly),
+  │     and the attempt is logged + recorded as an `invalid_tool_call` event)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
   │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
@@ -106,16 +123,38 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
   │     ContextEviction wraps outside MessagePersistence: the raw result is
   │     persisted first, then replaced by an evicted-head/tail preview before it
-  │     reaches state; read_file results are sliced, never offloaded. Its
+  │     reaches state; read_file results are sliced, never offloaded. A payload
+  │     the 5+5-LINE window cannot shrink (ten lines or fewer — a single
+  │     newline-free line, i.e. a compact JSON body, is the extreme — has
+  │     overlapping windows and would be reproduced twice) falls back to a
+  │     CHAR-budgeted head/tail (per-line 2 048, per-side 8 192 — the mirror of
+  │     the fd path's byte budgets), so it is offloaded like any oversized
+  │     result instead of riding the window in full. Its
   │     before_model tags an oversized trailing HumanMessage (full text stays in
   │     state/MesMemory) and wrap_model_call truncates only the model view)
-  │    ThinkingControl: per-session thinking toggle (client switch →
-  │     PUT /sessions/thinking → state register); swaps request.model for the
-  │     thinking on/off variant built by build_main_llm(thinking=...) when the
-  │     session carries an explicit LLM_THINKING_ENABLED flag, else env default
+  │    ThinkingControl: per-session thinking control (client switch / level
+  │     picker → PUT /sessions/thinking → state register); swaps request.model
+  │     for the variant built by build_main_llm(thinking=... / level=...) when
+  │     the session carries an explicit LLM_THINKING_ENABLED flag, else env
+  │     default. Levels are DECLARATIVE since the pi-style rework: the value
+  │     domain is the shared EXTENDED_THINKING_LEVELS enum (off / minimal / low
+  │     / medium / high / xhigh / max), models/LLMs/reasoning_payload.py
+  │     resolves a per-model thinkingLevelMap + thinkingFormat and CLAMPS the
+  │     request onto the nearest level the model accepts, and GET
+  │     /sessions/thinking returns the model's `levels` list so the client's
+  │     picker never offers an unsupported level. A session can also carry a
+  │     CUSTOM wire mapping (GET/PUT /sessions/thinking/custom,
+  │     StateKey.CUSTOM_THINKING_MAPPING with the usual parked twin): validated
+  │     at the API boundary (lowercase dotted wire_field, alphanumeric values,
+  │     >=1 level, budgets positive and under the context window) and it
+  │     overrides the declarative map outright — it rides into the variant AND
+  │     into the memory review's cache-warm rebuild (the published descriptor
+  │     carries it). Anthropic has an adaptive branch, Bedrock splits Claude
+  │     from GPT, and the headroom scales per level via
+  │     REASONING_BUDGET["thinking_budgets"]
   │
-  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
-  │         + file_tools + web_search + terminal + python_repl + question + ...
+  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(8)
+  │         + file_tools + web_search + web_fetch + terminal + python_repl + question + ...
   │
   ├─ graph wrappers: apply_graph_wrappers(inner)
   │    → ContextLimitGuard(RepetitionGuard(graph))
@@ -127,22 +166,55 @@ User message → Robyn WS → agent.core.built_agent() graph
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
 
+     spawn carries a per-spawn WALL-CLOCK timeout (`sessions_spawn`'s
+     `run_timeout_seconds`, clamped by the tool to `[600, 7200]`; internal
+     callers bypass the clamp and keep their own bounds), and after a
+     timeout/kill whose completion notice has no Result the caller can pull the
+     child's transcript — `sessions_messages` reads its checkpoint by
+     session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
+     budgeted, spawner-only)
+
+     Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
+     reviewer / librarian) may only spawn its own functional role (same role =
+     same tool allow-list; MAIN and general stay unrestricted), so a read-only
+     researcher cannot hire a write-capable executor — the refusal names the
+     way out and `functional_role` rides on the tool for a same-role fan-out
+
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
       taskflow_resume (json parse + validate_structured_output); a miss is a
       retry signal ("schema_error") that never spends a judge call, and an
-      unretried miss marks the step failed
+      unretried miss marks the step failed. The retry carries the validator's
+      own message as its feedback (the judge never ran, so judge_feedback is
+      empty) and the replacement inherits the step's spawn contract
+      (_retry.step_spawn_kwargs → response_schema / functional_role /
+      step_model / step_timeout_seconds — every dispatch site passes it,
+      including the manual batch and the auto-dispatch wave). The shape is
+      ALSO enforced at generation time: the child agent is built with
+      create_agent(response_format=<schema>) (AutoStrategy: provider-native
+      structured output, else a structured-output tool call), the schema
+      text stays in the child's system prompt as the prompt-level fallback,
+      and sessions_spawn exposes the same output_schema field so a
+      tool-driven child can be constrained the same way
     · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
       caller-declared step_outcome outranks both
     · CompletionJudge goal loop — every spawn, bounded by
-      COMPLETION_JUDGE["goal_max_turns"]; continue injects a follow-up turn
+      COMPLETION_JUDGE["goal_max_turns"] and gated by its master switch
+      (COMPLETION_JUDGE["enabled"]; off = no judge call at all, whatever budget
+      a caller passes); continue injects a follow-up turn. The judge's FIRST
+      call is skipped when the opening turn produced a result AND the child
+      session's ledger shows a passing, non-stale row — the ledger already
+      carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events; read side derives staleness (evidence_collector.py)
-    · taskflow_finish gates A–D — DAG completeness, no unresolved steps
+    · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      no FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
+      the flow's AGGREGATED evidence (every dispatched step's child session +
+      the creator's; rows carry a session key, never a flow id) carrying no
+      FAIL/[stale], then Gate E's goal judge (only for a flow with a
+      description and at least GOAL_GATE["min_steps"] = 3 steps)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence
 ```
@@ -245,7 +317,25 @@ size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
 (`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs
-to that session, so it opens under 当前会话 like the commit diff). The sidebar's 工作目录 body stacks TWO collapsible sections —
+to that session, so it opens under 当前会话 like the commit diff). The tree stays
+READ-ONLY but its rows are actionable (ZCode's workspace-file-tree parity): one
+`<ContextMenu>` per tree (rows emit their right-click upward — a per-row popup
+would mount one hidden menu per file) offers Open / Open with (viewer, plus the
+system default app on the desktop build) / Open in the built-in browser (HTML
+files; the page is served from the read-only endpoint as a blob URL, so relative
+references inside it do not resolve) / Reveal in the file manager (desktop only,
+`@tauri-apps/plugin-opener`; the label follows the platform, and the web build
+hides the entry because a browser cannot reach the OS) / Copy absolute path /
+Copy relative path / Add to chat. A row is also `draggable`, and a file-viewer
+TAB is too: both publish a `text/x-sherry-file` JSON payload plus the plain-text
+`@./path`, and the composer's drop handler turns either into a mention chip
+(`use-file-mention.ts`: an atomic `<span contenteditable="false">` whose visible
+label is the icon + file name while `data-file-path` holds the `@path` the send
+extracts — `extractTextForSend` also feeds the draft model, so chips never leak
+their label into a message). "Add to chat" travels the app-wide mitt bus
+(`chat:file-mention` with the session id) from the left sidebar to the chat page,
+which relays it to the composer it owns; the agent learns the convention from a
+stable `## File References` block in the system prompt. The sidebar's 工作目录 body stacks TWO collapsible sections —
 文件树 and the read-only **Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
@@ -309,7 +399,18 @@ through `/bin/sh -c` there with a scrubbed environment, bounded by
 exit code instead of raising. It is a one-shot console, not a PTY — an interactive
 full-screen program has nothing to attach to — and it is NOT the agent's
 `terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
-human's own shell, loopback-only via the gateway). Both panels keep their state in
+human's own shell, loopback-only via the gateway). The browser panel's address bar
+suggests the persistent VISIT HISTORY: every navigation (iframe mode from
+`stores/toolbox.ts::navigate`, CDP mode from the `page` frame the server reports —
+the devtools frontend is excluded) records one row in the Dexie `browserVisits`
+table (`composables/use-browser-history.ts`, schema version 3), so the list
+survives a reload and an app restart. A repeat visit inside 30 s UPDATEs the
+newest row instead of appending (CDP reports several frames per navigation), the
+table is capped at 500 rows (oldest pruned), and the dropdown
+(`BrowserHistoryDropdown.vue`) matches URL or title case-insensitively, newest
+first, showing a favicon (hidden when it 404s), the relative age in the active
+language and a 当前会话 mark, with a clear action for the whole history.
+Both panels keep their state in
 `stores/toolbox.ts` because the sidebar unmounts an inactive panel.
 
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)
@@ -353,7 +454,7 @@ backend exceeds several times over.
   — the difference between fitting the asset cap and not); macOS/Windows wheels
   are already CPU-only.
 - **Which backend runs**: `services/backend_downloader.rs` owns the first-run
-  flow — `<app_home>/sherry-backend/sherry-backend` present *and* its `VERSION`
+  flow — `<app_home>/sherry-backend/sherry-backend` present _and_ its `VERSION`
   equal to this build's → spawn it straight away; otherwise download
   `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest release
   (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background thread, unpack
@@ -409,7 +510,7 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   and `LANGSMITH_*` tracing (moved out of `sherry.jsonc`, which is tracked and
   must not hold a key). Loaded by `config/network_settings.py`.
 
-Both files are JSON5 (flat ``"KEY": value,`` lines; comments and trailing commas
+Both files are JSON5 (flat `"KEY": value,` lines; comments and trailing commas
 allowed). The loaders SEED a missing file from its template, overlaying the
 values still found in a legacy `.env` (and, for the tracing keys, in
 sherry.jsonc's old `LANGSMITH` object), then `hydrate` every key into
@@ -496,13 +597,13 @@ the model/thinking controls)::
 
 - `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
-  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
-  the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
-  false` = under `skills/plugins/`); each tool entry also carries the
-  tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
-  it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
-  reads/writes the payload; the service rejects an unknown tool / skill / role, and any
-  system-required middleware name, with a 400 that names it.
+  - `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
+    the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
+false` = under `skills/plugins/`); each tool entry also carries the
+    tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
+    it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
+    reads/writes the payload; the service rejects an unknown tool / skill / role, and any
+    system-required middleware name, with a 400 that names it.
 - **Tools** are applied per call by `ToolSelectionMiddleware`
   (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
   what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
@@ -536,7 +637,21 @@ the model/thinking controls)::
   option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
   `memory` (the nudge writes memory THROUGH that tool). At runtime
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
-  `schedule_compression_nudges`; the panel's switch is DISABLED while the draft has memory off —
+  both nudge entries — the compression-time memory review
+  (`schedule_memory_review`, handed the messages about to be discarded and run
+  CACHE-WARM: the slice goes back VERBATIM on the model configuration the turn
+  used — `nudges._build_session_model` rebuilds it from the descriptor
+  `thinking_control.current_session_model_config` publishes every main-chain
+  call — with the session's system prompt and tool face, so the compaction's
+  prefix cut makes the request a prefix-cache hit on the main model and only
+  the review instruction is fresh input; `NUDGE["memory_review_mode"] =
+"digest"` falls back to the folded view, `summarization/digest.py`) and the
+  plan-completion extraction fork
+  (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
+  on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
+  on the AUXILIARY model with no conversation history, and dedupes on a plan
+  snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
+  the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
   nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
   情感陪伴 pin `nudge: false`.
@@ -547,7 +662,7 @@ the model/thinking controls)::
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
   `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
-  build now fails without them (`scaffolding._MAIN_REQUIRED`, 14 entries) and the service
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 15 entries) and the service
   rejects a payload naming one. Together with `system_prompt_injection`,
   `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
   membership and order never change.
@@ -611,19 +726,19 @@ handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
 **ONE account, password only.** There is no username anywhere: the single
-``auth_account`` row (``CHECK (id = 1)`` — the schema cannot hold a second) is
+`auth_account` row (`CHECK (id = 1)` — the schema cannot hold a second) is
 identified by nothing, login takes just the password, and a username-era
-``auth_users`` table is copied into it at init and dropped
-(``_MIGRATION_DDLS`` in ``server/DAO/auth_store.py``). The JWT carries only
-``sub``/``jti``/``typ`` — no personal data.
+`auth_users` table is copied into it at init and dropped
+(`_MIGRATION_DDLS` in `server/DAO/auth_store.py`). The JWT carries only
+`sub`/`jti`/`typ` — no personal data.
 
-**Brute force is throttled, injection has no surface.** ``_LoginThrottle``
-(``server/service/auth_service.py``) counts consecutive failures per CLIENT
-SOCKET ADDRESS and escalates: ``AUTH["login_max_attempts"]`` free tries, then
-``login_lockout_base_seconds`` doubling to ``login_lockout_max_seconds``
-(a locked client is refused BEFORE any hashing, 429 + ``retry_after``), and a
+**Brute force is throttled, injection has no surface.** `_LoginThrottle`
+(`server/service/auth_service.py`) counts consecutive failures per CLIENT
+SOCKET ADDRESS and escalates: `AUTH["login_max_attempts"]` free tries, then
+`login_lockout_base_seconds` doubling to `login_lockout_max_seconds`
+(a locked client is refused BEFORE any hashing, 429 + `retry_after`), and a
 success clears the streak. Every query in the store is parameterized
-(``?`` placeholders only — never string-built SQL), which the test suite pins
+(`?` placeholders only — never string-built SQL), which the test suite pins
 with SQL-shaped passwords, and a missing account still pays one dummy scrypt
 verify so timing says nothing.
 
@@ -663,7 +778,7 @@ silent while nobody is signed in (the socket cannot connect by design then).
 
 **Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_account`
 (the single row: scrypt hash), `auth_settings` (single row = the runtime
-switch; `SHERRY_AUTH_ENABLED` only *seeds* a fresh row) and
+switch; `SHERRY_AUTH_ENABLED` only _seeds_ a fresh row) and
 `auth_jwt_blacklist` (`expires_at` in JWT seconds). Server tests isolate it with
 the autouse `isolated_auth_store` fixture — no test may touch the real file.
 
@@ -678,9 +793,9 @@ codes in, no generic toasts) and the transport's own 401 → refresh-once → re
 Two reporting views, both pushed (never polled) to the chat's floating progress
 panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
-* **Todos** — the existing `todo_updated` push from
+- **Todos** — the existing `todo_updated` push from
   `agent/tools/todolist/service.py::_push_todo_update`.
-* **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
+- **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
   (reporting only: the scheduler still unlocks each step on its own
   `depends_on`; an unknown dep id is ignored and a cycle lands in a trailing wave
   flagged `cyclic` instead of looping). Every flow mutation calls
@@ -747,6 +862,37 @@ the provider makes, for exercising the fallback end-to-end without a real
 instance (and without a Tavily key: point `SEARXNG_URL` at it and set
 `TAVILY_API_KEY` to a dummy to watch the downgrade fire).
 
+## URL Fetching (`agent/tools/web_fetch.py`)
+
+`web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
+companion to `web_search` (search finds URLs, this reads one). Two branches:
+
+- **public** (default): `is_public_url` (its own DNS resolution) then
+  `safe_fetch` — the same SSRF guard + DNS pinning + per-hop redirect re-check
+  the media pipeline uses; the body is capped at
+  `TOOLS_TIMEOUTS["web_fetch_max_bytes"]` (10 MiB) and the fetch at
+  `web_fetch_timeout_seconds` (30 s);
+- **local / private** (`localhost`, literal private / loopback / link-local
+  IPs): REFUSED unless `SHERRY_WEB_FETCH_ALLOW_LOCAL=1` (tracked `.env`,
+  default 0, read per call). Then httpx does the fetch (`verify=False` — dev
+  servers and self-signed certs — with a 5-hop redirect cap and a 10 s budget).
+  Address classification is literal-only: a public hostname resolving to
+  127.0.0.1 still goes down the public branch and is refused there, so the
+  switch can never turn a public-looking name into a local fetch. This is the
+  deliberate escape hatch for debugging a dev server the agent is running; the
+  switch reaches every service this machine can see.
+
+Both branches share the tail: a non-HTML body (JSON, plain text) is returned
+VERBATIM (html2text would escape and reflow it), HTML goes through `html2text`
+(scripts/styles/noscript stripped first; a tag-stripping fallback if the import
+ever fails), and the output is capped at
+`TOOLS_TIMEOUTS["web_fetch_max_output_chars"]` (50 K chars) — the context
+eviction layer is the second net for whatever still arrives oversized. The tool
+is in the `web` catalogue group with `idempotent: False`; it is not
+`main_only`, but a specialized child only receives it in `general` (inherit)
+mode, since no functional role's allow-list names it. Tests:
+`tests/agent/tools/test_web_fetch.py`.
+
 ## Log Tracing & the Trajectory Ledger (`server/service/trajectory_store.py`)
 
 A turn is one greppable unit. `turn_runner.WsTurnExecutor._drive` opens
@@ -781,7 +927,7 @@ Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 
 **Server side** — `server/service/browser_cdp.py` is a thin CDP transport (one
-WebSocket, JSON-RPC ids, flat sessions, *droppable* screencast events) plus the
+WebSocket, JSON-RPC ids, flat sessions, _droppable_ screencast events) plus the
 launcher: it probes `--no-sandbox` last (the first attempt is capped at 6 s so a
 host without user namespaces pays seconds, not the whole launch budget) and
 honours `SHERRY_BROWSER_HEADLESS` (default: headed when a DISPLAY exists). The
@@ -846,12 +992,12 @@ some job still loads. Documented in the four-language `scripts/README*.md`.
 
 Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.
 
-| Lane | Constrains | Default | Config key |
-|---|---|---|---|
-| `MAIN` | main-agent turn (`_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
-| `SUBAGENT` | child-agent executions (spawn + steer) | 8 | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
-| `NESTED` | `sessions_send` reply turns (serial) | 1 | `LANE_SYSTEM["nested_max_concurrent"]` |
+| Lane       | Constrains                                                   | Default                                                               | Config key                               |
+| ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
+| `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
+| `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
+| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
+| `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
 - Queueing: a spawn that passes per-parent admission but exceeds the SUBAGENT lane is registered `PENDING` (no `forbidden`); `PENDING → RUNNING` happens inside the lane slot and only then is `started_at` stamped (queue wait is not run time). `PENDING` counts as active in registry queries and is killable; restore finalizes restart-leftover PENDING runs the same way at startup (silently — no announce), and orphan recovery covers same-lifetime lost tasks with `ended_reason="pending_orphaned"`.
@@ -861,14 +1007,14 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 ## Key Configuration
 
-| File | Contents |
-|---|---|
-| `config/features/agent_side/` | 44 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
-| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 71 TypedDicts + instances re-exported |
-| `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
-| `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
-| `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
+| File                          | Contents                                                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config/features/agent_side/` | 49 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 76 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
+| `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
+| `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
 
 ## Code Graph
 
@@ -911,6 +1057,29 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 
 `tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
 
+`evals/` sits beside the pytest tree: a homegrown, sandboxed framework with seven
+registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag` suite
+needs the eval-only dependency group — `uv run --group evals python
+evals/evals.py graph_rag` — because `ragas` (and the `langchain-community` it
+hard-imports) is the harness's only consumer and stays out of the shipped
+runtime closure). `swebench` is the
+EXTERNAL benchmark — SWE-bench_Lite instances run through the same harness with
+the instance's own verdict (pinned base commit + a per-instance `uv venv
+--python 3.11` with the checkout installed; the agent sees only the problem
+statement, the test patch is applied by the JUDGE, and an instance whose gold
+patch does not resolve it fails a harness check before any model call).
+`coding_capability`
+is the coding baseline — it drives the REAL main agent
+(`server.service.messages.async_generate`) over a self-designed task set, judges
+every task with that repository's own `python -m pytest`, fails a task whose
+diff touched the tests, pins the thinking switch, and reports provider failures
+as invalid runs (excluded from the pass rate) instead of capability. It is the
+one suite that must run in its own process: it repoints `config.path.WORKSPACE_DIR`
+through `SHERRY_WORKSPACE_DIR` — read when `config.path` is first imported, and
+unset in every other launch — at a throwaway directory, so a measurement run
+never reads or writes the live persona, sessions or memory. `baseline.json` next
+to the suite is the version-controlled reference (threshold + model id).
+
 **IMPORTANT**: `tests/agent/tools/subagent/conftest.py` installs sys.modules stubs at collection time. When running multiple test dirs in one process, use the stub-tolerant loading pattern from `tests/agent/tools/taskflow/conftest.py`. The split runner (`tests/run_tests_split.py`) avoids this by running groups in separate processes.
 
 ## Conventions
@@ -934,17 +1103,43 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
+- a session's BOUND project directory must be a git repository before anything
+  writes into it (`agent/tools/pub_base/git_ensure.py::ensure_git_for_writes`):
+  the first write probes `git rev-parse --is-inside-work-tree` (true for the
+  root, a subdirectory OR a linked worktree, so the isolated-worktree children
+  never re-init) and runs a plain `git init` when the directory is not yet a
+  repository; a failed init REFUSES the write with a message naming the
+  directory and the reason (writes without version control are the thing the
+  gate exists to prevent). An UNBOUND session is untouched — its writes resolve
+  against the process default exactly as before. All four write doors are
+  gated (`write_file` / `patch_file` / `terminal` / `python_repl`, the last two
+  because a shell or `open(path,'w')` writes without ever touching the file
+  tools; command parsing is deliberately NOT attempted), while read operations
+  are not. The result is cached per RESOLVED ROOT (a project-directory switch
+  misses the cache and re-probes; `clear_git_ready()` forces a re-check), and a
+  FAILED init is never cached — the next write retries. `git init` uses git's
+  own defaults: no `--bare`, no `--initial-branch`, no user.name/email
+  handling, no auto-commit.
+- the three tool classes that used to inherit from the archived
+  `langchain-community` / `langchain-experimental` base classes
+  (``FormattedWriteFileTool``, ``SafeShellTool``, ``TimedPythonREPLTool``) are
+  re-based on plain `BaseTool` with the schemas reproduced locally — the field
+  names, descriptions, required sets and the `str -> [str]` commands
+  normalization are byte-identical, pinned by
+  `tests/agent/tools/test_tool_schema_goldens.py` (which also asserts those
+  modules no longer import the archived packages at all)
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). Its fuzzy ladder (`pub_base/text_matcher.py`, 11 strategies, first match wins) strips a copied snippet's line numbers (`N|` / `N: ` / `N<tab>`) and unescapes `\uXXXX` before the fuzzy ones, refuses `replace_all=True` for the lossy `BROAD_MATCHERS` (a global replace must not land on a lookalike), re-indents a fuzzy replacement to the file's own indentation and rewrites its straight quotes into the region's curly ones (only when the region uses that kind exclusively — mixed code/prose keeps straight quotes).
-- `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary; a single line longer than the whole budget is clipped inside itself and reported `truncated: true`, so it grants no license), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
+- `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two optional frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch) and `when_not_to_use` (optional) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_plan`'s planner may emit the field and `taskflow_update_steps` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file), and a watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg_list` / `terminal_bg_output` (both `scope=main_only`, catalogue group `terminal`) are how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
+- the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`).
 - the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
-  writable_roots)` takes the caller's write surface, which each tool resolves from
+writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
   writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
   an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=auto` (the same
@@ -961,11 +1156,32 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
   fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
   sandbox actually runs — neither backend has ever been verified on one.
-- An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); the docs page is `docs/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
+- An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `docs/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
-- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch.
+- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears.
 - a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer / memory-flush serializers (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
+- user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
+  right after `ToolGuardrails` — a guardrail-BLOCKED call never reaches a hook):
+  the `sherry.jsonc` `hooks` section names commands per event and the middleware
+  dispatches them as SUBPROCESSES with the turn's identity. Step 1 only —
+  `PostToolUse` / `PostToolUseFailure` (result/error previews bounded by
+  `USER_HOOKS["*_preview_chars"]`, `durationMs` measured right here) and `Stop`
+  (`responsePreview` + `toolCallCount`); `PreToolUse`, `UserPromptSubmit`,
+  `SessionStart` and the `updatedInput` rewrite are NOT dispatched (the config
+  parser still validates them, and the constructor logs a warning naming each
+  ignored event once) because blocking/rewriting hooks need a trust gate this
+  build does not have. The dispatcher NEVER blocks a turn: `shlex.split` and no
+  shell, a scrubbed env (`scrub_env` + `SHERRY_SESSION_ID`/`SHERRY_HOOK_EVENT`),
+  a per-hook timeout that kills the process, stdout capped at
+  `USER_HOOKS["max_output_bytes"]` and parsed as OPTIONAL outcome JSON (non-JSON
+  = success, and `decision`/`updatedInput` are parsed but ignored), stderr
+  logged (capped) and never shown to the model, and every failure is a log line
+  — the tool result rides through untouched. `hooks.enabled` defaults OFF
+  (`USER_HOOKS["enabled"]`): the config file is git-tracked, so executing its
+  commands must be a deliberate act. Added to `MIDDLEWARE_ORDER` +
+  `GATEABLE_MIDDLEWARES` (the 预设-中间件 switch calls `middleware_enabled`), and
+  the config is read once at construction (change = restart).
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
   finds the owning flow by scanning active flows' steps for the child key), and
@@ -980,6 +1196,31 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_replan`).
+- a dispatch wave spawns CONCURRENTLY, bounded by
+  `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the historical
+  sequential behaviour) through `asyncio.gather` + a semaphore — the three
+  dispatch loops (`taskflow_dispatch`'s batch, `taskflow_resume`'s
+  auto-dispatch wave and `taskflow_wait_all`'s retry pass) all do. The SUBAGENT
+  lane is the global backpressure; this cap only decides how many spawn calls
+  are in flight at once. A partial wave failure persists every successful child
+  (via `update_flow_with_conflict_retry`, so a concurrent writer cannot drop a
+  spawned key) and names the failed step ids (`auto_dispatch_failed=…` on the
+  resume answer). `taskflow_resume`'s normal path also writes through that
+  CAS-retry: the `build_state` callback re-applies the ALREADY-DECIDED verdict +
+  result onto the freshly-read state and re-derives the unlock set from what was
+  actually persisted — two children completing at once both land, and the same
+  step is spawned exactly once. A superseded flow releases its per-session slot.
+- two nullable `task_flows` columns record flow lineage (`resumed_from` /
+  `superseded_by`, additive migration): `taskflow_create(resumed_from=…)` —
+  the CREATE path, since `taskflow_replan` rewrites in place and never forks —
+  writes the successor's forward pointer and stamps the predecessor's
+  back-pointer with a plain session-scoped UPDATE that deliberately does NOT bump
+  `expected_revision` (lineage is metadata). `get_active_flows_sync` excludes a
+  superseded flow even while it is still `running`; `get_all_flows_sync(all)`
+  and `taskflow_summary` still show it.
+- `_try_auto_resume_taskflow` only reports success when the resume answer is not
+  an `Error:` (the resume genuinely failed → an error log, not an info log; the
+  child's completion is still recorded, so nothing is lost).
 - tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
   (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
   negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`

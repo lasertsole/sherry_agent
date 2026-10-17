@@ -171,27 +171,30 @@ def _tool(caller_scope: str | None = None) -> SafeShellTool:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestSchemaPropagation:
     def test_class_level_tool_call_schema_contains_sandbox(self):
-        # Plan line 605 acceptance one-liner: CLASS-level access must work
-        # (langchain_core 1.4.7 tool_call_schema is a bare instance @property
-        # -> needs the ClassVar descriptor, mirrored from python_repl.py).
+        # CLASS-level access must work: after the archived-parent migration the
+        # schema hangs off ``args_schema`` (a plain pydantic model), so both the
+        # class and an instance expose it.
         props = SafeShellTool.tool_call_schema.model_json_schema()["properties"]
         assert "sandbox" in props, "sandbox field must reach the tool-call schema"
         assert props["sandbox"].get("default") is True
         assert props["sandbox"].get("description"), "description must be non-empty"
 
-    def test_args_schema_is_safe_shell_input_subclass(self):
-        # ShellTool has EXPLICIT args_schema=ShellInput -> signature-only changes
-        # never propagate; the subclass must be wired as args_schema.
+    def test_args_schema_is_the_local_safe_shell_input(self):
+        # The schema is the repo's own model now (the archived ShellInput parent
+        # is gone); the field set must stay the union the LLM sees, and
+        # ``commands`` must remain the inherited-compatible name HITL reads.
         # NOTE: pydantic v2 has no class-level field attribute access, so read
         # the schema from an instance.
-        from langchain_community.tools.shell.tool import ShellInput
+        from agent.tools.terminal import SafeShellInput
 
         tool = _tool()
         schema = tool.args_schema
         assert isinstance(schema, type) and issubclass(schema, BaseModel)
         assert schema.__name__ == "SafeShellInput"
-        assert issubclass(schema, ShellInput), "must subclass the upstream ShellInput"
-        # inherited field intact (HITL core.py:277-279 reads args.get("commands"))
+        assert schema is SafeShellInput
+        # The field HITL core.py:277-279 reads by name must remain present, and
+        # the str->list normalization upstream's validator did must still hold
+        # (pinned end-to-end by test_shell_input_validator_normalizes_str_to_list).
         assert "commands" in schema.model_fields
         assert "sandbox" in schema.model_fields
         assert schema.model_fields["sandbox"].default is True

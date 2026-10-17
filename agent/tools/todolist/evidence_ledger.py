@@ -1,17 +1,29 @@
 """Append-only evidence ledger (``src/data/evidence-ledger.jsonl``).
 
-One JSON object per line records the evidence trail for a plan's checkboxes
-(``task-started`` / ``task-completed`` ...). Appends never rewrite existing
-lines: opening in ``"a"`` mode and writing one line at a time is the whole
-storage contract.
+One JSON object per line records the VERIFICATION trail: a recognized test /
+lint / build / typecheck / format command the agent ran (``terminal`` and
+``python_repl`` auto-record it), a file edit that invalidates earlier
+verification (``{"event": "stale", "file_path": …}``), or a workspace merge
+that invalidates the paths it landed. Appends never rewrite existing lines: a
+locked ``"a"`` append of one line is the whole storage contract.
+
+Rows are keyed by SESSION (``session_id`` — the main session's id, or a child's
+``agent:{agent}:subagent:{uuid}`` key); there is no plan / todo / flow key.
+The file stays repo-scoped and shared, so a per-session view filters it and a
+flow-level view aggregates the session keys of its steps.
 
 ``LEDGER_PATH`` is a class attribute so tests can redirect it into ``tmp_path``.
 """
 
 import json
 import os
+from collections.abc import Iterable
 from datetime import datetime, UTC
+from pathlib import Path
 
+from loguru import logger
+
+from agent.tools.pub_base import file_write_lock
 from config.path import resolve_evidence_ledger_path
 
 
@@ -27,22 +39,67 @@ class EvidenceLedger:
         """Append one entry as a single JSON line, stamping a UTC timestamp.
 
         The caller's dict is copied, not mutated, and existing lines are never
-        touched. Missing parent directories are created.
+        touched. Missing parent directories are created. The append takes the
+        shared per-path write lock (in-process lock + ``flock``), so two
+        processes appending at once cannot interleave a half-written line.
         """
         record = dict(entry)
         record["timestamp"] = datetime.now(UTC).isoformat()
         parent = os.path.dirname(os.path.abspath(cls.LEDGER_PATH))
         os.makedirs(parent, exist_ok=True)
-        with open(cls.LEDGER_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        with file_write_lock(Path(cls.LEDGER_PATH)):
+            with open(cls.LEDGER_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     @classmethod
     def read_all(cls) -> list[dict]:
-        """Read every entry back; a missing file is an empty ledger."""
+        """Read every entry back; a missing file is an empty ledger.
+
+        A line that does not parse (a torn write from a pre-lock build, a
+        hand-edited file) is SKIPPED with one warning naming the line numbers
+        and snippets: a single bad line must never make the whole ledger
+        unreadable, because every consumer is a fail-open gate that would
+        otherwise silently degrade to "pass".
+        """
         if not os.path.exists(cls.LEDGER_PATH):
             return []
+        records: list[dict] = []
+        broken: list[str] = []
         with open(cls.LEDGER_PATH, encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
+            for number, line in enumerate(f, start=1):
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    records.append(json.loads(text))
+                except json.JSONDecodeError:
+                    broken.append(f"line {number}: {text[:80]}")
+        if broken:
+            logger.warning(
+                "evidence ledger: skipped {} unparsable line(s) [{}]",
+                len(broken),
+                "; ".join(broken[:3]),
+            )
+        return records
+
+    @classmethod
+    def read_for_keys(cls, session_keys: Iterable[str]) -> dict[str, list[dict]]:
+        """ONE pass over the file, grouped by the requested session keys.
+
+        Grouping preserves the file's order WITHIN each key: the staleness
+        derivation ("a later stale event") is only meaningful inside one
+        session's row sequence. Keys with no rows are absent from the result
+        and blank keys are ignored.
+        """
+        wanted = {str(key).strip() for key in session_keys if str(key or "").strip()}
+        if not wanted:
+            return {}
+        grouped: dict[str, list[dict]] = {}
+        for row in cls.read_all():
+            key = str(row.get("session_id") or "")
+            if key in wanted:
+                grouped.setdefault(key, []).append(row)
+        return grouped
 
     # ── Session-scoped views ────────────────────────────────────────────────
 

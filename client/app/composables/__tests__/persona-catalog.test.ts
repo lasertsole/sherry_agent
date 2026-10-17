@@ -116,12 +116,13 @@ const FACTS = {
     'SubagentCompletionDrainMiddleware'
   ],
   // The required multimedia chain first (the backend serves it that way), then
-  // the four work-flow skills 编程助手 picks and two it does not.
+  // the work-flow skills 编程助手 picks and two it does not.
   skills: [
     { name: 'image_to_text', required: true },
     { name: 'speech_to_text', required: true },
     { name: 'text_to_image', required: true },
     { name: 'video_text_to_text', required: true },
+    { name: 'bugfix-contract' },
     { name: 'clawhub' },
     { name: 'code-wiki' },
     { name: 'cron' },
@@ -217,7 +218,14 @@ describe('persona catalogue', () => {
       'todoread',
       'sessions_spawn'
     ]);
-    expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'code-wiki', 'taskflow', 'todolist', 'ulw-execute']);
+    expect(payload.agent!.skills).toEqual([
+      ...REQUIRED_SKILLS,
+      'bugfix-contract',
+      'code-wiki',
+      'taskflow',
+      'todolist',
+      'ulw-execute'
+    ]);
     expect(payload.agent!.middlewares_disabled).toBeUndefined();
     // Every restricted preset turns the compression nudge off (only 全量 keeps it).
     expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });

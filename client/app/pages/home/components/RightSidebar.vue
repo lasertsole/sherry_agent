@@ -92,7 +92,9 @@
                 : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
             "
             :title="tabLabel(tab)"
-            @click="store.activateTab(tab.id)">
+            :draggable="isDraggableTab(tab)"
+            @click="store.activateTab(tab.id)"
+            @dragstart="onTabDragStart($event, tab)">
             <span class="truncate max-w-24">{{ tabLabel(tab) }}</span>
             <i
               class="pi pi-times text-[10px] opacity-60 hover:opacity-100"
@@ -142,8 +144,10 @@ import {
   RIGHT_SIDEBAR_PANEL_MIN_HEIGHT,
   RIGHT_SIDEBAR_PANEL_MIN_WIDTH,
   type RightSidebarPanelKind,
-  type RightSidebarScope
+  type RightSidebarScope,
+  type RightSidebarTab
 } from '~/stores/right-sidebar';
+import type { FileMentionPayload } from '~/composables/use-file-mention';
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -218,9 +222,36 @@ const activeKind = computed<RightSidebarPanelKind | null>(() =>
 const activePanel = computed<Component | null>(() => (activeKind.value ? PANELS[activeKind.value] : null));
 /** The active tab's own data (the file viewer's path, a toolbox panel's
  *  instance key…); undefined for the kinds that carry none. */
-const activeTabPayload = computed<{ path?: string; hash?: string; instance?: string } | undefined>(
+const activeTabPayload = computed<{ path?: string; hash?: string; instance?: string; url?: string } | undefined>(
   () => store.tabs.find(tab => tab.id === store.activeTabId)?.payload
 );
+
+/**
+ * Whether a tab can be dragged into the composer as a file mention. Only the
+ * file viewer carries a workspace path; the settings editors have nothing to
+ * reference.
+ * @param tab
+ */
+const isDraggableTab = (tab: RightSidebarTab): boolean => tab.kind === 'fileViewer' && !!tab.payload?.path;
+
+/**
+ * Start a drag carrying the tab's file as a mention (the composer's drop
+ * handler reads the custom MIME and appends a chip).
+ * @param event
+ * @param tab
+ */
+const onTabDragStart = (event: DragEvent, tab: RightSidebarTab): void => {
+  const path = tab.payload?.path;
+  if (!path || !event.dataTransfer) return;
+  const payload: FileMentionPayload = {
+    type: 'file',
+    path,
+    name: path.split('/').pop() ?? path
+  };
+  event.dataTransfer.setData(FILE_MENTION_MIME, JSON.stringify(payload));
+  event.dataTransfer.setData('text/plain', buildMentionText(payload));
+  event.dataTransfer.effectAllowed = 'copy';
+};
 
 /** Keep the store usable from the template without unwrapping refs manually. */
 const collapsed = computed(() => store.collapsed);

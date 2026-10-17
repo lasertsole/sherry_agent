@@ -68,17 +68,7 @@
 
 ### 증거 원장 (src/data/evidence-ledger.jsonl)
 
-한 줄에 하나의 JSON 객체로, 각 체크박스의 실행 증거를 기록합니다.
-
-```json
-{"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
-{"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
-{"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
-```
-
-- **자동 기록**: `agent/tools/todolist/evidence_recorder.py`가 `terminal` / `python_repl` 결과에서 인식한 검증 명령의 행(`kind` + `status`; 분류표는 `EVIDENCE_LEDGER["verify_commands"]`)을 항상 덧붙이고, `write_file` / `patch_file` 편집 후 `stale` 이벤트를 덧붙입니다. 모든 진입점은 페일오픈 — 원장 쓰기가 도구를 깨뜨리지 않습니다.
-- **staleness는 파생값**: 이후의 `{"event": "stale"}` 행이 어떤 evidence 행의 `command`에 포함된 경로를 지명할 때만 그 행이 stale입니다(`agent/tools/taskflow/evidence_collector.py`). 과거 행은 결코 재작성되지 않습니다.
-- **세션 뷰**: `EvidenceLedger.for_session(session_key)` / `read_for_session()`이 공유 파일을 `session_id`로 필터링합니다; 파일 자체는 저장소 전역으로 공유됩니다.
+한 줄에 JSON 객체 하나: 공유되는 추가 전용 검증 감사 트레일입니다. 쓰는 쪽은 `agent/tools/todolist/evidence_recorder.py`, 읽는 쪽은 `agent/tools/taskflow/evidence_collector.py`이며, 프로듀서·행 스키마·파생 스테일 규칙·요약 형식·이를 소비하는 게이트는 [증거 원장](../../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### todos.db — 세션 수준 TODO 저장
 

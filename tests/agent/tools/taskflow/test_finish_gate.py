@@ -1,15 +1,15 @@
-"""Finish-gate tests: DAG completeness, evidence, and SisyphusVerifier gates.
+"""Finish-gate tests: DAG completeness, evidence and the goal gate.
 
 The finish path is gated before the DONE transition:
 
 * Gate A — every step is done or blocked (none ready/dispatched);
 * Gate B — no step is blocked;
-* Gate C — flow-scoped evidence has no failing/stale rows;
-* Gate D — SisyphusVerifier, only when the caller passes ``todo`` + ``plan_path``.
+* Gate C — the flow's AGGREGATED evidence (its steps' child sessions plus the
+  creator's) has no failing/stale rows;
 
 The tests exercise both the pass and reject branches, the omitted-params path
-(Gate D silently skipped), and the fail-open contract (an unavailable evidence
-collector or verifier never blocks a finish).
+and the fail-open contract (an unavailable evidence
+collector or judge never blocks a finish).
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ import pytest
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
-from agent.tools.todolist.verifier import SisyphusVerifier
 
 pytestmark = [pytest.mark.unit]
 
@@ -43,7 +42,12 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
 async def _seed_flow(steps: list[dict]) -> None:
     await store_sqlite.create_flow(
         FLOW,
-        {"description": "finish gate probe", "steps": steps, "results": []},
+        {
+            "description": "finish gate probe",
+            "steps": steps,
+            "results": [],
+            "creator_session_key": SESSION,
+        },
         session_id=SESSION,
     )
 
@@ -107,10 +111,14 @@ async def test_finish_rejected_when_step_blocked(isolated_db: Path, ledger: Evid
 # ---------------------------------------------------------------------------
 
 
+CHILD_A = "agent:main:subagent:child-a"
+CHILD_B = "agent:main:subagent:child-b"
+
+
 @pytest.mark.asyncio
 async def test_finish_succeeds_when_evidence_passes(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="passed")
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest -q", status="passed")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
@@ -119,8 +127,13 @@ async def test_finish_succeeds_when_evidence_passes(isolated_db: Path, ledger: E
 
 @pytest.mark.asyncio
 async def test_finish_rejected_when_evidence_failed(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="failed")
+    """The regression: evidence rows carry the STEP'S child session key.
+
+    The old test seeded rows under the flow id, a key no producer writes — the
+    gate looked up the same nonexistent key and always passed.
+    """
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest -q", status="failed")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
@@ -129,131 +142,53 @@ async def test_finish_rejected_when_evidence_failed(isolated_db: Path, ledger: E
 
 @pytest.mark.asyncio
 async def test_finish_rejected_when_evidence_stale(isolated_db: Path, ledger: EvidenceLedger):
-    await _seed_flow([_step("s1", "done")])
-    ledger.for_session(FLOW).append(kind="test", command="pytest foo.py", status="passed")
-    ledger.for_session(FLOW).mark_stale_for_path("foo.py")
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest foo.py", status="passed")
+    ledger.for_session(CHILD_A).mark_stale_for_path("foo.py")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert "stale evidence" in out
 
 
-# ---------------------------------------------------------------------------
-# Gate D — SisyphusVerifier (only with explicit todo + plan_path)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_finish_rejected_when_verifier_fails(
-    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
+async def test_finish_aggregates_every_steps_child_session(
+    isolated_db: Path, ledger: EvidenceLedger
 ):
-    await _seed_flow([_step("s1", "done")])
-    captured: dict = {}
-
-    async def fake_verify(*, session_id, todo, plan_path, checkbox_label):
-        captured.update(
-            session_id=session_id,
-            todo=todo,
-            plan_path=plan_path,
-            checkbox_label=checkbox_label,
-        )
-        return False, {"reason": "acceptance criteria not found"}
-
-    monkeypatch.setattr(SisyphusVerifier, "verify", fake_verify)
-
-    out = await _finish_tool().coroutine(
-        session_id=SESSION,
-        flow_id=FLOW,
-        todo={"flow_id": FLOW, "step_id": "s1"},
-        plan_path="plans/p.md",
-        checkbox_label="wire the gate",
+    """Two dispatched steps, one failing verification → the flow is rejected."""
+    await _seed_flow(
+        [
+            _step("s1", "done", child_session_key=CHILD_A),
+            _step("s2", "done", child_session_key=CHILD_B),
+        ]
     )
-
-    assert "SisyphusVerifier" in out and "acceptance criteria not found" in out
-    assert captured["checkbox_label"] == "wire the gate"
-    assert captured["todo"] == {"flow_id": FLOW, "step_id": "s1"}
-
-
-@pytest.mark.asyncio
-async def test_finish_succeeds_when_verifier_passes(
-    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
-):
-    await _seed_flow([_step("s1", "done")])
-
-    async def fake_verify(**_kwargs):
-        return True, {}
-
-    monkeypatch.setattr(SisyphusVerifier, "verify", fake_verify)
-
-    out = await _finish_tool().coroutine(
-        session_id=SESSION,
-        flow_id=FLOW,
-        todo={"flow_id": FLOW, "step_id": "s1"},
-        plan_path="plans/p.md",
-    )
-
-    assert "TaskFlow finished" in out
-
-
-@pytest.mark.asyncio
-async def test_finish_skips_verifier_when_params_omitted(
-    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
-):
-    await _seed_flow([_step("s1", "done")])
-
-    async def must_not_run(**_kwargs):
-        raise AssertionError("verifier must be skipped without todo + plan_path")
-
-    monkeypatch.setattr(SisyphusVerifier, "verify", must_not_run)
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest a.py", status="passed")
+    ledger.for_session(CHILD_B).append(kind="lint", command="ruff b.py", status="failed")
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
-    assert "TaskFlow finished" in out
+    assert "failing verification evidence" in out
+    assert "ruff b.py" in out
 
 
 @pytest.mark.asyncio
-async def test_finish_skips_verifier_when_only_todo_passed(
+async def test_the_creators_own_verification_counts_too(
     isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
 ):
-    await _seed_flow([_step("s1", "done")])
+    """Rows under the flow's creator session are part of the flow's evidence."""
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest a.py", status="passed")
+    ledger.for_session(SESSION).append(kind="lint", command="ruff .", status="failed")
 
-    async def must_not_run(**_kwargs):
-        raise AssertionError("verifier requires both todo and plan_path")
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
-    monkeypatch.setattr(SisyphusVerifier, "verify", must_not_run)
-
-    out = await _finish_tool().coroutine(
-        session_id=SESSION, flow_id=FLOW, todo={"flow_id": FLOW, "step_id": "s1"}
-    )
-
-    assert "TaskFlow finished" in out
+    assert "failing verification evidence" in out
+    assert "ruff ." in out
 
 
 # ---------------------------------------------------------------------------
 # Fail-open — an unavailable probe never blocks a finish
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_finish_fail_open_when_verifier_raises(
-    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
-):
-    await _seed_flow([_step("s1", "done")])
-
-    async def boom(**_kwargs):
-        raise RuntimeError("verifier exploded")
-
-    monkeypatch.setattr(SisyphusVerifier, "verify", boom)
-
-    out = await _finish_tool().coroutine(
-        session_id=SESSION,
-        flow_id=FLOW,
-        todo={"flow_id": FLOW, "step_id": "s1"},
-        plan_path="plans/p.md",
-        checkbox_label="x",
-    )
-
-    assert "TaskFlow finished" in out
 
 
 @pytest.mark.asyncio

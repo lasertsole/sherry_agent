@@ -292,6 +292,27 @@ export interface SessionPresetBinding {
   preset_name: string;
 }
 
+/**
+ * One recorded browser visit (the toolbox browser panel's history).
+ *
+ * Written on every navigation of the panel (both iframe and CDP mode), lived in
+ * IndexedDB so the history survives a reload and an app restart. A repeated
+ * visit to the same URL within a short window UPDATEs the newest row instead of
+ * appending (CDP reports several `page` frames per navigation).
+ */
+export interface BrowserVisit {
+  /** Auto-increment primary key. */
+  id?: number;
+  /** Which session visited the page. */
+  sessionId: string;
+  /** The visited URL (normalized: a bare host gets https://). */
+  url: string;
+  /** The page title when known (CDP mode reports it; an iframe cannot read it cross-origin). */
+  title: string;
+  /** Visit time (epoch ms). */
+  visitedAt: number;
+}
+
 /** Primary key of the global pending profile in the character table (not a real session ID) */
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -328,6 +349,8 @@ class HistoryDb extends Dexie {
   personaPresets!: Table<PersonaPreset, number>;
   /** Per-session persona preset binding (primary key session_id, see {@link SessionPresetBinding}) */
   sessionPresets!: Table<SessionPresetBinding, string>;
+  /** Browser visit history (auto-increment id, see {@link BrowserVisit}) */
+  browserVisits!: Table<BrowserVisit, number>;
 
   constructor() {
     super('ema-history-cache');
@@ -360,6 +383,12 @@ class HistoryDb extends Dexie {
     // first open after the upgrade).
     this.version(2).stores({
       sessionPresets: 'session_id'
+    });
+    // version(3): the browser panel's visit history. Same additive bump: the
+    // table is created on the first open after the upgrade, older rows are
+    // untouched.
+    this.version(3).stores({
+      browserVisits: '++id, url, visitedAt, sessionId'
     });
   }
 }

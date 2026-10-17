@@ -216,10 +216,19 @@ async def test_replan_keeps_in_flight_steps(isolated_db, planner):
 # ---------------------------------------------------------------------------
 
 
-def _flow_with_results(description: str = "ship it") -> dict:
+def _flow_with_results(description: str = "ship it", *, steps: int = 3) -> dict:
+    """A judged flow: a description, results, and enough steps for Gate E.
+
+    ``GOAL_GATE["min_steps"]`` skips the judge below that size — the small-flow
+    case is pinned separately.
+    """
     return {
         "flow_id": "f",
-        "state": {"description": description, "results": [{"step_id": "s1", "result": "done"}]},
+        "state": {
+            "description": description,
+            "steps": [{"step_id": f"s{i}"} for i in range(1, steps + 1)],
+            "results": [{"step_id": "s1", "result": "done"}],
+        },
     }
 
 
@@ -249,6 +258,14 @@ async def test_goal_gate_fails_open_on_a_judge_error(monkeypatch):
     monkeypatch.setattr("models.build_auxiliary_llm", _boom)
 
     assert await finish_mod._goal_gate(_flow_with_results()) is None
+
+
+@pytest.mark.asyncio
+async def test_goal_gate_skips_small_flows(planner):
+    """Below ``min_steps`` the child-level CompletionJudge is the verdict."""
+    planner("GOAL_NOT_MET: nope")
+
+    assert await finish_mod._goal_gate(_flow_with_results(steps=2)) is None
 
 
 @pytest.mark.asyncio

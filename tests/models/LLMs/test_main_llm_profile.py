@@ -97,7 +97,12 @@ class TestProfileClientConfig:
             provider="openai", model="glm-4.6", thinking=False, thinking_floor=True
         )
         assert _reasoning_keys(floor) == {"extra_body": {"thinking": {"type": "low"}}}
-        assert floor["max_tokens"] == main_llm_module.OUTPUT_MAX_TOKEN + budget
+        # The floor is the "minimal" level, so its headroom comes from the
+        # per-level table rather than the ON default.
+        assert (
+            floor["max_tokens"]
+            == main_llm_module.OUTPUT_MAX_TOKEN + REASONING_BUDGET["thinking_budgets"]["minimal"]
+        )
 
     def test_thinking_none_keeps_the_env_default(self, monkeypatch):
         monkeypatch.setattr(main_llm_module, "enable_thinking", False)

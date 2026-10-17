@@ -23,7 +23,11 @@ getTaskSummary).
 ## Tool overview
 
 - `taskflow_create(flow_id, description, initial_state)`: create a flow with
-  initial revision=1 and status running.
+  initial revision=1 and status running. Ceilings (refused as `Error:` text):
+  at most 20 steps per flow (`TASKFLOW_INFRA["max_steps_per_flow"]`) and at most
+  20 ACTIVE flows per session (`max_flows_per_session`; finished/cancelled flows
+  release their slot) — close flows with `taskflow_finish` / `taskflow_cancel`
+  before creating more.
 - `taskflow_run_task(flow_id, task, label, depends_on, expected_revision,
   validation_criteria, retry_policy, response_schema, expected_params,
   input_bindings, judge_criteria, judge_model, functional_role, step_model,
@@ -105,11 +109,9 @@ getTaskSummary).
   `failed` without calling the judge, `skipped` marks it `skipped`, and
   `success` / `partial` are recorded while the gates still run. The judge is
   fail-open — when it is disabled or unavailable the step is marked `done`.
-- `taskflow_finish(flow_id, summary, expected_revision, todo, plan_path,
-  checkbox_label)`: mark done (terminal). Gated, fail-open: every step must be
-  `done` or `blocked`, no step may be `blocked`, the flow's evidence must have
-  no failing/stale row, and — only when you pass the linked `todo` +
-  `plan_path` — `SisyphusVerifier` must pass.
+- `taskflow_finish(flow_id, summary, expected_revision)`: mark done (terminal).
+  Gated, fail-open: every step must be `done` or `blocked`, no step may be
+  `blocked`, and the flow's evidence must have no failing/stale row.
 - `taskflow_fail(flow_id, reason, expected_revision)`: mark failed (terminal).
 - `taskflow_cancel(flow_id, reason, expected_revision)`: cancel the flow (terminal).
 - `taskflow_summary(flow_id)`: read-only readback of status, revision,

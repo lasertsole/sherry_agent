@@ -427,6 +427,8 @@ class _Sandbox:
     def instrument(self, recorder: _NudgeRecorder) -> None:
         monkeypatch = self.monkeypatch
         original_create = nudge_mod._create_nudge_agent
+        original_review_create = nudge_mod._create_memory_review_agent
+        original_plan_create = nudge_mod._create_plan_extraction_agent
 
         async def recording_create(system_prompt, allowed_metadata_key=None, tools=None):
             inner = await original_create(
@@ -434,23 +436,38 @@ class _Sandbox:
             )
             return _RecordingAgent(inner, recorder)
 
+        async def recording_review_create(session_id, system_prompt):
+            inner = await original_review_create(session_id, system_prompt)
+            return _RecordingAgent(inner, recorder)
+
+        async def recording_plan_create(system_prompt):
+            inner = await original_plan_create(system_prompt)
+            return _RecordingAgent(inner, recorder)
+
+        # Three seams: the compression-todo fork keeps the main model, the
+        # memory review rebuilds the session's main-model configuration
+        # (cache-warm), and the plan extraction builds its own (auxiliary) agent.
         monkeypatch.setattr(nudge_mod, "_create_nudge_agent", recording_create)
+        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", recording_review_create)
+        # The extraction fork builds its own agent (auxiliary model) — the seam
+        # the recorder has to wrap to see its runs.
+        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", recording_plan_create)
 
         original_memory = nudge_mod._nudge_memory
-        original_plan = nudge_mod._nudge_plan_extraction
+        original_plan = nudge_mod._run_plan_extraction
 
         async def recording_memory(session_id, system_prompt, messages):
             recorder.events.append(("memory", session_id))
             await original_memory(session_id, system_prompt, messages)
             recorder.memory_done += 1
 
-        async def recording_plan(session_id, system_prompt, messages):
+        async def recording_plan(session_id):
             recorder.events.append(("plan", session_id))
-            await original_plan(session_id, system_prompt, messages)
+            await original_plan(session_id)
             recorder.plan_done += 1
 
         monkeypatch.setattr(nudge_mod, "_nudge_memory", recording_memory)
-        monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", recording_plan)
+        monkeypatch.setattr(nudge_mod, "_run_plan_extraction", recording_plan)
 
 
 class _CompressionHarness:
@@ -765,7 +782,15 @@ def _plan_output_problems(
 
 
 @pytest.mark.asyncio
-async def test_all_complete_todos_dispatch_memory_and_plan_extraction(sandbox: _Sandbox) -> None:
+async def test_compaction_reviews_memory_and_the_completion_hook_forks_the_extraction(
+    sandbox: _Sandbox,
+) -> None:
+    """The two nudge paths are independent now.
+
+    Compaction carries the memory review and NOTHING else; the plan extraction
+    forks from the plan-completion hook, so the same all-complete round reaches
+    both without the extraction ever seeing the conversation.
+    """
     recorder = _NudgeRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
@@ -776,10 +801,17 @@ async def test_all_complete_todos_dispatch_memory_and_plan_extraction(sandbox: _
         await _settle_nudge_tasks()
 
         assert recorder.memory_done == 1, f"memory review did not complete: {recorder.events}"
+        assert recorder.plan_done == 0, (
+            f"compaction must not run the plan extraction any more: {recorder.events}"
+        )
+
+        await nudge_mod.maybe_trigger_plan_extraction(setup.sid)
+        await _settle_nudge_tasks()
+
         assert recorder.plan_done == 1, f"plan extraction did not complete: {recorder.events}"
         assert [kind for kind, sid in recorder.events if sid == setup.sid] == ["memory", "plan"]
-        fired = state_register_db.get_state(setup.sid, "nudge_plan_extraction_fired", False)
-        assert fired is True, "the plan-extraction single-fire flag was not set"
+        fingerprint = state_register_db.get_state(setup.sid, "nudge_plan_snapshot_hash", "")
+        assert fingerprint, "the plan snapshot fingerprint was not stored"
     finally:
         await _cancel_pending_nudges()
         await _purge_session(setup.sid)
@@ -801,6 +833,10 @@ async def test_plan_extraction_writes_knowledge_and_skill_outputs(sandbox: _Sand
         setup = await _setup_plan(sandbox, f"output-{attempt}")
         try:
             final = await harness.compress(setup.sid, _plan_conversation(setup.plan_name))
+            await _settle_nudge_tasks()
+            # The extraction no longer rides compaction: fork it explicitly, the
+            # way the plan-completion hook does.
+            await nudge_mod.maybe_trigger_plan_extraction(setup.sid)
             await _settle_nudge_tasks()
             problems = _plan_output_problems(sandbox, recorder, setup)
             if not problems:

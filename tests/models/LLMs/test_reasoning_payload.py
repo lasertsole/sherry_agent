@@ -85,8 +85,19 @@ class TestBuildReasoningKwargsRegression:
     def test_openai_non_reasoning_model_noop(self):
         assert build_reasoning_kwargs("openai", "gpt-4o-mini", True) == {}
 
-    def test_anthropic_reasoning_model_unchanged(self):
+    def test_anthropic_adaptive_models_use_the_effort_form(self):
+        # Adaptive-capable models (opus/sonnet 4.5+): thinking.type adaptive +
+        # output_config.effort instead of the legacy token budget.
         assert build_reasoning_kwargs("anthropic", "claude-opus-4-5", True) == {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+        }
+
+    def test_anthropic_legacy_models_keep_the_budget_form_unchanged(self):
+        assert build_reasoning_kwargs("anthropic", "claude-3-7-sonnet", True) == {
+            "thinking": {"type": "enabled", "budget_tokens": 2000}
+        }
+        assert build_reasoning_kwargs("anthropic", "claude-sonnet-4", True) == {
             "thinking": {"type": "enabled", "budget_tokens": 2000}
         }
 

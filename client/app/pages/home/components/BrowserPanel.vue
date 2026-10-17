@@ -64,14 +64,24 @@
         :aria-label="devtoolsOn ? t('browser.devtoolsReturn') : t('browser.devtools')"
         data-test="browser-devtools"
         @click="devtoolsAction" />
-      <InputText
-        v-model="address"
-        :placeholder="t('browser.placeholder')"
-        class="min-w-0 flex-1 font-mono text-xs"
-        autocomplete="off"
-        spellcheck="false"
-        data-test="browser-address"
-        @keyup.enter="go" />
+      <div class="relative min-w-0 flex-1">
+        <InputText
+          v-model="address"
+          :placeholder="t('browser.placeholder')"
+          class="w-full font-mono text-xs"
+          autocomplete="off"
+          spellcheck="false"
+          data-test="browser-address"
+          @keyup.enter="go"
+          @focus="historyOpen = true"
+          @input="historyOpen = true"
+          @blur="closeHistorySoon" />
+        <BrowserHistoryDropdown
+          :query="address"
+          :open="historyOpen"
+          :session-id="sessionId"
+          @select="onHistorySelect" />
+      </div>
       <Button
         icon="pi pi-sign-in"
         size="small"
@@ -281,6 +291,7 @@
 <script lang="ts" setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import BrowserHistoryDropdown from './BrowserHistoryDropdown.vue';
 import { useRoute } from 'vue-router';
 // Stable module specifiers so tests can vi.mock the channel / the bridge (the
 // unimport injection is compile-time and leaves bare symbols unmockable).
@@ -300,7 +311,7 @@ import {
 
 const { t } = useI18n({ useScope: 'local' });
 
-const props = defineProps<{ payload?: { instance?: string } }>();
+const props = defineProps<{ payload?: { instance?: string; url?: string } }>();
 
 const route = useRoute();
 const store = useToolboxStore();
@@ -375,8 +386,15 @@ function showError(message: string): void {
  * @param next.can_back
  * @param next.can_forward
  * @param next.kind
+ * @param next.title
  */
-function applyPage(next: { url: string; can_back: boolean; can_forward: boolean; kind?: string }): void {
+function applyPage(next: {
+  url: string;
+  can_back: boolean;
+  can_forward: boolean;
+  kind?: string;
+  title?: string;
+}): void {
   everConnected.value = true;
   store.setBrowserNav(stateKey.value, {
     url: next.url,
@@ -387,6 +405,11 @@ function applyPage(next: { url: string; can_back: boolean; can_forward: boolean;
   // server's truth instead of guessing.
   store.setBrowserDevtools(stateKey.value, next.kind === 'devtools');
   if (next.url) lastError.value = '';
+  // The devtools frontend is not a page the user browsed: only real pages enter
+  // the history (its URL is a loopback devtools:// address).
+  if (next.url && next.kind !== 'devtools') {
+    void recordBrowserVisit(stateKey.value, next.url, next.title);
+  }
 }
 
 /**
@@ -571,12 +594,25 @@ onMounted(async () => {
   if (!sessionId.value) return;
   const status = await fetchBrowserStatus();
   store.setBrowserCdp(stateKey.value, status.enabled);
-  if (!status.enabled) return;
+  if (!status.enabled) {
+    // iframe mode: the tab payload's initial address is the first navigation.
+    const initial = props.payload?.url;
+    if (initial && !store.browserFor(stateKey.value).url) {
+      address.value = initial;
+      store.navigate(stateKey.value, initial);
+    }
+    return;
+  }
   channel = new BrowserChannel(sessionId.value, {
     onReady: ready => {
       store.setBrowserCdp(stateKey.value, ready.enabled);
       store.setBrowserConnected(stateKey.value, true);
       applyPage(ready);
+      // "Open in browser" from the file tree hands the panel its first address
+      // through the tab payload; the server's page starts blank, so the panel
+      // drives that first navigation itself.
+      const initial = props.payload?.url;
+      if (initial && !ready.url) channel?.send({ event: 'nav', url: initial });
     },
     onPage: applyPage,
     onFrame: next => store.setBrowserFrame(stateKey.value, next),
@@ -599,6 +635,7 @@ onUnmounted(() => {
   store.setBrowserConnected(stateKey.value, false);
   if (viewportTimer) clearTimeout(viewportTimer);
   if (errorTimer) clearTimeout(errorTimer);
+  if (historyBlurTimer) clearTimeout(historyBlurTimer);
 });
 
 /**
@@ -872,6 +909,33 @@ const go = (): void => {
     return;
   }
   store.navigate(stateKey.value, address.value);
+};
+
+/** Whether the address bar's history dropdown is open. */
+const historyOpen = ref(false);
+let historyBlurTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Close the dropdown shortly after the address bar loses focus: the delay lets
+ * a click on an entry land (the entry also suppresses the blur, belt and
+ * braces).
+ */
+const closeHistorySoon = (): void => {
+  if (historyBlurTimer) clearTimeout(historyBlurTimer);
+  historyBlurTimer = setTimeout(() => {
+    historyBlurTimer = null;
+    historyOpen.value = false;
+  }, 150);
+};
+
+/**
+ * Navigate to a history entry.
+ * @param url
+ */
+const onHistorySelect = (url: string): void => {
+  historyOpen.value = false;
+  address.value = url;
+  go();
 };
 /** Re-enter the current URL (the panel's 刷新). */
 const reload = (): void => {

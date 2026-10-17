@@ -236,28 +236,24 @@ thread.
 
 ### Pipeline level: evidence ledger & the finish gate
 
-The evidence ledger is the shared, append-only verification trail
-(`src/data/evidence-ledger.jsonl`, one JSON object per line).
-`agent/tools/todolist/evidence_recorder.py` always auto-records recognized
-verification commands from `terminal` / `python_repl` (the taxonomy lives in
-`EVIDENCE_LEDGER["verify_commands"]`), and `write_file` / `patch_file` always
-append a `stale` event for the edited path.
-`agent/tools/taskflow/evidence_collector.py` derives staleness on read (a
-later `stale` row naming a path contained in a row's command) and renders the
-summary shown to the judges.
+The ledger itself — the shared, append-only verification trail
+(`src/data/evidence-ledger.jsonl`) whose staleness is derived on read — has its own
+page: [Evidence Ledger](../long-running-tasks/gates/evidence-ledger/README.md). What closes
+the loop here is the gate that reads it:
 
-`taskflow_finish.py` gates the DONE transition on four checks, in order:
+`taskflow_finish.py` gates the DONE transition on three checks, in order:
 
 | Gate | Checks | Reject reason |
 |---|---|---|
 | **A — DAG completeness** | every step is `done` or `blocked` | `step(s) not done/blocked` |
 | **B — no blocked steps** | no step is `blocked` | `step(s) are blocked` |
 | **C — flow evidence** | the flow's evidence has no `FAIL` and no `[stale]` row | `failing verification evidence` / `stale evidence` |
-| **D — SisyphusVerifier** | plan reread, acceptance criteria, and a linked `done` step — only when the caller passes both `todo` and `plan_path` | the `SisyphusVerifier` reason |
 
-Gate D is skipped entirely without the `todo` + `plan_path` linkage, and every
-gate is fail-open: an unreadable ledger or a verifier error passes rather than
-blocking a finish.
+Every gate is fail-open: an unreadable ledger passes rather than blocking a
+finish. An opt-in fourth check, **Gate E**, asks an auxiliary model whether the
+collected results satisfy the flow's `description` — it runs only for a flow of
+`GOAL_GATE["min_steps"]` (3) steps or more, because a smaller flow's work is
+already judged at the child level.
 
 ### Pipeline level: completion-drain programmatic gate
 

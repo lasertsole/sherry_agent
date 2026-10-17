@@ -1,0 +1,27 @@
+{
+  "captured_run": "20261014_010759",
+  "threshold_pass_rate": 0.5,
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com/v1",
+    "max_token": "131072",
+    "auxiliary_model": "glm-5.3-flash",
+    "reasoner_model": "",
+    "thinking_enabled": false
+  },
+  "aggregate": {
+    "tasks_total": 4,
+    "tasks_passed": 4,
+    "tasks_valid": 4,
+    "invalid_runs": [],
+    "pass_rate": 1.0,
+    "pass_rate_basis": "valid runs only (provider failures excluded)",
+    "duration_s": 63.8,
+    "tool_calls": 28,
+    "tokens": {
+      "input": 314565,
+      "output": 3026
+    }
+  }
+}

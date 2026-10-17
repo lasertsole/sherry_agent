@@ -2,8 +2,8 @@
 
 The suite seeds a self-contained, completed-plan run (plan file + completed
 todos + synthetic subagent run records), invokes the
-production plan-extraction pass
-(``agent.middlewares.summarization.nudges._nudge_plan_extraction``), then asks
+production plan-extraction fork
+(``agent.middlewares.summarization.nudges._run_plan_extraction``), then asks
 an auxiliary LLM whether the skill it produced is genuinely grounded in THIS
 run, reusable, and non-generic. Every write is redirected into the sandbox, so
 the repo's real ``skills/auto/`` and ``workspace/`` are never touched.
@@ -395,9 +395,7 @@ async def _seed_fixture(session_id: str, results_dir: Path, sandbox: EvalSandbox
 
 async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) -> dict[str, Any]:
     """Seed the fixture, run the real extraction, and evaluate every check."""
-    from langchain_core.messages import HumanMessage
-
-    from agent.middlewares.summarization.nudges import _nudge_plan_extraction
+    from agent.middlewares.summarization.nudges import _run_plan_extraction
 
     checks: list[dict[str, Any]] = []
     fixture = await _seed_fixture(session_id, results_dir, sandbox)
@@ -413,12 +411,19 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
     for attempt in range(1, 3):
         extraction_attempts = attempt
         try:
-            await asyncio.wait_for(
-                _nudge_plan_extraction(
-                    session_id, _SYSTEM_PROMPT, [HumanMessage(content=_SESSION_TAIL)]
-                ),
-                timeout=_EXTRACTION_TIMEOUT_S,
-            )
+            # The fork builds its own prompt from the plan context and carries no
+            # conversation; the scenario's tail line is folded into the prompt the
+            # way the old call site appended its HumanMessage.
+            import agent.middlewares.summarization.nudges as nudge_module
+
+            original_prompt = nudge_module._PLAN_EXTRACTION_PROMPT
+            nudge_module._PLAN_EXTRACTION_PROMPT = f"{original_prompt}\n\n{_SESSION_TAIL}"
+            try:
+                await asyncio.wait_for(
+                    _run_plan_extraction(session_id), timeout=_EXTRACTION_TIMEOUT_S
+                )
+            finally:
+                nudge_module._PLAN_EXTRACTION_PROMPT = original_prompt
         except Exception as exc:  # noqa: BLE001 — extraction is fail-open; record the failure
             extraction_error = f"{type(exc).__name__}: {exc}"
         knowledge = _scan_knowledge(sandbox.knowledge_plans_dir)

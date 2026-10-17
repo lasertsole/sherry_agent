@@ -13,6 +13,13 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    CustomThinkingMapping as CustomThinkingMapping,
+    EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
+    THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,
+    THINKING_LEVELS as THINKING_LEVELS,
+    ThinkingFormat as ThinkingFormat,
+    ThinkingLevel as ThinkingLevel,
+    ThinkingLevelMap as ThinkingLevelMap,
     GOAL_GATE as GOAL_GATE,
     GoalGateConfig as GoalGateConfig,
     TOKEN_ESTIMATION as TOKEN_ESTIMATION,
@@ -21,6 +28,8 @@ from .agent_side import (
     NUDGE as NUDGE,
     CONTEXT_GUARD as CONTEXT_GUARD,
     HEARTBEAT_STALENESS as HEARTBEAT_STALENESS,
+    InvalidToolCallConfig as InvalidToolCallConfig,
+    INVALID_TOOL_CALL as INVALID_TOOL_CALL,
     HITL_DEFAULTS as HITL_DEFAULTS,
     ITERATION_BUDGET as ITERATION_BUDGET,
     PLAN_ACTIVE_STATUSES as PLAN_ACTIVE_STATUSES,
@@ -89,6 +98,8 @@ from .agent_side import (
     PtcConfig as PtcConfig,
     ToolGuardrailsConfig as ToolGuardrailsConfig,
     ToolResultEvictionConfig as ToolResultEvictionConfig,
+    UserHooksConfig as UserHooksConfig,
+    USER_HOOKS as USER_HOOKS,
     ToolsTimeoutsConfig as ToolsTimeoutsConfig,
     assert_max_token_valid as assert_max_token_valid,
 )

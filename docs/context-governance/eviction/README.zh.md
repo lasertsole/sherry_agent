@@ -34,7 +34,9 @@
 - `excluded_tools`（8 个名字 —— `read_file`、`write_file`、`patch_file`、`search_files`、`list_files`、`memory`、`skill_view`、`skill_list`）原样通过：它们的载荷已在后端文件系统上或取回成本极低。`read_file` 另外走下面的切片路径。
 - 替换经 `ToolMessage.model_copy` 构造，消息 `id`、`tool_call_id`、`name`、`status` 与 `additional_kwargs` 全部存活 —— 配对、净化器与水位始终匹配同一条逻辑消息。
 - 多模态非文本块（图片/音频/视频）原样保留，只替换文本块。
-- 安全护栏：不安全的 `session_id`（空 / `.` / `..` / 含分隔符）跳过且不碰磁盘；已带 `[evicted to: …]` 标记的消息绝不二次驱逐；预览不会比原文更小（单行巨行）时跳过。
+- 安全护栏：不安全的 `session_id`（空 / `.` / `..` / 含分隔符）跳过且不碰磁盘；已带 `[evicted to: …]` 标记的消息绝不二次驱逐；预览不会比原文更小时跳过（有了下方的按字符上限回退，这只会发生在刚刚超过阈值的负载上）。
+- **行窗口缩不下去的负载回退到按字符预算的预览。** 普通窗口取 5 头 + 5 尾**行**，所以行数 ≤ 10 的负载——极端例子是无换行的单行（紧凑 JSON 响应体）——头尾窗口重叠、会把原文抄两遍。回退方案把每行截到 `_PREVIEW_LINE_MAX_CHARS`（2 048）、每侧截到 `_PREVIEW_HEAD/TAIL_MAX_CHARS`（8 192），正是盘上文件预览（`terminal` 的 fd 路径）早已使用的字节预算的镜像：50 000 字符的单行会得到约 4 300 字符的预览，于是它像其它超限结果一样被驱逐，而不是整段骑在上下文窗口里。同样的上限也施加于**首选的行窗口**（它保留整行，但每行截到 2 048 字符、每侧截到 8 192）：只缩掉一两行的负载再也不能交回一个「几乎和原文一样大、还带着一整条巨行」的预览；而缩不下去时，调用方的兜底判断会原样保留原消息。
+- **行内裁切会被点名，并附上能读过去的工具。** 预览对超长行是**静默**裁的（内存渲染器补 `\u2026`，盘上文件读取器把 chunk 停在 `_PREVIEW_LINE_MAX_BYTES`），而裁出来的结尾和正常行尾长得一模一样。两种预览因此在「有行被裁在中间」时追加一段说明——包括 tail 窗口的第一行：只要反向遍历停在一行内部，它就是残片——说明 `read_file` 按**行**翻页、读不到该行剩余部分，并点名能读的 `search_files` / `terminal` / `python_repl`。正常预览保持原有形状完全不变（说明是缺席而不是空行）。
 
 预览格式（`pub/func/message/eviction.py`，`preview_head_lines = preview_tail_lines = 5`）：
 
@@ -64,7 +66,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ### token 预算分页（工具先给自己封顶）
 
-`read_file` 是**第一道**裁剪，早于任何中间件看到结果：它返回的窗口同时受 `TOOLS_TIMEOUTS["read_file_token_budget"]`（4 000，乘 `read_file_budget_ratio` 0.85）与调用方的行 `limit` 约束 —— 谁更严谁生效。预算按 CJK 感知（CJK ≈ 2 字符/token，ASCII ≈ 4，与 `token_truncation` 同一组比率），所以同一个数字在任何语言里都代表同样的上下文开销：过去 2 000 行中文的开销约为 2 000 行英文的 2.5 倍。截断永远落在**整行边界**（行号连续），而单行本身超过整份预算时（如压缩过的 bundle）就在该行内部裁切并打上 `...[N chars clipped]...` 标记、同时报 `truncated: true` —— 因此它不会发放写许可。行数上限从注册表读取（`file_tools_read_default_limit` / `file_tools_read_max_limit`，不再是硬编码），预算设为 0 即恢复纯行数口径。对已**完整读过**（许可存在且来源为 `read`）且未变化的文件再次通读，返回的是指针（`unchanged: true`）而不是内容 —— 内容本来就在模型的对话里；带 offset 的范围读（offset ≥ 2）始终返回内容。
+`read_file` 是**第一道**裁剪，早于任何中间件看到结果：它返回的窗口同时受 `TOOLS_TIMEOUTS["read_file_token_budget"]`（4 000，乘 `read_file_budget_ratio` 0.85）与调用方的行 `limit` 约束 —— 谁更严谁生效。预算按 CJK 感知（CJK ≈ 2 字符/token，ASCII ≈ 4，与 `token_truncation` 同一组比率），所以同一个数字在任何语言里都代表同样的上下文开销：过去 2 000 行中文的开销约为 2 000 行英文的 2.5 倍。截断永远落在**整行边界**（行号连续），而单行本身超过整页预算时（如压缩过的 bundle）就在该行内部裁切并打上 `...[N chars clipped]...` 标记、同时报 `truncated: true` —— 因此它不会发放写许可。这条单行硬上限是 `read_file_max_line_tokens`（4 000），**无论该行在页里的位置、哪怕页预算被关闭都生效** —— 压缩成一行也永远整行进不了响应。由于 `offset` 数的是**行**，`read_file` 无法在被裁行内部翻页：提示里会点名能做到的工具（`search_files` 带上下文，或 `terminal` / `python_repl`）。行数上限从注册表读取（`file_tools_read_default_limit` / `file_tools_read_max_limit`，不再是硬编码），预算设为 0 只恢复纯行数口径（单行硬上限仍在）。对已**完整读过**（许可存在且来源为 `read`）且未变化的文件再次通读，返回的是指针（`unchanged: true`）而不是内容 —— 内容本来就在模型的对话里；带 offset 的范围读（offset ≥ 2）始终返回内容。
 
 因为工具已经给自己封顶，下面的压缩期裁切是**兜底**：载荷自称 `truncated: true` 就跳过（工具那一页和它的续读提示正是模型需要的），而 `truncated: false` 但确实很长的结果照旧裁切 —— 一次完整读可以达到预算上限，而预算比中间件自己的裁切预算大得多。
 

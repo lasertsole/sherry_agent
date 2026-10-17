@@ -49,7 +49,7 @@ The TTL registry itself (`record_first_seen` / `select_expired` / `truncate_expi
 
 Message persistence runs outside the compression path: human/AI messages are flushed to MesMemory at every model boundary and tool results the moment they return, through `MessagePersistenceMiddleware` (`agent/middlewares/message_persistence/`), write-once via the persistent `persisted_message_ids` watermark. A compact only compacts and schedules the nudge dispatch below. See `agent/middlewares/README.md` for the middleware's trigger semantics.
 
-**Compression-time nudges** (`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): the memory review (`_nudge_memory`) is dispatched on every compression; plan extraction evaluates `_detect_todo_all_complete` at the same point. Both dispatch fire-and-forget under the NUDGE lane, so they can never block the model call. While a nudge lock is held the compression skips dispatch entirely (nothing is queued). The single-fire `nudge_plan_extraction_fired` flag allows one extraction per completion cycle, so a session that never compresses never fires plan extraction.
+**Compression-time nudge** (`agent/middlewares/summarization/nudges.py::schedule_memory_review`): the memory review (`_nudge_memory`) is dispatched on every compression that discards messages, handed exactly that discarded slice and run CACHE-WARM — verbatim on the model configuration the turn used, with the session's system prompt and tool face, so the prefix cut makes the request a prefix-cache hit (`NUDGE["memory_review_mode"] = "digest"` folds the slice instead). It dispatches fire-and-forget under the NUDGE lane, so it can never block the model call; while a nudge lock is held the compression skips dispatch entirely (nothing is queued). Plan extraction is NOT on this path — it forks from `PlanContinuationEnforcer.aafter_agent` on plan completion (the single-fire `nudge_plan_extraction_fired` flag allows one extraction per completion cycle).
 
 **Cutoff selection** (`_determine_cutoff`, compression.py:277): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, compression.py:70); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (compression.py:311) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry inside `_plan_model_call`), the cutoff never crosses the last `HumanMessage`.
 
@@ -173,8 +173,8 @@ Main agent only (`need_update_system_prompt=True`): after a compression the midd
 ## 📌 Registration Sites
 
 ```python
-# agent/core.py:324 — main agent (Summarization is the LAST middleware:
-# innermost wrap layer, closest to the LLM)
+# agent/core.py:324 — main agent (the innermost wrap layer is
+# InvalidToolCallRepairMiddleware; Summarization sits directly inside LLMRetry)
 Summarization(
     need_update_system_prompt=True,
     model=auxiliary_llm,

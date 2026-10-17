@@ -3,21 +3,31 @@
 A step is dispatchable when its status is ``ready``, or when it is ``blocked``
 but its dependencies are now satisfied (every referenced step is ``done``).
 ALL ids are validated before any spawn, so an invalid request is all-or-nothing:
-it returns an ``Error:`` and mutates nothing. Spawns happen SEQUENTIALLY through
-the shared, monkeypatchable ``_dispatch.dispatch_child`` seam; a partial failure
-persists the successful spawns in ONE ``update_flow`` so a spawned child is
-never left unrecorded. The flow-level ``child_session_key`` is deliberately NOT
-touched by this tool - per-step child keys are authoritative.
+it returns an ``Error:`` and mutates nothing. Spawns happen CONCURRENTLY through
+the shared, monkeypatchable ``_dispatch.dispatch_child`` seam, bounded by
+``TASKFLOW_INFRA["max_parallel_dispatch"]``; a partial failure persists every
+successful spawn in ONE ``update_flow`` (so a spawned child is never left
+unrecorded) and names every failed step id. The flow-level
+``child_session_key`` is deliberately NOT touched by this tool - per-step child
+keys are authoritative.
 """
 
+import asyncio
 import time
 
 from langchain_core.tools import tool
 
+from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
 from ..registry import store_sqlite
 from . import _dispatch
-from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
+from ._retry import (
+    is_redispatch,
+    normalize_policy,
+    step_retry_count,
+    step_spawn_kwargs,
+    with_judge_feedback,
+)
 from agent.tools.pub_base import SessionId
 from ._shared import (
     build_task_with_bindings,
@@ -46,9 +56,10 @@ async def taskflow_dispatch(
     satisfied. Every id is validated before anything spawns: an unknown id or a
     step that is already dispatched/done rejects the whole call and changes
     nothing. On success all steps become ``dispatched`` with their own child
-    session key; a mid-batch spawn failure stops the batch and persists the
-    successes so no spawned child is lost. Pass expected_revision to fail fast
-    on concurrent writers.
+    session key; the batch spawns concurrently and when one spawn fails the
+    others still complete — the successes are persisted and the failures are
+    reported by step id. Pass expected_revision to fail fast on concurrent
+    writers.
 
     A step carrying a retry_policy that was already dispatched once consumes
     one retry from its budget (retry_count is incremented); once the budget is
@@ -112,8 +123,10 @@ async def taskflow_dispatch(
 
     dispatched_ids: list[str] = []
     records: list[dict] = []
-    failure: Exception | None = None
-    for sid in requested:
+    failures: list[tuple[str, Exception]] = []
+
+    async def _spawn_one(sid: str) -> tuple[str, str | None, Exception | None]:
+        """Spawn one step's child; never raises — a failure is returned."""
         step = by_id[sid]
         feedback = str(step.get("judge_feedback") or "").strip()
         task_text = with_judge_feedback(
@@ -127,10 +140,34 @@ async def taskflow_dispatch(
                 task=task_text,
                 requester_session_key=requester_key,
                 label=None,
+                # The step's own spawn contract rides along (schema, role, model,
+                # timeout): a step registered by taskflow_plan / update_steps must
+                # reach its child with the same configuration run_task would give.
+                **step_spawn_kwargs(step),
             )
-        except Exception as exc:  # tool boundary: convert to text, persist successes below
-            failure = exc
-            break
+        except Exception as exc:  # tool boundary: report; the other spawns stand
+            return sid, None, exc
+        return sid, child_key, None
+
+    # The wave spawns CONCURRENTLY, bounded by ``max_parallel_dispatch`` (the
+    # SUBAGENT lane queues anything over its own cap as PENDING, so this only
+    # decides how many spawn calls are in flight at once). One step failing no
+    # longer aborts the rest — every successful child is persisted below and
+    # every failure is reported by step id.
+    semaphore = asyncio.Semaphore(max(1, int(TASKFLOW_INFRA["max_parallel_dispatch"])))
+
+    async def _bounded(sid: str) -> tuple[str, str | None, Exception | None]:
+        async with semaphore:
+            return await _spawn_one(sid)
+
+    spawned = await asyncio.gather(*(_bounded(sid) for sid in requested))
+
+    for sid, child_key, exc in spawned:
+        if exc is not None or child_key is None:
+            failures.append((sid, exc or RuntimeError("dispatch returned no child key")))
+            continue
+        step = by_id[sid]
+        feedback = str(step.get("judge_feedback") or "").strip()
         if feedback:
             step.pop("judge_feedback", None)
         policy = normalize_policy(step)
@@ -144,10 +181,11 @@ async def taskflow_dispatch(
         dispatched_ids.append(sid)
 
     if not records:
-        failed_ids = [sid for sid in requested if sid not in dispatched_ids]
+        failed_ids = [sid for sid, _ in failures]
+        first = failures[0][1]
         return (
             f"Error: dispatch failed for step_id(s) {failed_ids} "
-            f"({type(failure).__name__}: {failure}); dispatched={dispatched_ids}"
+            f"({type(first).__name__}: {first}); dispatched={dispatched_ids}"
         )
 
     def build_state(fresh_flow: dict, _attempt: int) -> dict:
@@ -167,12 +205,9 @@ async def taskflow_dispatch(
     if updated is None:
         return error
 
-    failed_ids = [sid for sid in requested if sid not in dispatched_ids]
-    if failure is not None:
-        return (
-            f"Error: dispatch failed for step_id(s) {failed_ids} "
-            f"({type(failure).__name__}: {failure}); dispatched={dispatched_ids}"
-        )
+    if failures:
+        failed_text = "; ".join(f"{sid} ({type(exc).__name__}: {exc})" for sid, exc in failures)
+        return f"Error: dispatch failed for step_id(s) {failed_text}; dispatched={dispatched_ids}"
 
     return (
         f"TaskFlow steps dispatched: flow_id={flow_id}, step_ids={dispatched_ids}, "

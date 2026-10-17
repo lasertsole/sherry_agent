@@ -621,3 +621,133 @@ async def test_create_duplicate_cross_session_hides_revision(isolated_db: Path):
 
     assert "already exists" in out
     assert "revision=" not in out
+
+
+# ---------------------------------------------------------------------------
+# Resource ceilings: steps per flow + active flows per session
+# ---------------------------------------------------------------------------
+
+
+def _steps(n: int) -> list[dict]:
+    return [
+        {"step_id": f"step-{i}", "task": f"task {i}", "status": "ready", "depends_on": []}
+        for i in range(1, n + 1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_past_the_step_ceiling(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from config.features import TASKFLOW_INFRA
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "max_steps_per_flow", 3)
+    tools = _tool_map()
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION,
+        flow_id="flow-big",
+        description="avalanche",
+        initial_state={"steps": _steps(4)},
+    )
+
+    assert out.startswith("Error:")
+    assert "4 steps" in out and "max is 3" in out
+    assert "taskflow_plan" in out
+    assert await store_sqlite.get_flow("flow-big", _SESSION) is None, "nothing was created"
+
+
+@pytest.mark.asyncio
+async def test_create_accepts_exactly_the_step_ceiling(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from config.features import TASKFLOW_INFRA
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "max_steps_per_flow", 3)
+    tools = _tool_map()
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION,
+        flow_id="flow-edge",
+        description="at the edge",
+        initial_state={"steps": _steps(3)},
+    )
+
+    assert out.startswith("TaskFlow created")
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_past_the_active_flow_ceiling(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from config.features import TASKFLOW_INFRA
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "max_flows_per_session", 2)
+    tools = _tool_map()
+    for i in (1, 2):
+        out = await tools["taskflow_create"].coroutine(
+            session_id=_SESSION, flow_id=f"flow-{i}", description=f"flow {i}"
+        )
+        assert out.startswith("TaskFlow created")
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-3", description="one too many"
+    )
+
+    assert out.startswith("Error:")
+    assert "2 active flows" in out and "max 2" in out
+    assert await store_sqlite.get_flow("flow-3", _SESSION) is None
+
+
+@pytest.mark.asyncio
+async def test_a_finished_flow_releases_its_slot(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Only OPEN flows count: finishing one makes room for the next."""
+    from config.features import TASKFLOW_INFRA
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "max_flows_per_session", 1)
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="first"
+    )
+    assert "max 1" in (
+        await tools["taskflow_create"].coroutine(
+            session_id=_SESSION, flow_id="flow-2", description="blocked"
+        )
+    )
+
+    await tools["taskflow_finish"].coroutine(session_id=_SESSION, flow_id="flow-1", summary="done")
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-2", description="after the close"
+    )
+    assert out.startswith("TaskFlow created")
+
+
+@pytest.mark.asyncio
+async def test_plan_refuses_at_the_ceiling_before_the_planner_call(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The ceiling is refused cheaply — a planner call at the cap would be wasted."""
+    from config.features import TASKFLOW_INFRA
+    import models
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "max_flows_per_session", 1)
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="first"
+    )
+
+    def _no_planner(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the planner must not be consulted at the flow ceiling")
+
+    monkeypatch.setattr(models, "build_auxiliary_llm", _no_planner)
+
+    out = await tools["taskflow_plan"].coroutine(
+        session_id=_SESSION, flow_id="plan-x", goal="something else entirely"
+    )
+
+    assert out.startswith("Error:")
+    assert "1 active flows" in out
+    assert await store_sqlite.get_flow("plan-x", _SESSION) is None

@@ -1,20 +1,22 @@
 import os
 from typing import Any
+
+from config.features import LLM_CLIENT_DEFAULTS, THINKING_LEVEL_CONFIG
 from config.path import load_env
-from config.features import LLM_CLIENT_DEFAULTS
 from langchain.chat_models import init_chat_model
 from loguru import logger
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.reasoning_openai import ReasoningChatOpenAI
 from models.LLMs.reasoning_payload import (
     build_reasoning_kwargs,
-    build_thinking_floor_kwargs,
-    build_thinking_level_kwargs,
-    build_thinking_off_kwargs,
+    build_thinking_kwargs,
     get_thinking_budget,
     is_zhipu_reasoning_model,
 )
 from models.env_builder import ModelEnvBuilder, clean_client_kwargs
+
+#: The level a plain ON maps to (the shared declarative config).
+_DEFAULT_ON_LEVEL = THINKING_LEVEL_CONFIG["default_level"]
 
 # Load environment variables (.env, then the network.jsonc overlay — which wins)
 load_env()
@@ -56,7 +58,12 @@ OUTPUT_MAX_TOKEN = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
 
 
 def apply_thinking_budget(
-    model_config: dict[str, Any], provider: str | None, model_name: str | None, enabled: bool
+    model_config: dict[str, Any],
+    provider: str | None,
+    model_name: str | None,
+    enabled: bool,
+    *,
+    level: str | None = None,
 ) -> dict[str, Any]:
     """Inflate ``max_tokens`` by the provider's thinking budget when thinking is on.
 
@@ -65,7 +72,7 @@ def apply_thinking_budget(
     accepts no reasoning payload) the key stays ABSENT so providers keep
     applying their own default output cap.
     """
-    budget = get_thinking_budget(provider, model_name, enabled)
+    budget = get_thinking_budget(provider, model_name, enabled, level=level)
     if budget > 0:
         model_config["max_tokens"] = OUTPUT_MAX_TOKEN + budget
     return model_config
@@ -117,31 +124,56 @@ def _reasoning_for_state(
     thinking: bool | None,
     thinking_level: str | None,
     thinking_floor: bool,
-) -> tuple[dict[str, Any], bool]:
+    custom_mapping: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], bool, str | None]:
     """Provider-correct reasoning kwargs for one forced thinking state.
 
-    Returns ``(kwargs, budget_enabled)``: the caller merges the kwargs into the
-    client config and inflates ``max_tokens`` when the second value is true.
+    Returns ``(kwargs, budget_enabled, level_used)``: the caller merges the
+    kwargs into the client config, inflates ``max_tokens`` when the second value
+    is true, and passes ``level_used`` so the headroom can scale per level.
     ``thinking is None`` with no level keeps the env default
     (``MAIN_LLM_ENABLE_THINKING``), mirroring the module-init path; every other
     combination forces that state (same dispatch as the per-session toggle).
     """
     if thinking_level is not None:
-        return build_thinking_level_kwargs(provider, model_name, thinking_level), True
-    if thinking is True:
         return (
-            build_reasoning_kwargs(
-                provider=provider,
-                model_name=model_name,
-                enabled=True,
-                reasoning_effort=reasoning_effort,
+            build_thinking_kwargs(
+                provider, model_name, thinking_level, custom_mapping=custom_mapping
             ),
             True,
+            thinking_level,
+        )
+    if thinking is True:
+        return (
+            build_thinking_kwargs(
+                provider, model_name, _DEFAULT_ON_LEVEL, custom_mapping=custom_mapping
+            ),
+            True,
+            _DEFAULT_ON_LEVEL,
         )
     if thinking is False:
         if thinking_floor:
-            return build_thinking_floor_kwargs(provider, model_name), True
-        return build_thinking_off_kwargs(provider, model_name), False
+            return (
+                build_thinking_kwargs(
+                    provider, model_name, "minimal", custom_mapping=custom_mapping
+                ),
+                True,
+                "minimal",
+            )
+        return (
+            build_thinking_kwargs(provider, model_name, "off", custom_mapping=custom_mapping),
+            False,
+            None,
+        )
+    if custom_mapping:
+        # A custom wire mapping means every call goes through the custom map;
+        # the env switch decides WHICH level it runs at.
+        level = _DEFAULT_ON_LEVEL if enable_thinking else "off"
+        return (
+            build_thinking_kwargs(provider, model_name, level, custom_mapping=custom_mapping),
+            enable_thinking,
+            level,
+        )
     return (
         build_reasoning_kwargs(
             provider=provider,
@@ -150,6 +182,7 @@ def _reasoning_for_state(
             reasoning_effort=reasoning_effort,
         ),
         enable_thinking,
+        _DEFAULT_ON_LEVEL if enable_thinking else None,
     )
 
 
@@ -158,6 +191,7 @@ def _variant_client_config(
     enabled: bool,
     level: str | None = None,
     thinking_floor: bool = False,
+    custom_mapping: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Client config for a forced thinking state, env-independent.
 
@@ -172,15 +206,16 @@ def _variant_client_config(
       level instead (the closest possible approximation of "off").
     """
     cfg = dict(_pristine_config)
-    reasoning, budget_enabled = _reasoning_for_state(
+    reasoning, budget_enabled, level_used = _reasoning_for_state(
         provider=model_provider,
         model_name=api_name,
         thinking=None if level is not None else enabled,
         thinking_level=level,
         thinking_floor=thinking_floor,
+        custom_mapping=custom_mapping,
     )
     cfg.update(reasoning)
-    apply_thinking_budget(cfg, model_provider, api_name, budget_enabled)
+    apply_thinking_budget(cfg, model_provider, api_name, budget_enabled, level=level_used)
     return clean_client_kwargs(cfg)
 
 
@@ -226,6 +261,8 @@ def build_main_llm(
     thinking: bool | None = None,
     thinking_level: str | None = None,
     thinking_floor: bool = False,
+    level: str | None = None,
+    custom_mapping: dict[str, Any] | None = None,
 ):
     """Create a fresh LLM instance bound to the current event loop.
 
@@ -246,9 +283,12 @@ def build_main_llm(
     configs), ``None`` keeps the env-derived default. Used by the per-session
     thinking toggle (ThinkingControlMiddleware). With ``thinking=False`` and
     ``thinking_floor=True`` the variant carries the MINIMUM thinking level for
-    always-think models that reject the disable payload. ``thinking_level``
-    pins an explicit low/high/max level instead (level selector models).
+    always-think models that reject the disable payload. ``thinking_level`` (or
+    its unified alias ``level``) pins an explicit level instead — any of the
+    seven (off/minimal/low/medium/high/xhigh/max); the declarative engine
+    clamps it to the nearest level the model actually accepts.
     """
+    thinking_level = thinking_level or level
     if thinking is None and thinking_level is None:
         inner = _build_inner_chat_model()
     else:
@@ -257,6 +297,7 @@ def build_main_llm(
                 enabled=bool(thinking),
                 level=thinking_level,
                 thinking_floor=thinking_floor,
+                custom_mapping=custom_mapping,
             )
         )
     model = NormalizingChatModel(inner=inner)
@@ -271,6 +312,7 @@ def _profile_client_config(
     model: str,
     api_key: str | None = None,
     base_url: str | None = None,
+    custom_mapping: dict[str, Any] | None = None,
     thinking: bool | None = None,
     thinking_level: str | None = None,
     thinking_floor: bool = False,
@@ -296,15 +338,16 @@ def _profile_client_config(
             "profile": {"max_input_tokens": max_tokens},
         }
     )
-    reasoning, budget_enabled = _reasoning_for_state(
+    reasoning, budget_enabled, level_used = _reasoning_for_state(
         provider=effective_provider,
         model_name=model,
         thinking=thinking,
         thinking_level=thinking_level,
         thinking_floor=thinking_floor,
+        custom_mapping=custom_mapping,
     )
     config.update(reasoning)
-    apply_thinking_budget(config, effective_provider, model, budget_enabled)
+    apply_thinking_budget(config, effective_provider, model, budget_enabled, level=level_used)
     return config
 
 
@@ -318,6 +361,8 @@ def build_main_llm_for_profile(
     thinking: bool | None = None,
     thinking_level: str | None = None,
     thinking_floor: bool = False,
+    level: str | None = None,
+    custom_mapping: dict[str, Any] | None = None,
 ):
     """Build a main-LLM instance for an explicit identity (session override).
 
@@ -340,6 +385,7 @@ def build_main_llm_for_profile(
         model=model,
         api_key=api_key,
         base_url=base_url,
+        custom_mapping=custom_mapping,
         thinking=thinking,
         thinking_level=thinking_level,
         thinking_floor=thinking_floor,

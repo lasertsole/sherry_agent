@@ -1,7 +1,11 @@
 <template>
   <div
     class="root"
-    tabindex="-1">
+    :class="{ 'drag-over': isDragOver }"
+    tabindex="-1"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop">
     <div
       class="inputBox"
       :contenteditable="!disabled"
@@ -39,6 +43,10 @@
 import { computed, onMounted, watch, ref, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
+// Type-only: the mention helpers themselves are auto-imported composable
+// exports (the repo's `no-restricted-imports` rule keeps value imports out of
+// components).
+import type { FileMentionPayload } from '~/composables/use-file-mention';
 
 const { t } = useI18n();
 
@@ -66,6 +74,53 @@ const emit = defineEmits<{
 
 /** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
+
+/** True while a workspace file is dragged over the composer (highlight hint). */
+const isDragOver = ref(false);
+
+/**
+ * Highlight only for a workspace-file drag: an OS file drop is a different
+ * feature (attachment upload) and must not light up this surface.
+ * @param event
+ */
+function onDragOver(event: DragEvent): void {
+  if (!event.dataTransfer?.types.includes(FILE_MENTION_MIME)) return;
+  isDragOver.value = true;
+  event.dataTransfer.dropEffect = 'copy';
+}
+
+/** The pointer left the composer: drop the highlight. */
+function onDragLeave(): void {
+  isDragOver.value = false;
+}
+
+/**
+ * Drop a workspace file onto the composer: insert its mention chip at the
+ * caret (never its content — the agent reads the file itself).
+ * @param event
+ */
+function onDrop(event: DragEvent): void {
+  isDragOver.value = false;
+  const raw = event.dataTransfer?.getData(FILE_MENTION_MIME);
+  if (!raw) return;
+  try {
+    const payload = JSON.parse(raw) as FileMentionPayload;
+    if (payload?.path) insertFileMention(inputDom.value, payload);
+  } catch {
+    // A malformed payload (another app's drag) is ignored, not fatal.
+  }
+}
+
+/**
+ * Insert a mention chip programmatically (the file tree's "Add to chat",
+ * relayed by the page as a mitt event). Also places the caret so the user can
+ * keep typing right after the chip.
+ * @param payload The referenced workspace entry.
+ */
+function addFileMention(payload: FileMentionPayload): void {
+  if (props.disabled) return;
+  insertFileMention(inputDom.value, payload);
+}
 
 /**
  * Controlled draft content (two-way bound from the parent via `v-model:draft`).
@@ -196,7 +251,11 @@ function inputFunc(event: Event): void {
   }
 
   const target = event.target as HTMLElement;
-  const text = target.textContent ?? '';
+  // The DRAFT is the plain-text projection of the composer: a mention chip
+  // contributes the `@path` it carries, never its visible label — otherwise
+  // the draft model (validation, history, cross-session restore) would hold a
+  // string the user never meant to send.
+  const text = extractTextForSend(target);
 
   // When only blank lines/newlines remain, clear the inner content to avoid leftover <br>
   if (isEmpty(text) || text.trim() === '') {
@@ -240,7 +299,9 @@ function recordQuestion(text: string): void {
  *  enqueues the new message and reports it back as a `queued` frame (queue badge in [sid].vue). */
 function handleSend(): void {
   if (!sendingAllowed.value || props.disabled) return;
-  const text = draft.value;
+  // The DRAFT is only the plain-text projection; mention chips carry their
+  // `@path` in the DOM, so the send path reads the element itself.
+  const text = extractTextForSend(inputDom.value).trim();
   if (isEmpty(text)) return;
 
   recordQuestion(text);
@@ -263,7 +324,7 @@ function clearInput(): void {
  */
 function syncDraftToDom(): void {
   if (!inputDom.value) return;
-  if (draft.value && inputDom.value.textContent !== draft.value) {
+  if (draft.value && extractTextForSend(inputDom.value).trim() !== draft.value) {
     inputDom.value.textContent = draft.value;
   }
 }
@@ -289,7 +350,7 @@ function clearHistory(): void {
   browsingSnapshot = '';
 }
 
-defineExpose({ clearHistory });
+defineExpose({ clearHistory, addFileMention });
 </script>
 
 <style lang="scss" scoped>
@@ -325,6 +386,33 @@ defineExpose({ clearHistory });
       color: #9ca3af;
       pointer-events: none;
     }
+  }
+
+  // A workspace file is hovering the composer: the dashed outline names the
+  // drop target (the mention chip is inserted at the caret on drop).
+  &.drag-over > .inputBox {
+    outline: 1px dashed var(--color-theme-main);
+    outline-offset: -2px;
+    background-color: color-mix(in srgb, var(--color-theme-main) 6%, transparent);
+  }
+
+  // One inline file reference: an atomic chip the caret skips over. The
+  // visible label is the icon + file name; the text it stands for (`@path`)
+  // lives in its `data-file-path` and is spliced back in on send.
+  :deep(.file-mention-chip) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 0.375rem;
+    margin: 0 0.125rem;
+    border-radius: 0.375rem;
+    background-color: color-mix(in srgb, var(--color-theme-main) 12%, transparent);
+    color: var(--color-theme-main);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
   }
 
   // Send/stop buttons cluster: pinned bottom-right; the stop button (rendered only while

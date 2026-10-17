@@ -4,13 +4,35 @@
 
 > Design-level companion — role axes, spawn-privilege guards, and the four-layer completion gates: [docs/subagent/README.md](../../../docs/subagent/README.md)
 
+## Update Notes (2026-10-15)
+
+> Resource ceilings completed — the wall-clock timeout is real again and a session's spawn count is bounded:
+
+- **`run_timeout_seconds` default 0.0 → 600.0 (10 min)**: a child no longer runs unbounded in TIME. `spawn` and `steer` wrap the child's `ainvoke` in `asyncio.wait_for` again and the followup timeout check is active (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`); the sweeper's 2 h stale detection stays as the outer net. A caller still overrides per spawn via `sessions_spawn(run_timeout_seconds=...)`, and `0` still means "no timeout".
+- **The runtime `sessions_spawn` tool gains `isolation`** (and, in the same sweep, records the
+  one-level rule it now protects): the model can ask for an isolated git worktree, and a spawn
+  whose cwd already sits inside one reuses that tree instead of cutting a worktree of a
+  worktree. Before this the field existed only on the build-time class, so the whole isolation
+  feature was unreachable from the model side.
+- **Capability containment (same-role derivation)**: a specialized child (`researcher` /
+  `executor` / `reviewer` / `librarian`) may only spawn children of its OWN role. Until now a
+  read-only researcher at ORCHESTRATOR depth could hire a write-capable executor, because a
+  child's tools come from the full main set filtered by the CHILD's role and never by the
+  parent's. Same role = same allow-list, so the escalation path is gone; `MAIN` and `general`
+  (inherit = every tool) stay unrestricted, and a cross-role request is REFUSED with the fix
+  named (`functional_role="<parent role>"`), never silently re-roled. `functional_role` is now
+  exposed on the runtime `sessions_spawn` tool so a same-role fan-out is expressible.
+- **`sessions_spawn` exposes the timeout**: a `run_timeout_seconds` field (the model's own lever, next to the global default). The tool CLAMPS a model-provided value into `[run_timeout_min_seconds, run_timeout_max_seconds]` (600 s .. 7200 s) instead of rejecting it — a request for 60 s keeps the "short" intent at the 10-minute floor, 99999 lands at 2 h — and `None`/non-positive means "unset" (the global default applies). Internal callers (TaskFlow dispatch, `delegate_task`) bypass the clamp and keep their own bounds.
+- **New `sessions_messages` tool**: read a child session's checkpoint transcript by its `session_key` (the eighth runtime tool). It exists for the timeout/kill case — `Status: timed out` with no `Result:` used to leave the caller with nothing, while the child's checkpoint still held every tool call it made. The value is token-budgeted (4 000 tokens total, 500 per message) and gated on `spawned_by` / the run's completion owner, so only the session that spawned a child can read it.
+- **New `max_total_spawns_per_session` (50)**: a per-session LIFETIME spawn budget (`registry/spawn_budget.py`, in-memory like the rest of the live registry). `max_children_per_agent` (5) bounds children running AT A TIME; this bounds "finish one child, start the next" repeating forever — the shape a stuck orchestrator loops on. Counted in `register_run` (a spawn that reached registration), checked in the spawn admission gate, dropped when the session is purged; a process restart starts clean.
+
 ## Update Notes (2026-09-05)
 
 > Subagent limits aligned with OpenClaw (commits `794df0e..d200beb`):
 
 - **Global concurrency cap added**: `max_concurrent = 8` — originally enforced in the spawn pipeline; excess spawns returned `forbidden` ("Global concurrent ..."). **Superseded by the global SUBAGENT lane**: over-limit spawns now queue as `PENDING` and start when a lane slot frees (the cap field is retained for backward compatibility only). New registry queries: `count_all_active_runs` / `count_all_active_runs_readonly` — both count `PENDING` runs as active, since a queued child still holds an admission slot.
 - **`max_spawn_depth` default 3 → 2, now a hard cap**: values > 2 are rejected at construction and assignment; `delegate_task(max_spawn_depth=...)` raises `ValueError` beyond the cap. Depth tree: MAIN(0) → ORCHESTRATOR(1) → LEAF(2).
-- **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net.
+- **`run_timeout_seconds` default 300 → 0.0 (no timeout)**: spawn and steer invoke children directly; the followup timeout check is skipped; the sweeper's 2 h stale detection remains the safety net. (**Reversed on 2026-10-15**: the default is 600 s again — see the note above.)
 - **`archive_after_minutes` 1440 → 60**.
 - **`delegate_task`**: per-call `max_concurrent` override, now deprecated — global concurrency is queued by the SUBAGENT lane, so passing it only emits a `DeprecationWarning` (the value is still applied and restored per call).
 - All configuration tables and diagrams in these docs (en/zh/ko/ja) plus the root READMEs were synced to the new defaults.
@@ -55,18 +77,22 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── target_policy: agent_id in allow_agents whitelist (wildcard *)
   │     ├── depth = parent_depth + 1, must be ≤ max_spawn_depth (2)
   │     ├── active children < max_children_per_agent (5)
+  │     ├── total spawns < max_total_spawns_per_session (50)
   │     └── runtime isolation: cross-runtime spawn rejected
   │
   ├── 2. Ownership & Capability Resolution
   │     ├── resolve_spawn_ownership(): controller / completion-owner
   │     │   session keys (spawn/ownership.py)
-  │     └── resolve_subagent_capabilities(depth, max_depth):
-  │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
-  │           depth ≥ max → LEAF/NONE (capabilities/core.py)
+  │     ├── resolve_subagent_capabilities(depth, max_depth):
+  │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
+  │     │     depth ≥ max → LEAF/NONE (capabilities/core.py)
+  │     └── capability containment: a specialized parent (functional) may only
+  │         spawn the SAME functional role — MAIN/general are unrestricted
   │
   ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
   │     ├── thinking precedence: explicit → requester → target agent default
-  │     └── timeout: per-spawn override or run_timeout_seconds (0 = no timeout)
+  │     └── timeout: per-spawn override (tool input clamped to [600, 7200]) or
+  │           run_timeout_seconds (default 600 s; 0 = no timeout)
   │
   ├── 4. Origin Routing
   │     └── resolve_requester_origin_for_child(): channel/account metadata
@@ -325,6 +351,11 @@ Result:
 Please review the sub-agent execution results above. Provide further instructions if needed.
 ```
 
+A `timeout` status with an EMPTY `Result:` adds one line pointing at the transcript reader
+(`Partial work may be available — use sessions_messages(target_session_key="…") …`): a first-turn
+timeout extracts no text, but the child's checkpoint still holds its iterations. A later goal-loop
+turn timeout already carries the previous turn's text, so it is not hinted.
+
 Delivered as `InboundMessage(channel="system", sender_id="subagent", metadata.injected_event="subagent_result")` via `get_event_bus().publish_internal()`.
 
 The completion carrier `HumanMessage` built by `announce/completion_message.py` is persisted to MesMemory with `origin='subagent_completion'`; the web client renders such origin-tagged rows as a centered muted system card (i18n key `chat.backgroundMessage`) instead of a normal user bubble.
@@ -473,7 +504,7 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 |------------------|---------|--------------|----------------|
 | `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `librarian` | Read-only external codebase retrieval on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
@@ -489,7 +520,9 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 **Tool policy.** A role's `tools` list becomes an allow-list (the default deny-list is cleared). Per-spawn `extra_tools` join that allow-list; both are still subject to the unconditional `main_only` metadata gate and any explicit deny-list.
 
-**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget.
+**Capability containment.** A specialized role (`researcher` / `executor` / `reviewer` / `librarian`) may only spawn children of its **own** role: same role = same allow-list = the child can do exactly what the parent can. Without this a read-only researcher at ORCHESTRATOR depth could spawn a write-capable executor and have the writing done on its behalf — a child's tools are the child's own role's, never a subset of the parent's. `MAIN` (no run record) and `general` (inherit = every tool) are unrestricted, since every specialized allow-list is a subset of theirs. A cross-role request is refused (never silently re-roled) with the way out named in the message: `Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+
+**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget. The runtime tool the model calls carries `functional_role`, `run_timeout_seconds` and `isolation`; the remaining fields here are the build-time class's.
 
 **Configuration** (`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. Role resolution always runs on spawn; with no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
 
@@ -510,7 +543,7 @@ Completion gates layer from the child run through the step to the flow, and all 
 |-------|------|----------------|--------------------|
 | Child run | completion judge + goal loop (`agent/tools/subagent/spawn/completion_judge.py`) | the task and the child's latest response; budget `COMPLETION_JUDGE["goal_max_turns"]` (default 5) | judge error → `done` |
 | Step | step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (no criteria → no judge call) | model error / unparseable → `pass` |
-| Flow | `taskflow_finish` gates A–D | DAG state and the flow's evidence | unreadable ledger / verifier error → pass |
+| Flow | `taskflow_finish` gates A–C (+ the opt-in Gate E judge) | DAG state and the flow's evidence | unreadable ledger / judge error → pass |
 | Parent turn | completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`) | the session's verification evidence | unavailable lookup → no gate |
 
 The completion judge runs on every spawn; `goal_max_turns` is its only budget knob (a budget of 1 keeps the child single-turn). The step judge equally runs for every criteria-bearing step — `validation_criteria` is its input, not a switch — and `taskflow_finish` requires the evidence gates to pass before a flow can reach DONE.
@@ -603,13 +636,14 @@ followup/core.py — loop at sweeper_interval_seconds × 2 (default 120 s)
 
 Each check executes:
   1. Iterate all runs; keep live unended runs
-  2. When run_timeout_seconds > 0, flag runs whose elapsed time exceeds it; 0 disables the timeout check
+  2. When run_timeout_seconds > 0 (the default, 600 s), flag runs whose elapsed time exceeds it; 0 disables the timeout check
+     (the `sessions_spawn` tool clamps its own input to [600, 7200]; this checker reads whatever the run resolved)
   3. If any → recover_orphaned_runs() batch recovery
 ```
 
 ### 9. LLM Tool Interface
 
-All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools()` (tools/runtime_tools.py) is the one registered in the host's `_MAIN_TOOLS_BUILDERS`; it constructs the full toolset with the caller's `session_id` injected via `InjectedState("session_id")`.
+All eight tools are built by builders in `tools/`. `build_subagent_runtime_tools()` (tools/runtime_tools.py) is the one registered in the host's `_MAIN_TOOLS_BUILDERS`; it constructs the full toolset with the caller's `session_id` injected via `InjectedState("session_id")`.
 
 #### sessions_spawn — Create Child Agent
 
@@ -625,6 +659,8 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
+| `run_timeout_seconds` | float\|None | None | Wall-clock timeout for this spawn (seconds). Default 600, clamped to [600, 7200]; a non-positive value means "unset" (global default) |
+| `isolation` | bool | False | Run the child in a private git worktree of the project and merge its changes back on completion (see `docs/file-safety/README.md`). IGNORED when the caller's cwd is already inside an isolated worktree — the child reuses that tree |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 
@@ -688,6 +724,24 @@ Recent:
 ```
 
 Active entries show run_id[:8], label, depth, role; recent entries show run_id[:8], label, outcome status. Active list is capped at 10, recent at 5; runtime is rendered as s/m/h.
+
+#### sessions_messages — Read a Child's Transcript
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `target_session_key` | str | required | The child's session key (the `session_key=` value the spawn returned) |
+| `limit` | int | 10 | How many recent messages to FETCH from the checkpoint, clamped to [1, 30] |
+| `query` | str\|None | None | Optional case-insensitive keyword filter over message text and tool calls |
+
+Reads the child's LangGraph checkpoint through `agent/state_port.py::read_messages` (the same
+`rand_str_to_int(session_key)` thread id the child wrote with) and renders a token-budgeted
+transcript: `[role] text tool_calls: name(k=v)` per message, 500 tokens per message, 4 000 tokens
+in total (`TOOLS_TIMEOUTS["session_messages_token_budget"]`). Use it after a timed-out or killed
+subagent to see what it actually did — which tools it called, what came back — before deciding to
+continue, re-plan, or report. The checkpoint survives the run: `_release_child_resources` only
+closes the child's connection, and child cleanup never calls `delete_thread_history` (only an HTTP
+`clear_session` purge does). Only the spawning session (or the run's completion owner) may read;
+`read_for_session`-style cross-session reads are refused with `not the spawning session`.
 
 ### 10. Programmatic API — delegate_task
 
@@ -858,7 +912,8 @@ agent/tools/subagent/
 │   ├── sessions_kill.py       sessions_kill tool
 │   ├── sessions_steer.py      sessions_steer tool
 │   ├── agents_list.py         agents_list tool
-│   └── subagents_list.py      subagents tool
+│   ├── subagents_list.py      subagents tool
+│   └── sessions_messages.py   sessions_messages tool (checkpoint transcript reader)
 │
 ├── hooks/                     Channel hooks
 │   ├── base.py                Hook protocol definition (SubagentStartEvent / SubagentStopEvent)
@@ -937,7 +992,10 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `max_spawn_depth` | 2 | Maximum nesting depth (hard cap 2, cannot exceed) |
 | `max_concurrent` | 8 | Deprecated legacy global cap; the SUBAGENT lane now queues over-limit spawns as `PENDING` instead of returning forbidden |
 | `max_children_per_agent` | 5 | Max concurrent children per agent |
-| `run_timeout_seconds` | 0.0 | Child agent execution timeout (0 = no timeout; background sweeps provide the safety net) |
+| `max_total_spawns_per_session` | 50 | Lifetime spawns one requesting session may start (in-memory; checked at admission, counted at `register_run`, dropped on session purge) |
+| `run_timeout_seconds` | 600.0 | Child agent execution timeout (default 10 min; 0 = no timeout, and the sweeper's 2 h stale detection stays the outer net) |
+| `run_timeout_min_seconds` | 600.0 | Floor the `sessions_spawn` tool clamps a model-provided timeout to |
+| `run_timeout_max_seconds` | 7200.0 | Ceiling for the same clamp (2 h) |
 | `require_agent_id` | False | Whether agent_id is mandatory |
 | `allow_agents` | `["*"]` | Allowed agent_id whitelist |
 | `default_cleanup` | "delete" | Default cleanup policy |

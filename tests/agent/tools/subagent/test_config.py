@@ -12,7 +12,10 @@ class TestSubagentConfig:
         c = SubagentConfig()
         assert c.max_spawn_depth == 2
         assert c.max_children_per_agent == 5
-        assert c.run_timeout_seconds == 0.0
+        assert c.max_total_spawns_per_session == 50
+        # A real wall-clock ceiling by default: the goal loop is otherwise
+        # unbounded in TIME on a slow provider.
+        assert c.run_timeout_seconds == 600.0
         assert c.require_agent_id is False
         assert c.allow_agents == ["*"]
         assert c.default_cleanup == "delete"

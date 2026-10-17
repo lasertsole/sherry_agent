@@ -1,7 +1,7 @@
 # EMA Agent 미들웨어 시스템
 
-[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)]()
-[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)]()
+[![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)](<>)
+[![LangChain 1.3+](https://img.shields.io/badge/LangChain-1.3%2B-orange)](<>)
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
@@ -36,6 +36,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [InvalidToolCallRepairMiddleware](#invalidtoolcallrepairmiddleware)
   - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
@@ -53,12 +54,12 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 
 미들웨어는 `langchain.agents.middleware.AgentMiddleware`를 상속하여 에이전트 루프의 명확히 정의된 지점에서 후킹합니다. 시스템은 네 개의 후크 패밀리를 사용합니다(모두 동기/비동기 형태 제공):
 
-| 후크 패밀리 | 동기 | 비동기 | 실행 시점 |
-|---|---|---|---|
-| 에이전트 전/후 | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | 대화 턴당 1회, 모델–도구 루프 전체를 감쌈 |
-| 모델 전/후 | `before_model` / `after_model` | `abefore_model` / `aafter_model` | 개별 모델 요청을 감쌈 |
-| 모델 호출 래핑 | `wrap_model_call` | `awrap_model_call` | 모델 요청 자체를 인터셉트(메시지 / 시스템 프롬프트 수정, LLM 쇼트서킷) |
-| 도구 호출 래핑 | `wrap_tool_call` | `awrap_tool_call` | 각 도구 실행을 인터셉트 |
+| 후크 패밀리    | 동기                           | 비동기                           | 실행 시점                                                              |
+| -------------- | ------------------------------ | -------------------------------- | ---------------------------------------------------------------------- |
+| 에이전트 전/후 | `before_agent` / `after_agent` | `abefore_agent` / `aafter_agent` | 대화 턴당 1회, 모델–도구 루프 전체를 감쌈                              |
+| 모델 전/후     | `before_model` / `after_model` | `abefore_model` / `aafter_model` | 개별 모델 요청을 감쌈                                                  |
+| 모델 호출 래핑 | `wrap_model_call`              | `awrap_model_call`               | 모델 요청 자체를 인터셉트(메시지 / 시스템 프롬프트 수정, LLM 쇼트서킷) |
+| 도구 호출 래핑 | `wrap_tool_call`               | `awrap_tool_call`                | 각 도구 실행을 인터셉트                                                |
 
 ### 후크 순서 시맨틱스
 
@@ -124,6 +125,11 @@ middleware = [
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
     ),
+    # wrap_model_call의 최내곽, 원시 모델 호출에 가장 가까운 위치:
+    # JSON 인자 파싱에 실패한 도구 호출을 복구한다(그렇지 않으면 루프가
+    # 호출 없는 최종 답변으로 보고 턴을 종료한다). 복구 불가 시 모델을
+    # 한 번만 재호출한다.
+    InvalidToolCallRepairMiddleware(),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
 # 컴파일된 그래프는 apply_graph_wrappers()가 래핑합니다 (안쪽 → 바깥쪽):
@@ -152,6 +158,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
     HeartbeatStaleness(),
+    # 무효 도구 호출 구제: 여기서도 최내곽 wrap(자식의 유일한 호출이 JSON 파싱에
+    # 실패하면 예전에는 나레이션으로 이 호출이 끝났음). ainvoke이므로
+    # 재전송은 callbacks를 제거하지 않습니다.
+    InvalidToolCallRepairMiddleware(),
 ]
 # 자식 그래프도 같은 방식으로 래핑:
 child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
@@ -167,18 +177,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - `MaxTokensBoostMiddleware`는 비스트리밍 경로를 탑니다. 자식은
   `ainvoke`로 실행되므로 자식 세션 id에는 `is_stream_turn` 플래그가 절대 설정되지 않습니다.
+- `InvalidToolCallRepairMiddleware`는 자식 체인에서도 동작합니다(메인 체인과 마찬가지로 최내곽).
+  같은 이유로 비스트리밍 경로를 탑니다: 자식 세션의 `is_stream_turn`은 설정되지 않으므로
+  재전송은 callbacks를 제거하지 않습니다.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
 ### 턴별 실제 실행 순서 (메인 에이전트)
 
-| 페이즈 | 순서 |
-|---|---|
-| `before_agent` (리스트 순서) | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization |
-| `before_model`(목록 순서) | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음) |
-| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
-| `after_model` (역순) | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음) |
-| `wrap_tool_call` (최외곽 → 최내곽) | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
-| `after_agent` (역순) | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄) |
+| 페이즈                              | 순서                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `before_agent` (리스트 순서)        | MultimodalProcessor → IterationBudget → ToolGuardrails → OutputRepetitionGuard → HeartbeatStaleness → HumanInTheLoop → Summarization                                                                                                                                                                                                                                       |
+| `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
+| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
+| `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
+| `wrap_tool_call` (최외곽 → 최내곽)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
+| `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
 
 해당 페이즈의 후크를 구현한 미들웨어만 행에 표시합니다.
 
@@ -198,7 +211,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. `require_session_id`로 `session_id`를 해석합니다 —— 누락/공백이면 `RuntimeError("Not pass session_id")`.
 2. `state_register_mem`의 `system_prompt`를 조회합니다.
 3. 없으면 `state_register_db`로 폴백하고, 그래도 없으면 `workspace.prompt_builder.build_system_prompt(session_id)`로 재구축한 뒤 **db + mem에 이중 기록**합니다.
-4. same-content skip: `@dynamic_prompt`가 생성한 래퍼는 *무조건* `request.override(system_message=...)`를 호출합니다. 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 피장식 함수는 **그 동일한 message 객체**를 반환하므로 override가 같은 바이트를 다시 적용합니다 —— 모델이 보는 프리픽스는 바이트 단위로 동일하게 유지되어(프로바이더 프리픽스 캐시에 유리) 내용이 실제로 바뀌거나(또는 첫 호출이라 `request.system_message is None`)일 때만 새 `SystemMessage`를 반환합니다.
+4. same-content skip: `@dynamic_prompt`가 생성한 래퍼는 _무조건_ `request.override(system_message=...)`를 호출합니다. 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 피장식 함수는 **그 동일한 message 객체**를 반환하므로 override가 같은 바이트를 다시 적용합니다 —— 모델이 보는 프리픽스는 바이트 단위로 동일하게 유지되어(프로바이더 프리픽스 캐시에 유리) 내용이 실제로 바뀌거나(또는 첫 호출이라 `request.system_message is None`)일 때만 새 `SystemMessage`를 반환합니다.
 
 > `system_prompt` mem 키는 압축 파이프라인과의 계약입니다: `Summarization`이 토큰 추정(`_estimate_system_prompt_tokens`)에 읽고 압축 후 (mem + db에) 다시 씁니다 —— 그래서 캐시 미스 시 항상 이중 기록합니다.
 
@@ -246,11 +259,11 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `GET /agent/catalog`가 체인을 반환하고, 프리셋과 역할-미들웨어 탭은 **선택 항목 3개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
 
-| 끌 수 있음 | 끄면 |
-| --- | --- |
-| `PlanContinuationEnforcer` | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
-| `TaskIntentMiddleware` | 작업 의도 유도 메시지를 주입하지 않음 |
-| `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음 |
+| 끌 수 있음                          | 끄면                                                |
+| ----------------------------------- | --------------------------------------------------- |
+| `PlanContinuationEnforcer`          | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
+| `TaskIntentMiddleware`              | 작업 의도 유도 메시지를 주입하지 않음               |
+| `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음              |
 
 나머지는 모두 잠금(UI는 읽기 전용 표시): **14개** `_MAIN_REQUIRED` 안전 항목 — 기존 12개에 `WorkspaceNoticeMiddleware`(프롬프트가 현재 루트를 렌더링하므로 알림이 없으면 옛 트리 기준으로 계속 답한다)와 `MultimodalProcessor`(없으면 첨부가 사라진다) 추가 — 에 더해 `system_prompt_injection`(없으면 지시 없는 턴), `ThinkingControlMiddleware`(그 자체가 모델/사고 제어), `ToolSelectionMiddleware`(도구 선택을 적용하는 쪽). 필수 항목을 지정한 오래된 페이로드는 무시됩니다(`middleware_enabled()`는 필수 항목에 항상 `True`). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
 
@@ -294,22 +307,22 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 다섯 가지 실패 병리를 감지하고 4단계 에스컬레이션 `ALLOW → WARN → BLOCK → HALT`(`GuardrailAction` 열거형)으로 대응합니다:
 
-| 병리 | 트리거 | WARN 이후 | BLOCK 이후 | hard-stop 모드 |
-|---|---|---|---|---|
-| 완전한 실패 반복 | 동일 도구 + 동일 인자(인자 JSON을 `sort_keys`한 MD5)의 실패 | 2 (`exact_failure_warn_after`) | 5 (`exact_failure_block_after`) | 5에서 HALT |
-| 동일 도구 실패 누적 | 동일 도구가 **다른** 인자로 반복 실패 | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | 8에서 HALT |
-| 멱등 무진행 | 동일한 멱등 도구(메타데이터 `idempotent: true`)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 (`no_progress_warn_after`) | 5 (`no_progress_block_after`) | 5에서 HALT |
-| 핑퐁 | 두 도구 사이의 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진행 | 4 (`ping_pong_warn_after`) | 6 (`ping_pong_block_after`) | 6에서 HALT |
-| 인자 갱신 | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환 | 3개 변형 (`arg_churn_warn_after`) | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT |
+| 병리                | 트리거                                                                                   | WARN 이후                          | BLOCK 이후                         | hard-stop 모드 |
+| ------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- | ---------------------------------- | -------------- |
+| 완전한 실패 반복    | 동일 도구 + 동일 인자(인자 JSON을 `sort_keys`한 MD5)의 실패                              | 2 (`exact_failure_warn_after`)     | 5 (`exact_failure_block_after`)    | 5에서 HALT     |
+| 동일 도구 실패 누적 | 동일 도구가 **다른** 인자로 반복 실패                                                    | 3 (`same_tool_failure_warn_after`) | 8 (`same_tool_failure_halt_after`) | 8에서 HALT     |
+| 멱등 무진행         | 동일한 멱등 도구(메타데이터 `idempotent: true`)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 (`no_progress_warn_after`)       | 5 (`no_progress_block_after`)      | 5에서 HALT     |
+| 핑퐁                | 두 도구 사이의 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진행            | 4 (`ping_pong_warn_after`)         | 6 (`ping_pong_block_after`)        | 6에서 HALT     |
+| 인자 갱신           | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환                                     | 3개 변형 (`arg_churn_warn_after`)  | 5개 변형 (`arg_churn_block_after`) | 5에서 HALT     |
 
 - `before_agent`는 턴 단위 가드 상태를 리셋합니다(`state_register_mem`의 키 `tool_guardrail_state`) — 엄격히 턴 범위이므로 새 턴은 깨끗하게 시작합니다.
 - `wrap_tool_call`은 차단된 도구와 정지 상태를 사전 점검(실행하지 않고 오류 `ToolMessage` 반환)한 뒤 도구를 실행하고 결과를 평가합니다:
   - `warn`은 `ToolMessage`에 경고를 덧붙임;
   - `block`은 도구를 `blocked_tools`에 기록;
   - `halt`는 턴의 나머지 기간에 대한 스티키 정지를 설정(`halt_decision`).
-- **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, *precheck* 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다 — 즉석 벽이 아니라 관리되는 재시도 창입니다.
-- **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
-- `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 *차단* 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
+- **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, _precheck_ 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다 — 즉석 벽이 아니라 관리되는 재시도 창입니다.
+- **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, _연속된 두_ 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
+- `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 _차단_ 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
 
 ▶️ 전체 문서: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
 
@@ -377,6 +390,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 중단류 턴 오류(사용자 취소 / 타임아웃, `stagnation_tracker.is_abort_error`)는 절대 연속하지 않으며, 비어 있거나 전부 완료된 목록은 정체 추적기를 리셋합니다.
 - 정체 처리(`agent/tools/todolist/stagnation_tracker.py`): 여러 시도 후에도 목록이 변하지 않으면 복구 모드에 들어가 `_RECOVERY_PROMPT`를 주입합니다. `is_in_cooldown`이 반복 주입을 제한하고, 전달 성공 후에만 `mark_injected`로 기록합니다.
+- **계속 예산**: `mark_injected`가 그 turn도 세므로, 이 카운터는 실제로 **전달된** 연속 계속 turn 수입니다 (trigger가 거부한 지시 — `busy` / `already_pending` — 는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). `TODOLIST_INFRA["max_continuation_turns"]`(15)에 도달하면 게이트는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 전달하고 세션을 래치한 뒤, 자신이 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 — 이 예산과 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 검사가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 스냅샷을 계속 움직이는 경우)를 제한합니다.
 - fail-open: 예외는 로그로 남기고 턴은 정상 종료됩니다.
 - **todowrite 넛지**: 훅은 `todowrite`를 호출하지 않은 턴 수를 세고(`stagnation_tracker.record_turn` / `record_todowrite`, 그 턴에 `todowrite`를 호출하면 0으로), `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 블록을 **덧붙입니다** — 스냅샷 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다). 복구 모드는 자체의 더 강한 todowrite 안내를 가지며 넛지는 붙지 않습니다.
 
@@ -425,21 +439,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `HITLConfig` 기본값:
 
-| 파라미터 | 기본값 | 의미 |
-|---|---|---|
-| `mode` | `ApprovalMode.SMART` | `SMART` / `MANUAL` / `OFF` |
-| `timeout` | `60` | 인터럽트 결정 타임아웃 |
-| `deny_rules` | `[]` | 명시적 거부 패턴 |
-| `yolo_mode` | `False` | 모든 승인 건너뛰기 |
-| `write_approval_memory` | `False` | 메모리 도구 쓰기 게이트 |
-| `write_approval_skills` | `False` | 스킬 쓰기 게이트 |
-| `clarify_timeout` | `3600` | 명확화 질문 타임아웃 |
-| `kanban_recurrence_limit` | `3` (`BLOCK_RECURRENCE_LIMIT`) | 칸반 트리아지 전 반복 차단 한도 |
-| `mcp_reload_confirm` | `True` | MCP 서버 리로드 확인 |
-| `destructive_slash_confirm` | `True` | 파괴적 슬래시 명령 확인 |
-| `smart_approval_llm` | `None` | 스마트 자동 승인에 사용할 LLM |
-| `interrupted_tools` | `{}` | 항상 `interrupt()`를 일으키는 도구 |
-| `description_prefix` | `"Action requires human approval"` | 승인 다이얼로그 제목 접두사 |
+| 파라미터                    | 기본값                             | 의미                               |
+| --------------------------- | ---------------------------------- | ---------------------------------- |
+| `mode`                      | `ApprovalMode.SMART`               | `SMART` / `MANUAL` / `OFF`         |
+| `timeout`                   | `60`                               | 인터럽트 결정 타임아웃             |
+| `deny_rules`                | `[]`                               | 명시적 거부 패턴                   |
+| `yolo_mode`                 | `False`                            | 모든 승인 건너뛰기                 |
+| `write_approval_memory`     | `False`                            | 메모리 도구 쓰기 게이트            |
+| `write_approval_skills`     | `False`                            | 스킬 쓰기 게이트                   |
+| `clarify_timeout`           | `3600`                             | 명확화 질문 타임아웃               |
+| `kanban_recurrence_limit`   | `3` (`BLOCK_RECURRENCE_LIMIT`)     | 칸반 트리아지 전 반복 차단 한도    |
+| `mcp_reload_confirm`        | `True`                             | MCP 서버 리로드 확인               |
+| `destructive_slash_confirm` | `True`                             | 파괴적 슬래시 명령 확인            |
+| `smart_approval_llm`        | `None`                             | 스마트 자동 승인에 사용할 LLM      |
+| `interrupted_tools`         | `{}`                               | 항상 `interrupt()`를 일으키는 도구 |
+| `description_prefix`        | `"Action requires human approval"` | 승인 다이얼로그 제목 접두사        |
 
 도구 호출 승인 결정은 `ToolApprovalStore`(`approval_store.py`)를 통해 `SRC_DIR/data/approvals.json`에도 영속화됩니다: 오퍼레이터 단위로 분리된 JSON 저장소를 바이트 리비전 CAS로 갱신하므로, 승인된 `interrupted_tools` 호출은 재시작 후 다시 묻지 않습니다. 범위에 오퍼레이터가 없거나(또는 헤드리스 시스템 주입 턴) 승인이 필요한 게이트는 인터럽트 대신 자동 거부합니다.
 
@@ -454,12 +468,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 **지연 — 메시지 종류별 `messages` 테이블 도달 시점:**
 
-| 메시지 | 영속화 시점 |
-|---|---|
-| human | 그 턴의 첫 모델 경계 |
-| AI(`tool_calls` 포함) | 모델이 생성된 직후의 모델 경계 |
-| 도구 결과 | **도구 handler가 반환된 즉시**(`wrap_tool_call` / `awrap_tool_call`). 더 이상 다음 모델 호출을 기다리지 않음 |
-| HITL 거부(`HumanInTheLoop` 단락의 `status="error"` ToolMessage) | 다음 모델 경계 — HITL이 이 미들웨어를 바깥에서 감싸므로 단락은 내부 계층을 호출하지 않음 |
+| 메시지                                                          | 영속화 시점                                                                                                  |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| human                                                           | 그 턴의 첫 모델 경계                                                                                         |
+| AI(`tool_calls` 포함)                                           | 모델이 생성된 직후의 모델 경계                                                                               |
+| 도구 결과                                                       | **도구 handler가 반환된 즉시**(`wrap_tool_call` / `awrap_tool_call`). 더 이상 다음 모델 호출을 기다리지 않음 |
+| HITL 거부(`HumanInTheLoop` 단락의 `status="error"` ToolMessage) | 다음 모델 경계 — HITL이 이 미들웨어를 바깥에서 감싸므로 단락은 내부 계층을 호출하지 않음                     |
 
 **도구 반환 시 플러시:** wrap 후크는 먼저 `handler(request)`를 실행하고, 응답에서 `ToolMessage`를 추출합니다 — 응답은 단일 `ToolMessage`, `ToolMessage` / `Command`가 섞인 리스트, `Command.update["messages"]`에 메시지를 담은 `Command` 중 하나일 수 있습니다(`_iter_tool_messages`가 모두 순회). 같은 배치 파이프라인으로 영속화한 뒤 응답을 **그대로** 반환합니다. `ToolMessage`가 없는 응답(순수 내비게이션 `Command`)은 아무것도 쓰지 않습니다.
 
@@ -484,17 +498,17 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에는 등록되지 않습니다(자식 트랜스크립트는 완전한 도구 결과를 유지).
 
 **신뢰할 수 없는 도구 결과는 펜스됩니다.** 축출 후 공격자가 제어할 수 있는 도구의 결과(`web_search`——백엔드가 무엇이든 같은 하나의 도구이며 이름 변경 전의 `tavily_search`도 목록에 포함——`message_search`, 그리고 모든 `mcp_` 도구)는 `<untrusted_tool_result source="…" id="…">` 블록으로 감싸지고, 그 권고문이 내용은 지시가 아니라 데이터라고 밝힙니다. 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다. 펜스되는 것은 이 모델 표시뿐이며, 내부가 영속화한 원문은 변하지 않습니다. 스위치와 문구는 `config/features/agent_side/untrusted_output.py` 에 있습니다.
- 같은 패스가 유출되기 쉬운 도구(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`) 결과의 자격 증명도 마스킹합니다——순서는 **evict → redact → fence**. 파일 도구는 원문 그대로 두어 읽고 되쓰는 왕복이 설정을 망가뜨리지 않습니다. 스위치는 `REDACTION["tool_output_enabled"]`.
+같은 패스가 유출되기 쉬운 도구(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`) 결과의 자격 증명도 마스킹합니다——순서는 **evict → redact → fence**. 파일 도구는 원문 그대로 두어 읽고 되쓰는 왕복이 설정을 망가뜨리지 않습니다. 스위치는 `REDACTION["tool_output_enabled"]`.
 
 같은 미들웨어가 **인간 메시지** 경로(P1-9)도 담당하며, 그 삼상태 분할은 도구 쪽과 반대입니다. 아래를 참조: [인간 메시지 퇴거](#인간-메시지-퇴거p1-9).
 
 **도구 결과의 두 가지 축소 경로**
 
-| 결과 | 처리 |
-|---|---|
-| 일반 도구, 텍스트 > `evict_threshold_chars`(20 000자) | 전문을 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`에 기록하고 내용을 head/tail 미리보기로 교체 |
-| `read_file`(P2-4) | 파일은 이미 디스크에 있음 — 앞 4 000자 + 복구 안내로 슬라이스, **파일을 쓰지 않음** |
-| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | 절대 퇴거하지 않음(`excluded_tools`). `read_file`도 이 집합에 있지만 위의 슬라이스 경로를 탐 |
+| 결과                                                                                                 | 처리                                                                                                                |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 일반 도구, 텍스트 > `evict_threshold_chars`(20 000자)                                                | 전문을 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`에 기록하고 내용을 head/tail 미리보기로 교체 |
+| `read_file`(P2-4)                                                                                    | 파일은 이미 디스크에 있음 — 앞 4 000자 + 복구 안내로 슬라이스, **파일을 쓰지 않음**                                 |
+| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | 절대 퇴거하지 않음(`excluded_tools`). `read_file`도 이 집합에 있지만 위의 슬라이스 경로를 탐                        |
 
 **미리보기 형식**(`pub/func/message/eviction.py::build_preview`, `preview_head_lines=5`, `preview_tail_lines=5`):
 
@@ -514,11 +528,11 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **세 곳의 저장소**
 
-| 위치 | 내용 |
-|---|---|
-| graph state / 체크포인터 / 다음 모델 호출 | 미리보기만 |
-| MesMemory(`messages` 테이블) | 완전한 원문(안쪽 계층이 도구 반환 시 기록) |
-| `SESSIONS_DIR/<session_id>/evicted/` | 바이트 단위로 동일한 사본(`load_evicted()` / `read_file`로 회수 가능) |
+| 위치                                      | 내용                                                                  |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| graph state / 체크포인터 / 다음 모델 호출 | 미리보기만                                                            |
+| MesMemory(`messages` 테이블)              | 완전한 원문(안쪽 계층이 도구 반환 시 기록)                            |
+| `SESSIONS_DIR/<session_id>/evicted/`      | 바이트 단위로 동일한 사본(`load_evicted()` / `read_file`로 회수 가능) |
 
 **워터마크 안전성.** `model_copy`는 안쪽 플러시가 붙인 프로세스 내 `_db_persisted` 마커도 함께 가져가므로 다음 모델 경계는 미리보기를 건너뜁니다. 원문 기록이 성공한 경우 교체 메시지의 워터마크 키에도 툼스톤을 기록합니다 — 재시작으로 마커가 사라지고 미리보기 지문이 원문과 더 이상 일치하지 않는 경우를 커버합니다. 어느 경우든 같은 논리 메시지에 두 번째 행이 기록되지 않습니다. 원문 기록이 실패하면 툼스톤을 쓰지 않고 경계가 미리보기 내용으로 재시도합니다.
 
@@ -532,18 +546,18 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **트리거(`before_model` / `abefore_model`).** 게이트: `human_evict_enabled`이고 **마지막** 메시지가 `HumanMessage`이며 `lc_evicted_to`가 없고, 추출 텍스트 길이가 `human_evict_threshold_chars`(200 000자 ≒ DeepAgents 기본 50 000 토큰 × 4자/토큰)보다 **큼**. 마지막 한 건만 검사하므로 과거 사용자 발화는 다시 검사하지 않습니다. `before_agent` 체인(MultimodalProcessor)은 항상 모델 루프보다 먼저 실행되므로 태깅 시점의 텍스트에는 미디어 힌트가 이미 병합되어 있습니다. 이 미들웨어의 `before_model` 노드는 목록 순서로 `ToolCallNormalize` / `SubagentCompletionDrainMiddleware`보다 먼저 실행됩니다.
 
-**태깅 + 오프로드.** 전체 텍스트를 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|타임스탬프>.md`에 쓰고(`evict_human_message`, `pub/func/message/eviction.py`), 후크는 부분 상태 업데이트 `{"messages": [tagged]}`를 반환합니다. `tagged = msg.model_copy(update={"additional_kwargs": {..., "lc_evicted_to": str(path)}})`로 **content와 id는 불변**이며, 표준 `add_messages` reducer가 id로 제자리 교체합니다. `REMOVE_ALL_MESSAGES` 센티널도, 전체 목록 재작성도 필요 없고 state 쪽에서 프리픽스 캐시를 깨지 않습니다. `session_id`가 안전하지 않으면(빈 값 / `.` / `..` / 구분자 포함) 디스크를 건드리지 않고 건너뜁니다. 쓰기는 태깅보다 먼저 일어나므로 실패해도 dangling 포인터가 남지 않습니다. 한 줄이 거대해 미리보기가 원문보다 작지 않은 경우도 건너뜁니다(도구 쪽과 같은 가드).
+**태깅 + 오프로드.** 전체 텍스트를 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|타임스탬프>.md`에 쓰고(`evict_human_message`, `pub/func/message/eviction.py`), 후크는 부분 상태 업데이트 `{"messages": [tagged]}`를 반환합니다. `tagged = msg.model_copy(update={"additional_kwargs": {..., "lc_evicted_to": str(path)}})`로 **content와 id는 불변**이며, 표준 `add_messages` reducer가 id로 제자리 교체합니다. `REMOVE_ALL_MESSAGES` 센티널도, 전체 목록 재작성도 필요 없고 state 쪽에서 프리픽스 캐시를 깨지 않습니다. `session_id`가 안전하지 않으면(빈 값 / `.` / `..` / 구분자 포함) 디스크를 건드리지 않고 건너뜁니다. 쓰기는 태깅보다 먼저 일어나므로 실패해도 dangling 포인터가 남지 않습니다. 5+5줄 미리보기가 원문보다 작아지지 않는 페이로드는 문자 수 예산 미리보기로 폴백합니다(도구 쪽과 같은 선택기라서 개행 없는 붙여넣기도 축출됩니다).
 
 **모델 뷰(`wrap_model_call` / `awrap_model_call`).** `lc_evicted_to`가 있는 `HumanMessage`는 **해당 요청에서만** state 원문으로 만든 미리보기(`build_human_preview`)로 교체됩니다: 퇴거 경로 + head/tail 각 5줄 + `read_file(file_path=..., offset=0, limit=100)` 이어읽기 힌트. `_build_evicted_content`는 비텍스트 블록(이미지 / 오디오 / 비디오)을 그대로 유지하고 텍스트 블록만 교체합니다. 요청은 `request.override(messages=...)`로 재구성되며(Summarization과 같은 idiom) state는 절대 변경되지 않습니다. 파일이 없으면(세션 디렉터리 정리, 디스크 문제) state 원문으로 **자가 치유**하되, 대상이 해당 세션 자신의 `evicted/` 디렉터리가 아니면 쓰기를 거부합니다.
 
 **세 저장소 — 도구 결과와 반대되는 분할**
 
-| 위치 | 도구 결과(P0-2) | 인간 메시지(P1-9) |
-|---|---|---|
-| graph state / checkpointer | 미리보기만 | **전체 원문** + `lc_evicted_to` 태그 |
-| MesMemory(`messages` 테이블) | 전체 원문 | **전체 원문**(태그는 영속화를 필터링하지 않음) |
-| 다음 모델 호출(요청 뷰) | 미리보기 | 미리보기(경로 + `read_file` 힌트) |
-| `SESSIONS_DIR/<session_id>/evicted/` | 바이트 단위 동일 사본 | 바이트 단위 동일 사본 |
+| 위치                                 | 도구 결과(P0-2)       | 인간 메시지(P1-9)                              |
+| ------------------------------------ | --------------------- | ---------------------------------------------- |
+| graph state / checkpointer           | 미리보기만            | **전체 원문** + `lc_evicted_to` 태그           |
+| MesMemory(`messages` 테이블)         | 전체 원문             | **전체 원문**(태그는 영속화를 필터링하지 않음) |
+| 다음 모델 호출(요청 뷰)              | 미리보기              | 미리보기(경로 + `read_file` 힌트)              |
+| `SESSIONS_DIR/<session_id>/evicted/` | 바이트 단위 동일 사본 | 바이트 단위 동일 사본                          |
 
 차이의 이유: 인간 메시지는 턴의 첫 `after_model` 경계에서 영속화되므로 state가 전체 원문을 유지해야 MesMemory가 전문을 아카이브할 수 있습니다(그렇지 않으면 `message_search`와 압축은 미리보기만 보게 됨). 도구 결과는 안쪽 영속화 계층이 도구 반환 시 이미 플러시했으므로 state는 미리보기로 충분합니다. 인간 메시지 id는 변하지 않으므로 영속화 워터마크는 영향받지 않고 두 번째 행도 기록되지 않습니다. HITL과 도구 페어링은 `HumanMessage`와 상호작용하지 않고, P1-2 오버플로 테일 클립은 `ToolMessage`만 스텁화하며, `_filter_summary_messages`는 `lc_source='summarization'` 산출물만 제거합니다 — 어느 것도 태그나 포인터를 파괴하지 않습니다.
 
@@ -560,13 +574,13 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **`FailoverReason`별 재시도 시맨틱스**
 
-| 클래스 | 이유 | 처분 |
-|---|---|---|
-| 지터 백오프 재시도 (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | 최대 `max_retries`회 재호출. 지연 = `base_delay × 2^(attempt−1)`를 `max_delay`로 상한 적용, ±`jitter`, `[0.1, max_delay]`로 클램프 |
-| 압축 위임 (`should_compress=True`) | `context_overflow`, `payload_too_large` | 즉시 재발생 — 오버플로 오류는 Summarization의 T4/T5 복구 링이 담당 |
-| 멀티모달 스킬 폴백(`retryable=True`) | `multimodal_not_supported` | auto 모드 네이티브 시도 중에만: 메시지에 실제로 존재하는 미디어 종류를 `unsupported`로 기록하고 요청을 스킬 경로로 다시 쓴 뒤 재시도 예산을 리셋하고 재호출. 그 외에는 재발생 |
-| 폴백 (`should_fallback=True`, 재시도 불가) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | 다음 폴백 후보로 전환. 체인 소진 시 재발생 |
-| 하드 페일 | `format_error` | 재발생(재시도·폴백 없음) |
+| 클래스                                     | 이유                                                                                                                                                | 처분                                                                                                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 지터 백오프 재시도 (`retryable=True`)      | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown`                                     | 최대 `max_retries`회 재호출. 지연 = `base_delay × 2^(attempt−1)`를 `max_delay`로 상한 적용, ±`jitter`, `[0.1, max_delay]`로 클램프                                            |
+| 압축 위임 (`should_compress=True`)         | `context_overflow`, `payload_too_large`                                                                                                             | 즉시 재발생 — 오버플로 오류는 Summarization의 T4/T5 복구 링이 담당                                                                                                            |
+| 멀티모달 스킬 폴백(`retryable=True`)       | `multimodal_not_supported`                                                                                                                          | auto 모드 네이티브 시도 중에만: 메시지에 실제로 존재하는 미디어 종류를 `unsupported`로 기록하고 요청을 스킬 경로로 다시 쓴 뒤 재시도 예산을 리셋하고 재호출. 그 외에는 재발생 |
+| 폴백 (`should_fallback=True`, 재시도 불가) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | 다음 폴백 후보로 전환. 체인 소진 시 재발생                                                                                                                                    |
+| 하드 페일                                  | `format_error`                                                                                                                                      | 재발생(재시도·폴백 없음)                                                                                                                                                      |
 
 **스테일 연속 서킷 브레이커(턴 간):** timeout으로 분류된 실패마다 — 그리고 timeout 분류의 부분 스트림 스텁 재시도마다 — 세션 단위 `llm_stale_streak`(`state_register_mem` 내)가 증가하고, 성공한 handler 호출이 있으면 0으로 리셋됩니다. 연속이 `stale_giveup_threshold`에 도달하면 다음 모델 호출은 LLM을 호출하기 **전에** `RuntimeError("Provider unresponsive — aborting to avoid indefinite stall.")`를 발생시켜, 프로바이더가 계속 무응답인 악순환을 턴 간에 끊습니다.
 
@@ -599,17 +613,18 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **구조화 요약:** 보조 호출은 `with_structured_output(SummaryDoc, method="json_mode")`(`summarization/summary_doc.py`)를 통과합니다. Markdown은 문서에서 코드로 렌더링되고, cap 후 문서 본체는 AIMessage의 `additional_kwargs["summary_doc"]`에 저장됩니다(체이닝 재요약은 `<prior-summary-json>`으로 재투입). 파싱 실패는 `json_repair`, 다음으로 레거시 free-form 경로로 강등됩니다. 항목 상한은 배열 슬라이스(`completed[-5:]`, `key_decisions[-5:]`, `active_plan_notes[-20:]`, `evicted_refs[-20:]`)이며 Markdown 재파싱이 아닙니다.
 - `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **더 이상 영속화하지 않음:** 압축 경로는 MesMemory에 아무것도 쓰지 않습니다. 메시지 영속화는 각 모델 경계에서 `MessagePersistenceMiddleware`가 수행합니다; 기존 `compaction_persistence.py`의 버려진 프리픽스 플러시와 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다.
-- **압축 시점 nudge:** `schedule_compression_nudges`(`summarization/nudges.py`)가 압축마다 메모리 리뷰를 디스패치합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`로 평가됩니다. 둘 다 NUDGE 레인의 fire-and-forget 작업으로 실행됩니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. after-agent 훅은 이를 디스패치하지 않습니다.
+- **압축 시점 nudge:** `schedule_memory_review`(`summarization/nudges.py`)는 압축마다 **메모리 리뷰**만 디스패치하며, 넘기는 것은 **버려질** 메시지입니다——남길 사실이 거기에 있습니다. 기본 `cache_warm` 모드에서 `_nudge_memory`는 그 슬라이스를 **원문 그대로**, 해당 턴이 실제로 사용한 모델 구성(`_build_session_model`: 세션의 모델 오버라이드와 사고 변형, 또는 환경 기본값)으로 보내고, 세션 자신의 시스템 프롬프트와 도구 면도 재현합니다. 압축 절단은 **프리픽스 절단**이므로 `[도구][시스템 프롬프트][버려질 메시지][리뷰 지시]`가 메인 모델이 방금 처리한 요청 프리픽스를 그대로 재현합니다——제공자는 프리픽스 캐시에서 응답하고, 리뷰는 실제 원문을 읽으면서 캐시 읽기 가격만 지불하며, 새 입력은 지시 하나뿐입니다. `NUDGE["memory_review_mode"] = "digest"`는 먼저 접습니다(`digest_history`: 최근 24개는 원문, 이전은 한 줄로 절단)——캐시가 잘 안 듣는 제공자나 작은 윈도의 리뷰 모델용입니다. 가드는 여전히 두 겹입니다: 리뷰는 정확히 컨텍스트가 가장 가득 찬 순간에 실행되며, 넘겨받는 것은 버려질 슬라이스뿐(전체 대화는 결코 넘기지 않음)이고 턴을 막지 않습니다. NUDGE 레인의 fire-and-forget 작업으로 실행됩니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. 플랜 추출은 이 경로에 없습니다(플랜 완료 시 fork, 아래 참조).
 
-**Nudge 서브에이전트** (`summarization/nudges.py`, 압축 파이프라인이 디스패치): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
+**Nudge 서브에이전트** (`summarization/nudges.py`, 압축 파이프라인이 디스패치): 독립적인 `create_agent` 인스턴스로, 두 경로는 각각 다른 트리거·다른 모델·다른 도구 장벽을 가집니다:
 
-- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 사용자의 지속적 선호와 기대를 메모리 도구로 저장하는 주기적 패스.
-- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): 모든 todo가 완료될 때 한 번 발화하는 패스로, 두 가지 산출물을 생성합니다. **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다. **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(기존의 독립 스킬 리뷰 지침은 여기에 병합됨).  그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
+- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 압축 파이프라인이 발화하며 **해당 턴의 구성에서 재구축한 메인 모델**(`_build_session_model`, 위의 cache_warm 이음새)을 쓰고, 도구 면은 세션의 전체 면입니다; 그래프는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`를 지니며, `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 도구를 거부하므로 리뷰가 **실행**할 수 있는 것은 마커된 집합(`memory`, `knowledge`, `question`, 플랜 모드)뿐입니다. 전체 면은 프리픽스 캐시 일치를 위한 것이고, 게이트가 실행 장벽입니다. 스킬 3종은 **의도적으로 미마커**——여기서 스킬 추출이 일어날 수 없습니다.
+- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): **플랜 완료** 훅(`PlanContinuationEnforcer.aafter_agent` → `maybe_trigger_plan_extraction`)이 발화하며 **보조 모델**(`_create_plan_extraction_agent`, `temperature=0`)을 쓰고 **대화를 전혀 받지 않습니다**——지시문과 plan context뿐입니다. 도구 면은 **명시적으로 바인딩**되어 있으며——`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`(`_extraction_tool_face`; `memory`는 Part 3의 FACTS.md 기록 경로)——바인딩 목록 자체가 장벽이고 스킬 쓰기는 이 경로만 담당합니다. 두 가지 산출물: **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다; **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(`<module>-notes` 승계 포함). 그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
+- **플랜 추출 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: 세션별 `Summarization → nudge` 스위치, `NUDGE["plan_extraction_enabled"]`, `nudge_plan_extraction_lock`, 실행 중인 이벤트 루프.
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
 ▶️ 전체 문서: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
 
-> 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. *실제 등록된* 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
+> 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. _실제 등록된_ 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
 
 ### MaxTokensBoostMiddleware
 
@@ -652,6 +667,46 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
   청크/바이트 수와 첫 청크까지의 시간을 집계해 재발생되는 예외에 요약을 덧붙입니다 —
   위의 미들웨어 수준 복구를 보완하는 관측성입니다.
 
+### InvalidToolCallRepairMiddleware
+
+**모듈:** `agent/middlewares/invalid_tool_call_repair/core.py` · **클래스:** `InvalidToolCallRepairMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+**인자(JSON) 파싱에 실패한 도구 호출**을 구제합니다. `langchain_core`의
+`default_tool_parser`는 그런 호출을 `AIMessage.invalid_tool_calls`에 넣고(`args`는 원본
+문자열, `error=None`) `tool_calls`는 비워 둡니다——에이전트 루프는 `tool_calls`만 보고
+라우팅하므로, "유일한 호출이 무효"인 메시지는 호출 없는 최종 답변으로 보여 **턴이 조용히
+끝납니다**(SWE-bench 실행 `20261017_003529`: 모델의 `terminal` 호출은 셸 명령에 따옴표가
+빠져 있었고, 턴은 14.7초 만에 종료되고 편집은 0건이었습니다. 그런데도 모델 자신의 본문은
+"계속 확인하겠다"고 말하고 있었습니다).
+
+`_build_middlewares`의 **마지막**에 등록됩니다——즉 `wrap_model_call`의 최내곽, 원시 모델
+호출에 가장 가까운 위치입니다. 따라서 그래프 상태, checkpointer,
+`MessagePersistenceMiddleware`가 모두 복구된 메시지를 봅니다. 모든 바깥 재시도
+(LLMRetry / Summarization T4-T5)가 이 계층을 다시 통과하며, 복구는 멱등입니다.
+
+- **복구(구문만, `repair.py`)**: 끝의 따옴표 없는 문자열 값
+  (`{"commands": cd /repo && git log}`)은 **바이트 단위로 동일하게** 따옴표를 붙이고,
+  꼬리 쉼표는 문자열을 인식해 제거합니다. 모호한 형태(중간 값이 따옴표 없음, 값이 `{` /
+  `[` / `true` 같은 JSON 토큰으로 시작, 삼켜진 값 안에 `"k":` 형태 키가 존재)는 모두
+  거부합니다. 복구된 호출은 원래 `id`/`name`을 유지한 채 `tool_calls`에 들어가므로,
+  클라이언트가 이미 받은 `tool_start` 프레임이 실행 결과와 짝을 이루고 도구 카드가
+  정리됩니다. 잘림형 실패(`finish_reason`이 `length` / `max_tokens`)는
+  `MaxTokensBoostMiddleware`에 맡깁니다——거기서의 올바른 복구는 예산을 올린 재호출이지
+  따옴표 보정이 아닙니다.
+- **재전송(상한 있음)**: 복구가 실패하고 유효한 호출이 남지 않았을 때——턴이 끝나버리는
+  유일한 형태——수정용 `HumanMessage`를 **이번 요청에만** 덧붙여 모델을 재호출합니다
+  (`request.override`, state에 넣지 않고 영속화도 하지 않음). 상한은
+  `INVALID_TOOL_CALL["resend_max_retries"]`(2, 0이면 비활성). 재전송 전에는
+  `MaxTokensBoostMiddleware`와 같은 방식으로 스트리밍 callbacks를 제거하므로 복구된
+  토큰이 두 번 전송되지 않습니다.
+- **어떤 게이트도 우회하지 않음**: 복구된 호출은 여느 호출과 같이 `wrap_tool_call`
+  체인 전체(ToolGuardrails / PathGuard / HITL / sandbox)를 통과합니다.
+- **상시 켜짐, 두 체인**: `scaffolding._MAIN_REQUIRED`(프리셋-미들웨어 화면에서 잠금
+  표시)와 `scaffolding._SUBAGENT_REQUIRED`(자식도 최내곽에 보유)의 일원입니다. 복구할 수
+  없는 항목은 WARNING 로그(원본 args 미리보기는 `INVALID_TOOL_CALL["log_args_chars"]`로
+  상한)와 `invalid_tool_call` trajectory 이벤트로 기록됩니다.
+
 ### ThinkingControlMiddleware
 
 **모듈:** `agent/middlewares/thinking_control/core.py` · **클래스:** `ThinkingControlMiddleware(AgentMiddleware)`
@@ -666,9 +721,25 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 - 불리언 플래그 → 사고 온/오프 변형. 설정이 없으면 요청은 그대로 통과하며
   `MAIN_LLM_ENABLE_THINKING` 환경변수 기본값이 적용됩니다;
-- `"low"` / `"high"` / `"max"` → 항상 사고하는 모델(스위치가 아닌 셀렉터)을 위한
-  명시적 레벨. `thinking_control_mode()`는 glm-5 시리즈에 `"levels"`, 그 외에는
+- **일곱 개 레벨 토큰**(`off` / `minimal` / `low` / `medium` / `high` /
+  `xhigh` / `max`, 공유 `EXTENDED_THINKING_LEVELS` 열거) 중 아무거나 →
+  명시적 레벨. 레벨은 이제 **선언적**입니다: `models/LLMs/reasoning_payload.py`가
+  per-model 맵(pi 스타일 `thinkingLevelMap` + `thinkingFormat`)으로 해석하고
+  모델이 실제로 받는 가장 가까운 레벨로 **클램프**합니다——클라이언트 피커는
+  `GET /sessions/thinking`이 돌려주는 `levels` 목록으로 구동되므로, 지원하지
+  않는 값은 애초에 전송되지 않습니다(옛 동작: 보내고 400으로 배움).
+  `thinking_control_mode()`는 여전히 glm-5 시리즈에 `"levels"`, 그 외에는
   `"on_off"`를 보고합니다.
+  세션은 **사용자 지정 wire 매핑**(`PUT /sessions/thinking/custom`:
+  `{wire_field, wire_format, level_map, thinking_budgets?}`)을 가질 수 있습니다——내장
+  형식이 다루지 못하는 제공자를 위한 탈출구입니다. 선언적 맵을 완전히 덮어쓰고, API
+  경계에서 검증되며(소문자 점 경로, 영숫자 값, 최소 한 레벨 선언, 예산은 양수이고
+  컨텍스트 창 미만), 다른 세션 단위 제어와 같이 park/promote되고, 모델 호출 변형과
+  메모리 리뷰의 cache-warm 재구축 모두에 도달합니다. Anthropic에는 adaptive 분기
+  (4.5+/4.6은 `thinking.type: "adaptive"` + `output_config.effort`, 이전 모델은 토큰
+  예산)를 추가하고, Bedrock은 Claude(`additional_model_request_fields`)와
+  GPT(`reasoning_effort`)를 모델명으로 분기하며, 사고 여유분은
+  `REASONING_BUDGET["thinking_budgets"]`로 레벨별로 조정됩니다.
 
 비활성화 사다리: 서버 기본값이 사고 켜짐인 게이트웨이에는 명시적 disable
 페이로드가 필요하지만, 항상 사고하는 모델(glm-5 시리즈, 2026-09 실측:
@@ -700,6 +771,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
   - 2–10자의 짧은 구문이 ≥ 5회 반복.
 
   내부 경고는 라벨별로 세션당 1회만 발화합니다.
+
 - `_MIN_CONTENT_LENGTH = 20`자 미만의 내용은 건너뜀. 도구 호출을 포함한 모델 응답은 통째로 건너뜁니다(도구 루프 후에 재점검).
 - **추론 내용은 별도 추적**됩니다(`additional_kwargs`의 `reasoning_content` / `reasoning` / `reasoning_text`, 그리고 가시 내용에서 추출·제거되는 인라인 `<think>` / `<thinking>` / `<reasoning>` 블록).
 
@@ -725,32 +797,33 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 
 호출 간 모든 미들웨어 상태는 세션 단위로, 두 개의 레지스터와 타이머 레지스트리에 보관됩니다:
 
-| 레지스터 | 백엔드 | 비고 |
-|---|---|---|
-| `state_register_mem` (`StateRegisterMeM`) | 인메모리 딕셔너리 | 휘발성. `_initialized` 가드로 프로세스 시작 시 1회만 리셋 |
-| `state_register_db` (`StateRegisterDB`) | SQLite (`src/data/state_register.db`) | 재시작 후에도 유지. `clear_session` 미지원(`False` 반환), `get_all_session_ids` 제공 |
-| `timer_call_register` (`TimerCallRegister`) | asyncio 타이머 | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)` |
+| 레지스터                                    | 백엔드                                | 비고                                                                                 |
+| ------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------ |
+| `state_register_mem` (`StateRegisterMeM`)   | 인메모리 딕셔너리                     | 휘발성. `_initialized` 가드로 프로세스 시작 시 1회만 리셋                            |
+| `state_register_db` (`StateRegisterDB`)     | SQLite (`src/data/state_register.db`) | 재시작 후에도 유지. `clear_session` 미지원(`False` 반환), `get_all_session_ids` 제공 |
+| `timer_call_register` (`TimerCallRegister`) | asyncio 타이머                        | `register(session_id, name, callback, args, minutes 1–60, execute_now=False)`        |
 
 공통 인터페이스(`runtime/session/state_register.py`): `set_state`, `get_state`, `get_all_states`, `delete_state`, `clear_session`, `has_session`, `has_key`, `update_states`.
 
 ### 네임스페이스 컨벤션
 
-| 키 | 소유자 | 레지스터 |
-|---|---|---|
-| `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_plan_extraction_fired` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | db |
-| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | mem |
-| `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
-| `tool_guardrail_state` | ToolGuardrails | mem |
-| `summarization_*` 키(압축 카운터, 무효 연속, 마지막 토큰/전략, 스킵 LLM 플래그, 복구 상태, 마지막 사용자 질문) | Summarization | mem |
-| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
-| OutputRepetitionGuard 키(`SESSION_STATE_KEYS`, 6개) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
-| `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
-| `_multimodal_trying_native`, `_multimodal_native_model` | MultimodalProcessor(기록) → LLMRetryMiddleware(소비) | mem |
-| `llm_content_filter_blocked`, `llm_content_filter_terminated` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
-| `llm_partial_stream_stub`, `llm_partial_stream_cause` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
-| `summarization_force_recovery` | ContextLimitGuardWrapper(기록) → Summarization(소비) | mem |
-| `hitl:` 접두사 키(`_STATE_PREFIX = "hitl"`) | HumanInTheLoop | mem |
+| 키                                                                                                                                          | 소유자                                                                             | 레지스터 |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------- |
+| `system_prompt`                                                                                                                             | system_prompt_injection / Summarization                                            | mem + db |
+| `nudge_plan_extraction_fired`                                                                                                               | 플랜 완료 트리거 (PlanContinuationEnforcer → `summarization/nudges.py`)            | db       |
+| `nudge_plan_snapshot_hash`                                                                                                                  | 플랜 완료 트리거——마지막으로 추출한 플랜의 지문 (id + content + status + plan_ref) | db       |
+| `nudge_review_memory_lock`, `nudge_plan_extraction_lock`                                                                                    | nudge fork (압축 메모리 리뷰 / 플랜 완료 추출)                                     | mem      |
+| `iteration_budget`, `iteration_budget_used`                                                                                                 | IterationBudget                                                                    | mem      |
+| `tool_guardrail_state`                                                                                                                      | ToolGuardrails                                                                     | mem      |
+| `summarization_*` 키(압축 카운터, 무효 연속, 마지막 토큰/전략, 스킵 LLM 플래그, 복구 상태, 마지막 사용자 질문)                              | Summarization                                                                      | mem      |
+| `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness                                                                 | mem      |
+| OutputRepetitionGuard 키(`SESSION_STATE_KEYS`, 6개)                                                                                         | OutputRepetitionGuard / RepetitionGuardWrapper                                     | mem      |
+| `llm_stale_streak`, `llm_fallback_index`                                                                                                    | LLMRetryMiddleware                                                                 | mem      |
+| `_multimodal_trying_native`, `_multimodal_native_model`                                                                                     | MultimodalProcessor(기록) → LLMRetryMiddleware(소비)                               | mem      |
+| `llm_content_filter_blocked`, `llm_content_filter_terminated`                                                                               | 스트림 계층(기록) → LLMRetryMiddleware(소비)                                       | mem      |
+| `llm_partial_stream_stub`, `llm_partial_stream_cause`                                                                                       | 스트림 계층(기록) → LLMRetryMiddleware(소비)                                       | mem      |
+| `summarization_force_recovery`                                                                                                              | ContextLimitGuardWrapper(기록) → Summarization(소비)                               | mem      |
+| `hitl:` 접두사 키(`_STATE_PREFIX = "hitl"`)                                                                                                 | HumanInTheLoop                                                                     | mem      |
 
 ---
 
@@ -758,28 +831,28 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 
 ### 환경 변수와 설정 노브
 
-| 노브 | 위치 | 효과 |
-|---|---|---|
-| `MAIN_LLM_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`와 `ContextLimitGuardWrapper.context_window`로도 전달. 131072 (128K) 이상이어야 합니다: token guard가 시작 및 그래프 구축 시 차단합니다 |
-| `MAIN_LLM_OUTPUT_MAX_TOKEN` | `.env` → `models/LLMs/main_llm.py` | 출력 토큰 예산(기본 8192): MaxTokensBoost 부스트 base의 레이어 2, 추론 예산 부풀림이 더해지는 베이스 |
-| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()` | `LLMRetryMiddleware`의 모델 폴백 체인 후보(i = 1…, 처음 `NAME`이 빠진 지점에서 중단) |
+| 노브                                                | 위치                               | 효과                                                                                                                                                                                                        |
+| --------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`와 `ContextLimitGuardWrapper.context_window`로도 전달. 131072 (128K) 이상이어야 합니다: token guard가 시작 및 그래프 구축 시 차단합니다 |
+| `MAIN_LLM_OUTPUT_MAX_TOKEN`                         | `.env` → `models/LLMs/main_llm.py` | 출력 토큰 예산(기본 8192): MaxTokensBoost 부스트 base의 레이어 2, 추론 예산 부풀림이 더해지는 베이스                                                                                                        |
+| `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()`  | `LLMRetryMiddleware`의 모델 폴백 체인 후보(i = 1…, 처음 `NAME`이 빠진 지점에서 중단)                                                                                                                        |
 
 ### 기능 설정 (`config/features/agent_side/`)
 
 미들웨어 튜닝은 객체별 TypedDict 모듈에 있습니다 — 환경 변수는 위 표의 두 LLM 예산만 공급합니다. 이 계층이 소비하는 노브:
 
-| 모듈 | 노브 |
-|---|---|
-| `iteration_budget.py` | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50` |
-| `media_pipeline.py` | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
-| `summarization.py` | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/nudges.py`가 읽는 보존/시도/쿨다운/임계값 상수 |
-| `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000` |
-| `tool_guardrails.py` | ToolGuardrails 섹션에 나열된 다섯 병리 임계값과 복구 기본값 |
-| `heartbeat_staleness.py` | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20` |
-| `repetition_guard.py` | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30` |
-| `max_tokens_boost.py` | `base_max_tokens`(`MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3` |
-| `llm_retry.py` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` |
-| `context_guard.py` | `output_cut_ratio=0.20`, `check_interval=20` |
+| 모듈                      | 노브                                                                                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                                           |
+| `media_pipeline.py`       | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
+| `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/nudges.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
+| `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                         |
+| `tool_guardrails.py`      | ToolGuardrails 섹션에 나열된 다섯 병리 임계값과 복구 기본값                                                                                                                                                       |
+| `heartbeat_staleness.py`  | `heartbeat_interval_minutes=1`, `stale_cycles_idle=7`, `stale_cycles_in_tool=20`                                                                                                                                  |
+| `repetition_guard.py`     | `max_identical_outputs=3`, `warn_after=2`, `internal_repeat_ratio=0.6`, `internal_min_lines=6`, `char_run_min=8`, `tail_chars=500`, `max_history=30`                                                              |
+| `max_tokens_boost.py`     | `base_max_tokens`(`MAIN_LLM_OUTPUT_MAX_TOKEN`, 기본 8192), `default_max_tokens=8192`, `max_cap=32 768`, `max_retries=3`                                                                                           |
+| `llm_retry.py`            | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                     |
+| `context_guard.py`        | `output_cut_ratio=0.20`, `check_interval=20`                                                                                                                                                                      |
 
 > **관련되지만 독립적:** 도구별 타임아웃은 기능 레지스트리에 묶인 모듈 상수입니다(`config/features/agent_side/tools_timeouts.py`의 `TOOLS_TIMEOUTS`) — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `TOOL_CALL_TIMEOUT_MINUTES`(기본 5)는 `sherry.jsonc` 설정으로 `config/sherry_settings.py`를 거쳐 설정 서비스에 노출되지만, **이를 소비하는 도구 실행 경로는 없습니다** — 유효한 타임아웃 노브가 아닙니다. 요약 파이프라인은 `config/features/agent_side/summarization.py`에서 상수를 읽습니다.
 
@@ -814,7 +887,7 @@ agent = create_agent(
         PathGuard(),  # 경로 인자 스크리닝
         HeartbeatStaleness(),  # 멈춘 턴 워치독
         HumanInTheLoop(HITLConfig()),  # 승인 게이트
-        Summarization(  # 컨텍스트 압축 (최내곽)
+        Summarization(  # 컨텍스트 압축 (안쪽, InvalidToolCallRepair 바깥)
             need_update_system_prompt=True,
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,
@@ -826,20 +899,20 @@ agent = create_agent(
 
 ### 미들웨어별 파라미터
 
-| 미들웨어 | 파라미터 | 기본값 | 등록값 |
-|---|---|---|---|
-| `IterationBudget` | `max_iterations` | `50` | `90`(메인) / `60`(워커) |
-| `Summarization` | `need_update_system_prompt` | `False` | `True`(메인) |
-| `Summarization` | `model` | 필수 | `auxiliary_llm` |
-| `Summarization` | `main_llm_context_window` | 필수 | `main_llm_max_tokens` |
-| `Summarization` | `trigger` | 필수 | [미들웨어 체인](#미들웨어-체인) 참조 |
-| `Summarization` | `keep` | 필수 | `("messages", 10)`(받아들이지만 미사용) |
-| `ToolGuardrails` | `config: ToolCallGuardrailConfig` | 위 기본값 | 기본값 |
-| `HumanInTheLoop` | `config: HITLConfig` | 위 기본값 | 기본값 |
-| `HeartbeatStaleness` | (기본) | 주기 1분, 아이들 7 / 도구 내 20 | 기본값 |
-| `OutputRepetitionGuard` | (기본) | 3 / 2 / 0.6 / 6 / 8 | 기본값 |
-| `MaxTokensBoostMiddleware` | (환경 변수) | base: 요청 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`(8192) → 8192, 상한 32768, 3회 재시도 | 기본값 |
-| `LLMRetryMiddleware` | `config: LLMRetryConfig` | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | 기본값 (+ `FALLBACK_LLM_*` 기반 `fallback_chain`) |
+| 미들웨어                   | 파라미터                          | 기본값                                                                                        | 등록값                                            |
+| -------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `IterationBudget`          | `max_iterations`                  | `50`                                                                                          | `90`(메인) / `60`(워커)                           |
+| `Summarization`            | `need_update_system_prompt`       | `False`                                                                                       | `True`(메인)                                      |
+| `Summarization`            | `model`                           | 필수                                                                                          | `auxiliary_llm`                                   |
+| `Summarization`            | `main_llm_context_window`         | 필수                                                                                          | `main_llm_max_tokens`                             |
+| `Summarization`            | `trigger`                         | 필수                                                                                          | [미들웨어 체인](#미들웨어-체인) 참조              |
+| `Summarization`            | `keep`                            | 필수                                                                                          | `("messages", 10)`(받아들이지만 미사용)           |
+| `ToolGuardrails`           | `config: ToolCallGuardrailConfig` | 위 기본값                                                                                     | 기본값                                            |
+| `HumanInTheLoop`           | `config: HITLConfig`              | 위 기본값                                                                                     | 기본값                                            |
+| `HeartbeatStaleness`       | (기본)                            | 주기 1분, 아이들 7 / 도구 내 20                                                               | 기본값                                            |
+| `OutputRepetitionGuard`    | (기본)                            | 3 / 2 / 0.6 / 6 / 8                                                                           | 기본값                                            |
+| `MaxTokensBoostMiddleware` | (환경 변수)                       | base: 요청 `max_tokens` → `MAIN_LLM_OUTPUT_MAX_TOKEN`(8192) → 8192, 상한 32768, 3회 재시도    | 기본값                                            |
+| `LLMRetryMiddleware`       | `config: LLMRetryConfig`          | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5` | 기본값 (+ `FALLBACK_LLM_*` 기반 `fallback_chain`) |
 
 ---
 

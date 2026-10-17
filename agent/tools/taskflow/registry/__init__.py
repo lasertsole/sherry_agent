@@ -13,6 +13,7 @@ from .store_sqlite import (
     get_all_flows_sync,
     get_flow,
     get_flow_sync,
+    mark_flow_superseded,
     update_flow,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "get_all_flows_sync",
     "get_flow",
     "get_flow_sync",
+    "mark_flow_superseded",
     "update_flow",
 ]

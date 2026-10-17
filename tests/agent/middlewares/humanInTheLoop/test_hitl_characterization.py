@@ -11,7 +11,7 @@ Tag legend (grep-able, one tag per test — MANDATORY):
 
 Coverage map (plan Task 5, 6 items):
 1. terminal blacklist is ELEMENT-EXACT matching (defect) ....... test_terminal_blacklist_*
-2. ShellInput validator normalizes str -> list ................ test_shell_input_validator_*
+2. SafeShellInput validator normalizes str -> list ............ test_shell_input_validator_*
 3. python_repl _REPL_WRAPPER simple execution ................. test_python_repl_*
 4. HITL flow (check_command call site, hardline deny, YOLO-off
    interrupt, YOLO-on pass, python_repl not intercepted) ....... test_check_command_*, test_hardline_*,
@@ -43,7 +43,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import ToolException, tool
-from langchain_community.tools.shell.tool import ShellInput
+from agent.tools.terminal import SafeShellInput
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
@@ -56,7 +56,7 @@ from agent.middlewares.humanInTheLoop import (
 from agent.tools.python_repl import TimedPythonREPLTool, build_python_repl_tool
 from agent.tools.terminal import SafeShellTool, build_terminal_tool
 
-pytestmark = [  # The upstream ShellInput validator warns on every validation; keep output clean.
+pytestmark = [  # The input validator warns on every validation; keep the output clean.
     pytest.mark.filterwarnings("ignore:The shell tool has no safeguards"),
     pytest.mark.module,
 ]
@@ -148,14 +148,15 @@ class TestTerminalBlacklist:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Coverage 2 — ShellInput validator: str -> list normalization
+# Coverage 2 — SafeShellInput validator: str -> list normalization
 # ─────────────────────────────────────────────────────────────────────────────
 def test_shell_input_validator_normalizes_str_to_list(monkeypatch):
-    # # PRESERVE — langchain_community ShellInput model_validator(mode="before")
-    # wraps any non-list ``commands`` into a single-element list; an already-list
-    # value is kept as-is (no splitting). SafeShellTool inherits this schema.
-    assert ShellInput(commands="ls -la").commands == ["ls -la"]
-    assert ShellInput(commands=["ls -la"]).commands == ["ls -la"]  # list stays intact
+    # # PRESERVE — the local SafeShellInput reproduces the archived
+    # langchain_community ShellInput validator (model_validator(mode="before")):
+    # any non-list ``commands`` becomes a single-element list; an already-list
+    # value is kept as-is (no splitting).
+    assert SafeShellInput(commands="ls -la").commands == ["ls -la"]
+    assert SafeShellInput(commands=["ls -la"]).commands == ["ls -la"]  # list stays intact
 
     # End-to-end through the tool invocation path: _run receives a list.
     captured: list = []

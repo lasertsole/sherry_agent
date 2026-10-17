@@ -19,6 +19,7 @@
 - [并行步骤执行](#并行步骤执行)
 - [幂等恢复](#幂等恢复)
 - [带已派生子代理的冲突重试](#带已派生子代理的冲突重试)
+- [血缘指针](#血缘指针)
 - [持久化与连接生命周期](#持久化与连接生命周期)
 - [已知限制](#已知限制)
 
@@ -107,7 +108,7 @@ blocked → ready → dispatched → done
 | `skipped`     | 声明 `step_outcome="skipped"`，或某个依赖被跳过/取消（跳过会向下级联）        | （此步骤的终态）                                             |
 | `cancelled`   | `taskflow_cancel` 在该步骤完成前取消了整个流                                  | （此步骤的终态）                                             |
 
-> `done` 表示"结果已注入，且该步骤配置的质量门全部通过"——在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义"已注入结果"，因此调用方不声明 `step_outcome="failure"` 时，失败的子代理仍可能落到 `done`。
+> `done` 表示"结果已注入，且该步骤配置的质量门全部通过"——在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义"已注入结果"，因此调用方不声明 `step_outcome="failure"` 时，失败的子代理仍可能落到 `done`。 完整规则与每道门各自的作用见[判断门](../gates/README.zh.md)。
 >
 > `failed`、`skipped`、`cancelled` 都不会解锁依赖者：`failed` 的依赖会让依赖者保持 `blocked`（失败不能被静默跳过），而 `skipped`/`cancelled` 的依赖会把 `skipped` 级联给依赖者，让死分支就地结束而不是让整个流永远等待。
 
@@ -148,10 +149,15 @@ blocked → ready → dispatched → done
 ### taskflow_create
 
 ```python
-async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None) -> str
+async def taskflow_create(flow_id: str, description: str = "", initial_state: dict | None = None,
+                         deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
 创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。如果 id 已被占用则抛出 `FlowExistsError`（返回错误字符串，含当前版本号以便重读）。
+
+当新流**取代**旧流时传 `resumed_from=<前驱 flow_id>`：新流记录 `resumed_from`，前驱被盖上 `superseded_by` —— 见[血缘指针](#血缘指针)。未知的前驱在创建任何东西之前就被拒绝；自引用同样被拒绝。
+
+资源上限（在此强制，超限返回 `Error:` 文本）：单个流最多 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）步；单个会话最多 `TASKFLOW_INFRA["max_flows_per_session"]`（20）个**活跃**流——只计 running/waiting，完成或取消的流会释放名额（被取代的流同样释放）。`taskflow_plan` 在花费 planner 调用之前应用同一流数上限。
 
 ### taskflow_run_task
 
@@ -225,19 +231,15 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
 ) -> str
 ```
 
 把已完成的子会话结果注入流状态（幂等）。向 results 追加 `{child_session_key, result, result_hash, injected_at, step_id, schema_validated}`（已知时还包括 `structured_result` / `step_outcome`）。若流处于 `waiting`，则回到 `running`。
 
-**执行顺序**（每道门都按步骤可选，且串联）：
+**执行顺序** —— 各道门串联、且每个都按步骤可选：`retry_policy`（分类出的失败，或 `schema_validated=false`，在**任何判别调用之前**把步骤重新派发到替换子代理）→ `response_schema`（Tier 1，免费校验；未通过即 `schema_error` 重试）→ `judge_criteria` / `validation_criteria`（Tier 2，辅助 LLM 判别）→ 调用方声明的 `step_outcome`，它压倒以上全部。判定取值、预算、证据感知的判别提示词、fail-open 规则与 `done` 的真实含义，统一记录在[判断门](../gates/README.zh.md)。
 
-1. **失败重试** —— 步骤带 `retry_policy` 且结果属于失败时，用替换子代理重新派发而不是就此结案。失败信号既有分类出的结果文本，也有 `schema_validated=false`：声明了 schema 却结构不合格，是文本分类看不见的失败，会在这里重派——**早于**任何判别器调用，因此坏结构不会消耗判别 token。
-2. **Tier 1 —— 结构。** 步骤带 `response_schema` 时，用结果（调用方传入的 `structured_result`，否则把 `result` 解析为 JSON）对照校验，并把结论记录到结果条目。失败且重试预算耗尽时把步骤标为 `failed`，`fail_reason` 写入 schema 错误；通过则继续 Tier 2——结构正确不代表内容正确。
-3. **Tier 2 —— 语义。** 步骤带 `judge_criteria`（或旧版 `validation_criteria`）时，由 auxiliary-LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）评审结果——有已校验的 `structured_result` 就用它，否则用结果文本——返回 `pass` / `retry` / `block`。`retry` 走共享 `_retry` 缝隙重派，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器的指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标为 `blocked` 并记录理由。判别器会看到流的证据摘要，且是 fail-open——模型报错或输出无法解析都退化为 `pass`。
-4. **调用方声明的结果。** `step_outcome` 优先于两道门：`failure` 直接标 `failed` 且不调用判别器，`skipped` 标 `skipped`，`success` / `partial` 只做记录而两道门照常运行。非法取值在任何状态变更之前就被拒绝。
-
-**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。**resume 永不派发**新就绪的步骤——由调用方显式 `taskflow_dispatch`。
+**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时新就绪的波次会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_resume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_dispatch`。
 ### taskflow_set_waiting
 
 ```python
@@ -305,7 +307,9 @@ async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int
 
 终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话会继续运行；在流被取消之前，它们的结果仍可通过 `taskflow_resume` 送达。
 
-`finish` 按顺序用四道检查把守 DONE 转换：**A** 每个步骤都是 `done` 或 `blocked`；**B** 不能留下未解决的步骤——`failed`、`skipped`、`cancelled` 的步骤会带 id 与记录的原因被报出（它们需要调用方决策：resume、retry 或 cancel），`blocked` 的步骤同理；**C** 流的证据（`agent/tools/taskflow/evidence_collector.py`）中没有 `FAIL`、也没有 `[stale]` 行；**D** `SisyphusVerifier` 通过——仅在调用方同时给出 `todo` 与 `plan_path` 时执行，因此不需要任何 flow/step schema 迁移。每道门都是 fail-open：证据收集器不可用或校验器报错都会放行而不是挡住完成。
+`finish` 按顺序用四项检查把守 DONE 转换——**A** 每个步骤都是 `done` 或 `blocked`；**B** 不留未决步骤（`failed`、`skipped`、`cancelled`、`blocked` 的步骤按 id 附原因报出）；**C** 流程证据中没有 `FAIL`、也没有 `[stale]` 行；**E** 可选的目标准入门（流程步骤数达到 `GOAL_GATE["min_steps"]`（3）及以上）。每道门都 fail-open；拒绝文本与目标门的契约记录在[判断门](../gates/README.zh.md)。
+
+
 
 `cancel` 会把所有未完成的步骤标为 `cancelled`（连同取消原因）再翻转流终态，这样流终结后步骤状态不会继续声称 `ready` / `dispatched` / `blocked`。
 ---
@@ -356,7 +360,11 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ### 批量派发（`taskflow_dispatch`）
 
-在任何 spawn 之前验证整个批次（全有或全无）。通过共享 `_dispatch.dispatch_child` 接缝顺序 spawn。批量中途 spawn 失败时停止批量，并在一次 `update_flow` 调用中持久化已成功的 spawn。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。
+在任何 spawn 之前验证整个批次（全有或全无）。随后整个批次通过共享 `_dispatch.dispatch_child` 接缝**并发** spawn，并发上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（默认 2：SUBAGENT 泳道才是全局背压，这个上限只决定同时有多少个 spawn 调用在途）。单个 spawn 失败不再中止兄弟步骤——每个成功的子代理都会在一次 `update_flow` 调用中持久化，每个失败的步骤 id 都会出现在应答里（`Error: dispatch failed for step_id(s) …; dispatched=[…]`）。`apply_dispatched_steps()` 辅助函数将已记录的已派发步骤载荷重新应用到新读取的步骤列表上，按 `step_id` 匹配——已 spawn 的子代理不会因并发写入重写步骤列表而丢失。`max_parallel_dispatch = 1` 精确还原历史上的顺序行为。
+
+### 自动派发波次（`taskflow_resume`）
+
+解锁了依赖者的 resume 会顺带把它们启动起来（`auto_dispatch=True`，默认值）：新就绪的波次通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn，且 spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_dispatch` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试。由于解锁集合来自**实际持久化**的状态，两个完成事件争抢解锁同一步骤时只会 spawn 一次。
 
 ### 有界轮询等待（`taskflow_wait_all`）
 
@@ -389,6 +397,21 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ---
 
+## 血缘指针
+
+`task_flows` 上两个可空列记录流的演进（`resumed_from TEXT`、`superseded_by TEXT`，与 token 列相同的增量迁移模式——旧库在下次打开时收敛，其行读作 NULL）：
+
+| 列 | 写入时机 | 含义 |
+| -- | -------- | ---- |
+| `resumed_from` | 流创建时（`taskflow_create(resumed_from=…)`） | 本流延续的前驱 flow_id |
+| `superseded_by` | 后继创建时，盖到前驱上 | 取代本流的后继 flow_id |
+
+写入点是**创建**路径，而不是 `taskflow_replan`：replan 在**原地**重生成流的剩余步骤（对同一 `flow_id` 走 `update_flow_with_conflict_retry`），从不分叉新流，也就没有血缘可记。`taskflow_finish` 从不触碰这两列——完成是终态，不是取代。
+
+后果：`get_active_flows_sync` 会排除被取代的流，即便其状态仍是 `running`/`waiting`（续跑 enforcer、进度面板与会话级流数上限都走这个读口），而 `get_all_flows_sync(session_id, "all")` 仍会带着反向指针展示它——历史视图保留它。`taskflow_summary` 渲染两个指针（`resumed_from: …`、`superseded_by: …`）。反向指针的写入是普通的会话级 UPDATE，**刻意不递增** `expected_revision`：血缘是元数据，不能让持有前驱版本号的调用方失效。
+
+---
+
 ## 持久化与连接生命周期
 
 `store_sqlite.py` 映射子代理注册表蓝图：
@@ -404,6 +427,6 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ## 已知限制
 
-- **`done` ≠ 成功**：步骤 `done` 表示"结果已注入**且该步骤配置的质量门全部通过**"。在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义，因此除非调用方声明 `step_outcome="failure"`，失败的子代理仍会落到 `done`。要让闭环接住失败：声明期望（`response_schema` 的校验是免费的，且在判别调用之前执行）或声明结果；`failed` 会让依赖者保持阻塞，而 `retry_policy` 仍在预算内重新派发已结束的子代理（判别器对 `block` 判定或预算耗尽依旧标记 `blocked`）。
+- **`done` ≠ 成功**：步骤 `done` 表示"结果已注入**且该步骤配置的质量门全部通过**"。在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义，因此除非调用方声明 `step_outcome="failure"`，失败的子代理仍会落到 `done`。要让闭环接住失败：声明期望（`response_schema` 的校验是免费的，且在判别调用之前执行）或声明结果；`failed` 会让依赖者保持阻塞，而 `retry_policy` 仍在预算内重新派发已结束的子代理（判别器对 `block` 判定或预算耗尽依旧标记 `blocked`）。 完整规则与每道门各自的作用见[判断门](../gates/README.zh.md)。
 - **`taskflow_wait_all` 超时为有界轮询**：永不完成的子代理会话不会自动使流失败。超时返回部分报告。
 - **步骤 id 为顺序分配**：注册时分配 `step-{len(steps)+1}`。如果步骤被并发追加，id 在冲突重试时由 `build_state` 重新计算。

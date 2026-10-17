@@ -1,0 +1,25 @@
+{
+  "captured_run": "20261017_003529",
+  "threshold_resolve_rate": 0.0,
+  "model": {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com/v1",
+    "max_token": "1000000",
+    "auxiliary_model": "deepseek-flash",
+    "reasoner_model": "",
+    "thinking_enabled": false
+  },
+  "aggregate": {
+    "instances_total": 2,
+    "resolved": 0,
+    "invalid_runs": [],
+    "resolve_rate": 0.0,
+    "resolve_rate_basis": "valid runs only (provider failures excluded)",
+    "duration_s": 300.5
+  },
+  "instances": [
+    "django__django-17051",
+    "sympy__sympy-20639"
+  ]
+}

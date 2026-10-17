@@ -213,18 +213,17 @@
 
 ### パイプラインレベル: 証跡台帳と完了ゲート
 
-証跡台帳は共有の追記専用検証トレイルです（`src/data/evidence-ledger.jsonl`、1 行 1 JSON オブジェクト）。`agent/tools/todolist/evidence_recorder.py` は `terminal` / `python_repl` から認識された検証コマンドを常時自動記録し（分類表は `EVIDENCE_LEDGER["verify_commands"]`）、`write_file` / `patch_file` は編集されたパスに `stale` イベントを常時追記します。`agent/tools/taskflow/evidence_collector.py` は読み取り時に古さを導出し（後続の `stale` 行が、ある行のコマンドに含まれるパスを指す場合）、判定器に見せる要約を描画します。
+台帳そのもの——共有の追記専用検証トレイル（`src/data/evidence-ledger.jsonl`）で、古さは読み取り時に導出されます——には専用ページがあります：[エビデンス台帳](../long-running-tasks/gates/evidence-ledger/README.ja.md)。ここでループを閉じるのは、それを読むゲートです：
 
-`taskflow_finish.py` は DONE 遷移を四つの検査で順にゲートします：
+`taskflow_finish.py` は DONE 遷移を三つの検査で順にゲートします：
 
 | ゲート | 検査 | 拒否理由 |
 |---|---|---|
 | **A — DAG 完全性** | すべてのステップが `done` または `blocked` | `step(s) not done/blocked` |
 | **B — ブロックなし** | どのステップも `blocked` でない | `step(s) are blocked` |
 | **C — フロー証跡** | フローの証跡に `FAIL` も `[stale]` 行もない | `failing verification evidence` / `stale evidence` |
-| **D — SisyphusVerifier** | プラン再読、受け入れ基準、リンクされた `done` ステップ — 呼び出し側が `todo` と `plan_path` の両方を渡したときのみ | `SisyphusVerifier` の理由 |
 
-Gate D は `todo` + `plan_path` の連携がない場合は完全にスキップされ、すべてのゲートは fail-open です。読めない台帳や検証器のエラーは、完了を妨げず通過させます。
+すべてのゲートは fail-open です：読めない台帳は完了を妨げず通過させます。オプトインの第 4 チェック **Gate E** は、収集された結果がフローの `description` を満たすかを補助モデルに問います——フローのステップ数が `GOAL_GATE["min_steps"]`（3）以上のときだけ実行され、それ未満のフローは子レベルの判定に委ねられます。
 
 ### パイプラインレベル: 完了 drain のプログラム的ゲート
 

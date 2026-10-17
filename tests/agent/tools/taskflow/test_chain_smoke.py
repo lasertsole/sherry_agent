@@ -7,7 +7,7 @@ auxiliary LLM** (never the network):
   tools -- a step judge RETRY re-dispatches the step with the judge's feedback
   injected into the replacement task, a PASS then marks it done -- and then
   exercises each finish gate's reject and pass branch (Gate A pending, Gate B
-  blocked, Gate C failing/stale evidence, Gate D SisyphusVerifier).
+  blocked, Gate C failing/stale evidence).
 * ``test_goal_loop_smoke`` drives ``_execute_subagent`` through two turns: the
   completion judge says CONTINUE (its continuation prompt becomes the next
   human turn) and then DONE, so the loop ends with the second turn's output.
@@ -168,46 +168,29 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
     assert flow["state"]["steps"][0]["status"] == "done"
     assert len(dispatches) == 2, "resume must not spawn beyond the judge retry"
 
-    # Gate C reject (failing evidence) ...
-    ledger.for_session(FLOW).append(kind="test", command="pytest -q", status="failed")
+    # Gate C reject (failing evidence) — seeded under the STEP'S CHILD SESSION,
+    # which is the key every producer writes (evidence rows never carry a flow id).
+    ledger.for_session("agent:main:subagent:c2").append(
+        kind="test", command="pytest -q", status="failed"
+    )
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "failing verification evidence" in out, out
 
     # ... Gate C reject (stale evidence) ...
     _reset_ledger()
-    ledger.for_session(FLOW).append(kind="test", command="pytest foo.py", status="passed")
-    ledger.for_session(FLOW).mark_stale_for_path("foo.py")
+    ledger.for_session("agent:main:subagent:c2").append(
+        kind="test", command="pytest foo.py", status="passed"
+    )
+    ledger.for_session("agent:main:subagent:c2").mark_stale_for_path("foo.py")
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "stale evidence" in out, out
 
-    # ... Gate D reject (the verifier cannot reread the plan) ...
+    # ... and Gate A/B/C pass: a clean ledger admits the finish.
     _reset_ledger()
     out = await tools["taskflow_finish"].coroutine(
         session_id=SESSION,
         flow_id=FLOW,
-        todo={"flow_id": FLOW, "step_id": "step-1"},
-        plan_path="/nonexistent/plan.md",
-        checkbox_label="wire the gate",
-    )
-    assert "SisyphusVerifier" in out, out
-    assert "plan not found" in out, out
-
-    # ... and Gate D pass + Gate A/B/C pass: a real plan whose linked step is
-    # done admits the finish.
-    plan = Path(EvidenceLedger.LEDGER_PATH).parent / "plan.md"
-    plan.write_text(
-        "- [ ] wire the gate\n"
-        "  Acceptance: the chain is wired end to end\n"
-        "  Verification: pytest -q\n",
-        encoding="utf-8",
-    )
-    out = await tools["taskflow_finish"].coroutine(
-        session_id=SESSION,
-        flow_id=FLOW,
         summary="chain smoke done",
-        todo={"flow_id": FLOW, "step_id": "step-1"},
-        plan_path=str(plan),
-        checkbox_label="wire the gate",
     )
     assert "TaskFlow finished" in out and "status=done" in out, out
 

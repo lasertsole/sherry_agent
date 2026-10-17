@@ -41,6 +41,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 SESSION = "s-token-window"
 OTHER_SESSION = "s-token-window-2"
 BUDGET = TOOLS_TIMEOUTS["read_file_token_budget"]
+_LINE_TOKEN_CAP = TOOLS_TIMEOUTS["read_file_max_line_tokens"]
 
 
 @pytest.fixture
@@ -178,6 +179,64 @@ class TestTokenWindow:
         assert len(out["content"]) < BUDGET * 4 * 2, "the response must stay bounded"
         assert len(_numbered_lines(out["content"])) == 1
         assert read_state.licensed(SESSION, target) is None, "no license off a clipped read"
+
+    def test_a_giant_line_after_the_first_is_clipped_too(self, project):
+        # The hole this pins: the per-line cap used to fire only when the giant
+        # line was the page's FIRST line, so a minified blob on line 2 rode the
+        # response whole and pushed it past every bound.
+        target = project / "data.json"
+        target.write_text("header line\n" + "x" * 500_000 + "\nfooter line\n", "utf-8")
+
+        out = _read(SESSION, "data.json")
+
+        assert out["truncated"] is True
+        assert "chars clipped" in out["content"], "line 2 was clipped"
+        assert len(out["content"]) < BUDGET * 4 * 2, (
+            f"the page must stay bounded whatever line the blob sits on "
+            f"(got {len(out['content'])} chars)"
+        )
+        assert "header line" in out["content"], "the page starts at the requested line"
+        assert "footer line" not in out["content"], "the walk stopped at the blob"
+        assert read_state.licensed(SESSION, target) is None
+
+    def test_the_clipped_hint_names_the_tools_that_can_read_the_rest(self, project):
+        # read_file pages by LINE, so the remainder of a clipped line has no
+        # read_file address; the hint must say which tools reach it.
+        target = project / "min.js"
+        target.write_text("x" * 500_000, "utf-8")
+
+        hint = _read(SESSION, "min.js")["hint"]
+
+        assert "search_files" in hint
+        assert "terminal" in hint and "python_repl" in hint
+        assert "cannot page INSIDE a line" in hint
+
+    def test_the_per_line_cap_holds_even_with_the_budget_switched_off(self, project, monkeypatch):
+        # The page budget is switchable (0 = the historical line-count window);
+        # the single-line ceiling is NOT: one giant line must never be able to
+        # blow the context whatever the operator set the budget to.
+        target = project / "min.js"
+        target.write_text("x" * 500_000, "utf-8")
+        monkeypatch.setattr("agent.tools.file_tools.read_file._TOKEN_BUDGET", 0)
+
+        out = _read(SESSION, "min.js")
+
+        assert out["truncated"] is True
+        assert "chars clipped" in out["content"]
+        assert len(out["content"]) < _LINE_TOKEN_CAP * 4 * 2
+        assert read_state.licensed(SESSION, target) is None
+
+    def test_a_normal_page_is_untouched_by_the_per_line_cap(self, project):
+        # Lines well under the ceiling must come back whole — the cap is a
+        # ceiling, not a re-wrap.
+        target = project / "code.py"
+        target.write_text("\n".join(f"value_{i} = compute({i})" for i in range(1, 51)), "utf-8")
+
+        out = _read(SESSION, "code.py")
+
+        assert "clipped" not in out["content"]
+        assert out["truncated"] is False
+        assert _last_number(out["content"]) == 50
 
 
 class TestWindowConfiguration:

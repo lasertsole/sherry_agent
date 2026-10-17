@@ -101,7 +101,9 @@ def isolated_facts(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_memory_review_merges_and_prunes_facts(isolated_facts, monkeypatch):
-    monkeypatch.setattr("models.build_main_llm", lambda: _EditorialModel())
+    # The review runs on the session's own model (cache-warm); the seam is the
+    # rebuild helper, so the fake model stands in for it.
+    monkeypatch.setattr(nudge_mod, "_build_session_model", lambda session_id: _EditorialModel())
     monkeypatch.setattr("agent.get_agent_tools", lambda: [build_memory_tool()])
     monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
 

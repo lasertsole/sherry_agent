@@ -19,6 +19,16 @@ auto-turn trigger therefore DEFERS past those two self-busy signals (bounded by
 session still busy at the cap is a real user turn and the directive is dropped,
 with the next turn end deciding again.
 
+The gate is BOUNDED by a consecutive-continuation ceiling. Stagnation catches a
+plan that stops moving, but a model that edits the plan just enough to keep the
+snapshot changing (one status flip, one added step) never trips it — and its
+inject→auto-turn→inject loop has no other stop. ``mark_injected`` (the one point
+that runs only after the trigger CONFIRMED delivery) also counts the turn; at
+``TODOLIST_INFRA["max_continuation_turns"]`` the gate delivers ONE final
+stop-and-summarize directive and then stays silent until a real user message —
+or a subagent-completion turn, which is a new event rather than a continuation —
+resets the budget.
+
 Tailored from omo ``todo-continuation-enforcer``:
 
 - idle detection → ``auto_turn`` + ``detect_state`` (already present);
@@ -101,6 +111,22 @@ Recovery actions:
 5. If blocked: mark cancelled and note the blocker
 
 Do NOT repeat the same actions that led to stagnation.
+
+{todo_status}
+{flow_status}"""
+
+# Completion directive: the last thing the gate ever sends before it latches.
+# The model is told to stop and summarize — the plan stays open, and the user
+# (or a later turn) decides whether to resume.
+_STOP_PROMPT = """[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]
+
+The automatic continuation budget is exhausted ({used}/{cap} continuation turns).
+The plan is still open, but you must stop working on it now.
+
+- Stop calling tools.
+- Give the user a final summary: what you accomplished, what remains, and the
+  state the plan is left in.
+- Do not start new work. The user can continue by sending a new message.
 
 {todo_status}
 {flow_status}"""
@@ -272,6 +298,41 @@ def _turn_used_todowrite(state: dict[str, Any]) -> bool:
     return False
 
 
+def _trigger_refused(result: object) -> bool:
+    """True when the auto-turn trigger ANSWERED without accepting the directive.
+
+    The server's ``maybe_trigger_auto_turn`` returns an ``AutoTurnResult`` whose
+    outcome separates a queued turn (``triggered``) from a refusal (``busy`` —
+    a HITL wait or another owner — and ``already_pending``). A hook that returns
+    something without an outcome (a bare test spy, a differently-shaped
+    implementation) counts as ACCEPTED, the pre-existing contract.
+    """
+    outcome = getattr(result, "outcome", None)
+    if outcome is None:
+        return False
+    return str(getattr(outcome, "value", outcome)).lower() != "triggered"
+
+
+def _is_continuation_turn(state: dict[str, Any]) -> bool:
+    """True when this turn was driven by one of the gate's own directives.
+
+    The injected directive is the turn's LAST HumanMessage (the model's answer
+    and tool traffic follow it; a workspace notice or system reminder is spliced
+    BEFORE the human carrier), and it carries ``origin="todo_continuation"``.
+    Every other origin — a real user message, a subagent completion, a
+    background-task wake — reads as False: those are new events, not
+    continuations, and they reset the budget.
+    """
+    try:
+        for msg in reversed(state.get("messages") or []):
+            if isinstance(msg, HumanMessage):
+                meta = getattr(msg, "metadata", None) or {}
+                return str(meta.get("origin") or "") == _ORIGIN
+    except Exception:  # noqa: BLE001 - accounting must never break the turn end
+        logger.debug("plan continuation: continuation-turn detection failed", exc_info=True)
+    return False
+
+
 class PlanContinuationEnforcer(AgentMiddleware):
     """Turn-end enforcer: inject a continuation prompt when todos remain.
 
@@ -304,6 +365,13 @@ class PlanContinuationEnforcer(AgentMiddleware):
                 logger.debug("plan continuation: no session_id in state; skipping")
                 return None
 
+            # A real user turn — or a subagent completion, or a background-task
+            # wake: any turn this gate did not itself inject — resets the
+            # consecutive-continuation budget. The gate's own directives are
+            # exactly what the budget counts, so they never reset it.
+            if not _is_continuation_turn(state):
+                st.reset_continuation_turns(session_id)
+
             # Abort-class failures (user cancel / timeout) must never continue.
             error = _turn_error(state)
             if error is not None and st.is_abort_error(error):
@@ -332,10 +400,59 @@ class PlanContinuationEnforcer(AgentMiddleware):
             incomplete = [row for row in plan_rows if row["status"] in _INCOMPLETE_STATUSES]
             if not incomplete:
                 st.reset(session_id)
+                # The plan just finished: hand it to the plan-extraction fork.
+                # Deliberately independent of compaction — a short session whose
+                # window never fills must still get its plan extracted, and the
+                # fork needs no conversation history (the data is in the todos,
+                # the subagent runs and the plan file).
+                from agent.middlewares.summarization.nudges import (
+                    maybe_trigger_plan_extraction,
+                )
+
+                await maybe_trigger_plan_extraction(session_id)
+                return None
+
+            # The cap latched on an earlier turn: the stop directive was already
+            # delivered, so the gate stays silent until a real user turn (or a
+            # subagent completion) clears the latch above.
+            if st.is_stopped(session_id):
+                logger.info(
+                    "plan continuation: session {} stopped (continuation budget spent); "
+                    "waiting for a user message",
+                    session_id,
+                )
                 return None
 
             flow_block = _build_flow_block(flows)
             flow_status = f"\n{flow_block}" if flow_block else ""
+
+            # Consecutive-continuation ceiling — the shape stagnation cannot see
+            # (a plan edited just enough each turn to keep the snapshot moving).
+            # The gate spends ONE final directive telling the model to stop and
+            # summarize; the latch then silences it. The latch is set only on a
+            # CONFIRMED delivery (``_inject`` counts one), so a refused directive
+            # is retried on the next turn instead of losing the stop.
+            used_turns = st.continuation_turns(session_id)
+            if used_turns >= st.continuation_cap():
+                logger.info(
+                    "plan continuation: session {} spent its continuation budget ({}/{}); "
+                    "injecting the stop directive",
+                    session_id,
+                    used_turns,
+                    st.continuation_cap(),
+                )
+                await self._inject(
+                    session_id,
+                    _STOP_PROMPT.format(
+                        used=used_turns,
+                        cap=st.continuation_cap(),
+                        todo_status=_build_status_block(todos),
+                        flow_status=flow_status,
+                    ),
+                )
+                if st.continuation_turns(session_id) > used_turns:
+                    st.mark_stopped(session_id)
+                return None
 
             # Stagnation: unchanged across N attempts → recovery or give up.
             if st.check_stagnation(session_id, plan_rows):
@@ -401,10 +518,21 @@ class PlanContinuationEnforcer(AgentMiddleware):
             session_key = f"agent:main:session:{session_id}"
             # Injector provenance (persisted as the human row's ``origin``): these
             # directives must not read as messages the user sent.
-            await trigger(
+            result = await trigger(
                 session_key,
                 HumanMessage(content=prompt, metadata={"origin": _ORIGIN, "internal": True}),
             )
+            if _trigger_refused(result):
+                # The trigger ANSWERED and declined (a HITL wait, or another
+                # auto turn already queued): nothing was delivered, so nothing
+                # is recorded as injected — no phantom cooldown, no continuation
+                # turn counted, and the gate retries on the next turn end.
+                logger.info(
+                    "plan continuation: directive for session {} was refused ({})",
+                    session_id,
+                    getattr(result, "outcome", "unknown"),
+                )
+                return
             st.mark_injected(session_id)
         except Exception:
             logger.exception(

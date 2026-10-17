@@ -26,6 +26,8 @@
   - [ツール出力の要約](memory/README.ja.md#-ツール出力の要約)
   - [セッション継続性](memory/README.ja.md#-セッション継続性)
   - [TaskFlow 自動再開](memory/README.ja.md#-taskflow-自動再開)
+- [判定ゲート](gates/README.ja.md)
+- [エビデンス台帳](gates/evidence-ledger/README.ja.md)
 - [並行レーン](lanes/README.ja.md)
 - [設定レジストリ](#-設定レジストリ)
 - [アーキテクチャ図](#-アーキテクチャ図)
@@ -54,13 +56,13 @@
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **44** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
+| `config/features/agent_side/` | **49** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
 | `config/features/infra_side/` | **27** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **71 個の feature オブジェクト**を保持します——エージェント側 44 + インフラ側 27——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **76 個の feature オブジェクト**を保持します——エージェント側 49 + インフラ側 27——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -73,6 +75,8 @@
 | | `wait_all_default_timeout_seconds` | 300.0 |
 | | `wait_all_default_poll_interval_seconds` | 0.5 |
 | | `waiting_timeout_hours` | 24 |
+| | `max_steps_per_flow` | 20 |
+| | `max_flows_per_session` | 20 |
 | `MODEL_PRICING`（`infra_side/model_pricing.py`） | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
 | `MEMORY_FLUSH`（`agent_side/memory_flush.py`） | `enabled` | `MEMORY_FLUSH_ENABLED`（既定 1） |
@@ -231,7 +235,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_step_judge.py` | StepJudge 応答解析、判定の正規化、`pass` へのフェイルオープン、プロンプト組立 |
 | `test_resume_with_judge.py` | `taskflow_resume` + 判定器：pass/retry/block、再試行フィードバック注入、予算枯渇、フェイルオープン |
 | `test_evidence_collector.py` | 判定プロンプト用 evidence 要約の描画；staleness は後続の `stale` 行から導出 |
-| `test_finish_gate.py` | 完了ゲート A–D：DAG 完全性、blocked ステップ、失敗/stale evidence、`SisyphusVerifier` |
+| `test_finish_gate.py` | 完了ゲート A–C：DAG 完全性、blocked ステップ、失敗/stale evidence |
 | `test_chain_smoke.py` | 判定器 → 再試行フィードバック → goal loop → 完了ゲートの統合スモーク（stub 補助 LLM） |
 | `test_taskflow_list.py` | セッションボード描画、ステータスフィルタ、最終活動タイムスタンプ |
 | `test_index_audit.py` | SQLite インデックス更新パスとクエリプラン監査 |
@@ -257,7 +261,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 71。** 設定レジストリは 71 個の feature オブジェクト（エージェント側 44 + インフラ側 27）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
+- **レジストリ規模は 76。** 設定レジストリは 76 個の feature オブジェクト（エージェント側 49 + インフラ側 27）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
