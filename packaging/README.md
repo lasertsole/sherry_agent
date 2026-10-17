@@ -40,6 +40,11 @@ cd client && pnpm tauri build
   **`VERSION` marker** plus a copy of this document into the artifact. Most of
   the size is PyTorch. A first run seeds the app-data home's `.env` from the
   tracked one and its `.models` / `.network` from the two templates.
+- **Code embedder (optional)** — the code-intel semantic layer's Jina v2 Base
+  Code ONNX backend is collected through `onnxruntime`; its 612 MB ONNX weights
+  and tokenizer files are downloaded at runtime into
+  `models/embed_model/code/`, never shipped in the backend tree. BGE remains the
+  text embedder (memory / multimodal RAG).
 - **`VERSION`** — the installer version this tree belongs to, read from
   `client/src-tauri/tauri.conf.json` (the same field the shell reports as
   `package_info().version`). The shell re-downloads whenever the marker differs,

@@ -77,6 +77,7 @@ class SemanticSearchResult:
     indexed: int = 0
     truncated: bool = False
     degraded: str | None = None
+    embedder: str = ""
 
 
 def cosine(left: list[float], right: list[float]) -> float:
@@ -118,10 +119,16 @@ class SemanticSearch:
 
     def _get_embed_model(self) -> object:
         if self._embed_model is None:
-            from models import build_embed_model
-
-            self._embed_model = build_embed_model()
+            raise RuntimeError(
+                "code-intel semantic search requires a code embedder; "
+                "BGE is reserved for text semantics"
+            )
         return self._embed_model
+
+    def _embedder_name(self) -> str:
+        if self._embed_model is not None and hasattr(self._embed_model, "name"):
+            return str(self._embed_model.name)
+        return str(self._semantic.get("code_intel_semantic_model", ""))
 
     # -- public API --------------------------------------------------------
 
@@ -202,6 +209,7 @@ class SemanticSearch:
             reranked=reranked,
             indexed=len(rows),
             truncated=index_result.truncated,
+            embedder=self._embedder_name(),
         )
 
     # -- internals ---------------------------------------------------------
@@ -340,6 +348,7 @@ def _payload(result: SemanticSearchResult) -> dict[str, Any]:
         "reranked": result.reranked,
         "truncated": result.truncated,
         "degraded": result.degraded,
+        "embedder": result.embedder,
         "results": [
             {
                 "name": hit.name,

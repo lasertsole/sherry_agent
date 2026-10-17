@@ -1,17 +1,12 @@
-"""Real-embedding smoke test (opt-in by backend availability).
+"""Real-embedding smoke test for the code-specific embedder (opt-in).
 
 Builds the embedding index over the small 4-language fixture repo with the REAL
-configured embedding backend (``models.build_embed_model`` — local bge-m3 GGUF
-by default, or a configured remote API) and asserts a natural-language query
-returns a relevant code fragment.
+Jina v2 Base Code ONNX backend and asserts a natural-language query returns a
+relevant code fragment.
 
 The test SKIPS (never fails, never downloads) when the backend cannot run in
-this environment:
-
-* local mode requires both ``llama-cpp-python`` and the already-present GGUF
-  weights — CI checkouts have neither, so the local path skips there instead of
-  pulling 634 MB;
-* remote mode requires a non-empty ``EMBEDDING_API_BASE`` / ``EMBEDDING_API_KEY``.
+this environment: onnxruntime/transformers missing, or the ONNX/tokenizer files
+absent. CI checkouts do not carry the 612 MB weights.
 
 The reranker is optional: an unavailable reranker must degrade to cosine order
 (fail-open), which this test records rather than asserts.
@@ -31,41 +26,24 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 
 
 def _embedding_backend_unavailable() -> str | None:
-    """Return a skip reason when the configured real embedding backend cannot run."""
+    """Return a skip reason when the real code embedder cannot run here."""
     try:
-        from models.embed_model import core as embed_model_core
-        from models.utils import read_env_file_value as read_env
+        import onnxruntime  # noqa: F401
+        from transformers import RobertaTokenizerFast  # noqa: F401
+    except ModuleNotFoundError as exc:
+        return f"code embedder runtime missing: {exc.name}"
 
-        _, use_local, _ = embed_model_core._detect_backend()
-    except SystemExit:  # misconfigured remote mode aborts at detection
-        return "embedding backend misconfigured (EMBEDDING_* validation aborted)"
+    from models.embed_model.code import code_embedder_available
 
-    if not use_local:
-        if (
-            not read_env("EMBEDDING_API_BASE", "").strip()
-            or not read_env("EMBEDDING_API_KEY", "").strip()
-        ):
-            return "remote embedding backend unconfigured (EMBEDDING_API_BASE/KEY empty)"
-        return None
-
-    try:
-        from llama_cpp import Llama
-    except ModuleNotFoundError:
-        return "llama-cpp-python is not installed for the local bge-m3 backend"
-
-    if not hasattr(Llama, "from_pretrained"):
-        return "importable llama_cpp is a test stub without from_pretrained"
-
-    weights = Path(embed_model_core._GGUF_MODEL_PATH)
-    if not weights.is_file():
-        return f"local bge-m3 GGUF weights absent ({weights}); tests never download weights"
+    if not code_embedder_available():
+        return "Jina v2 Base Code ONNX/tokenizer files absent; tests never download weights"
     return None
 
 
 def test_real_embedding_build_then_concept_search(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
-    """Given the real embedding backend and the small fixture repo,
+    """Given the real code embedder and the small fixture repo,
     when the semantic index is built and a concept query is issued,
     then at least one semantically relevant fixture symbol is returned.
     """
@@ -73,7 +51,7 @@ def test_real_embedding_build_then_concept_search(
     if reason is not None:
         pytest.skip(reason)
 
-    from models import build_embed_model
+    from models.embed_model.code import build_code_embed_model
 
     before_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     semantic_config = CodeIntelSemanticConfig(**CODE_INTEL_SEMANTIC)
@@ -81,7 +59,7 @@ def test_real_embedding_build_then_concept_search(
         str(index_db),
         intel_config,
         semantic_config,
-        embed_model=build_embed_model(),
+        embed_model=build_code_embed_model(),
         reranker=None,  # resolved lazily; an unavailable reranker degrades, never fails
     )
 
@@ -92,6 +70,7 @@ def test_real_embedding_build_then_concept_search(
     print(
         f"\n[semantic smoke] indexed={result.indexed} hits={len(result.hits)} "
         f"reranked={result.reranked} degraded={result.degraded!r} "
+        f"embedder={result.embedder!r} "
         f"maxrss_before={before_kb // 1024}MB maxrss_after={after_kb // 1024}MB"
     )
 

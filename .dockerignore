@@ -45,6 +45,8 @@ AGENTS.md
 
 # Model weights are downloaded at runtime into models/*/model_weight/
 models/*/model_weight/
+models/embed_model/*/model_weight/
+models/embed_model/code/tokenizer/
 
 # Local docs / scratch
 *.log

@@ -1,5 +1,5 @@
 """TDD tests for audit item 1.1.4 — `_read_dotenv` duplicated across
-`models/embed_model/core.py` and `models/reranker_model/core.py`.
+`models/embed_model/text/core.py` and `models/reranker_model/core.py`.
 
 The two copies are byte-identical. Deduplicated into `models/utils.py`,
 preserving the documented semantics (parse the .env FILE only — never
@@ -78,6 +78,7 @@ class TestConfigWiring:
             next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
             / "models"
             / "embed_model"
+            / "text"
             / "core.py"
         ).read_text(encoding="utf-8")
         assert "from config.models_settings import get_model_setting" in src

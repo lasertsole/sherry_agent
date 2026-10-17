@@ -155,6 +155,7 @@ from .code_intel import (
     CODE_INTEL as CODE_INTEL,
 )
 from .code_intel_semantic import (
+    CodeEmbedderProfile as CodeEmbedderProfile,
     CodeIntelSemanticConfig as CodeIntelSemanticConfig,
     CODE_INTEL_SEMANTIC as CODE_INTEL_SEMANTIC,
 )

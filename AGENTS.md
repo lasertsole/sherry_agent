@@ -1272,6 +1272,14 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SHERRY_CODE_INTEL_DB` overrides the path, with the shared `CODE_INTEL_DIR`
   as the no-root fallback. The index root itself is resolved PER CALL
   (env override > session project dir > process default), like ast-grep and LSP
+- the code-intel semantic layer is OPTIONAL and CODE-EMBEDDER-ONLY: BGE remains
+  the text embedder (`context_engine` / multimodal RAG) and is never used here.
+  `CODE_INTEL_SEMANTIC["enabled"]` gates registration; without a valid profile
+  (`jina-embeddings-v2-base-code`, ONNX, 768d, Apache-2.0, under
+  `models/embed_model/code/`) the tool is absent and no model/index is touched.
+  The Jina backend is lazy (`onnxruntime` + `RobertaTokenizerFast`, mean pooling);
+  switching profiles purges the old `code_embeddings` rows, including legacy
+  `bge-m3` rows, so no BGE vector can be scored.
 - truncation is budgeted in TOKENS, CJK-aware (`pub/func/message/token_truncation.py`):
   tool outputs, tool args, the summary body, the aggressive pass and every
   SummaryDoc list item go through `truncate_by_tokens` (`evicted_refs` is exempt —

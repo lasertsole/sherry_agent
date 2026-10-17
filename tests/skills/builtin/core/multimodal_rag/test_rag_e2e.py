@@ -66,7 +66,7 @@ def _local_embedding_runtime_unavailable() -> str | None:
     backend is chosen by ``EMBEDDING_MODEL_LOCAL`` (default: local bge-m3 GGUF
     via llama-cpp-python). When the local backend is selected, the importable
     ``llama_cpp.Llama`` must expose ``from_pretrained`` — the classmethod
-    ``models.embed_model.core`` calls to fetch the GGUF from Hugging Face.
+    ``models.embed_model.text.core`` calls to fetch the GGUF from Hugging Face.
 
     Two recognizable conditions falsify that premise (no blanket ``except``):
 
@@ -82,7 +82,7 @@ def _local_embedding_runtime_unavailable() -> str | None:
     Returns ``None`` when the premise holds, including a remote embedding
     backend (``EMBEDDING_MODEL_LOCAL=false``), which needs no local runtime.
     """
-    from models.embed_model import core as embed_model_core
+    from models.embed_model.text import core as embed_model_core
 
     _, use_local, _ = embed_model_core._detect_backend()
     if not use_local:

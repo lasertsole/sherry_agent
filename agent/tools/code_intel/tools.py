@@ -26,10 +26,12 @@ from pydantic import BaseModel, Field, PrivateAttr
 from config.features.agent_side import (
     CODE_INTEL,
     CODE_INTEL_SEMANTIC,
+    CodeEmbedderProfile,
     CodeIntelConfig,
     CodeIntelSemanticConfig,
 )
 from config.path import CODE_INTEL_DIR
+from models.embed_model.code import build_code_embed_model, code_embedder_available
 
 from .roots import index_db_for_root, resolve_root, root_for_call
 
@@ -262,6 +264,36 @@ def _impact_payload(result: ImpactResult) -> dict[str, Any]:
     }
 
 
+def _semantic_profile(cfg: CodeIntelSemanticConfig) -> CodeEmbedderProfile | None:
+    """The configured CodeEmbedder profile, or None for an illegal/BGE value."""
+    name = str(cfg.get("code_intel_semantic_model", ""))
+    if not name or name == "bge-m3":
+        return None
+    profiles = cfg.get("code_intel_semantic_profiles", {})
+    return profiles.get(name)
+
+
+def _semantic_enabled(cfg: CodeIntelSemanticConfig, embed_model: object | None) -> bool:
+    """Whether the code-intel semantic layer may register its tool.
+
+    Tests may inject an embedder (``embed_model``) to bypass provisioning; the
+    production path is code-embedder-only — BGE is never accepted here.
+    """
+    mode = str(cfg.get("code_intel_semantic_enabled", "auto")).lower()
+    if mode == "off":
+        return False
+    if str(cfg.get("code_intel_semantic_embedder", "code")).lower() not in {"code", "auto"}:
+        return False
+    profile = _semantic_profile(cfg)
+    if profile is None:
+        return False
+    if embed_model is not None:
+        return True
+    if mode == "auto":
+        return code_embedder_available(profile)
+    return mode == "on"
+
+
 def build_code_intel_tools(
     session_id: str,
     *,
@@ -272,12 +304,11 @@ def build_code_intel_tools(
     embed_model: object | None = None,
     reranker: object | None = None,
 ) -> list[BaseTool]:
-    """Build the five RESEARCHER-only code intelligence tools.
+    """Build the RESEARCHER-only code intelligence tools.
 
-    Optional overrides exist for tests; production callers pass only
-    ``session_id`` and resolve the root from the process environment. The
-    semantic tool's model/reranker are injected (tests) or resolved lazily from
-    the existing ``models`` wrappers on first use.
+    Four tools are always present. ``semantic_code_search`` is appended only
+    when the code-intel semantic layer is enabled by a valid CodeEmbedder; BGE
+    is deliberately never used here. Optional overrides exist for tests.
     """
     cfg = config or CODE_INTEL
     explicit_root = Path(root).resolve() if root is not None else None
@@ -296,11 +327,19 @@ def build_code_intel_tools(
         CalleesTool(engine, cfg, resolved_root, session_id, explicit_root),
         ImpactTool(engine, cfg, resolved_root, session_id, explicit_root),
     ]
+    sem_cfg = semantic_config or CODE_INTEL_SEMANTIC
+    if not _semantic_enabled(sem_cfg, embed_model):
+        return tools
+    profile = _semantic_profile(sem_cfg)
+    if embed_model is None:
+        if profile is None:
+            return tools
+        embed_model = build_code_embed_model(profile)
     try:
         semantic = SemanticSearch(
             resolved_db,
             cfg,
-            semantic_config or CODE_INTEL_SEMANTIC,
+            sem_cfg,
             embed_model=embed_model,
             reranker=reranker,
         )

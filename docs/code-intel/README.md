@@ -51,7 +51,7 @@ child agent assembly (spawn/core.py)
 3. **Fail-open is the contract.** A missing binary, an unparseable file, an unavailable model, a timeout, or a refused request returns a JSON payload with an actionable message; no retrieval failure raises into the child turn.
 4. **Everything is bounded by construction.** File counts, per-file bytes, build time, batches, result counts, path counts, pattern size, and opened files all have caps; the LSP manager adds an LRU concurrency limit and idle reaping.
 5. **Writes are opt-in and containment-checked.** `ast_grep_rewrite` previews unless `dry_run=false`; `lsp_rename` and `lsp_format` preview unless called with the apply flag; every write path re-validates traversal and project-root containment before touching disk.
-6. **No new model providers.** Semantic search reuses the existing `models/embed_model` and `models/reranker_model` wrappers; the only new storage is the SQLite index.
+6. **No new LLM provider.** BGE remains the text embedder; code-intel uses the `jina-embeddings-v2-base-code` ONNX code embedder and the existing reranker wrapper; the only new storage is the SQLite index.
 7. **Roots resolve per call.** `SHERRY_CODE_INTEL_ROOT`, `SHERRY_SG_ROOT`, and `SHERRY_LSP_ROOT` override the working root for drills and tests; without them the process cwd and the shared `resolve_project_path` gate apply.
 
 ## 🔍 Layer 0: Keyword Search (ripgrep)
@@ -167,7 +167,7 @@ Availability is a three-state report: `available`, `not_installed` (configured b
 
 Semantic search embeds the Layer 1 symbol table instead of slicing arbitrary line windows, so each vector describes exactly one function, method, or class. `agent/tools/code_intel/semantic/chunker.py` builds a chunk from a header naming the symbol and its location plus the symbol body (falling back to the stored Layer 1 snippet); `agent/tools/code_intel/semantic/indexer.py` owns the `code_embeddings` table; `agent/tools/code_intel/semantic/search.py` ranks by cosine and optionally reranks.
 
-The index is incremental by construction: it refreshes the symbol index first, drops embeddings whose symbol no longer exists, and embeds only symbols without a vector. Rows are written in batches of 16 (configurable), and a build run embeds at most 1000 chunks, at most 60 per file, each at most 2000 characters. Vectors are packed as `array('d')` blobs in the `code_embeddings` table, which also stores the `model` name and `dim`; a stored model change or a stored dimension conflict purges the index and rebuilds it in the same call, and a partially embedded index is resumable because already-embedded symbols are skipped. The embedding backend is the existing `models.build_embed_model` (selected by the `EMBEDDING_*` environment variables; local `bge-m3` by default) — no new provider is introduced.
+The index is incremental by construction: it refreshes the symbol index first, drops embeddings whose symbol no longer exists, and embeds only symbols without a vector. Rows are written in batches of 16 (configurable), and a build run embeds at most 1000 chunks, at most 60 per file, each at most 2000 characters. Vectors are packed as `array('d')` blobs in the `code_embeddings` table, which also stores the `model` name and `dim`; a stored model change or a stored dimension conflict purges the index and rebuilds it in the same call, and a partially embedded index is resumable because already-embedded symbols are skipped. The code-intel semantic layer is optional and code-embedder-only: it uses `jina-embeddings-v2-base-code` (ONNX, 768d, Apache-2.0) under `models/embed_model/code/`; BGE remains the text embedder (memory/RAG) and is never used here. `semantic_code_search` is registered only when `CODE_INTEL_SEMANTIC` enables a valid profile.
 
 Search self-heals the index, embeds the query, ranks every stored chunk by pure-Python cosine similarity, keeps a candidate pool of 40, and hands the top candidates to the existing `models.build_reranker_model` when one is configured. The final page is `code_intel_semantic_default_top_k` (5) by default, at most 20. Fail-open states are explicit in the payload: no indexed embeddings yields a message to build the index first; an unavailable query model yields a `degraded` message; an unconfigured reranker silently keeps cosine order with `reranked=false`; and an index or query dimension mismatch asks for a rebuild instead of scoring nonsense.
 
@@ -190,7 +190,7 @@ The main agent is outside this table entirely: the builders are never added to `
 | Object | Module | Key knobs (default) |
 |--------|--------|---------------------|
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | max 5000 files, 1 MB per file, 60 s build budget, batch 100, explore 10 symbols and 8000 chars, call depth 3, fuzzy score 0.3 |
-| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | model `bge-m3`, top-K 5 (max 20), candidate pool 40, batch 16, 1000 chunks per build, 60 per file, 2000 chars per chunk |
+| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | model `jina-embeddings-v2-base-code` (ONNX, 768d), `enabled` auto/on/off, top-K 5 (max 20), candidate pool 40, batch 16, 1000 chunks per build, 60 per file, 2000 chars per chunk |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | pinned `0.43.0`, 50 matches, 16 KiB pattern, 30 s run timeout, 64 paths, 60 s provision timeout, 5 s version-probe timeout |
 | `LSP` | `config/features/agent_side/lsp.py` | request 10 s, start 15 s, diagnostics 15 s, 2 concurrent servers, 300 s idle shutdown, 50 results, 32 opened files, 1 MB per file, auto-install off |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime dir, 5 s version-probe timeout, 5 s / 5 s reap graces; the scan budget and match cap live in `TOOLS_TIMEOUTS` |
@@ -219,9 +219,9 @@ The other three engines on the same host:
 
 | Engine | State | Evidence |
 |--------|-------|----------|
-| Tree-sitter index | four grammars installed (`tree-sitter 0.26.0` family) | the full code-intel suite passes (281 tests) |
+| Tree-sitter index | four grammars installed (`tree-sitter 0.26.0` family) | the full code-intel suite passes (299 tests) |
 | ast-grep | available from the provisioned runtime tier (`ast-grep 0.43.0`) | a basic structural search returns real matches |
-| Semantic search | local `bge-m3` backend available | the real-embedding smoke returns a relevant symbol for a concept query |
+| Semantic search | `jina-embeddings-v2-base-code` ONNX files present | the real-embedding smoke returns a relevant symbol for a concept query |
 
 Any machine that lacks these capabilities degrades instead of failing: an unresolved ast-grep triggers the verified auto-provision path, and an unavailable embedding backend makes `semantic_code_search` return a `degraded` message pointing back at `explore` and `terminal`.
 

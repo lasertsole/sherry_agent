@@ -51,7 +51,7 @@ child agent assembly (spawn/core.py)
 3. **fail-open 是契约。** 缺失的二进制、无法解析的文件、不可用的模型、超时或被拒绝的请求，都返回带可执行提示的 JSON 载荷；任何检索失败都不会把异常抛进子代理回合。
 4. **一切都有上界。** 文件数、单文件字节数、构建时长、批次、结果数、路径数、模式大小与打开文件数都有上限；LSP 管理器另有 LRU 并发上限与空闲回收。
 5. **写入默认关闭并做容器校验。** `ast_grep_rewrite` 除非 `dry_run=false` 否则只预览；`lsp_rename` 与 `lsp_format` 除非传入应用标志否则只预览；每条写入路径在落盘前都重新校验路径穿越与项目根包含关系。
-6. **不引入新模型提供方。** 语义搜索复用既有的 `models/embed_model` 与 `models/reranker_model` 封装；唯一的新增存储是 SQLite 索引。
+6. **不引入新的 LLM 提供方。** BGE 继续只服务文本语义；code-intel 使用 `jina-embeddings-v2-base-code` ONNX 代码嵌入器与既有的重排器封装；唯一的新增存储是 SQLite 索引。
 7. **根目录按调用解析。** `SHERRY_CODE_INTEL_ROOT`、`SHERRY_SG_ROOT` 与 `SHERRY_LSP_ROOT` 可为演练与测试覆盖工作根；未设置时使用进程 cwd 与共享的 `resolve_project_path` 门禁。
 
 ## 🔍 第 0 层：关键词搜索（ripgrep）
@@ -149,7 +149,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 语义搜索嵌入的是第 1 层的符号表，而不是切分任意行窗口，因此每个向量恰好描述一个函数、方法或类。`agent/tools/code_intel/semantic/chunker.py` 用一条标明符号及其位置的头行加上符号体构建分块（读取失败时回退到已存快照）；`agent/tools/code_intel/semantic/indexer.py` 持有 `code_embeddings` 表；`agent/tools/code_intel/semantic/search.py` 按余弦排序并可选重排。
 
-索引天然增量：先刷新符号索引，删除符号已不存在的嵌入，并只为没有向量的符号生成嵌入。写入以 16 个分块为一批（可配置），单次构建最多嵌入 1000 个分块、每文件最多 60 个、每个最多 2000 字符。向量以 `array('d')` 二进制块存入 `code_embeddings` 表，该表同时保存 `model` 名与 `dim`；发现存储的模型变化或维度冲突时，会在同一次调用中清空索引并重建，未完成的索引可续跑，因为已嵌入的符号会被跳过。嵌入后端是既有的 `models.build_embed_model`（由 `EMBEDDING_*` 环境变量选择；默认本地 `bge-m3`）——不引入新的提供方。
+索引天然增量：先刷新符号索引，删除符号已不存在的嵌入，并只为没有向量的符号生成嵌入。写入以 16 个分块为一批（可配置），单次构建最多嵌入 1000 个分块、每文件最多 60 个、每个最多 2000 字符。向量以 `array('d')` 二进制块存入 `code_embeddings` 表，该表同时保存 `model` 名与 `dim`；发现存储的模型变化或维度冲突时，会在同一次调用中清空索引并重建，未完成的索引可续跑，因为已嵌入的符号会被跳过。code-intel 语义层是可选且仅限 code embedder：使用 `models/embed_model/code/` 下的 `jina-embeddings-v2-base-code`（ONNX，768d，Apache-2.0）；BGE 仍只用于文本语义（memory/RAG），这里永远不会使用。只有 `CODE_INTEL_SEMANTIC` 启用了合法 profile 时，才会注册 `semantic_code_search`。
 
 搜索会自愈索引：嵌入查询、用纯 Python 余弦相似度对全部已存分块排序、保留 40 个候选池，并在配置了重排器时交给既有的 `models.build_reranker_model`。最终返回默认 `code_intel_semantic_default_top_k`（5）条，最多 20 条。失败开放状态在载荷中显式可见：没有任何已索引嵌入时提示先构建索引；查询模型不可用时返回 `degraded` 消息；未配置重排器时静默保持余弦顺序并令 `reranked=false`；索引与查询维度不匹配时要求重建，而不是对无意义的向量打分。
 
@@ -172,7 +172,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | 对象 | 模块 | 关键项（默认值） |
 |------|------|------------------|
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 最多 5000 文件、单文件 1 MB、构建预算 60 秒、批次 100、explore 10 符号与 8000 字符、调用深度 3、模糊分数 0.3 |
-| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 模型 `bge-m3`、top-K 5（最大 20）、候选池 40、批次 16、单次构建 1000 分块、每文件 60 分块、每分块 2000 字符 |
+| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 模型 `jina-embeddings-v2-base-code`（ONNX，768d）、`enabled` auto/on/off、top-K 5（最大 20）、候选池 40、批次 16、单次构建 1000 分块、每文件 60 分块、每分块 2000 字符 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 锁定 `0.43.0`、50 条匹配、16 KiB 模式、30 秒运行超时、64 路径、60 秒预置超时、5 秒版本探测超时 |
 | `LSP` | `config/features/agent_side/lsp.py` | 请求 10 秒、启动 15 秒、诊断 15 秒、并发服务器 2、空闲关停 300 秒、50 条结果、打开文件 32、单文件 1 MB、自动安装关闭 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime 目录、5 s 版本探针超时、5 s / 5 s 回收宽限；扫描预算与匹配上限在 `TOOLS_TIMEOUTS` |
@@ -201,9 +201,9 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 | 引擎 | 状态 | 证据 |
 |------|------|------|
-| Tree-sitter 索引 | 四个语法已安装（`tree-sitter 0.26.0` 家族） | 完整 code-intel 测试套件通过（281 个测试） |
+| Tree-sitter 索引 | 四个语法已安装（`tree-sitter 0.26.0` 家族） | 完整 code-intel 测试套件通过（299 个测试） |
 | ast-grep | 可从预置运行时层使用（`ast-grep 0.43.0`） | 基础结构搜索返回真实匹配 |
-| 语义搜索 | 本地 `bge-m3` 后端可用 | 真实嵌入冒烟为概念查询返回相关符号 |
+| 语义搜索 | `jina-embeddings-v2-base-code` ONNX 文件存在 | 真实嵌入冒烟为概念查询返回相关符号 |
 
 缺少这些能力的机器会降级而非失败：ast-grep 未解析时触发带校验的自动预置路径，嵌入后端不可用时 `semantic_code_search` 返回 `degraded` 消息并指回 `explore` 与 `terminal`。
 

@@ -10,6 +10,7 @@ from agent.tools.subagent.registry import clear as clear_registry
 from agent.tools.subagent.spawn import core as spawn_core
 from agent.tools.subagent.spawn.core import _build_child_agent, spawn_subagent_direct
 from agent.tools.subagent.types import FunctionalRole, SubagentSessionRole
+from config.features.agent_side import CODE_INTEL_SEMANTIC
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -134,6 +135,9 @@ def _wiring(monkeypatch):
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: main_llm)
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: aux_llm)
+    # Tool-surface test: force the code-embedder layer on without provisioning
+    # the weights (construction never loads them, and no search runs here).
+    monkeypatch.setitem(CODE_INTEL_SEMANTIC, "code_intel_semantic_enabled", "on")
     captured["main_llm"] = main_llm
     captured["aux_llm"] = aux_llm
     return captured

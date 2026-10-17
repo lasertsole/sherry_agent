@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.features.agent_side import CODE_INTEL_SEMANTIC
+
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
 CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact"}
@@ -44,6 +46,9 @@ def _wiring(monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: SimpleNamespace(kind="main"))
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: SimpleNamespace(kind="aux"))
+    # Tool-surface test: force the code-embedder layer on without provisioning
+    # the 612 MB model (construction never loads it, and no search runs here).
+    monkeypatch.setitem(CODE_INTEL_SEMANTIC, "code_intel_semantic_enabled", "on")
     return captured
 
 
