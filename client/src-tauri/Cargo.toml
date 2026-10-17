@@ -1,6 +1,6 @@
 [package]
 name = "ema-ai-agent"
-version = "0.1.0"
+version = "0.1.1"
 description = "A deep role-playing AI Agent built on LangGraph and multimodal technology. Features long-term memory, dynamic skill system, and multi-channel access."
 authors = ["EMA AI Agent Team"]
 license = "MIT"
