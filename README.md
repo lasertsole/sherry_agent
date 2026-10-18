@@ -333,6 +333,7 @@ Each major subsystem has its own detailed README:
 | **Context Governance** | Per-boundary persistence, tool-result & human-message eviction, `read_file` slice, overflow tail clip, summary filtering | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 | **Stream Recovery** | Mid-turn WebSocket recovery: snapshot + per-turn `seq` watermark, no replay, no duplication, tool calls stay in the trajectory ledger | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | Atomic writes, two-layer CAS, per-path and cross-process locks, the read-before-write license for `write_file` (dropped again the moment a compression discards the read it came from), and isolated subagent workspaces whose merges report interface-level changes | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **Tool Parallel Safety** | Batch-aware ToolNode: same-file reads/writes ordered, different paths concurrent, process/session resource locks | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ Quick Start
 

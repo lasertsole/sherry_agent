@@ -437,7 +437,7 @@ Step 3 的「幂等变换」约束没有判定机制。两者连同既有设计�
 
 ---
 
-### 3.2 工具并行安全静态标注
+### 3.2 ✅ 工具并行安全静态标注（已完成）
 
 **Zcode 做法** [源码确认] `core/src/tool/scheduler.ts:85::canRunInParallel`：
 ```
@@ -449,14 +449,9 @@ readOnly 或 sideEffectScope == "none"  → 允许
 `READ_ONLY_TOOLS`（`:233`）显式列出 9 个：`Read`、`Glob`、`Grep`、`WebSearch`、`WebFetch`、`TodoRead`、`TodoWrite`、`AskUserQuestion`、`Skill`。
 调度：拓扑排序 → `groupByParallel` → 按 `maxConcurrency`（默认 10）切分并行组 → 顺序遍历各组并行执行；任一组返回 `stopTurnAfterResult` → 剩余组全部标 `ToolCancelled`。
 
-**Sherry 现状** [实测]：`TOOL_GUARDRAILS` 有 15 键阈值（`exact_failure_warn_after` / `block_after` / `same_tool_failure_warn_after` / `halt_after`），但这是**运行时反应式**（同一工具连续失败 N 次才阻断），**不是调度前的并行安全判定**。
+**Sherry 实现（2026-10-18）**：`SafeToolNode`（`agent/safe_tool_node.py`）替换 ToolNode，`plan_batch` 按 `READ_ONLY_TOOLS` / `concurrent_safe` / `side_effect_scope` 分类；文件工具按 canonical path 分组，同 path 有写按 `tool_calls` 顺序串行、不同 path 并发，非文件不安全工具为整批 barrier。`file_read_lock` / `file_write_lock` 提供跨 agent/进程的共享读、独占写；`ToolResourceLockMiddleware` 补 `system`（默认关）和 `user_interaction`（默认开）资源锁。主链与子链均接入。
 
-**差距**：Sherry 不知道哪些工具可以安全并行，只能靠 LLM 自觉串行调用。
-
-**改造建议**：给工具定义加 3 个静态标注字段（`destructive` / `concurrent_safe` / `side_effect_scope`），在 `build_main_tools()` 注册时声明；并发调度前按标注分组。`READ_ONLY` 集合可直接照抄 Zcode 的 9 个 + Sherry 自己的 `message_search` / `ast_grep` / `lsp` 等。
-标注是**纯声明式**的（不执行任何用户代码），安全风险为零。
-
-**风险**：低。唯一的坑是标注必须准确——标错会导致并发执行产生竞态。建议首批只标「明确只读」的一批，保守起步。
+**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制已记录在 `TODO/计划_工具并行安全标注.md`。
 
 ---
 
@@ -660,7 +655,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P1~~ | ~~2.5 step 挂载 skill~~ | 高 | 中 | 无 | **✅ 已完成**（_skill_prepend） |
 | ~~P1~~ | ~~2.3 续：拆独立 message + cacheHint~~ | 中 | 中 | stable/dynamic 已分离 | **❌ 不做**（概念分离已落地；131K 窗口下 wire 层缓存收益小；改跨层 seam + tests 成本不匹配收益） |
 | **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化（✅ 已完成） | 未开工 |
-| **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 | 未开工 |
+| ~~P2~~ | ~~3.2 工具并行安全标注~~ | 中 | 低（纯声明式） | 无 | **✅ 已完成**（`SafeToolNode` + 文件 path 分组 + `file_read_lock` / `file_write_lock` + `system` / `user_interaction` 资源锁；见 `docs/tool-parallel-safety/`） |
 | ~~P2~~ | ~~2.4 计划模式~~ | 中 | 低 | 与 1.5 协调 | **✅ 已完成**（plan_mode 工具 + 状态机） |
 | ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **✅ 核心目标已完成**（`resume_stream` 快照 + per-turn `seq` 水位；不重放、不重复。完整 7 事件协议不做） |
 | ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
@@ -674,7 +669,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ❌ | 桌面端 / CUA | — | 很高 | 见第七节 | — |
 
 **建议起手顺序**（2026-10-14 更新；**2026-10-17**：1.2 与 2.1 的 Step 1 已完成，见上表）：
-1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；1.3 + 3.2 仍待做
+1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；**3.2 已完成**；1.3 仍待做
 2. ~~先核查再决策：4.4~~ → **已完成**（fd 直写已落地）
 3. ~~第二批（需设计）：5.1 + 2.3 一起做~~ → **2.3 已部分完成**（stable/dynamic 分离已做，wire 层分段 ❌ 不做）；5.1 仍待做
 4. ~~2.2 目录化作为 3.1 的前置~~ → **已完成**，3.1 guide 可开工

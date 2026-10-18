@@ -66,10 +66,15 @@ def test_metadata_declares_idempotency_and_preserves_todo_update():
     assert tools["todoread"].metadata["idempotent"] is True
     assert tools["todowrite"].metadata["idempotent"] is False
     assert tools["todowrite"].metadata["todo_update"] is True
-    assert tools["todoread"].metadata == {"scope": "main_only", "idempotent": True}
+    assert tools["todoread"].metadata == {
+        "scope": "main_only",
+        "idempotent": True,
+        "side_effect_scope": "none",
+    }
     assert tools["todowrite"].metadata == {
         "scope": "main_only",
         "idempotent": False,
+        "side_effect_scope": "session",
         "todo_update": True,
     }
 

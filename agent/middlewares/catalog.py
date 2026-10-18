@@ -36,6 +36,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",
+    "ToolResourceLockMiddleware",
     "UserHooksMiddleware",
     "ContextEvictionMiddleware",
     "ToolCallNormalize",

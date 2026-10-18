@@ -102,6 +102,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
@@ -155,6 +156,7 @@ middleware = [
     ),
     IterationBudget(60),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -191,7 +193,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`（リスト順）           | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（2 つのインジェクタはいずれもサニタイズ書き換えの後に位置するため、注入ターンでもメッセージが剥がされない）                                       |
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
 | `after_model`（逆順）                | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない）                                                                                                                                                                                     |
-| `wrap_tool_call`（最外層 → 最内層）  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
+| `wrap_tool_call`（最外層 → 最内層）  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する）                                                                                                                                                                     |
 
 そのフェーズに該当するフックを実装しているミドルウェアだけを行に記載しています。

@@ -160,7 +160,12 @@ class TestFactoryWiring:
         tool = build_question_tool()
         assert tool.name == "question"
         assert tool.handle_tool_error is True
-        assert tool.metadata == {"idempotent": True, "skip_heartbeat": True, "nudge": True}
+        assert tool.metadata == {
+            "idempotent": True,
+            "skip_heartbeat": True,
+            "nudge": True,
+            "side_effect_scope": "user_interaction",
+        }
         assert tool.args_schema is QuestionInput
 
     def test_registered_in_main_tools_builders(self):

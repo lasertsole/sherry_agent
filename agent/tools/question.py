@@ -70,7 +70,12 @@ class QuestionTool(BaseTool):
         'If you recommend a specific option, put it first and add "(Recommended)".'
     )
     args_schema: type[BaseModel] = QuestionInput
-    metadata: dict = {"idempotent": True, "skip_heartbeat": True, "nudge": True}
+    metadata: dict = {
+        "idempotent": True,
+        "skip_heartbeat": True,
+        "nudge": True,
+        "side_effect_scope": "user_interaction",
+    }
 
     def _ask(
         self,

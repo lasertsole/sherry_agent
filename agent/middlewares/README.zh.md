@@ -101,6 +101,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
@@ -152,6 +153,7 @@ middleware = [
     ),
     IterationBudget(60),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -186,7 +188,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`（列表顺序）           | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离）                                                                             |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware 最贴近 LLM；Summarization 被 LLMRetry 从外部包住其 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序）                | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库）                                                                                                                                                                 |
-| `wrap_tool_call`（最外层 → 最内层）  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
+| `wrap_tool_call`（最外层 → 最内层）  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
 | `after_agent`（逆序）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合）                                                                                                                                             |
 
 表中只列出在该阶段实现了对应钩子的中间件。

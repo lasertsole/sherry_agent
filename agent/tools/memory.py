@@ -764,7 +764,12 @@ class MemoryTool(BaseTool):
     # scope="main_only": usable ONLY by the main agent; subagents can never get
     # this tool (enforced non-overridably by
     # agent/tools/subagent/spawn/inherited_tool_policy.apply_tool_policy).
-    metadata: dict = {"idempotent": True, "nudge": True, "scope": "main_only"}
+    metadata: dict = {
+        "idempotent": True,
+        "nudge": True,
+        "scope": "main_only",
+        "side_effect_scope": "session",
+    }
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)

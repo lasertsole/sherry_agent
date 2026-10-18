@@ -102,6 +102,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
@@ -155,6 +156,7 @@ middleware = [
     ),
     IterationBudget(60),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -191,7 +193,7 @@ Differences vs the main agent:
 | `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
 | `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
-| `wrap_tool_call` (outermost → innermost)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
+| `wrap_tool_call` (outermost → innermost)  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
 
 Only the middlewares that implement a given hook appear in that phase's row.

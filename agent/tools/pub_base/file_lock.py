@@ -34,9 +34,16 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
-from .path_lock import path_lock
+from .path_lock import path_read_lock, path_write_lock
 
-__all__ = ["FileBusyError", "cross_process_lock", "file_write_lock", "flock_path", "lock_path_for"]
+__all__ = [
+    "FileBusyError",
+    "cross_process_lock",
+    "file_read_lock",
+    "file_write_lock",
+    "flock_path",
+    "lock_path_for",
+]
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking.
 msvcrt = None
@@ -75,14 +82,16 @@ def lock_path_for(target: Path) -> Path:
 
 
 @contextlib.contextmanager
-def flock_path(lock_path: Path, timeout_s: float | None) -> Iterator[None]:
+def flock_path(lock_path: Path, timeout_s: float | None, *, shared: bool = False) -> Iterator[None]:
     """Take the OS lock on *lock_path*, waiting at most ``timeout_s``.
 
-    ``timeout_s=None`` waits indefinitely (the historical behaviour of the
-    memory / skill-usage call sites, kept when they were folded in here); a
-    number raises :class:`FileBusyError` once the budget is spent. On platforms
-    with neither fcntl nor msvcrt the lock degrades to a no-op — exactly what
-    the previous local copies did.
+    ``shared=True`` takes a shared read lock (``LOCK_SH``) where the platform
+    supports it; Windows' ``msvcrt`` has no shared mode, so readers there take
+    the exclusive lock. ``timeout_s=None`` waits indefinitely (the historical
+    behaviour of the memory / skill-usage call sites, kept when they were folded
+    in here); a number raises :class:`FileBusyError` once the budget is spent.
+    On platforms with neither fcntl nor msvcrt the lock degrades to a no-op —
+    exactly what the previous local copies did.
     """
     if fcntl is None and msvcrt is None:  # pragma: no cover - exotic platforms
         yield
@@ -98,8 +107,11 @@ def flock_path(lock_path: Path, timeout_s: float | None) -> Iterator[None]:
         while True:
             try:
                 if fcntl:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+                    fcntl.flock(fd, mode | fcntl.LOCK_NB)
                 else:  # pragma: no cover - Windows path
+                    # msvcrt has no shared mode; a reader takes the same
+                    # exclusive byte lock a writer uses.
                     fd.seek(0)
                     msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)
                 break
@@ -133,12 +145,27 @@ def file_write_lock(
     target: Path,
     timeout_s: float | None = DEFAULT_LOCK_TIMEOUT_SECONDS,
 ) -> Iterator[None]:
-    """The write lock the file tools take: in-process path lock, then flock.
+    """The write lock the file tools take: in-process gate, then exclusive flock.
 
-    One fixed order (thread lock → file lock) for every caller, so no two
-    writers can deadlock. ``timeout_s`` only bounds the cross-process wait.
+    One fixed order (in-process gate → file lock) for every caller, so no two
+    readers/writers can deadlock. ``timeout_s`` only bounds the cross-process
+    wait.
     """
-    with path_lock(target), cross_process_lock(target, timeout_s):
+    with path_write_lock(target), flock_path(lock_path_for(target), timeout_s):
+        yield
+
+
+@contextlib.contextmanager
+def file_read_lock(
+    target: Path,
+    timeout_s: float | None = DEFAULT_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[None]:
+    """The shared read lock: in-process reader gate, then shared flock.
+
+    A writer waits for every reader of the same canonical path; new readers
+    wait for a writer. Different paths never contend.
+    """
+    with path_read_lock(target), flock_path(lock_path_for(target), timeout_s, shared=True):
         yield
 
 

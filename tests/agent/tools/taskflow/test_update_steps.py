@@ -546,6 +546,7 @@ def test_update_steps_registered_with_main_only_metadata():
     assert tools["taskflow_update_steps"].metadata == {
         "scope": "main_only",
         "idempotent": False,
+        "side_effect_scope": "session",
     }
 
 

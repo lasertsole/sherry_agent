@@ -332,6 +332,7 @@ EMA_AI_agent/
 | **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 | **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ クイックスタート
 

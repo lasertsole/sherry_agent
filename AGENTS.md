@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (77 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (78 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -64,7 +64,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
-  │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
   │     keywords plus question/chat patterns, then a length fallback over 100 chars.
@@ -558,6 +558,51 @@ reconnects, then applies frames; there is no polling interval. The code
 embedder publishes the same event with `kind: "code_embedder"` and keeps its own
 `/code-embedder/*` snapshot pair.
 
+## Tool Parallel Safety (`agent/safe_tool_node.py`)
+
+LangGraph's ToolNode gathers **every** tool call in one model batch. Sherry
+replaces it in-process with `SafeToolNode` (patched into
+`langchain.agents.factory.ToolNode` once at `agent/core.py` import, gated by
+`TOOL_PARALLEL["enabled"]`) so a batch is scheduled by resource, not blindly:
+
+- **Classification** (`agent/tools/parallel_safety.py`): only explicit
+  `READ_ONLY_TOOLS` / `concurrent_safe` declarations are safe; unknown tools
+  and missing metadata default to unsafe. `idempotent` is NOT used for this
+  decision (`memory` is idempotent but writes session state).
+- **File calls** (`read_file` / `write_file` / `patch_file`) group by canonical
+  `file_path`. A group containing a write runs in the model's `tool_calls`
+  order; an all-read group may run concurrently; different paths never wait.
+  A path that cannot be resolved makes the batch a barrier.
+- **Every non-file unsafe tool is a whole-batch barrier** (`terminal`,
+  `python_repl`, `execute_code`, `ptc`, `memory`, session writes): its resource
+  cannot be inferred from arguments.
+- **Ordering**: within a batch, read-before-write reads the old content and the
+  write then sees the read's license; write-before-read writes first, so the
+  read sees the new content (and an unlicensed overwrite is refused by the
+  existing rule). Cross-agent/cross-batch order is the file-lock acquisition
+  order, not the model's call order.
+- **File locks** (`agent/tools/pub_base/path_lock.py` / `file_lock.py`):
+  `path_read_lock` is shared, `path_write_lock` is exclusive (writer
+  preferred); `flock` uses `LOCK_SH` / `LOCK_EX`. `read_file` takes
+  `file_read_lock`, the two writers keep `file_write_lock`. The batch scheduler
+  orders same-batch conflicts; these locks protect concurrent agents and
+  processes.
+- **Resource middleware** (`agent/middlewares/tool_resource_lock.py`, required
+  in BOTH the main and subagent chains): `side_effect_scope: "system"` takes a
+  process-wide lock (`TOOL_PARALLEL["system_lock"]`, default OFF to avoid
+  serializing all shell work); `"user_interaction"` takes a per-session lock
+  (`interaction_lock`, default ON). `workspace` / `session` / `network` are
+  deliberately not re-locked: file locks, memory, SQLite and the browser
+  manager already own those resources.
+- **Applies to every agent**: the factory patch is process-wide, so main,
+  subagent and auxiliary `create_agent` graphs all use `SafeToolNode`; the
+  subagent middleware chain carries the same `ToolResourceLockMiddleware`.
+- **Rollout / compatibility**: `TOOL_PARALLEL["enforce"] = False` logs the plan
+  but keeps native concurrency; `True` applies it. Tests pin the LangGraph
+  private methods `SafeToolNode` depends on, so an upgrade fails loudly.
+  `terminal`/`python_repl` still cannot be path-keyed; they remain barriers,
+  and `system_lock` only adds cross-agent exclusion when explicitly enabled.
+
 ## Plan-Then-Execute Plan Mode (`agent/tools/plan_mode/`)
 
 A session can DESIGN before it executes: the agent enters plan mode, works with
@@ -689,7 +734,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
   `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
-  build now fails without them (`scaffolding._MAIN_REQUIRED`, 15 entries) and the service
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 16 entries) and the service
   rejects a payload naming one. Together with `system_prompt_injection`,
   `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
   membership and order never change.
@@ -1071,9 +1116,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 49 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/agent_side/` | 50 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 77 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 78 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
@@ -1224,7 +1269,8 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer / memory-flush serializers (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
-  right after `ToolGuardrails` — a guardrail-BLOCKED call never reaches a hook):
+  after `ToolResourceLockMiddleware`, which itself sits right after
+  `ToolGuardrails` — a guardrail-BLOCKED call never reaches a hook):
   the `sherry.jsonc` `hooks` section names commands per event and the middleware
   dispatches them as SUBPROCESSES with the turn's identity. Step 1 only —
   `PostToolUse` / `PostToolUseFailure` (result/error previews bounded by

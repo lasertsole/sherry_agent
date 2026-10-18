@@ -68,6 +68,8 @@ from .agent_side import (
     UNTRUSTED_OUTPUT as UNTRUSTED_OUTPUT,
     REDACTION as REDACTION,
     TOOLS_TIMEOUTS as TOOLS_TIMEOUTS,
+    TOOL_PARALLEL as TOOL_PARALLEL,
+    ToolParallelConfig as ToolParallelConfig,
     MediaPipelineConfig as MediaPipelineConfig,
     NudgeConfig as NudgeConfig,
     ContextGuardConfig as ContextGuardConfig,

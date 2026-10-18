@@ -184,3 +184,7 @@ from .plan_mode import (
     PLAN_STATUS_REPLAN as PLAN_STATUS_REPLAN,
     PlanModeConfig as PlanModeConfig,
 )
+from .tool_parallel import (
+    TOOL_PARALLEL as TOOL_PARALLEL,
+    ToolParallelConfig as ToolParallelConfig,
+)

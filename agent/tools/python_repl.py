@@ -320,5 +320,5 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
 def build_python_repl_tool() -> TimedPythonREPLTool:
     tool = TimedPythonREPLTool()
     tool.handle_tool_error = True
-    tool.metadata = {"idempotent": False}
+    tool.metadata = {"idempotent": False, "side_effect_scope": "system"}
     return tool

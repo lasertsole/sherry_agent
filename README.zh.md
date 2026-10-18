@@ -332,6 +332,7 @@ EMA_AI_agent/
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 | **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 

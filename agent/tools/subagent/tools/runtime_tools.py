@@ -364,11 +364,28 @@ async def subagents_list_runtime_tool(
 # Idempotency metadata for ToolGuardrails: the five mutating tools declare
 # ``idempotent: False``; the two pure list tools declare ``idempotent: True``
 # so their repeatable results can feed no-progress detection.
-sessions_spawn_runtime_tool.metadata = {"idempotent": False}
-sessions_yield_runtime_tool.metadata = {"idempotent": False}
-sessions_send_runtime_tool.metadata = {"idempotent": False}
-sessions_kill_runtime_tool.metadata = {"scope": "main_only", "idempotent": False}
-sessions_steer_runtime_tool.metadata = {"scope": "main_only", "idempotent": False}
+sessions_spawn_runtime_tool.metadata = {
+    "idempotent": False,
+    "concurrent_safe": True,
+}
+sessions_yield_runtime_tool.metadata = {
+    "idempotent": False,
+    "side_effect_scope": "session",
+}
+sessions_send_runtime_tool.metadata = {
+    "idempotent": False,
+    "side_effect_scope": "session",
+}
+sessions_kill_runtime_tool.metadata = {
+    "scope": "main_only",
+    "idempotent": False,
+    "side_effect_scope": "session",
+}
+sessions_steer_runtime_tool.metadata = {
+    "scope": "main_only",
+    "idempotent": False,
+    "side_effect_scope": "session",
+}
 agents_list_runtime_tool.metadata = {"idempotent": True}
 subagents_list_runtime_tool.metadata = {"idempotent": True}
 sessions_messages_runtime_tool.metadata = {"idempotent": True}
