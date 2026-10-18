@@ -116,7 +116,7 @@
                  modifier because PrimeVue sets its own `display`). -->
             <span class="@max-[620px]:hidden"><ModeSwitch /></span>
             <Select
-              v-model="locale"
+              :model-value="locale"
               :options="languageOptions"
               option-label="name"
               option-value="code"
