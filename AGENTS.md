@@ -1024,6 +1024,9 @@ appends replayed frames, so no connection can see duplicated content. Every emit
 frame also carries a per-turn monotonic `seq`, and the snapshot carries the seq it
 was read at — the resumed client drops frames at or below that watermark, closing
 the race between "snapshot read" and "an in-flight frame lands after the reply".
+This snapshot + `seq` pair is Sherry's stream-recovery anchor: it restores the
+text tail without replaying any frame, while committed tool calls stay queryable
+in the per-turn trajectory ledger (`GET /sessions/:session_id/trajectory`).
 Because
 the turn keeps running when its last viewer disconnects (the socket release no
 longer cancels it), the reconnect resumes the SAME turn. Inbound frames are
