@@ -121,14 +121,26 @@ const confirm = async () => {
     const sessionId = crypto.randomUUID();
     await applyPresetPayload(payload, sessionId);
 
-    await cacheSessionPreset({ session_id: sessionId, preset_id: entry.id, preset_name: entryName(entry, t) });
+    try {
+      await cacheSessionPreset({
+        session_id: sessionId,
+        preset_id: entry.id,
+        preset_name: entryName(entry, t)
+      });
+    } catch (e) {
+      // The local preset binding is display metadata; a Dexie failure must not
+      // prevent the session itself from being created.
+      logUtil.e('[NewSessionPresetDialog] preset binding cache failed:', e);
+    }
     await ensureSessionCharacter(sessionId);
 
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
     const meta = { id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() };
-    cacheSessionMeta(meta);
+    void cacheSessionMeta(meta).catch(e => {
+      logUtil.e('[NewSessionPresetDialog] session meta cache failed:', e);
+    });
     // The left sidebar keeps its own in-memory list; tell it about the new row
     // so the session appears there without a reload.
     emit('session:created', meta);
@@ -140,7 +152,8 @@ const confirm = async () => {
     await router.push(localePath(`/home/${sessionId}`));
   } catch (e) {
     logUtil.e('[NewSessionPresetDialog] Failed to create the session:', e);
-    toastError(t('personaPreset.applyFailed'));
+    const detail = e instanceof Error ? e.message : String(e);
+    toastError(detail ? `${t('personaPreset.applyFailed')} (${detail})` : t('personaPreset.applyFailed'));
   } finally {
     creating.value = false;
   }

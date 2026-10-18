@@ -153,7 +153,7 @@ pub async fn system_prompt_write(
         "system_prompt_write called"
     );
     bridge
-        .put_json::<_, serde_json::Value>("/system_prompt", &payload)
+        .put_empty("/system_prompt", &payload)
         .await
         .map_err(FrontendError::from)?;
     Ok(())
@@ -202,7 +202,7 @@ pub async fn system_prompt_update(
         "system_prompt_update called"
     );
     bridge
-        .patch_json::<_, serde_json::Value>("/system_prompt", &payload)
+        .patch_empty("/system_prompt", &payload)
         .await
         .map_err(FrontendError::from)?;
     Ok(())

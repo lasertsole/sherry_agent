@@ -494,13 +494,18 @@ export async function applyPresetPayload(payload: PersonaPresetPayload, sessionI
   const written = await readSystemPrompt();
   const verified = !!written && Object.entries(payload.content).every(([file, content]) => written[file] === content);
   if (!verified) throw new Error('[persona-catalog] applied content verification failed');
-  await cacheCharacter({
-    session_id: GLOBAL_SESSION_KEY,
-    userName: payload.character.userName,
-    userAvatar: payload.character.userAvatar,
-    aiName: payload.character.aiName,
-    aiAvatar: payload.character.aiAvatar
-  });
+  try {
+    await cacheCharacter({
+      session_id: GLOBAL_SESSION_KEY,
+      userName: payload.character.userName,
+      userAvatar: payload.character.userAvatar,
+      aiName: payload.character.aiName,
+      aiAvatar: payload.character.aiAvatar
+    });
+  } catch (e) {
+    // A local display cache must never block creating the session.
+    logUtil.e('[persona-catalog] character cache write failed:', e);
+  }
   if (sessionId) {
     // A failure here must not undo the persona write (the session then runs
     // with every default, which is exactly a preset without an agent block).

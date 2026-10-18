@@ -206,6 +206,19 @@ impl PythonBridge {
         })
     }
 
+    /// `PUT {path}` with a JSON body and no response body.
+    pub async fn put_empty<B: Serialize>(&self, path: &str, body: &B) -> AppResult<()> {
+        let resp = self
+            .client
+            .put(self.url(path))
+            .json(body)
+            .send()
+            .await?;
+
+        Self::check_response(resp).await?;
+        Ok(())
+    }
+
     /// `PATCH {path}` with a JSON body, returning deserialized JSON.
     pub async fn patch_json<B: Serialize, T: DeserializeOwned>(
         &self,
@@ -223,6 +236,19 @@ impl PythonBridge {
         resp.json::<T>().await.map_err(|e| {
             AppError::Backend(format!("failed to deserialize PATCH {path}: {e}"))
         })
+    }
+
+    /// `PATCH {path}` with a JSON body and no response body.
+    pub async fn patch_empty<B: Serialize>(&self, path: &str, body: &B) -> AppResult<()> {
+        let resp = self
+            .client
+            .patch(self.url(path))
+            .json(body)
+            .send()
+            .await?;
+
+        Self::check_response(resp).await?;
+        Ok(())
     }
 
     /// `DELETE {path}` with a JSON body. Returns `()` on success.
