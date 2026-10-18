@@ -2,55 +2,102 @@
 
 [**English**](README.md) · [中文](README.zh.md) · **日本語** · [한국어](README.ko.md)
 
-> ターン実行中の WebSocket 切断で、クライアントがターンを再実行したり、他のビューアが既に受け取ったフレームを再送したりしてはならない。Sherry はテキストスナップショットとターンごとのシーケンス水位で実行中のターンを復元する。
+> このページは API 契約ではなくメカニズムを記録する：どの状態が権威か、再接続がそれをどう見つけるか、なぜ delta の再送ではなくスナップショット水位を使うのか。
 
-## 適用範囲
+## 設計上の問題
 
-- **ターンが少なくとも 1 つの chunk を生成した後**に切断したビューアは、再接続時に `resume_stream` で実行中ターンのスナップショットを要求する。
-- **最初の chunk より前**に切断したビューアは送信待ちの payload を再送する。バックエンドは `client_msg_id` で重複排除するため、ターンが二重に開始されることはない。
-- 最後のビューアが切断してもターン自体は実行を続ける。socket の解放はターンをキャンセルしない。
-- このプロトコルはスナップショットベースであり、ZCode の 7 イベントアンカープロトコルではない。中核目標——再実行しない、再送しない、重複しない、テキスト末尾はサーバーが正——は満たしている。
+ターンは長時間実行される async generator である。出力は生成されると同時にすべてのライブ socket へプッシュされ、per-client キューも replay log もない。ビューアはどの chunk でも消えうるが、ターンはツール呼び出しとトークンをすでに消費している可能性があるため、動き続けなければならない。
 
-## ワイヤプロトコル
+要件は相反する：
 
-1. クライアントは agent socket で `{"type": "resume_stream", "session_id": ..., "content": {}}` を送る。
-2. サーバーは `active_turn_snapshot(session_id)` を呼ぶ。実行中のターンがあれば、エンジンの `ai_text`、`has_reasoning`、現在のターンごとの `seq` を返す。
-3. サーバーは**その socket にだけ** `stream_resume` フレームを返し、`status` は `ok`、`ended`、`gone`、`unknown` のいずれかになる。
-4. `ok` はスナップショットを運ぶ。`ended` は実行中ターンがないが履歴はある状態（クライアントは再取得）、`gone` はセッション削除済みまたは未永続化、`unknown` は読み取り失敗時の fail-open 結果。
-5. サーバーはスナップショットをブロードキャストせず、過去のフレームも再送しない。ライブフレームは生成時に一度だけブロードキャストされる。
+- 再接続でターンを再実行してはならない。副作用とコストが重複する。
+- 再接続でフレームを再送してはならない。他のビューアが受信済みかもしれず、可視テキストが重複する。
+- 再接続のためにサーバーが全 delta をビューアごとに保持してはならない。状態が無界になる。
+- 同じ session の複数ビューアは、再送カーソルを共有せず同じテキストへ収束しなければならない。
 
-## クライアント契約
+答えはイベントログではなく、**時点スナップショットとシーケンス水位**である。
 
-- クライアントはまずバッファ済み delta を flush する。スナップショットは既にそれらを含んでいる。
-- そのターンの AI 行はスナップショットのテキストで**置き換え**られ、追記はされない。
-- 各ライブフレームはターンごとの `seq` を持ち、スナップショットは読み取り時の `seq` を運ぶ。復元したクライアントはその水位以下のフレームを破棄し、スナップショット読み取り後に在途フレームが届く競合を閉じる。
-- `stream:resumed` はビジネス層が消費するバスイベント。水位は chat store ではなく socket のフレームコンテキストに保存される。
+## 権威ある状態
 
-## 対象外
+`StreamTurn` が実行中ターンの権威あるテキストを持つ。可視モデルテキストは think scrubber を通過した後 `self.ai_text` に追加され、reasoning は `_has_reasoning` で別に追跡される。ツール呼び出しは `ai_text` の一部ではなく、trajectory ledger に記録される。
 
-- reasoning delta は復元しない。スナップショットは `has_reasoning` を報告するだけ。
-- 増分 tool-input JSON と delta ごとの usage テレメトリはスナップショットに含まれない。
-- 切断前にコミット済みのツール呼び出しは、ターンごとの trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できるが、ストリームイベントとして再送はしない。
-- ZCode の完全な 7 イベントアンカープロトコルは実装せず、予定もない。スナップショットプロトコルがユーザーに見える復元目標をより少ない仕組みで満たす。
+エンジンは `_run_frames` の開始時に `_ACTIVE_TURNS[session_id]` へ登録し、generator の `finally` で削除する。identity check により古いターンが新しいターンを消すことはない。turn runner/queue がターンを直列化するため、session ごとに活動中のターンは最大 1 つである。
+
+`active_turn_snapshot()` はそのエンジンから 3 つのフィールドを読む：
+
+- `ai_text`：これまでに生成された可視テキスト；
+- `_has_reasoning`：reasoning チャネルが存在するか；
+- `_frame_seq`：これまでに付与された最大フレームシーケンス。
+
+この読み取りは stream generator と同じイベントループ上で走るため、テキストとシーケンス番号は一貫した 1 つのカットで読まれる。ロックは不要である。登録されたエンジンがなければ実行中ターンはなく、スナップショット関数は `None` を返す。
+
+## フレーム順序と水位
+
+`StreamTurn.run()` が emit する各フレームには、yield 前にターンごとの単調な `_frame_seq` が付与される：
+
+```text
+_run_frames() がフレームを生成
+  → run() が _frame_seq をインクリメント
+  → frame["seq"] = _frame_seq
+  → フレームがブロードキャストされる
+```
+
+スナップショットは読み取り時の `_frame_seq` を運ぶ。この数値が水位である：
+
+- `seq <= snapshot.seq` のフレームは、スナップショットのカットで既に `ai_text` に反映されている。
+- そのようなフレームは、再接続 socket へ向かう途中か、スナップショット応答後に届く可能性がある。
+- したがって復元したクライアントは水位以下の全フレームを破棄し、ターンの AI 行をスナップショットテキストで置き換える。
+
+これは線形化の議論である。スナップショットはストリームを横切るカットであり、`seq` がそのカットを識別し、置換テキストがそのカットの状態である。クライアントはスナップショットがどの delta を含むかを知る必要がない。
+
+## 切断中のライフサイクル
+
+`_release_socket` は socket を登録解除し、pending tool arguments を掃除することがあるが、ターンを**キャンセルしない**。ターンタスクは完了まで `_active_tasks` に残り、`_ACTIVE_TURNS` は切断経路ではなく generator 自身の `finally` で削除される。したがって最後のビューアが去ってもターンは生き残る。
+
+再接続時、クライアントは `_handle_resume_stream` を呼ぶ。ハンドラは活動中エンジンを読む：
+
+- エンジンがある → `ok` とスナップショット；
+- エンジンはないが session に永続メッセージがある → `ended`（クライアントが履歴を再取得）；
+- エンジンも履歴もない → `gone`；
+- 読み取り失敗 → `unknown`。クライアントは古いテキストを黙って保持せず再取得する。
+
+応答は要求した socket にだけ送られる。他のビューアはライブフレームを受け続け、スナップショットはブロードキャストでも再送元でもない。
+
+## なぜ replay log がないのか
+
+replay log は全ターンの全 delta を保存し、ビューアごとに保持し、per-viewer カーソルを維持しなければならない。さらに保持ポリシー、バックプレッシャー、「配送済み」と「在途」を区別する手段が必要になる——同じ水位問題にログを付けただけである。
+
+スナップショット方式の状態は有界である：実行中ターンごとにテキストアキュムレータ 1 つとカウンタ 1 つ。また本質的に冪等である：クライアントが 1 フレーム見逃しても 1000 フレーム見逃しても、スナップショットで AI 行を置換した結果は同じ。再接続コストは O(現在のテキスト) であり、O(履歴) ではない。
+
+トレードオフは明示的である：スナップショットが復元するのは**可視テキストの末尾**であり、すべての中間イベントではない。
+
+## スナップショットが意図的に省略するもの
+
+- reasoning delta：スナップショットは `has_reasoning` を報告するだけで、reasoning テキストは含まない。
+- 増分 tool-input JSON と delta ごとの usage テレメトリ。
+- ストリームイベントとしてのツール呼び出しカード。コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できる。
+
+この分担は意図的である。テキストは永続記録から部分レンダリングを再構築できない唯一の状態であり、ツール呼び出しには既に永続台帳がある。そのストリームフレームを再送しても既存レコードを重複させるだけである。
+
+## 失敗時の意味論
+
+- スナップショット後に到着した古いフレームは水位で破棄され、可視テキストを重複させない。
+- `unknown` と `ended` はどちらも履歴の再取得を導き、`gone` は何もしない。
+- スナップショット読み取りはストリームのイベントループ上で走るため一貫している。フレームは `ai_text` に含まれ水位以下であるか、より新しくフィルタを通過するかのどちらかである。
+- socket ごとの応答はマルチビューアの独立性を保つ。あるビューアの再接続が別のビューアのカーソルやストリームを変えることはない。
+
+## 否定された代替案
+
+- **再接続時にターンを再実行する。** ツールの副作用とトークン消費を重複させ、回答を変えうる。
+- **全 delta を再送する。** per-viewer 履歴、カーソル、保持が必要になり、`seq` 水位が解いた競合が再び現れる。
+- **ZCode の 7 イベントアンカープロトコル。** reasoning/tool-input のより細かい復元を提供するが、フロントエンドプロトコルと永続的な anchor/tail-discard パイプラインを要する。Sherry のスナップショットプロトコルはユーザーに見える復元目標をより少ない仕組みで満たす。細粒度イベント型は設計上実装しない。
 
 ## コードマップ
 
-- `server/service/stream_dispatch.py`: `active_turn_snapshot` とアクティブターンレジストリ。
-- `server/trigger/ws/messages.py`: `_handle_resume_stream`、socket ごとの応答。
-- `runtime/session/ws_push.py`: ライブフレーム用の `broadcast_to_session`。再送ログはない。
-- `client/app/composables/bridge/agent-socket.ts`: 切断検出と `resume_stream` 要求。
-- `client/app/composables/bridge/agent-socket-frames.ts`: `stream_resume` ルーティングとスナップショット `seq` 水位。
-- `client/app/composables/use-chat-stream.ts`: テキスト置換と `ended` / `unknown` の再取得判断。
-
-## テスト
-
-- `tests/server/test_stream_resume.py`: ブロードキャストが正確に 1 回、死んだ socket の除去、スナップショットは要求者だけ、session を越えないこと、水位契約。
-- `client/app/composables/__tests__/agent-socket-resume.test.ts`: 再接続要求と `ok` / `ended` / `gone` の処理。
-- `client/app/composables/__tests__/agent-socket-frames.test.ts`: `stream_resume` フレームのルーティングとスナップショット適用。
-
-## 失敗モード
-
-- スナップショット読み取りが失敗すると、サーバーは `unknown` を返す。クライアントは古いテキストを黙って残さず、履歴を再取得する。
-- アクティブターンも永続履歴もない場合、応答は `gone` で、クライアントは何もしない。
-- スナップショット `seq` 以下のフレームがスナップショット後に届いた場合、クライアントはそれを破棄する。したがって重複配信で可視テキストが重複することはない。
-- スナップショットは要求した socket だけに届く。同じ session の他のビューアはライブフレームを続け、スナップショットを再送として見ることはない。
+- `server/service/stream_dispatch.py`: `StreamTurn`（`ai_text`、`_frame_seq`、`_ACTIVE_TURNS`）と `active_turn_snapshot`。
+- `server/trigger/ws/messages.py`: `_handle_resume_stream` と `_release_socket`。
+- `runtime/session/ws_push.py`: 正確に 1 回のブロードキャスト。replay log はない。
+- `client/app/composables/bridge/agent-socket.ts`: 切断検出と `resume_stream`。
+- `client/app/composables/bridge/agent-socket-frames.ts`: スナップショット `seq` 水位とフレームフィルタ。
+- `client/app/composables/use-chat-stream.ts`: スナップショット置換と履歴再取得。
+- `tests/server/test_stream_resume.py`、`client/app/composables/__tests__/agent-socket-resume.test.ts`: 上記の不変条件。
