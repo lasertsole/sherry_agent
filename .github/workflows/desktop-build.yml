@@ -91,6 +91,12 @@ jobs:
       - name: Build the backend tree
         run: uv run --no-sync python packaging/build_backend.py
 
+      # Release hygiene: the frozen tree must not carry the repo's tests, docs
+      # or generated wiki. build_backend.py runs the same guard; this step makes
+      # the check explicit in the workflow log.
+      - name: Audit the backend tree (no tests/docs/wiki)
+        run: uv run --no-sync python packaging/check_release.py backend client/src-tauri/sherry-backend
+
       # The archive holds the tree's CONTENTS at its root (`cd sherry-backend &&
       # tar czf … .`): that is the layout the shell's installer expects.
       - name: Compress the backend (Linux/macOS)
@@ -174,6 +180,14 @@ jobs:
       - name: Build the installers
         working-directory: client
         run: pnpm tauri build
+
+      # The installer payload is the SPA in .output/public; assert it carries no
+      # tests/docs/wiki (or Markdown) before it is bundled/uploaded.
+      - name: Audit the frontend bundle (no tests/docs/wiki)
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" packaging/check_release.py frontend client/.output/public
 
       - uses: actions/upload-artifact@v4
         with:

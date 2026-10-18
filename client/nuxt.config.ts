@@ -123,7 +123,10 @@ export default defineNuxtConfig({
     detectBrowserLanguage: false
   },
 
-  ignore: ['**/src-tauri/**'],
+  // Colocated test files are compiled by vitest and are never part of the SPA;
+  // the release bundle is audited by packaging/check_release.py. docs/ is the
+  // VitePress site, not an app source tree.
+  ignore: ['**/src-tauri/**', 'docs/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*'],
   css: ['~/assets/css/main.css', '~/assets/css/main.scss'],
 
   // Global directives

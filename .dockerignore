@@ -28,6 +28,21 @@ workspace/
 evals/results/
 skills/plugins/
 
+# Tests / documentation / generated code maps — never part of a release image
+tests/
+docs/
+wiki/
+graphify-out/
+evals/
+TODO/
+# Root-level documentation; skills/**/SKILL.md stays (runtime data for the
+# skill loader), and so do the skills' own README files.
+README*.md
+AGENTS.md
+**/__tests__/
+**/*.test.*
+**/*.spec.*
+
 # Model weights are downloaded at runtime into models/*/model_weight/
 models/*/model_weight/
 
