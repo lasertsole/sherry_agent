@@ -451,7 +451,7 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 **Sherry 实现（2026-10-18）**：`SafeToolNode`（`agent/safe_tool_node.py`）替换 ToolNode，`plan_batch` 按 `READ_ONLY_TOOLS` / `concurrent_safe` / `side_effect_scope` 分类；文件工具按 canonical path 分组，同 path 有写按 `tool_calls` 顺序串行、不同 path 并发，非文件不安全工具为整批 barrier。`file_read_lock` / `file_write_lock` 提供跨 agent/进程的共享读、独占写；`ToolResourceLockMiddleware` 补 `system`（默认关）和 `user_interaction`（默认开）资源锁。主链与子链均接入。
 
-**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制已记录在 `TODO/计划_工具并行安全标注.md`。
+**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制记录在 `docs/tool-parallel-safety/`。
 
 ---
 
