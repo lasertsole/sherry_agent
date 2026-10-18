@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -90,33 +91,31 @@ def disable_code_embedder() -> None:
     _ENABLED_MARKER.unlink(missing_ok=True)
 
 
-def download_code_embedder(profile: CodeEmbedderProfile | None = None) -> Path:
-    """Download the ONNX weights and tokenizer files, returning the ONNX path."""
-    cfg = _profile(profile)
-    from huggingface_hub import hf_hub_download
+def download_code_embedder(
+    profile: CodeEmbedderProfile | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> Path:
+    """Download the ONNX weights/tokenizer, reporting ``progress(done, total)``.
 
+    The ONNX body is streamed by ``httpx`` (not ``hf_hub_download``) so the
+    settings panel can show a real progress bar; the tokenizer files are small
+    and still come from the Hub cache.
+    """
+    cfg = _profile(profile)
     onnx = _onnx_path(cfg)
-    if not onnx.is_file() or onnx.stat().st_size != int(cfg["size_bytes"]):
+    expected = int(cfg["size_bytes"])
+    if onnx.is_file() and onnx.stat().st_size == expected:
+        if progress is not None:
+            progress(expected, expected)
+    else:
         if onnx.exists():
             onnx.unlink()
-        logger.info("code embedder: downloading {}", cfg["repo_id"])
-        downloaded = hf_hub_download(
-            cfg["repo_id"],
-            cfg["onnx_filename"],
-            revision=cfg["revision"],
-            local_dir=_WEIGHT_DIR,
-        )
-        got = Path(downloaded)
-        if got.resolve() != onnx.resolve():
-            onnx.parent.mkdir(parents=True, exist_ok=True)
-            if onnx.exists():
-                onnx.unlink()
-            got.replace(onnx)
-    if not onnx.is_file() or onnx.stat().st_size != int(cfg["size_bytes"]):
-        raise RuntimeError(
-            f"code embedder ONNX size mismatch: {onnx} is not {int(cfg['size_bytes'])} bytes"
-        )
+        _download_onnx(cfg, onnx, progress)
+    if not onnx.is_file() or onnx.stat().st_size != expected:
+        raise RuntimeError(f"code embedder ONNX size mismatch: {onnx} is not {expected} bytes")
     _TOKENIZER_DIR.mkdir(parents=True, exist_ok=True)
+    from huggingface_hub import hf_hub_download
+
     for name in cfg["tokenizer_files"]:
         if not (_TOKENIZER_DIR / name).is_file():
             hf_hub_download(
@@ -125,7 +124,49 @@ def download_code_embedder(profile: CodeEmbedderProfile | None = None) -> Path:
                 revision=cfg["revision"],
                 local_dir=_TOKENIZER_DIR,
             )
+    if progress is not None:
+        progress(expected, expected)
     return onnx
+
+
+def _download_onnx(
+    cfg: CodeEmbedderProfile,
+    onnx: Path,
+    progress: Callable[[int, int], None] | None,
+) -> None:
+    """Stream the ONNX body to ``<onnx>.part``, then atomically replace."""
+    import httpx
+
+    onnx.parent.mkdir(parents=True, exist_ok=True)
+    part = onnx.with_name(f"{onnx.name}.part")
+    url = (
+        f"https://huggingface.co/{cfg['repo_id']}/resolve/{cfg['revision']}/{cfg['onnx_filename']}"
+    )
+    timeout = float(CODE_INTEL_SEMANTIC["code_intel_semantic_download_timeout_seconds"])
+    chunk_size = int(CODE_INTEL_SEMANTIC["code_intel_semantic_download_chunk_bytes"])
+    downloaded = 0
+    logger.info("code embedder: downloading {}", cfg["repo_id"])
+    try:
+        with httpx.stream(
+            "GET",
+            url,
+            follow_redirects=True,
+            timeout=httpx.Timeout(timeout),
+        ) as response:
+            response.raise_for_status()
+            total = int(response.headers.get("content-length") or 0) or int(cfg["size_bytes"])
+            with part.open("wb") as handle:
+                for chunk in response.iter_bytes(chunk_size=chunk_size):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress is not None:
+                        progress(downloaded, total)
+        part.replace(onnx)
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
 
 
 class JinaCodeEmbedder:

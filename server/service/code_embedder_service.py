@@ -22,7 +22,16 @@ from models.embed_model.code import (
 )
 
 _LOCK = threading.RLock()
-_STATE: dict[str, Any] = {"state": "idle", "error": None}
+_STATE: dict[str, Any] = {
+    "state": "idle",
+    "error": None,
+    "downloaded_bytes": 0,
+    "total_bytes": 0,
+}
+
+
+def _percent(done: int, total: int) -> int:
+    return min(100, max(0, int(done * 100 / total))) if total > 0 else 0
 
 
 def _profile_name() -> str:
@@ -37,9 +46,12 @@ def _profile() -> CodeEmbedderProfile:
 def status() -> dict[str, Any]:
     """Report the download/enable state without touching the model files."""
     profile = _profile()
+    total = int(profile["size_bytes"])
     with _LOCK:
         state = str(_STATE["state"])
         error = _STATE["error"]
+        downloaded = int(_STATE.get("downloaded_bytes", 0))
+        total = int(_STATE.get("total_bytes", 0)) or total
     files_ready = code_embedder_available()
     enabled = code_embedder_enabled()
     if state == "downloading":
@@ -52,11 +64,16 @@ def status() -> dict[str, Any]:
         effective = "error"
     else:
         effective = "idle"
+    if enabled or files_ready:
+        downloaded, total = total, total
     return {
         "profile": profile["name"],
         "license": profile["license"],
         "natural_languages": list(profile["natural_languages"]),
-        "size_bytes": int(profile["size_bytes"]),
+        "size_bytes": total,
+        "downloaded_bytes": downloaded,
+        "total_bytes": total,
+        "percent": _percent(downloaded, total),
         "files_ready": files_ready,
         "enabled": enabled,
         "state": effective,
@@ -66,19 +83,35 @@ def status() -> dict[str, Any]:
 
 def start_download() -> dict[str, Any]:
     """Download (if needed) and enable the code embedder in the background."""
+    size = int(_profile()["size_bytes"])
     with _LOCK:
         if _STATE["state"] == "downloading":
             return status()
         if code_embedder_enabled():
-            _STATE.update(state="ready", error=None)
+            _STATE.update(
+                state="ready",
+                error=None,
+                downloaded_bytes=size,
+                total_bytes=size,
+            )
             return status()
         if code_embedder_available():
             # Files already came from a manual copy / an interrupted enable:
             # enabling is instant and needs no network.
             enable_code_embedder()
-            _STATE.update(state="ready", error=None)
+            _STATE.update(
+                state="ready",
+                error=None,
+                downloaded_bytes=size,
+                total_bytes=size,
+            )
             return status()
-        _STATE.update(state="downloading", error=None)
+        _STATE.update(
+            state="downloading",
+            error=None,
+            downloaded_bytes=0,
+            total_bytes=size,
+        )
     thread = threading.Thread(
         target=_download_and_enable, name="code-embedder-download", daemon=True
     )
@@ -87,11 +120,22 @@ def start_download() -> dict[str, Any]:
 
 
 def _download_and_enable() -> None:
+    size = int(_profile()["size_bytes"])
+
+    def on_progress(done: int, total: int) -> None:
+        with _LOCK:
+            _STATE.update(downloaded_bytes=done, total_bytes=total)
+
     try:
-        download_code_embedder()
+        download_code_embedder(progress=on_progress)
         enable_code_embedder()
         with _LOCK:
-            _STATE.update(state="ready", error=None)
+            _STATE.update(
+                state="ready",
+                error=None,
+                downloaded_bytes=size,
+                total_bytes=size,
+            )
         logger.info("code embedder downloaded and enabled")
     except Exception as exc:  # noqa: BLE001 - the status endpoint reports it
         logger.warning("code embedder download failed: {}", exc)

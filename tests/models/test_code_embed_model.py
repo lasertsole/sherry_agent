@@ -90,3 +90,43 @@ def test_mean_pooling_and_l2_without_loading_onnx() -> None:
     assert embedder.embed_query("short") == [1.0, 0.0, 0.0]
     embedder.close()
     assert embedder._session is None
+
+
+def test_download_streams_bytes_and_reports_progress(tmp_path: Path, monkeypatch) -> None:
+    import httpx
+
+    weight_dir = tmp_path / "weights"
+    tokenizer_dir = tmp_path / "tokenizer"
+    tokenizer_dir.mkdir()
+    (tokenizer_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(code_core, "_WEIGHT_DIR", weight_dir)
+    monkeypatch.setattr(code_core, "_TOKENIZER_DIR", tokenizer_dir)
+    profile = dict(PROFILE, size_bytes=6)
+
+    class _Response:
+        headers = {"content-length": "6"}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self, chunk_size: int):
+            yield b"abc"
+            yield b"def"
+
+    class _Context:
+        def __enter__(self) -> _Response:
+            return _Response()
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(httpx, "stream", lambda *args, **kwargs: _Context())
+    events: list[tuple[int, int]] = []
+
+    path = code_pkg.download_code_embedder(
+        profile, progress=lambda done, total: events.append((done, total))
+    )
+
+    assert path.read_bytes() == b"abcdef"
+    assert events[-1] == (6, 6)
+    assert (3, 6) in events

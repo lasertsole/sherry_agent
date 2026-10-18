@@ -7,6 +7,9 @@ export interface CodeEmbedderStatus {
   license: string;
   natural_languages: string[];
   size_bytes: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  percent: number;
   files_ready: boolean;
   enabled: boolean;
   state: CodeEmbedderState;

@@ -14,10 +14,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 @pytest.fixture(autouse=True)
 def _reset_state():
     with service._LOCK:
-        service._STATE.update(state="idle", error=None)
+        service._STATE.update(state="idle", error=None, downloaded_bytes=0, total_bytes=0)
     yield
     with service._LOCK:
-        service._STATE.update(state="idle", error=None)
+        service._STATE.update(state="idle", error=None, downloaded_bytes=0, total_bytes=0)
 
 
 def test_status_reports_off_until_provisioned(monkeypatch) -> None:
@@ -31,6 +31,22 @@ def test_status_reports_off_until_provisioned(monkeypatch) -> None:
     assert status["enabled"] is False
     assert status["profile"] == "jina-embeddings-v2-base-code"
     assert status["size_bytes"] == 641517466
+    assert status["downloaded_bytes"] == 0
+    assert status["percent"] == 0
+
+
+def test_status_exposes_download_progress(monkeypatch) -> None:
+    monkeypatch.setattr(service, "code_embedder_available", lambda: False)
+    monkeypatch.setattr(service, "code_embedder_enabled", lambda: False)
+    with service._LOCK:
+        service._STATE.update(state="downloading", downloaded_bytes=50, total_bytes=200)
+
+    status = service.status()
+
+    assert status["state"] == "downloading"
+    assert status["downloaded_bytes"] == 50
+    assert status["total_bytes"] == 200
+    assert status["percent"] == 25
 
 
 def test_status_distinguishes_downloaded_from_enabled(monkeypatch) -> None:
@@ -61,8 +77,10 @@ def test_download_runs_in_background_and_enables(monkeypatch) -> None:
     available = {"value": False}
     enabled = {"value": False}
 
-    def fake_download() -> None:
+    def fake_download(progress=None) -> None:
         available["value"] = True
+        if progress is not None:
+            progress(50, 100)
 
     def fake_enable() -> None:
         enabled["value"] = True

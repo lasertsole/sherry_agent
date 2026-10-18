@@ -52,6 +52,9 @@ class CodeIntelSemanticConfig(TypedDict):
     code_intel_semantic_max_chunks_per_file: int
     # Per-chunk character ceiling (header + symbol body).
     code_intel_semantic_max_chunk_chars: int
+    # Model download transport (the 模型配置 progress bar polls the byte count).
+    code_intel_semantic_download_timeout_seconds: int
+    code_intel_semantic_download_chunk_bytes: int
 
 
 CODE_INTEL_SEMANTIC: CodeIntelSemanticConfig = {
@@ -85,4 +88,6 @@ CODE_INTEL_SEMANTIC: CodeIntelSemanticConfig = {
     "code_intel_semantic_max_chunks": 1000,
     "code_intel_semantic_max_chunks_per_file": 60,
     "code_intel_semantic_max_chunk_chars": 2000,
+    "code_intel_semantic_download_timeout_seconds": 900,
+    "code_intel_semantic_download_chunk_bytes": 1_048_576,
 }

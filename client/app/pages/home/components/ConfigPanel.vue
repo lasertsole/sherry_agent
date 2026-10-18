@@ -143,6 +143,20 @@
                     @click="onCodeEmbedderAction" />
                 </div>
               </div>
+              <div
+                v-if="codeEmbedder?.state === 'downloading'"
+                class="flex flex-col gap-1">
+                <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                  <div
+                    class="h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                    :style="{ width: `${codeEmbedder?.percent ?? 0}%` }" />
+                </div>
+                <p class="m-0 text-[11px] text-gray-400">
+                  {{ codeEmbedder?.percent ?? 0 }}% ·
+                  {{ formatCodeEmbedderSize(codeEmbedder?.downloaded_bytes ?? 0) }} /
+                  {{ formatCodeEmbedderSize(codeEmbedder?.total_bytes ?? 0) }}
+                </p>
+              </div>
               <p
                 v-if="codeEmbedderError"
                 class="m-0 text-xs text-red-600 dark:text-red-400">
@@ -401,7 +415,7 @@ function stopCodeEmbedderPoll(): void {
 
 function startCodeEmbedderPoll(): void {
   if (codeEmbedderPoll) return;
-  codeEmbedderPoll = setInterval(() => void refreshCodeEmbedderStatus(), 1500);
+  codeEmbedderPoll = setInterval(() => void refreshCodeEmbedderStatus(), 1000);
 }
 
 async function refreshCodeEmbedderStatus(): Promise<void> {
