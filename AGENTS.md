@@ -440,11 +440,12 @@ tag); the split is forced by GitHub's 2 GiB release-asset cap, which a bundled
 backend exceeds several times over.
 
 Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
-`tests/`, `docs/` and `wiki/` trees (plus frontend `*.test.*` / `*.spec.*` files)
-in BOTH halves, and `build_backend.py` runs the backend half itself before the
-tree is compressed. `.dockerignore` applies the same boundary to the server
-image. The docs/wiki trees are also outside the pre-commit hooks and the code CI
-jobs (docs parity/link gates run in their own job); see `.github/workflows/ci.yml`.
+`tests/`, `evals/`, `docs/` and `wiki/` trees (plus frontend `*.test.*` /
+`*.spec.*` files) in BOTH halves, and `build_backend.py` runs the backend half
+itself before the tree is compressed. `.dockerignore` applies the same boundary
+to the server image. The docs/wiki trees are also outside the pre-commit hooks
+and the code CI jobs (docs parity/link gates run in their own job); see
+`.github/workflows/ci.yml`.
 
 - **Frontend**: `nuxt generate` (`pnpm build:desktop`) writes `.output/public`
   — the `frontendDist` a bundled app can serve from disk (the `nuxt build`

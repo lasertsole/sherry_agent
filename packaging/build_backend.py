@@ -81,8 +81,18 @@ COLLECT_SUBMODULES = (
 
 #: Static analysers that only a subagent feature needs; excluding them keeps the
 #: bundle from dragging every tree-sitter grammar's sources in twice. ``tests``
-#: is also excluded so PyInstaller can never pull the repository's suite in.
-EXCLUDES = ("tkinter", "matplotlib", "IPython", "jupyter", "pytest", "tests", "pandas.tests")
+#: and ``evals`` are also excluded so PyInstaller can never pull the repository's
+#: suites into a release.
+EXCLUDES = (
+    "tkinter",
+    "matplotlib",
+    "IPython",
+    "jupyter",
+    "pytest",
+    "tests",
+    "evals",
+    "pandas.tests",
+)
 
 
 def installer_version() -> str:
@@ -174,7 +184,7 @@ def main() -> int:
 
     leaks = audit_backend(APP_DIR)
     if leaks:
-        print("refusing: the release tree contains tests/docs/wiki payload:", file=sys.stderr)
+        print("refusing: the release tree contains tests/evals/docs/wiki payload:", file=sys.stderr)
         for leak in leaks[:50]:
             print(f"  {leak}", file=sys.stderr)
         if len(leaks) > 50:

@@ -1,4 +1,4 @@
-"""Release-artifact guard: tests, docs and wiki must never ship.
+"""Release-artifact guard: tests, evals, docs and wiki must never ship.
 
 A desktop release has two halves:
 
@@ -9,9 +9,9 @@ A desktop release has two halves:
 
 ``build_backend.py`` runs :func:`audit_backend` over the frozen tree, and the
 desktop workflow runs this CLI over both halves before uploading anything. The
-check is deliberately path-based: a shipped ``tests/``, ``docs/`` or ``wiki/``
-directory (or a colocated ``*.test.ts`` / ``test_*.py`` file) fails the build
-instead of being silently uploaded.
+check is deliberately path-based: a shipped ``tests/``, ``evals/``, ``docs/`` or
+``wiki/`` directory (or a colocated ``*.test.ts`` / ``test_*.py`` file) fails the
+build instead of being silently uploaded.
 
 Third-party payload under ``_internal`` is exempt from the file scan: a wheel
 may legitimately contain its own tests, and those are not this repository's
@@ -31,6 +31,7 @@ from pathlib import Path
 FORBIDDEN_DIR_NAMES = frozenset(
     {
         "tests",
+        "evals",
         "test",
         "docs",
         "doc",
@@ -114,7 +115,7 @@ def _walk(root: Path, *, skip_internal: bool) -> list[str]:
 
 
 def audit_backend(tree: Path) -> list[str]:
-    """Leaks in a frozen backend tree (tests/docs/wiki, frontend test files)."""
+    """Leaks in a frozen backend tree (tests/evals/docs/wiki, frontend test files)."""
     if not tree.is_dir():
         raise FileNotFoundError(f"backend tree not found: {tree}")
     leaks = [child.name for child in tree.iterdir() if child.name.lower() in FORBIDDEN_TOP_NAMES]
@@ -123,7 +124,7 @@ def audit_backend(tree: Path) -> list[str]:
 
 
 def audit_frontend(dist: Path) -> list[str]:
-    """Leaks in the generated SPA directory (tests/docs/wiki, Markdown files)."""
+    """Leaks in the generated SPA directory (tests/evals/docs/wiki, Markdown files)."""
     if not dist.is_dir():
         raise FileNotFoundError(f"frontend dist not found: {dist}")
     leaks = [child.name for child in dist.iterdir() if child.name.lower() in FORBIDDEN_TOP_NAMES]
@@ -149,7 +150,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if leaks:
-        print(f"release leak: {args.kind} tree contains tests/docs/wiki payload:", file=sys.stderr)
+        print(
+            f"release leak: {args.kind} tree contains tests/evals/docs/wiki payload:",
+            file=sys.stderr,
+        )
         for leak in leaks[:50]:
             print(f"  {leak}", file=sys.stderr)
         if len(leaks) > 50:

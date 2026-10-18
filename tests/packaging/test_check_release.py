@@ -1,9 +1,9 @@
 """The release-artifact guard (packaging/check_release.py).
 
 The desktop release is audited before upload: the frozen backend tree and the
-generated SPA must not carry the repository's test suites, documentation or the
-generated wiki. These tests pin the leak classes and the deliberate exemptions
-(third-party tests under ``_internal``; the skill's documented manual
+generated SPA must not carry the repository's test suites, evals, documentation
+or the generated wiki. These tests pin the leak classes and the deliberate
+exemptions (third-party tests under ``_internal``; the skill's documented manual
 ``rag_import*_test.py`` utilities).
 """
 
@@ -47,11 +47,13 @@ def test_a_clean_backend_tree_passes_and_skips_internal_dependency_tests(tmp_pat
     assert module.audit_backend(tree) == []
 
 
-def test_backend_leaks_name_every_shipped_test_doc_and_wiki_tree(tmp_path: Path):
+def test_backend_leaks_name_every_shipped_test_eval_doc_and_wiki_tree(tmp_path: Path):
     module = _load_check_release()
     tree = tmp_path / "sherry-backend"
     _touch(tree / "sherry-backend.exe")
     _touch(tree / "tests" / "test_suite.py")
+    _touch(tree / "evals" / "run.py")
+    _touch(tree / "agent" / "evals" / "nested.py")
     _touch(tree / "docs" / "index.md")
     _touch(tree / "wiki" / "index.md")
     _touch(tree / "client" / "app.test.ts")
@@ -62,6 +64,8 @@ def test_backend_leaks_name_every_shipped_test_doc_and_wiki_tree(tmp_path: Path)
 
     assert set(leaks) == {
         "tests",
+        "evals",
+        "agent/evals",
         "docs",
         "wiki",
         "client",
@@ -91,11 +95,12 @@ def test_a_clean_frontend_bundle_passes(tmp_path: Path):
     assert module.audit_frontend(dist) == []
 
 
-def test_frontend_leaks_cover_tests_docs_and_markdown(tmp_path: Path):
+def test_frontend_leaks_cover_tests_evals_docs_and_markdown(tmp_path: Path):
     module = _load_check_release()
     dist = tmp_path / "public"
     _touch(dist / "index.html")
     _touch(dist / "__tests__" / "page.ts")
+    _touch(dist / "evals" / "run.ts")
     _touch(dist / "home" / "page.test.ts")
     _touch(dist / "home" / "page.spec.tsx")
     _touch(dist / "docs" / "guide.html")
@@ -105,6 +110,7 @@ def test_frontend_leaks_cover_tests_docs_and_markdown(tmp_path: Path):
 
     assert set(leaks) == {
         "__tests__",
+        "evals",
         "docs",
         "home/page.test.ts",
         "home/page.spec.tsx",
