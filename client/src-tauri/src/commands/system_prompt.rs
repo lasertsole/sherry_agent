@@ -25,6 +25,13 @@ pub struct PromptFilePayload {
     pub file_to_content: HashMap<String, String>,
 }
 
+/// Payload for reading the persona template for one language.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct PromptTemplatePayload {
+    /// Language directory under `workspace/template/` (null = backend default).
+    pub lang: Option<String>,
+}
+
 /// Response after reading all system prompt files.
 ///
 /// | Field | Type | Description |
@@ -75,6 +82,28 @@ pub async fn system_prompt_read(
     // Python returns dict[str, str] directly, wrap in PromptFileResponse
     let file_to_content: HashMap<String, String> = bridge
         .get_json("/system_prompt", &[])
+        .await
+        .map_err(FrontendError::from)?;
+    Ok(PromptFileResponse { file_to_content })
+}
+
+/// Read the persona template files for one language.
+///
+/// The Python route is `GET /system_prompt/template?lang=<lang>`; a null
+/// language lets the backend choose its preferred template. This command was
+/// missing from the native bridge, which made the new-session preset dialog fail
+/// inside the packaged Tauri shell even though the browser transport worked.
+#[tauri::command]
+pub async fn system_prompt_read_template(
+    payload: PromptTemplatePayload,
+    bridge: tauri::State<'_, PythonBridge>,
+) -> Result<PromptFileResponse, FrontendError> {
+    let mut query: Vec<(&str, &str)> = Vec::new();
+    if let Some(lang) = payload.lang.as_deref() {
+        query.push(("lang", lang));
+    }
+    let file_to_content: HashMap<String, String> = bridge
+        .get_json("/system_prompt/template", &query)
         .await
         .map_err(FrontendError::from)?;
     Ok(PromptFileResponse { file_to_content })

@@ -101,7 +101,13 @@ _WORKSPACE_OVERRIDE = os.environ.get("SHERRY_WORKSPACE_DIR", "").strip()
 WORKSPACE_DIR = (
     Path(_WORKSPACE_OVERRIDE).expanduser() if _WORKSPACE_OVERRIDE else APP_HOME / "workspace"
 )
+#: The shipped, read-only persona seeds. A packaged app's APP_HOME starts with
+#: no ``workspace/template`` (it is user data), while the backend tree ships
+#: this directory; read it from the bundle until a writable copy exists.
+_SHIPPED_WORKSPACE_TEMPLATE_DIR = ROOT_DIR / "workspace" / "template"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
+if not WORKSPACE_TEMPLATE_DIR.is_dir() and _SHIPPED_WORKSPACE_TEMPLATE_DIR.is_dir():
+    WORKSPACE_TEMPLATE_DIR = _SHIPPED_WORKSPACE_TEMPLATE_DIR
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 # Plan-extraction knowledge namespace (Tier-1 prompt injection + Tier-2 tool
 # reads): one directory per plan, holding task-*.json / wave-*.json /
