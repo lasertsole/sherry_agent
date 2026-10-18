@@ -63,6 +63,7 @@ pub fn run() {
             session::session_history,
             // System Prompt
             system_prompt::system_prompt_read,
+            system_prompt::system_prompt_read_template,
             system_prompt::system_prompt_write,
             system_prompt::system_prompt_update,
             // System
