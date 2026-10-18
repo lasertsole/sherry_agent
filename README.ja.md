@@ -376,7 +376,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 - **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
 - **リランカーモデル**：`.models` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
 - **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
-- **進捗付きの事前ダウンロード**：「模型配置」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、`GET /model-downloads/status` をポーリングし、未完了の `.part` ファイルから中断した転送を再開します。
+- **進捗付きの事前ダウンロード**：「模型配置」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、スロットルされた `model_download_updated` WebSocket フレームを受信し、パネルを開いた時や再接続時に `GET /model-downloads/status` のスナップショットを 1 回取得して、未完了の `.part` ファイルから中断した転送を再開します。
 
 > 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
 

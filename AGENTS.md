@@ -547,9 +547,16 @@ does the HEAD size probe plus a streaming `.part` write and atomic replace;
 family (HEAD/no-Content-Length files report bytes rather than a bogus percent,
 an ITTT/VTTT GGUF already under `auxiliary_llm` is copied locally instead of
 re-downloaded) and `GET /model-downloads/status` / `POST /model-downloads/download`
-(family in the body) expose it. The panel polls the status once per second while
-that entry is selected and a download is running; the code embedder keeps its
-own `/code-embedder/*` pair.
+(family in the body) expose it. Live progress is PUSHED, not polled:
+`server/service/model_download_events.py` sends `model_download_updated` through
+`runtime/session/ws_push.py::broadcast_to_all` to every live socket (a download
+is process-level, not session state), throttled per family by
+`MODEL_DOWNLOADS["progress_push_interval_s"]` (0.25 s) with state transitions
+forced, and the worker thread schedules onto the loop captured by the start
+handler. The panel takes ONE status snapshot when opened or when a socket
+reconnects, then applies frames; there is no polling interval. The code
+embedder publishes the same event with `kind: "code_embedder"` and keeps its own
+`/code-embedder/*` snapshot pair.
 
 ## Plan-Then-Execute Plan Mode (`agent/tools/plan_mode/`)
 
@@ -997,7 +1004,10 @@ Every streamed frame fans out to **all live sockets of the session** at send
 time (`runtime/session/ws_push.py::broadcast_to_session`, called by the two
 `StreamDriver.send_frame` sites and the ~14 push sites: turn errors, taskflow
 progress, todo pushes, web-search fallback, background-terminal exits, subagent
-events, heartbeat/cron pseudo-sessions). The registry keeps a per-session bag
+events, heartbeat/cron pseudo-sessions). Process-level work that is NOT
+session-scoped uses `broadcast_to_all` instead (every registered socket,
+whatever its session; model download progress is its first consumer). The
+registry keeps a per-session bag
 (`relation_register.session_id_to_websocket_ids`, 1:N, ordered) plus the 1:1
 "newest socket" view; a failed send prunes only that socket. **There is no
 replay log and no per-client queue**: each frame reaches each socket exactly

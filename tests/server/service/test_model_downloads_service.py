@@ -115,6 +115,38 @@ def test_start_streams_with_progress_and_marks_ready(monkeypatch) -> None:
     assert (service.ROOT_DIR / "target" / "model.gguf").read_bytes() == b"0123456789"
 
 
+def test_start_publishes_a_forced_start_and_terminal_frame(monkeypatch) -> None:
+    """The UI never polls: start and completion are forced WS emissions."""
+    calls: list[tuple[str, str, bool]] = []
+    done = threading.Event()
+
+    monkeypatch.setattr(service, "probe_size", lambda url, timeout: 4)
+    monkeypatch.setattr(
+        service.events,
+        "publish",
+        lambda kind, key, builder, *, force=False: calls.append((kind, key, force)),
+    )
+
+    def fake_stream(
+        url: str, dest: Path, *, timeout_seconds: float, chunk_bytes: int, progress=None
+    ) -> int:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"data")
+        done.set()
+        return 4
+
+    monkeypatch.setattr(service, "stream_download", fake_stream)
+
+    service.start("TEST")
+    assert ("local", "TEST", True) in calls
+    assert done.wait(2.0)
+    for _ in range(100):
+        if service.status_for("TEST")["state"] == "ready":
+            break
+        time.sleep(0.02)
+    assert calls[-1] == ("local", "TEST", True)
+
+
 def test_fallback_is_copied_without_a_network_call(tmp_path: Path, monkeypatch) -> None:
     fallback = tmp_path / "fallback.gguf"
     fallback.write_bytes(b"cached")
@@ -127,8 +159,8 @@ def test_fallback_is_copied_without_a_network_call(tmp_path: Path, monkeypatch) 
 
     service.start("TEST")
     target = tmp_path / "target" / "model.gguf"
-    for _ in range(50):
-        if target.is_file():
+    for _ in range(100):
+        if service.status_for("TEST")["state"] == "ready":
             break
         threading.Event().wait(0.02)
     assert target.read_bytes() == b"cached"

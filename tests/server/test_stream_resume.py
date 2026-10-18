@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from runtime.session.relation_register import relation_register
-from runtime.session.ws_push import broadcast_to_session
+from runtime.session.ws_push import broadcast_to_all, broadcast_to_session
 
 # The server trigger module pulls the whole app (heavy first import; load-sensitive
 # on this host), so the budget is generous — these are still unit-level tests.
@@ -104,6 +104,34 @@ def test_broadcast_never_crosses_sessions():
     assert asyncio.run(broadcast_to_session(SESSION, {"event": "chunk"})) == 1
     assert len(ours.sent) == 1
     assert other.sent == []
+
+
+def test_broadcast_to_all_reaches_every_session_socket_once():
+    ours, other = _WS(), _WS()
+    relation_register.register_websocket(SESSION, ours)
+    relation_register.register_websocket("sess-other", other)
+
+    delivered = asyncio.run(broadcast_to_all({"event": "model_download_updated"}))
+
+    # Other suites may leave sockets registered in this process; the guarantee
+    # under test is that BOTH of ours received the frame exactly once.
+    assert delivered >= 2
+    assert len(ours.sent) == 1
+    assert len(other.sent) == 1
+    assert ours.sent[0] == other.sent[0]
+
+
+def test_broadcast_to_all_prunes_only_the_dead_socket():
+    alive, dead = _WS(), _WS(fail=True)
+    relation_register.register_websocket(SESSION, alive)
+    relation_register.register_websocket("sess-other", dead)
+
+    assert asyncio.run(broadcast_to_all({"event": "model_download_updated"})) >= 1
+    assert len(alive.sent) == 1
+    assert relation_register.get_websockets_by_session_id("sess-other") == []
+    remaining = relation_register.get_all_websockets()
+    assert alive in remaining
+    assert dead not in remaining
 
 
 def test_the_one_to_one_view_promotes_a_surviving_socket():

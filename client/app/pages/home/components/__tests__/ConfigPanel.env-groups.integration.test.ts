@@ -12,6 +12,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import type { EnvConfigPayload, EnvGroup } from '@/composables/env';
+import { emit } from '~/composables/mitt';
 import ConfigPanel from '@/pages/home/components/ConfigPanel.vue';
 
 const envState = vi.hoisted(() => {
@@ -48,6 +49,8 @@ const envState = vi.hoisted(() => {
 });
 
 vi.mock('@/composables/env', () => ({
+  API_BASE_URL: 'http://localhost:8080',
+  WS_BASE_URL: 'ws://localhost:8080',
   readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.envGroups })),
   readModelsConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.modelGroups })),
   readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.networkGroups })),
@@ -129,5 +132,34 @@ describe('ConfigPanel env groups', () => {
     expect(wrapper.find('[data-test="env-group-other"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="app-config-group-LANGSMITH"]').text()).toContain('LANGSMITH_TRACING');
     expect(wrapper.get('[data-test="app-config-group-other"]').text()).toContain('SHERRY_AUTH_ENABLED');
+  });
+
+  it('applies a pushed code-embedder download frame', async () => {
+    const wrapper = await mountEnvTab();
+
+    emit('ws:model_download_updated', {
+      content: {
+        kind: 'code_embedder',
+        status: {
+          profile: 'jina-embeddings-v2-base-code',
+          license: 'Apache-2.0',
+          natural_languages: ['en'],
+          size_bytes: 641_517_466,
+          downloaded_bytes: 269_000_000,
+          total_bytes: 641_517_466,
+          percent: 42,
+          files_ready: false,
+          enabled: false,
+          state: 'downloading',
+          error: null
+        }
+      }
+    });
+    await flushPromises();
+
+    const card = wrapper.get('[data-test="code-embedder"]');
+    expect(card.text()).toContain('42%');
+    expect(card.find('.bg-sky-500').attributes('style')).toContain('width: 42%');
+    wrapper.unmount();
   });
 });

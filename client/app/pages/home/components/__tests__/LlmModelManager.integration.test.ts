@@ -89,6 +89,9 @@ vi.mock('~/composables/model-downloads', () => ({
   startModelDownload: downloadsApi.startModelDownload
 }));
 
+const mittMocks = vi.hoisted(() => ({ on: vi.fn(), off: vi.fn(), emit: vi.fn() }));
+vi.mock('~/composables/mitt', () => mittMocks);
+
 const localState = (overrides: Record<string, unknown> = {}) => ({
   label: 'bge-m3',
   state: 'idle',
@@ -147,6 +150,8 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     downloadsApi.fetchModelDownloadsStatus.mockReset();
     downloadsApi.startModelDownload.mockReset();
     downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({ models: {} });
+    mittMocks.on.mockReset();
+    mittMocks.off.mockReset();
   });
 
   it('starts collapsed and reveals the manager on expand', async () => {
@@ -643,6 +648,55 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(card.text()).toContain('61 MB / 612 MB');
     expect(card.text()).toContain('0/1 文件');
     expect(card.find('.bg-sky-500').attributes('style')).toContain('width: 9%');
+    wrapper.unmount();
+  });
+
+  it('applies a pushed model_download_updated frame for its own group', async () => {
+    const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await flushPromises();
+
+    const handler = mittMocks.on.mock.calls.find(call => call[0] === 'ws:model_download_updated')?.[1] as (
+      payload: unknown
+    ) => void;
+    expect(handler).toBeTypeOf('function');
+
+    handler({
+      content: {
+        kind: 'local',
+        family: 'EMBEDDING',
+        status: localState({
+          state: 'downloading',
+          downloaded_bytes: 128_000_000,
+          total_bytes: 641_517_466,
+          percent: 20,
+          files_done: 0
+        })
+      }
+    });
+    await flushPromises();
+
+    const card = wrapper.get('[data-test="local-model-download"]');
+    expect(card.text()).toContain('20%');
+    expect(card.text()).toContain('122 MB / 612 MB');
+    expect(card.find('.bg-sky-500').attributes('style')).toContain('width: 20%');
+    // A frame for another family must not overwrite this group's state.
+    handler({
+      content: {
+        kind: 'local',
+        family: 'RERANKER',
+        status: localState({ state: 'error', error: 'other family' })
+      }
+    });
+    await flushPromises();
+    expect(card.text()).toContain('20%');
     wrapper.unmount();
   });
 });

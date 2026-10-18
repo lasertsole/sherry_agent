@@ -18,6 +18,7 @@ from config.features import MODEL_DOWNLOADS, LocalModelFile, LocalModelSpec
 from config.path import ROOT_DIR
 from loguru import logger
 from models.downloader import probe_size, stream_download
+from server.service import model_download_events as events
 
 _LOCK = threading.RLock()
 _STATES: dict[str, dict[str, Any]] = {}
@@ -101,22 +102,45 @@ def status() -> dict[str, Any]:
     return {"models": {family: status_for(family) for family in MODEL_DOWNLOADS["models"]}}
 
 
+def _publish(family: str, *, force: bool = False) -> None:
+    """Push one live state frame (throttled unless a state transition)."""
+    events.publish(
+        events.KIND_LOCAL,
+        family,
+        lambda: {"family": family, **status_for(family)},
+        force=force,
+    )
+
+
 def start(family: str) -> dict[str, Any]:
     """Start one family's prefetch; no-op when ready or already running."""
     spec = _spec(family)
     if spec is None:
         raise KeyError(f"unknown local model family: {family}")
+    events.capture_loop()
+    ready = False
+    already_running = False
     with _LOCK:
         if _ready(spec):
-            return status_for(family)
-        if _STATES.get(family, {}).get("state") == "downloading":
-            return status_for(family)
-        _STATES[family] = {
-            "state": "downloading",
-            "error": None,
-            "downloaded_bytes": 0,
-            "total_bytes": 0,
-        }
+            ready = True
+        elif _STATES.get(family, {}).get("state") == "downloading":
+            already_running = True
+        else:
+            _STATES[family] = {
+                "state": "downloading",
+                "error": None,
+                "downloaded_bytes": 0,
+                "total_bytes": 0,
+            }
+    if ready:
+        _publish(family, force=True)
+        return status_for(family)
+    if already_running:
+        _publish(family)
+        return status_for(family)
+    # Publish the downloading state BEFORE the worker can emit progress, so no
+    # client sees bytes for a download it never saw start.
+    _publish(family, force=True)
     thread = threading.Thread(
         target=_run, args=(family, spec), name=f"model-download-{family}", daemon=True
     )
@@ -145,6 +169,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
             size = int(file["size_bytes"]) or probe_size(_url(file), timeout)
         sizes.append(size)
     _update(family, total_bytes=sum(sizes), downloaded_bytes=done_base)
+    _publish(family, force=True)
 
     try:
         for index, (file, target, fallback) in enumerate(
@@ -157,6 +182,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
                 shutil.copy2(fallback, target)
                 done_base += sizes[index]
                 _update(family, downloaded_bytes=done_base, total_bytes=sum(sizes))
+                _publish(family, force=True)
                 continue
 
             def on_progress(done: int, reported_total: int, _index: int = index) -> None:
@@ -167,6 +193,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
                     downloaded_bytes=done_base + done,
                     total_bytes=sum(sizes),
                 )
+                _publish(family)
 
             written = stream_download(
                 _url(file),
@@ -178,6 +205,7 @@ def _run(family: str, spec: LocalModelSpec) -> None:
             sizes[index] = written
             done_base += written
             _update(family, downloaded_bytes=done_base, total_bytes=sum(sizes))
+            _publish(family, force=True)
 
         total = sum(_target(file).stat().st_size for file in files)
         _update(
@@ -187,10 +215,12 @@ def _run(family: str, spec: LocalModelSpec) -> None:
             downloaded_bytes=total,
             total_bytes=total,
         )
+        _publish(family, force=True)
         logger.info("local model {} downloaded", family)
     except Exception as exc:  # noqa: BLE001 - the status endpoint reports it
         logger.warning("local model {} download failed: {}", family, exc)
         _update(family, state="error", error=str(exc))
+        _publish(family, force=True)
 
 
 def _update(family: str, **changes: Any) -> None:

@@ -19,6 +19,16 @@ export interface ModelDownloadsStatus {
   models: Record<string, LocalModelDownload>;
 }
 
+/** One `model_download_updated` WS frame (a status snapshot for one target). */
+export interface ModelDownloadUpdate<T = LocalModelDownload> {
+  content?: {
+    kind?: 'local' | 'code_embedder';
+    family?: string;
+    /** The same shape `/model-downloads/status` and `/code-embedder/status` return. */
+    status?: T;
+  };
+}
+
 /** Read all local-model progress states. */
 export async function fetchModelDownloadsStatus(): Promise<ModelDownloadsStatus | null> {
   return fetchApi<ModelDownloadsStatus>({

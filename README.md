@@ -377,7 +377,7 @@ Models configured for **local GGUF** mode are downloaded automatically from Hugg
 - **Embedding**: `EMBEDDING_MODEL_LOCAL=true` (the default) uses the local `bge-m3` Q8_0 GGUF, auto-downloaded on first run.
 - **Reranker**: the `.models` template defaults to a **cloud API** (`RERANKER_MODEL_LOCAL=false`, OpenAI-compatible `bge-reranker-v2-m3`). Set it to `true` to run the local GGUF reranker instead, which is then auto-downloaded (~636 MB).
 - **ITTT / VTTT / Auxiliary LLM**: default to cloud APIs in the template; set `*_MODEL_LOCAL=true` to switch to local GGUF models (also auto-downloaded).
-- **Prefetch with progress**: the 模型配置 panel's built-in local entry (embedding, reranker, ITTT / VTTT, auxiliary) offers a download button and a live progress bar; it polls `GET /model-downloads/status` and resumes an interrupted transfer from its `.part` file.
+- **Prefetch with progress**: the 模型配置 panel's built-in local entry (embedding, reranker, ITTT / VTTT, auxiliary) offers a download button and a live progress bar; it receives throttled `model_download_updated` WebSocket frames and takes one `GET /model-downloads/status` snapshot when the panel opens or reconnects, then resumes an interrupted transfer from its `.part` file.
 
 > Network access to huggingface.co is required for first-run downloads (users in China may need a proxy or a mirror). Interrupted downloads are resumed on the next start; delete `models/<model>/model_weight/` to force a re-download.
 

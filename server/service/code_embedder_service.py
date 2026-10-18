@@ -3,7 +3,8 @@
 The semantic layer is OFF by default. Merely having the ONNX/tokenizer files on
 disk is not enough: ``models/embed_model/code/core.py`` requires the opt-in
 marker written here after a successful download. The 模型配置 panel uses these
-endpoints to start the 612 MB download in a background thread and poll status.
+endpoints to start the 612 MB download in a background thread and receives live
+progress as ``model_download_updated`` WebSocket frames.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from models.embed_model.code import (
     download_code_embedder,
     enable_code_embedder,
 )
+from server.service import model_download_events as events
 
 _LOCK = threading.RLock()
 _STATE: dict[str, Any] = {
@@ -41,6 +43,11 @@ def _profile_name() -> str:
 def _profile() -> CodeEmbedderProfile:
     profiles = CODE_INTEL_SEMANTIC["code_intel_semantic_profiles"]
     return profiles[_profile_name()]
+
+
+def _publish(*, force: bool = False) -> None:
+    """Push one live state frame (throttled unless a state transition)."""
+    events.publish(events.KIND_CODE_EMBEDDER, _profile_name(), status, force=force)
 
 
 def status() -> dict[str, Any]:
@@ -83,19 +90,21 @@ def status() -> dict[str, Any]:
 
 def start_download() -> dict[str, Any]:
     """Download (if needed) and enable the code embedder in the background."""
+    events.capture_loop()
     size = int(_profile()["size_bytes"])
+    action = "start"
     with _LOCK:
         if _STATE["state"] == "downloading":
-            return status()
-        if code_embedder_enabled():
+            action = "running"
+        elif code_embedder_enabled():
             _STATE.update(
                 state="ready",
                 error=None,
                 downloaded_bytes=size,
                 total_bytes=size,
             )
-            return status()
-        if code_embedder_available():
+            action = "ready"
+        elif code_embedder_available():
             # Files already came from a manual copy / an interrupted enable:
             # enabling is instant and needs no network.
             enable_code_embedder()
@@ -105,13 +114,23 @@ def start_download() -> dict[str, Any]:
                 downloaded_bytes=size,
                 total_bytes=size,
             )
-            return status()
-        _STATE.update(
-            state="downloading",
-            error=None,
-            downloaded_bytes=0,
-            total_bytes=size,
-        )
+            action = "ready"
+        else:
+            _STATE.update(
+                state="downloading",
+                error=None,
+                downloaded_bytes=0,
+                total_bytes=size,
+            )
+    if action == "running":
+        _publish()
+        return status()
+    if action == "ready":
+        _publish(force=True)
+        return status()
+    # Publish the downloading state BEFORE the worker can emit progress, so no
+    # client sees bytes for a download it never saw start.
+    _publish(force=True)
     thread = threading.Thread(
         target=_download_and_enable, name="code-embedder-download", daemon=True
     )
@@ -125,6 +144,7 @@ def _download_and_enable() -> None:
     def on_progress(done: int, total: int) -> None:
         with _LOCK:
             _STATE.update(downloaded_bytes=done, total_bytes=total)
+        _publish()
 
     try:
         download_code_embedder(progress=on_progress)
@@ -136,16 +156,20 @@ def _download_and_enable() -> None:
                 downloaded_bytes=size,
                 total_bytes=size,
             )
+        _publish(force=True)
         logger.info("code embedder downloaded and enabled")
     except Exception as exc:  # noqa: BLE001 - the status endpoint reports it
         logger.warning("code embedder download failed: {}", exc)
         with _LOCK:
             _STATE.update(state="error", error=str(exc))
+        _publish(force=True)
 
 
 def disable() -> dict[str, Any]:
     """Remove the opt-in marker; the model files stay on disk."""
+    events.capture_loop()
     _disable()
     with _LOCK:
         _STATE.update(state="idle", error=None)
+    _publish(force=True)
     return status()

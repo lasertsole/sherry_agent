@@ -120,6 +120,15 @@ class RelationManager(SessionRegister):
             logger.exception(f"get_websockets_by_session_id failed: session_id={session_id}")
             return []
 
+    def get_all_websockets(self) -> list[WebSocketAdapter]:
+        """Every live socket across all sessions (registration order)."""
+        try:
+            with self._rm_lock:
+                return list(self.websocket_id_to_ws.values())
+        except Exception:
+            logger.exception("get_all_websockets failed")
+            return []
+
     def get_websocket_by_session_id(self, session_id: str) -> WebSocketAdapter | None:
         try:
             with self._rm_lock:

@@ -151,6 +151,19 @@ describe('routeAgentFrame', () => {
     off('ws:todo_updated', spy);
   });
 
+  it('model_download_updated: re-emits on the mitt bus', () => {
+    const spy = vi.fn();
+    on('ws:model_download_updated', spy);
+    const { ctx } = makeCtx({});
+    const frame = {
+      event: 'model_download_updated',
+      content: { kind: 'local', family: 'EMBEDDING', status: { state: 'downloading' } }
+    };
+    fire(ctx, frame);
+    expect(spy).toHaveBeenCalledWith(frame);
+    off('ws:model_download_updated', spy);
+  });
+
   it('ignores non-JSON and non-object frames without throwing', () => {
     const onChunk = vi.fn();
     const { ctx } = makeCtx({ onChunk });

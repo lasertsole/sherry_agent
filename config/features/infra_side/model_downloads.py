@@ -35,12 +35,16 @@ class ModelDownloadsConfig(TypedDict):
 
     timeout_seconds: int
     chunk_bytes: int
+    # Minimum spacing between two live progress frames for the same family.
+    # Terminal state changes always bypass it.
+    progress_push_interval_s: float
     models: dict[str, LocalModelSpec]
 
 
 MODEL_DOWNLOADS: ModelDownloadsConfig = {
     "timeout_seconds": 1800,
     "chunk_bytes": 1_048_576,
+    "progress_push_interval_s": 0.25,
     "models": {
         "AUXILIARY_LLM": {
             "label": "Qwen3.5-9B (auxiliary)",

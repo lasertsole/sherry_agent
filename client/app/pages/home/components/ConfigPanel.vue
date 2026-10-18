@@ -358,6 +358,7 @@ import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
 import type { CodeEmbedderStatus } from '@/composables/code-embedder';
+import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
@@ -392,11 +393,14 @@ const envLoaded = ref(false);
 
 // ── Optional code-intel embedder (code semantic search) ─────
 // Off until the operator downloads it from this panel; the backend writes an
-// opt-in marker only after the download completes.
+// opt-in marker only after the download completes. Progress arrives as
+// `model_download_updated` WS frames; a REST snapshot covers opening the panel
+// and a socket reconnect.
 const codeEmbedder = ref<CodeEmbedderStatus | null>(null);
 const codeEmbedderBusy = ref(false);
 const codeEmbedderError = ref('');
-let codeEmbedderPoll: ReturnType<typeof setInterval> | null = null;
+/** Bumped by every pushed frame; a slower REST snapshot must not regress it. */
+let codeEmbedderFrameSeq = 0;
 
 /**
  * Human-readable model size (the status payload is bytes).
@@ -406,41 +410,39 @@ function formatCodeEmbedderSize(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-function stopCodeEmbedderPoll(): void {
-  if (codeEmbedderPoll) {
-    clearInterval(codeEmbedderPoll);
-    codeEmbedderPoll = null;
-  }
-}
-
-function startCodeEmbedderPoll(): void {
-  if (codeEmbedderPoll) return;
-  codeEmbedderPoll = setInterval(() => void refreshCodeEmbedderStatus(), 1000);
-}
-
 async function refreshCodeEmbedderStatus(): Promise<void> {
+  const seqAtRequest = codeEmbedderFrameSeq;
   try {
     const status = await fetchCodeEmbedderStatus();
+    if (seqAtRequest !== codeEmbedderFrameSeq) return;
     if (status) codeEmbedder.value = status;
     codeEmbedderError.value = '';
-    if (status?.state === 'downloading') startCodeEmbedderPoll();
-    else stopCodeEmbedderPoll();
   } catch (e) {
     logUtil.e('[ConfigPanel] Failed to read code embedder status:', e);
     codeEmbedderError.value = t('config.codeEmbedder.loadError');
-    stopCodeEmbedderPoll();
   }
+}
+
+function applyCodeEmbedderFrame(payload: unknown): void {
+  const content = (payload as ModelDownloadUpdate<CodeEmbedderStatus> | null)?.content;
+  if (content?.kind !== 'code_embedder' || !content.status) return;
+  codeEmbedderFrameSeq += 1;
+  codeEmbedder.value = content.status;
+  codeEmbedderError.value = '';
+}
+
+function refreshCodeEmbedderOnConnect(): void {
+  if (activeTab.value === 1) void refreshCodeEmbedderStatus();
 }
 
 /** Download+enable, or disable an already-enabled code embedder. */
 async function onCodeEmbedderAction(): Promise<void> {
   codeEmbedderBusy.value = true;
   codeEmbedderError.value = '';
+  const seqAtRequest = codeEmbedderFrameSeq;
   try {
     const status = codeEmbedder.value?.enabled ? await disableCodeEmbedder() : await startCodeEmbedderDownload();
-    if (status) codeEmbedder.value = status;
-    if (status?.state === 'downloading') startCodeEmbedderPoll();
-    else stopCodeEmbedderPoll();
+    if (status && seqAtRequest === codeEmbedderFrameSeq) codeEmbedder.value = status;
   } catch (e) {
     logUtil.e('[ConfigPanel] Code embedder action failed:', e);
     codeEmbedderError.value = t('config.codeEmbedder.actionError');
@@ -448,6 +450,13 @@ async function onCodeEmbedderAction(): Promise<void> {
     codeEmbedderBusy.value = false;
   }
 }
+
+on('ws:model_download_updated', applyCodeEmbedderFrame);
+on('ws:connected', refreshCodeEmbedderOnConnect);
+onBeforeUnmount(() => {
+  off('ws:model_download_updated', applyCodeEmbedderFrame);
+  off('ws:connected', refreshCodeEmbedderOnConnect);
+});
 
 /** Computes whether the env config has changes (used for canSave and save decisions) */
 const envHasChanges = computed(() =>
@@ -876,7 +885,6 @@ const saveDialogSettings = async () => {
 const onHide = () => {
   activeTab.value = 0;
   backgroundOpacityValue.value = backgroundOpacity.value;
-  stopCodeEmbedderPoll();
   codeEmbedder.value = null;
   codeEmbedderError.value = '';
   // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open

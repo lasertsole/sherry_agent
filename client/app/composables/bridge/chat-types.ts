@@ -56,6 +56,12 @@ export type AgentWsEventType =
   | 'todo_updated'
   | 'taskflow_updated'
   /**
+   * A local model family or the code embedder changed download state. Pushed
+   * to every live socket (process-level work, not session state); the panel
+   * applies it as a status snapshot.
+   */
+  | 'model_download_updated'
+  /**
    * `web_search` had to swap backends mid-call (Tavily failed and SearXNG took
    * over). Best-effort: the search itself already succeeded by the time it is
    * sent, so the frame only feeds the non-blocking banner.

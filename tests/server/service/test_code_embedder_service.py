@@ -99,6 +99,40 @@ def test_download_runs_in_background_and_enables(monkeypatch) -> None:
     assert final["enabled"] is True
 
 
+def test_download_publishes_a_forced_ready_frame(monkeypatch) -> None:
+    calls: list[tuple[str, str, bool]] = []
+    done = threading.Event()
+    ready_published = threading.Event()
+    available = {"value": False}
+    enabled = {"value": False}
+
+    def fake_download(progress=None) -> None:
+        available["value"] = True
+        if progress is not None:
+            progress(50, 100)
+
+    def fake_enable() -> None:
+        enabled["value"] = True
+        done.set()
+
+    def fake_publish(kind: str, key: str, builder, *, force: bool = False) -> None:
+        calls.append((kind, key, force))
+        if force and len(calls) > 1:
+            ready_published.set()
+
+    monkeypatch.setattr(service, "download_code_embedder", fake_download)
+    monkeypatch.setattr(service, "enable_code_embedder", fake_enable)
+    monkeypatch.setattr(service, "code_embedder_available", lambda: available["value"])
+    monkeypatch.setattr(service, "code_embedder_enabled", lambda: enabled["value"])
+    monkeypatch.setattr(service.events, "publish", fake_publish)
+
+    service.start_download()
+    assert calls and calls[0][0] == "code_embedder" and calls[0][2] is True
+    assert done.wait(2.0)
+    assert ready_published.wait(2.0)
+    assert calls[-1][0] == "code_embedder" and calls[-1][2] is True
+
+
 def test_already_downloaded_enables_without_a_thread(monkeypatch) -> None:
     available = {"value": True}
     enabled = {"value": False}

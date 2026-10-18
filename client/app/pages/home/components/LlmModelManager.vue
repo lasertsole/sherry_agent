@@ -234,7 +234,8 @@ import type { ModelTestResult } from '~/composables/env';
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
 import { testModelProfile } from '~/composables/env';
-import type { LocalModelDownload } from '~/composables/model-downloads';
+import { off, on } from '~/composables/mitt';
+import type { LocalModelDownload, ModelDownloadUpdate } from '~/composables/model-downloads';
 import { fetchModelDownloadsStatus, startModelDownload } from '~/composables/model-downloads';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
@@ -351,11 +352,14 @@ const isLocalEntrySelected = computed(() => selectedId.value === LOCAL_ENTRY_ID)
 
 // ── Local-model prefetch progress (the built-in local entry) ──────────────
 // The runtime downloads lazily on first use; this panel can prefetch the same
-// files and show byte progress. Only groups with a local entry have a spec.
+// files and show byte progress. The worker pushes `model_download_updated`
+// frames to every live socket (no polling); this panel takes one REST snapshot
+// when it opens and after a socket reconnect.
 const localDownload = ref<LocalModelDownload | null>(null);
 const localDownloadBusy = ref(false);
 const localDownloadError = ref('');
-let localDownloadPoll: ReturnType<typeof setInterval> | null = null;
+/** Bumped by every pushed frame; a slower REST snapshot must not regress it. */
+let localFrameSeq = 0;
 
 /**
  * Human-readable bytes for the download line.
@@ -366,40 +370,39 @@ function formatDownloadSize(bytes: number): string {
   return `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
 }
 
-function stopLocalDownloadPoll(): void {
-  if (localDownloadPoll) {
-    clearInterval(localDownloadPoll);
-    localDownloadPoll = null;
-  }
-}
-
-function startLocalDownloadPoll(): void {
-  if (localDownloadPoll) return;
-  localDownloadPoll = setInterval(() => void refreshLocalDownload(), 1000);
-}
-
 async function refreshLocalDownload(): Promise<void> {
   if (!isLocalEntrySelected.value) return;
+  const seqAtRequest = localFrameSeq;
   try {
     const payload = await fetchModelDownloadsStatus();
+    // A frame that arrived while the request was in flight is newer.
+    if (seqAtRequest !== localFrameSeq) return;
     localDownload.value = payload?.models?.[props.group] ?? null;
     localDownloadError.value = '';
-    if (localDownload.value?.state === 'downloading') startLocalDownloadPoll();
-    else stopLocalDownloadPoll();
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
-    stopLocalDownloadPoll();
   }
+}
+
+function applyLocalDownloadFrame(payload: unknown): void {
+  const content = (payload as ModelDownloadUpdate | null)?.content;
+  if (content?.kind !== 'local' || content.family !== props.group || !content.status) return;
+  localFrameSeq += 1;
+  localDownload.value = content.status;
+  localDownloadError.value = '';
+}
+
+function refreshOnSocketConnect(): void {
+  if (isLocalEntrySelected.value) void refreshLocalDownload();
 }
 
 async function downloadLocalModel(): Promise<void> {
   localDownloadBusy.value = true;
   localDownloadError.value = '';
+  const seqAtRequest = localFrameSeq;
   try {
     const state = await startModelDownload(props.group);
-    if (state) localDownload.value = state;
-    if (state?.state === 'downloading') startLocalDownloadPoll();
-    else stopLocalDownloadPoll();
+    if (state && seqAtRequest === localFrameSeq) localDownload.value = state;
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
   } finally {
@@ -411,11 +414,15 @@ watch(
   isLocalEntrySelected,
   selected => {
     if (selected) void refreshLocalDownload();
-    else stopLocalDownloadPoll();
   },
   { immediate: true }
 );
-onBeforeUnmount(stopLocalDownloadPoll);
+on('ws:model_download_updated', applyLocalDownloadFrame);
+on('ws:connected', refreshOnSocketConnect);
+onBeforeUnmount(() => {
+  off('ws:model_download_updated', applyLocalDownloadFrame);
+  off('ws:connected', refreshOnSocketConnect);
+});
 
 /** The viewed entry: a saved profile, or the built-in local model. */
 const selected = computed(() =>
