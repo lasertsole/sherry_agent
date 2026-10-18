@@ -551,7 +551,6 @@
     "copyAbsolutePath": "絶対パスをコピー",
     "copyRelativePath": "相対パスをコピー",
     "addToChat": "チャットに追加",
-    "addedToChat": "ファイル参照を入力欄に追加しました",
     "copied": "コピーしました",
     "copyFailed": "コピーに失敗しました",
     "revealFailed": "ファイルマネージャーを開けませんでした",

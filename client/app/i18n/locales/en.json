@@ -551,7 +551,6 @@
     "copyAbsolutePath": "Copy absolute path",
     "copyRelativePath": "Copy relative path",
     "addToChat": "Add to chat",
-    "addedToChat": "File reference added to the input box",
     "copied": "Copied",
     "copyFailed": "Copy failed",
     "revealFailed": "Could not open the file manager",

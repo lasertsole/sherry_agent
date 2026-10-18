@@ -551,7 +551,6 @@
     "copyAbsolutePath": "절대 경로 복사",
     "copyRelativePath": "상대 경로 복사",
     "addToChat": "채팅에 추가",
-    "addedToChat": "파일 참조를 입력창에 추가했습니다",
     "copied": "복사됨",
     "copyFailed": "복사 실패",
     "revealFailed": "파일 관리자를 열 수 없습니다",
