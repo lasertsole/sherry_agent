@@ -1,6 +1,8 @@
 ---
 name: cron
 description: 'Schedule reminders and recurring tasks. Actions: add, list, remove or set_context.'
+when_to_use: "When the user asks for a reminder, periodic check, or recurring scheduled task with a clear schedule."
+when_not_to_use: "For one-off work now, an ambiguous schedule, or work the current turn can do; ask for the time first."
 ---
 
 ## add a job to the cron

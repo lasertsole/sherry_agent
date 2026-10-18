@@ -1,6 +1,8 @@
 ---
 name: browser
 description: Drive the session's real browser (the 工具箱·浏览器 panel) — open pages, read them as text, click and type, screenshot when layout matters. Use it for any task that needs a LIVE web page instead of web_search snippets.
+when_to_use: "When a task needs a live page: inspecting rendered UI, logging in, clicking or typing, or verifying an app."
+when_not_to_use: "When web_search snippets or web_fetch text already answer it; not for unattended scraping at scale."
 scope: main_only
 ---
 

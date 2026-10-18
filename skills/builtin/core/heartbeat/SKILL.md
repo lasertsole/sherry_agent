@@ -1,6 +1,8 @@
 ---
 name: heartbeat
 description: 'Periodic wake-up service that checks HEARTBEAT.md for pending tasks and executes them automatically. Use this skill to write or update HEARTBEAT.md.'
+when_to_use: "When the user wants a periodic autonomous wake-up that checks HEARTBEAT.md and executes pending items."
+when_not_to_use: "For one-off tasks, immediate work, or when a fixed cron schedule is the better fit."
 ---
 
 ## How to write HEARTBEAT.md

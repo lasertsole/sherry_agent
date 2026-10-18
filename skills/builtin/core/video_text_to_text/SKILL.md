@@ -1,6 +1,8 @@
 ---
 name: video_text_to_text
 description: Describe/transcribe video content (such as .mp4, .mkv, .avi) into text. Use whenever the user uploads or refers to a video file and expects you to understand what happens in it. Enables non-multimodal LLMs to understand video by running this skill's script via the terminal tool.
+when_to_use: "When the user uploads or links a video and expects a description or transcript of what happens in it."
+when_not_to_use: "For a single image (image_to_text), audio-only files (speech_to_text), or when the model already sees the video."
 ---
 
 ## Usage

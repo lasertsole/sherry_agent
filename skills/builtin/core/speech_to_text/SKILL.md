@@ -1,6 +1,8 @@
 ---
 name: speech_to_text
 description: Transcribe speech (such as .mp3, .wav, .ogg) into text. Use whenever the user uploads or refers to an audio file and expects you to understand its spoken content. Enables non-multimodal LLMs to transcribe audio by running this skill's script via the terminal tool.
+when_to_use: "When the user uploads or links an audio file and expects its spoken content transcribed."
+when_not_to_use: "For music/sound classification, real-time streaming, or when a vision-capable model already handles attached audio."
 ---
 
 ## Usage

@@ -1,6 +1,8 @@
 ---
 name: ulw-execute
 description: Orchestrator execution doctrine. Run a plan file to completion by delegating every implementation unit to subagents, verifying with the Sisyphus contract, and using TaskFlow for dependency-ordered DAG execution.
+when_to_use: "When executing an approved plan file to completion via delegated units, verification gates, and TaskFlow DAG ordering."
+when_not_to_use: "For planning/design only, a single implementation unit, or work not needing orchestrated delegation."
 scope: main_only
 ---
 

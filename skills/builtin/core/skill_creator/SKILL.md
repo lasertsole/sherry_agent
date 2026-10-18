@@ -1,6 +1,8 @@
 ---
 name: skill_creator
 description: Create or update AgentSkills. Use when designing, structuring, or packaging skills with scripts, references, and assets.
+when_to_use: "When creating, editing, structuring, or packaging an AgentSkill with scripts, references, or assets."
+when_not_to_use: "For installing an existing registry skill (clawhub) or a one-off prompt tweak needing no skill package."
 scope: main_only
 ---
 
