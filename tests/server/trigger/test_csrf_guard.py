@@ -58,6 +58,12 @@ class TestVerdictMatrix:
     def test_allowlisted_tauri_origin_passes(self):
         assert csrf_verdict("POST", "https://tauri.localhost", None, None) is None
 
+    def test_allowlisted_tauri_origin_passes_even_when_the_scheme_differs(self):
+        """The Linux/macOS webview sends Sec-Fetch-Site: cross-site for
+        tauri://localhost -> http://127.0.0.1:8080. Its Origin is allowlisted,
+        and a hostile page cannot forge that Origin."""
+        assert csrf_verdict("PUT", "tauri://localhost", None, "cross-site") is None
+
     def test_foreign_origin_is_refused(self):
         verdict = csrf_verdict("POST", "https://evil.example/x", None, None)
 

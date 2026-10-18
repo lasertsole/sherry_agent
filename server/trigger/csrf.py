@@ -44,6 +44,14 @@ __all__ = ["csrf_guard_middleware", "csrf_verdict"]
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
+def _explicitly_allowed(value: str) -> bool:
+    """True when *value* is an exact (normalized) entry in the Origin allowlist."""
+    candidate = value.strip().rstrip("/").lower()
+    if not candidate:
+        return False
+    return candidate in {origin.rstrip("/").lower() for origin in auth.allowed_origins()}
+
+
 def _loopback_or_allowed(value: str) -> bool:
     """True when *value* resolves to a loopback host or an allowlisted origin."""
     candidate = value.strip()
@@ -76,6 +84,11 @@ def csrf_verdict(
         return None
 
     site = (sec_fetch_site or "").strip().lower()
+    # An explicitly allowlisted Origin (the Tauri webview) is trusted even when
+    # the webview reports cross-site: tauri://localhost -> http://127.0.0.1 is
+    # cross-site by scheme, but a hostile page cannot forge that Origin.
+    if origin and _explicitly_allowed(origin):
+        return None
     if site == "cross-site":
         return 403, "Cross-site request blocked by the CSRF guard"
 

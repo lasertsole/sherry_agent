@@ -26,6 +26,10 @@ class ServerHttpConfig(TypedDict):
     env_panel_hidden_prefixes: tuple[str, ...]
     memory_system_file_names: list[str]
     memory_max_content_length: int
+    # The persona/system prompt files can be longer than memory entries; the
+    # shipped AGENTS.md template is ~4.6K chars, so the old 2K cap rejected the
+    # full preset before the session dialog could create it.
+    system_prompt_max_content_length: int
 
 
 SERVER_HTTP: ServerHttpConfig = {
@@ -147,4 +151,5 @@ SERVER_HTTP: ServerHttpConfig = {
     ),
     "memory_system_file_names": ["MEMORY.md", "USER.md"],
     "memory_max_content_length": 8000,
+    "system_prompt_max_content_length": 12000,
 }

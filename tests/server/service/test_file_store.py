@@ -10,6 +10,8 @@ budget.
 
 import pytest
 
+from pathlib import Path
+
 from server.service.file_store import FileStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -178,6 +180,21 @@ class TestServiceWiring:
         workplace_service.update_system_prompt_file({"AGENTS.md": "# AGENTS.md\nnew\n"})
         assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nnew\n"
         assert "AGENTS.md" in workplace_service.read_system_prompt_file()
+
+    def test_workplace_accepts_the_full_agents_template(self, tmp_path, monkeypatch):
+        """The shipped 运行守则 is >2K chars; the old cap rejected every full preset."""
+        from server.service import workplace as workplace_service
+
+        template = (
+            Path(__file__).resolve().parents[3] / "workspace" / "template" / "en" / "AGENTS.md"
+        ).read_text(encoding="utf-8")
+        assert len(template) > 2_000
+        monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
+        monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
+
+        workplace_service.write_system_prompt_file({"AGENTS.md": template})
+
+        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == template
 
     def test_workplace_rejects_unknown_name(self, tmp_path, monkeypatch):
         """The whitelist still bounds the API surface: names outside the system file set are refused."""
