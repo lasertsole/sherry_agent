@@ -376,6 +376,7 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 - **嵌入模型**：`EMBEDDING_MODEL_LOCAL=true`（默认）使用本地 `bge-m3` Q8_0 GGUF，首次运行时自动下载。
 - **重排序模型**：`.models` 模板默认使用**云端 API**（`RERANKER_MODEL_LOCAL=false`，OpenAI 兼容的 `bge-reranker-v2-m3`）。设为 `true` 可切换为本地 GGUF 重排序模型（约 636 MB，自动下载）。
 - **ITTT / VTTT / Auxiliary LLM**：模板默认云端 API；设 `*_MODEL_LOCAL=true` 切换为本地 GGUF 模型（同样自动下载）。
+- **带进度的预下载**：「模型配置」面板的内置本地模型条目（嵌入、重排序、ITTT / VTTT、辅助模型）提供下载按钮与实时进度条，通过轮询 `GET /model-downloads/status` 更新，并可从未完成的 `.part` 文件断点续传。
 
 > 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
 

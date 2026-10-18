@@ -80,6 +80,29 @@ vi.mock('~/composables/env', () => ({
   WS_BASE_URL: 'ws://localhost:8080'
 }));
 
+const downloadsApi = vi.hoisted(() => ({
+  fetchModelDownloadsStatus: vi.fn(),
+  startModelDownload: vi.fn()
+}));
+vi.mock('~/composables/model-downloads', () => ({
+  fetchModelDownloadsStatus: downloadsApi.fetchModelDownloadsStatus,
+  startModelDownload: downloadsApi.startModelDownload
+}));
+
+const localState = (overrides: Record<string, unknown> = {}) => ({
+  label: 'bge-m3',
+  state: 'idle',
+  ready: false,
+  downloaded_bytes: 0,
+  total_bytes: 0,
+  percent: 0,
+  files_done: 0,
+  file_count: 1,
+  files: [{ name: 'bge-m3-q8_0.gguf', exists: false, fallback_ready: false }],
+  error: null,
+  ...overrides
+});
+
 const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
   mount(LlmModelManager, {
     props: { group, keys, values, groupTitle: group },
@@ -121,6 +144,9 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
     makeStore();
     envApi.testModelProfile.mockReset();
+    downloadsApi.fetchModelDownloadsStatus.mockReset();
+    downloadsApi.startModelDownload.mockReset();
+    downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({ models: {} });
   });
 
   it('starts collapsed and reveals the manager on expand', async () => {
@@ -554,5 +580,69 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
 
     await rowFor(wrapper, '本地模型')!.trigger('click');
     expect(countHints(wrapper)).toBe(0);
+  });
+
+  it('shows a local model ready without offering the download button', async () => {
+    const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...VALUES } }], 'e1', 'EMBEDDING');
+    downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({
+      models: {
+        EMBEDDING: localState({
+          state: 'ready',
+          ready: true,
+          downloaded_bytes: 641_517_466,
+          total_bytes: 641_517_466,
+          percent: 100,
+          files_done: 1,
+          files: [{ name: 'bge-m3-q8_0.gguf', exists: true, fallback_ready: false }]
+        })
+      }
+    });
+    const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="local-model-download"]').text()).toContain('本地模型已下载');
+    expect(buttonFor(wrapper, '下载本地模型')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('starts a download and renders its byte progress', async () => {
+    const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...VALUES } }], 'e1', 'EMBEDDING');
+    downloadsApi.startModelDownload.mockResolvedValue(
+      localState({
+        state: 'downloading',
+        downloaded_bytes: 64_000_000,
+        total_bytes: 641_517_466,
+        percent: 9,
+        files_done: 0
+      })
+    );
+    const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await flushPromises();
+
+    await buttonFor(wrapper, '下载本地模型')!.trigger('click');
+    await flushPromises();
+
+    expect(downloadsApi.startModelDownload).toHaveBeenCalledWith('EMBEDDING');
+    const card = wrapper.get('[data-test="local-model-download"]');
+    expect(card.text()).toContain('下载中…');
+    expect(card.text()).toContain('9%');
+    expect(card.text()).toContain('61 MB / 612 MB');
+    expect(card.text()).toContain('0/1 文件');
+    expect(card.find('.bg-sky-500').attributes('style')).toContain('width: 9%');
+    wrapper.unmount();
   });
 });

@@ -376,6 +376,7 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 - **임베딩**: `EMBEDDING_MODEL_LOCAL=true`(기본값)이면 로컬 `bge-m3` Q8_0 GGUF를 첫 실행 시 자동 다운로드합니다.
 - **리랭커**: `.models` 템플릿의 기본값은 **클라우드 API**(`RERANKER_MODEL_LOCAL=false`, OpenAI 호환 `bge-reranker-v2-m3`)입니다. `true`로 설정하면 로컬 GGUF 리랭커(자동 다운로드, 약 636 MB)로 전환됩니다.
 - **ITTT / VTTT / Auxiliary LLM**: 템플릿 기본값은 클라우드 API이며, `*_MODEL_LOCAL=true`로 설정하면 로컬 GGUF 모델로 전환됩니다(역시 자동 다운로드).
+- **진행률이 있는 사전 다운로드**: 「模型配置」 패널의 내장 로컬 항목(임베딩, 리랭커, ITTT / VTTT, 보조 모델)은 다운로드 버튼과 실시간 진행률 표시줄을 제공하며, `GET /model-downloads/status`를 폴링하고 미완료 `.part` 파일에서 중단된 전송을 재개합니다.
 
 > 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
 

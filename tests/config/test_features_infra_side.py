@@ -244,6 +244,21 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
 ]
 
 
+def test_model_download_families() -> None:
+    """Every 模型配置 local entry has a download family, and each file names a model_weight target."""
+    assert set(fs.MODEL_DOWNLOADS["models"]) == {
+        "AUXILIARY_LLM",
+        "ITTT",
+        "VTTT",
+        "RERANKER",
+        "EMBEDDING",
+    }
+    for family, spec in fs.MODEL_DOWNLOADS["models"].items():
+        assert spec["files"], family
+        for file in spec["files"]:
+            assert file["target_dir"].endswith("model_weight"), (family, file["filename"])
+
+
 def test_all_features_present() -> None:
     # 19 data-driven cases plus GATEWAY, which is env-sourced and covered by
     # the dedicated builder tests below. Pin the count so a new feature object

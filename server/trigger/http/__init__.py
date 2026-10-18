@@ -18,6 +18,7 @@ import server.trigger.http.env
 import server.trigger.http.sherry_config
 import server.trigger.http.models_config
 import server.trigger.http.code_embedder  # noqa: F401  (side-effect route registration)
+import server.trigger.http.model_downloads  # noqa: F401  (side-effect route registration)
 import server.trigger.http.network_config
 import server.trigger.http.memory
 import server.trigger.http.heartbeat
