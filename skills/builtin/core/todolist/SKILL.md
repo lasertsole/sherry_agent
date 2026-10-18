@@ -1,6 +1,8 @@
 ---
 name: todolist
 description: Session-scoped task tracking with delegation routing and TaskFlow-backed DAG execution. Use for 3+ step work or any multi-item request.
+when_to_use: "For 3+ step work or multi-item requests needing visible session progress, ordering, and delegation routing."
+when_not_to_use: "For one-step tasks, simple Q&A, or long cross-session projects; use TaskFlow for durable DAG execution."
 scope: main_only
 ---
 

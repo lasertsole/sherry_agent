@@ -243,6 +243,25 @@ def _normalize_text(content) -> str:
     return str(content)
 
 
+#: The session's ACTIVE turn engine (at most one per session: the queue
+#: serializes turns and the resume path cancels/awaits the previous one). The
+#: stream-resume handler reads a text snapshot from it; it registers on
+#: ``run()`` and unregisters in the generator's ``finally``.
+_ACTIVE_TURNS: dict[str, "StreamTurn"] = {}
+
+
+def active_turn_snapshot(session_id: str) -> dict[str, Any] | None:
+    """Text snapshot of the session's running turn, or ``None`` when idle."""
+    engine = _ACTIVE_TURNS.get(session_id)
+    if engine is None:
+        return None
+    return {
+        "text": engine.ai_text,
+        "has_reasoning": engine._has_reasoning,
+        "seq": int(getattr(engine, "_frame_seq", 0)),
+    }
+
+
 class StreamTurn:
     """Template Method over the ``["messages", "updates"]`` astream dispatch loop.
 
@@ -293,6 +312,11 @@ class StreamTurn:
         # every event derived from an emitted frame (the turn identity comes
         # from the scope opened by the turn driver).
         self._trajectory_seq: int = 0
+        # Per-turn monotonic frame sequence, carried on every emitted frame and
+        # in the resume snapshot: a resumed client drops frames at or below the
+        # snapshot's seq, so a frame produced before the snapshot but delivered
+        # after it can never be appended twice.
+        self._frame_seq: int = 0
 
     # ---- hooks ----------------------------------------------------------
 
@@ -465,8 +489,21 @@ class StreamTurn:
         project_frame(frame, self.session_id, turn_id, self._trajectory_seq)
 
     async def run(self) -> AsyncGenerator[dict[str, Any]]:
+        """Stamp every frame with a per-turn monotonic ``seq`` before yielding.
+
+        The resume snapshot carries the seq it was read at; a resumed client
+        drops frames that are not newer, which closes the race between "snapshot
+        read" and "in-flight frame delivered after the reply".
+        """
+        async for frame in self._run_frames():
+            self._frame_seq += 1
+            frame["seq"] = self._frame_seq
+            yield frame
+
+    async def _run_frames(self) -> AsyncGenerator[dict[str, Any]]:
         start_time = time.time()
         self._log_started()
+        _ACTIVE_TURNS[self.session_id] = self
         await self._prepare()
 
         # Control answering
@@ -545,6 +582,8 @@ class StreamTurn:
             self._log_failed(elapsed, e)
             reraise_with_diag(e, diag_summary)
         finally:
+            if _ACTIVE_TURNS.get(self.session_id) is self:
+                _ACTIVE_TURNS.pop(self.session_id, None)
             await self._cleanup(kind, source)
 
     # ---- the per-chunk dispatch `run` drives ----------------------------

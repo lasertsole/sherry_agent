@@ -98,7 +98,12 @@ class ExitPlanModeTool(BaseTool):
     args_schema: type[BaseModel] = ExitPlanModeInput
     # Not idempotent (it persists a plan and suspends), and the wait for the
     # user must not count against the heartbeat staleness watchdog.
-    metadata: dict = {"idempotent": False, "skip_heartbeat": True, "nudge": True}
+    metadata: dict = {
+        "idempotent": False,
+        "skip_heartbeat": True,
+        "nudge": True,
+        "side_effect_scope": "user_interaction",
+    }
 
     @staticmethod
     def _persist_plan(session_id: str, plan: str, revision: str) -> str:

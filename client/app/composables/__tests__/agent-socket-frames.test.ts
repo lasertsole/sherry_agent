@@ -7,6 +7,7 @@ type Turn = { turnId: string; msgIds: string[] } | null;
 
 function makeCtx(handlers: AgentSocketHandlers = {}, pendingKeys: string[] = ['p1']) {
   let activeTurn: Turn = null;
+  let snapshotSeq = 0;
   const ctx: AgentFrameContext = {
     sessionId: 'sess',
     handlers,
@@ -18,7 +19,11 @@ function makeCtx(handlers: AgentSocketHandlers = {}, pendingKeys: string[] = ['p
       activeTurn = turn;
     },
     pendingKeys: () => pendingKeys,
-    flushStopResolvers: vi.fn()
+    flushStopResolvers: vi.fn(),
+    getSnapshotSeq: () => snapshotSeq,
+    setSnapshotSeq: seq => {
+      snapshotSeq = seq;
+    }
   };
   return { ctx, getActiveTurn: () => activeTurn };
 }
@@ -146,11 +151,95 @@ describe('routeAgentFrame', () => {
     off('ws:todo_updated', spy);
   });
 
+  it('model_download_updated: re-emits on the mitt bus', () => {
+    const spy = vi.fn();
+    on('ws:model_download_updated', spy);
+    const { ctx } = makeCtx({});
+    const frame = {
+      event: 'model_download_updated',
+      content: { kind: 'local', family: 'EMBEDDING', status: { state: 'downloading' } }
+    };
+    fire(ctx, frame);
+    expect(spy).toHaveBeenCalledWith(frame);
+    off('ws:model_download_updated', spy);
+  });
+
   it('ignores non-JSON and non-object frames without throwing', () => {
     const onChunk = vi.fn();
     const { ctx } = makeCtx({ onChunk });
     expect(() => routeAgentFrame({ data: 'not json' } as MessageEvent, ctx)).not.toThrow();
     expect(() => routeAgentFrame({ data: '42' } as MessageEvent, ctx)).not.toThrow();
     expect(onChunk).not.toHaveBeenCalled();
+  });
+});
+
+describe('routeAgentFrame — stream_resume (snapshot reply)', () => {
+  it('ok: emits the snapshot text and does NOT settle the in-flight send', () => {
+    const { ctx } = makeCtx();
+    const seen: unknown[] = [];
+    const listener = (payload: unknown) => seen.push(payload);
+    on('stream:resumed', listener);
+    try {
+      fire(ctx, {
+        event: 'stream_resume',
+        session_id: 's1',
+        content: { status: 'ok', text: 'abc', has_reasoning: true }
+      });
+      expect(ctx.settleResolve).not.toHaveBeenCalled();
+      expect(seen).toEqual([{ sessionId: 's1', status: 'ok', text: 'abc', hasReasoning: true }]);
+      // A replacement value only — never a frame log the client could replay.
+      expect(seen[0]).not.toHaveProperty('frames');
+    } finally {
+      off('stream:resumed', listener);
+    }
+  });
+
+  it('ended: settles the in-flight send like done and emits the status', () => {
+    const { ctx, getActiveTurn } = makeCtx({}, ['p1']);
+    fire(ctx, { event: 'turn_started', turn_id: 't1', message_ids: ['p1'] });
+    expect(getActiveTurn()).not.toBeNull();
+    const seen: unknown[] = [];
+    const listener = (payload: unknown) => seen.push(payload);
+    on('stream:resumed', listener);
+    try {
+      fire(ctx, { event: 'stream_resume', session_id: 's1', content: { status: 'ended' } });
+      expect(ctx.settleResolve).toHaveBeenCalledWith(['p1']);
+      expect(getActiveTurn()).toBeNull();
+      expect(seen).toEqual([{ sessionId: 's1', status: 'ended' }]);
+    } finally {
+      off('stream:resumed', listener);
+    }
+  });
+
+  it('drops chunks covered by the snapshot watermark (no duplicated text)', () => {
+    const onChunk = vi.fn();
+    const { ctx } = makeCtx({ onChunk });
+    fire(ctx, {
+      event: 'stream_resume',
+      session_id: 's1',
+      content: { status: 'ok', text: 'abcdef', seq: 10 }
+    });
+    // Produced before the snapshot: already inside the replacement text → dropped.
+    fire(ctx, { event: 'chunk', content: 'abc', type: 'text', seq: 9 });
+    fire(ctx, { event: 'chunk', content: 'def', type: 'text', seq: 10 });
+    expect(onChunk).not.toHaveBeenCalled();
+    // Newer frames still stream in normally.
+    fire(ctx, { event: 'chunk', content: 'ghi', type: 'text', seq: 11 });
+    expect(onChunk).toHaveBeenCalledTimes(1);
+    expect(onChunk.mock.calls[0]![0]).toBe('ghi');
+  });
+
+  it('gone: settles the send (nothing to resume) and emits the status', () => {
+    const { ctx } = makeCtx({}, ['p1']);
+    const seen: unknown[] = [];
+    const listener = (payload: unknown) => seen.push(payload);
+    on('stream:resumed', listener);
+    try {
+      fire(ctx, { event: 'stream_resume', session_id: 's1', content: { status: 'gone' } });
+      expect(ctx.settleResolve).toHaveBeenCalledWith(['p1']);
+      expect(seen).toEqual([{ sessionId: 's1', status: 'gone' }]);
+    } finally {
+      off('stream:resumed', listener);
+    }
   });
 });

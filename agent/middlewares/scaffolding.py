@@ -45,6 +45,7 @@ from .workspace_notice import WorkspaceNoticeMiddleware
 from .summarization import Summarization
 from .tool_call_normalize import ToolCallNormalize
 from .tool_guardrails import ToolGuardrails
+from .tool_resource_lock import ToolResourceLockMiddleware
 
 
 class RequiredMiddlewareEntry(NamedTuple):
@@ -66,6 +67,8 @@ class RequiredMiddlewareEntry(NamedTuple):
 _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     # Tool-call safety guardrails (failure-pathology detection / halt).
     RequiredMiddlewareEntry(ToolGuardrails, ()),
+    # Process/session resource locks for shell and HITL interaction.
+    RequiredMiddlewareEntry(ToolResourceLockMiddleware, ()),
     # Human-in-the-loop approval gate for sensitive operations.
     RequiredMiddlewareEntry(HumanInTheLoop, ()),
     # Context compaction — without it long sessions exhaust the window.
@@ -110,6 +113,7 @@ _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
 # (ORCHESTRATOR / LEAF) or functional role.
 _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(ToolGuardrails, ()),
+    RequiredMiddlewareEntry(ToolResourceLockMiddleware, ()),
     RequiredMiddlewareEntry(IterationBudget, ()),
     RequiredMiddlewareEntry(Summarization, ()),
     RequiredMiddlewareEntry(OutputRepetitionGuard, ()),

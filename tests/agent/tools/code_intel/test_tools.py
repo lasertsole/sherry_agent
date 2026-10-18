@@ -1,4 +1,4 @@
-"""Unit tests for the four LangChain code_intel tool wrappers."""
+"""Unit tests for the LangChain code_intel tool wrappers."""
 
 from __future__ import annotations
 
@@ -9,16 +9,101 @@ from pathlib import Path
 import pytest
 
 from agent.tools.code_intel import build_code_intel_tools
-from config.features.agent_side import CodeIntelConfig
+from config.features.agent_side import CODE_INTEL_SEMANTIC, CodeIntelConfig, CodeIntelSemanticConfig
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
+
+
+class _FakeEmbedding:
+    """Deterministic stand-in; these tests never call the semantic tool."""
+
+    dim = 8
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1] * self.dim for _ in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.1] * self.dim
+
+
+def _semantic_config(enabled: str = "on") -> CodeIntelSemanticConfig:
+    config = CodeIntelSemanticConfig(**CODE_INTEL_SEMANTIC)
+    config["code_intel_semantic_enabled"] = enabled
+    return config
 
 
 @pytest.fixture()
 def tools(sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig) -> list:
     return build_code_intel_tools(
-        "sess-1", config=intel_config, root=sample_repo, db_path=str(index_db)
+        "sess-1",
+        config=intel_config,
+        semantic_config=_semantic_config(),
+        root=sample_repo,
+        db_path=str(index_db),
+        embed_model=_FakeEmbedding(),
     )
+
+
+def test_semantic_layer_can_be_disabled(
+    sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
+) -> None:
+    tools = build_code_intel_tools(
+        "sess-off",
+        config=intel_config,
+        semantic_config=_semantic_config("off"),
+        root=sample_repo,
+        db_path=str(index_db),
+        embed_model=_FakeEmbedding(),
+    )
+    assert [tool.name for tool in tools] == [
+        "explore",
+        "callers",
+        "callees",
+        "impact",
+    ]
+
+
+def test_default_auto_stays_off_without_the_opt_in_marker(
+    sample_repo: Path,
+    index_db: Path,
+    intel_config: CodeIntelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent.tools.code_intel.tools.code_embedder_enabled", lambda profile: False)
+    tools = build_code_intel_tools(
+        "sess-auto-off",
+        config=intel_config,
+        semantic_config=CodeIntelSemanticConfig(**CODE_INTEL_SEMANTIC),
+        root=sample_repo,
+        db_path=str(index_db),
+    )
+    assert [tool.name for tool in tools] == [
+        "explore",
+        "callers",
+        "callees",
+        "impact",
+    ]
+
+
+def test_bge_is_not_a_code_intel_embedder(
+    sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
+) -> None:
+    semantic = _semantic_config()
+    semantic["code_intel_semantic_model"] = "bge-m3"
+    tools = build_code_intel_tools(
+        "sess-bge",
+        config=intel_config,
+        semantic_config=semantic,
+        root=sample_repo,
+        db_path=str(index_db),
+        embed_model=_FakeEmbedding(),
+    )
+    assert [tool.name for tool in tools] == [
+        "explore",
+        "callers",
+        "callees",
+        "impact",
+    ]
 
 
 def test_tool_names_and_scope_metadata(tools: list) -> None:

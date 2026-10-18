@@ -259,7 +259,6 @@ function openRowMenu(event: Event, node: TreeNode): void {
     copy: text => void copyAndToast(text),
     addToChat: () => {
       requestFileMention(props.sessionId, mentionPayloadOf(row));
-      toastInfo(t('projectFiles.addedToChat'));
     }
   });
   rowMenuRef.value?.show(event);

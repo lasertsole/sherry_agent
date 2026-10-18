@@ -51,7 +51,7 @@ child agent assembly (spawn/core.py)
 3. **fail-open이 계약입니다.** 없는 바이너리, 파싱할 수 없는 파일, 사용할 수 없는 모델, 타임아웃, 거부된 요청은 모두 실행 가능한 메시지가 담긴 JSON 페이로드를 반환합니다. 어떤 검색 실패도 자식 턴으로 예외를 던지지 않습니다.
 4. **모든 것이 구조적으로 유계입니다.** 파일 수, 파일당 바이트, 빌드 시간, 배치, 결과 수, 경로 수, 패턴 크기, 열린 파일 수에 상한이 있습니다. LSP 관리자는 LRU 동시성 상한과 유휴 회수를 추가합니다.
 5. **쓰기는 옵트인이며 포함 관계를 검증합니다.** `ast_grep_rewrite`는 `dry_run=false`가 아니면 미리보기만 하고, `lsp_rename`과 `lsp_format`은 적용 플래그 없이는 미리보기만 합니다. 모든 쓰기 경로는 디스크를 건드리기 전에 경로 탈출과 프로젝트 루트 포함 관계를 다시 검증합니다.
-6. **새 모델 공급자를 도입하지 않습니다.** 시맨틱 검색은 기존 `models/embed_model`과 `models/reranker_model` 래퍼를 재사용하며, 유일한 새 저장소는 SQLite 인덱스입니다.
+6. **새 LLM 공급자를 도입하지 않습니다.** BGE는 텍스트 임베딩 전용으로 남고, code-intel은 `jina-embeddings-v2-base-code` ONNX 코드 임베딩과 기존 리랭커 래퍼를 사용합니다. 유일한 새 저장소는 SQLite 인덱스입니다.
 7. **루트는 호출마다 해석됩니다.** `SHERRY_CODE_INTEL_ROOT`, `SHERRY_SG_ROOT`, `SHERRY_LSP_ROOT`가 드릴과 테스트를 위해 작업 루트를 덮어씁니다. 설정하지 않으면 프로세스 cwd와 공용 `resolve_project_path` 게이트가 적용됩니다.
 
 ## 🔍 제 0 계층: 키워드 검색(ripgrep)
@@ -149,7 +149,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 
 시맨틱 검색은 임의의 행 창을 자르는 대신 제 1 계층 심볼 테이블을 임베딩하므로, 각 벡터는 정확히 하나의 함수, 메서드, 클래스를 설명합니다. `agent/tools/code_intel/semantic/chunker.py`는 심볼과 그 위치를 밝히는 헤더 행과 심볼 본문으로 청크를 만듭니다(읽기 실패 시 저장된 스냅숏으로 폴백). `agent/tools/code_intel/semantic/indexer.py`가 `code_embeddings` 테이블을 소유하고, `agent/tools/code_intel/semantic/search.py`가 코사인으로 순위를 매기고 선택적으로 재순위합니다.
 
-인덱스는 구조적으로 증분입니다: 먼저 심볼 인덱스를 새로 고치고, 심볼이 더 이상 없는 임베딩을 삭제하고, 벡터가 없는 심볼만 임베딩합니다. 행은 16개 청크 단위(설정 가능)로 기록되고, 한 번의 빌드로 최대 1000개 청크, 파일당 최대 60개, 청크당 최대 2000자를 임베딩합니다. 벡터는 `array('d')` BLOB으로 `code_embeddings` 테이블에 저장되며, 같은 테이블에 `model` 이름과 `dim`도 보관합니다. 저장된 모델 변경이나 차원 충돌을 감지하면 같은 호출에서 인덱스를 비우고 재빌드하며, 부분적으로 임베딩된 인덱스는 이미 임베딩된 심볼을 건너뛰므로 재개할 수 있습니다. 임베딩 백엔드는 기존 `models.build_embed_model`(`EMBEDDING_*` 환경 변수로 선택, 기본은 로컬 `bge-m3`)이며 새 공급자를 도입하지 않습니다.
+인덱스는 구조적으로 증분입니다: 먼저 심볼 인덱스를 새로 고치고, 심볼이 더 이상 없는 임베딩을 삭제하고, 벡터가 없는 심볼만 임베딩합니다. 행은 16개 청크 단위(설정 가능)로 기록되고, 한 번의 빌드로 최대 1000개 청크, 파일당 최대 60개, 청크당 최대 2000자를 임베딩합니다. 벡터는 `array('d')` BLOB으로 `code_embeddings` 테이블에 저장되며, 같은 테이블에 `model` 이름과 `dim`도 보관합니다. 저장된 모델 변경이나 차원 충돌을 감지하면 같은 호출에서 인덱스를 비우고 재빌드하며, 부분적으로 임베딩된 인덱스는 이미 임베딩된 심볼을 건너뛰므로 재개할 수 있습니다. code-intel 시맨틱 계층은 선택 사항이며 code embedder 전용입니다: `models/embed_model/code/` 아래의 `jina-embeddings-v2-base-code`(ONNX, 768d, Apache-2.0)를 사용하고, BGE는 텍스트 의미론(memory/RAG) 전용으로 남아 여기서는 절대 사용하지 않습니다. `CODE_INTEL_SEMANTIC`이 유효한 profile을 활성화할 때만 `semantic_code_search`가 등록됩니다. 기본적으로 꺼져 있으며, 「모델 설정」에서 모델을 다운로드하면 활성화 마커가 기록되어 켜집니다(`GET /code-embedder/status`, `POST /code-embedder/download`, `DELETE /code-embedder`로 비활성화).
 
 검색은 먼저 인덱스를 자가 치유하고, 질의를 임베딩하고, 저장된 모든 청크를 순수 Python 코사인 유사도로 순위를 매기고, 후보 풀 40을 유지하고, 리랭커가 설정되어 있으면 상위 후보를 기존 `models.build_reranker_model`에 넘깁니다. 최종 페이지는 기본 `code_intel_semantic_default_top_k`(5)개, 최대 20개입니다. fail-open 상태는 페이로드에 명시됩니다: 인덱싱된 임베딩이 없으면 먼저 인덱스를 만들라는 메시지를 보내고, 질의 모델을 쓸 수 없으면 `degraded` 메시지를 반환하며, 리랭커가 없으면 코사인 순서를 유지하며 `reranked=false`가 되고, 인덱스와 질의 차원이 다르면 무의미한 채점 대신 재빌드를 요구합니다.
 
@@ -172,7 +172,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | 객체 | 모듈 | 주요 항목(기본값) |
 |------|------|-------------------|
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 최대 5000 파일, 파일당 1 MB, 빌드 예산 60초, 배치 100, explore 10 심볼과 8000자, 호출 깊이 3, 퍼지 점수 0.3 |
-| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 모델 `bge-m3`, top-K 5(최대 20), 후보 풀 40, 배치 16, 빌드당 1000 청크, 파일당 60, 청크당 2000자 |
+| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 모델 `jina-embeddings-v2-base-code`(ONNX, 768d), `enabled` auto/on/off, top-K 5(최대 20), 후보 풀 40, 배치 16, 빌드당 1000 청크, 파일당 60, 청크당 2000자 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 고정 `0.43.0`, 50 일치, 16 KiB 패턴, 30초 실행 타임아웃, 64 경로, 60초 프로비저닝 타임아웃, 5초 버전 프로브 |
 | `LSP` | `config/features/agent_side/lsp.py` | 요청 10초, 시작 15초, 진단 15초, 동시 서버 2, 유휴 종료 300초, 50 결과, 열린 파일 32, 파일당 1 MB, 자동 설치 꺼짐 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime 디렉터리, 5초 버전 프로브, 5초 / 5초 회수 유예. 스캔 예산과 매치 상한은 `TOOLS_TIMEOUTS` |
@@ -203,7 +203,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 |------|------|------|
 | Tree-sitter 인덱스 | 4개 문법 설치됨(`tree-sitter 0.26.0` 계열) | 전체 code-intel 스위트 통과(281개 테스트) |
 | ast-grep | 프로비저닝된 런타임 계층에서 사용 가능(`ast-grep 0.43.0`) | 기본 구조 검색이 실제 일치를 반환 |
-| 시맨틱 검색 | 로컬 `bge-m3` 백엔드 사용 가능 | 실제 임베딩 스모크가 개념 질의에 관련 심볼을 반환 |
+| 시맨틱 검색 | `jina-embeddings-v2-base-code` ONNX 파일 존재 | 실제 임베딩 스모크가 개념 질의에 관련 심볼을 반환 |
 
 이 능력이 없는 머신은 실패 대신 강등됩니다: ast-grep이 해석되지 않으면 검증된 자동 프로비저닝 경로가 동작하고, 임베딩 백엔드를 쓸 수 없으면 `semantic_code_search`가 `degraded` 메시지를 반환하며 `explore`와 `terminal`을 가리킵니다.
 

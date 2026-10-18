@@ -1,6 +1,8 @@
 ---
 name: taskflow
 description: Durable multi-step task flows with optimistic locking, detached subagent step dispatch, waiting and idempotent resume via the taskflow_* tool family
+when_to_use: "When work spans multiple dependent steps, needs detached subagents, waiting, resume, or a durable DAG with budgets."
+when_not_to_use: "For a single quick action, a short linear task, or conversational work with no durable step state."
 scope: main_only
 ---
 

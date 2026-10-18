@@ -54,7 +54,11 @@ class EnterPlanModeTool(BaseTool):
     )
     args_schema: type[BaseModel] = EnterPlanModeInput
     # idempotent: entering the mode has no side effects beyond a status write.
-    metadata: dict = {"idempotent": True, "nudge": True}
+    metadata: dict = {
+        "idempotent": True,
+        "nudge": True,
+        "side_effect_scope": "session",
+    }
 
     def _enter(self, reason: str, replan: bool, session_id: str) -> str:
         if not PLAN_MODE["enabled"]:

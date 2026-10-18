@@ -38,7 +38,7 @@
 | Prompt 缓存分段 | ✅ `stable` / `dynamic` + `cacheHint` [源码确认] | 🔨 stable/dynamic 已分离（cached system prompt vs per-turn reminders），未拆独立 message [实测，2026-10-14 更新] | **Zcode 仍领先**（wire 层分段） |
 | turn 内联输入（`guide`） | ✅ 3 种投递语义 [源码确认] | ❌（2 种）[实测] | **Zcode** |
 | per-agent 用量记账 | ✅ 3 张表，`model_usage` 5,880 行 [落盘实测] | ❌（进程内计数器不落库；trajectory ledger 已有但不记 token）[实测] | **Zcode** |
-| 流恢复锚点 | ✅ 7 个流恢复事件 [源码确认] | 🔨 trajectory ledger 已落地（tool_start/end per-call），完整锚点协议未做 [实测，2026-10-14 更新] | **Zcode 仍领先**（完整续传协议） |
+| 流恢复锚点 | ✅ 7 个流恢复事件 [源码确认] | ✅ 快照续传 (`resume_stream` + `seq` 水位) + trajectory ledger [实测，2026-10-18 更新] | **核心目标已追平**（协议不同：快照 vs 事件锚点；reasoning/tool-input 细粒度仍逊于 Zcode） |
 | Edit 模糊匹配 | ✅ 8 级级联 [源码确认] | ✅ 11 级级联 [实测，2026-10-14 新增] | **Sherry**（多 3 级） |
 | Write 原子性 | ✅ temp+fsync+rename+`O_NOFOLLOW` [源码确认] | ✅ temp+fsync+rename+`O_NOFOLLOW` + 跨进程 flock [实测] | **Sherry**（多了跨进程锁） |
 | workflow 编排表达力 | 两代、9 工具、TS 脚本 [源码确认] | 14 工具、声明式 DAG [实测] | Zcode 更表达力 |
@@ -203,15 +203,28 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 
 ---
 
-### 1.5 🔨 流恢复锚点（部分完成：trajectory ledger 已落地，完整锚点协议未做）
+### 1.5 ✅ 流恢复锚点（核心目标已完成：snapshot + seq；ZCode 7 事件协议不做）
 
-> **2026-10-14 核验：部分完成。** `server/service/trajectory_store.py` 已实现 per-turn
-> 结构化时间线：`tool_start` / `tool_end` 合并为每工具一行（确定性 `event_id`，
-> `json_patch` merge），`turn_start` / `turn_end` / `compact` / `error` 事件。
-> 这实现了文档建议的「低成本 `streaming_tool_ledger_updated` 等价物」——
-> tool call 的 start/end 是 committed 的、可查的。**但完整的 7 事件锚点协议**
-> （`stream_recovery_anchor_created` → `anchor_selected` → `tail_discarded` → `retry_started`
-> 等）未实现，断线重连后仍无「从第 N 个 delta 续传 + 丢弃不确定尾部」的协议。
+> **2026-10-18 核验：已完成。** 实现方式不是 ZCode 的事件级锚点，而是**快照续传**：
+> 断线重连后不重跑、不重放、不重复，文本从服务端的权威快照继续。
+>
+> - `server/service/stream_dispatch.py::active_turn_snapshot` 读取运行中 turn 的 `ai_text`
+>   和当前 `seq`；没有运行中的 turn 时返回 `None`。
+> - `server/trigger/ws/messages.py::_handle_resume_stream` 只向请求 socket 回复
+>   `stream_resume`，状态为 `ok` / `ended` / `gone` / `unknown`；不广播、不重放历史帧。
+> - 客户端 `agent-socket.ts` 在断线且本轮已收到过 chunk 时发送 `resume_stream`；
+>   `agent-socket-frames.ts` 记录快照的 `seq` 水位，`use-chat-stream.ts` 用快照文本
+>   **替换**当前 AI 行（先 flush buffered deltas），并丢弃 `seq` 以下的所有后续帧。
+> - 测试：`tests/server/test_stream_resume.py`（广播恰好一次、死 socket 剔除、快照只回请求方、
+>   跨 session 隔离）与 `client/app/composables/__tests__/agent-socket-resume.test.ts`。
+>
+> **未覆盖**（因此仍不是 ZCode 的完整 7 事件协议）：reasoning 增量、tool input JSON 增量、
+> usage 遥测的 delta 级续传；这些场景下客户端拿不到断线期间的细粒度流。已 committed 的
+> tool call 仍可在 trajectory ledger（`server/service/trajectory_store.py`，
+> `GET /sessions/:session_id/trajectory`）里查到 start/end。
+>
+> **结论**：以“断线恢复、不重放、不重复”为目标，1.5 已完成；ZCode 的 7 事件锚点协议
+> 作为事件粒度更细的另一种实现，不再作为 backlog。
 
 **Zcode 做法** [源码确认]：7 个流恢复事件构成一套完整协议：
 ```
@@ -221,11 +234,7 @@ stream_recovery_anchor_created → stream_recovery_started → anchor_selected
 ```
 即「流中途断线后，从锚点续传并**丢弃不确定尾部**」。配套 14 种流式 kind（`ModelStreamingKind`：`start` / `text_*` / `reasoning_*` / `tool_input_*` / `tool_call` / `finish` / `error`），客户端能分别拿到 reasoning 流与正文流、增量 tool input JSON、usage 遥测。
 
-**Sherry 现状** [实测]：~~`WS_STREAM` 有 `max_continuation_retries = 4` / `max_reasoning_only_retries = 2` / `drain_error_backoff_s = 1.0`，`pub/func/message/` 有 retry——**但没有流级锚点**~~ → **部分完成**：`server/service/trajectory_store.py` 已实现 per-turn 结构化时间线（`tool_start`/`tool_end` 每工具一行 + `turn_start`/`turn_end`/`compact`/`error`），agent 侧 producer 通过 `runtime.hooks.RECORD_TRAJECTORY_EVENT` 写入。这是文档建议的「低成本 `streaming_tool_ledger_updated` 等价物」——已下发完成的 tool call 有 start/end 记录。**但完整锚点协议未做**（断线续传 + 丢弃不确定尾部）。
-
-**差距**：~~断线重连后要么整轮重跑，要么盲目续接~~ **已部分收窄**：tool call ledger 已存在，可查已 committed 的 tool call。完整锚点协议（从第 N 个 delta 续传 + 丢弃不确定尾部）仍未做。
-
-~~**改造建议**：先做低成本的 `streaming_tool_ledger_updated` 等价物~~ **已做**（trajectory ledger）。完整锚点协议作为后续优化。
+**Sherry 对照**：核心目标（不重跑、不重放、文本续上、丢弃不确定尾部）由上述 snapshot + seq 方案完成；事件粒度的 reasoning/tool-input 续传不做。trajectory ledger 保留为已 committed tool call 的查询面。
 
 ---
 
@@ -428,7 +437,7 @@ Step 3 的「幂等变换」约束没有判定机制。两者连同既有设计�
 
 ---
 
-### 3.2 工具并行安全静态标注
+### 3.2 ✅ 工具并行安全静态标注（已完成）
 
 **Zcode 做法** [源码确认] `core/src/tool/scheduler.ts:85::canRunInParallel`：
 ```
@@ -440,14 +449,9 @@ readOnly 或 sideEffectScope == "none"  → 允许
 `READ_ONLY_TOOLS`（`:233`）显式列出 9 个：`Read`、`Glob`、`Grep`、`WebSearch`、`WebFetch`、`TodoRead`、`TodoWrite`、`AskUserQuestion`、`Skill`。
 调度：拓扑排序 → `groupByParallel` → 按 `maxConcurrency`（默认 10）切分并行组 → 顺序遍历各组并行执行；任一组返回 `stopTurnAfterResult` → 剩余组全部标 `ToolCancelled`。
 
-**Sherry 现状** [实测]：`TOOL_GUARDRAILS` 有 15 键阈值（`exact_failure_warn_after` / `block_after` / `same_tool_failure_warn_after` / `halt_after`），但这是**运行时反应式**（同一工具连续失败 N 次才阻断），**不是调度前的并行安全判定**。
+**Sherry 实现（2026-10-18）**：`SafeToolNode`（`agent/safe_tool_node.py`）替换 ToolNode，`plan_batch` 按 `READ_ONLY_TOOLS` / `concurrent_safe` / `side_effect_scope` 分类；文件工具按 canonical path 分组，同 path 有写按 `tool_calls` 顺序串行、不同 path 并发，非文件不安全工具为整批 barrier。`file_read_lock` / `file_write_lock` 提供跨 agent/进程的共享读、独占写；`ToolResourceLockMiddleware` 补 `system`（默认关）和 `user_interaction`（默认开）资源锁。主链与子链均接入。
 
-**差距**：Sherry 不知道哪些工具可以安全并行，只能靠 LLM 自觉串行调用。
-
-**改造建议**：给工具定义加 3 个静态标注字段（`destructive` / `concurrent_safe` / `side_effect_scope`），在 `build_main_tools()` 注册时声明；并发调度前按标注分组。`READ_ONLY` 集合可直接照抄 Zcode 的 9 个 + Sherry 自己的 `message_search` / `ast_grep` / `lsp` 等。
-标注是**纯声明式**的（不执行任何用户代码），安全风险为零。
-
-**风险**：低。唯一的坑是标注必须准确——标错会导致并发执行产生竞态。建议首批只标「明确只读」的一批，保守起步。
+**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制记录在 `docs/tool-parallel-safety/`。
 
 ---
 
@@ -651,9 +655,9 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P1~~ | ~~2.5 step 挂载 skill~~ | 高 | 中 | 无 | **✅ 已完成**（_skill_prepend） |
 | ~~P1~~ | ~~2.3 续：拆独立 message + cacheHint~~ | 中 | 中 | stable/dynamic 已分离 | **❌ 不做**（概念分离已落地；131K 窗口下 wire 层缓存收益小；改跨层 seam + tests 成本不匹配收益） |
 | **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化（✅ 已完成） | 未开工 |
-| **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 | 未开工 |
+| ~~P2~~ | ~~3.2 工具并行安全标注~~ | 中 | 低（纯声明式） | 无 | **✅ 已完成**（`SafeToolNode` + 文件 path 分组 + `file_read_lock` / `file_write_lock` + `system` / `user_interaction` 资源锁；见 `docs/tool-parallel-safety/`） |
 | ~~P2~~ | ~~2.4 计划模式~~ | 中 | 低 | 与 1.5 协调 | **✅ 已完成**（plan_mode 工具 + 状态机） |
-| ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **❌ 不做**（trajectory ledger 已覆盖最危险场景；完整 7 事件协议需前端协同 + WS_STREAM 已有 4 次重试，边际收益低） |
+| ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **✅ 核心目标已完成**（`resume_stream` 快照 + per-turn `seq` 水位；不重放、不重复。完整 7 事件协议不做） |
 | ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
 | ~~P3~~ | ~~1.1①④ input_hash 短路 + 步骤缓存~~ | 低-中 | 中 | 依赖原型验证 | **❌ 不做**（DAG 已防重跑） |
 | ~~P3~~ | ~~1.1② PAUSED 显式挂起~~ | 低 | 中 | — | **❌ 不做**（不杀子 agent 无效果） |
@@ -665,12 +669,12 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ❌ | 桌面端 / CUA | — | 很高 | 见第七节 | — |
 
 **建议起手顺序**（2026-10-14 更新；**2026-10-17**：1.2 与 2.1 的 Step 1 已完成，见上表）：
-1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；1.3 + 3.2 仍待做
+1. ~~第一批（零风险、可并行）：4.1 + 1.3 + 3.2~~ → **4.1 已完成**；**3.2 已完成**；1.3 仍待做
 2. ~~先核查再决策：4.4~~ → **已完成**（fd 直写已落地）
 3. ~~第二批（需设计）：5.1 + 2.3 一起做~~ → **2.3 已部分完成**（stable/dynamic 分离已做，wire 层分段 ❌ 不做）；5.1 仍待做
 4. ~~2.2 目录化作为 3.1 的前置~~ → **已完成**，3.1 guide 可开工
 5. ~~1.1 四条差距~~ → **①②④ 不做**；**③ 血缘指针已完成**（随并行执行计划一起落地并退休）
-6. ~~1.5 完整锚点协议~~ → **不做**（trajectory ledger 已覆盖）；~~1.6 microcompact~~ → **不做**（ContextEviction 已覆盖）；~~2.3 续 wire 分段~~ → **不做**（概念分离已落地）；~~6.2 OffPeak~~ → **不做**（cron 已覆盖）；~~6.4 大窗口~~ → **非 ZCode 特性**（换模型即生效）
+6. ~~1.5 流恢复~~ → **核心目标已完成**（`resume_stream` 快照 + `seq` 水位；完整 7 事件协议不做）；~~1.6 microcompact~~ → **不做**（ContextEviction 已覆盖）；~~2.3 续 wire 分段~~ → **不做**（概念分离已落地）；~~6.2 OffPeak~~ → **不做**（cron 已覆盖）；~~6.4 大窗口~~ → **非 ZCode 特性**（换模型即生效）
 7. ~~**独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里~~ → **两者都已按独立立项交付**：6.1 WebFetch ✅（SSRF 复用 + 本地 opt-in）；2.1 Hooks Step 1 ✅（只读三事件 + 默认关总开关），Step 2 的信任门 / Step 3 的 updatedInput 仍待做（阻塞点见 2.1 节）
 
 ---
@@ -687,7 +691,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~1.1② PAUSED 显式挂起~~ | stop("user") abort in-flight | **❌ 不需要**（PAUSED 不杀子 agent 无实际效果；已有 taskflow_cancel + set_waiting 覆盖） |
 | ~~1.1④ 步骤级结果缓存~~ | cached + input_hash 命中 | **❌ 不需要**（result 已在 state["results"] 被下游 build_task_with_dep_results 复用） |
 | ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **✅ 已完成**（2026-10-15：两列 additive migration + `taskflow_create(resumed_from=…)` 写入 + active 读过滤；见 `docs/long-running-tasks/taskflow/` Flow Lineage） |
-| ~~1.5 完整锚点协议~~ | 7 事件流恢复协议 | **❌ 不需要**（trajectory ledger 已覆盖最危险场景——tool_start/end per-call 可查；完整 delta 续传协议需前端协同，WS_STREAM 已有 4 次重试，边际收益低） |
+| ~~1.5 流恢复~~ | 7 事件流恢复协议 | **✅ 核心目标已完成**（2026-10-18：`resume_stream` 文本快照 + per-turn `seq` 水位，客户端替换文本并丢弃水位以下帧；不重放/不重复。ZCode 的 reasoning/tool-input delta 级协议不做；已 committed tool call 走 trajectory ledger） |
 | ~~1.6 microcompact 独立通道~~ | 只清工具结果保留对话 | **❌ 不需要**（ContextEvictionMiddleware 已做工具结果落盘驱逐 20K 阈值 + head/tail 预览 + preemptive_truncate_ratio 0.7→0.5 预截断，本质重叠） |
 | ~~2.3 续：拆独立 message + cacheHint~~ | stable/dynamic wire 分段 | **❌ 不需要**（stable/dynamic 概念分离已落地——cached system prompt 持 stable + per-turn reminders 持 dynamic；131K 窗口下 wire 层缓存收益小，改跨层 seam + tests 成本不匹配） |
 | ~~6.2 OffPeak 低谷期~~ | 独立低谷期概念 | **❌ 不需要**（cron 系统已有降级背压 + 禁用阈值 + skill 绑定；"低谷期跑"就是 `0 2 * * 1-5` cron 表达式） |

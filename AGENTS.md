@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (76 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (78 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -64,7 +64,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
-  │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
   │     keywords plus question/chat patterns, then a length fallback over 100 chars.
@@ -439,6 +439,14 @@ ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a `v*
 tag); the split is forced by GitHub's 2 GiB release-asset cap, which a bundled
 backend exceeds several times over.
 
+Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
+`tests/`, `evals/`, `docs/` and `wiki/` trees (plus frontend `*.test.*` /
+`*.spec.*` files) in BOTH halves, and `build_backend.py` runs the backend half
+itself before the tree is compressed. `.dockerignore` applies the same boundary
+to the server image. The docs/wiki trees are also outside the pre-commit hooks
+and the code CI jobs (docs parity/link gates run in their own job); see
+`.github/workflows/ci.yml`.
+
 - **Frontend**: `nuxt generate` (`pnpm build:desktop`) writes `.output/public`
   — the `frontendDist` a bundled app can serve from disk (the `nuxt build`
   output needs a Nitro server and is NOT it).
@@ -530,6 +538,71 @@ sources and routes each group's save back to its own endpoint, while the
 模型联网 tab writes Tavily / SearXNG through `PUT /network-config`.
 `.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
 `.models` / `.network` keep one.
+
+The 模型配置 panel's built-in local entry (embedding, reranker, ITTT / VTTT,
+auxiliary) prefetches the same GGUFs the runtime would download lazily, with a
+live progress bar. `config/features/infra_side/model_downloads.py` (`MODEL_DOWNLOADS`)
+lists each family's files and their `model_weight` target; `models/downloader.py`
+does the HEAD size probe plus a streaming `.part` write and atomic replace;
+`server/service/model_downloads_service.py` runs one background worker per
+family (HEAD/no-Content-Length files report bytes rather than a bogus percent,
+an ITTT/VTTT GGUF already under `auxiliary_llm` is copied locally instead of
+re-downloaded) and `GET /model-downloads/status` / `POST /model-downloads/download`
+(family in the body) expose it. Live progress is PUSHED, not polled:
+`server/service/model_download_events.py` sends `model_download_updated` through
+`runtime/session/ws_push.py::broadcast_to_all` to every live socket (a download
+is process-level, not session state), throttled per family by
+`MODEL_DOWNLOADS["progress_push_interval_s"]` (0.25 s) with state transitions
+forced, and the worker thread schedules onto the loop captured by the start
+handler. The panel takes ONE status snapshot when opened or when a socket
+reconnects, then applies frames; there is no polling interval. The code
+embedder publishes the same event with `kind: "code_embedder"` and keeps its own
+`/code-embedder/*` snapshot pair.
+
+## Tool Parallel Safety (`agent/safe_tool_node.py`)
+
+LangGraph's ToolNode gathers **every** tool call in one model batch. Sherry
+replaces it in-process with `SafeToolNode` (patched into
+`langchain.agents.factory.ToolNode` once at `agent/core.py` import, gated by
+`TOOL_PARALLEL["enabled"]`) so a batch is scheduled by resource, not blindly:
+
+- **Classification** (`agent/tools/parallel_safety.py`): only explicit
+  `READ_ONLY_TOOLS` / `concurrent_safe` declarations are safe; unknown tools
+  and missing metadata default to unsafe. `idempotent` is NOT used for this
+  decision (`memory` is idempotent but writes session state).
+- **File calls** (`read_file` / `write_file` / `patch_file`) group by canonical
+  `file_path`. A group containing a write runs in the model's `tool_calls`
+  order; an all-read group may run concurrently; different paths never wait.
+  A path that cannot be resolved makes the batch a barrier.
+- **Every non-file unsafe tool is a whole-batch barrier** (`terminal`,
+  `python_repl`, `execute_code`, `ptc`, `memory`, session writes): its resource
+  cannot be inferred from arguments.
+- **Ordering**: within a batch, read-before-write reads the old content and the
+  write then sees the read's license; write-before-read writes first, so the
+  read sees the new content (and an unlicensed overwrite is refused by the
+  existing rule). Cross-agent/cross-batch order is the file-lock acquisition
+  order, not the model's call order.
+- **File locks** (`agent/tools/pub_base/path_lock.py` / `file_lock.py`):
+  `path_read_lock` is shared, `path_write_lock` is exclusive (writer
+  preferred); `flock` uses `LOCK_SH` / `LOCK_EX`. `read_file` takes
+  `file_read_lock`, the two writers keep `file_write_lock`. The batch scheduler
+  orders same-batch conflicts; these locks protect concurrent agents and
+  processes.
+- **Resource middleware** (`agent/middlewares/tool_resource_lock.py`, required
+  in BOTH the main and subagent chains): `side_effect_scope: "system"` takes a
+  process-wide lock (`TOOL_PARALLEL["system_lock"]`, default OFF to avoid
+  serializing all shell work); `"user_interaction"` takes a per-session lock
+  (`interaction_lock`, default ON). `workspace` / `session` / `network` are
+  deliberately not re-locked: file locks, memory, SQLite and the browser
+  manager already own those resources.
+- **Applies to every agent**: the factory patch is process-wide, so main,
+  subagent and auxiliary `create_agent` graphs all use `SafeToolNode`; the
+  subagent middleware chain carries the same `ToolResourceLockMiddleware`.
+- **Rollout / compatibility**: `TOOL_PARALLEL["enforce"] = False` logs the plan
+  but keeps native concurrency; `True` applies it. Tests pin the LangGraph
+  private methods `SafeToolNode` depends on, so an upgrade fails loudly.
+  `terminal`/`python_repl` still cannot be path-keyed; they remain barriers,
+  and `system_lock` only adds cross-agent exclusion when explicitly enabled.
 
 ## Plan-Then-Execute Plan Mode (`agent/tools/plan_mode/`)
 
@@ -662,7 +735,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
   `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
-  build now fails without them (`scaffolding._MAIN_REQUIRED`, 15 entries) and the service
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 16 entries) and the service
   rejects a payload naming one. Together with `system_prompt_injection`,
   `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
   membership and order never change.
@@ -971,6 +1044,41 @@ mobile emulation reports its own scale, measured 393x852 -> 554x1200); 打开调
 on browser actions — the panel IS the human's window on the same page (ZCode
 parity); the external-path HITL gate still covers `terminal`/skills.
 
+## Stream Broadcast & Reconnect Resume (`runtime/session/ws_push.py`)
+
+Every streamed frame fans out to **all live sockets of the session** at send
+time (`runtime/session/ws_push.py::broadcast_to_session`, called by the two
+`StreamDriver.send_frame` sites and the ~14 push sites: turn errors, taskflow
+progress, todo pushes, web-search fallback, background-terminal exits, subagent
+events, heartbeat/cron pseudo-sessions). Process-level work that is NOT
+session-scoped uses `broadcast_to_all` instead (every registered socket,
+whatever its session; model download progress is its first consumer). The
+registry keeps a per-session bag
+(`relation_register.session_id_to_websocket_ids`, 1:N, ordered) plus the 1:1
+"newest socket" view; a failed send prunes only that socket. **There is no
+replay log and no per-client queue**: each frame reaches each socket exactly
+once, and a socket that connects mid-turn receives only frames produced after
+its registration.
+
+A viewer that drops mid-turn reconnects and sends `{"type": "resume_stream"}`
+on the agent socket; the handler replies **on that socket only** with a text
+snapshot (`active_turn_snapshot` → the engine's accumulated `ai_text`) plus one
+of `ok` / `ended` (history exists → refetch) / `gone` (deleted or never
+persisted → nothing to fetch) / `unknown` (fail-open). The client REPLACES its
+turn text with the snapshot (buffered deltas are flushed first) — it never
+appends replayed frames, so no connection can see duplicated content. Every emitted
+frame also carries a per-turn monotonic `seq`, and the snapshot carries the seq it
+was read at — the resumed client drops frames at or below that watermark, closing
+the race between "snapshot read" and "an in-flight frame lands after the reply".
+This snapshot + `seq` pair is Sherry's stream-recovery anchor: it restores the
+text tail without replaying any frame, while committed tool calls stay queryable
+in the per-turn trajectory ledger (`GET /sessions/:session_id/trajectory`).
+Because
+the turn keeps running when its last viewer disconnects (the socket release no
+longer cancels it), the reconnect resumes the SAME turn. Inbound frames are
+also checked against the socket's registered session (`_frame_session_allowed`)
+so one session's socket can never read another's.
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
@@ -1009,9 +1117,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 49 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
-| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 76 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/agent_side/` | 50 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
+| `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 78 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
@@ -1131,7 +1239,7 @@ to the suite is the version-controlled reference (threshold + model id).
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). Its fuzzy ladder (`pub_base/text_matcher.py`, 11 strategies, first match wins) strips a copied snippet's line numbers (`N|` / `N: ` / `N<tab>`) and unescapes `\uXXXX` before the fuzzy ones, refuses `replace_all=True` for the lossy `BROAD_MATCHERS` (a global replace must not land on a lookalike), re-indents a fuzzy replacement to the file's own indentation and rewrites its straight quotes into the region's curly ones (only when the region uses that kind exclusively — mixed code/prose keeps straight quotes).
 - `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
-- the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two optional frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch) and `when_not_to_use` (optional) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
+- the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_plan`'s planner may emit the field and `taskflow_update_steps` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file), and a watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg_list` / `terminal_bg_output` (both `scope=main_only`, catalogue group `terminal`) are how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
@@ -1162,7 +1270,8 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer / memory-flush serializers (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
-  right after `ToolGuardrails` — a guardrail-BLOCKED call never reaches a hook):
+  after `ToolResourceLockMiddleware`, which itself sits right after
+  `ToolGuardrails` — a guardrail-BLOCKED call never reaches a hook):
   the `sherry.jsonc` `hooks` section names commands per event and the middleware
   dispatches them as SUBPROCESSES with the turn's identity. Step 1 only —
   `PostToolUse` / `PostToolUseFailure` (result/error previews bounded by
@@ -1236,6 +1345,17 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SHERRY_CODE_INTEL_DB` overrides the path, with the shared `CODE_INTEL_DIR`
   as the no-root fallback. The index root itself is resolved PER CALL
   (env override > session project dir > process default), like ast-grep and LSP
+- the code-intel semantic layer is OPTIONAL and CODE-EMBEDDER-ONLY: BGE remains
+  the text embedder (`context_engine` / multimodal RAG) and is never used here.
+  `CODE_INTEL_SEMANTIC["enabled"]` gates registration; without a valid profile
+  (`jina-embeddings-v2-base-code`, ONNX, 768d, Apache-2.0, under
+  `models/embed_model/code/`) the tool is absent and no model/index is touched.
+  The Jina backend is lazy (`onnxruntime` + `RobertaTokenizerFast`, mean pooling);
+  switching profiles purges the old `code_embeddings` rows, including legacy
+  `bge-m3` rows, so no BGE vector can be scored. It is OFF by default: merely
+  having the files is not enough — the 模型配置 panel downloads the model and
+  writes the opt-in marker (`GET /code-embedder/status`, `POST /code-embedder/download`,
+  `DELETE /code-embedder` disables; the download runs in a background thread).
 - truncation is budgeted in TOKENS, CJK-aware (`pub/func/message/token_truncation.py`):
   tool outputs, tool args, the summary body, the aggressive pass and every
   SummaryDoc list item go through `truncate_by_tokens` (`evicted_refs` is exempt —

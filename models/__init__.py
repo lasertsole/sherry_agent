@@ -16,6 +16,7 @@ _MODULE_MAP = {
     "VTTT_model": ".VTTT_model",
     "build_vttt_model": ".VTTT_model",
     "build_embed_model": ".embed_model",
+    "build_code_embed_model": ".embed_model",
     "reranker_model": ".reranker_model",
     "build_reranker_model": ".reranker_model",
     "mineru_model": ".extract_model",

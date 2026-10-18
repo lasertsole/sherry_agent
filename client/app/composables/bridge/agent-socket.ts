@@ -81,6 +81,8 @@ class SessionAgentSocket implements AgentSocket {
   private readonly outboundQueue = new OutboundQueue();
   private readonly reconnectTimer = new ReconnectTimer();
   private activeTurn: { turnId: string; msgIds: string[] } | null = null;
+  /** Highest frame seq covered by the last resume snapshot (see ctx wiring). */
+  private snapshotSeq = 0;
   private stopResolvers: Array<() => void> = [];
   private attempt = 0;
   private reconnectScheduled = false;
@@ -270,6 +272,19 @@ class SessionAgentSocket implements AgentSocket {
         return;
       }
       if (this.attempt > 0) emit('stream:reconnected', { sessionId: this.sessionId });
+      let hasMidStreamSend = false;
+      for (const pending of this.sends.values()) {
+        if (pending.receivedChunk) {
+          hasMidStreamSend = true;
+          break;
+        }
+      }
+      if (this.attempt > 0 && hasMidStreamSend) {
+        // Mid-stream turn survived the disconnect: ask for its text snapshot.
+        // The reply is a targeted response on THIS socket (never broadcast),
+        // and live frames keep arriving by broadcast — nothing is replayed.
+        ws.send(JSON.stringify({ type: 'resume_stream', session_id: this.sessionId, content: {} }));
+      }
       this.attempt = 0;
       this.reconnectScheduled = false;
       // (Re)send every pending send that has not received a chunk yet; the
@@ -304,23 +319,19 @@ class SessionAgentSocket implements AgentSocket {
 
     const inFlight = this.sends.all();
 
-    // Case B: a send already produced chunks — its content is on screen and
-    // resending would duplicate it. Fail it immediately and never resend.
+    // A send that already produced chunks is NOT rejected here any more: the
+    // server keeps the turn running, and after the reconnect the client asks
+    // for a text snapshot (resume_stream) instead of resending the payload —
+    // so nothing is replayed and the content is never duplicated.
     const midStream = inFlight.filter(p => p.receivedChunk);
-    if (midStream.length > 0) {
-      for (const pending of midStream) {
-        pending.reject(new StreamInterruptedError('WebSocket closed after streaming began', true));
-      }
-      emit('ws:conn-loss', { sessionId: this.sessionId, midStream: true });
-    }
-
-    // Case A: sends that have not produced a chunk can be re-sent after a reconnect.
+    // Sends that never produced a chunk can be re-sent after a reconnect; the
+    // backend dedupes on the client msg_id, so a turn it already started is
+    // never duplicated.
     const resumable = inFlight.filter(p => !p.receivedChunk && p.payload);
-    const decision = decideReconnect(resumable.length > 0, this.attempt);
+    const decision = decideReconnect(midStream.length + resumable.length > 0, this.attempt);
 
     if (decision.retrying) {
       this.attempt = decision.attempt;
-      emit('ws:conn-loss', { sessionId: this.sessionId, midStream: false });
       emit('stream:reconnecting', {
         sessionId: this.sessionId,
         attempt: this.attempt,
@@ -332,11 +343,14 @@ class SessionAgentSocket implements AgentSocket {
 
     if (decision.budgetExhausted) {
       // Retry budget exhausted: surface the interruption and keep the socket
-      // alive for future sends with the fixed fallback cadence.
-      for (const pending of resumable) {
-        pending.reject(new StreamInterruptedError('WebSocket connection error', false));
+      // alive for future sends with the fixed fallback cadence. Mid-stream
+      // sends now fail as interrupted too (their turn may still be running
+      // server-side; the next successful connect's snapshot would catch up,
+      // but the UI must not wait forever).
+      for (const pending of inFlight) {
+        pending.reject(new StreamInterruptedError('WebSocket connection error', pending.receivedChunk));
       }
-      emit('ws:conn-loss', { sessionId: this.sessionId, midStream: false });
+      emit('ws:conn-loss', { sessionId: this.sessionId, midStream: midStream.length > 0 });
       emit('stream:reconnect:failed', { sessionId: this.sessionId });
       this.attempt = decision.attempt;
       this.scheduleReconnect(decision.delayMs);
@@ -373,6 +387,10 @@ class SessionAgentSocket implements AgentSocket {
       pendingKeys: () => this.sends.keys(),
       flushStopResolvers: () => {
         this.stopResolvers.splice(0).forEach(resolve => resolve());
+      },
+      getSnapshotSeq: () => this.snapshotSeq,
+      setSnapshotSeq: seq => {
+        this.snapshotSeq = seq;
       }
     });
   }

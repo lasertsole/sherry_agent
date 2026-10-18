@@ -127,6 +127,13 @@ def env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         tr, "get_websocket_by_session_id", lambda session_id: sockets.get(session_id)
     )
+    import runtime.session.ws_push as ws_push
+
+    monkeypatch.setattr(
+        ws_push.relation_register,
+        "get_websockets_by_session_id",
+        lambda sid: [sockets[sid]] if sid in sockets else [],
+    )
     monkeypatch.setattr(tr, "_get_active_tasks", lambda: active_tasks)
     monkeypatch.setattr(tr, "get_pending_interrupt", _noop_pending_interrupt)
     monkeypatch.setattr(

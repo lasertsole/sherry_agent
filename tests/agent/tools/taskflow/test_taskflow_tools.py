@@ -143,6 +143,7 @@ def test_taskflow_idempotency_metadata_survives_repeated_builds():
         assert tool.metadata == {
             "scope": "main_only",
             "idempotent": name in READ_ONLY_TASKFLOW_TOOLS,
+            "side_effect_scope": "none" if name in READ_ONLY_TASKFLOW_TOOLS else "session",
         }, name
 
 

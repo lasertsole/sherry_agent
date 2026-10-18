@@ -24,6 +24,8 @@ __pycache__
 sherry.jsonc.bak
 # models/
 model_weight/
+# Jina tokenizer files are downloaded next to the ONNX weights at runtime.
+models/embed_model/code/tokenizer/
 
 # Runtime data (src/, temp/, cron) — regenerated every run, never commit.
 # /src/ is anchored to the repo root: an unanchored `src/` also swallowed
@@ -56,7 +58,15 @@ logs/*.log
 /workspace/memory/MEMORY.md
 skills/auto
 skills/plugins/*.state.json
+# Generated code-map wiki (root Obsidian vault; the ** form also covers
+# per-project generated wikis) and the graphify code graph — regenerated, never
+# committed. See packaging/check_release.py for the release-artifact guard.
+/wiki/
 **/wiki/
+/graphify-out/
+# Obsidian's per-vault config — created when the checkout or wiki/ is opened
+# as a vault; machine-local state, never project source.
+.obsidian/
 skills/skills_snapshot.json
 .omo/
 static/

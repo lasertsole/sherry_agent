@@ -162,8 +162,8 @@ class TestWiring:
         assert isinstance(cloud._http, OpenAICompatibleClient)
 
     def test_embed_model_uses_shared_client(self):
-        # embed_model/core.py downloads the GGUF at import when the local file
-        # is missing, so it is pinned at source level (same approach as
+        # embed_model/text/core.py downloads the GGUF at import when the local
+        # file is missing, so it is pinned at source level (same approach as
         # tests/models/test_models_utils.py).
         from pathlib import Path
 
@@ -171,6 +171,7 @@ class TestWiring:
             next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
             / "models"
             / "embed_model"
+            / "text"
             / "core.py"
         ).read_text(encoding="utf-8")
         assert "OpenAICompatibleClient(" in src

@@ -78,5 +78,6 @@ def build_taskflow_tools() -> list[BaseTool]:
             **(t.metadata or {}),
             "scope": "main_only",
             "idempotent": t.name in _READ_ONLY_TASKFLOW,
+            "side_effect_scope": "none" if t.name in _READ_ONLY_TASKFLOW else "session",
         }
     return list(_TASKFLOW_TOOLS)

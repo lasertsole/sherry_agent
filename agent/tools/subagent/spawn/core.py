@@ -1303,6 +1303,7 @@ def _build_child_middlewares(
         Summarization,
         ToolCallNormalize,
         ToolGuardrails,
+        ToolResourceLockMiddleware,
     )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from config.features import ITERATION_BUDGET, SUMMARIZATION
@@ -1321,6 +1322,8 @@ def _build_child_middlewares(
         ),
         IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
         ToolGuardrails(),
+        # Same process/system and per-session interaction locks as the parent.
+        ToolResourceLockMiddleware(),
         # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
         # (this module's ``_execute_subagent``), so there are no intermediate tokens
         # already emitted to any client. ``OutputRepetitionGuard`` intercepts the

@@ -97,6 +97,55 @@
             spellcheck="false" />
         </div>
 
+        <div
+          v-if="isLocalEntrySelected"
+          class="flex flex-col gap-2 rounded-lg border border-gray-100 p-2 dark:border-gray-800"
+          data-test="local-model-download">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">
+              {{ localDownload?.label || t('config.llm.localModel') }}
+            </span>
+            <Button
+              v-if="localDownload?.state !== 'ready'"
+              :label="
+                localDownload?.state === 'downloading'
+                  ? t('config.llm.localDownloading')
+                  : t('config.llm.localDownload')
+              "
+              icon="pi pi-download"
+              size="small"
+              :loading="localDownloadBusy || localDownload?.state === 'downloading'"
+              :disabled="localDownload?.state === 'downloading'"
+              @click="downloadLocalModel" />
+            <span
+              v-else
+              class="text-xs text-emerald-600 dark:text-emerald-400">
+              {{ t('config.llm.localReady') }}
+            </span>
+          </div>
+          <div
+            v-if="localDownload?.state === 'downloading'"
+            class="flex flex-col gap-1">
+            <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+              <div
+                class="h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                :style="{ width: `${localDownload.percent}%` }" />
+            </div>
+            <p class="m-0 text-[11px] text-gray-400">
+              {{ localDownload.percent }}% · {{ formatDownloadSize(localDownload.downloaded_bytes) }} /
+              {{ formatDownloadSize(localDownload.total_bytes) }} · {{ localDownload.files_done }}/{{
+                localDownload.file_count
+              }}
+              {{ t('config.llm.localFiles') }}
+            </p>
+          </div>
+          <p
+            v-if="localDownloadError || localDownload?.state === 'error'"
+            class="m-0 text-xs text-red-600 dark:text-red-400">
+            {{ localDownloadError || localDownload?.error }}
+          </p>
+        </div>
+
         <div class="mt-1 flex items-center gap-2">
           <!-- The built-in local entry is read-only: it can be applied, never saved. -->
           <Button
@@ -181,10 +230,13 @@ import LlmProfileRow from './LlmProfileRow.vue';
 import { MAX_TOKEN_GUARD_KEYS } from '@/constants/env';
 import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
 import type { ModelTestResult } from '~/composables/env';
-// Stable module specifier so tests can vi.mock the composable (the unimport
+// Stable module specifiers so tests can vi.mock the composables (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
 import { testModelProfile } from '~/composables/env';
+import { off, on } from '~/composables/mitt';
+import type { LocalModelDownload, ModelDownloadUpdate } from '~/composables/model-downloads';
+import { fetchModelDownloadsStatus, startModelDownload } from '~/composables/model-downloads';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 const props = defineProps<{
@@ -297,6 +349,80 @@ const profileRows = computed(() => listEntries.value.filter(e => e.id !== LOCAL_
 
 /** Whether the built-in local entry is the one being viewed. */
 const isLocalEntrySelected = computed(() => selectedId.value === LOCAL_ENTRY_ID);
+
+// ── Local-model prefetch progress (the built-in local entry) ──────────────
+// The runtime downloads lazily on first use; this panel can prefetch the same
+// files and show byte progress. The worker pushes `model_download_updated`
+// frames to every live socket (no polling); this panel takes one REST snapshot
+// when it opens and after a socket reconnect.
+const localDownload = ref<LocalModelDownload | null>(null);
+const localDownloadBusy = ref(false);
+const localDownloadError = ref('');
+/** Bumped by every pushed frame; a slower REST snapshot must not regress it. */
+let localFrameSeq = 0;
+
+/**
+ * Human-readable bytes for the download line.
+ * @param bytes
+ */
+function formatDownloadSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
+}
+
+async function refreshLocalDownload(): Promise<void> {
+  if (!isLocalEntrySelected.value) return;
+  const seqAtRequest = localFrameSeq;
+  try {
+    const payload = await fetchModelDownloadsStatus();
+    // A frame that arrived while the request was in flight is newer.
+    if (seqAtRequest !== localFrameSeq) return;
+    localDownload.value = payload?.models?.[props.group] ?? null;
+    localDownloadError.value = '';
+  } catch {
+    localDownloadError.value = t('config.llm.localDownloadError');
+  }
+}
+
+function applyLocalDownloadFrame(payload: unknown): void {
+  const content = (payload as ModelDownloadUpdate | null)?.content;
+  if (content?.kind !== 'local' || content.family !== props.group || !content.status) return;
+  localFrameSeq += 1;
+  localDownload.value = content.status;
+  localDownloadError.value = '';
+}
+
+function refreshOnSocketConnect(): void {
+  if (isLocalEntrySelected.value) void refreshLocalDownload();
+}
+
+async function downloadLocalModel(): Promise<void> {
+  localDownloadBusy.value = true;
+  localDownloadError.value = '';
+  const seqAtRequest = localFrameSeq;
+  try {
+    const state = await startModelDownload(props.group);
+    if (state && seqAtRequest === localFrameSeq) localDownload.value = state;
+  } catch {
+    localDownloadError.value = t('config.llm.localDownloadError');
+  } finally {
+    localDownloadBusy.value = false;
+  }
+}
+
+watch(
+  isLocalEntrySelected,
+  selected => {
+    if (selected) void refreshLocalDownload();
+  },
+  { immediate: true }
+);
+on('ws:model_download_updated', applyLocalDownloadFrame);
+on('ws:connected', refreshOnSocketConnect);
+onBeforeUnmount(() => {
+  off('ws:model_download_updated', applyLocalDownloadFrame);
+  off('ws:connected', refreshOnSocketConnect);
+});
 
 /** The viewed entry: a saved profile, or the built-in local model. */
 const selected = computed(() =>

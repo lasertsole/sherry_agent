@@ -7,6 +7,7 @@ from loguru import logger
 from server.trigger.core import app
 from runtime import state_register_mem
 from runtime.session.relation_register import relation_register
+from runtime.session.ws_push import broadcast_to_session
 from agent.tools.subagent.registry.session_state import set_hitl_pending
 from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
@@ -101,7 +102,10 @@ class _AgentWsStreamDriver(StreamDriver):
         self.stream_kind = stream_kind
 
     async def send_frame(self, payload: dict[str, Any]) -> None:
-        await _send_ws(self.websocket, payload)
+        # Fan out to every live socket of the session (reconnected viewers and
+        # additional viewers each receive the frame exactly once; nothing is
+        # ever re-sent — there is no replay log).
+        await broadcast_to_session(self.session_id, payload)
 
     async def check_interrupt(self) -> dict[str, Any] | None:
         return await get_pending_interrupt(self.session_id)
@@ -346,9 +350,40 @@ async def _handle_generation(
     # executor IS this turn's execution; no inline turn here.
 
 
+async def _handle_resume_stream(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``resume_stream``: reply with a snapshot of the running turn (THIS socket only).
+
+    The snapshot is a targeted response on the requesting socket — never a
+    broadcast (other viewers see live frames only) and never a replay of past
+    frames: live frames are broadcast exactly once when produced, so the client
+    replaces its accumulated text with the snapshot and keeps consuming.
+    """
+    content: dict[str, Any]
+    try:
+        from server.service.stream_dispatch import active_turn_snapshot
+
+        snapshot = active_turn_snapshot(session_id)
+        if snapshot is not None:
+            content = {"status": "ok", **snapshot}
+        else:
+            from context_engine.store.core import session_has_messages
+
+            content = {"status": "ended" if session_has_messages(session_id) else "gone"}
+    except Exception as e:  # noqa: BLE001 — fail-open: the client refetches
+        logger.warning(f"resume_stream failed: {e}, session_id={session_id}")
+        content = {"status": "unknown"}
+    await _send_ws(
+        websocket,
+        {"event": "stream_resume", "session_id": session_id, "content": content},
+    )
+
+
 #: ``type`` → handler. A generation frame carries no type (the default).
 _FRAME_HANDLERS: dict[str, Any] = {
     "stop": _handle_stop,
+    "resume_stream": _handle_resume_stream,
     "hitl_response": _handle_hitl_response,
     "cancel_queued": _handle_cancel_queued,
     "edit_queued": _handle_edit_queued,
@@ -383,14 +418,32 @@ def _release_socket(websocket: WebSocketAdapter) -> None:
         disconnected_session_id is not None
         and relation_register.get_websocket_id_by_session_id(disconnected_session_id) is None
     ):
-        task = _active_tasks.pop(disconnected_session_id, None)
-        if task is not None and not task.done():
-            task.cancel()
+        # Stream-resume contract: a disconnected viewer must NOT abort the
+        # turn — the client reconnects and asks for a snapshot (resume_stream).
+        # The turn's task stays in _active_tasks until it finishes, and its
+        # on_finish pops it there.
         _clear_pending_args(disconnected_session_id)
 
     for sid, task in list(_active_tasks.items()):
         if task.done():
             _active_tasks.pop(sid, None)
+
+
+def _frame_session_allowed(websocket: WebSocketAdapter, session_id: str) -> bool:
+    """Session isolation for one inbound frame.
+
+    Once this socket is registered for a session, it must never process frames
+    naming another one (a resume request could otherwise read another session's
+    data). An unregistered socket is allowed — the generation frame registers it.
+    """
+    socket_session = relation_register.get_session_id_by_websocket(websocket)
+    if socket_session is not None and socket_session != session_id:
+        logger.warning(
+            "Agent WS frame for another session dropped: "
+            f"socket_session={socket_session}, frame_session={session_id}"
+        )
+        return False
+    return True
 
 
 @app.websocket("/sessions/agent/ws")
@@ -428,6 +481,9 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                         websocket,
                         {"event": "error", "session_id": None, "content": "Missing session_id"},
                     )
+                    continue
+
+                if not _frame_session_allowed(websocket, session_id):
                     continue
 
                 await _dispatch_frame(websocket, session_id, obj)

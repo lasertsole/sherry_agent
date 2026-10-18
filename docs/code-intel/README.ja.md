@@ -51,7 +51,7 @@ child agent assembly (spawn/core.py)
 3. **fail-open が契約です。** バイナリ欠如、解析不能なファイル、利用不能なモデル、タイムアウト、拒否された要求はすべて実行可能なメッセージ付きの JSON ペイロードを返します。検索の失敗が子エージェントのターンに例外を投げることはありません。
 4. **すべてが構造的に有界です。** ファイル数、ファイルあたりのバイト数、構築時間、バッチ、結果数、パス数、パターンサイズ、開くファイル数に上限があります。LSP マネージャはさらに LRU 同時実行上限とアイドル回収を課します。
 5. **書き込みはオプトインで、封じ込めを検証します。** `ast_grep_rewrite` は `dry_run=false` でない限りプレビューし、`lsp_rename` と `lsp_format` は適用フラグなしではプレビューだけです。すべての書き込み経路はディスクに触れる前にトラバーサルとプロジェクトルート内包を再検証します。
-6. **新しいモデルプロバイダを導入しません。** セマンティック検索は既存の `models/embed_model` と `models/reranker_model` ラッパーを再利用し、新しいストレージは SQLite 索引だけです。
+6. **新しい LLM プロバイダを導入しません。** BGE はテキスト埋め込み専用のままで、code-intel は `jina-embeddings-v2-base-code` ONNX コード埋め込みと既存のリランカーラッパーを使います。新しいストレージは SQLite 索引だけです。
 7. **ルートは呼び出しごとに解決されます。** `SHERRY_CODE_INTEL_ROOT`、`SHERRY_SG_ROOT`、`SHERRY_LSP_ROOT` がドリルとテスト用に作業ルートを上書きします。未設定時はプロセスの cwd と共有の `resolve_project_path` ゲートが適用されます。
 
 ## 🔍 第 0 層：キーワード検索（ripgrep）
@@ -149,7 +149,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 
 セマンティック検索は任意の行窓を切るのではなく第 1 層のシンボルテーブルを埋め込むため、各ベクトルは正確に 1 つの関数、メソッド、クラスを記述します。`agent/tools/code_intel/semantic/chunker.py` はシンボルとその位置を示すヘッダー行とシンボル本体からチャンクを作ります（読み取り失敗時は保存済みスナップショットにフォールバック）。`agent/tools/code_intel/semantic/indexer.py` が `code_embeddings` テーブルを所有し、`agent/tools/code_intel/semantic/search.py` がコサインで順位付けし任意で再順位付けします。
 
-索引は構造的に増分です：まずシンボル索引を更新し、シンボルが存在しなくなった埋め込みを削除し、ベクトルを持たないシンボルだけを埋め込みます。行は 16 チャンク単位（設定可能）で書かれ、1 回の構築で最大 1000 チャンク、1 ファイルあたり最大 60、各チャンク最大 2000 文字です。ベクトルは `array('d')` の BLOB として `code_embeddings` テーブルに格納され、同テーブルは `model` 名と `dim` も保持します。保存済みのモデル変更や次元衝突を検出すると、同じ呼び出し内で索引を消去して再構築します。部分的に埋め込まれた索引は、埋め込み済みシンボルをスキップするため再開可能です。埋め込みバックエンドは既存の `models.build_embed_model`（`EMBEDDING_*` 環境変数で選択、既定はローカル `bge-m3`）であり、新しいプロバイダは導入しません。
+索引は構造的に増分です：まずシンボル索引を更新し、シンボルが存在しなくなった埋め込みを削除し、ベクトルを持たないシンボルだけを埋め込みます。行は 16 チャンク単位（設定可能）で書かれ、1 回の構築で最大 1000 チャンク、1 ファイルあたり最大 60、各チャンク最大 2000 文字です。ベクトルは `array('d')` の BLOB として `code_embeddings` テーブルに格納され、同テーブルは `model` 名と `dim` も保持します。保存済みのモデル変更や次元衝突を検出すると、同じ呼び出し内で索引を消去して再構築します。部分的に埋め込まれた索引は、埋め込み済みシンボルをスキップするため再開可能です。code-intel のセマンティック層はオプションかつ code embedder 専用です：`models/embed_model/code/` の `jina-embeddings-v2-base-code`（ONNX、768d、Apache-2.0）を使い、BGE はテキスト意味論（memory/RAG）専用のままでここでは決して使いません。`CODE_INTEL_SEMANTIC` が有効な profile を有効にしたときだけ `semantic_code_search` が登録されます。既定では無効で、「モデル設定」からモデルをダウンロードすると有効マーカーが書かれ有効になります（`GET /code-embedder/status`、`POST /code-embedder/download`、`DELETE /code-embedder` で無効化）。
 
 検索はまず索引を自己修復し、クエリを埋め込み、格納済みの全チャンクを純 Python のコサイン類似度で順位付けし、候補プール 40 を保ち、リランカーが設定されていれば既存の `models.build_reranker_model` に上位候補を渡します。最終ページは既定で `code_intel_semantic_default_top_k`（5）件、最大 20 件です。fail-open の状態はペイロードに明示されます：索引済み埋め込みがなければ先に索引を構築するよう促し、クエリモデルが利用不能なら `degraded` メッセージを返し、リランカー未設定ならコサイン順のまま `reranked=false` となり、索引とクエリの次元が不一致なら無意味な採点をせず再構築を求めます。
 
@@ -172,7 +172,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | オブジェクト | モジュール | 主要項目（既定値） |
 |--------------|------------|--------------------|
 | `CODE_INTEL` | `config/features/agent_side/code_intel.py` | 最大 5000 ファイル、1 ファイル 1 MB、構築予算 60 秒、バッチ 100、explore 10 シンボルと 8000 文字、呼び出し深さ 3、ファジースコア 0.3 |
-| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | モデル `bge-m3`、top-K 5（最大 20）、候補プール 40、バッチ 16、1 構築 1000 チャンク、1 ファイル 60、1 チャンク 2000 文字 |
+| `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | モデル `jina-embeddings-v2-base-code`（ONNX、768d）、`enabled` auto/on/off、top-K 5（最大 20）、候補プール 40、バッチ 16、1 構築 1000 チャンク、1 ファイル 60、1 チャンク 2000 文字 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 固定 `0.43.0`、50 一致、16 KiB パターン、30 秒実行タイムアウト、64 パス、60 秒プロビジョニングタイムアウト、5 秒バージョンプローブ |
 | `LSP` | `config/features/agent_side/lsp.py` | 要求 10 秒、起動 15 秒、診断 15 秒、同時サーバー 2、アイドル停止 300 秒、50 結果、開くファイル 32、1 ファイル 1 MB、自動インストール無効 |
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime ディレクトリ、5 s のバージョンプローブ、5 s / 5 s の回収猶予。スキャン予算とマッチ上限は `TOOLS_TIMEOUTS` |
@@ -203,7 +203,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 |----------|------|------|
 | Tree-sitter 索引 | 4 文法がインストール済み（`tree-sitter 0.26.0` ファミリ） | 完全な code-intel スイートが通過（281 テスト） |
 | ast-grep | プロビジョニング済みランタイム層から利用可能（`ast-grep 0.43.0`） | 基本の構造検索が実マッチを返す |
-| セマンティック検索 | ローカル `bge-m3` バックエンドが利用可能 | 実埋め込みスモークが概念クエリに関連シンボルを返す |
+| セマンティック検索 | `jina-embeddings-v2-base-code` ONNX ファイルが存在 | 実埋め込みスモークが概念クエリに関連シンボルを返す |
 
 これらの能力を欠くマシンは失敗せず降格します：ast-grep が解決できなければ検証付き自動プロビジョニング経路が起動し、埋め込みバックエンドが利用不能なら `semantic_code_search` は `degraded` メッセージを返して `explore` と `terminal` を指します。
 

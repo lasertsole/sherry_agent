@@ -818,7 +818,8 @@ const {
   clearQueueBadge,
   onStreamReconnecting,
   onStreamReconnected,
-  onStreamReconnectFailed
+  onStreamReconnectFailed,
+  onStreamResumed
 } = stream;
 
 // The page installs the session-level socket handlers ONCE: every frame of the
@@ -1015,6 +1016,7 @@ onMounted(() => {
   on('stream:reconnecting', onStreamReconnecting);
   on('stream:reconnected', onStreamReconnected);
   on('stream:reconnect:failed', onStreamReconnectFailed);
+  on('stream:resumed', onStreamResumed);
   // The left sidebar's file tree has no reference to this composer, so its
   // "Add to chat" asks over the bus; only the instance owning that session
   // performs the insert.
@@ -1027,6 +1029,7 @@ onUnmounted(() => {
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
+  off('stream:resumed', onStreamResumed);
   off('chat:file-mention', onFileMentionRequest);
   // Cancel this page's pending draft-write debounce timers (the slice lives in
   // this component's closure; an orphaned timer would fire into a dead page).

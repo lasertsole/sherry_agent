@@ -1,6 +1,8 @@
 ---
 name: multimodal_rag
 description: Private knowledge base for indexing multimodal files or folders into a knowledge graph, supporting multi-hop graph retrieval
+when_to_use: "When the user wants to index private multimodal files/folders or query a persistent private knowledge graph."
+when_not_to_use: "For reading one known file, or when a lightweight keyword or web search is enough; indexing is heavier."
 ---
 
 **Index all files under a directory into the rag-anything graph:**

@@ -454,10 +454,12 @@ def test_the_push_builds_the_documented_frame(monkeypatch: pytest.MonkeyPatch) -
         async def send_text(self, text: str) -> None:
             sent.append(text)
 
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        web_search_push.relation_register,
-        "get_websocket_by_session_id",
-        lambda session_id: _Socket(),
+        ws_push.relation_register,
+        "get_websockets_by_session_id",
+        lambda session_id: [_Socket()],
     )
 
     asyncio.run(web_search_push.push_search_fallback("sess-1", "searxng", "tavily_timeout"))
@@ -475,10 +477,12 @@ def test_the_push_is_a_noop_without_a_session_or_a_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        web_search_push.relation_register,
-        "get_websocket_by_session_id",
-        lambda session_id: calls.append(session_id) or None,
+        ws_push.relation_register,
+        "get_websockets_by_session_id",
+        lambda session_id: calls.append(session_id) or [],
     )
 
     asyncio.run(web_search_push.push_search_fallback("", "searxng", "tavily_error"))
@@ -498,10 +502,12 @@ def test_a_send_failure_never_reaches_the_search(monkeypatch: pytest.MonkeyPatch
         async def send_text(self, text: str) -> None:
             raise RuntimeError("socket closed")
 
+    import runtime.session.ws_push as ws_push
+
     monkeypatch.setattr(
-        web_search_push.relation_register,
-        "get_websocket_by_session_id",
-        lambda session_id: _BrokenSocket(),
+        ws_push.relation_register,
+        "get_websockets_by_session_id",
+        lambda session_id: [_BrokenSocket()],
     )
 
     # Must not raise: the search result is already on its way back to the model.

@@ -230,6 +230,17 @@ async def ws_handler(websocket: WebSocketAdapter):
                     )
                     continue
 
+                # Session isolation: the socket is registered for exactly one
+                # session at connect time; a frame naming another session is
+                # dropped (it could otherwise read that session's data).
+                socket_session = relation_register.get_session_id_by_websocket(websocket)
+                if socket_session is not None and socket_session != session_id:
+                    logger.warning(
+                        "WS frame for another session dropped: "
+                        f"socket_session={socket_session}, frame_session={session_id}"
+                    )
+                    continue
+
                 event: str | None = obj.get("event", None)
                 if event is None:
                     logger.debug(f"WebSocket message missing event: session_id={session_id}")

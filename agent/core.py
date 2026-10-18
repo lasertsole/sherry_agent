@@ -28,6 +28,7 @@ from .middlewares import (
     MultimodalProcessor,
     system_prompt_injection,
     ToolGuardrails,
+    ToolResourceLockMiddleware,
     ContextEvictionMiddleware,
     IterationBudget,
     HeartbeatStaleness,
@@ -52,6 +53,11 @@ from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.skill_write_provider import register_skill_write_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
+from .safe_tool_node import install_safe_tool_node
+
+# One process-level patch, before any create_agent() call. It is a no-op when
+# TOOL_PARALLEL["enabled"] is false.
+install_safe_tool_node()
 
 COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 
@@ -289,6 +295,10 @@ def _build_middlewares(
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         ToolGuardrails(),
+        # Process-wide shell/code and per-session HITL resource locks. Registered
+        # after ToolGuardrails (inner to it), so a blocked call never waits on a
+        # lock it will not execute.
+        ToolResourceLockMiddleware(),
         # User-configurable lifecycle hooks (sherry.jsonc ``hooks``): registered
         # directly after the guardrails so a guardrail-BLOCKED call never reaches
         # a hook, and OUTER relative to the approval/persistence layers so

@@ -75,6 +75,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
 - **병렬 단계 디스패치와 플로우 계보** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): 디스패치 웨이브는 동시에 spawn하며, `TASKFLOW_INFRA["max_parallel_dispatch"]`(2; 1이면 순차 동작 복원)로 제한된다 — 웨이브 일부가 실패해도 spawn된 자식은 모두 영속화되고 실패한 단계 id는 개별적으로 명시된다. 두 자식이 동시에 완료해도 두 결과 모두 착지한다(resume의 쓰기가 `update_flow_with_conflict_retry`를 통해 확정된 판정을 재적용하므로 결과가 충돌로 유실되거나 같은 단계가 두 번 spawn되는 일이 없다). `taskflow_create(resumed_from=…)`는 플로우 계보(`resumed_from` / `superseded_by` 추가 컬럼)를 기록하며, 대체된 플로우는 active 읽기에서 빠지되 보드에는 남는다
 - **TaskFlow 진행 웨이브** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): 흐름의 단계들을 최장 경로 DAG 레벨로 묶어 플로팅 진행 패널에 표시한다(표시 전용 — 스케줄러는 여전히 각자의 `depends_on`에 따라 단계별 해제를 유지한다. 알 수 없는 의존성은 무시되고, 사이클은 `cyclic`로 표시된 마지막 웨이브에 놓인다). 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
+- **스트림 복구 앵커** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): 턴 도중 연결이 끊긴 뷰어가 재접속하면 `resume_stream`을 보내고, 서버는 해당 socket에만 실행 중인 턴의 `ai_text` 스냅샷과 현재 `seq`를 반환한다. 클라이언트는 버퍼링된 delta를 flush한 뒤 해당 턴의 텍스트를 스냅샷으로 교체하고 `seq` 이하의 프레임을 버리므로, 프레임을 재생하거나 중복하지 않는다. 커밋된 도구 호출은 trajectory ledger(`GET /sessions/:session_id/trajectory`)에서 계속 조회할 수 있다.
 - **도구 소요 시간**: 모든 도구 호출은 도구 반환 시점에 한 번만 측정된다(`time.monotonic()` 사용, 0으로 클램프), 메시지 영속화 래퍼가 이를 처리해 `ToolMessage.additional_kwargs["tool_duration_ms"]`에 기록하고 `messages.tool_duration_ms`에 영속화한다. 실시간 카드는 실행 중 티커를, 종료 후에는 측정값을 보여준다. 설계상 승인 대기 시간과 대기열 시간은 이 측정 구간에 포함되지 않는다
 - **세션별 모델 및 사고**: `PUT /sessions/thinking`과 `PUT /sessions/model`이 단일 세션의 사고 토글과 메인 모델을 재정의한다(로그인이 활성화된 경우 클라이언트는 단회용 `GET /auth/ws-ticket`을 미리 가져온다). 사고 제어 미들웨어는 이에 맞춰 요청 모델을 `build_main_llm(thinking=...)` 변수로 교체하며, 세션에 명시적 선택이 없으면 환경 변수 기본값으로 폴백한다
 
@@ -329,7 +330,9 @@ EMA_AI_agent/
 | **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute: 읽기 전용 설계, 계획 승인 게이트, 리비전 결속 재제출 루프와 수정 예산 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
 | **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
+| **스트림 복구** | 턴 도중 WebSocket 복구: 스냅샷 + 턴별 `seq` 워터마크, 재생 없음, 중복 없음, 도구 호출은 trajectory ledger에 유지 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | 원자적 쓰기, 이중 CAS, 경로별·프로세스 간 잠금, `write_file`의 읽기 우선 라이선스(라이선스를 준 읽기를 압축이 버리는 순간 함께 사라집니다), 그리고 병합이 인터페이스 단위 변경을 보고하는 격리 서브에이전트 워크스페이스 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **도구 병렬 안전** | 배치 인식 ToolNode: 같은 파일 읽기/쓰기는 순서 보장, 다른 경로는 병렬, 프로세스/세션 리소스 잠금 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 빠른 시작
 
@@ -376,6 +379,7 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 - **임베딩**: `EMBEDDING_MODEL_LOCAL=true`(기본값)이면 로컬 `bge-m3` Q8_0 GGUF를 첫 실행 시 자동 다운로드합니다.
 - **리랭커**: `.models` 템플릿의 기본값은 **클라우드 API**(`RERANKER_MODEL_LOCAL=false`, OpenAI 호환 `bge-reranker-v2-m3`)입니다. `true`로 설정하면 로컬 GGUF 리랭커(자동 다운로드, 약 636 MB)로 전환됩니다.
 - **ITTT / VTTT / Auxiliary LLM**: 템플릿 기본값은 클라우드 API이며, `*_MODEL_LOCAL=true`로 설정하면 로컬 GGUF 모델로 전환됩니다(역시 자동 다운로드).
+- **진행률이 있는 사전 다운로드**: 「模型配置」 패널의 내장 로컬 항목(임베딩, 리랭커, ITTT / VTTT, 보조 모델)은 다운로드 버튼과 실시간 진행률 표시줄을 제공하며, 스로틀된 `model_download_updated` WebSocket 프레임을 받고 패널을 열거나 재연결할 때 `GET /model-downloads/status` 스냅샷을 한 번 읽은 뒤 미완료 `.part` 파일에서 중단된 전송을 재개합니다.
 
 > 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
 

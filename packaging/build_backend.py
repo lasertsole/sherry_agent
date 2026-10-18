@@ -56,7 +56,7 @@ DATA = (
 )
 
 #: Packages whose data files PyInstaller's built-in hooks miss.
-COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets")
+COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets", "onnxruntime")
 
 #: OUR packages, collected whole. They resolve parts of themselves through
 #: ``importlib.import_module`` (``models/__init__`` and ``models/LLMs/__init__``

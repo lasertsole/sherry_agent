@@ -222,6 +222,18 @@ def ws_env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         turn_runner, "get_websocket_by_session_id", lambda session_id: socket_holder.get("socket")
     )
+    import runtime.session.ws_push as ws_push
+
+    # The fixture pins the reply socket when a test sets one; otherwise the
+    # REAL registry must answer (the handler-registration test relies on the
+    # socket the handler itself registered).
+    _real_bag = ws_push.relation_register.get_websockets_by_session_id
+
+    monkeypatch.setattr(
+        ws_push.relation_register,
+        "get_websockets_by_session_id",
+        lambda sid: [socket_holder["socket"]] if socket_holder.get("socket") else _real_bag(sid),
+    )
 
     return SimpleNamespace(
         store=store,

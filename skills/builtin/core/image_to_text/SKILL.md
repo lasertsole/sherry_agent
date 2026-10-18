@@ -1,6 +1,8 @@
 ---
 name: image_to_text
 description: Recognize and describe the content of an image. Accepts either a local file path OR a URL (http/https). Use this whenever the user uploads or refers to an image and expects you to see/analyze it — even if the image is provided as a URL, not a local path. Enables non-multimodal LLMs to have vision capabilities. Do NOT run it for an image that is already attached to the conversation (a vision-capable model sees those directly), nor for a browser screenshot whose tool result carried the image itself.
+when_to_use: "When the user uploads or links an image the serving model cannot see; extract its text or description via the script."
+when_not_to_use: "When the image is already attached for a vision-capable model, or a browser screenshot already carries it."
 ---
 
 **First check whether you already have the image.** When the conversation carries the image as an attachment — a vision-capable model receiving an upload, or a tool result that returned the image itself — you can SEE it: describe what you see and never run this script for it. This skill exists for what you cannot see directly: a bare file path or URL with no attached image, and a model without native vision.

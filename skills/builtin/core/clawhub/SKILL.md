@@ -1,6 +1,8 @@
 ---
 name: clawhub
 description: Search and install agent skills from ClawHub, the public skill registry.
+when_to_use: "When the user wants to discover, search, or install a reusable agent skill from the ClawHub registry."
+when_not_to_use: "When the needed skill already exists locally or a bespoke skill must be created; use skill_creator."
 scope: main_only
 ---
 

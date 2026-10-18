@@ -66,6 +66,7 @@ def build_todolist_tools() -> list[BaseTool]:
             **(t.metadata or {}),
             "scope": "main_only",
             "idempotent": t.name in _READ_ONLY_TODOLIST,
+            "side_effect_scope": "none" if t.name in _READ_ONLY_TODOLIST else "session",
         }
     # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo
     # nudge admits tools by this metadata marker, so ``todoread`` stays untagged

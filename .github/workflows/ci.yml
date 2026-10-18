@@ -26,8 +26,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Docs-only and wiki-only changes do not need the 30-minute code suite. The
+  # docs gate below still runs for docs changes (and for code changes, because a
+  # file move can break a documentation link); wiki/ is generated and ignored by
+  # every job.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!client/docs/**'
+              - '!wiki/**'
+              - '!README*.md'
+              - '!AGENTS.md'
+              - '!TODO/**'
+            docs:
+              - 'docs/**'
+              - 'client/docs/**'
+              - 'README*.md'
+              - 'AGENTS.md'
+              - 'TODO/**'
+
   test:
     name: Hermetic tests (split runner)
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -50,17 +86,42 @@ jobs:
       - name: Run hermetic test suite
         run: uv run --no-sync python tests/run_tests_split.py
 
+      - name: Check server layer contract
+        run: uv run --no-sync lint-imports
+
+  docs-gate:
+    name: Docs gates (parity + links)
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true' || needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies (minus heavy local-inference packages)
+        run: >
+          uv sync --frozen
+          --no-install-package llama-cpp-python
+          --no-install-package funasr
+          --no-install-package torch
+
       - name: Check README structural parity (4 languages)
         run: uv run --no-sync python scripts/check_docs_parity.py
 
       - name: Check Markdown links and anchors
         run: uv run --no-sync python scripts/check_doc_links.py
 
-      - name: Check server layer contract
-        run: uv run --no-sync lint-imports
-
   security-scan:
     name: Security scans (bandit + pip-audit)
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -98,6 +159,8 @@ jobs:
 
   frontend-test:
     name: Frontend tests (Vitest)
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

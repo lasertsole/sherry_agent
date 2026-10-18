@@ -101,6 +101,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
@@ -154,6 +155,7 @@ middleware = [
     ),
     IterationBudget(60),
     ToolGuardrails(),
+    ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     ToolCallNormalize(),
@@ -190,7 +192,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
 | `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
 | `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
-| `wrap_tool_call` (최외곽 → 최내곽)  | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
+| `wrap_tool_call` (최외곽 → 최내곽)  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
 
 해당 페이즈의 후크를 구현한 미들웨어만 행에 표시합니다.

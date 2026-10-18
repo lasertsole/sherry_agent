@@ -35,6 +35,7 @@ from agent.tools.pub_base import (
     _open_no_follow,
     decode_text,
     display_path,
+    file_read_lock,
     licensed,
     note_read,
     resolve_tool_path,
@@ -221,11 +222,16 @@ class ReadFileTool(BaseTool):
         except OSError:
             file_size = 0
 
-        data, read_stat, error = self._read_bytes(resolved)
-        if error is not None or data is None or read_stat is None:
-            return error or tool_error("Failed to read file")
+        # A same-path writer must not change the bytes between the read and the
+        # revision/license below. Different paths take independent gates.
+        with file_read_lock(resolved):
+            data, read_stat, error = self._read_bytes(resolved)
+            if error is not None or data is None or read_stat is None:
+                return error or tool_error("Failed to read file")
 
-        return self._paginate(resolved, root, data, read_stat, file_size, offset, limit, session_id)
+            return self._paginate(
+                resolved, root, data, read_stat, file_size, offset, limit, session_id
+            )
 
     def _paginate(
         self,

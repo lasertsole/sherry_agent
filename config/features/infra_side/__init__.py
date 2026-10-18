@@ -112,3 +112,9 @@ from .lane_system import (
     LANE_SYSTEM as LANE_SYSTEM,
     validate_lane_config as validate_lane_config,
 )
+from .model_downloads import (
+    LocalModelFile as LocalModelFile,
+    LocalModelSpec as LocalModelSpec,
+    ModelDownloadsConfig as ModelDownloadsConfig,
+    MODEL_DOWNLOADS as MODEL_DOWNLOADS,
+)

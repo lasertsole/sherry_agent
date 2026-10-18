@@ -89,18 +89,29 @@ def test_owner_unregister_still_clears_everything(reg):
     assert reg.get_websocket_by_websocket_id("ws-1") is None
 
 
-def test_newest_owner_unregister_clears_session_binding(reg):
+def test_newest_owner_unregister_promotes_the_surviving_socket(reg):
+    """1:N broadcast model: the newest unregister does NOT strand the session.
+
+    A still-connected older socket takes over the 1:1 "newest socket" view (and
+    keeps receiving broadcasts from its own bag entry); when no socket remains
+    the binding is cleared entirely.
+    """
     old, new = _FakeWs("ws-old"), _FakeWs("ws-new")
     reg.register_websocket("s1", old)
     reg.register_websocket("s1", new)
 
     reg.unregister_websocket_by_websocket(new)  # the CURRENT owner leaves
 
-    assert reg.get_websocket_by_session_id("s1") is None
+    assert reg.get_websocket_by_session_id("s1") is old
     assert reg.get_websocket_by_websocket_id("ws-new") is None
+    assert reg.get_websockets_by_session_id("s1") == [old]
     # The old socket is still physically connected — only its streaming duty
     # was reassigned — so its own reverse entries must survive.
     assert reg.get_websocket_by_websocket_id("ws-old") is old
+
+    reg.unregister_websocket_by_websocket(old)
+    assert reg.get_websocket_by_session_id("s1") is None
+    assert reg.get_websockets_by_session_id("s1") == []
 
 
 def test_overwrite_registration_rebinds_session(reg):

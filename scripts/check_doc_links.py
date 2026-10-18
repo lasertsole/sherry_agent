@@ -68,6 +68,8 @@ SKIP_DIRS = frozenset(
         "node_modules",
         "src",
         "temp",
+        "wiki",
+        "graphify-out",
         "workspace",
     }
 )

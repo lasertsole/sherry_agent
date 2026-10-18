@@ -266,7 +266,8 @@ describe('ProjectFileTree row context menu', () => {
       sessionId: 'sid-1',
       payload: { type: 'file', path: 'README.md', name: 'README.md' }
     });
-    expect(toasts.toastInfo).toHaveBeenCalled();
+    // The composer chip is the feedback; no transient toast in the corner.
+    expect(toasts.toastInfo).not.toHaveBeenCalled();
   });
 
   it('opens a directory row instead of the viewer (Open mirrors a click)', async () => {

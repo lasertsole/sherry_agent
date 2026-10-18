@@ -18,7 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.pub_base.file_lock import FileBusyError, cross_process_lock, lock_path_for
+from agent.tools.pub_base.file_lock import (
+    FileBusyError,
+    cross_process_lock,
+    file_read_lock,
+    file_write_lock,
+    lock_path_for,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -28,8 +34,15 @@ pytestmark = [
 
 
 def _hold(target: str, seconds: float, ready) -> None:  # pragma: no cover - child process
-    """Child body: take the lock, announce it, hold it."""
+    """Child body: take the EXCLUSIVE lock, announce it, hold it."""
     with cross_process_lock(Path(target)):
+        ready.set()
+        time.sleep(seconds)
+
+
+def _hold_read(target: str, seconds: float, ready) -> None:  # pragma: no cover - child process
+    """Child body: take the SHARED read lock, announce it, hold it."""
+    with file_read_lock(Path(target)):
         ready.set()
         time.sleep(seconds)
 
@@ -49,6 +62,17 @@ def _start_holder(target: Path, seconds: float = 60.0):
     proc = ctx.Process(target=_hold, args=(str(target), seconds, ready), daemon=True)
     proc.start()
     assert ready.wait(timeout=10), "holder never took the lock"
+    return proc
+
+
+def _start_read_holder(target: Path, seconds: float = 60.0):
+    import multiprocessing as mp
+
+    ctx = mp.get_context("fork")
+    ready = ctx.Event()
+    proc = ctx.Process(target=_hold_read, args=(str(target), seconds, ready), daemon=True)
+    proc.start()
+    assert ready.wait(timeout=10), "read holder never took the lock"
     return proc
 
 
@@ -100,6 +124,34 @@ def test_the_lock_is_per_target(tmp_path, lock_env):
         # Another target is not blocked by the held one.
         with cross_process_lock(second, timeout_s=5.0):
             pass
+    finally:
+        holder.kill()
+        holder.join(timeout=10)
+
+
+def test_an_exclusive_writer_blocks_a_cross_process_reader(tmp_path, lock_env):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    holder = _start_holder(target)
+    try:
+        with pytest.raises(FileBusyError):
+            with file_read_lock(target, timeout_s=0.3):
+                pytest.fail("a reader entered while a writer held the file")
+    finally:
+        holder.kill()
+        holder.join(timeout=10)
+
+
+def test_a_shared_reader_allows_another_reader_but_blocks_a_writer(tmp_path, lock_env):
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    holder = _start_read_holder(target)
+    try:
+        with file_read_lock(target, timeout_s=2.0):
+            pass  # shared with the child reader
+        with pytest.raises(FileBusyError):
+            with file_write_lock(target, timeout_s=0.3):
+                pytest.fail("a writer entered while a reader held the file")
     finally:
         holder.kill()
         holder.join(timeout=10)

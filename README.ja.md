@@ -75,6 +75,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
 - **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_create(resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の追加列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
 - **TaskFlow の進捗ウェーブ** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): フローのステップは最長経路の DAG レベルにまとめられ、フローティング進捗パネルに表示される（表示専用 — スケジューラは依然として各ステップの `depends_on` ごとに解錠する。未知の依存は無視され、閉路は `cyclic` と表示された末尾のウェーブに置かれる）。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
+- **ストリーム復元アンカー** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): ターン途中で切断したビューアが再接続すると `resume_stream` を送り、サーバーはその socket だけに実行中ターンの `ai_text` スナップショットと現在の `seq` を返します。クライアントはバッファ済み delta を flush し、そのターンのテキストをスナップショットで置き換え、`seq` 以下のフレームを破棄します。したがってフレームの再送も重複もなく、コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できます。
 - **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
 - **セッションごとのモデルと思考**: `PUT /sessions/thinking` と `PUT /sessions/model` は単一セッションの思考トグルとメインモデルを上書きする（ログインが有効な場合、クライアントは単回限りの `GET /auth/ws-ticket` を先取りする）。思考制御ミドルウェアはそれに基づいてリクエストモデルを `build_main_llm(thinking=...)` のバリアントに差し替え、セッションに明示的な選択がなければ環境変数の既定値へフォールバックする
 
@@ -329,7 +330,9 @@ EMA_AI_agent/
 | **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
 | **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
+| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ クイックスタート
 
@@ -376,6 +379,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 - **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
 - **リランカーモデル**：`.models` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
 - **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
+- **進捗付きの事前ダウンロード**：「模型配置」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、スロットルされた `model_download_updated` WebSocket フレームを受信し、パネルを開いた時や再接続時に `GET /model-downloads/status` のスナップショットを 1 回取得して、未完了の `.part` ファイルから中断した転送を再開します。
 
 > 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
 

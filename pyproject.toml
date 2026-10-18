@@ -5,12 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "mineru-vl-utils[transformers]>=1.0.5",
+    "mineru-vl-utils[transformers]>=2.0.7",
     "aiosqlite>=0.22.1",
     "croniter>=6.2.2",
     "dotenv>=0.9.9",
     "editdistance>=0.8.1",
-    "funasr>=1.3.9",
+    "funasr>=1.4.16",
+    "kaldi-native-fbank>=1.22.3",
     "langchain>=1.3.4",
     "langchain-classic>=1.0.7",
     "langchain-deepseek>=1.1.0",
@@ -20,6 +21,8 @@ dependencies = [
     "leidenalg>=0.12.0",
     "loguru>=0.7.3",
     "opencv-python-headless>=4.11.0",
+    # code-intel CodeEmbedder (Jina v2 Base Code ONNX) — CPU only, lazy import.
+    "onnxruntime>=1.31.0",
     "nest-asyncio>=1.6.0",
     "pillow>=9.2.0",
     "robyn>=0.84.0",
@@ -126,6 +129,8 @@ extend-exclude = [
     ".playwright-mcp",
     "docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
     "TODO",             # hand-written plan notes (same rationale as docs)
+    "wiki",             # generated Obsidian code-map vault
+    "graphify-out",     # generated code-graph output
 ]
 
 [tool.ruff.lint]
@@ -168,6 +173,8 @@ exclude = [
     "**/__pycache__",    # restate pyright default: bytecode caches
     "**/node_modules",   # restate pyright default
     "docs",
+    "wiki",
+    "graphify-out",
     ".omo",
     ".playwright-mcp",
     "**/vendored_raganything/**",

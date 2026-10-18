@@ -93,7 +93,7 @@ def _load_model():
 # 2. Explicit initialisation (idempotent)
 # ─────────────────────────────────────────────
 # This block used to run at import time, which made any bare
-# ``import models.embed_model.core`` (tests, tooling, type checkers) read .env
+# ``import models.embed_model.text.core`` (tests, tooling, type checkers) read .env
 # and trigger an eager GGUF download. It is now an explicit
 # ``setup_embed_model()`` invoked by the assembly point (``build_embed_model``)
 # and lazily by the first embed call, so importing this module is

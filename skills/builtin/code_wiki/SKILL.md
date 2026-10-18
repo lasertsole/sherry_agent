@@ -1,6 +1,8 @@
 ---
 name: code-wiki
 description: "Generate wiki docs + Mermaid diagrams for any codebase. Use when the user asks to document a codebase, generate architecture diagrams, or create a structured wiki for a repo."
+when_to_use: "When the user asks for a repo overview, architecture diagrams, or an onboarding wiki for a local or remote codebase."
+when_not_to_use: "For single-file/function docs, a quick API answer, strategic narrative, or code the user is actively changing."
 ---
 
 # Code Wiki Skill
@@ -72,7 +74,7 @@ REPO_NAME=$(basename "$PWD")
 Then set the output dir — inside this agent project, under `src/data/`:
 
 ```bash
-WIKI_ROOT="$REPO_ROOT/src/data/wikis"
+WIKI_ROOT="$REPO_ROOT/src/data/wiki"
 OUTPUT_DIR="$WIKI_ROOT/$REPO_NAME"
 mkdir -p "$OUTPUT_DIR/modules" "$OUTPUT_DIR/diagrams"
 ```
@@ -85,6 +87,9 @@ ls -la
 
 # Deeper tree, noise filtered
 find . -type d \
+  -not -path './src/data/wiki*' \
+  -not -path './wiki*' \
+  -not -path './graphify-out*' \
   -not -path '*/\.*' \
   -not -path '*/node_modules*' \
   -not -path '*/venv*' \
@@ -96,6 +101,9 @@ find . -type d \
 ```
 
 Then read the relevant manifests (`package.json`, `pyproject.toml`, `setup.py`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`) and the project README.
+
+The output tree MUST be pruned by every scan: `src/data/wiki/` (the generated wiki), root `wiki/`, and `graphify-out/`. If the documented repo is this agent project, those paths are inside the target; without the `-not -path` guards a rerun would document the previous wiki and nest it forever.
+
 
 ### 3. Pick modules to document
 
@@ -109,7 +117,7 @@ Cap initial pass at **8–10 modules**. Heuristics by language:
 
 Prioritize by: imported-from count, LOC, mentions in README / top-level docs.
 
-State the module list to the user before generating per-module docs on big repos.
+State the module list to the user before generating per-module docs on big repos. Never select the output tree (`$OUTPUT_DIR`, `src/data/wiki`, root `wiki/`, `graphify-out/`) as a module or a scan source.
 
 ### 4. Write `README.md`
 
@@ -174,7 +182,7 @@ Only write this if the project is a library or API server. Document each public 
 State exactly what was generated and where:
 
 ```
-Generated wiki at src/data/wikis/<repo-name>/:
+Generated wiki at src/data/wiki/<repo-name>/:
   README.md                   project overview, module map
   architecture.md             system architecture + flowchart
   getting-started.md          setup, first run, workflows
@@ -189,6 +197,7 @@ Generated wiki at src/data/wikis/<repo-name>/:
 - Per-module docs: cap at 10 modules unless user expands scope
 - Per-file reads: prefer search for symbols + offset/limit over full reads
 - Skip vendored code (`vendor/`, `third_party/`, generated code, `_pb2.py`, `.min.js`)
+- Skip the output tree (`$OUTPUT_DIR` / `src/data/wiki`), root `wiki/`, and `graphify-out/` in every scan and module pick
 
 ## Re-Run / Update
 
@@ -205,7 +214,8 @@ If `.codewiki-state.json` already exists at the target path:
 - **Restating code as prose.** A doc that paraphrases function signatures is worse than just linking to the function.
 - **Mermaid > 50 nodes** don't render legibly. Split them.
 - **Documenting tests, generated code, or vendored deps** as if they were product code. Skip them.
-- **Writing into the documented repo without asking.** Default output lives in this agent project at `src/data/wikis/`. Only write into the target repo when explicitly requested.
+- **Writing into the documented repo without asking.** Default output lives in this agent project at `src/data/wiki/`. Only write into the target repo when explicitly requested.
+- **Scanning the output tree.** A `find`/module pick that includes `src/data/wiki/`, root `wiki/`, or `graphify-out/` will document the previous wiki and nest it on every rerun. Always prune those paths.
 - **Mermaid special chars need quotes:** `A["Tool / Agent"]` not `A[Tool / Agent]`. `<br>` for line breaks inside a node.
 - **Nested code fences.** When writing markdown that contains a Mermaid block, use 4-backtick outer fences.
 - **classDiagram generics** render as `~T~` (e.g. `List~Tool~`), not `<T>`.

@@ -1,6 +1,8 @@
 ---
 name: llm-wiki
 description: "Karpathy's LLM Wiki: build/query interlinked markdown KB."
+when_to_use: "When the user wants to build, ingest into, query, or lint a persistent interlinked markdown knowledge base."
+when_not_to_use: "For transient Q&A, one-off notes, code documentation (code-wiki), or when no curated wiki is wanted."
 version: 3.0.0
 author: EMA AI Agent
 license: MIT

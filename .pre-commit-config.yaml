@@ -19,6 +19,11 @@
 
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 
+# Hand-formatted docs and generated trees are outside every hook's scope. The
+# CI code jobs mirror this (docs-only pushes skip them); the docs parity/link
+# gates still run in their own CI job.
+exclude: ^(docs|client/docs|wiki|graphify-out)/
+
 repos:
   # ---- backend: ruff (rule set pinned in pyproject [tool.ruff.lint]) ------
   - repo: https://github.com/astral-sh/ruff-pre-commit

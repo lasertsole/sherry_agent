@@ -39,10 +39,11 @@ from .read_state import (
     note_overwrite,
     note_read,
 )
-from .path_lock import active_path_locks, path_lock
+from .path_lock import active_path_locks, path_lock, path_read_lock, path_write_lock
 from .file_lock import (
     FileBusyError,
     cross_process_lock,
+    file_read_lock,
     file_write_lock,
     flock_path,
     lock_path_for,
@@ -102,8 +103,11 @@ __all__ = [
     "note_read",
     "active_path_locks",
     "path_lock",
+    "path_read_lock",
+    "path_write_lock",
     "FileBusyError",
     "cross_process_lock",
+    "file_read_lock",
     "file_write_lock",
     "flock_path",
     "lock_path_for",

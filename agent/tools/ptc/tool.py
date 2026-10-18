@@ -128,5 +128,9 @@ def build_ptc_tool(available_tools: list[Any], session_id: str) -> ExecuteCodeTo
     tool._tools_map = tools_map
     tool._config = PTC
     tool.description = _build_description(tools_map)
-    tool.metadata = {"idempotent": False, "scope": "subagent_only"}
+    tool.metadata = {
+        "idempotent": False,
+        "scope": "subagent_only",
+        "side_effect_scope": "system",
+    }
     return tool

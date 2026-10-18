@@ -40,6 +40,11 @@ cd client && pnpm tauri build
   **`VERSION` marker** plus a copy of this document into the artifact. Most of
   the size is PyTorch. A first run seeds the app-data home's `.env` from the
   tracked one and its `.models` / `.network` from the two templates.
+- **Code embedder (optional)** — the code-intel semantic layer's Jina v2 Base
+  Code ONNX backend is collected through `onnxruntime`; its 612 MB ONNX weights
+  and tokenizer files are downloaded at runtime into
+  `models/embed_model/code/`, never shipped in the backend tree. BGE remains the
+  text embedder (memory / multimodal RAG).
 - **`VERSION`** — the installer version this tree belongs to, read from
   `client/src-tauri/tauri.conf.json` (the same field the shell reports as
   `package_info().version`). The shell re-downloads whenever the marker differs,
@@ -86,11 +91,12 @@ uv run --no-sync python packaging/check_release.py backend client/src-tauri/sher
 python3 packaging/check_release.py frontend client/.output/public
 ```
 
-Third-party tests under `_internal` are exempt (a wheel may ship its own tests),
-and the multimodal_rag skill's documented manual `rag_import*_test.py` utilities
-are not test suites. The shipped `packaging/README.md` and `skills/**/SKILL.md`
-are functional assets, not project documentation. The Docker image applies the
-same boundary through `.dockerignore`.
+Two exemptions are deliberate. Third-party tests under `_internal` are not this
+repository's suite, and the multimodal_rag skill ships two documented manual
+import utilities named `rag_import*_test.py`; neither is a test suite. The
+shipped `packaging/README.md` and `skills/**/SKILL.md` are functional assets,
+not project documentation. The Docker image applies the same boundary through
+`.dockerignore` (which also excludes `evals/`).
 
 ## The archive layout contract
 

@@ -39,7 +39,11 @@ def _build() -> ExecuteCodeTool:
 def test_identity_metadata_and_scope() -> None:
     tool = _build()
     assert tool.name == "execute_code"
-    assert tool.metadata == {"idempotent": False, "scope": "subagent_only"}
+    assert tool.metadata == {
+        "idempotent": False,
+        "scope": "subagent_only",
+        "side_effect_scope": "system",
+    }
 
 
 def test_args_schema_exposes_only_code() -> None:

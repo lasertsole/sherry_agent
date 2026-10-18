@@ -15,7 +15,7 @@ from workspace.file_sync import ensure_workspace_system_files
 from channels import channel_manager
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
-from runtime import relation_register
+from runtime.session.ws_push import broadcast_to_session
 from workspace.prompt_builder import build_system_prompt
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 from agent.tools import build_python_repl_tool, build_read_file_tool, build_write_file_tool
@@ -68,12 +68,9 @@ async def push_heartbeat_updated() -> None:
     fails, we simply skip without breaking the execution flow.
     """
     try:
-        websocket = relation_register.get_websocket_by_session_id(HEARTBEAT_WS_SESSION_ID)
-        if websocket is None:
-            return
         content: dict[str, str] = read_heartbeat_file()
         res: dict[str, Any] = {"event": "heartbeat:updated", "content": content}
-        await websocket.send_text(json.dumps(res))
+        await broadcast_to_session(HEARTBEAT_WS_SESSION_ID, res)
     except Exception as e:
         logger.warning("Failed to push heartbeat:updated: {}", e)
 
@@ -88,11 +85,8 @@ async def push_heartbeat_notification(result_content: str) -> None:
     source. Best-effort: failures are logged and never break the flow.
     """
     try:
-        websocket = relation_register.get_websocket_by_session_id(HEARTBEAT_WS_SESSION_ID)
-        if websocket is None:
-            return
         res: dict[str, Any] = {"event": "notification", "content": f"heartbeat: {result_content}"}
-        await websocket.send_text(json.dumps(res))
+        await broadcast_to_session(HEARTBEAT_WS_SESSION_ID, res)
     except Exception as e:
         logger.warning("Failed to push heartbeat notification: {}", e)
 

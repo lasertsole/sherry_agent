@@ -43,6 +43,7 @@ from agent.tools.subagent.registry.session_state import (
 )
 from config.features import TODOLIST_INFRA
 from runtime.session.relation_register import relation_register
+from runtime.session.ws_push import broadcast_to_session
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
 from server.service.turn_runner import on_turn_finished
@@ -257,7 +258,7 @@ class _AutoTurnStreamDriver(StreamDriver):
     done_reasoning_tokens = None
 
     async def send_frame(self, payload: dict[str, Any]) -> None:
-        await _send_ws(self.websocket, payload)
+        await broadcast_to_session(self.session_id, payload, ensure_ascii=False)
 
     async def check_interrupt(self) -> dict[str, Any] | None:
         return await get_pending_interrupt(self.session_id)

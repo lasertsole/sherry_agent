@@ -31,7 +31,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
 
 def test_import_embed_model_has_no_side_effects() -> None:
     result = _run(
-        "from models.embed_model import core\n"
+        "from models.embed_model.text import core\n"
         "assert core._setup_done is False, 'import ran setup'\n"
         "assert core._backend is None, 'import detected backend'\n"
     )
@@ -58,7 +58,7 @@ def test_import_extract_model_does_not_export_mineru_env() -> None:
 
 
 def test_setup_embed_model_detects_then_downloads_once(monkeypatch, tmp_path) -> None:
-    from models.embed_model import core
+    from models.embed_model.text import core
 
     downloads: list[int] = []
     monkeypatch.setattr(core, "_setup_done", False)
@@ -78,7 +78,7 @@ def test_setup_embed_model_detects_then_downloads_once(monkeypatch, tmp_path) ->
 
 
 def test_setup_embed_model_skips_download_when_weights_present(monkeypatch, tmp_path) -> None:
-    from models.embed_model import core
+    from models.embed_model.text import core
 
     weights = tmp_path / "bge-m3-q8_0.gguf"
     weights.write_bytes(b"x")

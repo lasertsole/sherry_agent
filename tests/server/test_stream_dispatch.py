@@ -67,7 +67,10 @@ def _make_stream(agen):
 
 
 async def _collect(agen) -> list[dict]:
-    return [f async for f in agen]
+    # Every emitted frame is stamped with a per-turn `seq` (the stream-resume
+    # watermark; its own contract is pinned in tests/server/test_stream_resume.py).
+    # These tests assert frame CONTENT/order, so the stamp is dropped here.
+    return [{k: v for k, v in f.items() if k != "seq"} async for f in agen]
 
 
 class _PlainTurn(StreamTurn):
@@ -271,8 +274,9 @@ class TestLifecycle:
 
         frames = asyncio.run(_scenario())
 
-        assert frames[0] == {"type": "text", "content": "x"}
-        assert frames[-1] == {"type": "text", "content": "Request cancelled"}
+        # Content assertions ignore the per-turn `seq` watermark stamp.
+        assert {"type": "text", "content": "x"}.items() <= frames[0].items()
+        assert {"type": "text", "content": "Request cancelled"}.items() <= frames[-1].items()
         assert state_register_mem.get_state(SID, "answering") is False
 
     def test_generate_cancel_writes_marker_then_frame(self, monkeypatch):
@@ -299,8 +303,8 @@ class TestLifecycle:
 
         frames = asyncio.run(_scenario())
 
-        assert frames[0] == {"type": "text", "content": "partial"}
-        assert frames[-1] == {"type": "text", "content": "Request cancelled"}
+        assert {"type": "text", "content": "partial"}.items() <= frames[0].items()
+        assert {"type": "text", "content": "Request cancelled"}.items() <= frames[-1].items()
         assert markers == [("partial", "cancelled")]
 
     def test_heartbeat_timeout_yields_timeout_frame(self):

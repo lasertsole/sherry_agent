@@ -99,7 +99,9 @@ def _gen_turn(*, chunks=None, chunks_per_call=None, invoke_result=None, no_conti
 
 
 async def _collect(agen) -> list[dict]:
-    return [f async for f in agen]
+    # Drop the per-turn `seq` stamp (stream-resume watermark): this test asserts
+    # frame content only.
+    return [{k: v for k, v in f.items() if k != "seq"} async for f in agen]
 
 
 @pytest.fixture(autouse=True)

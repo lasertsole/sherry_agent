@@ -1,4 +1,4 @@
-"""Unit tests for the todo-continuation enforcer middleware.
+"""Unit tests for the plan-continuation enforcer middleware (todos + TaskFlow flows).
 
 Uses the installed langchain 1.3.9 hook contract: ``aafter_agent(state, runtime)``
 returning ``None`` (the continuation prompt is delivered through the
@@ -123,7 +123,7 @@ async def test_no_todos_resets_and_does_not_inject(
     st._stagnation_count[_SID] = 2
     st._last_snapshot[_SID] = "stale"
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert spy_auto_turn == []
@@ -148,7 +148,7 @@ async def test_incomplete_injects_continuation_once(
         ],
     )
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert len(spy_auto_turn) == 1
@@ -178,7 +178,7 @@ async def test_cooldown_suppresses_second_injection(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
-    middleware = tc.TodoContinuationEnforcer()
+    middleware = tc.PlanContinuationEnforcer()
 
     await middleware.aafter_agent(_state())
     await middleware.aafter_agent(_state())
@@ -196,7 +196,7 @@ async def test_stagnation_triggers_recovery_prompt_capped(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
-    middleware = tc.TodoContinuationEnforcer()
+    middleware = tc.PlanContinuationEnforcer()
 
     for _ in range(12):
         await middleware.aafter_agent(_state())
@@ -222,7 +222,7 @@ async def test_abort_error_skips_injection(
 ) -> None:
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(
+    result = await tc.PlanContinuationEnforcer().aafter_agent(
         _state(error=RuntimeError("operation cancelled"))
     )
 
@@ -236,7 +236,7 @@ async def test_non_abort_error_still_injects(
 ) -> None:
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(
+    result = await tc.PlanContinuationEnforcer().aafter_agent(
         _state(error=RuntimeError("invalid JSON from model"))
     )
 
@@ -259,7 +259,7 @@ async def test_all_done_resets_and_does_not_inject(
     )
     st._stagnation_count[_SID] = 2
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert spy_auto_turn == []
@@ -323,7 +323,7 @@ async def test_auto_turn_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -
 
     hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _boom)
     try:
-        result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+        result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
     finally:
         hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
 
@@ -339,7 +339,7 @@ async def test_missing_hook_degrades_to_noop(monkeypatch: pytest.MonkeyPatch) ->
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
     hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     # Nothing injected -> not marked injected -> the next turn retries.
@@ -355,7 +355,7 @@ async def test_missing_hook_degrades_to_noop(monkeypatch: pytest.MonkeyPatch) ->
 async def test_blank_session_is_noop(monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list) -> None:
     _patch_todos(monkeypatch, [_todo("build api", "pending")])
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent({"session_id": "   "})
+    result = await tc.PlanContinuationEnforcer().aafter_agent({"session_id": "   "})
 
     assert result is None
     assert spy_auto_turn == []
@@ -363,7 +363,7 @@ async def test_blank_session_is_noop(monkeypatch: pytest.MonkeyPatch, spy_auto_t
 
 @pytest.mark.asyncio
 async def test_non_dict_state_is_noop(spy_auto_turn: list) -> None:
-    result = await tc.TodoContinuationEnforcer().aafter_agent(None)
+    result = await tc.PlanContinuationEnforcer().aafter_agent(None)
     assert result is None
     assert spy_auto_turn == []
 
@@ -392,7 +392,7 @@ async def test_open_flow_without_todos_still_gates_the_turn(
         ],
     )
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert len(spy_auto_turn) == 1
@@ -416,7 +416,7 @@ async def test_a_settled_but_open_flow_asks_for_closure(
     _patch_todos(monkeypatch, [])
     _patch_flows(monkeypatch, [_flow([_step("step-1", "done"), _step("step-2", "done")])])
 
-    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert len(spy_auto_turn) == 1
     content = spy_auto_turn[0][1].content
@@ -434,7 +434,7 @@ async def test_a_finished_plan_never_nudges(
     st._stagnation_count[_SID] = 3
     st._last_snapshot[_SID] = "stale"
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert spy_auto_turn == []
@@ -448,7 +448,7 @@ async def test_todos_and_flows_share_one_directive(
     _patch_todos(monkeypatch, [_todo("write the design doc", "pending")])
     _patch_flows(monkeypatch, [_flow([_step("step-1", "ready")])])
 
-    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert len(spy_auto_turn) == 1
     content = spy_auto_turn[0][1].content
@@ -467,7 +467,7 @@ async def test_a_long_flow_is_clipped_in_the_directive(
     steps = [_step(f"step-{i}", "ready") for i in range(1, 26)]
     _patch_flows(monkeypatch, [_flow(steps)])
 
-    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     content = spy_auto_turn[0][1].content
     assert "step-20 [ready]" in content
@@ -488,7 +488,7 @@ async def test_a_broken_taskflow_read_degrades_to_the_todo_half(
 
     monkeypatch.setattr(flow_store, "get_active_flows_sync", _boom)
 
-    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+    result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     assert result is None
     assert len(spy_auto_turn) == 1

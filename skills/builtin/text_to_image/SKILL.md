@@ -1,6 +1,8 @@
 ---
 name: text_to_image
 description: When a user needs to generate an image from a text description, use the python_repl tool to call generate_image().
+when_to_use: "When the user asks to generate or illustrate an image from a textual description."
+when_not_to_use: "For image editing/understanding, diagrams better drawn as SVG/Mermaid, or when no image model is configured."
 ---
 
 ```python

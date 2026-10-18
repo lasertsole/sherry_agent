@@ -155,6 +155,7 @@ from .code_intel import (
     CODE_INTEL as CODE_INTEL,
 )
 from .code_intel_semantic import (
+    CodeEmbedderProfile as CodeEmbedderProfile,
     CodeIntelSemanticConfig as CodeIntelSemanticConfig,
     CODE_INTEL_SEMANTIC as CODE_INTEL_SEMANTIC,
 )
@@ -182,4 +183,8 @@ from .plan_mode import (
     PLAN_STATUS_READY as PLAN_STATUS_READY,
     PLAN_STATUS_REPLAN as PLAN_STATUS_REPLAN,
     PlanModeConfig as PlanModeConfig,
+)
+from .tool_parallel import (
+    TOOL_PARALLEL as TOOL_PARALLEL,
+    ToolParallelConfig as ToolParallelConfig,
 )

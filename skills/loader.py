@@ -337,7 +337,7 @@ def get_skills_text(
         )
         # Trigger / exclusion signals: the model sees WHEN to load the skill and
         # when not to, instead of inferring it from a capability summary alone.
-        # Absent on the shipped built-ins — rendered only when present.
+        # Shipped built-ins carry them too; rendered only when present.
         when_to_use = _bounded_field(s.get("when_to_use"), _WHEN_TO_USE_MAX_TOKENS)
         if when_to_use:
             lines.append(f"    <when_to_use>{_xml_text(when_to_use)}</when_to_use>")

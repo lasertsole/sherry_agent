@@ -100,23 +100,102 @@
               {{ t('config.env.restartHint') }}
             </p>
 
+            <!-- Optional code-intel embedder: OFF until the operator downloads it here. -->
+            <div
+              class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+              data-test="code-embedder">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="m-0 text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    {{ t('config.codeEmbedder.title') }}
+                  </p>
+                  <p class="m-0 mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('config.codeEmbedder.hint') }}
+                  </p>
+                  <p class="m-0 mt-1 text-xs text-gray-400">
+                    {{ codeEmbedder?.profile ?? 'jina-embeddings-v2-base-code' }} ·
+                    {{ formatCodeEmbedderSize(codeEmbedder?.size_bytes ?? 641517466) }} ·
+                    {{ codeEmbedder?.license ?? 'Apache-2.0' }}
+                  </p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="codeEmbedder?.enabled"
+                    :label="t('config.codeEmbedder.disable')"
+                    size="small"
+                    severity="secondary"
+                    text
+                    :loading="codeEmbedderBusy"
+                    @click="onCodeEmbedderAction" />
+                  <Button
+                    v-else
+                    :label="
+                      codeEmbedder?.state === 'downloading'
+                        ? t('config.codeEmbedder.downloading')
+                        : codeEmbedder?.files_ready
+                          ? t('config.codeEmbedder.enable')
+                          : t('config.codeEmbedder.download')
+                    "
+                    icon="pi pi-download"
+                    size="small"
+                    :loading="codeEmbedderBusy || codeEmbedder?.state === 'downloading'"
+                    :disabled="codeEmbedder?.state === 'downloading'"
+                    @click="onCodeEmbedderAction" />
+                </div>
+              </div>
+              <div
+                v-if="codeEmbedder?.state === 'downloading'"
+                class="flex flex-col gap-1">
+                <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                  <div
+                    class="h-full rounded-full bg-sky-500 transition-[width] duration-300"
+                    :style="{ width: `${codeEmbedder?.percent ?? 0}%` }" />
+                </div>
+                <p class="m-0 text-[11px] text-gray-400">
+                  {{ codeEmbedder?.percent ?? 0 }}% ·
+                  {{ formatCodeEmbedderSize(codeEmbedder?.downloaded_bytes ?? 0) }} /
+                  {{ formatCodeEmbedderSize(codeEmbedder?.total_bytes ?? 0) }}
+                </p>
+              </div>
+              <p
+                v-if="codeEmbedderError"
+                class="m-0 text-xs text-red-600 dark:text-red-400">
+                {{ codeEmbedderError }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.state === 'error'"
+                class="m-0 text-xs text-red-600 dark:text-red-400">
+                {{ codeEmbedder.error }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.enabled"
+                class="m-0 text-xs text-emerald-600 dark:text-emerald-400">
+                {{ t('config.codeEmbedder.enabled') }}
+              </p>
+              <p
+                v-else-if="codeEmbedder?.files_ready"
+                class="m-0 text-xs text-amber-600 dark:text-amber-400">
+                {{ t('config.codeEmbedder.downloaded') }}
+              </p>
+            </div>
+
             <div
               v-if="envLoadError"
               class="flex">
               <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
             </div>
 
-            <template v-else-if="envGroups.length === 0">
-              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+            <template v-else-if="modelTabGroups.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noModelGroups') }}</p>
             </template>
 
             <template v-else>
               <template
-                v-for="group in envGroups"
+                v-for="group in modelTabGroups"
                 :key="group.name">
                 <!-- Model groups: profile manager (list + parameters + save/apply);
-                       everything else (the catch-all "other", the browser feature's
-                       switches) stays a plain key/value card. -->
+                       any remaining plain network group stays a key/value card.
+                       LANGSMITH, SHERRY_BROWSER and `other` moved to App Config. -->
                 <LlmModelManager
                   v-if="group.kind !== 'plain' && group.name !== 'other'"
                   :group="group.name"
@@ -171,16 +250,14 @@
             </p>
 
             <div
-              v-if="sherryLoadError"
+              v-if="sherryLoadError || envLoadError"
               class="flex">
-              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">
+                {{ sherryLoadError || envLoadError }}
+              </p>
             </div>
 
-            <template v-else-if="sherryEntries.length === 0">
-              <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
-            </template>
-
-            <template v-else>
+            <template v-if="sherryEntries.length">
               <div
                 v-for="entry in sherryEntries"
                 :key="entry.key"
@@ -192,6 +269,50 @@
                   class="w-full font-mono text-xs"
                   autocomplete="off"
                   spellcheck="false" />
+              </div>
+            </template>
+            <p
+              v-else-if="appConfigGroups.length === 0"
+              class="m-0 text-sm text-gray-400">
+              {{ t('config.sherry.noConfigFile') }}
+            </p>
+
+            <!-- Application settings that live outside sherry.jsonc: LANGSMITH
+                 comes from .network, `other` is the .env catch-all. Each keeps
+                 its own source writer through the env-group save path. -->
+            <template v-if="appConfigGroups.length">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.sherry.movedHint') }}
+              </p>
+              <div
+                v-for="group in appConfigGroups"
+                :key="group.name"
+                class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                :data-test="`app-config-group-${group.name}`">
+                <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  {{ group.name }}
+                </p>
+                <div
+                  v-for="entry in group.entries"
+                  :key="entry.key"
+                  class="flex flex-col gap-1">
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                  <InputText
+                    v-model="entry.value"
+                    :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                    class="w-full font-mono text-xs"
+                    autocomplete="off"
+                    spellcheck="false" />
+                </div>
+                <div class="mt-1 flex justify-start">
+                  <Button
+                    :label="t('config.save')"
+                    icon="pi pi-save"
+                    size="small"
+                    :loading="saving"
+                    :disabled="!groupHasChanges(group)"
+                    @click="handleSave" />
+                </div>
               </div>
             </template>
           </div>
@@ -236,6 +357,8 @@ import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
+import type { CodeEmbedderStatus } from '@/composables/code-embedder';
+import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
@@ -268,10 +391,86 @@ const envLoadError = ref('');
 /** Whether the env config has already been loaded (avoids duplicate GETs) */
 const envLoaded = ref(false);
 
+// ── Optional code-intel embedder (code semantic search) ─────
+// Off until the operator downloads it from this panel; the backend writes an
+// opt-in marker only after the download completes. Progress arrives as
+// `model_download_updated` WS frames; a REST snapshot covers opening the panel
+// and a socket reconnect.
+const codeEmbedder = ref<CodeEmbedderStatus | null>(null);
+const codeEmbedderBusy = ref(false);
+const codeEmbedderError = ref('');
+/** Bumped by every pushed frame; a slower REST snapshot must not regress it. */
+let codeEmbedderFrameSeq = 0;
+
+/**
+ * Human-readable model size (the status payload is bytes).
+ * @param bytes
+ */
+function formatCodeEmbedderSize(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+async function refreshCodeEmbedderStatus(): Promise<void> {
+  const seqAtRequest = codeEmbedderFrameSeq;
+  try {
+    const status = await fetchCodeEmbedderStatus();
+    if (seqAtRequest !== codeEmbedderFrameSeq) return;
+    if (status) codeEmbedder.value = status;
+    codeEmbedderError.value = '';
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to read code embedder status:', e);
+    codeEmbedderError.value = t('config.codeEmbedder.loadError');
+  }
+}
+
+function applyCodeEmbedderFrame(payload: unknown): void {
+  const content = (payload as ModelDownloadUpdate<CodeEmbedderStatus> | null)?.content;
+  if (content?.kind !== 'code_embedder' || !content.status) return;
+  codeEmbedderFrameSeq += 1;
+  codeEmbedder.value = content.status;
+  codeEmbedderError.value = '';
+}
+
+function refreshCodeEmbedderOnConnect(): void {
+  if (activeTab.value === 1) void refreshCodeEmbedderStatus();
+}
+
+/** Download+enable, or disable an already-enabled code embedder. */
+async function onCodeEmbedderAction(): Promise<void> {
+  codeEmbedderBusy.value = true;
+  codeEmbedderError.value = '';
+  const seqAtRequest = codeEmbedderFrameSeq;
+  try {
+    const status = codeEmbedder.value?.enabled ? await disableCodeEmbedder() : await startCodeEmbedderDownload();
+    if (status && seqAtRequest === codeEmbedderFrameSeq) codeEmbedder.value = status;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Code embedder action failed:', e);
+    codeEmbedderError.value = t('config.codeEmbedder.actionError');
+  } finally {
+    codeEmbedderBusy.value = false;
+  }
+}
+
+on('ws:model_download_updated', applyCodeEmbedderFrame);
+on('ws:connected', refreshCodeEmbedderOnConnect);
+onBeforeUnmount(() => {
+  off('ws:model_download_updated', applyCodeEmbedderFrame);
+  off('ws:connected', refreshCodeEmbedderOnConnect);
+});
+
 /** Computes whether the env config has changes (used for canSave and save decisions) */
 const envHasChanges = computed(() =>
   envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
+
+// LANGSMITH + SHERRY_BROWSER (from .network) and the catch-all `other` (from
+// .env) are application settings, not model settings: the App Config tab
+// renders them, while the Model Config tab keeps only the model/network groups.
+const MOVED_TO_APP_CONFIG = new Set(['LANGSMITH', 'SHERRY_BROWSER', 'other']);
+const modelTabGroups = computed(() => envGroups.value.filter(group => !MOVED_TO_APP_CONFIG.has(group.name)));
+const appConfigGroups = computed(() => envGroups.value.filter(group => MOVED_TO_APP_CONFIG.has(group.name)));
+const groupHasChanges = (group: SourcedEnvGroup): boolean =>
+  group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]);
 
 // ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
 const llmProfiles = useLlmProfilesStore();
@@ -464,8 +663,14 @@ const resetSherryState = () => {
 watch(
   activeTab,
   tab => {
-    if (tab === 1) void loadEnvConfig();
-    if (tab === 2) void loadSherryConfig();
+    if (tab === 1) {
+      void loadEnvConfig();
+      void refreshCodeEmbedderStatus();
+    }
+    if (tab === 2) {
+      void loadEnvConfig();
+      void loadSherryConfig();
+    }
   },
   // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
   { flush: 'post' }
@@ -680,6 +885,8 @@ const saveDialogSettings = async () => {
 const onHide = () => {
   activeTab.value = 0;
   backgroundOpacityValue.value = backgroundOpacity.value;
+  codeEmbedder.value = null;
+  codeEmbedderError.value = '';
   // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
   resetEnvState();
   resetSherryState();
@@ -694,6 +901,18 @@ onBeforeUnmount(onHide);
 {
   "zh": {
     "config": {
+      "codeEmbedder": {
+        "title": "代码语义检索模型",
+        "hint": "默认不启用。下载 Jina v2 Base Code（612 MB）后自动启用；BGE 仍只用于文本语义。",
+        "download": "下载并启用",
+        "downloading": "下载中…",
+        "enable": "启用",
+        "enabled": "已启用",
+        "downloaded": "已下载，待启用",
+        "disable": "停用",
+        "loadError": "读取代码语义模型状态失败",
+        "actionError": "操作失败，请查看后端日志"
+      },
       "agent": {
         "tabs": {
           "tools": "工具",
@@ -887,6 +1106,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
+        "noModelGroups": "暂无模型配置项。",
         "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
         "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
       },
@@ -894,6 +1114,7 @@ onBeforeUnmount(onHide);
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+        "movedHint": "以下设置来自 .network / .env。",
         "noConfigFile": "未找到 sherry.jsonc 文件。"
       },
       "cron": {
@@ -990,6 +1211,18 @@ onBeforeUnmount(onHide);
   },
   "en": {
     "config": {
+      "codeEmbedder": {
+        "title": "Code semantic search model",
+        "hint": "Off by default. Download Jina v2 Base Code (612 MB) to enable it; BGE remains text-only.",
+        "download": "Download & enable",
+        "downloading": "Downloading…",
+        "enable": "Enable",
+        "enabled": "Enabled",
+        "downloaded": "Downloaded, not enabled",
+        "disable": "Disable",
+        "loadError": "Failed to read the code embedder status",
+        "actionError": "Action failed; check the backend log"
+      },
       "agent": {
         "tabs": {
           "tools": "Tools",
@@ -1183,6 +1416,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "Failed to save model config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
+        "noModelGroups": "No model settings.",
         "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
         "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
       },
@@ -1190,6 +1424,7 @@ onBeforeUnmount(onHide);
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+        "movedHint": "The settings below come from .network / .env.",
         "noConfigFile": "No sherry.jsonc file found."
       },
       "cron": {
@@ -1286,6 +1521,18 @@ onBeforeUnmount(onHide);
   },
   "ja": {
     "config": {
+      "codeEmbedder": {
+        "title": "コードセマンティック検索モデル",
+        "hint": "既定では無効です。Jina v2 Base Code（612 MB）をダウンロードすると有効になります。BGE はテキスト専用のままです。",
+        "download": "ダウンロードして有効化",
+        "downloading": "ダウンロード中…",
+        "enable": "有効化",
+        "enabled": "有効",
+        "downloaded": "ダウンロード済み（未有効）",
+        "disable": "無効化",
+        "loadError": "コード埋め込みモデルの状態を取得できませんでした",
+        "actionError": "操作に失敗しました。バックエンドログを確認してください"
+      },
       "agent": {
         "tabs": {
           "tools": "ツール",
@@ -1479,6 +1726,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "モデル設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
+        "noModelGroups": "モデル設定はありません。",
         "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
         "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
@@ -1486,6 +1734,7 @@ onBeforeUnmount(onHide);
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+        "movedHint": "以下の設定は .network / .env に由来します。",
         "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
       },
       "cron": {
@@ -1582,6 +1831,18 @@ onBeforeUnmount(onHide);
   },
   "ko": {
     "config": {
+      "codeEmbedder": {
+        "title": "코드 시맨틱 검색 모델",
+        "hint": "기본적으로 꺼져 있습니다. Jina v2 Base Code(612 MB)를 다운로드하면 활성화됩니다. BGE는 텍스트 전용으로 유지됩니다.",
+        "download": "다운로드 및 활성화",
+        "downloading": "다운로드 중…",
+        "enable": "활성화",
+        "enabled": "활성화됨",
+        "downloaded": "다운로드됨(비활성)",
+        "disable": "비활성화",
+        "loadError": "코드 임베딩 모델 상태를 읽지 못했습니다",
+        "actionError": "작업 실패; 백엔드 로그를 확인하세요"
+      },
       "agent": {
         "tabs": {
           "tools": "도구",
@@ -1775,6 +2036,7 @@ onBeforeUnmount(onHide);
         "saveFailed": "모델 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
+        "noModelGroups": "모델 설정이 없습니다.",
         "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
         "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
@@ -1782,6 +2044,7 @@ onBeforeUnmount(onHide);
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
+        "movedHint": "아래 설정은 .network / .env에서 가져옵니다.",
         "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
       },
       "cron": {

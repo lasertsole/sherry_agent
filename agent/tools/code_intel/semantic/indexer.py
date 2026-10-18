@@ -126,9 +126,10 @@ class SemanticIndexer:
 
     def _get_embed_model(self) -> object:
         if self._embed_model is None:
-            from models import build_embed_model
-
-            self._embed_model = build_embed_model()
+            raise RuntimeError(
+                "code-intel semantic search requires a code embedder; "
+                "BGE is reserved for text semantics"
+            )
         return self._embed_model
 
     # -- public API --------------------------------------------------------

@@ -20,11 +20,11 @@ is logged and swallowed; it never rolls back or masks a successful persistence.
 """
 
 import asyncio
-import json
 
 from loguru import logger
 
-from runtime import StateKey, relation_register
+from runtime import StateKey
+from runtime.session.ws_push import broadcast_to_session
 
 from .config import (
     DEFAULT_CATEGORY,
@@ -172,15 +172,12 @@ async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
     send is logged and swallowed so it cannot break the persistence path.
     """
     try:
-        websocket = relation_register.get_websocket_by_session_id(session_id)
-        if websocket is None:
-            return
         payload = {
             "event": "todo_updated",
             "session_id": session_id,
             "content": {"todos": todos},
         }
-        await websocket.send_text(json.dumps(payload, ensure_ascii=False))
+        await broadcast_to_session(session_id, payload, ensure_ascii=False)
     except Exception as e:
         logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 

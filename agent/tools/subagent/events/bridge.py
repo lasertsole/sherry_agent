@@ -23,7 +23,6 @@ Lifecycle:
 from __future__ import annotations
 
 import asyncio
-import json
 from loguru import logger
 
 from .core import InboundMessage as FSInboundMessage, get_event_bus
@@ -69,14 +68,13 @@ async def _deliver_to_channel(channel_id: str, chat_id: str, content: str) -> No
 
 async def _deliver_to_websocket(session_id: str, content: str) -> None:
     """Send a delivery message to the websocket recipient bound to a session."""
-    from runtime import relation_register
+    from runtime.session.ws_push import broadcast_to_session
 
-    websocket = relation_register.get_websocket_by_session_id(session_id)
-    if websocket is None:
+    payload = {"event": "notification", "content": content}
+    sent = await broadcast_to_session(session_id, payload)
+    if sent == 0:
         logger.warning("EventBusBridge: no websocket for session {}", session_id)
         return
-    payload = {"event": "notification", "content": content}
-    await websocket.send_text(json.dumps(payload))
     logger.info(
         "EventBusBridge: delivered to websocket for session={} content_len={}",
         session_id,

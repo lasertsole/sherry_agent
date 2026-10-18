@@ -75,6 +75,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
 - **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_create(resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列增量迁移）；被取代的流退出 active 读取，但仍留在看板上
 - **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
+- **流恢复锚点** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py))：回合中途断线的客户端重连后发送 `resume_stream`，服务端只向该 socket 返回运行中回合的 `ai_text` 快照与当前 `seq`。客户端先 flush 已缓冲的 delta，再用快照替换该回合文本，并丢弃 `seq` 及以下的帧，因此不会重放或重复任何帧；已 committed 的工具调用仍可在 trajectory ledger（`GET /sessions/:session_id/trajectory`）中查询。
 - **工具耗时**：每次工具调用仅在工具返回时被计时一次（使用 `time.monotonic()`，下限钳制为 0），由消息持久化包装器完成，写入 `ToolMessage.additional_kwargs["tool_duration_ms"]` 并持久化到 `messages.tool_duration_ms`；实时卡片在运行中显示计时器，结束后显示实测值。按设计，审批等待和排队时间不计入该窗口
 - **会话级模型与思考**：`PUT /sessions/thinking` 与 `PUT /sessions/model` 为单个会话覆盖思考开关和主模型（启用登录时，客户端会预取一次性使用的 `GET /auth/ws-ticket`），思考控制中间件据此将请求模型替换为 `build_main_llm(thinking=...)` 变体——会话没有显式选择时回退到环境变量默认值
 
@@ -329,7 +330,9 @@ EMA_AI_agent/
 | **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
+| **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
 | **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 
@@ -376,6 +379,7 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 - **嵌入模型**：`EMBEDDING_MODEL_LOCAL=true`（默认）使用本地 `bge-m3` Q8_0 GGUF，首次运行时自动下载。
 - **重排序模型**：`.models` 模板默认使用**云端 API**（`RERANKER_MODEL_LOCAL=false`，OpenAI 兼容的 `bge-reranker-v2-m3`）。设为 `true` 可切换为本地 GGUF 重排序模型（约 636 MB，自动下载）。
 - **ITTT / VTTT / Auxiliary LLM**：模板默认云端 API；设 `*_MODEL_LOCAL=true` 切换为本地 GGUF 模型（同样自动下载）。
+- **带进度的预下载**：「模型配置」面板的内置本地模型条目（嵌入、重排序、ITTT / VTTT、辅助模型）提供下载按钮与实时进度条，通过节流的 `model_download_updated` WebSocket 帧更新，并在打开面板或重连时读一次 `GET /model-downloads/status` 快照，可从未完成的 `.part` 文件断点续传。
 
 > 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
 

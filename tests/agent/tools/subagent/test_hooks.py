@@ -8,6 +8,14 @@ from agent.tools.subagent.hooks.base import (
     fire_stop_hooks,
     clear_hooks,
 )
+from agent.tools.subagent.hooks.progress import (
+    clear_all_hooks,
+    fire_progress_hook,
+    fire_spawned_hook,
+    register_progress_hook,
+    register_spawned_hook,
+)
+from agent.tools.subagent.types.registry import SubagentRunRecord
 
 
 pytestmark = [pytest.mark.unit]
@@ -16,8 +24,19 @@ pytestmark = [pytest.mark.unit]
 @pytest.fixture(autouse=True)
 def _clean_hooks():
     clear_hooks()
+    clear_all_hooks()
     yield
     clear_hooks()
+    clear_all_hooks()
+
+
+def _make_run() -> SubagentRunRecord:
+    return SubagentRunRecord(
+        run_id="r1",
+        child_session_key="agent:main:subagent:abc",
+        requester_session_key="agent:main:session:p1",
+        task="test",
+    )
 
 
 class TestHooks:
@@ -106,3 +125,42 @@ class TestHooks:
                 parent_session_key="p", child_session_key="c", child_role="leaf", child_goal="t"
             )
         )
+
+
+class TestProgressHooks:
+    @pytest.mark.asyncio
+    async def test_spawned_and_progress_hooks_receive_the_run_and_message(self):
+        run = _make_run()
+        seen: list[tuple[str, str]] = []
+
+        async def on_spawn(record: SubagentRunRecord) -> None:
+            seen.append(("spawned", record.run_id))
+
+        async def on_progress(record: SubagentRunRecord, message: str) -> None:
+            seen.append(("progress", message))
+
+        register_spawned_hook(on_spawn)
+        register_progress_hook(on_progress)
+
+        await fire_spawned_hook(run)
+        await fire_progress_hook(run, "50% done")
+
+        assert seen == [("spawned", "r1"), ("progress", "50% done")]
+
+    @pytest.mark.asyncio
+    async def test_progress_hook_error_does_not_stop_others(self):
+        run = _make_run()
+        seen: list[str] = []
+
+        async def bad_hook(record: SubagentRunRecord, message: str) -> None:
+            raise RuntimeError("fail")
+
+        async def good_hook(record: SubagentRunRecord, message: str) -> None:
+            seen.append(message)
+
+        register_progress_hook(bad_hook)
+        register_progress_hook(good_hook)
+
+        await fire_progress_hook(run, "still delivered")
+
+        assert seen == ["still delivered"]

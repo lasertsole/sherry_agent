@@ -34,6 +34,10 @@ export interface AgentFrameContext {
   pendingKeys(): string[];
   /** Resolve and clear the pending stop() waiters. */
   flushStopResolvers(): void;
+  /** Highest frame seq covered by the last resume snapshot (chunk watermark). */
+  getSnapshotSeq(): number;
+  /** Record the snapshot's seq; reset when a new turn starts. */
+  setSnapshotSeq(seq: number): void;
 }
 
 /**
@@ -56,6 +60,10 @@ function turnMessageIds(ctx: AgentFrameContext, messageIds?: string[]): string[]
 export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): void {
   const handler = createWsMessageHandler<AgentWsEvent>({
     chunk: data => {
+      // A resumed viewer drops text produced at or before its snapshot: those
+      // deltas are already inside the replacement text. Nothing is replayed.
+      const seq = (data as { seq?: unknown }).seq;
+      if (typeof seq === 'number' && seq <= ctx.getSnapshotSeq()) return;
       ctx.markAllReceivedChunk();
       ctx.handlers.onChunk?.(
         typeof data.content === 'string' ? data.content : '',
@@ -109,6 +117,7 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
     turn_started: data => {
       const turn = { turnId: data.turn_id ?? '', msgIds: data.message_ids ?? [] };
       ctx.setActiveTurn(turn);
+      ctx.setSnapshotSeq(0);
       ctx.handlers.onTurnStarted?.({
         sessionId: data.session_id ?? ctx.sessionId,
         turnId: turn.turnId,
@@ -134,8 +143,31 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.setActiveTurn(null);
       ctx.flushStopResolvers();
     },
+    stream_resume: data => {
+      const content = (data.content ?? {}) as { status?: string; text?: string; has_reasoning?: boolean };
+      const status = content.status ?? 'unknown';
+      if (status === 'ok') {
+        const snapshotSeq = (content as { seq?: unknown }).seq;
+        if (typeof snapshotSeq === 'number') ctx.setSnapshotSeq(snapshotSeq);
+        ctx.markAllReceivedChunk();
+        emit('stream:resumed', {
+          sessionId: data.session_id ?? ctx.sessionId,
+          status,
+          text: typeof content.text === 'string' ? content.text : '',
+          hasReasoning: content.has_reasoning === true
+        });
+        return;
+      }
+      // ended / gone / unknown: there is no running turn to resume — settle the
+      // in-flight sends so the UI closes (like `done`), then let the business
+      // layer refetch for ended/unknown (gone = nothing to fetch).
+      ctx.settleResolve(turnMessageIds(ctx));
+      ctx.setActiveTurn(null);
+      emit('stream:resumed', { sessionId: data.session_id ?? ctx.sessionId, status });
+    },
     todo_updated: data => emit('ws:todo_updated', data),
     taskflow_updated: data => emit('ws:taskflow_updated', data),
+    model_download_updated: data => emit('ws:model_download_updated', data),
     // Best-effort downgrade notice from `web_search` (the turn keeps streaming);
     // the store renders it as a dismissible banner.
     search_backend_fallback: data => emit('ws:search_backend_fallback', data)

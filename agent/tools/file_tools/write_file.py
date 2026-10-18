@@ -345,5 +345,5 @@ class FormattedWriteFileTool(BaseTool):
 def build_write_file_tool() -> BaseTool:
     tool = FormattedWriteFileTool()
     tool.handle_tool_error = True
-    tool.metadata = {"idempotent": False}
+    tool.metadata = {"idempotent": False, "side_effect_scope": "workspace"}
     return tool

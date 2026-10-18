@@ -23,7 +23,8 @@ from collections.abc import Callable, Coroutine
 from workspace.prompt_builder import build_system_prompt
 from .types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
-from runtime import hooks, relation_register
+from runtime import hooks
+from runtime.session.ws_push import broadcast_to_session
 
 cron_store_path: Path = ROOT_DIR / "cron_jobs.json"
 
@@ -44,13 +45,10 @@ async def _push_cron_notification(job: CronJob) -> None:
     are logged and never break the flow.
     """
     try:
-        websocket = relation_register.get_websocket_by_session_id(CRON_WS_SESSION_ID)
-        if websocket is None:
-            return
         status: str = job.state.last_status or "ok"
         content: str = f"cron: {job.name} [{status}]"
         res: dict[str, Any] = {"event": "notification", "content": content}
-        await websocket.send_text(json.dumps(res))
+        await broadcast_to_session(CRON_WS_SESSION_ID, res)
     except Exception as e:
         logger.exception("Cron: failed to push notification: %s", e)
 
