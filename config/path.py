@@ -106,7 +106,12 @@ WORKSPACE_DIR = (
 #: this directory; read it from the bundle until a writable copy exists.
 _SHIPPED_WORKSPACE_TEMPLATE_DIR = ROOT_DIR / "workspace" / "template"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
-if not WORKSPACE_TEMPLATE_DIR.is_dir() and _SHIPPED_WORKSPACE_TEMPLATE_DIR.is_dir():
+if (
+    not _WORKSPACE_OVERRIDE
+    and APP_HOME != ROOT_DIR
+    and not WORKSPACE_TEMPLATE_DIR.is_dir()
+    and _SHIPPED_WORKSPACE_TEMPLATE_DIR.is_dir()
+):
     WORKSPACE_TEMPLATE_DIR = _SHIPPED_WORKSPACE_TEMPLATE_DIR
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 # Plan-extraction knowledge namespace (Tier-1 prompt injection + Tier-2 tool
