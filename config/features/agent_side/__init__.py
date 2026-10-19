@@ -188,3 +188,7 @@ from .tool_parallel import (
     TOOL_PARALLEL as TOOL_PARALLEL,
     ToolParallelConfig as ToolParallelConfig,
 )
+from .graph_rag_path import (
+    GRAPH_RAG_PATH as GRAPH_RAG_PATH,
+    GraphRagPathConfig as GraphRagPathConfig,
+)

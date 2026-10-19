@@ -180,6 +180,7 @@ sherry_agent/
 │   ├── long-running-tasks/ # TaskFlow 编排
 │   ├── subagent/           # Subagent design invariants & completion gates
 │   ├── code-intel/         # Code retrieval layers
+│   ├── graph-rag/          # 多跳路径检索与召回调优
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
@@ -315,6 +316,7 @@ sherry_agent/
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
 | **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **GraphRAG 路径查询** | 显式多跳路径检索：2-3 跳的 BFS、embedding 引导的 beam 兜底，以及在纯稠密 LightRAG 引擎上调优的召回阈值 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
 | **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |

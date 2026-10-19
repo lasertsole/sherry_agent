@@ -3594,6 +3594,207 @@ async def extract_entities(
     return chunk_results
 
 
+async def _build_path_query_context(
+    query: str,
+    knowledge_graph_inst: BaseGraphStorage,
+    entities_vdb: BaseVectorStorage,
+    text_chunks_db: BaseKVStorage,
+    query_param: QueryParam,
+    keywords: list[str],
+) -> QueryContextResult | None:
+    """Build the explicit-path context section for a relationship query.
+
+    ``path`` mode calls this exclusively; ``mix``/``hybrid`` call it to merge
+    path evidence into the normal recall when the question is relationship
+    shaped. Returns None when no path exists, so the caller can fall back to
+    vector recall without inventing a section.
+    """
+    from config.features import GRAPH_RAG_PATH
+
+    from graph_rag.path_search import format_path_context, search_paths
+
+    result = await search_paths(knowledge_graph_inst, entities_vdb, keywords)
+    if not result.paths:
+        return None
+
+    text, evidence_ids = format_path_context(result)
+    chunk_rows: list[dict] = []
+    if evidence_ids and text_chunks_db is not None:
+        limited = evidence_ids[: int(GRAPH_RAG_PATH["max_evidence_chunks"])]
+        rows = await text_chunks_db.get_by_ids(limited)
+        for chunk_id, row in zip(limited, rows):
+            if not row:
+                continue
+            chunk = dict(row)
+            chunk["chunk_id"] = chunk_id
+            chunk_rows.append(chunk)
+        if chunk_rows:
+            text, _ = format_path_context(
+                result,
+                source_chunks={row["chunk_id"]: row for row in chunk_rows},
+            )
+
+    entities_raw = [
+        {
+            "entity_name": node_id,
+            "entity_type": data.get("entity_type", "UNKNOWN"),
+            "description": data.get("description", ""),
+            "source_id": data.get("source_id", ""),
+            "file_path": data.get("file_path", "unknown_source"),
+            "created_at": data.get("created_at", ""),
+        }
+        for node_id, data in result.nodes.items()
+    ]
+
+    relations_raw: list[dict] = []
+    seen_relations: set[tuple[str, str]] = set()
+    for path in result.paths:
+        for src, tgt in path.edges:
+            key = tuple(sorted((src, tgt)))
+            if key in seen_relations:
+                continue
+            seen_relations.add(key)
+            data = result.edges.get((src, tgt)) or result.edges.get((tgt, src)) or {}
+            relations_raw.append(
+                {
+                    "src_id": src,
+                    "tgt_id": tgt,
+                    "description": data.get("description", ""),
+                    "keywords": data.get("keywords", ""),
+                    "weight": data.get("weight", 1.0),
+                    "source_id": data.get("source_id", ""),
+                    "file_path": data.get("file_path", "unknown_source"),
+                    "created_at": data.get("created_at", ""),
+                }
+            )
+
+    chunks_raw: list[dict] = []
+    references: list[dict] = []
+    for index, chunk in enumerate(chunk_rows, start=1):
+        reference_id = str(index)
+        file_path = chunk.get("file_path", "unknown_source")
+        chunks_raw.append(
+            {
+                "reference_id": reference_id,
+                "content": chunk.get("content", ""),
+                "file_path": file_path,
+                "chunk_id": chunk["chunk_id"],
+            }
+        )
+        if not any(ref["file_path"] == file_path for ref in references):
+            references.append({"reference_id": reference_id, "file_path": file_path})
+
+    raw_data = {
+        "status": "success",
+        "message": "Query processed successfully",
+        "data": {
+            "entities": entities_raw,
+            "relationships": relations_raw,
+            "chunks": chunks_raw,
+            "references": references,
+        },
+        "metadata": {
+            "query_mode": "path",
+            "keywords": {"high_level": [], "low_level": []},
+            "path_info": {
+                "endpoints": result.endpoints,
+                "used_beam": result.used_beam,
+                "truncated": result.truncated,
+                "paths": [
+                    {
+                        "nodes": list(path.nodes),
+                        "hops": len(path.edges),
+                        "avg_weight": path.avg_weight,
+                        "source": path.source,
+                    }
+                    for path in result.paths
+                ],
+            },
+        },
+    }
+    return QueryContextResult(context=text, raw_data=raw_data)
+
+
+def _path_auto_merge_applies(query: str, query_param: QueryParam) -> bool:
+    if query_param.mode not in ("mix", "hybrid"):
+        return False
+    from config.features import GRAPH_RAG_PATH
+
+    from graph_rag.path_search import is_relationship_query
+
+    return bool(GRAPH_RAG_PATH["auto_merge"]) and is_relationship_query(query)
+
+
+def _merge_path_raw_data(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Merge a path section's structured data into the normal recall payload."""
+    data = base.setdefault("data", {})
+    extra_data = extra.get("data", {})
+
+    seen_entities = {entity.get("entity_name") for entity in data.get("entities", [])}
+    for entity in extra_data.get("entities", []):
+        if entity.get("entity_name") not in seen_entities:
+            data.setdefault("entities", []).append(entity)
+            seen_entities.add(entity.get("entity_name"))
+
+    seen_relations = {
+        tuple(sorted((relation.get("src_id", ""), relation.get("tgt_id", ""))))
+        for relation in data.get("relationships", [])
+    }
+    for relation in extra_data.get("relationships", []):
+        key = tuple(sorted((relation.get("src_id", ""), relation.get("tgt_id", ""))))
+        if key not in seen_relations:
+            data.setdefault("relationships", []).append(relation)
+            seen_relations.add(key)
+
+    seen_chunks = {chunk.get("chunk_id") for chunk in data.get("chunks", [])}
+    file_to_ref = {
+        reference.get("file_path"): reference.get("reference_id")
+        for reference in data.get("references", [])
+    }
+    next_ref = len(data.get("chunks", [])) + 1
+    for chunk in extra_data.get("chunks", []):
+        if chunk.get("chunk_id") in seen_chunks:
+            continue
+        seen_chunks.add(chunk.get("chunk_id"))
+        file_path = chunk.get("file_path", "unknown_source")
+        reference_id = file_to_ref.get(file_path)
+        if reference_id is None:
+            reference_id = str(next_ref)
+            next_ref += 1
+            data.setdefault("references", []).append(
+                {"reference_id": reference_id, "file_path": file_path}
+            )
+            file_to_ref[file_path] = reference_id
+        data.setdefault("chunks", []).append({**chunk, "reference_id": reference_id})
+
+    metadata = base.setdefault("metadata", {})
+    metadata["path_info"] = extra.get("metadata", {}).get("path_info", {})
+    metadata["path_merged"] = True
+    return base
+
+
+async def _maybe_build_path_context(
+    query: str,
+    query_param: QueryParam,
+    knowledge_graph_inst: BaseGraphStorage,
+    entities_vdb: BaseVectorStorage,
+    text_chunks_db: BaseKVStorage,
+    hl_keywords: list[str],
+    ll_keywords: list[str],
+) -> QueryContextResult | None:
+    if not _path_auto_merge_applies(query, query_param):
+        return None
+    keywords = list(dict.fromkeys([*ll_keywords, *hl_keywords]))
+    return await _build_path_query_context(
+        query,
+        knowledge_graph_inst,
+        entities_vdb,
+        text_chunks_db,
+        query_param,
+        keywords,
+    )
+
+
 async def kg_query(
     query: str,
     knowledge_graph_inst: BaseGraphStorage,
@@ -3668,17 +3869,63 @@ async def kg_query(
     hl_keywords_str = ", ".join(hl_keywords) if hl_keywords else ""
 
     # Build query context (unified interface)
-    context_result = await _build_query_context(
-        query,
-        ll_keywords_str,
-        hl_keywords_str,
-        knowledge_graph_inst,
-        entities_vdb,
-        relationships_vdb,
-        text_chunks_db,
-        query_param,
-        chunks_vdb,
-    )
+    path_mode = query_param.mode == "path"
+    if path_mode:
+        context_result = await _build_path_query_context(
+            query,
+            knowledge_graph_inst,
+            entities_vdb,
+            text_chunks_db,
+            query_param,
+            list(dict.fromkeys([*ll_keywords, *hl_keywords])),
+        )
+        if context_result is None:
+            # No path exists (or the graph is too sparse): degrade to ordinary
+            # hybrid recall instead of answering with an empty context.
+            logger.info("[kg_query] path mode found no path; falling back to hybrid recall")
+            from dataclasses import replace
+
+            context_result = await _build_query_context(
+                query,
+                ll_keywords_str,
+                hl_keywords_str,
+                knowledge_graph_inst,
+                entities_vdb,
+                relationships_vdb,
+                text_chunks_db,
+                replace(query_param, mode="hybrid"),
+                chunks_vdb,
+            )
+    else:
+        context_result = await _build_query_context(
+            query,
+            ll_keywords_str,
+            hl_keywords_str,
+            knowledge_graph_inst,
+            entities_vdb,
+            relationships_vdb,
+            text_chunks_db,
+            query_param,
+            chunks_vdb,
+        )
+        if context_result is not None:
+            path_context = await _maybe_build_path_context(
+                query,
+                query_param,
+                knowledge_graph_inst,
+                entities_vdb,
+                text_chunks_db,
+                hl_keywords,
+                ll_keywords,
+            )
+            if path_context is not None:
+                context_result = QueryContextResult(
+                    context=context_result.context + "\n\n" + path_context.context,
+                    raw_data=_merge_path_raw_data(
+                        context_result.raw_data or {},
+                        path_context.raw_data or {},
+                    ),
+                )
 
     if context_result is None:
         logger.info("[kg_query] No query context could be built; returning no-result.")

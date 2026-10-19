@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (78 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (79 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -935,6 +935,47 @@ the provider makes, for exercising the fallback end-to-end without a real
 instance (and without a Tavily key: point `SEARXNG_URL` at it and set
 `TAVILY_API_KEY` to a dummy to watch the downgrade fire).
 
+## GraphRAG Query Paths (`skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py`)
+
+The vendored LightRAG retrieves entities/relations by vector similarity and leaves
+multi-hop joins to the LLM, so a bridge entity outside top-k makes a relationship
+question unanswerable by traversal. `path_search.py` adds the explicit layer
+(the vendored tree only gains a dispatch hook in `operate.py`):
+
+- **Endpoint resolution** — exact graph node name → graph-label containment
+  (`Kepler-7 launch pad` → `Kepler-7 Launch Pad`) → entity-vector recall keyed by
+  `compute_mdhash_id(name, prefix="ent-")` (the vdb keys are hashes, not names —
+  a raw-name `get_vectors_by_ids` silently returns nothing).
+- **BFS** — all simple paths up to `GRAPH_RAG_PATH["max_depth"] = 3`, ordered by
+  `(hops, -average edge weight)`, capped at `top_k_paths = 10`, with a
+  `max_visit_nodes` budget and a `max_frontier` per-layer cap; a path never
+  repeats a node.
+- **Beam fallback** — only when BFS finds nothing: bidirectional,
+  embedding-guided, `beam_width = 5`, `beam_max_hops = 5`, score =
+  cosine(neighbour, opposite endpoint) + `beam_edge_weight × edge weight`.
+- **Modes** — `mode="path"` searches paths exclusively and falls back to
+  `hybrid` recall when none exists (never an empty context); `mix`/`hybrid`
+  queries that read as relationship-shaped (four-language patterns,
+  `is_relationship_query`) auto-merge a path section. Both add the chain +
+  node/edge descriptions + the traversed edges' source chunks to the prompt and
+  the structured raw data (`path_info` metadata). Tunables live in
+  `config/features/agent_side/graph_rag_path.py::GRAPH_RAG_PATH`.
+- **Env defaults belong in `graph_rag/__init__.py`**, before the vendored import:
+  `QueryParam` and the LightRAG dataclass read `TOP_K` / `CHUNK_TOP_K` /
+  `COSINE_THRESHOLD` / `MIN_RERANK_SCORE` (tuned to 20 / 12 / 0.4 / 0.5) and the
+  graph caps into class-level defaults at import time; setting them in `base.py`
+  after its own LightRAG import never took effect.
+- **Sparse recall is blocked**: `models/embed_model/text/core.py::CustomEmbedding`
+  is dense-only (llama.cpp `create_embedding` / a remote `/embeddings`), the vdb
+  is one HNSW cosine index, and `EmbeddingFunc` returns one `ndarray`; BGE-M3
+  sparse would need FlagEmbedding/PyTorch or a sparse endpoint. FTS5/BM25 remains
+  the documented future option for rare ID/version strings.
+- **Measurement**: `evals/graph_rag/multihop_bench.py` (20 docs, 102 nodes / 106
+  edges, 6 questions, deterministic bridge-token scoring) reports bridge recall
+  and context size per mode; `evals/graph_rag/suite.py` stays the single-hop RAGAS
+  regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
+  total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
+
 ## URL Fetching (`agent/tools/web_fetch.py`)
 
 `web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
@@ -1129,9 +1170,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 50 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 51 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 78 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 79 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |

@@ -181,6 +181,7 @@ sherry_agent/
 │   ├── long-running-tasks/ # TaskFlow orchestration
 │   ├── subagent/           # Subagent design invariants & completion gates
 │   ├── code-intel/         # Code retrieval layers
+│   ├── graph-rag/          # Multi-hop path retrieval + recall tuning
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
@@ -316,6 +317,7 @@ Each major subsystem has its own detailed README:
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **Subagent Design** | Design invariants: two-axis role model, spawn-privilege guards, four-layer completion gates | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
 | **Code Intel** | Code retrieval: ripgrep keyword search for every agent, plus four role-gated layers — tree-sitter symbol index, ast-grep structural search, LSP precision, semantic search | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **GraphRAG Path Query** | Explicit multi-hop path retrieval: BFS for 2-3 hops, an embedding-guided beam fallback, and tuned recall thresholds over the dense-only LightRAG engine | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
 | **Programmatic Tool Calling** | EXECUTOR-only `execute_code`: one Python script in a separate child process, real tools over a loopback TCP RPC bridge, restricted builtins, per-script budgets | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **Channels** | Channel interface & adapter system | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |

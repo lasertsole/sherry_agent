@@ -70,6 +70,8 @@ from .agent_side import (
     TOOLS_TIMEOUTS as TOOLS_TIMEOUTS,
     TOOL_PARALLEL as TOOL_PARALLEL,
     ToolParallelConfig as ToolParallelConfig,
+    GRAPH_RAG_PATH as GRAPH_RAG_PATH,
+    GraphRagPathConfig as GraphRagPathConfig,
     MediaPipelineConfig as MediaPipelineConfig,
     NudgeConfig as NudgeConfig,
     ContextGuardConfig as ContextGuardConfig,

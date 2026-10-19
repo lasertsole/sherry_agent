@@ -180,6 +180,7 @@ sherry_agent/
 │   ├── long-running-tasks/ # TaskFlow オーケストレーション
 │   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
 │   ├── code-intel/         # コード検索レイヤー
+│   ├── graph-rag/          # マルチホップ検索と召回調整
 │   ├── ptc/                # プログラム的ツール呼び出し
 │   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
@@ -315,6 +316,7 @@ sherry_agent/
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
 | **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **GraphRAG パスクエリ** | 明示的マルチホップ検索：2-3 ホップの BFS、embedding 誘導 beam フォールバック、純稠密 LightRAG エンジン向けに調整した召回しきい値 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
 | **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |

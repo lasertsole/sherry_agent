@@ -34,6 +34,22 @@ _scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 
+# Environment defaults are installed HERE, before anything imports the vendored
+# package: QueryParam and the LightRAG dataclass read them into class-level
+# defaults at class-definition time (import time). ``base.py`` used to set them
+# after its own ``from graph_rag.vendored_lightrag import LightRAG`` line, which
+# meant the LightRAG defaults (top_k=40, chunk_top_k=20, cosine=0.2, no rerank
+# floor) always won. This package __init__ is the earliest seam every importer
+# crosses.
+os.environ.setdefault("MAX_SOURCE_IDS_PER_ENTITY", "50")
+os.environ.setdefault("MAX_SOURCE_IDS_PER_RELATION", "50")
+os.environ.setdefault("SOURCE_IDS_LIMIT_METHOD", "FIFO")
+os.environ.setdefault("RELATED_CHUNK_NUMBER", "5")
+os.environ.setdefault("TOP_K", "20")
+os.environ.setdefault("CHUNK_TOP_K", "12")
+os.environ.setdefault("COSINE_THRESHOLD", "0.4")
+os.environ.setdefault("MIN_RERANK_SCORE", "0.5")
+
 
 def _alias_vendored_lightrag() -> None:
     """Expose the vendored LightRAG under the bare ``lightrag`` import names.
