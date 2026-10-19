@@ -6,7 +6,7 @@ self-contained coding tasks, each in its own throwaway git repository, and
 judges every task by running **that repository's own test suite**. No LLM judge,
 no network, no external benchmark.
 
-Reporting discipline (``TODO/对标计划_编码能力实测方案.md`` §六), enforced here:
+Reporting discipline, enforced here:
 
 - this is a SELF-DESIGNED task set. The result is "N of M tasks passed", never a
   capability percentage, and it is not comparable to any public leaderboard;
@@ -15,18 +15,18 @@ Reporting discipline (``TODO/对标计划_编码能力实测方案.md`` §六), 
 - the persona is neutral BY CONSTRUCTION and the evidence is recorded: the suite
   points ``SHERRY_WORKSPACE_DIR`` at a throwaway directory, writes its own
   neutral ``AGENTS.md`` plus empty ``SOUL.md`` / ``USER.md`` / ``ROLE.md``, and
-  scans the ASSEMBLED system prompt for persona markers (§3.5 criterion 2);
+  scans the ASSEMBLED system prompt for persona markers;
 - the agent configuration is the built-in 编码助手 preset, derived from the live
   tool / skill catalogues at run time (all tools except the memory store, the
   required skills plus the coding skill set, and the compression nudge off) —
   the persona files of that preset are NOT reused, because its shipped
-  ``AGENTS.md`` carries the "ORCHESTRATOR. NEVER THE IMPLEMENTER" doctrine that
-  the plan identifies as the worst way to get a coding number (§3.3);
+  ``AGENTS.md`` carries the "ORCHESTRATOR. NEVER THE IMPLEMENTER" doctrine —
+  the worst way to get a coding number;
 - the module is a task whose tests do not pass with the intended fix are
   reported as HARNESS failures before any model call, so "the model did not fix
-  it" and "the harness did not run" never blur together (§3.5 criterion 1);
+  it" and "the harness did not run" never blur together;
 - a run that cannot start at all (no model key) is SKIPPED loudly and exits
-  non-zero, never 0 (§4.5);
+  non-zero, never 0;
 - approvals are auto-granted (``set_session_yolo``) so no instance needs a human.
 
 Usage::
@@ -57,13 +57,13 @@ from evals.coding_capability import tasks  # noqa: E402
 from evals.coding_capability.tasks import TASKS, Task  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
-#: Below this pass rate the suite exits non-zero (the plan's §4.2 mechanism).
+#: Below this pass rate the suite exits non-zero (the threshold rule).
 DEFAULT_THRESHOLD_PASS_RATE = 0.5
 _MAX_RESUMES = 3
 #: A provider-side failure (a stalled stream the model then refuses to replay, a
 #: rate limit, a 5xx) is an INVALID RUN, never a capability signal: the task is
 #: retried once in a fresh session, and if it fails again it is reported and
-#: EXCLUDED from the pass-rate denominator (the plan's §4.4 rule).
+#: EXCLUDED from the pass-rate denominator (the invalid-run rule).
 _MAX_ATTEMPTS = 2
 _PROVIDER_ERROR_MARKERS = (
     "badrequesterror",
@@ -81,8 +81,8 @@ _PROVIDER_ERROR_MARKERS = (
 )
 
 #: The neutral arm's rules. Deliberately free of persona names and of the
-#: shipped template's orchestrator doctrine: this is the only persona file the
-#: plan says must be self-built (§3.3 "A 的真实前置工作").
+#: shipped template's orchestrator doctrine: it is the one persona file this
+#: arm must build itself.
 _NEUTRAL_AGENTS_MD = """# Working rules
 
 - The session's project directory is the repository you are asked to change.
@@ -95,7 +95,7 @@ _NEUTRAL_AGENTS_MD = """# Working rules
 _EMPTY_PERSONA_FILES = ("SOUL.md", "USER.md", "ROLE.md")
 
 #: Markers a neutral arm must not contain: the persona name in any shipped
-#: spelling and the orchestrator doctrine (§3.5 criterion 2).
+#: spelling and the orchestrator doctrine.
 _FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "ORCHESTRATOR", "NEVER THE IMPLEMENTER")
 
 _PROCEED_DIRECTIVE = (
@@ -173,7 +173,7 @@ def _run(selected: list[Task], *, update_baseline: bool, skip_self_check: bool) 
 
     # The agent's tool list is assembled here, BEFORE the sandbox patches
     # ``agent.tools.build_main_tools`` to the child-safe subset: the sandbox's
-    # restriction is for spawned children (§4.6), while the MAIN agent — the one
+    # restriction is for spawned children, while the MAIN agent — the one
     # this suite drives — must keep write_file / patch_file / terminal.
     init_agent()
     main_tools = _main_tool_names()
@@ -243,8 +243,8 @@ def _seed_persona(workspace: Path) -> None:
     """Write the neutral arm: rules only, no persona, no template copy.
 
     ``workspace/template/`` is deliberately NOT copied — the shipped templates
-    carry the persona (and its orchestrator doctrine) that the plan forbids as a
-    "neutral" arm (§3.3). The memory note is seeded instead, so the memory store
+    carry the persona (and its orchestrator doctrine) that a neutral arm must not
+    carry. The memory note is seeded instead, so the memory store
     finds an empty page rather than warning about a missing template.
     """
     (workspace / "memory").mkdir(parents=True, exist_ok=True)
@@ -255,7 +255,7 @@ def _seed_persona(workspace: Path) -> None:
 
 
 def init_agent() -> None:
-    """One-time agent assembly (the plan's P0: without it the tool list is empty)."""
+    """One-time agent assembly (without it the tool list is empty)."""
     from agent import core as agent_core
 
     agent_core.init()
@@ -540,7 +540,7 @@ def _build_report(
         "aggregate": {
             "tasks_total": len(results) or len(selected),
             "tasks_passed": passed,
-            # Provider failures are excluded from the basis (plan §4.4) and are
+            # Provider failures are excluded from the basis (the invalid-run rule) and are
             # listed separately, so a provider outage can never masquerade as a
             # capability number in either direction.
             "tasks_valid": valid,
@@ -571,7 +571,7 @@ def _model_info() -> dict[str, str]:
 
 
 def _persona_evidence(session_id: str | None) -> dict[str, Any]:
-    """The plan's criterion 2: prove the neutral arm really is neutral."""
+    """Prove the neutral arm really is neutral."""
     from config.path import WORKSPACE_DIR
     from workspace.prompt_builder import build_system_prompt
 
@@ -593,7 +593,7 @@ def _persona_evidence(session_id: str | None) -> dict[str, Any]:
 def _isolation_evidence(
     live_workspace: Path, live_sessions: set[str], eval_workspace: Path
 ) -> dict[str, Any]:
-    """The plan's P2a ④: the run's state landed in the instance directory."""
+    """The run's state landed in the instance directory."""
     return {
         "eval_workspace": str(eval_workspace),
         "eval_workspace_has_sessions": (eval_workspace / "sessions").is_dir(),
@@ -602,7 +602,7 @@ def _isolation_evidence(
         "sandbox_policy": os.getenv("SANDBOX_POLICY", ""),
         "note": (
             "commands run UNSANDBOXED here: this host has no OS sandbox backend "
-            "(PRoot), so the plan's one-shot-container requirement is not met. "
+            "(PRoot), so the one-shot-container requirement is not met. "
             "Task repositories are throwaway directories, prompts are ours, and "
             "every bare run is recorded 'sandboxed: false' in the evidence ledger."
         ),
@@ -665,7 +665,7 @@ def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool
 
 
 def _delta(baseline: dict[str, Any], aggregate: dict[str, Any]) -> str:
-    """Human-readable baseline comparison (the plan's §4.1 trend read-out)."""
+    """Human-readable baseline comparison (the baseline trend read-out)."""
     old = baseline.get("aggregate", {})
     parts = [
         f"{key} {old[key]} -> {aggregate[key]}"
