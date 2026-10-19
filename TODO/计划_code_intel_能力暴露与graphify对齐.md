@@ -12,7 +12,7 @@
   - `agent/tools/code_intel/roots.py`（多根解析）
   - `skills/builtin/code_wiki/SKILL.md`（LLM-driven wiki 生成器）
   - `skills/builtin/code_wiki/scripts/core.py`（路径管理）
-- 关联文档：`TODO/计划_GraphRAG_多跳路径查询缺口.md`（BFS 算法跨包呼应）
+- 关联文档：`wiki/graph-rag/README.md`（已落地的 graph_rag BFS + beam 路径层，跨包呼应）
 - 关联评测：`evals/graph_rag/suite.py`（code_intel 暂无独立 evals，需新建）
 
 ---
@@ -352,8 +352,7 @@
 
 | TODO | 解决的问题 | 与本 TODO 的关系 |
 |---|---|---|
-| `计划_GraphRAG_稀疏召回与重排调优.md` | graph_rag 节点召回精度（BGE-M3 sparse + 重排） | 独立，互不影响 |
-| `计划_GraphRAG_多跳路径查询缺口.md` | graph_rag 多跳路径发现（BFS + beam search） | **BFS 算法跨包呼应**——本 TODO 的 `path()` 跟那边的 BFS 同构，但分别在 code_intel/graph_rag 两套存储上实现。两套都做完后，可考虑抽取共享 BFS util（不强制） |
+| `wiki/graph-rag/README.md`（已落地） | graph_rag 多跳路径发现（BFS + beam search） | **BFS 算法跨包呼应**——本 TODO 的 `path()` 与该页描述的 BFS 同构，但分别在 code_intel/graph_rag 两套存储上实现。两套都做完后，可考虑抽取共享 BFS util（不强制） |
 
 ---
 

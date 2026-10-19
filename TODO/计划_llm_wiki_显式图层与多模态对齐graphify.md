@@ -12,9 +12,9 @@
   - `skills/builtin/core/image_to_text/scripts/core.py`（VLM 可复用）
   - `skills/builtin/core/multimodal_rag/scripts/graph_rag/base.py`（`_vision_model_func` 可复用）
 - 关联文档：
-  - `TODO/计划_GraphRAG_多跳路径查询缺口.md`（BFS 算法跨包呼应）
+  - `wiki/graph-rag/README.md`（已落地的 BFS + beam 路径层，跨包呼应）
   - `TODO/计划_code_intel_能力暴露与graphify对齐.md`（code_intel 对齐，同系列）
-  - `TODO/计划_GraphRAG_稀疏召回与重排调优.md`（graph_rag 对齐，同系列）
+  - `wiki/graph-rag/README.md`（graph_rag 召回与路径层现状，含稀疏结论）
 - 关联外部参考：
   - `D:/selfProj/graphify/graphify/extractors/markdown.py`（markdown extractor 正则模式可借鉴）
   - graphify README.md L37, L107（EXTRACTED/INFERRED confidence tag 语义）
@@ -377,8 +377,8 @@ llm_wiki 跟 graphify 处理常规内容**都是 LLM-driven**（非代码没法 
 
 | TODO | 图存储 | 当前查询能力 | 改造目标 |
 |---|---|---|---|
-| `计划_GraphRAG_稀疏召回与重排调优.md` | graph_rag SNKV | 向量召回 + LLM 推理 | 加 BGE-M3 sparse + 重排 |
-| `计划_GraphRAG_多跳路径查询缺口.md` | graph_rag SNKV | 无 BFS | 加 BFS + beam search |
+| `wiki/graph-rag/README.md` | graph_rag SNKV | 稠密召回 + 路径层，阈值已调优 | 稀疏输出被 dense-only embedding 阻塞（已记录） |
+| `wiki/graph-rag/README.md` | graph_rag SNKV | 已落地 BFS + beam search | —（参考实现） |
 | `计划_code_intel_能力暴露与graphify对齐.md` | code_intel SQLite | impact 单向 BFS | 加 path/imports/inherits/communities |
 | **本文档** | **llm_wiki SQLite（新建）** | **search_wiki grep** | **加显式图 + 多模态 + path/communities** |
 
@@ -415,5 +415,5 @@ llm_wiki 跟 graphify 处理常规内容**都是 LLM-driven**（非代码没法 
 
 ### 跨包呼应
 
-- BFS 算法：`TODO/计划_GraphRAG_多跳路径查询缺口.md` §1.2（graph_rag 上 BFS）+ `TODO/计划_code_intel_能力暴露与graphify对齐.md` §3.2（code_intel 上 path）——本文档 §5 是第三处 BFS 实现，建议抽取共享 util
+- BFS 算法：`skills/builtin/core/multimodal_rag/scripts/graph_rag/path_search.py`（graph_rag 上已落地的 BFS + beam）+ `TODO/计划_code_intel_能力暴露与graphify对齐.md` §3.2（code_intel 上 path）——本文档 §5 是第三处 BFS 实现，建议抽取共享 util
 - 硬约束模式：参考 `TODO/计划_code_intel_能力暴露与graphify对齐.md` §1 的 C1-C8 模式，本文档 L1-L8 同构
