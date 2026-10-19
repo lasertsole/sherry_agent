@@ -83,7 +83,7 @@ def test_generate_pages_links_and_navigation(tmp_path: Path):
 
     assert (out / "Home-zh.md").read_text(encoding="utf-8").startswith("# Sherry Wiki")
     assert "[中文](Home-zh)" in (out / "_Sidebar.md").read_text(encoding="utf-8")
-    assert "github.com/owner/repo/tree/dev/docs" in (out / "_Footer.md").read_text(encoding="utf-8")
+    assert "github.com/owner/repo/tree/dev/wiki" in (out / "_Footer.md").read_text(encoding="utf-8")
 
 
 def test_strip_language_switcher_only_removes_the_header_line():

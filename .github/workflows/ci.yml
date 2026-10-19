@@ -47,14 +47,13 @@ jobs:
           filters: |
             code:
               - '**'
-              - '!docs/**'
               - '!client/docs/**'
               - '!wiki/**'
               - '!README*.md'
               - '!AGENTS.md'
               - '!TODO/**'
             docs:
-              - 'docs/**'
+              - 'wiki/**'
               - 'client/docs/**'
               - 'README*.md'
               - 'AGENTS.md'

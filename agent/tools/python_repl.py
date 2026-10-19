@@ -3,7 +3,7 @@
 Uses subprocess to run code in an isolated Python process. On timeout the
 child process is killed cleanly — no thread/memory leakage.
 
-Sandbox-hardening additions (see docs/sandbox/README.md):
+Sandbox-hardening additions (see wiki/sandbox/README.md):
 
 - ``sandbox`` parameter on ``_run``/``_arun``/``_run_with_timeout`` — the
   schema auto-derivation path (PythonREPLTool has NO explicit ``args_schema``,

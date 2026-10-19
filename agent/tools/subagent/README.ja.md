@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> 設計レイヤの姉妹編——役割軸、spawn 権限ガード、四層の完了ゲート：[docs/subagent/README.ja.md](../../../docs/subagent/README.ja.md)
+> 設計レイヤの姉妹編——役割軸、spawn 権限ガード、四層の完了ゲート：[wiki/subagent/README.ja.md](../../../wiki/subagent/README.ja.md)
 
 ## 更新ノート（2026-10-15）
 
@@ -593,7 +593,7 @@ registry/sweeper.py — backoff.current_interval を sleep するループ
   9. persist_runs_to_disk()               — メモリ全体のスナップショットを SQLite へ
 ```
 
-▶️ 詳細：[docs/loop-prevention/README.md](../../../docs/loop-prevention/README.md) · [中文](../../../docs/loop-prevention/README.zh.md) · [한국어](../../../docs/loop-prevention/README.ko.md) · [日本語](../../../docs/loop-prevention/README.ja.md)
+▶️ 詳細：[wiki/loop-prevention/README.md](../../../wiki/loop-prevention/README.md) · [中文](../../../wiki/loop-prevention/README.zh.md) · [한국어](../../../wiki/loop-prevention/README.ko.md) · [日本語](../../../wiki/loop-prevention/README.ja.md)
 
 #### オーファンリカバリ（orphan/recovery.py）
 
@@ -651,7 +651,7 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer / librarian）。None は depth ベースの挙動を維持 |
 | `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
 | `run_timeout_seconds` | float\|None | None | この spawn の wall-clock タイムアウト（秒）。既定 600、clamp で [600, 7200]；非正値は「未設定」（グローバル既定） |
-| `isolation` | bool | False | 子をプロジェクトのプライベート git worktree で動かし、完了時に変更をマージし戻す（`docs/file-safety/README.ja.md` 参照）。呼び出し元の cwd がすでに隔離ワークスペース内なら**無視**され、子はそのツリーを再利用する |
+| `isolation` | bool | False | 子をプロジェクトのプライベート git worktree で動かし、完了時に変更をマージし戻す（`wiki/file-safety/README.ja.md` 参照）。呼び出し元の cwd がすでに隔離ワークスペース内なら**無視**され、子はそのツリーを再利用する |
 
 戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 

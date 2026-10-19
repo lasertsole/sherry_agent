@@ -22,7 +22,7 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 | Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
 | steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
-| TaskFlow 편성 | `docs/long-running-tasks/` |
+| TaskFlow 편성 | `wiki/long-running-tasks/` |
 
 ## 메모리 파일
 

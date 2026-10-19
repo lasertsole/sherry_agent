@@ -77,7 +77,7 @@ cd client && pnpm tauri build
 Both halves are audited before they are uploaded. `packaging/check_release.py`
 fails the build when a shipped tree contains:
 
-- a `tests/`, `evals/`, `docs/`, `wiki/` or `__tests__/` directory (any depth
+- a `tests/`, `evals/`, `wiki/`, `wiki/` or `__tests__/` directory (any depth
   outside PyInstaller's `_internal` dependency payload);
 - a `test_*.py` file, or a colocated `*.test.*` / `*.spec.*` frontend test file;
 - a Markdown file in the SPA (`client/.output/public`), whose payload is code

@@ -1,4 +1,4 @@
-"""Publish the four-language ``docs/`` tree as a GitHub Wiki.
+"""Publish the four-language ``wiki/`` tree as a GitHub Wiki.
 
 GitHub's wiki is a separate git repository (``<owner>/<repo>.wiki.git``) with
 flat Markdown pages. This script builds one page per docs README and language
@@ -16,10 +16,10 @@ initialized; ``--push`` prints the same instruction and exits 3 when it is not.
 Usage::
 
     uv run --no-sync python scripts/sync_wiki.py --check
-    uv run --no-sync python scripts/sync_wiki.py --output wiki/
+    uv run --no-sync python scripts/sync_wiki.py --output .wiki-build/
     uv run --no-sync python scripts/sync_wiki.py --push
 
-The generated tree is gitignored (``/wiki/``); only this script is tracked.
+The generated tree is gitignored (``/.wiki-build/``); only this script is tracked.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOCS_ROOT = REPO_ROOT / "docs"
+DOCS_ROOT = REPO_ROOT / "wiki"
 LANGS = ("en", "zh", "ja", "ko")
 LANG_SUFFIX = {"en": "", "zh": "-zh", "ja": "-ja", "ko": "-ko"}
 README_FILES = {"en": "README.md", "zh": "README.zh.md", "ja": "README.ja.md", "ko": "README.ko.md"}
@@ -46,19 +46,19 @@ HOME_INTRO = {
     "en": (
         "Mechanism-level documentation for the Sherry agent: context governance, "
         "tools and safety, memory, orchestration, and evaluation. Generated from "
-        "the repository's `docs/` tree."
+        "the repository's `wiki/` tree."
     ),
     "zh": (
         "Sherry Agent 的机制级文档：上下文治理、工具与安全、记忆、任务编排与评估。"
-        "由仓库的 `docs/` 目录生成。"
+        "由仓库的 `wiki/` 目录生成。"
     ),
     "ja": (
         "Sherry Agent の機構ドキュメント：コンテキスト管理、ツールと安全性、記憶、"
-        "オーケストレーション、評価。リポジトリの `docs/` から生成。"
+        "オーケストレーション、評価。リポジトリの `wiki/` から生成。"
     ),
     "ko": (
         "Sherry Agent의 메커니즘 문서: 컨텍스트 거버넌스, 도구와 안전, 메모리, "
-        "오케스트레이션, 평가. 저장소의 `docs/` 트리에서 생성."
+        "오케스트레이션, 평가. 저장소의 `wiki/` 트리에서 생성."
     ),
 }
 TOPIC_LABEL = {"en": "Topic", "zh": "主题", "ja": "トピック", "ko": "주제"}
@@ -291,7 +291,7 @@ def build_page(
 def _home(chapters: list[Chapter], lang: str, *, repo: str, branch: str) -> str:
     rows = [
         f"| [{chapter.title(lang)}]({page_name(chapter.slug, lang)}) "
-        f"| `docs/{chapter.rel_dir.as_posix()}` |"
+        f"| `wiki/{chapter.rel_dir.as_posix()}` |"
         for chapter in chapters
     ]
     language_links = " · ".join(
@@ -306,7 +306,7 @@ def _home(chapters: list[Chapter], lang: str, *, repo: str, branch: str) -> str:
         f"{HOME_INTRO[lang]}\n\n"
         f"| {TOPIC_LABEL[lang]} | {SOURCE_LABEL[lang]} |\n"
         "| :--- | :--- |\n" + "\n".join(rows) + f"\n\n[Repository](https://github.com/{repo}) · "
-        f"[Docs source](https://github.com/{repo}/tree/{branch}/docs)\n"
+        f"[Docs source](https://github.com/{repo}/tree/{branch}/wiki)\n"
     )
 
 
@@ -315,14 +315,14 @@ def _sidebar(repo: str, branch: str) -> str:
     return (
         f"**{WIKI_LABEL}**\n\n"
         f"{language_links}\n\n"
-        f"[Docs source](https://github.com/{repo}/tree/{branch}/docs)\n"
+        f"[Docs source](https://github.com/{repo}/tree/{branch}/wiki)\n"
     )
 
 
 def _footer(repo: str, branch: str) -> str:
     return (
-        f"Generated from the repository's `docs/` tree. "
-        f"[Source](https://github.com/{repo}/tree/{branch}/docs)\n"
+        f"Generated from the repository's `wiki/` tree. "
+        f"[Source](https://github.com/{repo}/tree/{branch}/wiki)\n"
     )
 
 
@@ -505,7 +505,7 @@ def publish(repo: str, *, branch: str = "main") -> int:
                 "user.email=sherry-wiki@users.noreply.github.com",
                 "commit",
                 "-m",
-                "docs(wiki): sync the four-language wiki from docs/",
+                "docs(wiki): sync the four-language wiki from wiki/",
             ],
             env=env,
             cwd=cache,
@@ -543,7 +543,7 @@ def main() -> None:
         raise SystemExit(0 if initialized else 3)
     if args.push:
         raise SystemExit(publish(repo, branch=branch))
-    output = args.output or (REPO_ROOT / "wiki")
+    output = args.output or (REPO_ROOT / ".wiki-build")
     count = generate(output, repo=repo, branch=branch)
     print(f"generated {count} wiki pages in {output}")
 

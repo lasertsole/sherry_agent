@@ -22,7 +22,7 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 | Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
 | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
-| TaskFlow orchestration | `docs/long-running-tasks/` |
+| TaskFlow orchestration | `wiki/long-running-tasks/` |
 
 ## Memory Files
 

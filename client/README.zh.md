@@ -208,7 +208,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、……
 │       ├── response.d.ts          # API 响应类型定义
 │       └── backend/               # ts-rs 生成的后端类型（ChatRequest、HealthStatus、……）
-├── docs/                          # VitePress 文档站点（guide/commands/events/types/zh）
+├── wiki/                          # VitePress 文档站点（guide/commands/events/types/zh）
 ├── public/                        # 静态资源（favicon.svg、robots.txt、avatar/）
 ├── repros/                        # Playwright repro 测试（经 playwright.config.ts 运行）
 ├── src-tauri/                     # Tauri 2 原生外壳
@@ -308,7 +308,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 - Base64 媒体先经 `POST /images/upload`、`/audio/upload`、`/video/upload` 上传并以 URL 引用
 - 服务端帧：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；chunk 携带 `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）与工具元数据
 - 流中断后按指数退避重连（1s/2s/4s，经 `WS_RECONNECT_MAX_ATTEMPTS` 最多 3 次）；流中丢失会抛出 `StreamInterruptedError`，并经 mitt 发出 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed`
-- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）。同一张卡片也渲染 Plan-Then-Execute 审批（`exit_plan_mode`）：计划正文、反馈输入、**退回修改**（reject + 反馈）与 **批准** —— 详见 `../docs/plan-mode/`
+- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）。同一张卡片也渲染 Plan-Then-Execute 审批（`exit_plan_mode`）：计划正文、反馈输入、**退回修改**（reject + 反馈）与 **批准** —— 详见 `../wiki/plan-mode/`
 - 本页从未发起过的轮次（计划续写的 auto-turn、子代理完成注入、cron 运行）**不带 `turn_started`**——auto-turn 不携带轮次身份——因此它的 chunk 无法流进本地行；`done` 处理器会重取最新一页历史，让最终回答无需刷新即可显示
 
 ### WebSocket 单例（ws.ts）

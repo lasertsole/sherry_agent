@@ -22,7 +22,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 | Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
 | steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
-| TaskFlow 編成 | `docs/long-running-tasks/` |
+| TaskFlow 編成 | `wiki/long-running-tasks/` |
 
 ## メモリファイル
 

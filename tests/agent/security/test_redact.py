@@ -155,7 +155,7 @@ def test_redaction_is_idempotent():
         "The token budget was refreshed during the turn.",
         "Authorization failed for the request.",
         "password: short",  # below the value floor
-        "see docs/sandbox/README.md for the sandbox threat model",
+        "see wiki/sandbox/README.md for the sandbox threat model",
         "secret: nothing to hide here",
         "The system prompt builder assembles persona and memory blocks.",
     ],
@@ -177,9 +177,9 @@ def test_the_projects_own_docs_are_not_rewritten():
         "AGENTS.md",
         "README.md",
         "pyproject.toml",
-        "docs/threat-model/README.md",
-        "docs/sandbox/README.md",
-        "docs/summarization/README.md",
+        "wiki/threat-model/README.md",
+        "wiki/sandbox/README.md",
+        "wiki/summarization/README.md",
     ]:
         path = pathlib.Path(name)
         assert path.exists(), f"corpus file moved: {name}"

@@ -22,7 +22,7 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 | Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
 | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
-| TaskFlow 编排 | `docs/long-running-tasks/` |
+| TaskFlow 编排 | `wiki/long-running-tasks/` |
 
 ## 记忆文件
 

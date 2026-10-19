@@ -27,7 +27,7 @@ from config.features import agent_side, infra_side
 pytestmark = [pytest.mark.unit]
 
 _GROUP = tuple(
-    pathlib.Path(f"docs/long-running-tasks/README{suffix}.md")
+    pathlib.Path(f"wiki/long-running-tasks/README{suffix}.md")
     for suffix in ("", ".zh", ".ja", ".ko")
 )
 _AGENTS = pathlib.Path("AGENTS.md")

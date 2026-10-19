@@ -208,7 +208,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API 응답 타입 정의
 │       └── backend/               # ts-rs 생성 백엔드 타입(ChatRequest, HealthStatus, ...)
-├── docs/                          # VitePress 문서 사이트(guide/commands/events/types/zh)
+├── wiki/                          # VitePress 문서 사이트(guide/commands/events/types/zh)
 ├── public/                        # 정적 에셋(favicon.svg, robots.txt, avatar/)
 ├── repros/                        # Playwright repro 테스트(playwright.config.ts로 실행)
 ├── src-tauri/                     # Tauri 2 네이티브 셸
@@ -308,7 +308,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 - Base64 미디어는 먼저 `POST /images/upload`, `/audio/upload`, `/video/upload`로 업로드되고 URL로 참조됨
 - 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
 - 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행
-- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송. 같은 카드가 Plan-Then-Execute 승인(`exit_plan_mode`)도 렌더링합니다: 계획 본문, 피드백 입력, **수정 요청**(reject + 피드백), **승인** — 자세히는 `../docs/plan-mode/`
+- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송. 같은 카드가 Plan-Then-Execute 승인(`exit_plan_mode`)도 렌더링합니다: 계획 본문, 피드백 입력, **수정 요청**(reject + 피드백), **승인** — 자세히는 `../wiki/plan-mode/`
 - 이 페이지가 보낸 적 없는 턴(계획 연속 auto-turn, 서브에이전트 완료 주입, cron 실행)에는 **`turn_started`가 오지 않습니다**——auto-turn은 턴 식별자를 전달하지 않습니다——그래서 청크를 로컬 행으로 스트리밍할 수 없습니다. `done` 핸들러가 최신 턴 페이지를 다시 가져와 새로고침 없이 최종 답변을 표시합니다
 
 ### WebSocket 싱글턴(ws.ts)

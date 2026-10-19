@@ -1,6 +1,6 @@
 """Terminal tool with sandbox, blacklist, timeout, and env scrubbing.
 
-Sandbox-hardening additions (see docs/sandbox/README.md):
+Sandbox-hardening additions (see wiki/sandbox/README.md):
 
 - ``SafeShellInput``: the LLM-facing schema (``commands`` + the ``sandbox`` /
   ``run_in_background`` / ``timeout`` additions), wired as ``args_schema`` so

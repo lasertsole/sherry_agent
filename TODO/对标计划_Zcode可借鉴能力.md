@@ -59,7 +59,7 @@
 ### 1.1 workflow journal 重放：四条差距逐一评估，仅血缘指针保留（首轮误判已修正）
 
 > **2026-10-14 深度评估后更新**：原四条差距经逐一分析，①②④ 不需要做（详见下文），③ 血缘指针已合并到 `计划_taskflow并行执行.md` §8。原独立的 `计划_workflow_journal重放.md` 已删除。
-> **2026-10-15 完成**：`计划_taskflow并行执行.md` 全量落地（Phase 0 并发缺陷修复、Phase 1-2 有界并发派发、Phase 3 血缘指针），计划文件已删除；设计文档见 `docs/long-running-tasks/taskflow/README.md`（Flow Lineage 一节）。
+> **2026-10-15 完成**：`计划_taskflow并行执行.md` 全量落地（Phase 0 并发缺陷修复、Phase 1-2 有界并发派发、Phase 3 血缘指针），计划文件已删除；设计文档见 `wiki/long-running-tasks/taskflow/README.md`（Flow Lineage 一节）。
 
 **首轮写的**：「Sherry 进程重启后无法从中间步骤恢复，只能整个 task 重跑」——**这条是错的，已撤回**。
 
@@ -71,7 +71,7 @@
 |---|---|---|---|---|
 | ① | 已完成步骤是否重跑 | journal 短路（`settleCachedAsk`，不调 driver）+ `inputHash` 校验 | DONE 硬拒绝 re-dispatch + DONE 不可变 + replan 不重置 DONE + result 从 `state["results"]` 复用 | **不需要做**——DAG 结构已防止重跑 |
 | ② | 显式挂起 | `stop("user")` 实际 abort in-flight ask | `taskflow_cancel` 杀子 agent + `set_waiting` 暂停 flow | **不需要做**——PAUSED 不杀子 agent 无实际效果 |
-| ③ | 血缘指针 | `dwf_run.resumed_from` + `superseded_by` | `task_flows.resumed_from` + `superseded_by` | **✅ 已完成**（2026-10-15，`taskflow_create(resumed_from=…)` 写入，`docs/long-running-tasks/taskflow/` Flow Lineage） |
+| ③ | 血缘指针 | `dwf_run.resumed_from` + `superseded_by` | `task_flows.resumed_from` + `superseded_by` | **✅ 已完成**（2026-10-15，`taskflow_create(resumed_from=…)` 写入，`wiki/long-running-tasks/taskflow/` Flow Lineage） |
 | ④ | 步骤级结果缓存 | `cached` 事件标志 + `input_hash` 命中 | result 已在 `state["results"]` 被下游 `build_task_with_dep_results` 复用 | **不需要做**——result 复用已工作 |
 
 **① 不做的理由**：ZCode 是确定性脚本重放引擎——每次 resume 从头重跑脚本，journal 短路是唯一跳过已完成节点的方式。Sherry 是事件驱动 DAG——step 只在依赖满足时被 dispatch，DONE step 永远不会被再次 dispatch。四层已有防护：`taskflow_dispatch` 的 `dispatchable` 硬拒绝（`:92-98`）、`taskflow_update_steps` 的 DONE 不可变（`:123-133`）、`taskflow_replan` 只 re-block 非 DONE step（`:75-96`）、下游 `build_task_with_dep_results` 已从 `state["results"]` 拉取 DONE step 的 result（`_shared.py:174-214`）。`input_hash` 要短路的是"DONE step 被尝试 re-dispatch 且 input 没变"——但这个场景在 Sherry 里不会发生。
@@ -97,7 +97,7 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 **落地位置**：`agent/tools/taskflow/tools/{taskflow_dispatch,taskflow_resume,taskflow_wait_all}.py`、
 `config/features/agent_side/taskflow_infra.py`、`agent/tools/pub_base/evidence_ledger.py`；
 测试 `tests/agent/tools/taskflow/{test_concurrent_resume,test_concurrent_dispatch,test_no_double_dispatch,test_parallel_dispatch_failure,test_evidence_concurrent,test_lineage}.py`；
-设计文档 `docs/long-running-tasks/taskflow/`（四语 "Auto-Dispatch Wave" + "Flow Lineage" 两节）。
+设计文档 `wiki/long-running-tasks/taskflow/`（四语 "Auto-Dispatch Wave" + "Flow Lineage" 两节）。
 
 **与原计划的偏差（均已写进 docs）**：血缘指针的写入点是 **create 路径**
 （`taskflow_create(resumed_from=…)` 盖前驱的 `superseded_by`），因为 `taskflow_replan` 是原地重写、从不分叉新流。
@@ -450,7 +450,7 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 **Sherry 实现（2026-10-18）**：`SafeToolNode`（`agent/safe_tool_node.py`）替换 ToolNode，`plan_batch` 按 `READ_ONLY_TOOLS` / `concurrent_safe` / `side_effect_scope` 分类；文件工具按 canonical path 分组，同 path 有写按 `tool_calls` 顺序串行、不同 path 并发，非文件不安全工具为整批 barrier。`file_read_lock` / `file_write_lock` 提供跨 agent/进程的共享读、独占写；`ToolResourceLockMiddleware` 补 `system`（默认关）和 `user_interaction`（默认开）资源锁。主链与子链均接入。
 
-**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制记录在 `docs/tool-parallel-safety/`。
+**差距**：Zcode 的拓扑分组 + `maxConcurrency` 分波更细；Sherry 不做依赖 DAG，只做文件 path 冲突分组，`terminal` / `python_repl` 的目标无法推断仍是 barrier。该限制记录在 `wiki/tool-parallel-safety/`。
 
 ---
 
@@ -654,7 +654,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~P1~~ | ~~2.5 step 挂载 skill~~ | 高 | 中 | 无 | **✅ 已完成**（_skill_prepend） |
 | ~~P1~~ | ~~2.3 续：拆独立 message + cacheHint~~ | 中 | 中 | stable/dynamic 已分离 | **❌ 不做**（概念分离已落地；131K 窗口下 wire 层缓存收益小；改跨层 seam + tests 成本不匹配收益） |
 | **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化（✅ 已完成） | 未开工 |
-| ~~P2~~ | ~~3.2 工具并行安全标注~~ | 中 | 低（纯声明式） | 无 | **✅ 已完成**（`SafeToolNode` + 文件 path 分组 + `file_read_lock` / `file_write_lock` + `system` / `user_interaction` 资源锁；见 `docs/tool-parallel-safety/`） |
+| ~~P2~~ | ~~3.2 工具并行安全标注~~ | 中 | 低（纯声明式） | 无 | **✅ 已完成**（`SafeToolNode` + 文件 path 分组 + `file_read_lock` / `file_write_lock` + `system` / `user_interaction` 资源锁；见 `wiki/tool-parallel-safety/`） |
 | ~~P2~~ | ~~2.4 计划模式~~ | 中 | 低 | 与 1.5 协调 | **✅ 已完成**（plan_mode 工具 + 状态机） |
 | ~~P2~~ | ~~1.5 流恢复完整锚点协议~~ | 中 | 中 | 无 | **✅ 核心目标已完成**（`resume_stream` 快照 + per-turn `seq` 水位；不重放、不重复。完整 7 事件协议不做） |
 | ~~P2~~ | ~~6.1 WebFetch~~ | 中 | **高（SSRF 必须重做）** | 独立安全设计 | **✅ 已完成**（`web_fetch`：复用 `public_url` + `safe_fetch`；本地地址走 opt-in 开关；html2text；测试 23 例） |
@@ -689,7 +689,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | ~~1.1① input_hash 短路~~ | journal 短路 + inputHash 校验 | **❌ 不需要**（DAG 结构已防重跑：dispatchable 硬拒绝 + DONE 不可变 + replan 不重置 DONE + result 从 state["results"] 复用） |
 | ~~1.1② PAUSED 显式挂起~~ | stop("user") abort in-flight | **❌ 不需要**（PAUSED 不杀子 agent 无实际效果；已有 taskflow_cancel + set_waiting 覆盖） |
 | ~~1.1④ 步骤级结果缓存~~ | cached + input_hash 命中 | **❌ 不需要**（result 已在 state["results"] 被下游 build_task_with_dep_results 复用） |
-| ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **✅ 已完成**（2026-10-15：两列 additive migration + `taskflow_create(resumed_from=…)` 写入 + active 读过滤；见 `docs/long-running-tasks/taskflow/` Flow Lineage） |
+| ~~1.1③ 血缘指针~~ | resumed_from + superseded_by | **✅ 已完成**（2026-10-15：两列 additive migration + `taskflow_create(resumed_from=…)` 写入 + active 读过滤；见 `wiki/long-running-tasks/taskflow/` Flow Lineage） |
 | ~~1.5 流恢复~~ | 7 事件流恢复协议 | **✅ 核心目标已完成**（2026-10-18：`resume_stream` 文本快照 + per-turn `seq` 水位，客户端替换文本并丢弃水位以下帧；不重放/不重复。ZCode 的 reasoning/tool-input delta 级协议不做；已 committed tool call 走 trajectory ledger） |
 | ~~1.6 microcompact 独立通道~~ | 只清工具结果保留对话 | **❌ 不需要**（ContextEvictionMiddleware 已做工具结果落盘驱逐 20K 阈值 + head/tail 预览 + preemptive_truncate_ratio 0.7→0.5 预截断，本质重叠） |
 | ~~2.3 续：拆独立 message + cacheHint~~ | stable/dynamic wire 分段 | **❌ 不需要**（stable/dynamic 概念分离已落地——cached system prompt 持 stable + per-turn reminders 持 dynamic；131K 窗口下 wire 层缓存收益小，改跨层 seam + tests 成本不匹配） |

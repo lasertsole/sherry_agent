@@ -197,7 +197,7 @@ LLM 输出 → after_model
 
 访问模式开关**不能**解除这道闸门：只有在这张卡上选 `yolo`（持久全局标记 `external_path_yolo`）或把目录加入允许列表才行。处于 `full_access` 的会话访问根目录之外的路径时，仍然会看到这张卡。
 
-▶️ 详见：[docs/sandbox/isolation/README.zh.md](../../../docs/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
+▶️ 详见：[wiki/sandbox/isolation/README.zh.md](../../../wiki/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
 
 ---
 

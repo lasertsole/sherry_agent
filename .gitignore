@@ -60,11 +60,10 @@ logs/*.log
 /workspace/memory/MEMORY.md
 skills/auto
 skills/plugins/*.state.json
-# Generated code-map wiki (root Obsidian vault; the ** form also covers
-# per-project generated wikis) and the graphify code graph — regenerated, never
-# committed. See packaging/check_release.py for the release-artifact guard.
-/wiki/
-**/wiki/
+# Generated GitHub-wiki build (scripts/sync_wiki.py) and the graphify code
+# graph — regenerated, never committed. The docs tree itself is `wiki/` and is
+# tracked. See packaging/check_release.py for the release-artifact guard.
+/.wiki-build/
 /graphify-out/
 # Obsidian's per-vault config — created when the checkout or wiki/ is opened
 # as a vault; machine-local state, never project source.

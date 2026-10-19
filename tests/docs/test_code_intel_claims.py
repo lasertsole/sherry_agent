@@ -20,7 +20,7 @@ import pytest
 
 pytestmark = [pytest.mark.unit]
 
-_DOC = pathlib.Path("docs/code-intel/README.md")
+_DOC = pathlib.Path("wiki/code-intel/README.md")
 
 
 def _doc_text() -> str:

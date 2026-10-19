@@ -27,14 +27,14 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
 - **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
-- ▶️ _4 本の抽出経路とスキルキュレーションは [Experience README](docs/experience/README.ja.md) を参照_
+- ▶️ _4 本の抽出経路とスキルキュレーションは [Experience README](wiki/experience/README.ja.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
 - **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
 - **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
-- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](docs/experience/README.ja.md)
+- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](wiki/experience/README.ja.md)
 - **ツールタイムアウト**：実際のツール別制限は `TOOLS_TIMEOUTS` レジストリ（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）から取得されます。`TOOL_CALL_TIMEOUT_MINUTES` は保存設定にすぎず、**どの実行パスも消費しません**
 - ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 
@@ -47,7 +47,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
 - **検証された完了**：すべての spawn が子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、設定された `COMPLETION_JUDGE["goal_max_turns"]` 予算（既定 5）で上限が決まります
 - **機能ロール（オプトイン）**：`sessions_spawn(functional_role=...)` でワーカーを特化（general / researcher / executor / reviewer / librarian）。ロールが LLM 層、ツール allow-list、子のシステムプロンプトセクションを決定します
-- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](docs/file-safety/README.md)
+- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](wiki/file-safety/README.md)
 - ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 
 ### 4. 🌐 マルチチャンネルアクセス
@@ -169,7 +169,7 @@ sherry_agent/
 │   ├── embeddings/         # ベクトルセマンティック検索（indexer / search）
 │   └── curator/            # 自動スキルキュレーション
 │
-├── docs/                   # サブシステム設計ドキュメント（言語別 README）
+├── wiki/                   # サブシステム設計ドキュメント（言語別 README）
 │   ├── experience/         # 経験抽出経路 + スキルキュレーション
 │   ├── session_memory/     # セッションメモリのケイパビリティ
 │   ├── summarization/      # 圧縮トリガーとクールダウン
@@ -310,29 +310,29 @@ sherry_agent/
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 4 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
-| **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 4 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
-| **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
-| **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
+| **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
 | **Cron サービス** | 定時/周期的エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
 | **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
-| **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
-| **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
-| **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
-| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、ターンをまたぐメモリ継続性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
-| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
-| **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
-| **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
-| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
+| **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
+| **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
+| **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
+| **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
+| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
+| **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
+| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
+| **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
+| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ クイックスタート
 

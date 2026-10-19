@@ -27,14 +27,14 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
 - **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(압축마다), 압축 시 todo가 전부 완료일 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
-- ▶️ _네 개 추출 경로와 스킬 큐레이션은 [Experience README](docs/experience/README.ko.md) 참조_
+- ▶️ _네 개 추출 경로와 스킬 큐레이션은 [Experience README](wiki/experience/README.ko.md) 참조_
 
 ### 2. 🛠️ 동적 스킬 시스템
 - **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더가 `skills/` 하위의 모든 `SKILL.md`를 자동으로 발견합니다
 - **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `code_wiki`, `llm_wiki`
 - **스킬 관리 도구**: 에이전트가 런타임에 스킬을 나열, 조회, 관리할 수 있습니다. 서드파티 업로드 스킬(`skills/plugins/`)은 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다
 - **SkillSpector 보안 스캔**([server/service/skill_scanner.py](server/service/skill_scanner.py)): 서드파티 스킬은 활성화 전에 NVIDIA SkillSpector로 스캔됩니다(정적 YARA/룰 분석 + auxiliary LLM을 통한 선택적 LLM 시맨틱 분석). 플래그가 지정된 스킬은 설치가 차단됩니다
-- **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](docs/experience/README.ko.md)
+- **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](wiki/experience/README.ko.md)
 - **도구 타임아웃**: 실제 도구별 제한은 `TOOLS_TIMEOUTS` 레지스트리(`WEB_SEARCH_TIMEOUT=15`, `TERMINAL_TIMEOUT=30`, `PYTHON_REPL_TIMEOUT=30`)에서 오며, `TOOL_CALL_TIMEOUT_MINUTES`는 저장 설정일 뿐 **어떤 실행 경로도 소비하지 않습니다**
 - ▶️ _미들웨어 파이프라인(가드레일, 반복 예산, HITL, 정규화, 요약, 멀티모달 처리)은 [Middlewares README](agent/middlewares/README.md) 참조_
 
@@ -47,7 +47,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
 - **검증된 완료**: 모든 spawn이 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, 설정된 `COMPLETION_JUDGE["goal_max_turns"]` 예산(기본 5)으로 상한이 정해집니다
 - **기능 역할(옵트인)**: `sessions_spawn(functional_role=...)`로 워커를 전문화(general / researcher / executor / reviewer / librarian)합니다. 역할이 LLM 계층, 도구 allow-list, 자식 시스템 프롬프트 섹션을 결정합니다
-- **격리 워크트리(옵트인)**: `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 자체 git 워크트리(`agent/tools/subagent/isolation/`)를 제공합니다. 이 워크트리는 **더티** 기준선(`git stash create`, 따라서 커밋되지 않은 수정도 자식에게 보임)에서 잘라내고, announce 시점에 루트별 잠금 아래에서 다시 병합합니다. 자세한 내용은 [File Safety README](docs/file-safety/README.md) 참조
+- **격리 워크트리(옵트인)**: `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 자체 git 워크트리(`agent/tools/subagent/isolation/`)를 제공합니다. 이 워크트리는 **더티** 기준선(`git stash create`, 따라서 커밋되지 않은 수정도 자식에게 보임)에서 잘라내고, announce 시점에 루트별 잠금 아래에서 다시 병합합니다. 자세한 내용은 [File Safety README](wiki/file-safety/README.md) 참조
 - ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 
 ### 4. 🌐 멀티채널 접근
@@ -169,7 +169,7 @@ sherry_agent/
 │   ├── embeddings/         # 벡터 시맨틱 검색(indexer / search)
 │   └── curator/            # 자동 스킬 큐레이션
 │
-├── docs/                   # 서브시스템 설계 문서(언어별 README)
+├── wiki/                   # 서브시스템 설계 문서(언어별 README)
 │   ├── experience/         # 경험 추출 경로 + 스킬 큐레이션
 │   ├── session_memory/     # 세션 메모리 역량
 │   ├── summarization/      # 압축 트리거 및 쿨다운
@@ -310,29 +310,29 @@ sherry_agent/
 | 서브모듈 | 설명 | 문서 |
 |-----------|-------------|---------------|
 | **Context Engine** | 단기 세션 메시지 메모리(MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **경험 체계** | 대화 이력을 재사용 가능한 경험으로 축적하는 네 개 추출 경로와 `skills/auto/`를 관리하는 Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
-| **세션 메모리** | SESSION 계획 역량: memory flush, 압축 쿨다운, compaction lock, 이벤트 로그, 시맨틱 검색 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **경험 체계** | 대화 이력을 재사용 가능한 경험으로 축적하는 네 개 추출 경로와 `skills/auto/`를 관리하는 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **세션 메모리** | SESSION 계획 역량: memory flush, 압축 쿨다운, compaction lock, 이벤트 로그, 시맨틱 검색 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **서브에이전트 설계** | 설계 불변식: 두 역할 축 모델, spawn 권한 가드, 4계층 완료 게이트 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
-| **Code Intel** | 코드 검색: 모든 에이전트가 쓰는 ripgrep 키워드 검색에 더해, 역할 게이트가 걸린 네 계층——tree-sitter 심볼 인덱스, ast-grep 구조 검색, LSP 정밀 검색, 시맨틱 검색 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
-| **프로그래매틱 도구 호출** | EXECUTOR 전용 `execute_code`: Python 스크립트 하나를 별도 자식 프로세스에서 실행하고 loopback TCP RPC 브리지로 실제 도구를 호출하며, 제한된 builtins와 스크립트별 예산을 적용 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **서브에이전트 설계** | 설계 불변식: 두 역할 축 모델, spawn 권한 가드, 4계층 완료 게이트 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
+| **Code Intel** | 코드 검색: 모든 에이전트가 쓰는 ripgrep 키워드 검색에 더해, 역할 게이트가 걸린 네 계층——tree-sitter 심볼 인덱스, ast-grep 구조 검색, LSP 정밀 검색, 시맨틱 검색 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **프로그래매틱 도구 호출** | EXECUTOR 전용 `execute_code`: Python 스크립트 하나를 별도 자식 프로세스에서 실행하고 loopback TCP RPC 브리지로 실제 도구를 호출하며, 제한된 builtins와 스크립트별 예산을 적용 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **채널** | 채널 인터페이스 및 어댑터 시스템 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **데스크톱 클라이언트** | Tauri 2 + Nuxt 4 데스크톱/모바일 SPA 클라이언트 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
 | **Cron 서비스** | 예약/주기적 에이전트 작업 실행 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
 | **Heartbeat 서비스** | 주기적 웨이크업 작업 확인 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **요약 압축** | 컨텍스트 압축 미들웨어: 5개 트리거 지점, 4경로 오버플로 라우터, 스래싱 방지 가드 | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
-| **루프 방지** | 폭주 루프 가드, 지수 백오프 브레이커, 프로세스 크래시 게이팅 | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
-| **샌드박스** | 터미널 및 Python REPL 격리: 환경 변수 스크러빙, OS 네이티브 격리, 승인 게이트 | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **위협 모델** | 신뢰 경계, 데이터 분류, 위협별 방어 현황, 그리고 prompt 주입 스캐너 | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
-| **사용자 로그인** | 선택형 계정 보호: loopback 클라이언트는 면제되며, 원격 접근은 scrypt 비밀번호와 HttpOnly JWT 세션 쿠키로 제어됩니다 | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
-| **장기 실행 작업** | TaskFlow DAG 엔진, 단계 판정기, 토큰 예산, 데드라인, 검증된 완료 게이트, 턴 간 메모리 연속성 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
-| **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute: 읽기 전용 설계, 계획 승인 게이트, 리비전 결속 재제출 루프와 수정 예산 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
-| **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **스트림 복구** | 턴 도중 WebSocket 복구: 스냅샷 + 턴별 `seq` 워터마크, 재생 없음, 중복 없음, 도구 호출은 trajectory ledger에 유지 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
-| **File Safety** | 원자적 쓰기, 이중 CAS, 경로별·프로세스 간 잠금, `write_file`의 읽기 우선 라이선스(라이선스를 준 읽기를 압축이 버리는 순간 함께 사라집니다), 그리고 병합이 인터페이스 단위 변경을 보고하는 격리 서브에이전트 워크스페이스 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
-| **도구 병렬 안전** | 배치 인식 ToolNode: 같은 파일 읽기/쓰기는 순서 보장, 다른 경로는 병렬, 프로세스/세션 리소스 잠금 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
+| **요약 압축** | 컨텍스트 압축 미들웨어: 5개 트리거 지점, 4경로 오버플로 라우터, 스래싱 방지 가드 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
+| **루프 방지** | 폭주 루프 가드, 지수 백오프 브레이커, 프로세스 크래시 게이팅 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **샌드박스** | 터미널 및 Python REPL 격리: 환경 변수 스크러빙, OS 네이티브 격리, 승인 게이트 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
+| **위협 모델** | 신뢰 경계, 데이터 분류, 위협별 방어 현황, 그리고 prompt 주입 스캐너 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
+| **사용자 로그인** | 선택형 계정 보호: loopback 클라이언트는 면제되며, 원격 접근은 scrypt 비밀번호와 HttpOnly JWT 세션 쿠키로 제어됩니다 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
+| **장기 실행 작업** | TaskFlow DAG 엔진, 단계 판정기, 토큰 예산, 데드라인, 검증된 완료 게이트, 턴 간 메모리 연속성 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Plan Mode** | Plan-Then-Execute: 읽기 전용 설계, 계획 승인 게이트, 리비전 결속 재제출 루프와 수정 예산 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
+| **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
+| **스트림 복구** | 턴 도중 WebSocket 복구: 스냅샷 + 턴별 `seq` 워터마크, 재생 없음, 중복 없음, 도구 호출은 trajectory ledger에 유지 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
+| **File Safety** | 원자적 쓰기, 이중 CAS, 경로별·프로세스 간 잠금, `write_file`의 읽기 우선 라이선스(라이선스를 준 읽기를 압축이 버리는 순간 함께 사라집니다), 그리고 병합이 인터페이스 단위 변경을 보고하는 격리 서브에이전트 워크스페이스 | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
+| **도구 병렬 안전** | 배치 인식 ToolNode: 같은 파일 읽기/쓰기는 순서 보장, 다른 경로는 병렬, 프로세스/세션 리소스 잠금 | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 빠른 시작
 

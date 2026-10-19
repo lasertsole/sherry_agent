@@ -79,7 +79,7 @@ This page owns the TaskFlow gates. The same "a claim is not a fact" rule recurs 
 - **[Evidence Ledger](../gates/evidence-ledger/README.md)** — the recorded verification trail; its summary is Gate C's input *and* the StepJudge prompt's evidence section.
 - **[Subagent completion gates](../../subagent/README.md)** — the per-child layers: the CompletionJudge goal loop (DONE / CONTINUE, bounded by `COMPLETION_JUDGE["goal_max_turns"]`, with the first call skipped when the child's ledger already shows a passing non-stale row) and the completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`, parent-side).
 - **[TodoList Enforcement](../todolist/enforcement/README.md)** — the plan side: the E1–E7 enforcement layers, including the turn-end continuation gate and its budget.
-- **Loop prevention** — [docs/loop-prevention](../../loop-prevention/README.md) collects the guards' altitude matrix (turn / step / subagent / pipeline) with the fail-open policy per layer.
+- **Loop prevention** — [wiki/loop-prevention](../../loop-prevention/README.md) collects the guards' altitude matrix (turn / step / subagent / pipeline) with the fail-open policy per layer.
 
 ## Configuration
 

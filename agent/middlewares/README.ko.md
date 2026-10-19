@@ -253,7 +253,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS`는 활성 집합에 다시 합쳐집니다(도구 탭은 해당 행을 잠금 표시): 필수 항목을 빠뜨린 새 페이로드는 이미 서비스가 거부하지만, 도구가 필수가 되기 전에 기록된 레지스터 값으로도 벗겨낼 수 없게 하는 두 번째 가드입니다.
 
-**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `docs/plan-mode/` 참조.
+**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `wiki/plan-mode/` 참조.
 
 미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
 
@@ -326,7 +326,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, _연속된 두_ 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
 - `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 _차단_ 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
 
-▶️ 전체 문서: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ 전체 문서: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -357,7 +357,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` 밖으로 해석되는 값은 하드 거부 바닥(YOLO 거부 목록 / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`)에 걸리지 않는 한 통과합니다;
 - 그 밖의 외부 경로는 도구 자체의 `resolve_external_path()` HITL 흐름에 맡깁니다 —— 미들웨어는 승인도, 인자 재작성도, 인터럽트도 하지 않습니다. 도구가 실행 시 같은 게이트를 다시 돌기 때문에 여기서 개입하면 결정이 두 번 내려집니다.
 
-거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [docs/sandbox/isolation/README.ko.md §5](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구).
+거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [wiki/sandbox/isolation/README.ko.md §5](../../wiki/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -434,7 +434,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. 하드라인 / 위험 명령 감지(`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, 기반은 `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`)를 `ApprovalPipeline.check_command`(`approval.py`)로 수행.
 2. 스마트 승인(`ApprovalMode.SMART`, 선택적 `smart_approval_llm`) — 명백히 안전한 호출을 자동 승인.
 3. `interrupt()` — 기본 결정 타임아웃 60초.
-4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [docs/sandbox/isolation/README.ko.md](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
+4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [wiki/sandbox/isolation/README.ko.md](../../wiki/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
 5. `wrap_tool_call`은 승인이 거부되었거나 타임아웃된 호출의 실행을 거부합니다(턴 단위 플래그는 `before_agent`에서 리셋).
 
 서브게이트(`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. 상태는 `state_register_mem`에 `hitl:` 접두사 키로 저장됩니다.
@@ -624,7 +624,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **플랜 추출 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: 세션별 `Summarization → nudge` 스위치, `NUDGE["plan_extraction_enabled"]`, `nudge_plan_extraction_lock`, 실행 중인 이벤트 루프.
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
-▶️ 전체 문서: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ 전체 문서: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 > 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. _실제 등록된_ 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
 

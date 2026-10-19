@@ -207,7 +207,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API response type definitions
 │       └── backend/               # ts-rs generated backend types (ChatRequest, HealthStatus, ...)
-├── docs/                          # VitePress documentation site (guide/commands/events/types/zh)
+├── wiki/                          # VitePress documentation site (guide/commands/events/types/zh)
 ├── public/                        # Static assets (favicon.svg, robots.txt, avatar/)
 ├── repros/                        # Playwright repro tests (run via playwright.config.ts)
 ├── src-tauri/                     # Tauri 2 native shell
@@ -308,7 +308,7 @@ Browser-mode chat streaming details:
 - Base64 media is uploaded first via `POST /images/upload`, `/audio/upload`, `/video/upload` and referenced by URL
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt
-- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`). The same card also renders the Plan-Then-Execute approval (`exit_plan_mode`): the plan text, a feedback field, **Request changes** (reject + the feedback) and **Approve** — `/proj`-free, see `../docs/plan-mode/`
+- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`). The same card also renders the Plan-Then-Execute approval (`exit_plan_mode`): the plan text, a feedback field, **Request changes** (reject + the feedback) and **Approve** — `/proj`-free, see `../wiki/plan-mode/`
 - A turn this page never sent (the plan-continuation auto-turn, a subagent-completion injection, a cron run) arrives with **no `turn_started`** — the auto-turn passes no turn identity — so its chunks cannot be streamed into a local row; the `done` handler refetches the newest turn page, which renders the finished answer without a reload
 
 ### WebSocket Singletons (ws.ts)

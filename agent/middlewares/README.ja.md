@@ -254,7 +254,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` は有効集合に合流されます（ツール タブでは該当行がロック表示）: 必須項目を欠いた新しいペイロードはすでにサービスが拒否しますが、ツールが必須になる前に書かれたレジスタ値でも外せないようにする第二のガードです。
 
-**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`docs/plan-mode/` を参照。
+**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`wiki/plan-mode/` を参照。
 
 未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
 
@@ -327,7 +327,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **無進捗とは停滞（stagnation、`is_stagnant`）のこと**：成功した冪等呼び出しは、**同一ツール**がそのターン内で既に同じ `result_hash` を返していた場合にのみ無進捗と判定されます。結果が変われば進捗です。**ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも無進捗である間だけ累積します。エラーが一度でも出たり、結果が変化（非停滞）したり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。冪等ツールの結果変化も同様に引数改変として数えられなくなり、非冪等ツールの成功は引数改変状態を完全にクリアします。
 - `ToolCallGuardrailConfig` の既定値：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1` — `hard_stop_enabled=True` にするとすべての _ブロック_ しきい値が HALT に変わり（旧来の厳格な壁）、`recovery_mode_enabled=False` にすると即時ブロックの挙動に戻ります。
 
-▶️ 詳細：[docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ 詳細：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -358,7 +358,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` の外に解決される値は、ハード拒否フロア（YOLO 拒否リスト / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`）に当たらない限り通します；
 - それ以外の外部パスはツール自身の `resolve_external_path()` HITL フローに委ねます——ミドルウェアは承認・引数書き換え・インタラプトのいずれも行いません。ツールは実行時に同じゲートを再実行するため、ここで介入すると決定が二重になります。
 
-拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[docs/sandbox/isolation/README.ja.md §5](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[wiki/sandbox/isolation/README.ja.md §5](../../wiki/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -435,7 +435,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. ハードライン / 危険コマンド検知（`detection.py`：`detect_hardline_command`、`detect_dangerous_command`、基盤は `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`）を `ApprovalPipeline.check_command`（`approval.py`）経由で実施。
 2. スマート承認（`ApprovalMode.SMART`、任意の `smart_approval_llm`）— 明らかに安全な呼び出しを自動承認。
 3. `interrupt()` — 既定の決定タイムアウトは 60 秒。
-4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [docs/sandbox/isolation/README.ja.md](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
+4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [wiki/sandbox/isolation/README.ja.md](../../wiki/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
 5. `wrap_tool_call` は承認が拒否またはタイムアウトした呼び出しの実行を拒否します（ターン単位のフラグは `before_agent` でリセット）。
 
 サブゲート（`gates.py` / `approval.py`）：`ApprovalPipeline`、`WriteApprovalGate`、`InterruptManager`、`MCPElicitationConsent`、`KanbanTriage`、`PairingStore`、`SlashConfirm`。状態は `state_register_mem` に `hitl:` 接頭辞キーで格納されます。
@@ -625,7 +625,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **プラン抽出の重複排除：** `_detect_todo_all_complete` は、全 todo が `completed`/`cancelled` で、かつプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）が最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と異なるときに発火します——完了済み todo のその場編集は再抽出し、変化のないプランはスキップし、失敗したパスは次の完了ターンで再試行します。手前のゲート：セッション単位の `Summarization → nudge` スイッチ、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、実行中のイベントループ。
 - **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
-▶️ 詳細：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ 詳細：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 > 予算ミドルウェアのクラス既定値 `max_iterations` は 50 です。_登録されている_ 値は 90（メイン）と 60（ワーカー）。本ドキュメントの旧版は予算 10 と主張していました — 誤りです。
 

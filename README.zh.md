@@ -27,14 +27,14 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
 - **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
-- ▶️ _详见 [Experience README](docs/experience/README.zh.md) 了解四条抽取路径与技能策展_
+- ▶️ _详见 [Experience README](wiki/experience/README.zh.md) 了解四条抽取路径与技能策展_
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
 - **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
 - **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
-- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](docs/experience/README.zh.md)
+- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](wiki/experience/README.zh.md)
 - **工具超时**：真实的分工具限制来自 `TOOLS_TIMEOUTS` 注册表（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）；`TOOL_CALL_TIMEOUT_MINUTES` 只是存储设置，**没有任何执行路径消费它**
 - ▶️ _详见 [Middlewares README](agent/middlewares/README.md) 了解中间件流水线（护栏、迭代预算、HITL、规范化、摘要、多模态处理）_
 
@@ -47,7 +47,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
 - **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
 - **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer / librarian）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
-- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](docs/file-safety/README.md)
+- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](wiki/file-safety/README.md)
 - ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
 
 ### 4. 🌐 多渠道接入
@@ -169,7 +169,7 @@ sherry_agent/
 │   ├── embeddings/         # 向量语义搜索（indexer / search）
 │   └── curator/            # 自动技能维护
 │
-├── docs/                   # 子系统设计文档（各语言 README）
+├── wiki/                   # 子系统设计文档（各语言 README）
 │   ├── experience/         # 经验抽取路径 + 技能策展
 │   ├── session_memory/     # 会话记忆能力
 │   ├── summarization/      # 压缩触发条件与冷却
@@ -310,29 +310,29 @@ sherry_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
-| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
-| **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
-| **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
+| **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
 | **Cron 服务** | 定时/周期性 Agent 任务执行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
 | **Heartbeat 服务** | 周期性唤醒任务检查 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
-| **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
-| **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
-| **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
-| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
-| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
-| **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
-| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
-| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
+| **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
+| **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
+| **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
+| **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
+| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
+| **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
+| **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
+| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
+| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 

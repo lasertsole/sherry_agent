@@ -79,7 +79,7 @@ Tier 1 schema 校验**先跑**（见下文），产出 `schema_validated`。该�
 - **[证据账本](../gates/evidence-ledger/README.zh.md)**——记录的验证轨迹；它的摘要既是 Gate C 的输入，也是 StepJudge 提示词里的证据段。
 - **[子代理完成门](../../subagent/README.zh.md)**——子代理级的两层：CompletionJudge 目标循环（DONE / CONTINUE，由 `COMPLETION_JUDGE["goal_max_turns"]` 限界；当子代理的账本已显示一条通过且未陈旧的证据行时跳过首次调用），以及完成 drain 的程序化门（`SubagentCompletionDrainMiddleware`，父侧）。
 - **[TodoList 强制层](../todolist/enforcement/README.zh.md)**——计划侧：E1–E7 强制层，含回合结束续跑门及其预算。
-- **防循环**——[docs/loop-prevention](../../loop-prevention/README.zh.md)汇总了各防护的高度矩阵（回合 / 步骤 / 子代理 / 管线）与每层的 fail-open 策略。
+- **防循环**——[wiki/loop-prevention](../../loop-prevention/README.zh.md)汇总了各防护的高度矩阵（回合 / 步骤 / 子代理 / 管线）与每层的 fail-open 策略。
 
 ## 配置
 

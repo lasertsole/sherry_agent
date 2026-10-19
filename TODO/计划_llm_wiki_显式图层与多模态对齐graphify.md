@@ -46,10 +46,10 @@
 
 ### 0.3 graphify 处理常规内容的真相（我之前漏说，现在补上）
 
-graphify **不只做代码 wiki**——README 明确支持 docs/PDFs/images/video/audio 进同一个图。处理方式分两种：
+graphify **不只做代码 wiki**——README 明确支持 wiki/PDFs/images/video/audio 进同一个图。处理方式分两种：
 
 - **代码**：tree-sitter AST，确定性，0 LLM
-- **常规内容（docs/PDFs/images/video/audio）**：LLM semantic pass 抽 entities/concepts/relationships，进同一个 `graph.json`，跟代码节点互连，每条边标 EXTRACTED/INFERRED
+- **常规内容（wiki/PDFs/images/video/audio）**：LLM semantic pass 抽 entities/concepts/relationships，进同一个 `graph.json`，跟代码节点互连，每条边标 EXTRACTED/INFERRED
 
 graphify 的 markdown extractor（`graphify/extractors/markdown.py`）用正则解析三类 markdown 元素作为图边：
 - `_MD_WIKILINK_RE`：`[[link]]` Obsidian 风格 wikilink
@@ -84,7 +84,7 @@ llm_wiki 跟 graphify 处理常规内容**都是 LLM-driven**（非代码没法 
 
 ---
 
-## 2. 任务一：多模态 ingest（docs/PDFs/images/video/audio）
+## 2. 任务一：多模态 ingest（wiki/PDFs/images/video/audio）
 
 ### 2.1 目标
 

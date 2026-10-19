@@ -79,7 +79,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 - **[エビデンス台帳](../gates/evidence-ledger/README.ja.md)** — 記録された検証トレイル。その要約は Gate C の入力であり、StepJudge プロンプトのエビデンス節でもあります。
 - **[サブエージェント完了ゲート](../../subagent/README.ja.md)** — 子レベルの層：CompletionJudge ゴールループ（DONE / CONTINUE、`COMPLETION_JUDGE["goal_max_turns"]` で有界。子の台帳が通過済みで陳腐化していない行を示すときは最初の呼び出しをスキップ）と完了 drain のプログラム的ゲート（`SubagentCompletionDrainMiddleware`、親側）。
 - **[TodoList 強制層](../todolist/enforcement/README.ja.md)** — 計画側：E1–E7 強制層（ターン終了時の継続ゲートとその予算を含む）。
-- **ループ防止** — [docs/loop-prevention](../../loop-prevention/README.ja.md) が各ガードの高度マトリクス（ターン／ステップ／サブエージェント／パイプライン）と層ごとのフェイルオープン方針をまとめています。
+- **ループ防止** — [wiki/loop-prevention](../../loop-prevention/README.ja.md) が各ガードの高度マトリクス（ターン／ステップ／サブエージェント／パイプライン）と層ごとのフェイルオープン方針をまとめています。
 
 ## 設定
 

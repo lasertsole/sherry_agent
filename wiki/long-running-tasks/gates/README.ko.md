@@ -79,7 +79,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 - **[증거 원장](../gates/evidence-ledger/README.ko.md)** — 기록된 검증 트레일. 그 요약은 Gate C의 입력이자 StepJudge 프롬프트의 증거 절입니다.
 - **[서브에이전트 완료 게이트](../../subagent/README.ko.md)** — 자식 층위의 두 겹: CompletionJudge 목표 루프(DONE / CONTINUE, `COMPLETION_JUDGE["goal_max_turns"]`로 유계; 자식의 원장이 통과·비스테일 행을 보이면 첫 호출을 건너뜀)와 완료 drain의 프로그램 게이트(`SubagentCompletionDrainMiddleware`, 부모 측).
 - **[TodoList 강제 계층](../todolist/enforcement/README.ko.md)** — 계획 측: E1–E7 강제 계층(턴 종료 연속 게이트와 그 예산 포함).
-- **루프 방지** — [docs/loop-prevention](../../loop-prevention/README.ko.md)가 가드들의 고도 매트릭스(턴 / 스텝 / 서브에이전트 / 파이프라인)와 계층별 페일오픈 정책을 모아 둡니다.
+- **루프 방지** — [wiki/loop-prevention](../../loop-prevention/README.ko.md)가 가드들의 고도 매트릭스(턴 / 스텝 / 서브에이전트 / 파이프라인)와 계층별 페일오픈 정책을 모아 둡니다.
 
 ## 설정
 

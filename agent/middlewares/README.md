@@ -254,7 +254,7 @@ Runs the session's own tool set (预设角色-工具 tab → `AGENT_CONFIG["tool
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` is unioned back into the enabled set (the 工具 tab shows those rows locked): the service already refuses a payload that omits one, this is the second guard so a register value written before a tool became required cannot strip it either.
 
-**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `docs/plan-mode/`.
+**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `wiki/plan-mode/`.
 
 Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
 
@@ -327,7 +327,7 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 - **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the _same tool_ already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while _both_ consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every _block_ threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
 
-▶️ Full details: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ Full details: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -358,7 +358,7 @@ Screening is deliberately conservative:
 - a value resolving outside `ROOT_DIR` is passed through **unless** it hits the hard-deny floor (the YOLO deny list / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`);
 - every other external path is left to the tool's own `resolve_external_path()` HITL flow — the middleware never approves, rewrites args, or raises an interrupt, because the tool re-runs the same gate during execution (intercepting here would decide twice).
 
-On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [docs/sandbox/isolation/README.md §5](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
+On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [wiki/sandbox/isolation/README.md §5](../../wiki/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -435,7 +435,7 @@ Per-call pipeline in `after_model`:
 1. Hard-line / dangerous command detection (`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, backed by `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`) via `ApprovalPipeline.check_command` (`approval.py`).
 2. Smart approval (`ApprovalMode.SMART`, optional `smart_approval_llm`) — auto-approves clearly safe calls.
 3. `interrupt()` — decision timeout 60 s by default.
-4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [docs/sandbox/isolation/README.md](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools)).
+4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [wiki/sandbox/isolation/README.md](../../wiki/sandbox/isolation/README.md#5-external-file-path-gate-file-tools)).
 5. `wrap_tool_call` rejects execution for calls whose approval was denied or timed out (the per-turn flag is reset in `before_agent`).
 
 Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. State is namespaced under `hitl:` keys in `state_register_mem`.
@@ -625,7 +625,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Plan-extraction dedup:** `_detect_todo_all_complete` fires when every todo is `completed`/`cancelled` and the plan's **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) differs from the one stored under `nudge_plan_snapshot_hash` after the last SUCCESSFUL pass — so an in-place edit of a completed todo re-extracts, an unchanged plan does not, and a failed pass retries on the next completion turn. Gates in front of it: the per-session `Summarization → nudge` option, `NUDGE["plan_extraction_enabled"]`, the `nudge_plan_extraction_lock`, and a running event loop.
 - **Post-compression todo update:** when `compression_todo_update_enabled` (default on) is set and a compaction actually discards messages, the async path fire-and-forgets a dedicated nudge agent (`_COMPRESSION_TODO_PROMPT`) whose graph runs under a derived session key (`<id>::compression-todo`, so `IterationBudget` / `ToolGuardrails` state can never touch the main session) and whose tool set is exactly one metadata-marked `todowrite` shim (`todo_update: True`, admitted by `_NudgeLimitTool(allowed_metadata_key="todo_update")`) bound to the main session. It reconciles the session todo list with the discarded slice — marking actually-finished items `completed` / `cancelled`, adding evidenced new work as `pending`, writing the COMPLETE list back via `todowrite`. It never blocks or fails compression; a per-session `compression_todo_update_lock` prevents overlapping runs and the sync path only schedules when an event loop is already running.
 
-▶️ Full details: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ Full details: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 ### MaxTokensBoostMiddleware
 
