@@ -116,6 +116,7 @@ class TestDoneAndInterrupt:
         assert driver.frames[-1] == {
             "event": "done",
             "session_id": "s1",
+            "turn_id": "",
             "content": "",
             "model_name": "deepseek-v3",
             "input_tokens": 11,
@@ -133,6 +134,7 @@ class TestDoneAndInterrupt:
         assert driver.frames[-1] == {
             "event": "done",
             "session_id": "s1",
+            "turn_id": "",
             "content": "",
             "model_name": "",
             "input_tokens": 0,
@@ -180,6 +182,7 @@ class TestDoneAndInterrupt:
             {
                 "event": "hitl_request",
                 "session_id": "s1",
+                "turn_id": "t-1",
                 "content": {"tool_name": "bash"},
                 "message_ids": ["m1"],
             },
@@ -215,6 +218,7 @@ class TestCancelAndError:
         assert driver.frames[-1] == {
             "event": "stopped",
             "session_id": "s1",
+            "turn_id": "",
             "content": "Request cancelled",
             "message_ids": [],
         }
@@ -236,6 +240,7 @@ class TestCancelAndError:
         assert driver.frames[-1] == {
             "event": "error",
             "session_id": "s1",
+            "turn_id": "",
             "content": "model exploded",
             "message_ids": [],
         }

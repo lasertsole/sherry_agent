@@ -54,9 +54,14 @@ class StreamDriver:
         session_id: str,
         websocket: Any,
         turn_info: Mapping[str, Any] | None = None,
+        turn_id: str = "",
     ) -> None:
         self.session_id = session_id
         self.websocket = websocket
+        # The turn identity every frame carries. Generation turns derive it from
+        # their turn_info; resume and auto-turn sites pass it explicitly (their
+        # turn_info is absent). Empty is legal for an old/unknown turn.
+        self.turn_id = turn_id or (str(turn_info.get("turn_id") or "") if turn_info else "")
         # Generation turns carry the batch's turn identity; HITL resume and the
         # idle auto-turn pass None (no ``turn_started`` frame, empty
         # ``message_ids``). ``turn_info`` is a plain mapping with a ``turn_id``
@@ -75,7 +80,7 @@ class StreamDriver:
             {
                 "event": "turn_started",
                 "session_id": self.session_id,
-                "turn_id": self.turn_info.get("turn_id") if self.turn_info else None,
+                "turn_id": self.turn_id or None,
                 "message_ids": self._message_ids(),
             }
         )
@@ -141,6 +146,7 @@ class StreamDriver:
                     {
                         "event": "hitl_request",
                         "session_id": self.session_id,
+                        "turn_id": self.turn_id,
                         "content": interrupt,
                         "message_ids": self._message_ids(),
                     }
@@ -151,6 +157,7 @@ class StreamDriver:
                     {
                         "event": "done",
                         "session_id": self.session_id,
+                        "turn_id": self.turn_id,
                         "content": "",
                         "model_name": meta.get("model_name", self.done_model_name),
                         "input_tokens": meta.get("input_tokens", self.done_input_tokens),
@@ -170,6 +177,7 @@ class StreamDriver:
                 {
                     "event": "stopped",
                     "session_id": self.session_id,
+                    "turn_id": self.turn_id,
                     "content": "Request cancelled",
                     "message_ids": self._message_ids(),
                 }
@@ -182,6 +190,7 @@ class StreamDriver:
                 {
                     "event": "error",
                     "session_id": self.session_id,
+                    "turn_id": self.turn_id,
                     # The full text (with any internal paths/identifiers) stays
                     # in the server log; the client gets the public summary.
                     "content": self.public_error(e),

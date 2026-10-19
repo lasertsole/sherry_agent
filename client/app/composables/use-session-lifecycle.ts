@@ -7,6 +7,21 @@ import type { Ref } from 'vue';
 import type { MessageItem } from '../pages/home/type';
 import type { CachedCharacter } from './db';
 import { logUtil } from '~/utils/log';
+import type { ActiveTurnSnapshot } from './messages';
+
+/** Options for a history load. */
+export interface LoadHistoryOptions {
+  /** Ask the server for the running turn's snapshot in the same round trip. */
+  includeActiveTurn?: boolean;
+  /** Gate the merge into `chatMessages` (a timed-out snapshot request must not land late). */
+  shouldApply?: () => boolean;
+}
+
+/** The history loader signature shared by the page and the chat-stream slice. */
+export type LoadSessionHistory = (
+  sessionId: string,
+  options?: LoadHistoryOptions
+) => Promise<ActiveTurnSnapshot | null>;
 
 /**
  * Create the session lifecycle slice for one session page.
@@ -97,9 +112,22 @@ export function useSessionLifecycle(chatMessages: Ref<MessageItem[]>) {
    * Fix: No longer reconstruct entire `currentSession.value` (that would overwrite user's already-sent local messages,
    * causing 'list cleared after sending'). Only merge history rows into single list, existing messages preserved.
    * @param sessionId
+   * @param options
    */
-  const loadSessionHistory = async (sessionId: string) => {
-    const rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
+  const loadSessionHistory: LoadSessionHistory = async (sessionId, options = {}) => {
+    let rows;
+    let activeTurn: ActiveTurnSnapshot | null = null;
+    if (options.includeActiveTurn) {
+      const page = await get_history_page_with_active_turn(sessionId, 0, 10, 1);
+      rows = page.messages;
+      activeTurn = page.activeTurn;
+    } else {
+      rows = await get_history_by_turn_page(sessionId, 0, 10, 1);
+    }
+    // A timed-out snapshot request may still resolve later; its rows are
+    // already cached, but they must not overwrite the chat list after the
+    // caller gave up waiting and released the frame queue.
+    if (options.shouldApply && !options.shouldApply()) return activeTurn;
     const historyItems = toMessageItems(rows);
 
     // Merge and deduplicate: existing ids preserve local versions (including unsent temporary messages with negative ids),
@@ -189,6 +217,7 @@ export function useSessionLifecycle(chatMessages: Ref<MessageItem[]>) {
     // has been filtered out by 'skip' logic above, drafts that can be hydrated are all failed turns not yet persisted, thus won't
     // conflict with actual rendering.
     chatMessages.value = [...mergedById.values()].sort((a, b) => a.turn_num - b.turn_num || a.id - b.id);
+    return activeTurn;
   };
 
   return { characterInfo, applyCharacterSnapshot, ensureSessionCharacter, loadSessionHistory };

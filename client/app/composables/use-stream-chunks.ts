@@ -11,6 +11,7 @@ import type { DraftPersistence } from './use-draft-persistence';
 /** Tool-call metadata carried by tool_result chunks. */
 export interface StreamChunkMeta {
   tool_id?: string;
+  turn_id?: string;
   tool_name?: string;
   args?: Record<string, unknown>;
   error?: boolean;

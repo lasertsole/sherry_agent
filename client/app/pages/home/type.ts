@@ -54,6 +54,8 @@ export interface MessageItem {
   id: number;
   /** Conversation turn number */
   turn_num: number;
+  /** Server turn identity while this row is the live streaming row (never on history rows). */
+  turn_id?: string;
   /** Timestamp */
   timestamp: string;
   /** Tool name (only set when role=TOOL; identifies which tool call) */

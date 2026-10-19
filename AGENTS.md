@@ -1060,24 +1060,36 @@ replay log and no per-client queue**: each frame reaches each socket exactly
 once, and a socket that connects mid-turn receives only frames produced after
 its registration.
 
-A viewer that drops mid-turn reconnects and sends `{"type": "resume_stream"}`
-on the agent socket; the handler replies **on that socket only** with a text
-snapshot (`active_turn_snapshot` → the engine's accumulated `ai_text`) plus one
-of `ok` / `ended` (history exists → refetch) / `gone` (deleted or never
-persisted → nothing to fetch) / `unknown` (fail-open). The client REPLACES its
-turn text with the snapshot (buffered deltas are flushed first) — it never
-appends replayed frames, so no connection can see duplicated content. Every emitted
-frame also carries a per-turn monotonic `seq`, and the snapshot carries the seq it
-was read at — the resumed client drops frames at or below that watermark, closing
-the race between "snapshot read" and "an in-flight frame lands after the reply".
-This snapshot + `seq` pair is Sherry's stream-recovery anchor: it restores the
-text tail without replaying any frame, while committed tool calls stay queryable
-in the per-turn trajectory ledger (`GET /sessions/:session_id/trajectory`).
-Because
-the turn keeps running when its last viewer disconnects (the socket release no
-longer cancels it), the reconnect resumes the SAME turn. Inbound frames are
-also checked against the socket's registered session (`_frame_session_allowed`)
-so one session's socket can never read another's.
+A viewer that drops mid-turn reconnects and makes ONE HTTP request instead of
+a WS snapshot frame: `GET /get_history_by_turn_page?...&include_active_turn=1`
+returns `{messages, active_turn}` (without the flag the endpoint keeps returning
+the plain row array). `messages` carries every turn that completed while the
+socket was down, so no answer waits for the current turn to end; `active_turn`
+is `active_turn_snapshot()`'s `{text, has_reasoning, seq, turn_id, turn_num}` or
+null. While that request is in flight the socket HOLDS every inbound frame
+(`AgentSocket.holdFrames`, capped at 1000, oldest dropped); on the response the
+client merges history, applies the snapshot to its turn's row (by `turn_id`,
+else `turn_num`, else a new AI row), records the watermark and releases the
+queue. A held frame is dropped only when its `turn_id` matches the snapshot's
+and its `seq <= snapshot.seq`: the watermark is PER-TURN (each `StreamTurn`
+restarts `seq` at 1), so a new turn can never be mistaken for old data. Every
+stream frame — chunks and the driver's `turn_started` / `done` /
+`hitl_request` / `error` / `stopped` — carries `turn_id`; the client routes by
+it, and a late `done` of a previous turn does not settle the current one. The
+wait is bounded at 10 s: on timeout the response is gated out of the chat merge,
+the queue is released without a watermark, and terminal frames or the busy
+watchdog settle the turn. Only a send that already received a chunk can be
+concluded as ended-while-disconnected; a pre-chunk send is re-sent (deduped by
+`msg_id`) and stays pending. The old `resume_stream` WS handler and its
+`stream_resume` reply are retained as a legacy fallback, but the client no
+longer sends that frame. This snapshot + per-turn `seq` pair is Sherry's
+stream-recovery anchor: it restores the text tail without replaying any frame,
+while committed tool calls stay queryable in the per-turn trajectory ledger
+(`GET /sessions/:session_id/trajectory`). Because the turn keeps running when
+its last viewer disconnects (the socket release no longer cancels it), the
+reconnect resumes the SAME turn. Inbound frames are also checked against the
+socket's registered session (`_frame_session_allowed`) so one session's socket
+can never read another's.
 
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 

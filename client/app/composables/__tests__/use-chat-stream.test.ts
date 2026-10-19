@@ -111,6 +111,13 @@ function makeDeps(): HarnessDeps {
     send: vi.fn(() => ({ controller: { closed: false, abort: vi.fn() }, promise: Promise.resolve() })),
     stop: vi.fn(() => Promise.resolve()),
     sendHitlResponse: vi.fn(),
+    holdFrames: vi.fn(),
+    releaseFrames: vi.fn(),
+    setSnapshotWatermark: vi.fn(),
+    hasPendingSends: vi.fn(() => false),
+    hasPendingMidStreamSends: vi.fn(() => false),
+    settlePendingSends: vi.fn(),
+    settlePendingMidStreamSends: vi.fn(),
     sendCancelQueued: vi.fn(),
     sendEditQueued: vi.fn(),
     sendNow: vi.fn(),
@@ -129,7 +136,7 @@ function makeDeps(): HarnessDeps {
     t: ((key: string) => key) as unknown as Composer['t'],
     getPendingMedia: () => ({ images: [], audios: [], videos: [] }),
     clearMediaSelection: vi.fn(),
-    loadSessionHistory: vi.fn(async () => {}),
+    loadSessionHistory: vi.fn(async () => null),
     drafts: {
       allocateTempId: () => -1,
       activeTurns: () => [],
@@ -627,6 +634,98 @@ describe('useChatStream — stream-resume snapshot', () => {
     load.mockClear();
     harness.stream.onStreamResumed({ sessionId: 's1', status: 'gone' });
     expect(load).not.toHaveBeenCalled();
+  });
+
+  it('syncHistory holds frames, applies the snapshot, then releases', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    harness.chatMessages.value.push({
+      session_id: 's1',
+      role: CHAT_ROLE.USER,
+      content: 'question',
+      id: 1,
+      turn_num: 1,
+      timestamp: 't'
+    } as MessageItem);
+    vi.mocked(harness.deps.loadSessionHistory).mockResolvedValue({
+      text: 'partial answer',
+      has_reasoning: false,
+      seq: 5,
+      turn_id: 'turn-9',
+      turn_num: 2
+    });
+
+    await harness.stream.syncHistory('s1');
+
+    expect(harness.socket.holdFrames).toHaveBeenCalledTimes(1);
+    expect(harness.socket.releaseFrames).toHaveBeenCalledTimes(1);
+    expect(harness.socket.setSnapshotWatermark).toHaveBeenCalledWith(5, 'turn-9');
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(2);
+    const ai = harness.chatMessages.value.find(row => row.role === CHAT_ROLE.AI);
+    expect(ai).toMatchObject({ content: 'partial answer', turn_num: 2, turn_id: 'turn-9' });
+
+    // A frame of the snapshot's turn routes to its row.
+    harness.stream.handleSocketChunk(' more', 'text', 's1', { turn_id: 'turn-9' });
+    expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', ' more', 'text', 2, {
+      turn_id: 'turn-9'
+    });
+    vi.useRealTimers();
+  });
+
+  it('syncHistory times out at 10s, releases frames and applies no snapshot', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    vi.mocked(harness.deps.loadSessionHistory).mockImplementation(() => new Promise<never>(() => {}));
+
+    const pending = harness.stream.syncHistory('s1');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await pending;
+
+    expect(harness.socket.releaseFrames).toHaveBeenCalledTimes(1);
+    expect(harness.socket.setSnapshotWatermark).toHaveBeenCalledWith(0, '');
+    expect(harness.chatMessages.value).toHaveLength(0);
+    vi.useRealTimers();
+  });
+
+  it('a late done for the previous turn does not settle the turn now streaming', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('first');
+    const first = state.sends[0]!;
+    await harness.stream.handleSend('second');
+    const second = state.sends[1]!;
+
+    harness.stream.handleTurnStarted({
+      sessionId: 's1',
+      turnId: 't1',
+      messageIds: [first.msgId!]
+    });
+    harness.stream.handleTurnStarted({
+      sessionId: 's1',
+      turnId: 't2',
+      messageIds: [second.msgId!]
+    });
+    expect(harness.streamingTurn.value).toBe(2);
+
+    harness.stream.handleSocketDone({ turnId: 't1' });
+
+    expect(harness.streamingTurn.value).toBe(2);
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.drafts.commitDraftTurn).toHaveBeenCalledWith('s1', 1);
+    expect(harness.markRunningToolsFailed).not.toHaveBeenCalled();
+  });
+
+  it('syncHistory settles a stale pending send when the snapshot says idle', async () => {
+    const harness = makeHarness();
+    harness.isSending.value = true;
+    harness.streamingTurn.value = null;
+    vi.mocked(harness.socket.hasPendingMidStreamSends).mockReturnValue(true);
+    vi.mocked(harness.deps.loadSessionHistory).mockResolvedValue(null);
+
+    await harness.stream.syncHistory('s1');
+
+    expect(harness.socket.settlePendingMidStreamSends).toHaveBeenCalledTimes(1);
+    expect(harness.isSending.value).toBe(false);
   });
 
   it('ignores a snapshot addressed to another session', () => {

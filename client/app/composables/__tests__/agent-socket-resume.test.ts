@@ -4,9 +4,11 @@
  * Pinned contract (no duplicate content, ever):
  *  - a mid-stream connection loss does NOT reject the send and does NOT
  *    resend the generation payload;
- *  - on reconnect the socket asks for a text snapshot (`resume_stream`) and the
- *    reply only updates the view — frames are never replayed;
- *  - `ended` settles the send like `done`; an exhausted retry budget rejects it.
+ *  - on reconnect the PAGE fetches history + the active-turn snapshot in one
+ *    HTTP request; the socket only holds inbound frames while that request is
+ *    in flight and flushes them after the snapshot watermark is applied;
+ *  - the legacy `stream_resume` reply is still accepted (`ended` settles the
+ *    send like `done`); an exhausted retry budget rejects it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -76,7 +78,7 @@ afterEach(() => {
 });
 
 describe('agent socket stream resume', () => {
-  it('keeps a mid-stream send pending and requests a snapshot on reconnect', () => {
+  it('keeps a mid-stream send pending, reconnects, and never sends resume_stream', () => {
     const socket = acquireAgentSocket('s1');
     const ws = FakeWebSocket.instances[0]!;
     ws.open();
@@ -88,18 +90,59 @@ describe('agent socket stream resume', () => {
     ws.closeFromServer();
     expect(controller.closed).toBe(false);
 
-    vi.advanceTimersByTime(1000);
-    const resumed = FakeWebSocket.instances[1]!;
-    resumed.open();
+    const reconnected: unknown[] = [];
+    const listener = (payload: unknown) => reconnected.push(payload);
+    on('stream:reconnected', listener);
+    let resumed: FakeWebSocket;
+    try {
+      vi.advanceTimersByTime(1000);
+      resumed = FakeWebSocket.instances[1]!;
+      resumed.open();
+      expect(reconnected).toEqual([{ sessionId: 's1' }]);
+    } finally {
+      off('stream:reconnected', listener);
+    }
 
-    const frames = resumed.sent.map(raw => JSON.parse(raw));
-    const request = frames.find(frame => frame.type === 'resume_stream');
-    expect(request).toMatchObject({ type: 'resume_stream', session_id: 's1' });
+    const frames = resumed!.sent.map(raw => JSON.parse(raw));
+    expect(frames.some(frame => frame.type === 'resume_stream')).toBe(false);
     // The generation payload itself is NEVER re-sent (that would replay the turn).
     expect(frames.some(frame => frame.text === 'hi')).toBe(false);
   });
 
-  it('applies the snapshot as a replacement value (never a frame replay)', () => {
+  it('holds inbound frames until release (history+snapshot in flight)', () => {
+    const socket = acquireAgentSocket('s1');
+    const onChunk = vi.fn();
+    socket.setHandlers({ onChunk });
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+
+    socket.holdFrames();
+    ws.frame({ event: 'chunk', content: 'held', type: 'text' });
+    expect(onChunk).not.toHaveBeenCalled();
+
+    socket.setSnapshotWatermark(0, 't1');
+    socket.releaseFrames();
+    expect(onChunk).toHaveBeenCalledTimes(1);
+    expect(onChunk.mock.calls[0]![0]).toBe('held');
+  });
+
+  it('caps the held-frame queue at 1000 (oldest dropped)', () => {
+    const socket = acquireAgentSocket('s1');
+    const onChunk = vi.fn();
+    socket.setHandlers({ onChunk });
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+
+    socket.holdFrames();
+    for (let i = 0; i < 1005; i++) {
+      ws.frame({ event: 'chunk', content: `c${i}`, type: 'text', turn_id: 't1' });
+    }
+    socket.releaseFrames();
+    expect(onChunk).toHaveBeenCalledTimes(1000);
+    expect(onChunk.mock.calls[0]![0]).toBe('c5');
+  });
+
+  it('accepts a legacy snapshot reply as a replacement value', () => {
     const emitted: unknown[] = [];
     const listener = (payload: unknown) => emitted.push(payload);
     on('stream:resumed', listener);
@@ -111,21 +154,20 @@ describe('agent socket stream resume', () => {
       socket.send(generation());
       ws.frame({ event: 'turn_started', turn_id: 't1', message_ids: ['m1'] });
       ws.frame({ event: 'chunk', content: 'abc', type: 'text' });
-      ws.closeFromServer();
-      vi.advanceTimersByTime(1000);
-      const resumed = FakeWebSocket.instances[1]!;
-      resumed.open();
-      resumed.frame({
+      ws.frame({
         event: 'stream_resume',
         session_id: 's1',
-        content: { status: 'ok', text: 'abcdef' }
+        content: { status: 'ok', text: 'abcdef', seq: 3, turn_id: 't1' }
       });
 
       expect(emitted.at(-1)).toEqual({
         sessionId: 's1',
         status: 'ok',
         text: 'abcdef',
-        hasReasoning: false
+        hasReasoning: false,
+        seq: 3,
+        turnId: 't1',
+        turnNum: undefined
       });
       // The reply carries a TEXT value — nothing the client could replay.
       expect(emitted.at(-1)).not.toHaveProperty('frames');

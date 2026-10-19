@@ -1,103 +1,115 @@
 # 🔁 스트림 복구
 
-[**English**](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · **한국어**
+[English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 이 페이지는 API 계약이 아니라 메커니즘을 기록한다: 어떤 상태가 권위 있는지, 재접속이 그것을 어떻게 찾는지, 왜 delta 재생 대신 스냅샷 워터마크를 쓰는지.
+> 이 문서는 API 계약이 아니라 메커니즘을 기록합니다: 어떤 상태가 권위인지, 재접속이 그것을 어떻게 찾는지, 왜 델타 재생 대신 스냅샷 워터마크를 쓰는지.
 
 ## 설계 문제
 
-턴은 오래 실행되는 async generator다. 출력은 생성되는 즉시 모든 라이브 socket으로 푸시되며, per-client 큐도 replay log도 없다. 뷰어는 어느 chunk에서든 사라질 수 있지만, 턴은 이미 도구 호출을 수행하고 토큰을 소비했을 수 있으므로 계속 실행되어야 한다.
+턴은 장수명 async generator입니다. 출력은 생성되는 즉시 모든 라이브 socket으로 push되며, 클라이언트별 큐도 재생 로그도 없습니다. 시청자는 어느 chunk에서든 사라질 수 있고, 턴은 계속 실행되어야 합니다——이미 도구 호출을 수행하고 token을 소비했을 수 있기 때문입니다.
 
-요구 사항은 서로 상충한다:
+요구사항은 서로 당깁니다:
 
-- 재접속이 턴을 다시 실행해서는 안 된다. 부작용과 비용이 중복된다.
-- 재접속이 프레임을 재생해서는 안 된다. 다른 뷰어가 이미 받았을 수 있고, 가시 텍스트가 중복된다.
-- 재접속을 위해 서버가 뷰어별로 모든 delta를 보관해서는 안 된다. 상태가 무한해진다.
-- 한 session의 여러 뷰어는 재생 커서를 공유하지 않고 같은 텍스트로 수렴해야 한다.
+- 재접속은 턴을 재실행해서는 안 됩니다(부작용과 비용 중복).
+- 재접속은 프레임을 재생해서는 안 됩니다(다른 시청자가 이미 받았다면 보이는 텍스트가 중복됨).
+- 재접속을 위해 서버가 시청자별 모든 델타를 기억해서는 안 됩니다(무한 상태).
+- 한 세션의 여러 시청자는 재생 커서를 공유하지 않고 같은 텍스트로 수렴해야 합니다.
 
-해답은 이벤트 로그가 아니라 **시점 스냅샷과 시퀀스 워터마크**다.
+답은 **한 시점의 스냅샷 + 턴 단위 시퀀스 워터마크**이며, 영속화된 히스토리와 같은 요청으로 함께 전달됩니다.
 
-## 권위 있는 상태
+## 권위 상태
 
-`StreamTurn`이 실행 중인 턴의 권위 있는 텍스트를 소유한다. 가시 모델 텍스트는 think scrubber를 통과한 뒤 `self.ai_text`에 추가되고, reasoning은 `_has_reasoning`으로 별도 추적된다. 도구 호출은 `ai_text`의 일부가 아니며 trajectory ledger에 기록된다.
+`StreamTurn`이 실행 중 턴의 권위 텍스트를 소유합니다. think scrubber를 통과한 가시 모델 텍스트는 `self.ai_text`에 추가되고, 추론은 `_has_reasoning`으로 별도 추적됩니다. 도구 호출은 `ai_text`에 속하지 않으며 trajectory ledger에 기록됩니다.
 
-엔진은 `_run_frames` 시작 시 `_ACTIVE_TURNS[session_id]`에 등록하고 generator의 `finally`에서 제거하며, identity check로 오래된 턴이 새 턴을 제거하지 못하게 한다. turn runner/queue가 턴을 직렬화하므로 session당 활성 턴은 최대 하나다.
+엔진은 `_run_frames`가 시작할 때 `_ACTIVE_TURNS[session_id]`에 등록되고 generator의 `finally`에서 자신을 제거합니다. 식별 검사로 오래된 턴이 새 턴을 제거하지 못합니다. turn runner/queue가 턴을 직렬화하므로 세션당 최대 한 턴이 활성입니다.
 
-`active_turn_snapshot()`은 그 엔진에서 세 필드를 읽는다:
+`StreamTurn`은 주변 turn scope에서 `turn_id`를 캡처합니다. `active_turn_snapshot()`는 엔진에서 네 필드를 읽습니다:
 
 - `ai_text`: 지금까지 생성된 가시 텍스트;
-- `_has_reasoning`: reasoning 채널이 존재하는지;
-- `_frame_seq`: 지금까지 부여된 최고 프레임 시퀀스.
+- `_has_reasoning`: 추론 채널이 있는지;
+- `_frame_seq`: 지금까지 찍힌 최대 프레임 시퀀스;
+- `turn_id`: 텍스트가 속한 턴의 식별자.
 
-이 읽기는 stream generator와 같은 이벤트 루프에서 실행되므로 텍스트와 시퀀스 번호가 하나의 일관된 컷에서 읽힌다. 락은 필요 없다. 등록된 엔진이 없으면 실행 중인 턴이 없고 스냅샷 함수는 `None`을 반환한다.
+읽기는 스트림 generator와 같은 이벤트 루프에서 실행되므로 텍스트와 시퀀스 번호가 같은 일관된 컷에서 읽히며 락이 필요 없습니다. 등록된 엔진이 없으면 실행 중 턴이 없고 스냅샷 함수는 `None`을 반환합니다. HTTP 히스토리 경로는 표시용 메타데이터로 `turn_num`(다음에 영속화될 턴 번호)을 덧붙입니다.
 
-## 프레임 순서와 워터마크
+## 프레임 시퀀스와 워터마크
 
-`StreamTurn.run()`이 내보내는 모든 프레임은 yield 전에 턴별 단조 `_frame_seq`를 받는다:
+`StreamTurn.run()`이 내보내는 모든 프레임은 yield 전에 턴 단위 단조 `_frame_seq`를 찍습니다:
 
 ```text
-_run_frames()가 프레임을 생성
-  → run()이 _frame_seq를 증가
+_run_frames() produces a frame
+  → run() increments _frame_seq
   → frame["seq"] = _frame_seq
-  → 프레임이 브로드캐스트됨
+  → frame["turn_id"] = self.turn_id
+  → the frame is broadcast
 ```
 
-스냅샷은 읽을 당시의 `_frame_seq`를 담는다. 그 숫자가 워터마크다:
+`StreamDriver`도 `turn_started`, `done`, `hitl_request`, `error`, `stopped`에 `turn_id`를 찍습니다(chunk 루프 밖에서 만드는 프레임). 따라서 재접속 클라이언트는 턴 전환 후에도 각 프레임을 소속 턴으로 라우팅할 수 있습니다.
 
-- `seq <= snapshot.seq`인 프레임은 스냅샷 컷에서 이미 `ai_text`에 반영되어 있다.
-- 그런 프레임은 재접속 socket으로 가는 중이거나 스냅샷 응답 후에 도착할 수 있다.
-- 따라서 복구된 클라이언트는 워터마크 이하의 모든 프레임을 버리고 해당 턴의 AI 행을 스냅샷 텍스트로 교체한다.
+워터마크는 **턴 단위**입니다. 스냅샷은 읽은 시점의 `seq`와 `turn_id`를 운반하고, 프레임의 `turn_id`가 일치하고 `seq <= snapshot.seq`일 때만 버립니다. 새 턴은 `seq = 1`에서 다시 시작하므로 다른 턴의 워터마크보다 숫자가 작다는 이유만으로 오래된 데이터로 오인되지 않습니다.
 
-이것은 선형화 논증이다. 스냅샷은 스트림을 가로지르는 컷이고, `seq`가 그 컷을 식별하며, 대체 텍스트가 그 컷의 상태다. 클라이언트는 스냅샷이 어떤 delta를 포함하는지 알 필요가 없다.
+## 재접속 시 한 번의 왕복
 
-## 연결 끊김 중 수명 주기
+클라이언트는 재접속 때 `resume_stream`을 보내지 않습니다. 히스토리 요청을 한 번 보냅니다:
 
-`_release_socket`은 socket을 등록 해제하고 pending tool arguments를 정리할 수 있지만 턴을 **취소하지 않는다**. 턴 태스크는 완료될 때까지 `_active_tasks`에 남고, `_ACTIVE_TURNS`는 연결 끊김 경로가 아니라 generator 자체의 `finally`에서 제거된다. 따라서 마지막 뷰어가 떠나도 턴은 살아남는다.
+```text
+GET /get_history_by_turn_page?session_id=…&include_active_turn=1
+  → {messages: [...persisted rows...],
+     active_turn: {text, has_reasoning, seq, turn_id, turn_num} | null}
+```
 
-재접속 시 클라이언트는 `_handle_resume_stream`을 호출한다. 핸들러는 활성 엔진을 읽는다:
+`include_active_turn=1`이 없으면 엔드포인트는 기존처럼 행 배열을 반환하므로 모든 기존 호출자의 계약이 유지됩니다. 플래그가 있으면 영속화 히스토리와 실행 중 턴의 스냅샷이 함께 도착합니다: 연결이 끊긴 동안 완료된 턴은 `messages`에, 실행 중 턴은 `active_turn`에 들어갑니다.
 
-- 엔진이 있음 → `ok`와 스냅샷;
-- 엔진은 없지만 session에 영속 메시지가 있음 → `ended`(클라이언트가 이력을 다시 가져옴);
-- 엔진도 이력도 없음 → `gone`;
-- 읽기 실패 → `unknown`. 클라이언트는 낡은 텍스트를 조용히 유지하지 않고 다시 가져온다.
+WS handler `_handle_resume_stream`과 `stream_resume` 응답은 구버전 클라이언트용 폴백으로 남으며, 현재 클라이언트는 그 프레임을 보내지 않습니다.
 
-응답은 요청한 socket에만 전송된다. 다른 뷰어는 라이브 프레임을 계속 받고, 스냅샷은 브로드캐스트도 재생 소스도 아니다.
+## 클라이언트 스냅샷 큐
 
-## 왜 replay log가 없는가
+히스토리 요청이 진행 중일 때 socket은 들어오는 모든 WS 프레임을 적용하지 않고 보관합니다(`holdFrames`, 최대 1000 프레임, 초과 시 가장 오래된 것 버림). 응답이 오면:
 
-replay log는 모든 턴의 모든 delta를 저장하고 뷰어별로 보관하며 per-viewer 커서를 유지해야 한다. 또한 보존 정책, 백프레셔, "전달됨"과 "인플라이트"를 구분하는 방법이 필요하다 — 같은 워터마크 문제에 로그를 붙인 것뿐이다.
+1. 영속화 메시지를 채팅 목록에 병합(연결이 끊긴 동안 완료된 턴이 즉시 보임);
+2. `active_turn`을 소속 턴의 행에 적용: 행에 `turn_id`가 있으면 그것으로, 없으면 `turn_num`, 둘 다 없으면 새 AI 행 생성;
+3. socket이 스냅샷 워터마크(`seq`와 `turn_id`)를 기록;
+4. 보관 프레임을 도착 순서로 해제. 같은 턴에서 `seq <= 워터마크`인 프레임은 버리고, 나머지는 자신의 `turn_id`로 정상 적용.
 
-스냅샷 방식의 상태는 유계다: 실행 중인 턴마다 텍스트 누산기 하나와 카운터 하나. 본질적으로 멱등하다: 클라이언트가 한 프레임을 놓쳤든 천 프레임을 놓쳤든 스냅샷으로 AI 행을 교체한 결과는 같다. 재접속 비용은 O(현재 텍스트)이며 O(이력)이 아니다.
+지연되거나 유실된 응답이 UI를 막지 않습니다: 대기는 10초로 제한됩니다. 타임아웃 시 응답은 채팅 병합에서 제외되고, 워터마크 없이 큐를 해제하며, socket의 종료 프레임이나 busy watchdog이 턴을 정리합니다. chunk를 아직 받지 않은 전송은 재개 가능하므로 idle 스냅샷으로 결산되지 않으며, chunk를 받은 전송만 연결 중 종료로 결산됩니다.
 
-트레이드오프는 명시적이다: 스냅샷이 복구하는 것은 **가시 텍스트 꼬리**이지 모든 중간 이벤트가 아니다.
+## 연결 중단 시 수명주기
 
-## 스냅샷이 의도적으로 생략하는 것
+`_release_socket`은 socket을 등록 해제하고 대기 중 도구 인자를 정리할 수 있지만 턴을 **취소하지 않습니다**. 턴 작업은 끝날 때까지 `_active_tasks`에 남고, `_ACTIVE_TURNS`는 연결 경로가 아니라 generator 자신의 `finally`에서 제거됩니다. 마지막 시청자가 떠나도 턴은 살아남습니다.
 
-- reasoning delta: 스냅샷은 `has_reasoning`만 보고하고 reasoning 텍스트는 포함하지 않는다.
-- 증분 tool-input JSON과 delta별 usage 텔레메트리.
-- 스트림 이벤트로서의 도구 호출 카드. 커밋된 도구 호출은 trajectory ledger(`GET /sessions/:session_id/trajectory`)에서 계속 조회할 수 있다.
+프레임은 정확히 한 번 브로드캐스트되고 재생되지 않습니다. 재접속 클라이언트는 스냅샷에서 권위 텍스트를 얻고 등록 이후 생성된 프레임만 받습니다——둘의 조합에는 빈틈이 없고 재생 로그도 필요 없습니다.
 
-이 분담은 의도적이다. 텍스트는 영속 기록으로 부분 렌더링을 재구성할 수 없는 유일한 상태이며, 도구 호출에는 이미 영속 원장이 있다. 그 스트림 프레임을 재생하면 이미 있는 기록을 중복시킬 뿐이다.
+## 스냅샷이 생략하는 것
+
+- 추론 델타: 스냅샷은 `has_reasoning`만 보고하고 추론 본문은 포함하지 않습니다.
+- 증분 도구 입력 JSON과 delta 단위 사용량 텔레메트리.
+- 도구 호출 카드의 스트림 이벤트. 확정된 도구 호출은 trajectory ledger(`GET /sessions/:session_id/trajectory`)에서 조회할 수 있습니다.
+
+이 구분은 의도적입니다. 텍스트만이 영속 기록으로 부분 렌더링을 재구성할 수 없는 상태입니다. 도구 호출에는 이미 영속 ledger가 있으므로 스트림 프레임을 재생하면 기존 기록을 중복시키게 됩니다.
 
 ## 실패 의미론
 
-- 스냅샷 이후 도착한 오래된 프레임은 워터마크로 버려져 가시 텍스트를 중복시키지 않는다.
-- `unknown`과 `ended`는 모두 이력 재조회로 이어지고, `gone`은 아무 동작도 하지 않는다.
-- 스냅샷 읽기는 스트림의 이벤트 루프에서 실행되므로 일관적이다. 프레임은 `ai_text`에 포함되어 워터마크 이하이거나, 더 새로워 필터를 통과한다.
-- socket별 응답은 다중 뷰어 독립성을 유지한다. 한 뷰어의 재접속이 다른 뷰어의 커서나 스트림을 바꾸지 않는다.
+- 스냅샷 이후 도착한 오래된 프레임은 턴 단위 워터마크로 버려져 가시 텍스트를 중복시키지 않습니다.
+- 히스토리 응답이 없거나 타임아웃되면 워터마크 없이 보관 프레임을 해제하고 평소대로 적용합니다. watchdog은 마지막 안전망입니다.
+- 연결 중 종료된 턴은 히스토리 행에 나타납니다. 스냅샷이 활성 턴 없음을 보고하면 chunk를 받은 전송은 결산됩니다. chunk를 받지 않은 전송은 재전송되고(backend는 `msg_id`로 중복 제거) 턴이 시작될 때까지 pending으로 남습니다.
+- socket별 타기팅은 다중 시청자 독립성을 보존합니다: 한 시청자의 재접속이 다른 시청자의 커서나 스트림을 바꾸지 않습니다.
 
-## 거부된 대안
+## 거부한 대안
 
-- **재접속 시 턴 재실행.** 도구 부작용과 토큰 소비를 중복시키고 답을 바꿀 수 있다.
-- **모든 delta 재생.** per-viewer 이력, 커서, 보존이 필요하며 `seq` 워터마크가 해결한 경쟁이 다시 나타난다.
-- **ZCode의 7이벤트 앵커 프로토콜.** reasoning/tool-input의 더 세밀한 복구를 제공하지만 프론트엔드 프로토콜과 영속적인 anchor/tail-discard 파이프라인이 필요하다. Sherry의 스냅샷 프로토콜은 사용자에게 보이는 복구 목표를 더 적은 장치로 충족한다. 세밀한 이벤트 타입은 설계상 구현하지 않는다.
+- **재접속 시 턴 재실행.** 도구 부작용과 token 소비를 중복시키고 답을 바꿀 수 있습니다.
+- **모든 델타 재생.** 시청자별 히스토리·커서·보존이 필요하며, `seq` 워터마크가 해결하는 경쟁이 다시 도입됩니다.
+- **ZCode의 7이벤트 앵커 프로토콜.** 더 세밀한 추론/도구 입력 복구를 제공하지만 프런트엔드 프로토콜과 영속 anchor/tail-discard 파이프라인이 필요합니다. Sherry의 스냅샷 프로토콜은 더 적은 기계장치로 사용자 가시 복구 목표를 충족하며, 세밀한 이벤트 타입은 설계상 미구현으로 남습니다.
 
 ## 코드 맵
 
-- `server/service/stream_dispatch.py`: `StreamTurn`(`ai_text`, `_frame_seq`, `_ACTIVE_TURNS`)과 `active_turn_snapshot`.
-- `server/trigger/ws/messages.py`: `_handle_resume_stream`과 `_release_socket`.
-- `runtime/session/ws_push.py`: 정확히 한 번의 브로드캐스트. replay log는 없다.
-- `client/app/composables/bridge/agent-socket.ts`: 연결 끊김 감지와 `resume_stream`.
-- `client/app/composables/bridge/agent-socket-frames.ts`: 스냅샷 `seq` 워터마크와 프레임 필터.
-- `client/app/composables/use-chat-stream.ts`: 스냅샷 교체와 이력 재조회.
-- `tests/server/test_stream_resume.py`, `client/app/composables/__tests__/agent-socket-resume.test.ts`: 위 불변 조건.
+- `server/service/stream_dispatch.py`: `StreamTurn`(`ai_text`, `_frame_seq`, `turn_id`, `_ACTIVE_TURNS`)과 `active_turn_snapshot`.
+- `server/service/stream_driver.py`: driver가 만드는 모든 프레임에 `turn_id`.
+- `server/trigger/http/messages.py`: `GET /get_history_by_turn_page`의 `include_active_turn`.
+- `server/trigger/ws/messages.py`: 구 `_handle_resume_stream` 경로와 `_release_socket`.
+- `runtime/session/ws_push.py`: 정확히 한 번 브로드캐스트, 재생 로그 없음.
+- `client/app/composables/messages.ts`: `get_history_page_with_active_turn`.
+- `client/app/composables/use-session-lifecycle.ts`: 스냅샷을 반환하는 히스토리 병합.
+- `client/app/composables/use-chat-stream.ts`: `syncHistory`, 스냅샷 적용과 턴 라우팅.
+- `client/app/composables/bridge/agent-socket.ts`: 프레임 보관/해제와 스냅샷 워터마크.
+- `client/app/composables/bridge/agent-socket-frames.ts`: 턴 단위 워터마크 필터.
+- `tests/server/test_stream_resume.py`, `tests/server/service/test_stream_turn_id.py`, `tests/server/trigger/test_history_active_turn.py`, `client/app/composables/__tests__/agent-socket-resume.test.ts`: 위 불변식.

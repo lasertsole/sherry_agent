@@ -934,7 +934,9 @@ const doLoadFor = (sid: string) => {
   clearMediaSelection();
   // Load this session's locked character snapshot (if none, lock using the global profile)
   ensureSessionCharacter(sid);
-  loadSessionHistory(sid);
+  // One round trip: history + the running turn's snapshot. Frames arriving
+  // during the request are held and flushed after the snapshot is applied.
+  void stream.syncHistory(sid);
   // Restore a possibly still-pending HITL interrupt card in three-tier persistence scenarios (session switch / refresh / browser reopen / server restart)
   restorePendingHitl(sid);
   mySidLoaded = true;

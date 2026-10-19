@@ -1,103 +1,115 @@
 # 🔁 流恢复
 
-[**English**](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
+[English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> 本文记录机制而非 API 契约：哪份状态是权威的、重连如何找到它，以及为什么用快照水位而不是重放 delta。
+> 本文记录机制，不是 API 契约：哪份状态是权威的、重连如何找到它，以及为什么用快照水位而不是重放增量。
 
 ## 设计问题
 
-一个回合是一条长时间运行的 async generator。输出产生时就被推给所有在线 socket；没有 per-client 队列，也没有 replay log。观看者可能在任意 chunk 处消失，而回合必须继续运行，因为它可能已经执行过工具调用并消耗了 token。
+一个回合是一条长生命周期的 async generator。它的输出在产生时推送给所有在线 socket；没有按客户端的队列，也没有重放日志。观看者可能在任何 chunk 处消失，而回合必须继续运行——它可能已经执行了工具调用并消耗了 token。
 
-需求互相拉扯：
+需求彼此拉扯：
 
-- 重连不能重跑回合：那会重复副作用和成本。
-- 重连不能重放帧：其他观看者可能已经收到，重放会让可见文本重复。
-- 重连不能要求服务端为每个观看者保存所有 delta：那是无界状态。
-- 同一会话的多个观看者必须收敛到同一文本，而不共享重放游标。
+- 重连不能重跑回合：那会重复副作用和花费。
+- 重连不能重放帧：别的观看者可能已经收到，重放会重复可见文本。
+- 重连不能让服务端为每个观看者记住每个增量：那是无界状态。
+- 同一会话的多个观看者必须收敛到同一份文本，而不共享重放游标。
 
-答案不是事件日志，而是**时间点快照加序列号水位**。
+答案是**某一时刻的快照 + 按回合的序号水位**，并与持久化历史在同一次请求中返回。
 
 ## 权威状态
 
-`StreamTurn` 持有运行中回合的权威文本。可见模型文本经过 think scrubber 后追加到 `self.ai_text`；reasoning 由 `_has_reasoning` 单独记录。工具调用不属于 `ai_text`，它们记录在 trajectory ledger 中。
+`StreamTurn` 拥有运行中回合的权威文本。通过 think scrubber 的可见模型文本追加到 `self.ai_text`；推理由 `_has_reasoning` 单独记录。工具调用不属于 `ai_text`；它们写入 trajectory ledger。
 
-引擎在 `_run_frames` 开始时注册到 `_ACTIVE_TURNS[session_id]`，在 generator 的 `finally` 中移除，并用身份检查防止旧回合移除新回合。每个会话最多只有一个活动回合，因为 turn runner/queue 会串行化回合。
+引擎在 `_run_frames` 开始时注册到 `_ACTIVE_TURNS[session_id]`，在 generator 的 `finally` 中移除，并使用身份检查避免旧回合移除新回合。由于 turn runner/queue 串行化回合，每个会话最多只有一个活跃回合。
 
-`active_turn_snapshot()` 从该引擎读取三个字段：
+`StreamTurn` 从外围 turn scope 捕获 `turn_id`。`active_turn_snapshot()` 从引擎读取四个字段：
 
-- `ai_text`：目前产生的可见文本；
-- `_has_reasoning`：是否存在 reasoning 通道；
-- `_frame_seq`：目前打上的最高帧序列号。
+- `ai_text`：到目前为止产生的可见文本；
+- `_has_reasoning`：是否存在推理通道；
+- `_frame_seq`：到目前为止盖上的最高帧序号；
+- `turn_id`：文本所属回合的身份。
 
-这次读取与 stream generator 运行在同一个事件循环上，因此文本和序列号是在同一个一致切面上读出的，不需要锁。若没有注册的引擎，会话就没有运行中的回合，快照函数返回 `None`。
+读取与 流 generator 在同一事件循环上运行，因此文本和序号在同一个一致切面读取，无需锁。没有注册引擎时，会话没有运行中回合，快照函数返回 `None`。HTTP 历史路径额外附加 `turn_num`（下一个持久化回合号）作为展示元数据。
 
-## 帧序列与水位
+## 帧序号与水位
 
-`StreamTurn.run()` 发出的每一帧在 yield 前都会打上逐回合单调的 `_frame_seq`：
+`StreamTurn.run()` 产生的每一帧在 yield 之前都盖上按回合单调递增的 `_frame_seq`：
 
 ```text
-_run_frames() 产生一帧
-  → run() 递增 _frame_seq
+_run_frames() produces a frame
+  → run() increments _frame_seq
   → frame["seq"] = _frame_seq
-  → 该帧被广播
+  → frame["turn_id"] = self.turn_id
+  → the frame is broadcast
 ```
 
-快照携带读取时的 `_frame_seq`。这个数字就是水位：
+`StreamDriver` 也会在 `turn_started`、`done`、`hitl_request`、`error` 和 `stopped` 上盖 `turn_id`（这些是它在 chunk 循环之外构造的帧）。因此重连客户端可以把每一帧路由到它所属的回合，即使期间发生了回合切换。
 
-- 任何 `seq <= snapshot.seq` 的帧，在快照切面上都已经反映到 `ai_text` 中。
-- 这样的帧仍可能在飞往重连 socket，或在快照回复之后才送达。
-- 因此恢复后的客户端会丢弃水位及以下的每一帧，并用快照文本替换该回合的 AI 行。
+水位是**按回合的**。快照携带读取时的 `seq` 和 `turn_id`；只有帧的 `turn_id` 匹配且 `seq <= snapshot.seq` 时才丢弃。新回合从 `seq = 1` 重新开始，绝不会因为数值低于另一回合的水位而被误判为旧数据。
 
-这是一个线性化论证：快照是流过流的一个切面，`seq` 标识这个切面，替换文本就是该切面上的状态。客户端不需要知道快照具体包含了哪些 delta。
+## 重连时的一次往返
+
+客户端重连时不再发送 `resume_stream`，而是发一次历史请求：
+
+```text
+GET /get_history_by_turn_page?session_id=…&include_active_turn=1
+  → {messages: [...persisted rows...],
+     active_turn: {text, has_reasoning, seq, turn_id, turn_num} | null}
+```
+
+不带 `include_active_turn=1` 时端点仍返回纯行数组，所有现有调用方的契约不变。带该参数时，持久化历史和运行中回合的快照一起到达：断线期间完成的回合在 `messages` 里，仍在运行的回合在 `active_turn` 里。
+
+WS handler `_handle_resume_stream` 及其 `stream_resume` 回复作为旧客户端的回退保留；当前客户端不再发送该帧。
+
+## 客户端快照队列
+
+历史请求在途时，socket 不 apply 收到任何 WS 帧，而是全部暂存（`holdFrames`，上限 1000 帧，超出丢最旧的）。响应到达后：
+
+1. 持久化消息合并进聊天列表（断线期间完成的回合立即显示）；
+2. `active_turn` 应用到它所属回合的行：行上已有 `turn_id` 时按 `turn_id`，否则按 `turn_num`，都没有则新建 AI 行；
+3. socket 记录快照水位（`seq` 和 `turn_id`）；
+4. 按到达顺序释放暂存帧。同一回合中 `seq <= 水位` 的帧丢弃；其余帧按自己的 `turn_id` 正常路由。
+
+迟到或丢失的响应不会卡住 UI：等待上限为 10 秒。超时后该响应被排除在聊天合并之外，队列在没有水位的情况下释放，由 socket 的终止帧或 busy watchdog 收口。收到过 chunk 的发送才可能在断线期间结束并结算；未收到 chunk 的发送可重发，不会被空闲快照结算。
 
 ## 断线期间的生命周期
 
-`_release_socket` 注销 socket，并可能清理 pending tool arguments，但**不会**取消回合。回合任务留在 `_active_tasks` 中直到完成；`_ACTIVE_TURNS` 由 generator 自己的 `finally` 移除，而不是由断线路径移除。因此最后一个观看者离开后回合仍然存活。
+`_release_socket` 会注销 socket、可能清理待处理工具参数，但**不会**取消回合。回合任务留在 `_active_tasks` 直到结束；`_ACTIVE_TURNS` 由 generator 自己的 `finally` 移除，而不是断线路径。因此最后一个观看者离开后回合仍然存活。
 
-重连时客户端调用 `_handle_resume_stream`。处理器读取活动引擎：
+帧只广播一次、从不重放；重连客户端从快照取得权威文本，并只收到注册之后产生的帧——两者组合无缺口，也不需要重放日志。
 
-- 存在引擎 → `ok` 加快照；
-- 没有引擎但会话有持久化消息 → `ended`（客户端重新拉取历史）；
-- 没有引擎也没有历史 → `gone`；
-- 读取失败 → `unknown`，客户端重新拉取，而不是静默保留陈旧文本。
+## 快照省略的内容
 
-回复只发给请求的 socket。其他观看者继续接收实时帧；快照不是广播，也永远不会成为重放来源。
+- 推理增量：快照只报告 `has_reasoning`，不包含推理文本。
+- 增量工具输入 JSON 和逐 delta 的使用量遥测。
+- 工具调用卡片作为流事件；已提交的工具调用仍可在 trajectory ledger（`GET /sessions/:session_id/trajectory`）查询。
 
-## 为什么没有重放日志
-
-重放日志必须为每个回合保存所有 delta、为每个观看者保留、并维护 per-viewer 游标。它还需要保留策略、背压，以及区分“已送达”和“在途”的方法——还是同一个水位问题，只是多了一份日志。
-
-快照方案的状态有界：每个运行中回合只有一个文本累加器和一个计数器。它天然幂等：无论客户端错过一帧还是一千帧，用快照替换 AI 行都得到相同结果。重连成本是 O(当前文本)，不是 O(历史)。
-
-代价是明确的：快照恢复的是**可见文本尾部**，不是每一个中间事件。
-
-## 快照刻意省略的内容
-
-- reasoning delta：快照只报告 `has_reasoning`，不包含 reasoning 文本。
-- 增量 tool-input JSON 与逐 delta 的 usage 遥测。
-- 作为流事件的工具调用卡片；已 committed 的工具调用仍可在 trajectory ledger（`GET /sessions/:session_id/trajectory`）中查询。
-
-这个划分是刻意的。文本是唯一无法从持久记录重建部分渲染的状态；工具调用已经有持久账本，重放它们的流帧只会重复一条已经存在的记录。
+这种划分是刻意的。文本是唯一无法从持久记录重建部分渲染的状态；工具调用已有持久 ledger，重放它们的流帧只会重复已有记录。
 
 ## 失败语义
 
-- 快照之后到达的旧帧会被水位丢弃，永远不会让可见文本重复。
-- `unknown` 与 `ended` 都会触发历史重新拉取；`gone` 不采取动作。
-- 快照读取是一致的，因为它运行在流的事件循环上；一帧要么已经包含在 `ai_text` 中且不高于水位，要么更新并通过过滤。
-- 按 socket 定向回复保持了多观看者的独立性：一个观看者的重连不会改变另一个观看者的游标或流。
+- 快照之后到达的旧帧会被按回合水位丢弃，永远不会重复可见文本。
+- 历史响应缺失或超时会无水位地释放暂存帧；更早的帧正常 apply，watchdog 仍是最后兜底。
+- 断线期间结束的回合会出现在历史行里；快照报告没有活跃回合时，收到过 chunk 的发送会被结算。未收到 chunk 的发送会重发（后端按 `msg_id` 去重），并保持 pending 直到它的回合开始。
+- 按 socket 定向保持了多观看者独立性：一个观看者的重连不会改变另一个的游标或流。
 
-## 被否定的方案
+## 被拒绝的方案
 
-- **重连时重跑回合。** 会重复工具副作用和 token 消耗，还可能改变答案。
-- **重放所有 delta。** 需要 per-viewer 历史、游标和保留策略；`seq` 水位解决的那个竞态会重新出现。
-- **ZCode 的七事件锚点协议。** 它提供更细粒度的 reasoning/tool-input 恢复，但需要前端协议和持久化的 anchor/tail-discard 流水线。Sherry 的快照协议用更少的机制满足用户可见的恢复目标；更细的事件类型按设计不实现。
+- **重连时重跑回合。** 重复工具副作用和 token 花费，且可能改变答案。
+- **重放全部增量。** 需要按观看者的历史、游标和保留策略；`seq` 水位解决的那个竞态会重新出现。
+- **ZCode 的七事件锚点协议。** 它能恢复更细的推理/工具输入，但需要前端协议和持久的 anchor/tail-discard 管线。Sherry 的快照协议用更少机制达到用户可见的恢复目标；更细的事件类型按设计仍未实现。
 
-## 代码位置
+## 代码地图
 
-- `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`_ACTIVE_TURNS`）与 `active_turn_snapshot`。
-- `server/trigger/ws/messages.py`：`_handle_resume_stream` 与 `_release_socket`。
-- `runtime/session/ws_push.py`：恰好一次的广播，没有重放日志。
-- `client/app/composables/bridge/agent-socket.ts`：断线检测与 `resume_stream`。
-- `client/app/composables/bridge/agent-socket-frames.ts`：快照 `seq` 水位与帧过滤。
-- `client/app/composables/use-chat-stream.ts`：快照替换与历史重新拉取。
-- `tests/server/test_stream_resume.py`、`client/app/composables/__tests__/agent-socket-resume.test.ts`：上述不变量。
+- `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）和 `active_turn_snapshot`。
+- `server/service/stream_driver.py`：所有 driver 构造的帧都带 `turn_id`。
+- `server/trigger/http/messages.py`：`GET /get_history_by_turn_page` 的 `include_active_turn`。
+- `server/trigger/ws/messages.py`：旧的 `_handle_resume_stream` 路径和 `_release_socket`。
+- `runtime/session/ws_push.py`：恰好一次广播，无重放日志。
+- `client/app/composables/messages.ts`：`get_history_page_with_active_turn`。
+- `client/app/composables/use-session-lifecycle.ts`：返回快照的历史合并。
+- `client/app/composables/use-chat-stream.ts`：`syncHistory`、快照应用与回合路由。
+- `client/app/composables/bridge/agent-socket.ts`：帧暂存/释放与快照水位。
+- `client/app/composables/bridge/agent-socket-frames.ts`：按回合的水位过滤。
+- `tests/server/test_stream_resume.py`、`tests/server/service/test_stream_turn_id.py`、`tests/server/trigger/test_history_active_turn.py`、`client/app/composables/__tests__/agent-socket-resume.test.ts`：上述不变量。

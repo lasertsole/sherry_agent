@@ -36,8 +36,12 @@ export interface AgentFrameContext {
   flushStopResolvers(): void;
   /** Highest frame seq covered by the last resume snapshot (chunk watermark). */
   getSnapshotSeq(): number;
-  /** Record the snapshot's seq; reset when a new turn starts. */
+  /** Record the snapshot's seq (the watermark is scoped to its turn). */
   setSnapshotSeq(seq: number): void;
+  /** Turn identity the snapshot seq belongs to ('' when the snapshot omitted it). */
+  getSnapshotTurnId(): string;
+  /** Record the snapshot's turn identity. */
+  setSnapshotTurnId(turnId: string): void;
 }
 
 /**
@@ -61,9 +65,13 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
   const handler = createWsMessageHandler<AgentWsEvent>({
     chunk: data => {
       // A resumed viewer drops text produced at or before its snapshot: those
-      // deltas are already inside the replacement text. Nothing is replayed.
+      // deltas are already inside the replacement text. The watermark is
+      // per-turn — a NEW turn's seq restarts at 1 and must never be dropped
+      // because it is numerically below another turn's snapshot seq.
       const seq = (data as { seq?: unknown }).seq;
-      if (typeof seq === 'number' && seq <= ctx.getSnapshotSeq()) return;
+      const turnId = data.turn_id ?? '';
+      const sameTurn = !turnId || !ctx.getSnapshotTurnId() || turnId === ctx.getSnapshotTurnId();
+      if (typeof seq === 'number' && seq <= ctx.getSnapshotSeq() && sameTurn) return;
       ctx.markAllReceivedChunk();
       ctx.handlers.onChunk?.(
         typeof data.content === 'string' ? data.content : '',
@@ -74,7 +82,8 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
           tool_name: data.tool_name,
           args: data.args,
           error: data.error,
-          duration_ms: data.duration_ms
+          duration_ms: data.duration_ms,
+          turn_id: turnId || undefined
         }
       );
     },
@@ -117,7 +126,9 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
     turn_started: data => {
       const turn = { turnId: data.turn_id ?? '', msgIds: data.message_ids ?? [] };
       ctx.setActiveTurn(turn);
-      ctx.setSnapshotSeq(0);
+      // Do NOT clear the snapshot watermark here: a new turn's seq restarts at
+      // 1 and is kept by the per-turn check above; a queued turn_started for
+      // the snapshot's own turn must not make its old deltas replayable.
       ctx.handlers.onTurnStarted?.({
         sessionId: data.session_id ?? ctx.sessionId,
         turnId: turn.turnId,
@@ -130,7 +141,8 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.handlers.onDone?.({
         modelName: data.model_name ?? undefined,
         inputTokens: data.input_tokens ?? undefined,
-        outputTokens: data.output_tokens ?? undefined
+        outputTokens: data.output_tokens ?? undefined,
+        turnId: data.turn_id ?? undefined
       });
     },
     error: data => {
@@ -144,17 +156,28 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.flushStopResolvers();
     },
     stream_resume: data => {
-      const content = (data.content ?? {}) as { status?: string; text?: string; has_reasoning?: boolean };
+      const content = (data.content ?? {}) as {
+        status?: string;
+        text?: string;
+        has_reasoning?: boolean;
+        seq?: number;
+        turn_id?: string;
+        turn_num?: number;
+      };
       const status = content.status ?? 'unknown';
       if (status === 'ok') {
-        const snapshotSeq = (content as { seq?: unknown }).seq;
-        if (typeof snapshotSeq === 'number') ctx.setSnapshotSeq(snapshotSeq);
+        const snapshotSeq = typeof content.seq === 'number' ? content.seq : 0;
+        ctx.setSnapshotSeq(snapshotSeq);
+        ctx.setSnapshotTurnId(content.turn_id ?? '');
         ctx.markAllReceivedChunk();
         emit('stream:resumed', {
           sessionId: data.session_id ?? ctx.sessionId,
           status,
           text: typeof content.text === 'string' ? content.text : '',
-          hasReasoning: content.has_reasoning === true
+          hasReasoning: content.has_reasoning === true,
+          seq: snapshotSeq,
+          turnId: content.turn_id ?? '',
+          turnNum: content.turn_num
         });
         return;
       }

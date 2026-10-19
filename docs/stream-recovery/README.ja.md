@@ -1,103 +1,115 @@
-# 🔁 ストリーム復元
+# 🔁 ストリーム回復
 
-[**English**](README.md) · [中文](README.zh.md) · **日本語** · [한국어](README.ko.md)
+[English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> このページは API 契約ではなくメカニズムを記録する：どの状態が権威か、再接続がそれをどう見つけるか、なぜ delta の再送ではなくスナップショット水位を使うのか。
+> このページは API 契約ではなく機構を記録します。どの状態が権威か、再接続がどうそれを見つけるか、なぜ差分再生ではなくスナップショット水位を使うのか。
 
 ## 設計上の問題
 
-ターンは長時間実行される async generator である。出力は生成されると同時にすべてのライブ socket へプッシュされ、per-client キューも replay log もない。ビューアはどの chunk でも消えうるが、ターンはツール呼び出しとトークンをすでに消費している可能性があるため、動き続けなければならない。
+ターンは長寿命の async generator です。出力は生成されるたびに全ライブ socket へ push され、クライアント別キューも再生ログもありません。視聴者は任意の chunk で消えることがあり、ターンは実行を続けなければなりません——すでにツール呼び出しを実行し token を消費している可能性があるからです。
 
-要件は相反する：
+要件は相反します：
 
-- 再接続でターンを再実行してはならない。副作用とコストが重複する。
-- 再接続でフレームを再送してはならない。他のビューアが受信済みかもしれず、可視テキストが重複する。
-- 再接続のためにサーバーが全 delta をビューアごとに保持してはならない。状態が無界になる。
-- 同じ session の複数ビューアは、再送カーソルを共有せず同じテキストへ収束しなければならない。
+- 再接続はターンを再実行してはならない（副作用とコストの重複）。
+- 再接続はフレームを再生してはならない（他の視聴者が受信済みなら可視テキストが重複する）。
+- 再接続のためにサーバーが視聴者ごとの全差分を保持してはならない（無界の状態）。
+- 同じセッションの複数視聴者は、再生カーソルを共有せず同じテキストに収束しなければならない。
 
-答えはイベントログではなく、**時点スナップショットとシーケンス水位**である。
+答えは**ある時点のスナップショット + ターン単位のシーケンス水位**で、永続化履歴と同じ 1 回のリクエストで届けます。
 
-## 権威ある状態
+## 権威状態
 
-`StreamTurn` が実行中ターンの権威あるテキストを持つ。可視モデルテキストは think scrubber を通過した後 `self.ai_text` に追加され、reasoning は `_has_reasoning` で別に追跡される。ツール呼び出しは `ai_text` の一部ではなく、trajectory ledger に記録される。
+`StreamTurn` が実行中ターンの権威テキストを持ちます。think scrubber を通った可視モデルテキストは `self.ai_text` に追加され、推論は `_has_reasoning` で別管理されます。ツール呼び出しは `ai_text` に含まれず、trajectory ledger に記録されます。
 
-エンジンは `_run_frames` の開始時に `_ACTIVE_TURNS[session_id]` へ登録し、generator の `finally` で削除する。identity check により古いターンが新しいターンを消すことはない。turn runner/queue がターンを直列化するため、session ごとに活動中のターンは最大 1 つである。
+エンジンは `_run_frames` 開始時に `_ACTIVE_TURNS[session_id]` へ登録し、generator の `finally` で自分自身を削除します。識別チェックにより古いターンが新しいターンを削除できません。turn runner/queue がターンを直列化するため、1 セッションにつき最大 1 ターンがアクティブです。
 
-`active_turn_snapshot()` はそのエンジンから 3 つのフィールドを読む：
+`StreamTurn` は周囲の turn scope から `turn_id` を取得します。`active_turn_snapshot()` はエンジンから 4 フィールドを読みます：
 
 - `ai_text`：これまでに生成された可視テキスト；
-- `_has_reasoning`：reasoning チャネルが存在するか；
-- `_frame_seq`：これまでに付与された最大フレームシーケンス。
+- `_has_reasoning`：推論チャネルが存在するか；
+- `_frame_seq`：これまでに刻まれた最大フレームシーケンス；
+- `turn_id`：テキストが属するターンの識別子。
 
-この読み取りは stream generator と同じイベントループ上で走るため、テキストとシーケンス番号は一貫した 1 つのカットで読まれる。ロックは不要である。登録されたエンジンがなければ実行中ターンはなく、スナップショット関数は `None` を返す。
+読み取りはストリーム generator と同じイベントループで実行されるため、テキストとシーケンス番号は同じ一貫したカットで読まれ、ロックは不要です。エンジンが未登録なら実行中ターンはなく、スナップショット関数は `None` を返します。HTTP 履歴パスは表示用メタデータとして `turn_num`（次に永続化されるターン番号）を追加します。
 
-## フレーム順序と水位
+## フレームシーケンスと水位
 
-`StreamTurn.run()` が emit する各フレームには、yield 前にターンごとの単調な `_frame_seq` が付与される：
+`StreamTurn.run()` が出力する各フレームは yield 前にターン単位の単調 `_frame_seq` を刻まれます：
 
 ```text
-_run_frames() がフレームを生成
-  → run() が _frame_seq をインクリメント
+_run_frames() produces a frame
+  → run() increments _frame_seq
   → frame["seq"] = _frame_seq
-  → フレームがブロードキャストされる
+  → frame["turn_id"] = self.turn_id
+  → the frame is broadcast
 ```
 
-スナップショットは読み取り時の `_frame_seq` を運ぶ。この数値が水位である：
+`StreamDriver` も `turn_started`、`done`、`hitl_request`、`error`、`stopped` に `turn_id` を刻みます（chunk ループ外で構築されるフレーム）。したがって再接続クライアントは、ターン切り替えの後でも各フレームを所属ターンへルーティングできます。
 
-- `seq <= snapshot.seq` のフレームは、スナップショットのカットで既に `ai_text` に反映されている。
-- そのようなフレームは、再接続 socket へ向かう途中か、スナップショット応答後に届く可能性がある。
-- したがって復元したクライアントは水位以下の全フレームを破棄し、ターンの AI 行をスナップショットテキストで置き換える。
+水位は**ターン単位**です。スナップショットは読んだ時点の `seq` と `turn_id` を運び、フレームの `turn_id` が一致し `seq <= snapshot.seq` のときだけ破棄します。新しいターンは `seq = 1` から再開するため、他のターンの水位より数値が小さいだけで古いデータと誤認されることはありません。
 
-これは線形化の議論である。スナップショットはストリームを横切るカットであり、`seq` がそのカットを識別し、置換テキストがそのカットの状態である。クライアントはスナップショットがどの delta を含むかを知る必要がない。
+## 再接続時の 1 往復
+
+クライアントは再接続時に `resume_stream` を送りません。1 回の履歴リクエストを送ります：
+
+```text
+GET /get_history_by_turn_page?session_id=…&include_active_turn=1
+  → {messages: [...persisted rows...],
+     active_turn: {text, has_reasoning, seq, turn_id, turn_num} | null}
+```
+
+`include_active_turn=1` がなければエンドポイントは従来どおり行配列を返すため、既存呼び出しの契約は不変です。フラグ付きでは永続化履歴と実行中ターンのスナップショットが同時に届きます：切断中に完了したターンは `messages` に、実行中のターンは `active_turn` に入ります。
+
+WS handler `_handle_resume_stream` と `stream_resume` 応答は旧クライアント向けフォールバックとして残りますが、現行クライアントはそのフレームを送りません。
+
+## クライアントのスナップショットキュー
+
+履歴リクエストが飛行中、socket は受信した全 WS フレームを適用せず保持します（`holdFrames`、最大 1000 フレーム、超過時は最古を破棄）。応答が届いたら：
+
+1. 永続化メッセージをチャット一覧へマージ（切断中に完了したターンが即座に見える）；
+2. `active_turn` を所属ターンの行へ適用：行に `turn_id` があればそれ、なければ `turn_num`、どちらもなければ新しい AI 行を作成；
+3. socket がスナップショット水位（`seq` と `turn_id`）を記録；
+4. 保持フレームを到着順に解放。同じターンで `seq <= 水位` のフレームは破棄し、それ以外は自身の `turn_id` で通常適用。
+
+遅延・消失した応答で UI が固まることはありません：待機は 10 秒で上限。タイムアウト時は応答をチャットマージから除外し、水位なしでキューを解放し、socket の終端フレームまたは busy watchdog が収束させます。chunk をまだ受け取っていない送信は再開可能なので idle スナップショットで決済されず、chunk 受信済みの送信だけが切断中の終了として決済されます。
 
 ## 切断中のライフサイクル
 
-`_release_socket` は socket を登録解除し、pending tool arguments を掃除することがあるが、ターンを**キャンセルしない**。ターンタスクは完了まで `_active_tasks` に残り、`_ACTIVE_TURNS` は切断経路ではなく generator 自身の `finally` で削除される。したがって最後のビューアが去ってもターンは生き残る。
+`_release_socket` は socket を登録解除し保留中のツール引数を掃除できますが、ターンを**キャンセルしません**。ターンタスクは終了まで `_active_tasks` に残り、`_ACTIVE_TURNS` は切断経路ではなく generator 自身の `finally` で削除されます。最後の視聴者が離れてもターンは生存します。
 
-再接続時、クライアントは `_handle_resume_stream` を呼ぶ。ハンドラは活動中エンジンを読む：
+フレームはちょうど 1 回ブロードキャストされ再生されません。再接続クライアントはスナップショットで権威テキストを取得し、登録後に生成されたフレームだけを受け取ります——両者の組み合わせに欠落はなく、再生ログも不要です。
 
-- エンジンがある → `ok` とスナップショット；
-- エンジンはないが session に永続メッセージがある → `ended`（クライアントが履歴を再取得）；
-- エンジンも履歴もない → `gone`；
-- 読み取り失敗 → `unknown`。クライアントは古いテキストを黙って保持せず再取得する。
+## スナップショットが省略するもの
 
-応答は要求した socket にだけ送られる。他のビューアはライブフレームを受け続け、スナップショットはブロードキャストでも再送元でもない。
+- 推論差分：スナップショットは `has_reasoning` のみを報告し、推論本文は含みません。
+- インクリメンタルなツール入力 JSON と delta 単位の使用量テレメトリ。
+- ツール呼び出しカードのストリームイベント。確定済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で照会できます。
 
-## なぜ replay log がないのか
-
-replay log は全ターンの全 delta を保存し、ビューアごとに保持し、per-viewer カーソルを維持しなければならない。さらに保持ポリシー、バックプレッシャー、「配送済み」と「在途」を区別する手段が必要になる——同じ水位問題にログを付けただけである。
-
-スナップショット方式の状態は有界である：実行中ターンごとにテキストアキュムレータ 1 つとカウンタ 1 つ。また本質的に冪等である：クライアントが 1 フレーム見逃しても 1000 フレーム見逃しても、スナップショットで AI 行を置換した結果は同じ。再接続コストは O(現在のテキスト) であり、O(履歴) ではない。
-
-トレードオフは明示的である：スナップショットが復元するのは**可視テキストの末尾**であり、すべての中間イベントではない。
-
-## スナップショットが意図的に省略するもの
-
-- reasoning delta：スナップショットは `has_reasoning` を報告するだけで、reasoning テキストは含まない。
-- 増分 tool-input JSON と delta ごとの usage テレメトリ。
-- ストリームイベントとしてのツール呼び出しカード。コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できる。
-
-この分担は意図的である。テキストは永続記録から部分レンダリングを再構築できない唯一の状態であり、ツール呼び出しには既に永続台帳がある。そのストリームフレームを再送しても既存レコードを重複させるだけである。
+この分割は意図的です。テキストだけが、永続記録から部分レンダリングを再構築できない状態です。ツール呼び出しには既に永続 ledger があり、ストリームフレームを再生すると既存記録を重複させます。
 
 ## 失敗時の意味論
 
-- スナップショット後に到着した古いフレームは水位で破棄され、可視テキストを重複させない。
-- `unknown` と `ended` はどちらも履歴の再取得を導き、`gone` は何もしない。
-- スナップショット読み取りはストリームのイベントループ上で走るため一貫している。フレームは `ai_text` に含まれ水位以下であるか、より新しくフィルタを通過するかのどちらかである。
-- socket ごとの応答はマルチビューアの独立性を保つ。あるビューアの再接続が別のビューアのカーソルやストリームを変えることはない。
+- スナップショット後に届いた古いフレームはターン単位の水位で破棄され、可視テキストを重複させません。
+- 履歴応答の欠落・タイムアウト時は水位なしで保持フレームを解放し、従来どおり適用します。watchdog は最後の保険です。
+- 切断中に終了したターンは履歴行に現れます。スナップショットがアクティブターンなしを報告したとき、chunk 受信済みの送信は決済されます。chunk 未受信の送信は再送され（backend は `msg_id` で重複排除）、ターン開始まで pending を保ちます。
+- socket ごとのターゲティングにより、1 視聴者の再接続が他視聴者のカーソルやストリームを変えることはありません。
 
-## 否定された代替案
+## 却下した代替案
 
-- **再接続時にターンを再実行する。** ツールの副作用とトークン消費を重複させ、回答を変えうる。
-- **全 delta を再送する。** per-viewer 履歴、カーソル、保持が必要になり、`seq` 水位が解いた競合が再び現れる。
-- **ZCode の 7 イベントアンカープロトコル。** reasoning/tool-input のより細かい復元を提供するが、フロントエンドプロトコルと永続的な anchor/tail-discard パイプラインを要する。Sherry のスナップショットプロトコルはユーザーに見える復元目標をより少ない仕組みで満たす。細粒度イベント型は設計上実装しない。
+- **再接続時にターンを再実行する。** ツール副作用と token 消費を重複させ、回答を変え得ます。
+- **全差分を再生する。** 視聴者ごとの履歴・カーソル・保持が必要で、`seq` 水位が解く競合が再導入されます。
+- **ZCode の 7 イベントアンカープロトコル。** より細かい推論／ツール入力回復を与えますが、フロントエンドプロトコルと永続 anchor/tail-discard パイプラインが必要です。Sherry のスナップショットプロトコルはより少ない機構でユーザー可視の回復目標を満たし、細粒度イベント型は設計上未実装のままです。
 
 ## コードマップ
 
-- `server/service/stream_dispatch.py`: `StreamTurn`（`ai_text`、`_frame_seq`、`_ACTIVE_TURNS`）と `active_turn_snapshot`。
-- `server/trigger/ws/messages.py`: `_handle_resume_stream` と `_release_socket`。
-- `runtime/session/ws_push.py`: 正確に 1 回のブロードキャスト。replay log はない。
-- `client/app/composables/bridge/agent-socket.ts`: 切断検出と `resume_stream`。
-- `client/app/composables/bridge/agent-socket-frames.ts`: スナップショット `seq` 水位とフレームフィルタ。
-- `client/app/composables/use-chat-stream.ts`: スナップショット置換と履歴再取得。
-- `tests/server/test_stream_resume.py`、`client/app/composables/__tests__/agent-socket-resume.test.ts`: 上記の不変条件。
+- `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）と `active_turn_snapshot`。
+- `server/service/stream_driver.py`：driver が構築する全フレームに `turn_id`。
+- `server/trigger/http/messages.py`：`GET /get_history_by_turn_page` の `include_active_turn`。
+- `server/trigger/ws/messages.py`：旧 `_handle_resume_stream` 経路と `_release_socket`。
+- `runtime/session/ws_push.py`：ちょうど 1 回のブロードキャスト、再生ログなし。
+- `client/app/composables/messages.ts`：`get_history_page_with_active_turn`。
+- `client/app/composables/use-session-lifecycle.ts`：スナップショットを返す履歴マージ。
+- `client/app/composables/use-chat-stream.ts`：`syncHistory`、スナップショット適用、ターンルーティング。
+- `client/app/composables/bridge/agent-socket.ts`：フレーム保持／解放とスナップショット水位。
+- `client/app/composables/bridge/agent-socket-frames.ts`：ターン単位の水位フィルタ。
+- `tests/server/test_stream_resume.py`、`tests/server/service/test_stream_turn_id.py`、`tests/server/trigger/test_history_active_turn.py`、`client/app/composables/__tests__/agent-socket-resume.test.ts`：上記の不変条件。

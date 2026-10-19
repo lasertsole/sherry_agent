@@ -79,7 +79,9 @@ async def _run_stream(
     # Resume turns never pass through the queue executor, so this is their one
     # contextualize scope (a fresh turn_id: a resume is its own turn).
     with turn_scope(turn_id or uuid.uuid4().hex, session_id):
-        await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind).drive(source)
+        await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind, turn_id).drive(
+            source
+        )
 
 
 class _AgentWsStreamDriver(StreamDriver):
@@ -96,8 +98,9 @@ class _AgentWsStreamDriver(StreamDriver):
         websocket: WebSocketAdapter,
         claim_row_id: str | None,
         stream_kind: str,
+        turn_id: str = "",
     ) -> None:
-        super().__init__(session_id, websocket)
+        super().__init__(session_id, websocket, turn_id=turn_id)
         self.claim_row_id = claim_row_id
         self.stream_kind = stream_kind
 
