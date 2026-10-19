@@ -113,7 +113,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 ## 📂 Project Structure
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # Agent core logic
 │   ├── core.py             # Main agent loop (LangChain create_agent → LangGraph graph)
 │   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
@@ -343,7 +343,7 @@ Each major subsystem has its own detailed README:
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # creates .venv and installs the exact dependencies from uv.lock
 ```
 

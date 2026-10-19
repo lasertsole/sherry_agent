@@ -44,7 +44,7 @@ __all__ = ["FetchResult", "safe_fetch"]
 _DEFAULT_TIMEOUT_S = 30.0
 _MAX_REDIRECTS = 5
 _READ_CHUNK = 65536
-_USER_AGENT = "Mozilla/5.0 (EMA_AI_agent)"
+_USER_AGENT = "Mozilla/5.0 (sherry_agent)"
 _ACCEPTED_SCHEMES = frozenset({"http", "https"})
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 

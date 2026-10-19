@@ -112,7 +112,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 ## 📂 プロジェクト構成
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # エージェントコアロジック
 │   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
 │   ├── security/           # 秘匿化、PII、脅威パターン、信頼できない出力のラッピング
@@ -342,7 +342,7 @@ EMA_AI_agent/
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # .venv を作成し、uv.lock の依存関係を正確にインストール
 ```
 

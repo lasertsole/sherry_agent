@@ -112,7 +112,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 ## 📂 프로젝트 구조
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # 에이전트 코어 로직
 │   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
 │   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
@@ -342,7 +342,7 @@ EMA_AI_agent/
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 설치
 ```
 

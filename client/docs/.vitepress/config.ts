@@ -93,7 +93,7 @@ export default defineConfig({
       }
     ],
 
-    socialLinks: [{ icon: 'github', link: 'https://github.com/lasertsole/EMA_AI_agent' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/lasertsole/sherry_agent' }],
 
     search: {
       provider: 'local'

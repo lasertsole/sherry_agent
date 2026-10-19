@@ -69,7 +69,7 @@ NETWORK_SETTING_DEFAULTS: dict[str, Any] = {
     # LangSmith tracing
     "LANGSMITH_TRACING_V2": False,
     "LANGSMITH_API_KEY": "",
-    "LANGSMITH_PROJECT": "EMA_AI_agent",
+    "LANGSMITH_PROJECT": "sherry_agent",
 }
 
 NETWORK_SETTING_KEYS: tuple[str, ...] = tuple(NETWORK_SETTING_DEFAULTS)

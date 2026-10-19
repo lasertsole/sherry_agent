@@ -6,7 +6,7 @@
 
 ## ✨ Overview
 
-`multimodal_rag` is a built-in core skill of the [EMA AI Agent](https://github.com/your-repo/EMA_AI_agent) (see the [top-level README](../../../../README.md)). It provides a private, self-hosted RAG knowledge base:
+`multimodal_rag` is a built-in core skill of the [EMA AI Agent](https://github.com/your-repo/sherry_agent) (see the [top-level README](../../../../README.md)). It provides a private, self-hosted RAG knowledge base:
 
 - **Multimodal ingestion**: indexes documents of many formats (TXT / Markdown / PDF / and more) by any enabled parser.
 - **Knowledge graph**: builds entity–relationship graphs from your documents instead of flat vector chunks.

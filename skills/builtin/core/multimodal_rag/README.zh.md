@@ -6,7 +6,7 @@
 
 ## ✨ 简介
 
-`multimodal_rag` 是 [EMA AI Agent](https://github.com/your-repo/EMA_AI_agent)（见[项目根 README](../../../../README.md)）的内置核心技能。它提供一个私有、自托管的 RAG 知识库：
+`multimodal_rag` 是 [EMA AI Agent](https://github.com/your-repo/sherry_agent)（见[项目根 README](../../../../README.md)）的内置核心技能。它提供一个私有、自托管的 RAG 知识库：
 
 - **多模态摄取**：可摄取多种格式文档（TXT / Markdown / PDF 等），由启用的解析器处理。
 - **知识图谱**：基于你的文档构建实体–关系图谱，而非扁平向量分块。

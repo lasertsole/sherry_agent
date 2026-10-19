@@ -41,5 +41,5 @@
   // ── LangSmith 追踪 / tracing ─────────────────────────────────────────────
   "LANGSMITH_TRACING_V2": false,
   "LANGSMITH_API_KEY": "",
-  "LANGSMITH_PROJECT": "EMA_AI_agent"
+  "LANGSMITH_PROJECT": "sherry_agent"
 }

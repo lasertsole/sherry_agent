@@ -6,7 +6,7 @@
 
 ## ✨ 개요
 
-`multimodal_rag`는 [EMA AI Agent](https://github.com/your-repo/EMA_AI_agent)([최상위 README](../../../../README.md) 참조)의 내장 핵심 스킬입니다. 자체 호스팅되는 개인 RAG 지식 베이스를 제공합니다:
+`multimodal_rag`는 [EMA AI Agent](https://github.com/your-repo/sherry_agent)([최상위 README](../../../../README.md) 참조)의 내장 핵심 스킬입니다. 자체 호스팅되는 개인 RAG 지식 베이스를 제공합니다:
 
 - **멀티모달 수집**: 다양한 형식의 문서(TXT / Markdown / PDF 등)를 활성화된 파서로 인덱싱합니다.
 - **지식 그래프**: 플랫한 벡터 청크 대신 문서로부터 엔티티–관계 그래프를 구축합니다.

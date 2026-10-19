@@ -112,7 +112,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ## 📂 项目结构
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # Agent 核心逻辑
 │   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
 │   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
@@ -342,7 +342,7 @@ EMA_AI_agent/
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 ```
 
