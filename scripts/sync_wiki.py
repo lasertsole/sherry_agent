@@ -371,6 +371,18 @@ def generate(
 # ── Publishing ──────────────────────────────────────────────────────────────
 
 
+def current_branch() -> str:
+    """The checkout's branch (fallback ``main`` for a detached HEAD)."""
+    completed = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    name = completed.stdout.strip()
+    return name if completed.returncode == 0 and name and name != "HEAD" else "main"
+
+
 def detect_repo() -> str:
     """Resolve ``owner/repo`` from the checkout's origin remote."""
     completed = subprocess.run(
@@ -514,12 +526,15 @@ def publish(repo: str, *, branch: str = "main") -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default="", help="owner/repo (default: origin remote)")
-    parser.add_argument("--branch", default="main", help="repo branch for source links")
+    parser.add_argument(
+        "--branch", default="", help="repo branch for source links (default: current)"
+    )
     parser.add_argument("--output", type=Path, default=None, help="generate into this directory")
     parser.add_argument("--push", action="store_true", help="publish to the GitHub wiki")
     parser.add_argument("--check", action="store_true", help="report whether the wiki repo exists")
     args = parser.parse_args()
     repo = args.repo or detect_repo()
+    branch = args.branch or current_branch()
     if args.check:
         initialized, detail = wiki_initialized(repo)
         print("initialized" if initialized else "uninitialized")
@@ -527,9 +542,9 @@ def main() -> None:
             print(detail, file=sys.stderr)
         raise SystemExit(0 if initialized else 3)
     if args.push:
-        raise SystemExit(publish(repo, branch=args.branch))
+        raise SystemExit(publish(repo, branch=branch))
     output = args.output or (REPO_ROOT / "wiki")
-    count = generate(output, repo=repo, branch=args.branch)
+    count = generate(output, repo=repo, branch=branch)
     print(f"generated {count} wiki pages in {output}")
 
 
