@@ -96,6 +96,11 @@ graph is `2-13 ms` per query (BFS `2-5 ms`, beam `11-13 ms`), far inside the
 `500 ms` BFS and `2 s` beam targets. The beam found the 4- and 5-hop chains the
 3-hop BFS could not, which is why it ships enabled as a fallback.
 
+The single-hop RAGAS suite (`evals/results/graph_rag/20261019_233415`) kept
+faithfulness, context recall and context precision at `1.000`; its answer
+relevancy read `0.916`, against `0.963` and `0.934` in two pre-change runs —
+inside the run-to-run spread, with the correctness metrics unchanged.
+
 Verdict: better than the pre-change pipeline, so both GraphRAG plan documents
 were retired.
 

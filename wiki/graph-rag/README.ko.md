@@ -94,6 +94,11 @@ LightRAG 기본값은 거의 모든 후보를 통과시켰습니다: `TOP_K=40`,
 크게 밑돕니다. beam은 3홉 BFS가 찾지 못한 4·5홉 체인을 찾았기에 폴백으로
 기본 활성화되어 있습니다.
 
+단일 홉 RAGAS 스위트(`evals/results/graph_rag/20261019_233415`)는
+faithfulness, context recall, context precision을 `1.000`으로 유지했습니다.
+answer relevancy는 `0.916`였고 변경 전 두 번의 실행은 `0.963`과 `0.934`——
+실행 간 변동 범위 안이며 정확성 지표는 그대로입니다.
+
 결론: 변경 전 파이프라인보다 우수하므로 GraphRAG 계획 문서 두 개를 삭제했습니다.
 
 ## 테스트

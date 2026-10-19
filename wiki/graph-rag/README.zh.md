@@ -85,6 +85,10 @@ MiB）或一个支持稀疏的端点；两者都不适合桌面打包。因此�
 （BFS `2-5 ms`，beam `11-13 ms`），远低于 BFS `500 ms`、beam `2 s` 的目标。
 beam 找到了 3 跳 BFS 找不到的 4、5 跳链路，因此它作为兜底默认开启。
 
+单跳 RAGAS 套件（`evals/results/graph_rag/20261019_233415`）的 faithfulness、
+context recall 与 context precision 保持 `1.000`；answer relevancy 为 `0.916`，
+两次改前运行分别是 `0.963` 与 `0.934`——落在运行间波动范围内，正确性指标不变。
+
 结论：优于改动前的流水线，两份 GraphRAG 计划文档已删除。
 
 ## 测试
