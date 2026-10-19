@@ -179,6 +179,11 @@ def _run(
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates .env / .models / .network
 
+    # Bind the REAL build_main_tools before EvalSandbox patches it for child
+    # agents: agent.core imported it at module load, so this import must happen
+    # before sandbox.apply() or init() would see only the child-safe subset.
+    import agent.core  # noqa: F401
+
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(
             "[evals] swebench SKIPPED: MAIN_LLM_API_KEY is not configured "

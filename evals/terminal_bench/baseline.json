@@ -1,0 +1,12 @@
+{
+  "captured_run": null,
+  "threshold_resolve_rate": 0.0,
+  "model": {},
+  "aggregate": {
+    "note": "no measured run yet; Terminal-Bench needs Docker and a configured MAIN_LLM"
+  },
+  "tasks": [
+    "hello-world",
+    "fix-permissions"
+  ]
+}

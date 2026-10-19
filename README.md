@@ -186,7 +186,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # Opt-in login protection (account + session)
 │
-├── evals/                  # Evaluation framework (dispatcher + 7 suites)
+├── evals/                  # Evaluation framework (dispatcher + 9 suites)
 │   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # Sandbox that redirects repo writes during a run
 │   ├── graph_rag/          # RAGAS metrics for the graph-RAG pipeline
@@ -479,12 +479,14 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 | `nudge_extraction` | The plan-extraction pass, judged by an auxiliary LLM for grounded, reusable, non-generic skills |
 | `coding_capability` | The real main agent on a small self-designed coding task set, each task judged by its own repository's pytest run — a baseline, not an external benchmark |
 | `swebench` | External SWE-bench_Lite instances through the same harness (pinned base commit + per-instance venv + the instance's own FAIL_TO_PASS / PASS_TO_PASS verdict; the agent sees the problem statement only) |
+| `deepswe` | External DeepSWE tasks in the benchmark's own Docker image: the agent edits a bind-mounted checkout, `terminal` runs in the container, and the task's separate verifier image grades the agent's diff (gold patch checked first) |
+| `terminal_bench` | External Terminal-Bench tasks: the task image is built, the agent works inside it, and its own `run-tests.sh` pytest verdict judges the run (oracle checked first; multi-service tasks are reported unsupported) |
 
 Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
 
-`coding_capability` and `swebench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
+`deepswe` and `terminal_bench` are container-backed and need a working Docker daemon; without one they SKIP loudly and exit non-zero (a skipped suite is not a pass). Their task trees are cloned into `~/.cache/sherry_evals` (override with `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR`), never inside the repository; `--dry-run` validates a task selection without Docker.
 
-`coding_capability` additionally keeps a version-controlled baseline (`evals/coding_capability/baseline.json`), points the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exits non-zero when it drops below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
+`coding_capability`, `swebench`, `deepswe` and `terminal_bench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
 
 ---
 

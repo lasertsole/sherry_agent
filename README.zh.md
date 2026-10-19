@@ -185,7 +185,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │
-├── evals/                  # 评估框架（dispatcher + 7 个套件）
+├── evals/                  # 评估框架（dispatcher + 9 个套件）
 │   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
 │   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
@@ -478,10 +478,14 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
 | `coding_capability` | 真实主 agent 在一小批自设计编码任务上的表现，每道题由该任务仓库自己的 pytest 运行判定——是基线，不是外部基准 |
 | `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
+| `deepswe` | 外部 DeepSWE 任务，在基准自己的 Docker 镜像中运行：agent 编辑绑定挂载的 checkout，`terminal` 在容器内执行，任务独立的 verifier 镜像对 agent 的 diff 判分（先跑 gold patch 自检） |
+| `terminal_bench` | 外部 Terminal-Bench 任务：构建任务镜像，agent 在容器内工作，由任务自己的 `run-tests.sh` pytest 判定（先跑 oracle 自检；多服务任务会明确标为不支持） |
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
 
-`coding_capability` 与 `swebench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
+`deepswe` 与 `terminal_bench` 依赖可用的 Docker daemon；缺失时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树克隆到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker 时校验任务选择。
+
+`coding_capability`、`swebench`、`deepswe` 与 `terminal_bench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
 
 ---
 

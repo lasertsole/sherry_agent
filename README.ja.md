@@ -185,7 +185,7 @@ EMA_AI_agent/
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
-├── evals/                  # 評価フレームワーク（dispatcher + 7 スイート）
+├── evals/                  # 評価フレームワーク（dispatcher + 9 スイート）
 │   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
 │   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
@@ -478,10 +478,14 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
 | `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
 | `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
+| `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |
+| `terminal_bench` | 外部 Terminal-Bench タスク：タスクイメージをビルドし、agent がコンテナ内で作業し、タスク自身の `run-tests.sh` の pytest 判定で評価（先に oracle を自己検査。マルチサービス構成のタスクは非対応と明示） |
 
 すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。
 
-`coding_capability` と `swebench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
+`deepswe` と `terminal_bench` はコンテナベースで、動作する Docker daemon が必要です。無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーは `~/.cache/sherry_evals` に clone し（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` で上書き可能）、リポジトリ内には置きません。Docker なしで選択を検証するには `--dry-run` を使います。
+
+`coding_capability`、`swebench`、`deepswe`、`terminal_bench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
 
 ---
 
