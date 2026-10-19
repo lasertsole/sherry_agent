@@ -1,7 +1,7 @@
 <template>
   <!-- Floating progress read-out: top-right of the chat list, collapsed to a pill
        by default. ONE plan from two pushed payloads (the todo rows and the
-       taskflow waves over the WebSocket), so it needs no polling and no
+       taskflow step lists over the WebSocket), so it needs no polling and no
        navigation. It is PERMANENT — it stays on screen with no plan at all (the
        panel then shows the empty state), so the control never disappears. -->
   <div
@@ -28,10 +28,10 @@
         >{{ summaryText }}</span
       >
       <span
-        v-if="store.totals.waves > 0"
+        v-if="store.totals.total > 0"
         class="text-[11px] text-gray-500 dark:text-gray-400"
-        data-test="progress-float-waves">
-        {{ waveChipLabel }}
+        data-test="progress-float-steps">
+        {{ doneChipLabel }}
       </span>
       <i
         :class="['pi text-[10px] text-gray-400', expanded ? 'pi-chevron-up' : 'pi-chevron-down']"
@@ -45,7 +45,7 @@
       <!-- ONE box for ONE plan. The checklist rows and the TaskFlow steps are the
            same running plan (the backend's plan gate reads todos ∪ open flows), so
            they share a single header and a single list: a todo that mirrors a
-           rendered step is filtered out and appears once, inside its wave. -->
+           rendered step is filtered out and appears once, inside its flow. -->
       <header
         v-if="hasPlan"
         class="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
@@ -83,7 +83,7 @@
         </li>
       </ul>
 
-      <!-- TaskFlow flows: one caption per flow, then its waves and steps -->
+      <!-- TaskFlow flows: one caption per flow, then its flat step list -->
       <section
         v-for="(flow, flowIndex) in store.flows"
         :key="flow.flow_id"
@@ -101,52 +101,25 @@
           </span>
           <span class="shrink-0">{{ t('progressFloat.counts', { done: flow.done, total: flow.total }) }}</span>
         </header>
-        <div
-          v-for="wave in flow.waves"
-          :key="wave.index"
-          class="mb-1.5 last:mb-0"
-          data-test="progress-wave">
-          <div class="flex items-center justify-between gap-2 text-[10px] text-gray-500 dark:text-gray-400">
-            <span class="flex items-center gap-1">
-              {{ t('progressFloat.waveLabel', { index: wave.index }) }}
-              <span
-                v-if="store.started && wave.index === flow.current_wave"
-                class="rounded bg-theme-main/10 px-1 text-[9px] text-theme-main"
-                data-test="progress-wave-current">
-                {{ t('progressFloat.current') }}
-              </span>
-              <span
-                v-if="wave.cyclic"
-                class="rounded bg-amber-100 px-1 text-[9px] text-amber-600 dark:bg-amber-900/30 dark:text-amber-400"
-                data-test="progress-wave-cyclic">
-                {{ t('progressFloat.cyclic') }}
-              </span>
+        <ul
+          class="m-0 mt-1 flex list-none flex-col gap-0.5 p-0"
+          data-test="progress-flow-steps">
+          <li
+            v-for="step in flow.steps"
+            :key="step.step_id"
+            class="flex items-start gap-1.5"
+            data-test="progress-step">
+            <i
+              :class="['pi mt-0.5 text-[10px]', todoIcon(step.status)]"
+              :title="t(`progressFloat.status.${step.status}`)"
+              aria-hidden="true"></i>
+            <span
+              :class="['min-w-0 flex-1 truncate', isTerminal(step.status) ? 'text-gray-400 dark:text-gray-500' : '']">
+              {{ step.task }}
             </span>
-            <span>{{ wave.done }}/{{ wave.total }}</span>
-          </div>
-          <div class="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-            <div
-              class="h-full rounded-full bg-emerald-500 transition-all"
-              :style="{ width: `${wavePercent(wave)}%` }"></div>
-          </div>
-          <ul class="m-0 mt-1 flex list-none flex-col gap-0.5 p-0">
-            <li
-              v-for="step in wave.steps"
-              :key="step.step_id"
-              class="flex items-start gap-1.5"
-              data-test="progress-step">
-              <i
-                :class="['pi mt-0.5 text-[10px]', todoIcon(step.status)]"
-                :title="t(`progressFloat.status.${step.status}`)"
-                aria-hidden="true"></i>
-              <span
-                :class="['min-w-0 flex-1 truncate', isTerminal(step.status) ? 'text-gray-400 dark:text-gray-500' : '']">
-                {{ step.task }}
-              </span>
-              <span class="shrink-0 text-[10px] text-gray-400">{{ step.step_id }}</span>
-            </li>
-          </ul>
-        </div>
+            <span class="shrink-0 text-[10px] text-gray-400">{{ step.step_id }}</span>
+          </li>
+        </ul>
       </section>
 
       <!-- No plan: the panel says so instead of opening as a bare box -->
@@ -164,11 +137,10 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTaskflowStore } from '~/stores/taskflow';
-import type { FlowWave } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
 
 const { t } = useI18n();
-/** Wave/step progress (taskflow payloads). */
+/** Flow/step progress (taskflow payloads). */
 const store = useTaskflowStore();
 store.subscribe();
 /** The checklist half of the same plan — its own pushed payload. */
@@ -192,16 +164,14 @@ const hasPlan = computed(() => store.hasProgress || todoStore.todos.length > 0);
 const renderedSteps = computed(() => {
   const keys = new Set<string>();
   for (const flow of store.flows) {
-    for (const wave of flow.waves) {
-      for (const step of wave.steps) keys.add(`${flow.flow_id}:${step.step_id}`);
-    }
+    for (const step of flow.steps) keys.add(`${flow.flow_id}:${step.step_id}`);
   }
   return keys;
 });
 
 /**
  * Checklist rows shown on their own: todos that are NOT a rendered flow step
- * (a linked todo would otherwise appear twice — once here, once in its wave).
+ * (a linked todo would otherwise appear twice — once here, once in its flow).
  */
 const planTodos = computed(() =>
   todoStore.todos.filter(
@@ -219,25 +189,16 @@ const planTotal = computed(() => planTodos.value.length + store.totals.total);
 /** Aggregate line inside the pill — the same numbers as the expanded header. */
 const summaryText = computed(() => t('progressFloat.summary', { done: planDone.value, total: planTotal.value }));
 
-/** "wave X of Y" for the pill: X = the first wave with open work. */
 /**
- * The pill's wave chip, in three honest states instead of one misleading number:
+ * The pill's step chip, in two honest states:
  *
  * - nothing started yet (every step merely ``ready``) → "not started": a board
- *   nobody has begun must not read as "wave 1/1" (it looks like work in flight);
- * - work under way → "wave X of Y" (X = the first wave with open work);
- * - every step settled while the flow is still open → "needs closing" (the plan
- *   gate asks the agent to close it; a wave number would be a lie until then).
+ *   nobody has begun must not read as progress;
+ * - work under way → "X / Y done" from the flat step totals.
  */
-const waveChipLabel = computed(() => {
+const doneChipLabel = computed(() => {
   if (!store.started) return t('progressFloat.notStarted');
-  if (store.totals.current_wave > 0) {
-    return t('progressFloat.waveSummary', {
-      current: store.totals.current_wave,
-      total: store.totals.waves
-    });
-  }
-  return t('progressFloat.needsClosing');
+  return t('progressFloat.doneSummary', { done: store.totals.done, total: store.totals.total });
 });
 
 /**
@@ -277,14 +238,5 @@ function todoIcon(status: string): string {
     default:
       return 'pi-circle text-gray-400';
   }
-}
-
-/**
- * Percentage of finished steps in one wave.
- * @param wave
- * @returns 0–100, rounded; 0 for a wave with no steps.
- */
-function wavePercent(wave: FlowWave): number {
-  return wave.total > 0 ? Math.round((wave.done / wave.total) * 100) : 0;
 }
 </script>

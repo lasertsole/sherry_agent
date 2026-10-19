@@ -48,7 +48,7 @@ from agent.tools.pub_base import (
     revision_id,
     safe_error_detail,
 )
-from agent.tools.todolist.evidence_recorder import invalidates_evidence
+from agent.tools.pub_base.evidence_recorder import invalidates_evidence
 
 
 # ── Diff helper ──────────────────────────────────────────────────────────

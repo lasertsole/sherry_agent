@@ -48,7 +48,7 @@ from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
-from agent.tools.todolist.evidence_recorder import record_verification_evidence
+from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 
 #: Injected calling session (see terminal.SessionId for why the runnable-config
 #: fallback is never enough in production).

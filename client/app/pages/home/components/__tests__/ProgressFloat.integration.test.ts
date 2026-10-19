@@ -21,29 +21,14 @@ function makeFlow(overrides: Partial<FlowProgress> = {}): FlowProgress {
   return {
     flow_id: 'flow-1',
     status: 'running',
-    description: '两波任务流',
+    description: '两段任务流',
     total: 3,
     done: 2,
-    current_wave: 2,
     by_status: { done: 2, ready: 1 },
-    waves: [
-      {
-        index: 1,
-        total: 2,
-        done: 2,
-        by_status: { done: 2 },
-        steps: [
-          { step_id: 'a', task: '第一波任务 A', status: 'done' },
-          { step_id: 'b', task: '第一波任务 B', status: 'done' }
-        ]
-      },
-      {
-        index: 2,
-        total: 1,
-        done: 0,
-        by_status: { ready: 1 },
-        steps: [{ step_id: 'c', task: '第二波任务 C', status: 'ready' }]
-      }
+    steps: [
+      { step_id: 'a', task: '第一段任务 A', status: 'done' },
+      { step_id: 'b', task: '第一段任务 B', status: 'done' },
+      { step_id: 'c', task: '第二段任务 C', status: 'ready' }
     ],
     ...overrides
   };
@@ -58,9 +43,7 @@ function taskflowFrame(flows: FlowProgress[]) {
       totals: {
         flows: flows.length,
         total: flows.reduce((sum, f) => sum + f.total, 0),
-        done: flows.reduce((sum, f) => sum + f.done, 0),
-        current_wave: flows[0]?.current_wave ?? 0,
-        waves: flows.reduce((sum, f) => sum + f.waves.length, 0)
+        done: flows.reduce((sum, f) => sum + f.done, 0)
       }
     }
   };
@@ -109,8 +92,8 @@ describe('ProgressFloat', () => {
 
     expect(wrapper.find('[data-test="progress-float"]').exists()).toBe(true);
     expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('0/0');
-    // No wave chip without waves — an idle pill must not read "wave 0/0".
-    expect(wrapper.find('[data-test="progress-float-waves"]').exists()).toBe(false);
+    // No step chip without steps — an idle pill must not read "0/0 done".
+    expect(wrapper.find('[data-test="progress-float-steps"]').exists()).toBe(false);
 
     await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
     await flushPromises();
@@ -172,10 +155,10 @@ describe('ProgressFloat', () => {
     expect(wrapper.find('[data-test="progress-float"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="progress-float-panel"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('2/3');
-    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('2/2');
+    expect(wrapper.get('[data-test="progress-float-steps"]').text()).toContain('已完成 2/3');
   });
 
-  it('expands on click into ONE box: checklist rows and waves under a single header', async () => {
+  it('expands on click into ONE box: checklist rows and steps under a single header', async () => {
     const wrapper = await mountFloat();
     handlers().taskflow!(taskflowFrame([makeFlow()]));
     handlers().todo!(todoFrame());
@@ -192,12 +175,11 @@ describe('ProgressFloat', () => {
     expect(panel.get('[data-test="progress-float-todos"]').text()).toContain('跑测试');
     expect(panel.findAll('[data-test="progress-todo"]')).toHaveLength(2);
     expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(1);
-    expect(panel.findAll('[data-test="progress-wave"]')).toHaveLength(2);
     expect(panel.findAll('[data-test="progress-step"]')).toHaveLength(3);
-    expect(panel.text()).toContain('第二波任务 C');
+    expect(panel.text()).toContain('第二段任务 C');
   });
 
-  it('shows a flow-linked todo once — inside its wave, never as a second row', async () => {
+  it('shows a flow-linked todo once — inside its flow, never as a second row', async () => {
     // The agent may mirror a TaskFlow step into the checklist (`flow_id` +
     // `step_id`). Both halves are the same plan item, so the box must not list
     // it twice ("任务计划 和 计划清单不是一个东西吗").
@@ -208,7 +190,7 @@ describe('ProgressFloat', () => {
       session_id: 'sid-1',
       content: {
         todos: [
-          { content: '第二波任务 C', status: 'in_progress', priority: 'high', flow_id: 'flow-1', step_id: 'c' },
+          { content: '第二段任务 C', status: 'in_progress', priority: 'high', flow_id: 'flow-1', step_id: 'c' },
           { content: '独立的清单项', status: 'pending', priority: 'medium' }
         ]
       }
@@ -222,7 +204,7 @@ describe('ProgressFloat', () => {
     // Only the unlinked checklist row renders as a checklist row.
     expect(panel.findAll('[data-test="progress-todo"]')).toHaveLength(1);
     expect(panel.get('[data-test="progress-float-todos"]').text()).toContain('独立的清单项');
-    // The mirrored step still appears once, inside its wave.
+    // The mirrored step still appears once, inside its flow.
     expect(panel.findAll('[data-test="progress-step"]')).toHaveLength(3);
     // And it is counted once: 2 flow steps done + 1 unlinked todo out of 3 + 1.
     expect(panel.get('[data-test="progress-float-header"]').text()).toContain('2/4');
@@ -255,27 +237,18 @@ describe('ProgressFloat', () => {
   });
 
   it('says "not started" while every step is merely ready', async () => {
-    // A board nobody has begun must not read as "wave 1/1": that number belongs
-    // to work in flight, and the user read it as exactly that.
+    // A board nobody has begun must not read as progress: the chip only switches
+    // to a done count once a step finished or a child is dispatched.
     const wrapper = await mountFloat();
     handlers().taskflow!(
       taskflowFrame([
         makeFlow({
           done: 0,
-          current_wave: 1,
           by_status: { ready: 3 },
-          waves: [
-            {
-              index: 1,
-              total: 3,
-              done: 0,
-              by_status: { ready: 3 },
-              steps: [
-                { step_id: 'a', task: 'A', status: 'ready' },
-                { step_id: 'b', task: 'B', status: 'ready' },
-                { step_id: 'c', task: 'C', status: 'ready' }
-              ]
-            }
+          steps: [
+            { step_id: 'a', task: 'A', status: 'ready' },
+            { step_id: 'b', task: 'B', status: 'ready' },
+            { step_id: 'c', task: 'C', status: 'ready' }
           ],
           total: 3
         })
@@ -284,105 +257,46 @@ describe('ProgressFloat', () => {
     await flushPromises();
 
     expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('0/3');
-    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('未开始');
-
-    // …and the panel carries no "current wave" tag either.
-    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
-    await flushPromises();
-    expect(wrapper.find('[data-test="progress-wave-current"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="progress-float-steps"]').text()).toContain('未开始');
   });
 
-  it('reports the wave once work is under way, and closure once every step settled', async () => {
+  it('reports done counts once work is under way', async () => {
     const wrapper = await mountFloat();
-    // A dispatched step = a child agent is on it → the wave position is real.
+    // A dispatched step = a child agent is on it → the count is real progress.
     handlers().taskflow!(
       taskflowFrame([
         makeFlow({
-          done: 0,
-          current_wave: 2,
+          done: 2,
           by_status: { done: 2, dispatched: 1 },
-          total: 3,
-          waves: [
-            makeFlow().waves[0]!,
-            {
-              index: 2,
-              total: 1,
-              done: 0,
-              by_status: { dispatched: 1 },
-              steps: [{ step_id: 'c', task: 'C', status: 'dispatched' }]
-            }
-          ]
+          steps: [
+            { step_id: 'a', task: 'A', status: 'done' },
+            { step_id: 'b', task: 'B', status: 'done' },
+            { step_id: 'c', task: 'C', status: 'dispatched' }
+          ],
+          total: 3
         })
       ])
     );
     await flushPromises();
-    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('2/2');
+    expect(wrapper.get('[data-test="progress-float-steps"]').text()).toContain('已完成 2/3');
 
-    // Every step settled but the flow still open → the number would be a lie.
+    // Every step settled → the same chip reports the final count.
     handlers().taskflow!(
       taskflowFrame([
         makeFlow({
           done: 3,
-          current_wave: 0,
-          total: 3,
-          waves: [
-            makeFlow().waves[0]!,
-            {
-              index: 2,
-              total: 1,
-              done: 1,
-              by_status: { done: 1 },
-              steps: [{ step_id: 'c', task: 'C', status: 'done' }]
-            }
-          ]
-        })
-      ])
-    );
-    await flushPromises();
-    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('待收口');
-  });
-
-  it('marks the first wave with open work as the current one', async () => {
-    const wrapper = await mountFloat();
-    handlers().taskflow!(taskflowFrame([makeFlow()]));
-    await flushPromises();
-    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
-    await flushPromises();
-
-    const waves = wrapper.findAll('[data-test="progress-wave"]');
-    expect(waves[0]!.find('[data-test="progress-wave-current"]').exists()).toBe(false);
-    expect(waves[1]!.find('[data-test="progress-wave-current"]').exists()).toBe(true);
-  });
-
-  it('flags a cyclic trailing wave', async () => {
-    const wrapper = await mountFloat();
-    handlers().taskflow!(
-      taskflowFrame([
-        makeFlow({
-          waves: [
-            {
-              index: 1,
-              total: 2,
-              done: 0,
-              by_status: { ready: 2 },
-              steps: [
-                { step_id: 'a', task: 'A', status: 'ready' },
-                { step_id: 'b', task: 'B', status: 'ready' }
-              ],
-              cyclic: true
-            }
+          by_status: { done: 3 },
+          steps: [
+            { step_id: 'a', task: 'A', status: 'done' },
+            { step_id: 'b', task: 'B', status: 'done' },
+            { step_id: 'c', task: 'C', status: 'done' }
           ],
-          total: 2,
-          done: 0,
-          current_wave: 1
+          total: 3
         })
       ])
     );
     await flushPromises();
-    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
-    await flushPromises();
-
-    expect(wrapper.find('[data-test="progress-wave-cyclic"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="progress-float-steps"]').text()).toContain('已完成 3/3');
   });
 
   it('re-renders from a later push without remounting (live updates)', async () => {
@@ -391,22 +305,18 @@ describe('ProgressFloat', () => {
     await flushPromises();
     expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('2/3');
 
-    // The last wave finishes: done 3/3, current_wave 0 (nothing left).
+    // The last step finishes: done 3/3.
     handlers().taskflow!(
       taskflowFrame([
         makeFlow({
           done: 3,
-          current_wave: 0,
-          waves: [
-            makeFlow().waves[0]!,
-            {
-              index: 2,
-              total: 1,
-              done: 1,
-              by_status: { done: 1 },
-              steps: [{ step_id: 'c', task: '第二波任务 C', status: 'done' }]
-            }
-          ]
+          by_status: { done: 3 },
+          steps: [
+            { step_id: 'a', task: '第一段任务 A', status: 'done' },
+            { step_id: 'b', task: '第一段任务 B', status: 'done' },
+            { step_id: 'c', task: '第二段任务 C', status: 'done' }
+          ],
+          total: 3
         })
       ])
     );
@@ -415,7 +325,7 @@ describe('ProgressFloat', () => {
     expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('3/3');
     await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
     await flushPromises();
-    expect(wrapper.find('[data-test="progress-wave-current"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-test="progress-step"]')).toHaveLength(3);
   });
 
   it('shows only the checklist when no flow is tracked', async () => {

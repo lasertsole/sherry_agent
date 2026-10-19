@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` は検証監査トレイルを支える append-only の JSONL ストア（`src/data/evidence-ledger.jsonl`）です：`append` + `read_all` がストレージ契約のすべてで、セッションスコープのビューは同じ共有ファイルを読みます。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
+`agent/tools/pub_base/evidence_ledger.py` は検証監査トレイルを支える append-only の JSONL ストア（`src/data/evidence-ledger.jsonl`）です：`append` + `read_all` がストレージ契約のすべてで、セッションスコープのビューは同じ共有ファイルを読みます。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
 
 ### WS プッシュ
 

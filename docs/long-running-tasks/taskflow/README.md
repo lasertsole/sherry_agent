@@ -388,17 +388,16 @@ Flow-scoped: only polls child sessions recorded on THIS flow's dispatched steps.
 
 ---
 
-### Waves & live progress
+### Live progress
 
-Steps are reported as **waves**: one longest-path level of the dependency graph
-(`agent/tools/taskflow/waves.py`), so a wave is exactly the set of steps that can
-run once the previous wave finished. Waves are a reporting view — the scheduler
-still unlocks each step on its own dependencies. A dependency that is not in the
-step list is ignored, and a dependency cycle is reported in a trailing wave
-flagged `cyclic` instead of looping.
+Steps are reported as a **flat list per flow** (`agent/tools/taskflow/progress_push.py`):
+each row carries the step id, the task text and its status, plus per-status
+totals. The scheduler unlocks each step on its own dependencies; there is no
+wave/round projection, so the payload never implies a barrier between groups of
+steps.
 
 The chat's floating progress panel (top-right, collapsed to a pill by default)
-renders those waves plus the session's todo list. Both halves arrive over the
+renders that step list plus the session's todo list. Both halves arrive over the
 WebSocket: every flow mutation pushes `taskflow_updated` with the same payload the
 `taskflow_refresh` request answers with, so a reconnecting client recovers the
 board with one frame. Nothing is polled.

@@ -524,15 +524,11 @@
     },
     "collapse": "Hide plan progress",
     "counts": "{done}/{total}",
-    "current": "current",
-    "cyclic": "cyclic deps",
+    "doneSummary": "{done} / {total} done",
     "empty": "No tasks in progress",
     "expand": "Show plan progress",
-    "needsClosing": "Needs closing",
     "notStarted": "Not started",
-    "summary": "Plan {done}/{total}",
-    "waveLabel": "Wave {index}",
-    "waveSummary": "Wave {current}/{total}"
+    "summary": "Plan {done}/{total}"
   },
   "projectFiles": {
     "title": "Files",

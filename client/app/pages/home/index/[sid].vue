@@ -453,7 +453,7 @@ const mySid = String(route.params.sid ?? '');
 
 const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
-/** TaskFlow wave progress for the floating panel (same init contract). */
+/** TaskFlow step progress for the floating panel (same init contract). */
 const taskflowStore = useTaskflowStore();
 const rightSidebarStore = useRightSidebarStore();
 /** Mandatory new-session preset dialog (owned by the shell). */
@@ -509,7 +509,7 @@ onActivated(() => {
   if (mySid) restorePendingHitl(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
   if (mySid) todoStore.init(mySid);
-  // Same pull for the TaskFlow wave board that feeds the floating progress panel.
+  // Same pull for the TaskFlow board that feeds the floating progress panel.
   if (mySid) taskflowStore.init(mySid);
 });
 onDeactivated(() => {

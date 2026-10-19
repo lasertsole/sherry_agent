@@ -6,7 +6,7 @@
 
 The evidence ledger answers one question at every completion boundary: **"Did the agent verify its work, and is that verification still valid?"** It does this without storing a staleness flag — the trail is append-only, and freshness is computed on the read side from the ordering of verification rows and file-edit events.
 
-**Source of truth:** `agent/tools/todolist/evidence_ledger.py` (storage), `agent/tools/todolist/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy).
+**Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy).
 
 ---
 

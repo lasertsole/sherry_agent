@@ -401,8 +401,8 @@ async def test_open_flow_without_todos_still_gates_the_turn(
     assert "TaskFlow board (open flows)" in content
     assert "flow-1 [running]" in content
     assert "1/3 steps done" in content
-    assert "step-2 [dispatched]" in content
-    assert "wave 1" in content and "wave 2" in content
+    assert "step step-1 (done): task-step-1" in content
+    assert "step step-2 (dispatched): task-step-2" in content
     # The board's next actions are spelled out, not left to guesswork.
     assert "taskflow_wait_all" in content
     assert "taskflow_finish" in content
@@ -455,7 +455,7 @@ async def test_todos_and_flows_share_one_directive(
     # One directive carries both surfaces: the todo list AND the board.
     assert "write the design doc" in content
     assert "flow-1 [running]" in content
-    assert "step-1 [ready]" in content
+    assert "step step-1 (ready): task-step-1" in content
     assert "1 remaining" in content
 
 
@@ -470,9 +470,9 @@ async def test_a_long_flow_is_clipped_in_the_directive(
     await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
     content = spy_auto_turn[0][1].content
-    assert "step-20 [ready]" in content
-    assert "step-21 [ready]" not in content
-    assert "+5 more" in content
+    assert "step step-20 (ready): task-step-20" in content
+    assert "step step-21 (ready)" not in content
+    assert "+5 more steps" in content
 
 
 @pytest.mark.asyncio

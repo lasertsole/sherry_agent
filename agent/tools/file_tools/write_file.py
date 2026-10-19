@@ -52,7 +52,7 @@ from agent.tools.pub_base import (
     safe_error_detail,
     sniff_text_encoding,
 )
-from agent.tools.todolist.evidence_recorder import invalidates_evidence
+from agent.tools.pub_base.evidence_recorder import invalidates_evidence
 
 
 class FormattedWriteFileInput(BaseModel):

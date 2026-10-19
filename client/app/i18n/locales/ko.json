@@ -524,15 +524,11 @@
     },
     "collapse": "계획 진행률 숨기기",
     "counts": "{done}/{total}",
-    "current": "진행 중",
-    "cyclic": "순환 의존",
+    "doneSummary": "{done} / {total} 완료",
     "empty": "진행 중인 작업이 없습니다",
     "expand": "계획 진행률 보기",
-    "needsClosing": "마무리 필요",
     "notStarted": "시작 전",
-    "summary": "계획 {done}/{total}",
-    "waveLabel": "{index}번째 웨이브",
-    "waveSummary": "웨이브 {current}/{total}"
+    "summary": "계획 {done}/{total}"
   },
   "projectFiles": {
     "title": "파일 트리",

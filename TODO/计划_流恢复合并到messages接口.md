@@ -2,7 +2,7 @@
 
 > **状态**：提案
 > **范围**：客户端重连/连接协议改造，合并 `resume_stream` 与 `loadSessionHistory`；扩展 `active_turn_snapshot` 和流式帧携带 `turn_id`
-> **前置条件**：无（独立于 `计划_agent工具层清理.md` 的 Plan A/B）
+> **前置条件**：无（独立于已落地的 agent 工具层清理 Plan A/B）
 > **风险等级**：中-高 —— 涉及流式协议层改动，影响所有重连路径
 
 ## 1. 设计问题
@@ -401,8 +401,6 @@ grep -rn "resume_stream" client/app/   # 期望：零命中（除了类型定义
 - [ ] 重连场景 e2e：用户排队多消息 + 断线重连，所有消息完整显示，无错乱
 - [ ] 重连场景 e2e：服务端自动续跑期间用户断线重连，自动续跑的内容正确显示
 
-## 12. 与 `计划_agent工具层清理.md` 的关系
+## 12. 与已落地的 agent 工具层清理的关系
 
-完全独立。`Plan A`（evidence-ledger 抽出）和 `Plan B`（wave 削减）都是 agent/tools 工程清理，跟流恢复协议无关。本计划（Plan C）是 client/server 协议层改动，可以前后任意顺序跑，互不影响。
-
-如果一定要排顺序：建议先做 Plan B（wave 削减会让 `taskflow_updated` payload 简化），再做 Plan C（流恢复重写时不用考虑 wave 字段）；但这个顺序约束很弱，不强制。
+agent 工具层清理的 Plan A（evidence-ledger 抽出到 `pub_base/`）与 Plan B（删除 wave 投影、`taskflow_updated` 改为扁平步骤列表）均已落地，其计划文档已删除。本计划（Plan C）是 client/server 协议层改动，与它们完全独立；前后顺序不影响。

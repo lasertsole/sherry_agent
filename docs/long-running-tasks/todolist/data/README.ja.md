@@ -68,7 +68,7 @@
 
 ### エビデンス台帳 (src/data/evidence-ledger.jsonl)
 
-1 行 1 JSON オブジェクト：共有の追記専用検証監査トレイルです。書き込み側は `agent/tools/todolist/evidence_recorder.py`、読み取り側は `agent/tools/taskflow/evidence_collector.py` で、書き込み側・行スキーマ・導出される古さのルール・要約形式・これを消費するゲートは[エビデンス台帳](../../gates/evidence-ledger/README.ja.md)にまとめています。
+1 行 1 JSON オブジェクト：共有の追記専用検証監査トレイルです。書き込み側は `agent/tools/pub_base/evidence_recorder.py`、読み取り側は `agent/tools/taskflow/evidence_collector.py` で、書き込み側・行スキーマ・導出される古さのルール・要約形式・これを消費するゲートは[エビデンス台帳](../../gates/evidence-ledger/README.ja.md)にまとめています。
 
 ### todos.db — セッションレベル TODO ストレージ
 

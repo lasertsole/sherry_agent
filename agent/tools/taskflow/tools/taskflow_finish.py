@@ -133,7 +133,7 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     The flow's evidence is the AGGREGATE over the sessions that did its work:
     every dispatched step's ``child_session_key`` plus the flow's creator
     (evidence rows carry a session key, never a flow id — see
-    ``todolist/evidence_ledger.py``). A flow that never dispatched a step has
+    ``pub_base/evidence_ledger.py``). A flow that never dispatched a step has
     no keys and therefore no evidence, which passes.
 
     Fail-open: a missing collector, unreadable ledger, or any collector error

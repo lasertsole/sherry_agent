@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 
 pytestmark = [pytest.mark.unit]
 
@@ -148,7 +148,7 @@ class TestLedgerRobustness:
 
     def test_append_takes_the_shared_write_lock(self, tmp_path, monkeypatch):
         """The lock is wired in: two processes must not interleave a line."""
-        from agent.tools.todolist import evidence_ledger as module
+        from agent.tools.pub_base import evidence_ledger as module
 
         held: list[Path] = []
 

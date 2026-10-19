@@ -33,9 +33,9 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/middlewares/`                 | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence)                                                                       | `agent/middlewares/__init__.py`                      |
 | `agent/tools/`                       | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...)                                                                                                         | `agent/tools/__init__.py::build_main_tools()`        |
 | `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
-| `agent/tools/todolist/`              | Session-scoped todo planning layer + append-only evidence ledger/recorder                                                                                                            | `agent/tools/todolist/service.py`                    |
+| `agent/tools/todolist/`              | Session-scoped todo planning layer                                                                                                            | `agent/tools/todolist/service.py`                    |
 | `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
-| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the append-only evidence ledger/recorder)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
 | `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
 | `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
@@ -861,17 +861,17 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
-## TaskFlow Progress (`agent/tools/taskflow/waves.py`)
+## TaskFlow Progress (`agent/tools/taskflow/progress_push.py`)
 
 Two reporting views, both pushed (never polled) to the chat's floating progress
 panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
 - **Todos** — the existing `todo_updated` push from
   `agent/tools/todolist/service.py::_push_todo_update`.
-- **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
-  (reporting only: the scheduler still unlocks each step on its own
-  `depends_on`; an unknown dep id is ignored and a cycle lands in a trailing wave
-  flagged `cyclic` instead of looping). Every flow mutation calls
+- **Steps** — `progress_push.py` sends each flow's flat step list (`step_id`,
+  task text, status) plus per-status totals. The scheduler unlocks each step on
+  its own `depends_on`; there is no wave/round projection, so the payload never
+  implies a barrier between groups of steps. Every flow mutation calls
   `progress_push.push_taskflow_progress(session_id)` — wired into the shared
   `update_flow_with_conflict_retry` plus create / update_steps / finish / fail /
   cancel / set_waiting — which sends `{"event":"taskflow_updated", …}` to the

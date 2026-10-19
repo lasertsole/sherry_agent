@@ -524,15 +524,11 @@
     },
     "collapse": "計画の進捗を隠す",
     "counts": "{done}/{total}",
-    "current": "進行中",
-    "cyclic": "循環依存",
+    "doneSummary": "{done} / {total} 完了",
     "empty": "実行中のタスクはありません",
     "expand": "計画の進捗を表示",
-    "needsClosing": "クローズ待ち",
     "notStarted": "未着手",
-    "summary": "計画 {done}/{total}",
-    "waveLabel": "第 {index} ウェーブ",
-    "waveSummary": "ウェーブ {current}/{total}"
+    "summary": "計画 {done}/{total}"
   },
   "projectFiles": {
     "title": "ファイルツリー",

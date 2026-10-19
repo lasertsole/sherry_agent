@@ -182,7 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
+`agent/tools/pub_base/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 
@@ -406,7 +406,7 @@ WS events: `todo_updated` (push on change) + `todo_refresh` (re-send on reconnec
 ### UI Component (ProgressFloat.vue)
 
 - **ProgressFloat.vue**: the chat's plan float — todos grouped by `flow_id` plus the
-  TaskFlow wave view, collapsed to a pill by default. There is no other plan surface
+  TaskFlow flat step list, collapsed to a pill by default. There is no other plan surface
   in the UI (the old input-box dock was removed on purpose).
 
 ### WS Message Format
@@ -430,4 +430,4 @@ WS events: `todo_updated` (push on change) + `todo_refresh` (re-send on reconnec
 }
 ```
 
-`taskflow_status` is the step status re-read from `taskflow_summary(flow_id)`; the frontend does not recompute waves/dependencies.
+`taskflow_status` is the step status re-read from `taskflow_summary(flow_id)`; the frontend does not recompute step dependencies.

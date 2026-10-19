@@ -174,7 +174,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/todolist/evidence_ledger.py` 是验证审计轨迹背后的 append-only JSONL 存储（`src/data/evidence-ledger.jsonl`）：`append` + `read_all` 就是全部存储契约，会话级视图读取同一份共享文件。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
+`agent/tools/pub_base/evidence_ledger.py` 是验证审计轨迹背后的 append-only JSONL 存储（`src/data/evidence-ledger.jsonl`）：`append` + `read_all` 就是全部存储契约，会话级视图读取同一份共享文件。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
 
 ### WS 推送
 

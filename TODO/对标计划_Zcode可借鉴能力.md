@@ -95,7 +95,7 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 （1.1③）随本项一起落地。
 
 **落地位置**：`agent/tools/taskflow/tools/{taskflow_dispatch,taskflow_resume,taskflow_wait_all}.py`、
-`config/features/agent_side/taskflow_infra.py`、`agent/tools/todolist/evidence_ledger.py`；
+`config/features/agent_side/taskflow_infra.py`、`agent/tools/pub_base/evidence_ledger.py`；
 测试 `tests/agent/tools/taskflow/{test_concurrent_resume,test_concurrent_dispatch,test_no_double_dispatch,test_parallel_dispatch_failure,test_evidence_concurrent,test_lineage}.py`；
 设计文档 `docs/long-running-tasks/taskflow/`（四语 "Auto-Dispatch Wave" + "Flow Lineage" 两节）。
 
@@ -179,7 +179,6 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 | SQLite store（WAL + busy_timeout） | 引擎层串行化写入，CAS 拒绝 stale 写 |
 | `update_flow_with_conflict_retry` | 本身就是为并发设计的（CAS + bounded retry），Phase 0 只是让其他路径也用它 |
 | `dispatch_child` → `spawn_subagent_direct` | 返回后子 agent 是后台 asyncio task，lane 系统已管理并发（8 SUBAGENT slot） |
-| `waves.py::compute_waves` | 纯 reporting，不改 dispatch |
 
 **风险**：Phase 0 是硬前置——不修缺陷 1/2 就并行化 = 必然丢数据。Phase 0 本身无新风险（只是把已有的 conflict-retry 机制扩展到两条遗漏路径）。Phase 1 的风险在 `build_state` callback 的正确性——它必须能将 step-done + result-injection + unlock 逻辑重新应用到任意 fresh state 上（当前 `apply_dispatched_steps` 已为 redispatch 路径做了这件事，模式相同）。
 

@@ -6,7 +6,7 @@
 
 에비던스 원장은 모든 완료 경계에서 하나의 질문에 답합니다: **"에이전트가 자신의 작업을 검증했는가, 그 검증이 여전히 유효한가?"** 이를 위해 유효하지 않음 플래그를 저장하지 않습니다 — 트레일은 append-only이며, 신선도는 읽기 시점에 검증 행과 파일 편집 이벤트의 순서로부터 계산됩니다.
 
-**소스 코드:** `agent/tools/todolist/evidence_ledger.py`(스토리지), `agent/tools/todolist/evidence_recorder.py`(프로듀서), `agent/tools/taskflow/evidence_collector.py`(리더/컨슈머), `config/features/agent_side/evidence_ledger.py`(분류).
+**소스 코드:** `agent/tools/pub_base/evidence_ledger.py`(스토리지), `agent/tools/pub_base/evidence_recorder.py`(프로듀서), `agent/tools/taskflow/evidence_collector.py`(리더/컨슈머), `config/features/agent_side/evidence_ledger.py`(분류).
 
 ---
 

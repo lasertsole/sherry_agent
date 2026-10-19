@@ -6,7 +6,7 @@
 
 证据账本在每个完成边界回答一个问题：**"agent 验证了它的成果吗，验证还有效吗？"** 它不存储过期标志——轨迹是 append-only 的，新鲜度在读取时从验证行和文件编辑事件的顺序计算。
 
-**代码来源：** `agent/tools/todolist/evidence_ledger.py`（存储层）、`agent/tools/todolist/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）。
+**代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）。
 
 ---
 

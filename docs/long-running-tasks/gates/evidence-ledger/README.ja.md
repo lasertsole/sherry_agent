@@ -6,7 +6,7 @@
 
 エビデンス台帳はすべての完了境界で一つの問いに答えます：**「エージェントは自分の作業を検証したか、その検証はまだ有効か？」** 古さのフラグを保存せずにこれを実現します — トレイルは append-only で、鮮度は読み取り時に検証行とファイル編集イベントの順序から計算されます。
 
-**ソースコード:** `agent/tools/todolist/evidence_ledger.py`（ストレージ）、`agent/tools/todolist/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）。
+**ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）。
 
 ---
 

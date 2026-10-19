@@ -55,7 +55,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
-from agent.tools.taskflow.waves import compute_waves, steps_of
+from agent.tools.taskflow.progress_push import steps_of
 from agent.tools.taskflow.tools._shared import steps_summary
 from config.features import TODOLIST_INFRA
 from runtime import hooks
@@ -205,18 +205,15 @@ def _build_flow_block(flows: list[dict]) -> str:
             f"- {flow_id} [{flow.get('status')}] {description} — "
             f"{counts['done']}/{len(steps)} steps done"
         )
-        for wave in compute_waves(steps):
-            clipped = wave["steps"][:_MAX_STEPS_PER_FLOW]
-            rendered = "; ".join(
-                f"{s['step_id']} [{s['status']}] {s['task'][:_TASK_WIDTH]}" for s in clipped
-            )
-            extra = wave["total"] - len(clipped)
-            if extra > 0:
-                rendered += f"; … +{extra} more"
-            suffix = " (cyclic deps)" if wave.get("cyclic") else ""
-            lines.append(
-                f"  wave {wave['index']} ({wave['done']}/{wave['total']}){suffix}: {rendered}"
-            )
+        clipped = steps[:_MAX_STEPS_PER_FLOW]
+        for step in clipped:
+            step_id = str(step.get("step_id") or "")
+            status = str(step.get("status") or "ready")
+            task = str(step.get("task") or "")[:_TASK_WIDTH]
+            lines.append(f"  step {step_id} ({status}): {task}")
+        extra = len(steps) - len(clipped)
+        if extra > 0:
+            lines.append(f"  … +{extra} more steps")
         if steps and all(_step_settled(step) for step in steps):
             lines.append(
                 "  every step is settled but the flow is still open: close it with "
