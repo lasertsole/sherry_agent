@@ -43,9 +43,9 @@ The session-scoped lightweight planning/checklist layer. It is responsible for "
 - Marking many items complete in one batch hides the real progress; mark them one by one.
 - Once a completed status is written, the continuation system in later turns uses it to decide whether to proceed.
 
-## DAG / dependencies / waves are not here
+## DAG / dependencies are not here
 
-The todolist layer does **not** track `depends_on`, does **not** store waves, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
+The todolist layer does **not** track `depends_on`, does **not** store a DAG/wave projection, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
 
 - Declare dependencies: `taskflow_run_task(flow_id, task, depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
 - Dispatch ready steps in parallel: `taskflow_dispatch(flow_id, step_ids)`.

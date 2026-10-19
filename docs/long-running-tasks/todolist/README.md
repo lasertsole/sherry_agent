@@ -56,7 +56,7 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 | Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_resume` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
 | Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
-| Execution evidence                          | `src/data/evidence-ledger.jsonl` | `EvidenceLedger` appends                                 |
+| Execution evidence                          | `src/data/evidence-ledger.jsonl` | `EvidenceLedger` appends (shared, in `pub_base/`)       |
 | Active work state                           | `src/data/boulder.json` | Plan activation/recovery                                            |
 
 ### Association (Single Source of Truth)
@@ -68,7 +68,7 @@ A todo may carry two optional fields pointing to TaskFlow:
 
 The **no-mirroring** principle:
 
-- The todo layer does **not** copy `depends_on`, does **not** store waves, does **not** cache step status.
+- The todo layer does **not** copy `depends_on`, does **not** store a DAG/wave projection, does **not** cache step status.
 - When DAG status is needed, call the read-only `taskflow_summary(flow_id)` and map `blocked/ready/dispatched/done` back to the UI/prompt.
 - When advancing the DAG, call TaskFlow tools; the todo layer only updates the corresponding todo status.
 
@@ -136,7 +136,7 @@ Layer 6  │ Compression Guard │ build_system_prompt injects current todos + b
 Layer 5  │ DAG Execution     │ Provided by TaskFlow: depends_on + blocked/ready/dispatched/done
 Layer 4  │ Orchestration     │ ulw-execute: plan→checkbox→sub-task→worker→verify, calls TaskFlow
 Layer 3  │ Tools             │ todowrite + todoread (DAG executed by taskflow_* tool family)
-Layer 2  │ Service           │ TodoService + EvidenceLedger (DAG queries delegated to TaskFlow)
+Layer 2  │ Service           │ TodoService (EvidenceLedger moved to `pub_base/`, shared; DAG queries delegated to TaskFlow)
 Layer 1  │ Data Storage      │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
 ─────────│──────────────────│
 E1       │ System Prompt     │ AGENTS.md: MANDATORY orchestrator doctrine
@@ -182,7 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
+`agent/tools/pub_base/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. It moved out of `todolist/` into `pub_base/` and is shared by todolist, TaskFlow, terminal and the file tools — it is not a todolist-owned layer. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 

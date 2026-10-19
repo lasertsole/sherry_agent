@@ -56,7 +56,7 @@
 | step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_resume` 能把 step 标 `done` 并解锁后继  |
 | 子会话是否还在跑             | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run` |
 | 计划文件进度（checkbox）     | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
-| 执行证据                     | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 追加                                  |
+| 执行证据                     | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 追加（共享，位于 `pub_base/`）        |
 | 活跃工作状态                 | `src/data/boulder.json`   | 计划激活/恢复                                          |
 
 ### 关联方式（唯一事实来源）
@@ -128,7 +128,7 @@ Layer 6  │ 压缩保护层 ★      │ build_system_prompt 注入当前 todos
 Layer 5  │ DAG 执行层 ★      │ 由 TaskFlow 提供: depends_on + blocked/ready/dispatched/done（本层不实现）
 Layer 4  │ 编排执行层 ★      │ ulw-execute: plan→checkbox→sub-task→worker→verify，调用 TaskFlow
 Layer 3  │ 工具层            │ todowrite + todoread（DAG 由 taskflow_* 工具家族执行）
-Layer 2  │ 服务层            │ TodoService + EvidenceLedger（DAG 状态查询委派 TaskFlow）
+Layer 2  │ 服务层            │ TodoService（EvidenceLedger 已移到 `pub_base/` 并共享；DAG 状态查询委派 TaskFlow）
 Layer 1  │ 数据存储层         │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
 ─────────│──────────────────│
 E1       │ 系统提示词强制     │ AGENTS.md: MANDATORY orchestrator doctrine
@@ -174,7 +174,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` 是验证审计轨迹背后的 append-only JSONL 存储（`src/data/evidence-ledger.jsonl`）：`append` + `read_all` 就是全部存储契约，会话级视图读取同一份共享文件。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
+`agent/tools/pub_base/evidence_ledger.py` 是验证审计轨迹背后的 append-only JSONL 存储（`src/data/evidence-ledger.jsonl`）：`append` + `read_all` 就是全部存储契约，会话级视图读取同一份共享文件。它已从 `todolist/` 迁到 `pub_base/`，由 todolist、TaskFlow、terminal 和文件工具共享，不再是 todolist 私有层。类 API、写入方、行 schema、陈旧性推导规则与消费该摘要的门控，统一记录在[证据账本](../gates/evidence-ledger/README.zh.md)。
 
 ### WS 推送
 
@@ -392,7 +392,7 @@ WS 事件：`todo_updated`（变更推送）+ `todo_refresh`（重连重发）�
 
 ### UI 组件（ProgressFloat.vue）
 
-- **ProgressFloat.vue**：对话里的计划悬浮框——按 `flow_id` 分组的待办 + TaskFlow 波次视图，默认收成一个小胶囊。界面里没有第二处计划展示（输入框上方那块 dock 已按设计移除）。
+- **ProgressFloat.vue**：对话里的计划悬浮框——按 `flow_id` 分组的待办 + TaskFlow 扁平步骤列表，默认收成一个小胶囊。界面里没有第二处计划展示（输入框上方那块 dock 已按设计移除）。
 
 ### WS 消息格式
 

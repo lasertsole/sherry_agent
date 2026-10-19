@@ -18,7 +18,7 @@ the ``CREATE TABLE IF NOT EXISTS`` statements run ONCE per process, lazy,
 loop-gated under an asyncio.Lock on the async path and thread-locked on the
 sync path, never per operation.
 
-The store keeps no DAG state: ``depends_on``/``wave_index`` are deliberately
+The store keeps no DAG state: ``depends_on``/DAG state are deliberately
 absent. Dependency edges, unlock logic and the
 ``blocked/ready/dispatched/done`` step status live in TaskFlow and are reached
 through ``flow_id``/``step_id``.

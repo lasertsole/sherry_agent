@@ -124,7 +124,7 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 - **后果**：两个并行 resume 都 unlock + dispatch → 重复 dispatch 同一 step、丢失已 spawn child 记录、互相覆盖 step 修改
 
 **缺陷 3（中）：evidence ledger 无文件锁**
-- 位置：`evidence_ledger.py` — 追加写 JSONL（`open(path, "a")`），无 `file_write_lock` / `cross_process_lock`
+- 位置：`agent/tools/pub_base/evidence_ledger.py` — 追加写 JSONL（`open(path, "a")`），无 `file_write_lock` / `cross_process_lock`
 - `read_all()` 无 per-line `try/except`，partial line 会让 `json.loads` 崩 → `collect_evidence_summary` 崩 → `taskflow_resume` 崩 → `_try_auto_resume_taskflow` 静默吞掉
 - 仓库已有 `pub_base/file_lock.py`（flock / msvcrt.locking）但 evidence ledger 没用
 
@@ -141,7 +141,7 @@ SUBAGENT lane（8）仍是全局背压。部分失败不再中止兄弟步骤：
 |---|---|---|
 | 0a | `taskflow_resume.py:383-397` | 正常完成路径改用 `update_flow_with_conflict_retry`（和 redispatch 路径一致），`build_state` callback 重新应用 step-done + result-injection + unlock 逻辑到 fresh state 上 |
 | 0b | `taskflow_resume.py:430-501` (`_auto_dispatch_ready`) | 改用 `update_flow_with_conflict_retry`；写前用 `latest["state"]["steps"]` 而非第一次读的旧 steps；`build_state` callback 重新应用 dispatched-step payloads 到 fresh steps（复用 `apply_dispatched_steps`） |
-| 0c | `evidence_ledger.py` | 写路径加 `file_write_lock`（复用 `pub_base/file_lock.py`）；`read_all` 加 per-line `try/except JSONDecodeError`（skip partial lines，log warning） |
+| 0c | `agent/tools/pub_base/evidence_ledger.py` | 写路径加 `file_write_lock`（复用 `pub_base/file_lock.py`）；`read_all` 加 per-line `try/except JSONDecodeError`（skip partial lines，log warning） |
 | 0d | `delivery.py:366-407` | 检查 `taskflow_resume` 返回值是否以 `Error:` 开头，是则 log + return False（不阻断 announce 但留下可追溯的错误状态） |
 
 **Phase 1：并行化 spawn 循环**

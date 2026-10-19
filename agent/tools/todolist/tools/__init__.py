@@ -46,7 +46,7 @@ If not, it's too big — split it.
 - flow_id: linked TaskFlow flow id (DAG lives in TaskFlow, not in todos.db)
 - step_id: linked TaskFlow step id (e.g. step-2); read its status via taskflow_summary
 - To declare dependencies, call taskflow_run_task(..., depends_on=[...]); do NOT
-  re-implement wave/frontier scheduling in the todolist layer
+  re-implement DAG/frontier scheduling in the todolist layer
 """
 
 _TODOLIST_TOOLS: list[BaseTool] = [todowrite, todoread]

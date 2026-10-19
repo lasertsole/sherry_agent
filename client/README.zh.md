@@ -127,7 +127,7 @@ client/
 │   │       └── components/        # 49 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
-│   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
+│   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow 扁平步骤列表，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关，或按模型声明档位（含关闭）的选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
@@ -196,7 +196,7 @@ client/
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
 │   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 代理模型 / 技能）按会话镜像；必需工具与必需技能锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
-│   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
+│   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + 扁平步骤，由 taskflow_updated 刷新）
 │   │   ├── web-search.ts       # 每会话的搜索后端 + Tavily→SearXNG 降级通知
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件

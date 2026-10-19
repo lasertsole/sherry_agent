@@ -56,7 +56,7 @@
 | step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_resume`만 step을 `done`으로 표시하고 후속 언록 |
 | 자식 세션 실행 중 여부            | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`   |
 | 계획 파일 진행 (체크박스)         | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
-| 실행 증거                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 추가                                    |
+| 실행 증거                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 추가(공유, `pub_base/`)                  |
 | 활성 작업 상태                    | `src/data/boulder.json`   | 계획 활성화/복원                                         |
 
 ### 연결 (단일 진실 소스)
@@ -126,7 +126,7 @@ Layer 6  │ 압축 보호 ★     │ build_system_prompt가 현재 todos + bou
 Layer 5  │ DAG 실행 ★      │ TaskFlow 제공: depends_on + blocked/ready/dispatched/done (본 레이어 미구현)
 Layer 4  │ 오케스트레이션 ★ │ ulw-execute: plan→checkbox→sub-task→worker→verify, TaskFlow 호출
 Layer 3  │ 도구            │ todowrite + todoread (DAG는 taskflow_* 도구 패밀리가 실행)
-Layer 2  │ 서비스           │ TodoService + EvidenceLedger (DAG 상태 쿼리는 TaskFlow에 위임)
+Layer 2  │ 서비스           │ TodoService(EvidenceLedger는 `pub_base/`로 이동해 공유, DAG 상태 쿼리는 TaskFlow에 위임)
 Layer 1  │ 데이터 저장      │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
 ─────────│────────────────│
 E1       │ 시스템 프롬프트  │ AGENTS.md: MANDATORY orchestrator doctrine
@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
+`agent/tools/pub_base/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. `todolist/`에서 `pub_base/`로 이동했고 todolist, TaskFlow, terminal, 파일 도구가 공유하므로 더 이상 todolist 전용 계층이 아닙니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### WS 푸시
 
@@ -390,7 +390,7 @@ WS 이벤트: `todo_updated` (변경 시 푸시) + `todo_refresh` (재연결 시
 
 ### UI 컴포넌트 (ProgressFloat.vue)
 
-- **ProgressFloat.vue**: 채팅의 계획 플로트 — `flow_id`별로 그룹화한 TODO와 TaskFlow 웨이브 뷰, 기본값은 알약 형태로 접힘. UI에 다른 계획 표시는 없다(입력창 위 dock은 설계에 따라 제거됨).
+- **ProgressFloat.vue**: 채팅의 계획 플로트 — `flow_id`별로 그룹화한 TODO와 TaskFlow 플랫 단계 목록, 기본값은 알약 형태로 접힘. UI에 다른 계획 표시는 없다(입력창 위 dock은 설계에 따라 제거됨).
 
 ### WS 메시지 형식
 

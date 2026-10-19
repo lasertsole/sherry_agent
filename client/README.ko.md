@@ -127,7 +127,7 @@ client/
 │   │       └── components/        # 49 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
-│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
+│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow 플랫 단계 목록, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
 │   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글, 또는 모델이 선언한 레벨 픽커(off 포함), 다음 턴부터 적용)
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
 │   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(모델 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
@@ -196,7 +196,7 @@ client/
 │   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
 │   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
 │   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 에이전트 모델 / 스킬)을 세션별로 보관; 필수 도구와 필수 스킬은 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
-│   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
+│   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + 플랫 단계, taskflow_updated로 갱신)
 │   │   ├── web-search.ts       # 세션별 검색 백엔드 + Tavily→SearXNG 강등 알림
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인

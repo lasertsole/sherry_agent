@@ -2,7 +2,7 @@
 
 The todo store keeps only session-scoped checklist state (content/status/
 priority/position + delegation + TaskFlow pointers). DAG scheduling
-(depends_on/wave) is deliberately absent: dependency edges, unlock logic and
+(depends_on/DAG state) is deliberately absent: dependency edges, unlock logic and
 ``blocked/ready/dispatched/done`` live in TaskFlow, reached through
 ``flow_id``/``step_id``.
 """

@@ -126,7 +126,7 @@ client/
 │   │       └── components/        # 49 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
-│   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
+│   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow step lists, collapsed to a pill and always on screen, live via taskflow_updated)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch, or the model-declared level picker incl. off, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
@@ -195,7 +195,7 @@ client/
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
 │   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
-│   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
+│   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + flat steps, refreshed by taskflow_updated)
 │   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins

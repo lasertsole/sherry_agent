@@ -127,7 +127,7 @@ client/
 │   │       └── components/        # 49 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
-│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
+│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow のフラットなステップ一覧、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグル、またはモデル宣言のレベルピッカー（off 含む）、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（モデル設定 MAIN_LLM プロファイル、次ターンから有効）
@@ -196,7 +196,7 @@ client/
 │   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
 │   │   ├── notification.ts     # 通知リスト + 未読バッジ（タブを閉じてもカウント継続）
 │   │   ├── agent-config.ts     # プリセットの agent 設定（ツール / ミドルウェア / エージェント モデル / スキル）をセッション単位で保持；必須ツールと必須スキルはロック解除不可、タスクと計画 / サブエージェントの 2 グループは一括選択のみ
-│   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + wave、taskflow_updated で更新）
+│   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + フラットなステップ、taskflow_updated で更新）
 │   │   ├── web-search.ts       # セッションごとの検索バックエンド + Tavily→SearXNG の降格通知
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   ├── plugins/                   # Nuxt プラグイン
