@@ -1181,6 +1181,59 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the repo into `.codegraph/codegraph.db` (gitignored) — a 20-language AST knowledge graph (Python/TS/Rust full; `.vue` gets no AST). One MCP tool, `codegraph_explore`, returns verbatim source + call paths (dynamic dispatch included) + blast radius. Auto-syncs on file events (2s debounce). CLI: `codegraph query|explore|callers|impact|status`. Rebuild index after big restructures: `codegraph init`. It is a snapshot — verify against source when editing.
 
+## Code Intel Graph & Wiki Export
+
+`agent/tools/code_intel/` now carries four edge families, all resolved by the same
+two-pass name resolution (`indexer.py`): `call_edges` (unchanged), plus the
+parallel `import_edges` / `inherit_edges` / `mixin_edges` tables created with
+`CREATE TABLE IF NOT EXISTS` (an old index DB is upgraded in place — C1). The
+extractor (`extract.py`) records Python imports/inheritance, TS/TSX named/default/
+namespace imports plus `extends`/`implements` (interfaces are symbols), Rust
+`use`/trait bounds/`impl Trait for Type`, and Go import paths + struct/interface
+embedding. Module-scope edges use `importer_id = 0`; named-edge resolution prefers
+the file's own language so a TS `Base` never links to a Python `Base`.
+
+The RESEARCHER surface gained one tool, `path(symbol_a, symbol_b)` — a directed
+bidirectional BFS over all four families (forward from A, backward from B,
+`code_intel_call_graph_max_depth`) returning hops with `edge_type` and
+`confidence` (`EXTRACTED` = resolved, `INFERRED` = name-only). It is an
+independent implementation; `impact()` is untouched (C2) and still returns its
+`depth` + `via` BFS view. `CalleeInfo`/`CallerInfo` gained a derived
+`confidence` field alongside the unchanged `resolved` bool. Query-only methods
+(exposed to the agent through `explore`/`path`, not new tools): `imports_of`,
+`importers_of`, `inherits_from`, `subclasses_of`, `mixins_of`, `mixins_in_by`,
+`god_nodes` (pure SQL degree) and `communities` / `community_of` (networkx
+Louvain on demand with a connected-components fallback when networkx is absent).
+The tool name is `path`; the tool set is still `scope=researcher_only` and never
+joins `_MAIN_TOOLS_BUILDERS` (C5).
+
+`skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index(repo_name,
+db_path)` turns a code_intel SQLite DB into a deterministic, zero-LLM wiki
+(README/architecture/modules/class-diagram + state); `sequences.md` stays
+LLM-owned (runtime flow is not in an AST). It is an independent entry point —
+`init_repo_wiki` and the other path helpers are unchanged (C6) — and returns
+`{"fallback": True, "reason": ...}` for a missing/empty index or unsupported
+languages. Caps live in `SKILLS_TOOLING` (`code_wiki_export_*`).
+
+## LLM Wiki Graph Layer
+
+`skills/builtin/llm_wiki/` keeps markdown as the source of truth and adds a
+derived graph at `src/data/wiki/.wiki_graph.db` (`scripts/graph.py`): nodes for
+file stems and link targets, edges for `[[wikilinks]]` (`[[Target|INFERRED]]`
+carries the tag; a plain link is EXTRACTED), inline links, code-span mentions and
+optional frontmatter `extracted_relations`; `extracted_entities` adds nodes.
+`build_wiki_graph(force=False)` is incremental by file mtime, removes deleted
+files' nodes/edges, and never touches the existing `save_source`/`search_wiki`/
+`lint_wiki` signatures (L1). `scripts/graph_query.py` exposes `path` (undirected
+bidirectional BFS), `god_nodes`, `explain`, `communities` (networkx Louvain or
+connected components) and `query_graph` (ASCII words + CJK bigrams → node recall
+→ 1-hop subgraph; no jieba dependency). `scripts/ingest.py::save_binary_source`
+adds PDF (pypdf → pdftotext → mineru), image, audio, video, docx/xlsx (stdlib
+ZIP/XML readers, no python-docx/openpyxl) and text ingest: one auxiliary-LLM
+semantic pass (fail-open), a markdown source with the additive frontmatter, then
+a graph refresh. `lint_wiki` appends a `graph` section (connectivity, confidence
+split, low-confidence pages, god nodes) after its original ten checks (L7).
+
 ## Import Rules
 
 - `server/**` layering: trigger → service → queue|DAO → utils (enforced by import-linter)

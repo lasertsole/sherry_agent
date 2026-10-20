@@ -29,7 +29,7 @@ Code Intel은 다섯 가지 검색 엔진으로 코드 이해 질문에 답하�
 | 계층 | 답하는 질문 | 도구 | 개방 범위 |
 |------|-------------|------|-----------|
 | **키워드 검색** | 이 리터럴이나 정규식이 어디에 나타나는가——내용인가, 파일 이름인가? | `search_files` | 메인 에이전트 + `researcher` + `librarian` |
-| **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact` | `researcher` + `librarian` |
+| **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact`, `path` | `researcher` + `librarian` |
 | **ast-grep** | 어떤 코드가 이 구조 형태를 가지며 어떻게 재작성하는가? | `ast_grep_search`, `ast_grep_rewrite` | 모든 서브에이전트 |
 | **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
 | **시맨틱 검색** | 이 개념을 구현한 코드는 무엇인가? | `semantic_code_search` | `researcher` + `librarian` |
@@ -92,7 +92,7 @@ child agent assembly (spawn/core.py)
 
 증분성과 상한: 각 파일의 `mtime`과 `size`가 `index_meta`와 비교되고, 바뀐 파일만 다시 파싱되며, 삭제된 파일은 해석된 인바운드 간선의 분리를 포함해 제거되고, 쓰기는 100개 파일 단위 트랜잭션으로 배치 처리됩니다. 순회는 `code_intel_index_max_files`(5000) 또는 `code_intel_index_timeout_s`(60)에서 멈추고 `truncated`를 보고합니다. fail-open은 파일 단위입니다: 문법 오류, 초대형 파일(1 MB 초과), 알 수 없는 확장자, 읽기 오류는 각각 `index_meta` 행을 기록하고 건너뜁니다——문법 오류 파일이 부분적으로 인덱싱되는 일은 없습니다. 변경 호출은 인스턴스 잠금으로 직렬화되고, 연결은 WAL과 30초 busy timeout을 사용합니다.
 
-질의는 읽기 전에 증분 인덱스를 새로 고치므로 편집 후 검색이 오래된 심볼을 반환하지 않고, 트리가 바뀌지 않았으면 값싼 no-op입니다. 네 도구는 다음과 같습니다:
+질의는 읽기 전에 증분 인덱스를 새로 고치므로 편집 후 검색이 오래된 심볼을 반환하지 않고, 트리가 바뀌지 않았으면 값싼 no-op입니다. 다섯 도구는 다음과 같습니다:
 
 | 도구 | 입력 | 출력 | 상한 |
 |------|------|------|------|
@@ -100,6 +100,45 @@ child agent assembly (spawn/core.py)
 | `callers` | 심볼 이름 | 그 심볼을 호출하는 모든 함수와 메서드, 호출 지점 행 포함 | 정확한 이름 우선, 퍼지 폴백 |
 | `callees` | 심볼 이름 | 그 심볼이 내보내는 모든 호출, 알려진 경우 해석된 대상 파일과 행 포함 | 중복 호출 지점 병합 |
 | `impact` | 심볼 이름 | 전이적 호출자(폭발 반경), 깊이와 경유한 이름 포함 | 깊이 3, `truncated` 플래그 |
+| `path` | 두 심볼 이름 | calls/imports/inherits/mixins를 가로지르는 최단 방향 홉 시퀀스(각 홉에 간선 유형과 confidence) | 깊이 3, `truncated` 플래그 |
+
+## 🕸️ 그래프 간선과 경로 쿼리
+
+인덱스는 이제 호출 간선만이 아닙니다. `call_edges`(전혀 수정하지 않음) 옆에 세
+개의 병렬 테이블이 있습니다: `import_edges`(모듈 범위 행은 `importer_id = 0`),
+`inherit_edges`(`inherit_type` = `class` / `interface` / `trait`),
+`mixin_edges`(`implements`, Rust trait impl, Go 임베딩). 오래된 DB는 처음 열 때
+`CREATE TABLE IF NOT EXISTS`로 제자리 업그레이드됩니다.
+
+| 언어 | imports | 상속 | mixin |
+|------|---------|------|-------|
+| Python | `import a.b`, `from a.b import c` | 클래스 기반 | — |
+| TypeScript | default / named / namespace / side-effect | `extends`(class, interface) | `implements` |
+| Rust | `use a::b::{c, d}` | trait supertrait | `impl Trait for Type` |
+| Go | import 경로 | interface 임베딩 | struct 임베딩 |
+
+해석은 이름 기반 2-pass로 유지되며, 새 테이블은 같은 언어를 우선합니다.
+TypeScript의 `Base`가 Python의 `Base`로 해석되는 일은 없습니다. 6개 쿼리
+메서드가 노출됩니다: `imports_of`, `importers_of`, `inherits_from`,
+`subclasses_of`, `mixins_of`, `mixins_in_by`. `callers`와 `callees`는 `resolved`
+불리언을 그대로 두고 `confidence: "EXTRACTED"`(해석됨) 또는
+`"INFERRED"`(이름만 일치)를 추가했습니다.
+
+여섯 번째 도구 `path(symbol_a, symbol_b)`는 네 가지 간선을 가로지르는 방향성
+양방향 BFS입니다——A에서 나가는 간선으로 정방향, B에서 들어오는 간선으로
+역방향——`code_intel_call_graph_max_depth`로 제한됩니다. 각 홉은 `edge_type`
+(`calls` / `imports` / `inherits` / `mixes_in`)과 `confidence`를 가집니다.
+`impact`는 그대로이며 단방향 호출자 폭발 반경입니다. `god_nodes`는 해석된 총
+차수로 순위를 매기고, `communities`는 필요할 때 networkx Louvain을 실행하며
+(networkx가 없으면 연결 요소), `community_of`는 한 심볼의 소속을 조회합니다.
+
+같은 인덱스가
+`skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index`(결정적이고
+LLM 호출이 없는 README / architecture / modules / class diagram 내보내기)를
+구동합니다. `sequences.md`는 AST에 런타임 흐름이 없으므로 LLM 생성으로
+남습니다. 인덱스가 없거나 지원하지 않는 언어면
+`{"fallback": true, "reason": ...}`를 반환하고 스킬의 LLM 절차로 넘어갑니다.
+
 
 ## 🧬 제 2 계층: ast-grep 구조 검색과 재작성
 

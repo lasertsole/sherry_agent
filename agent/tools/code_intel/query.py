@@ -39,6 +39,7 @@ class CallerInfo:
     file_path: str
     line_start: int
     call_line: int
+    confidence: str = "EXTRACTED"
 
 
 @dataclass(slots=True)
@@ -50,6 +51,86 @@ class CalleeInfo:
     target_line: int | None
     call_line: int
     resolved: bool
+    confidence: str = ""
+
+
+@dataclass(slots=True)
+class ImportInfo:
+    """One import edge (outgoing from a symbol/module, or a module-scope import)."""
+
+    name: str
+    target_file: str | None
+    target_line: int | None
+    line: int
+    resolved: bool
+    confidence: str = ""
+
+
+@dataclass(slots=True)
+class ImporterInfo:
+    """One importer of a symbol (a module-scope importer carries ``kind="module"``)."""
+
+    name: str
+    kind: str
+    file_path: str
+    line: int
+    resolved: bool
+    confidence: str = ""
+
+
+@dataclass(slots=True)
+class InheritInfo:
+    """One inheritance/mixin edge; ``name`` is the counterpart symbol."""
+
+    name: str
+    target_file: str | None
+    target_line: int | None
+    edge_type: str
+    inherit_type: str
+    line: int
+    resolved: bool
+    confidence: str = ""
+
+
+@dataclass(slots=True)
+class NodeDegree:
+    """A symbol ranked by total resolved-graph degree."""
+
+    symbol: SymbolMatch
+    degree: int
+    in_degree: int
+    out_degree: int
+
+
+@dataclass(slots=True)
+class PathHop:
+    """One node on a path; ``edge_type`` is the edge that led INTO it."""
+
+    symbol: SymbolMatch
+    edge_type: str
+    edge_confidence: str
+
+
+@dataclass(slots=True)
+class PathResult:
+    """Result of :meth:`CodeQuery.path`."""
+
+    root_a: str
+    root_b: str
+    hops: list[PathHop] = field(default_factory=list)
+    found: bool = False
+    truncated: bool = False
+
+
+@dataclass(slots=True)
+class Community:
+    """One Louvain / connected-component cluster of the symbol graph."""
+
+    community_id: int
+    size: int
+    symbols: list[str] = field(default_factory=list)
+    top_nodes: list[str] = field(default_factory=list)
+    engine: str = "networkx"
 
 
 @dataclass(slots=True)
@@ -94,6 +175,11 @@ class ImpactResult:
     entries: list[ImpactEntry] = field(default_factory=list)
     max_depth: int = 0
     truncated: bool = False
+
+
+def _confidence(resolved: object) -> str:
+    """Map the stored 0/1 resolver flag onto the graphify confidence vocabulary."""
+    return "EXTRACTED" if bool(resolved) else "INFERRED"
 
 
 def _tokenize(text: str) -> list[str]:
@@ -319,6 +405,611 @@ class CodeQuery:
         finally:
             conn.close()
 
+    # -- graph queries (SHERRY-PATCH: imports/inherits/mixins + path) -------
+
+    def imports_of(self, symbol_name: str, root: Path) -> list[ImportInfo]:
+        """Imports of a symbol (function-local) plus its file's module-scope imports."""
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            ids = self._resolve_symbol_ids(conn, symbol_name)
+            files = self._files_for(conn, ids)
+            if not ids and not files:
+                # A module-style name ("pkg.mod") maps to its indexed file.
+                files = self._files_matching_module(conn, symbol_name)
+            clauses = []
+            params: list[object] = []
+            if ids:
+                clauses.append(f"ie.importer_id IN ({','.join('?' * len(ids))})")
+                params.extend(ids)
+            if files:
+                clauses.append(
+                    f"(ie.importer_id = 0 AND ie.file_path IN ({','.join('?' * len(files))}))"
+                )
+                params.extend(files)
+            if not clauses:
+                return []
+            sql = (
+                "SELECT ie.imported_name, ie.line, ie.resolved, "
+                "s.file_path AS target_file, s.line_start AS target_line "
+                "FROM import_edges ie LEFT JOIN symbols s ON s.id = ie.imported_id "
+                f"WHERE {' OR '.join(clauses)} ORDER BY ie.line, ie.imported_name"
+            )
+            seen: set[tuple[str, int]] = set()
+            out: list[ImportInfo] = []
+            for row in conn.execute(sql, params).fetchall():
+                key = (row["imported_name"], int(row["line"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    ImportInfo(
+                        name=row["imported_name"],
+                        target_file=row["target_file"],
+                        target_line=int(row["target_line"])
+                        if row["target_line"] is not None
+                        else None,
+                        line=int(row["line"]),
+                        resolved=bool(row["resolved"]),
+                        confidence=_confidence(row["resolved"]),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def importers_of(self, symbol_name: str, root: Path) -> list[ImporterInfo]:
+        """Symbols (and module scopes) that import *symbol_name*."""
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            ids = self._resolve_symbol_ids(conn, symbol_name)
+            clauses = []
+            params: list[object] = []
+            if ids:
+                clauses.append(f"ie.imported_id IN ({','.join('?' * len(ids))})")
+                params.extend(ids)
+            clauses.append("(ie.imported_id IS NULL AND ie.imported_name = ?)")
+            params.append(symbol_name)
+            sql = (
+                "SELECT ie.line, ie.resolved, ie.file_path AS source_file, "
+                "s.name AS importer_name, s.kind AS importer_kind, "
+                "s.file_path AS importer_file, s.line_start AS importer_line "
+                "FROM import_edges ie LEFT JOIN symbols s ON s.id = ie.importer_id "
+                f"WHERE {' OR '.join(clauses)} ORDER BY ie.file_path, ie.line"
+            )
+            seen: set[tuple[str, int]] = set()
+            out: list[ImporterInfo] = []
+            for row in conn.execute(sql, params).fetchall():
+                name = row["importer_name"] or Path(row["source_file"]).stem
+                key = (name, int(row["line"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    ImporterInfo(
+                        name=name,
+                        kind=row["importer_kind"] or "module",
+                        file_path=row["importer_file"] or row["source_file"],
+                        line=int(row["line"]),
+                        resolved=bool(row["resolved"]),
+                        confidence=_confidence(row["resolved"]),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def inherits_from(self, symbol_name: str, root: Path) -> list[InheritInfo]:
+        """Parents a class/interface/trait extends."""
+        return self._inherit_rows(symbol_name, root, direction="up")
+
+    def subclasses_of(self, symbol_name: str, root: Path) -> list[InheritInfo]:
+        """Classes/interfaces that extend *symbol_name*."""
+        return self._inherit_rows(symbol_name, root, direction="down")
+
+    def _inherit_rows(self, symbol_name: str, root: Path, *, direction: str) -> list[InheritInfo]:
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            ids = self._resolve_symbol_ids(conn, symbol_name)
+            if direction == "up":
+                clauses = []
+                params: list[object] = []
+                if ids:
+                    clauses.append(f"he.child_id IN ({','.join('?' * len(ids))})")
+                    params.extend(ids)
+                if not clauses:
+                    return []
+                sql = (
+                    "SELECT he.parent_name AS name, he.inherit_type, he.line, he.resolved, "
+                    "s.file_path AS target_file, s.line_start AS target_line "
+                    "FROM inherit_edges he LEFT JOIN symbols s ON s.id = he.parent_id "
+                    f"WHERE {' OR '.join(clauses)} ORDER BY he.line, he.parent_name"
+                )
+                rows = conn.execute(sql, params).fetchall()
+            else:
+                clauses = []
+                params = []
+                if ids:
+                    clauses.append(f"he.parent_id IN ({','.join('?' * len(ids))})")
+                    params.extend(ids)
+                clauses.append("(he.parent_id IS NULL AND he.parent_name = ?)")
+                params.append(symbol_name)
+                sql = (
+                    "SELECT s.name AS name, he.inherit_type, he.line, he.resolved, "
+                    "s.file_path AS target_file, s.line_start AS target_line "
+                    "FROM inherit_edges he JOIN symbols s ON s.id = he.child_id "
+                    f"WHERE {' OR '.join(clauses)} ORDER BY s.file_path, he.line"
+                )
+                rows = conn.execute(sql, params).fetchall()
+            seen: set[tuple[str, int]] = set()
+            out: list[InheritInfo] = []
+            for row in rows:
+                key = (row["name"], int(row["line"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    InheritInfo(
+                        name=row["name"],
+                        target_file=row["target_file"],
+                        target_line=int(row["target_line"])
+                        if row["target_line"] is not None
+                        else None,
+                        edge_type="inherits",
+                        inherit_type=row["inherit_type"],
+                        line=int(row["line"]),
+                        resolved=bool(row["resolved"]),
+                        confidence=_confidence(row["resolved"]),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def mixins_of(self, symbol_name: str, root: Path) -> list[InheritInfo]:
+        """Interfaces/traits/mixins implemented by *symbol_name*."""
+        return self._mixin_rows(symbol_name, root, direction="up")
+
+    def mixins_in_by(self, symbol_name: str, root: Path) -> list[InheritInfo]:
+        """Hosts that implement the given interface/trait/mixin."""
+        return self._mixin_rows(symbol_name, root, direction="down")
+
+    def _mixin_rows(self, symbol_name: str, root: Path, *, direction: str) -> list[InheritInfo]:
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            ids = self._resolve_symbol_ids(conn, symbol_name)
+            if direction == "up":
+                if not ids:
+                    return []
+                sql = (
+                    "SELECT me.mixin_name AS name, me.line, me.resolved, "
+                    "s.file_path AS target_file, s.line_start AS target_line "
+                    "FROM mixin_edges me LEFT JOIN symbols s ON s.id = me.mixin_id "
+                    f"WHERE me.host_id IN ({','.join('?' * len(ids))}) "
+                    "ORDER BY me.line, me.mixin_name"
+                )
+                rows = conn.execute(sql, ids).fetchall()
+            else:
+                clauses = []
+                params: list[object] = []
+                if ids:
+                    clauses.append(f"me.mixin_id IN ({','.join('?' * len(ids))})")
+                    params.extend(ids)
+                clauses.append("(me.mixin_id IS NULL AND me.mixin_name = ?)")
+                params.append(symbol_name)
+                sql = (
+                    "SELECT s.name AS name, me.line, me.resolved, "
+                    "s.file_path AS target_file, s.line_start AS target_line "
+                    "FROM mixin_edges me JOIN symbols s ON s.id = me.host_id "
+                    f"WHERE {' OR '.join(clauses)} ORDER BY s.file_path, me.line"
+                )
+                rows = conn.execute(sql, params).fetchall()
+            seen: set[tuple[str, int]] = set()
+            out: list[InheritInfo] = []
+            for row in rows:
+                key = (row["name"], int(row["line"]))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    InheritInfo(
+                        name=row["name"],
+                        target_file=row["target_file"],
+                        target_line=int(row["target_line"])
+                        if row["target_line"] is not None
+                        else None,
+                        edge_type="mixes_in",
+                        inherit_type="mixin",
+                        line=int(row["line"]),
+                        resolved=bool(row["resolved"]),
+                        confidence=_confidence(row["resolved"]),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def path(
+        self,
+        symbol_a: str,
+        symbol_b: str,
+        root: Path,
+        edge_types: list[str] | None = None,
+    ) -> PathResult:
+        """Shortest path between two symbols across calls/imports/inherits/mixins.
+
+        Bidirectional BFS: forward from A over outgoing edges, backward from B
+        over incoming edges. Independent of :meth:`impact` (C2).
+        """
+        self._ensure_index(root)
+        allowed = tuple(edge_types or ("calls", "imports", "inherits", "mixes_in"))
+        max_hops = int(self._config["code_intel_call_graph_max_depth"])
+        conn = self._connect()
+        try:
+            starts = self._resolve_symbol_ids(conn, symbol_a)
+            ends = self._resolve_symbol_ids(conn, symbol_b)
+            if not starts or not ends:
+                return PathResult(root_a=symbol_a, root_b=symbol_b)
+            start, end = starts[0], ends[0]
+            if start == end:
+                row = self._symbols_by_ids(conn, {start})[0]
+                return PathResult(
+                    root_a=symbol_a,
+                    root_b=symbol_b,
+                    hops=[PathHop(self._row_to_match(row), "root", "")],
+                    found=True,
+                )
+            parents_f: dict[int, tuple[int | None, str, str]] = {start: (None, "root", "")}
+            parents_b: dict[int, tuple[int | None, str, str]] = {end: (None, "root", "")}
+            layer_f: set[int] = {start}
+            layer_b: set[int] = {end}
+            meet: int | None = None
+            truncated = False
+            for _depth in range(max_hops):
+                if not layer_f or not layer_b:
+                    break
+                if len(layer_f) <= len(layer_b):
+                    layer_f, found = self._expand_path_layer(
+                        conn, layer_f, parents_f, parents_b, allowed, outgoing=True
+                    )
+                else:
+                    layer_b, found = self._expand_path_layer(
+                        conn, layer_b, parents_b, parents_f, allowed, outgoing=False
+                    )
+                if found is not None:
+                    meet = found
+                    break
+                if _depth == max_hops - 1:
+                    truncated = bool(layer_f and layer_b)
+            if meet is None:
+                return PathResult(root_a=symbol_a, root_b=symbol_b, truncated=truncated)
+            chain = self._reconstruct_path(meet, parents_f, parents_b)
+            rows = self._symbols_by_ids(conn, {node for node, _edge, _conf in chain})
+            by_id = {int(row["id"]): self._row_to_match(row) for row in rows}
+            hops = [
+                PathHop(by_id[node], edge_type, confidence)
+                for node, edge_type, confidence in chain
+                if node in by_id
+            ]
+            return PathResult(root_a=symbol_a, root_b=symbol_b, hops=hops, found=bool(hops))
+        finally:
+            conn.close()
+
+    def _expand_path_layer(
+        self,
+        conn: sqlite3.Connection,
+        layer: set[int],
+        own: dict[int, tuple[int | None, str, str]],
+        other: dict[int, tuple[int | None, str, str]],
+        allowed: tuple[str, ...],
+        *,
+        outgoing: bool,
+    ) -> tuple[set[int], int | None]:
+        next_layer: set[int] = set()
+        for node in sorted(layer):
+            for neighbour, edge_type, confidence in self._path_neighbours(
+                conn, node, allowed, outgoing=outgoing
+            ):
+                if neighbour == node:
+                    continue
+                if neighbour in other:
+                    own.setdefault(neighbour, (node, edge_type, confidence))
+                    return set(), neighbour
+                if neighbour in own:
+                    continue
+                own[neighbour] = (node, edge_type, confidence)
+                next_layer.add(neighbour)
+        return next_layer, None
+
+    def _path_neighbours(
+        self,
+        conn: sqlite3.Connection,
+        node_id: int,
+        allowed: tuple[str, ...],
+        *,
+        outgoing: bool,
+    ) -> list[tuple[int, str, str]]:
+        row = conn.execute(
+            "SELECT id, name, file_path, language FROM symbols WHERE id = ?", (node_id,)
+        ).fetchone()
+        if row is None:
+            return []
+        name = row["name"]
+        file_path = row["file_path"]
+        language = row["language"]
+        out: list[tuple[int, str, str]] = []
+
+        def _target(target_id: int | None, target_name: str, edge_type: str, resolved: object):
+            if target_id is not None:
+                return int(target_id)
+            found = conn.execute(
+                "SELECT id FROM symbols WHERE name = ? AND language = ? LIMIT 1",
+                (target_name, language),
+            ).fetchone()
+            if found is None:
+                found = conn.execute(
+                    "SELECT id FROM symbols WHERE name = ? LIMIT 1", (target_name,)
+                ).fetchone()
+            return int(found["id"]) if found is not None else None
+
+        if "calls" in allowed:
+            if outgoing:
+                rows = conn.execute(
+                    "SELECT callee_id, callee_name, resolved FROM call_edges WHERE caller_id = ?",
+                    (node_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT caller_id AS callee_id, callee_name, resolved FROM call_edges "
+                    "WHERE callee_id = ? OR (callee_id IS NULL AND callee_name = ?)",
+                    (node_id, name),
+                ).fetchall()
+            for edge in rows:
+                target = _target(edge["callee_id"], edge["callee_name"], "calls", edge["resolved"])
+                if target is not None:
+                    out.append((target, "calls", _confidence(edge["resolved"])))
+        if "imports" in allowed:
+            if outgoing:
+                rows = conn.execute(
+                    "SELECT imported_id, imported_name, resolved FROM import_edges "
+                    "WHERE importer_id = ? OR (importer_id = 0 AND file_path = ?)",
+                    (node_id, file_path),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT importer_id AS imported_id, imported_name, resolved "
+                    "FROM import_edges WHERE imported_id = ? "
+                    "OR (imported_id IS NULL AND imported_name = ?)",
+                    (node_id, name),
+                ).fetchall()
+            for edge in rows:
+                if edge["imported_id"] == 0:
+                    continue
+                target = _target(
+                    edge["imported_id"], edge["imported_name"], "imports", edge["resolved"]
+                )
+                if target is not None:
+                    out.append((target, "imports", _confidence(edge["resolved"])))
+        if "inherits" in allowed:
+            if outgoing:
+                rows = conn.execute(
+                    "SELECT parent_id AS target_id, parent_name AS target_name, resolved "
+                    "FROM inherit_edges WHERE child_id = ?",
+                    (node_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT child_id AS target_id, parent_name AS target_name, resolved "
+                    "FROM inherit_edges WHERE parent_id = ? "
+                    "OR (parent_id IS NULL AND parent_name = ?)",
+                    (node_id, name),
+                ).fetchall()
+            for edge in rows:
+                target = _target(
+                    edge["target_id"], edge["target_name"], "inherits", edge["resolved"]
+                )
+                if target is not None:
+                    out.append((target, "inherits", _confidence(edge["resolved"])))
+        if "mixes_in" in allowed:
+            if outgoing:
+                rows = conn.execute(
+                    "SELECT mixin_id AS target_id, mixin_name AS target_name, resolved "
+                    "FROM mixin_edges WHERE host_id = ?",
+                    (node_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT host_id AS target_id, mixin_name AS target_name, resolved "
+                    "FROM mixin_edges WHERE mixin_id = ? "
+                    "OR (mixin_id IS NULL AND mixin_name = ?)",
+                    (node_id, name),
+                ).fetchall()
+            for edge in rows:
+                target = _target(
+                    edge["target_id"], edge["target_name"], "mixes_in", edge["resolved"]
+                )
+                if target is not None:
+                    out.append((target, "mixes_in", _confidence(edge["resolved"])))
+        return out
+
+    @staticmethod
+    def _reconstruct_path(
+        meet: int,
+        parents_f: dict[int, tuple[int | None, str, str]],
+        parents_b: dict[int, tuple[int | None, str, str]],
+    ) -> list[tuple[int, str, str]]:
+        forward: list[tuple[int, str, str]] = []
+        current: int | None = meet
+        while current is not None:
+            prev, edge_type, confidence = parents_f[current]
+            forward.append((current, edge_type, confidence))
+            current = prev
+        forward.reverse()
+        path = list(forward)
+        current = parents_b[meet][0]
+        while current is not None:
+            prev, edge_type, confidence = parents_b[current]
+            path.append((current, edge_type, confidence))
+            current = prev
+        return path
+
+    def god_nodes(self, root: Path, limit: int = 10) -> list[NodeDegree]:
+        """Top symbols by total resolved degree across the four edge families."""
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            in_degree: dict[int, int] = {}
+            out_degree: dict[int, int] = {}
+            for table, src, dst in (
+                ("call_edges", "caller_id", "callee_id"),
+                ("import_edges", "importer_id", "imported_id"),
+                ("inherit_edges", "child_id", "parent_id"),
+                ("mixin_edges", "host_id", "mixin_id"),
+            ):
+                for row in conn.execute(
+                    f"SELECT {src} AS id, COUNT(*) AS n FROM {table} "  # noqa: S608 - fixed identifiers
+                    f"GROUP BY {src}"
+                ):
+                    node_id = int(row["id"])
+                    if node_id:
+                        out_degree[node_id] = out_degree.get(node_id, 0) + int(row["n"])
+                for row in conn.execute(
+                    f"SELECT {dst} AS id, COUNT(*) AS n FROM {table} "  # noqa: S608
+                    f"WHERE {dst} IS NOT NULL GROUP BY {dst}"
+                ):
+                    node_id = int(row["id"])
+                    in_degree[node_id] = in_degree.get(node_id, 0) + int(row["n"])
+            ids = set(in_degree) | set(out_degree)
+            if not ids:
+                return []
+            ranked = sorted(
+                ids,
+                key=lambda node_id: (
+                    -(in_degree.get(node_id, 0) + out_degree.get(node_id, 0)),
+                    node_id,
+                ),
+            )[:limit]
+            rows = self._symbols_by_ids(conn, set(ranked))
+            by_id = {int(row["id"]): row for row in rows}
+            out: list[NodeDegree] = []
+            for node_id in ranked:
+                row = by_id.get(node_id)
+                if row is None:
+                    continue
+                out.append(
+                    NodeDegree(
+                        symbol=self._row_to_match(row),
+                        degree=in_degree.get(node_id, 0) + out_degree.get(node_id, 0),
+                        in_degree=in_degree.get(node_id, 0),
+                        out_degree=out_degree.get(node_id, 0),
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def communities(self, root: Path) -> list[Community]:
+        """Louvain communities over the resolved graph (networkx optional)."""
+        self._ensure_index(root)
+        conn = self._connect()
+        try:
+            max_symbols = int(self._config["code_intel_communities_max_symbols"])
+            rows = conn.execute(
+                "SELECT id, name FROM symbols ORDER BY id LIMIT ?", (max_symbols,)
+            ).fetchall()
+            names = {int(row["id"]): row["name"] for row in rows}
+            node_ids = set(names)
+            edges: set[tuple[int, int]] = set()
+            for table, src, dst in (
+                ("call_edges", "caller_id", "callee_id"),
+                ("import_edges", "importer_id", "imported_id"),
+                ("inherit_edges", "child_id", "parent_id"),
+                ("mixin_edges", "host_id", "mixin_id"),
+            ):
+                for row in conn.execute(
+                    f"SELECT {src} AS s, {dst} AS d FROM {table} "  # noqa: S608
+                    f"WHERE {dst} IS NOT NULL"
+                ):
+                    s, d = int(row["s"]), int(row["d"])
+                    if s in node_ids and d in node_ids and s != d:
+                        edges.add((s, d))
+            if not node_ids:
+                return []
+            try:
+                import networkx as nx
+            except ImportError:
+                return self._components(node_ids, edges, names)
+            graph = nx.Graph()
+            graph.add_nodes_from(sorted(node_ids))
+            graph.add_edges_from(sorted(edges))
+            try:
+                partitions = nx.community.louvain_communities(graph, seed=0)
+            except AttributeError:  # networkx < 3.0
+                return self._components(node_ids, edges, names)
+            out: list[Community] = []
+            for index, part in enumerate(
+                sorted(partitions, key=lambda part: (-len(part), min(part)))
+            ):
+                members = sorted(int(node) for node in part)
+                ranked = sorted(members, key=lambda node: (-graph.degree[node], node))
+                out.append(
+                    Community(
+                        community_id=index,
+                        size=len(members),
+                        symbols=[names[node] for node in members],
+                        top_nodes=[names[node] for node in ranked[:5]],
+                        engine="networkx",
+                    )
+                )
+            return out
+        finally:
+            conn.close()
+
+    def community_of(self, symbol_name: str, root: Path) -> Community | None:
+        for community in self.communities(root):
+            if symbol_name in community.symbols:
+                return community
+        return None
+
+    @staticmethod
+    def _components(
+        node_ids: set[int], edges: set[tuple[int, int]], names: dict[int, str]
+    ) -> list[Community]:
+        adjacency: dict[int, set[int]] = {node: set() for node in node_ids}
+        for src, dst in edges:
+            adjacency[src].add(dst)
+            adjacency[dst].add(src)
+        seen: set[int] = set()
+        out: list[Community] = []
+        for node in sorted(node_ids):
+            if node in seen:
+                continue
+            stack = [node]
+            members: list[int] = []
+            while stack:
+                current = stack.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                members.append(current)
+                stack.extend(sorted(adjacency[current] - seen))
+            members.sort()
+            ranked = sorted(members, key=lambda member: (-len(adjacency[member]), member))
+            out.append(
+                Community(
+                    community_id=len(out),
+                    size=len(members),
+                    symbols=[names[member] for member in members],
+                    top_nodes=[names[member] for member in ranked[:5]],
+                    engine="components",
+                )
+            )
+        out.sort(key=lambda community: (-community.size, community.community_id))
+        return out
+
     # -- shared SQL helpers ------------------------------------------------
 
     def _callers_for(
@@ -331,7 +1022,8 @@ class CodeQuery:
             clauses.append(f"ce.callee_id IN ({placeholders})")
             params.extend(ids)
         sql = (
-            "SELECT ce.line AS call_line, s.id AS caller_id, s.name AS caller_name, "
+            "SELECT ce.line AS call_line, ce.resolved AS edge_resolved, "
+            "s.id AS caller_id, s.name AS caller_name, "
             "s.kind AS caller_kind, s.file_path AS caller_file, s.line_start AS caller_line "
             "FROM call_edges ce JOIN symbols s ON s.id = ce.caller_id "
             f"WHERE {' OR '.join(clauses)} ORDER BY s.file_path, ce.line"
@@ -351,6 +1043,7 @@ class CodeQuery:
                     file_path=row["caller_file"],
                     line_start=int(row["caller_line"]),
                     call_line=int(row["call_line"]),
+                    confidence=_confidence(row["edge_resolved"]),
                 )
             )
         return out
@@ -379,6 +1072,7 @@ class CodeQuery:
                     target_line=int(row["target_line"]) if row["target_line"] is not None else None,
                     call_line=int(row["call_line"]),
                     resolved=bool(row["resolved"]),
+                    confidence=_confidence(row["resolved"]),
                 )
             )
         return out
@@ -411,6 +1105,26 @@ class CodeQuery:
             f"WHERE id IN ({placeholders}) ORDER BY file_path, line_start",
             sorted(ids),
         ).fetchall()
+
+    @staticmethod
+    def _files_for(conn: sqlite3.Connection, ids: list[int]) -> list[str]:
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT DISTINCT file_path FROM symbols WHERE id IN ({placeholders})", ids
+        ).fetchall()
+        return [row["file_path"] for row in rows]
+
+    @staticmethod
+    def _files_matching_module(conn: sqlite3.Connection, module_name: str) -> list[str]:
+        """Map a dotted module name (``pkg.mod``) onto indexed file paths."""
+        dotted = module_name.replace("::", ".").replace(".", "/").strip("/")
+        rows = conn.execute(
+            "SELECT file_path FROM index_meta WHERE file_path LIKE ? OR file_path LIKE ? LIMIT 5",
+            (f"%{dotted}%", f"%{module_name}%"),
+        ).fetchall()
+        return [row["file_path"] for row in rows]
 
     def _names_for(self, conn: sqlite3.Connection, ids: set[int]) -> set[str]:
         if not ids:

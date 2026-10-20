@@ -182,6 +182,7 @@ sherry_agent/
 │   ├── subagent/           # Subagent design invariants & completion gates
 │   ├── code-intel/         # Code retrieval layers
 │   ├── graph-rag/          # Multi-hop path retrieval + recall tuning
+│   ├── llm-wiki/          # Markdown KB + derived graph queries
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
@@ -316,7 +317,8 @@ Each major subsystem has its own detailed README:
 | **Session Memory** | SESSION-plan capabilities: memory flush, compression cooldown, compaction lock, event log, semantic search | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **Subagent Design** | Design invariants: two-axis role model, spawn-privilege guards, four-layer completion gates | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
-| **Code Intel** | Code retrieval: ripgrep keyword search for every agent, plus four role-gated layers — tree-sitter symbol index, ast-grep structural search, LSP precision, semantic search | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **Code Intel** | Code retrieval: ripgrep keyword search for every agent, plus four role-gated layers — tree-sitter symbol index, ast-grep structural search, LSP precision, semantic search — with imports/inheritance/mixin edges and a bidirectional `path` tool | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **LLM Wiki Graph** | Markdown-first knowledge base with an explicit derived graph: wikilink/mention edges with EXTRACTED/INFERRED confidence, multimodal ingest, and path/god-node/community queries | [EN](wiki/llm-wiki/README.md) · [ZH](wiki/llm-wiki/README.zh.md) · [JA](wiki/llm-wiki/README.ja.md) · [KO](wiki/llm-wiki/README.ko.md) |
 | **GraphRAG Path Query** | Explicit multi-hop path retrieval: BFS for 2-3 hops, an embedding-guided beam fallback, and tuned recall thresholds over the dense-only LightRAG engine | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
 | **Programmatic Tool Calling** | EXECUTOR-only `execute_code`: one Python script in a separate child process, real tools over a loopback TCP RPC bridge, restricted builtins, per-script budgets | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |

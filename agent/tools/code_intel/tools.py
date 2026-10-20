@@ -1,6 +1,6 @@
 """LangChain tool wrappers for the code intelligence index — RESEARCHER only.
 
-The five tools (``explore`` / ``callers`` / ``callees`` / ``impact`` /
+The six tools (``explore`` / ``callers`` / ``callees`` / ``impact`` / ``path`` /
 ``semantic_code_search``) are never registered in ``_MAIN_TOOLS_BUILDERS``;
 ``agent/tools/subagent/spawn/core.py`` injects them into a child agent only when
 its functional role is RESEARCHER. Each carries
@@ -35,7 +35,14 @@ from models.embed_model.code import build_code_embed_model, code_embedder_enable
 
 from .roots import index_db_for_root, resolve_root, root_for_call
 
-from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
+from .query import (
+    CalleeInfo,
+    CallerInfo,
+    CodeQuery,
+    ExploreResult,
+    ImpactResult,
+    PathResult,
+)
 from .semantic import SemanticSearch, build_semantic_search_tool
 
 _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
@@ -70,6 +77,13 @@ class ImpactInput(BaseModel):
     """Input for the ``impact`` tool."""
 
     symbol: str = Field(description="Symbol name whose blast radius should be analysed.")
+
+
+class PathInput(BaseModel):
+    """Input for the ``path`` tool."""
+
+    symbol_a: str = Field(description="Symbol name at the start of the path.")
+    symbol_b: str = Field(description="Symbol name at the end of the path.")
 
 
 class _CodeIntelTool(BaseTool):
@@ -174,7 +188,10 @@ class ImpactTool(_CodeIntelTool):
     description: str = (
         "Analyse the blast radius of modifying the given symbol by traversing the call graph "
         "upward (callers direction) to the configured depth. Use before refactoring to "
-        'understand what might break. Example: impact("build_main_tools")'
+        "understand what might break. Each affected entry is a BFS path: `depth` is its hop "
+        "count from the queried symbol and `via` is the callee name of the previous hop (the "
+        "edge label on the path), not a standalone match. "
+        'Example: impact("build_main_tools")'
     )
     args_schema: type[BaseModel] = ImpactInput
     metadata: dict[str, Any] = _SCOPE_METADATA
@@ -182,6 +199,26 @@ class ImpactTool(_CodeIntelTool):
     def _run(self, symbol: str) -> str:
         result = self._engine.impact(symbol, self._session_root())
         return self._json(_impact_payload(result))
+
+
+class PathTool(_CodeIntelTool):
+    """Shortest path between two symbols across the indexed graph."""
+
+    name: str = "path"
+    description: str = (
+        "Find the shortest directed path from symbol_a to symbol_b across calls, imports, "
+        "inheritance and mixins (bidirectional BFS: forward from A, backward from B). "
+        "Returns the hop sequence with each hop's edge type and confidence (EXTRACTED = "
+        'resolved in source, INFERRED = name-only match). Use for "how does A reach B" '
+        "questions and cross-module dependency chains. "
+        'Example: path("UserService", "DatabasePool")'
+    )
+    args_schema: type[BaseModel] = PathInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, symbol_a: str, symbol_b: str) -> str:
+        result = self._engine.path(symbol_a, symbol_b, self._session_root())
+        return self._json(_path_payload(result))
 
 
 def _explore_payload(result: ExploreResult) -> dict[str, Any]:
@@ -221,6 +258,7 @@ def _callers_payload(symbol: str, rows: list[CallerInfo]) -> dict[str, Any]:
                 "file": row.file_path,
                 "line": row.line_start,
                 "call_line": row.call_line,
+                "confidence": row.confidence,
             }
             for row in rows
         ],
@@ -238,6 +276,7 @@ def _callees_payload(symbol: str, rows: list[CalleeInfo]) -> dict[str, Any]:
                 "target_line": row.target_line,
                 "call_line": row.call_line,
                 "resolved": row.resolved,
+                "confidence": row.confidence,
             }
             for row in rows
         ],
@@ -260,6 +299,26 @@ def _impact_payload(result: ImpactResult) -> dict[str, Any]:
                 "via": entry.via,
             }
             for entry in result.entries
+        ],
+    }
+
+
+def _path_payload(result: PathResult) -> dict[str, Any]:
+    return {
+        "symbol_a": result.root_a,
+        "symbol_b": result.root_b,
+        "found": result.found,
+        "truncated": result.truncated,
+        "hops": [
+            {
+                "name": hop.symbol.name,
+                "kind": hop.symbol.kind,
+                "file": hop.symbol.file_path,
+                "line": hop.symbol.line_start,
+                "edge_type": hop.edge_type,
+                "confidence": hop.edge_confidence,
+            }
+            for hop in result.hops
         ],
     }
 
@@ -306,9 +365,10 @@ def build_code_intel_tools(
 ) -> list[BaseTool]:
     """Build the RESEARCHER-only code intelligence tools.
 
-    Four tools are always present. ``semantic_code_search`` is appended only
-    when the code-intel semantic layer is enabled by a valid CodeEmbedder; BGE
-    is deliberately never used here. Optional overrides exist for tests.
+    Five tools are always present (explore/callers/callees/impact/path).
+    ``semantic_code_search`` is appended only when the code-intel semantic layer
+    is enabled by a valid CodeEmbedder; BGE is deliberately never used here.
+    Optional overrides exist for tests.
     """
     cfg = config or CODE_INTEL
     explicit_root = Path(root).resolve() if root is not None else None
@@ -326,6 +386,7 @@ def build_code_intel_tools(
         CallersTool(engine, cfg, resolved_root, session_id, explicit_root),
         CalleesTool(engine, cfg, resolved_root, session_id, explicit_root),
         ImpactTool(engine, cfg, resolved_root, session_id, explicit_root),
+        PathTool(engine, cfg, resolved_root, session_id, explicit_root),
     ]
     sem_cfg = semantic_config or CODE_INTEL_SEMANTIC
     if not _semantic_enabled(sem_cfg, embed_model):

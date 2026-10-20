@@ -29,7 +29,7 @@ Code Intel answers code-understanding questions with five retrieval engines, eac
 | Layer | Question it answers | Tools | Gate |
 |-------|--------------------|-------|------|
 | **Keyword search** | Where does this literal or regex appear — in contents or in file names? | `search_files` | main agent + `researcher` + `librarian` |
-| **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact` | `researcher` + `librarian` |
+| **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact`, `path` | `researcher` + `librarian` |
 | **ast-grep** | What code has this structural shape, and how do I rewrite it? | `ast_grep_search`, `ast_grep_rewrite` | every subagent |
 | **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
 | **Semantic search** | Which code implements this concept? | `semantic_code_search` | `researcher` + `librarian` |
@@ -110,7 +110,7 @@ The node names and grammar versions were measured against the pinned packages �
 
 Incrementality and bounds: every file's `mtime` and `size` are compared against `index_meta`; only changed files are re-parsed, removed files are dropped (including detaching inbound resolved edges), and writes are batched in transactions of 100 files. The walk stops at `code_intel_index_max_files` (5000) or `code_intel_index_timeout_s` (60) and reports `truncated`. Fail-open is per file: a syntax-error file, an oversized file (over 1 MB), an unknown extension, or a read error records an `index_meta` row and is skipped — a syntax-error file is never partially indexed. Mutating calls are serialized by an instance lock, and the connection uses WAL with a 30 s busy timeout.
 
-Queries refresh the incremental index before they read, so a search after edits does not return stale symbols, and an unchanged tree is a cheap no-op. The four tools are:
+Queries refresh the incremental index before they read, so a search after edits does not return stale symbols, and an unchanged tree is a cheap no-op. The five tools are:
 
 | Tool | Input | Output | Bound |
 |------|-------|--------|-------|
@@ -118,6 +118,46 @@ Queries refresh the incremental index before they read, so a search after edits 
 | `callers` | symbol name | every function or method that calls it, with call-site lines | exact name first, fuzzy fallback |
 | `callees` | symbol name | every call the symbol emits, with the resolved target file and line when known | duplicate call sites collapsed |
 | `impact` | symbol name | transitive callers (blast radius), with depth and the name reached through | depth 3, `truncated` flag |
+| `path` | two symbol names | shortest directed hop sequence across calls/imports/inherits/mixins, each hop with edge type + confidence | depth 3, `truncated` flag |
+
+## 🕸️ Graph Edges & Path Queries
+
+The index is no longer call-only. Three parallel tables sit beside `call_edges`
+(which is never altered): `import_edges` (module-scope rows use
+`importer_id = 0`), `inherit_edges` (`inherit_type` = `class` / `interface` /
+`trait`) and `mixin_edges` (`implements`, Rust trait impls, Go embedding).
+`CREATE TABLE IF NOT EXISTS` upgrades an older DB in place on first open.
+
+| Language | Imports | Inheritance | Mixins |
+|----------|---------|-------------|--------|
+| Python | `import a.b`, `from a.b import c` | class bases | — |
+| TypeScript | default / named / namespace / side-effect | `extends` (class, interface) | `implements` |
+| Rust | `use a::b::{c, d}` | trait supertraits | `impl Trait for Type` |
+| Go | import paths | interface embedding | struct embedding |
+
+Resolution stays name-based and two-pass; the new tables prefer the file's own
+language, so a TypeScript `Base` never resolves to a Python `Base`. Six query
+methods expose them: `imports_of`, `importers_of`, `inherits_from`,
+`subclasses_of`, `mixins_of`, `mixins_in_by`. `callers` and `callees` now carry
+`confidence: "EXTRACTED"` (resolved) or `"INFERRED"` (name-only) beside the
+unchanged `resolved` bool.
+
+The sixth tool, `path(symbol_a, symbol_b)`, is a directed bidirectional BFS
+across all four edge families — forward from A over outgoing edges, backward
+from B over incoming edges — bounded by `code_intel_call_graph_max_depth`. Each
+hop carries `edge_type` (`calls` / `imports` / `inherits` / `mixes_in`) and
+`confidence`. `impact` is unchanged: it remains the one-directional caller blast
+radius. `god_nodes` ranks by total resolved degree; `communities` runs networkx
+Louvain on demand (connected components without networkx) and `community_of`
+looks one symbol up.
+
+The same index feeds
+`skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index`, a
+deterministic zero-LLM export (README / architecture / modules / class diagram).
+`sequences.md` stays LLM-generated because runtime flow is not in an AST. A
+missing index or an unsupported language returns
+`{"fallback": true, "reason": ...}` so the skill's LLM procedure takes over.
+
 
 ## 🧬 Layer 2: ast-grep Structural Search & Rewrite
 

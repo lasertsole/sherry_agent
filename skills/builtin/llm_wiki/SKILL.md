@@ -104,6 +104,53 @@ result = save_source("source content", category="articles", filename="my-source.
 print(result)
 ```
 
+`save_source` is unchanged (text only). For PDF / image / audio / video / docx /
+xlsx / markdown payloads use the additive binary path:
+
+```python
+from skills.builtin.llm_wiki.scripts import save_binary_source
+
+result = save_binary_source(
+    pdf_bytes, "pdf", source_url="https://example.test/paper.pdf", filename="paper.pdf"
+)
+```
+
+It extracts text with the skill's own extractors (mineru / pypdf / pdftotext for
+PDF, `image_to_text` for images, `speech_to_text` for audio,
+`video_text_to_text` for video, stdlib ZIP/XML readers for docx/xlsx), runs one
+auxiliary-LLM semantic pass (fail-open), writes `raw/<category>/<name>.md` with
+the optional `extracted_entities` / `extracted_relations` frontmatter, and
+refreshes the explicit graph.
+
+### Graph queries
+
+`search_wiki(keyword)` is still the plain grep (unchanged). Once a wiki has a
+graph, prefer the graph queries — they return structure, not matching lines:
+
+```python
+from skills.builtin.llm_wiki.scripts import (
+    build_wiki_graph,
+    path,
+    god_nodes,
+    explain,
+    communities,
+    query_graph,
+)
+
+build_wiki_graph()  # incremental (mtime); also runs automatically
+result = path("Apple", "Battery")  # undirected shortest path + edge confidence
+hubs = god_nodes(10)  # degree-ranked entities/concepts
+node = explain("Apple")  # neighbours + confidence split + source files
+clusters = communities()  # Louvain (networkx) or connected components
+subgraph = query_graph("Apple and its suppliers")  # NL → nodes + 1-hop edges
+```
+
+The graph is derived from the markdown: `[[wikilinks]]`, `[inline links](...)`
+and `` `code-span` `` mentions are EXTRACTED edges; `[[Target|INFERRED]]` and
+frontmatter `extracted_relations` carry the stated confidence. The DB lives at
+`src/data/wiki/.wiki_graph.db`; it is disposable and rebuilt from markdown.
+`networkx` is optional — without it, communities degrade to connected components.
+
 ## Architecture: Three Layers
 
 ```

@@ -209,6 +209,11 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
             "video_max_duration_sec": 60.0,
             "skill_creator_max_skill_name_length": 64,
             "wiki_subdir": "wiki",
+            "code_wiki_export_max_symbols": 5000,
+            "code_wiki_export_max_modules": 12,
+            "code_wiki_export_max_diagram_nodes": 50,
+            "code_wiki_export_max_class_edges": 40,
+            "wiki_lint_low_confidence_ratio": 0.7,
         },
     ),
     (

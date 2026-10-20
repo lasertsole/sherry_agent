@@ -28,6 +28,7 @@ Do NOT use this for:
 
 | Step | Action |
 |---|---|
+| 0 | **Try the deterministic export** from a code_intel index (no LLM); fall back to the procedure below only when it reports `fallback` |
 | 1 | Resolve target — local cwd, given path, or `git clone --depth 50 <url>` to a temp dir |
 | 2 | Scan structure — `ls`, `find -maxdepth 3`, manifest files, README |
 | 3 | Pick 8–10 modules to document |
@@ -42,6 +43,37 @@ Do NOT use this for:
 | 12 | Report paths to user |
 
 ## Procedure
+
+### 0. Prefer the deterministic export (code_intel index)
+
+When the target repository is Python / TypeScript / TSX / JavaScript / Rust / Go,
+build (or refresh) its code_intel index and export the wiki from it. This path is
+deterministic, makes zero LLM calls, and produces `README.md`,
+`architecture.md`, `modules/*.md`, `diagrams/class-diagram.md` and
+`diagrams/sequences.md` from the symbol/edge tables. It also writes
+`.codewiki-state.json` with `"generator": "code_intel_export"`.
+
+```python
+from pathlib import Path
+from agent.tools.code_intel import CodeIndexer
+from config.features.agent_side import CODE_INTEL
+from skills.builtin.code_wiki.scripts.core import export_wiki_from_index
+
+root = Path("<repo path>").resolve()
+db_path = root / ".codeintel" / "index.db"  # honored only when SHERRY_CODE_INTEL_DB is unset
+CodeIndexer(str(db_path), CODE_INTEL).index_directory(root)  # incremental
+result = export_wiki_from_index("<repo_name>", str(db_path))
+if result.get("fallback"):
+    print(result["reason"])  # index_not_found / empty_index / unsupported_language
+    # → continue with the LLM-driven procedure below
+```
+
+`export_wiki_from_index` never overwrites the existing path-management helpers
+(`init_repo_wiki` / `get_repo_wiki_path` / ...); it is an independent entry point.
+`diagrams/sequences.md` is intentionally a note: runtime call flow is not
+representable from a static AST, so sequence diagrams stay LLM-generated.
+Communities come from networkx Louvain when available; without networkx the
+exporter falls back to connected components and records `community_engine`.
 
 ### 1. Resolve the target
 
@@ -172,7 +204,7 @@ Only write this if the project is a library or API server. Document each public 
   "source_path": "<PWD>",
   "source_sha": "<REPO_SHA>",
   "generated_at": "<ISO timestamp>",
-  "generator": "code-wiki skill v0.1.0",
+  "generator": "code-wiki skill v0.1.0",  // or "code_intel_export"
   "modules_documented": []
 }
 ```

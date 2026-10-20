@@ -29,7 +29,7 @@ Code Intel は 5 つの検索エンジンでコード理解の問いに答えま
 | 層 | 答える問い | ツール | 開放範囲 |
 |----|------------|--------|----------|
 | **キーワード検索** | このリテラルや正規表現はどこに出るか——内容か、ファイル名か？ | `search_files` | メインエージェント + `researcher` + `librarian` |
-| **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact` | `researcher` + `librarian` |
+| **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact`, `path` | `researcher` + `librarian` |
 | **ast-grep** | どのコードがこの構造形を持ち、どう書き換えるか？ | `ast_grep_search`、`ast_grep_rewrite` | すべてのサブエージェント |
 | **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
 | **セマンティック検索** | この概念を実装するのはどのコードか？ | `semantic_code_search` | `researcher` + `librarian` |
@@ -92,7 +92,7 @@ child agent assembly (spawn/core.py)
 
 増分性と上限：各ファイルの `mtime` と `size` が `index_meta` と比較され、変更されたファイルだけが再解析され、削除されたファイルは解決済みの入辺の切り離しを含めて破棄され、書き込みは 100 ファイル単位のトランザクションでバッチ処理されます。走査は `code_intel_index_max_files`（5000）または `code_intel_index_timeout_s`（60）で停止し、`truncated` を報告します。fail-open はファイル単位です：構文エラー、巨大ファイル（1 MB 超）、未知の拡張子、読み取りエラーはそれぞれ `index_meta` 行を記録してスキップされます——構文エラーのファイルが部分的に索引付けされることは決してありません。変更操作はインスタンスロックで直列化され、接続は WAL で 30 秒の busy timeout を持ちます。
 
-照会は読み取り前に増分索引を更新するため、編集後の検索が古いシンボルを返すことはなく、ツリーが変わっていなければ安価な no-op です。4 つのツールは次のとおりです：
+照会は読み取り前に増分索引を更新するため、編集後の検索が古いシンボルを返すことはなく、ツリーが変わっていなければ安価な no-op です。5 つのツールは次のとおりです：
 
 | ツール | 入力 | 出力 | 上限 |
 |--------|------|------|------|
@@ -100,6 +100,45 @@ child agent assembly (spawn/core.py)
 | `callers` | シンボル名 | それを呼ぶすべての関数・メソッドと呼び出し箇所の行 | 完全名優先、ファジーをフォールバック |
 | `callees` | シンボル名 | そのシンボルが発するすべての呼び出し（判明時は解決済みの対象ファイルと行） | 重複する呼び出し箇所を集約 |
 | `impact` | シンボル名 | 推移的な呼び出し元（ブラスト半径）、深さと経由した名前付き | 深さ 3、`truncated` フラグ |
+| `path` | 2 つのシンボル名 | calls/imports/inherits/mixins をまたぐ最短の有向ホップ列（各ホップに辺種別と confidence） | 深さ 3、`truncated` フラグ |
+
+## 🕸️ グラフ辺とパスクエリ
+
+索引は呼び出し辺だけではなくなりました。`call_edges`（一切変更しません）の隣に
+3 つの並行テーブルがあります：`import_edges`（モジュールスコープは
+`importer_id = 0`）、`inherit_edges`（`inherit_type` = `class` / `interface` /
+`trait`）、`mixin_edges`（`implements`、Rust の trait impl、Go の埋め込み）。
+古い DB は初回オープン時に `CREATE TABLE IF NOT EXISTS` でその場で更新されます。
+
+| 言語 | imports | 継承 | mixin |
+|------|---------|------|-------|
+| Python | `import a.b`、`from a.b import c` | クラス基底 | — |
+| TypeScript | default / named / namespace / side-effect | `extends`（class、interface） | `implements` |
+| Rust | `use a::b::{c, d}` | trait の supertrait | `impl Trait for Type` |
+| Go | import パス | interface 埋め込み | struct 埋め込み |
+
+解決は名前ベースの 2 パスのままで、新しいテーブルは同一言語を優先します。
+TypeScript の `Base` が Python の `Base` に解決されることはありません。6 つの
+クエリメソッドが公開されます：`imports_of`、`importers_of`、`inherits_from`、
+`subclasses_of`、`mixins_of`、`mixins_in_by`。`callers` と `callees` は
+`resolved` ブール値を変えずに `confidence: "EXTRACTED"`（解決済み）または
+`"INFERRED"`（名前のみ）を追加しました。
+
+6 番目のツール `path(symbol_a, symbol_b)` は 4 種類の辺をまたぐ有向の双方向
+BFS です——A から出辺を正向、B から入辺を反向——`code_intel_call_graph_max_depth`
+で制限されます。各ホップは `edge_type`（`calls` / `imports` / `inherits` /
+`mixes_in`）と `confidence` を持ちます。`impact` は不変で、単方向の呼び出し元
+ブラスト半径のままです。`god_nodes` は解決済み次数の合計で順位付けし、
+`communities` は必要時に networkx Louvain を実行し（networkx が無ければ連結
+成分）、`community_of` は 1 シンボルの所属を返します。
+
+同じ索引が
+`skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index`（決定的・
+LLM 呼び出しゼロの README / architecture / modules / class diagram エクスポート）
+を支えます。`sequences.md` は AST に実行時フローが無いため LLM 生成のままです。
+索引が無い場合や未対応言語では `{"fallback": true, "reason": ...}` を返し、
+スキルの LLM 手順に切り替わります。
+
 
 ## 🧬 第 2 層：ast-grep 構造検索と書き換え
 

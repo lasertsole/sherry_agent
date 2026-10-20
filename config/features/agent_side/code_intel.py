@@ -20,6 +20,7 @@ class CodeIntelConfig(TypedDict):
     code_intel_explore_max_source_chars: int
     code_intel_call_graph_max_depth: int
     code_intel_fuzzy_min_score: float
+    code_intel_communities_max_symbols: int
     code_intel_supported_extensions: list[str]
     code_intel_language_map: dict[str, str]
     code_intel_prune_dirs: list[str]
@@ -38,6 +39,9 @@ CODE_INTEL: CodeIntelConfig = {
     "code_intel_explore_max_source_chars": 8000,
     "code_intel_call_graph_max_depth": 3,
     "code_intel_fuzzy_min_score": 0.3,
+    # Louvain communities are computed on demand; above this symbol count the
+    # pass is skipped and callers fall back to connected components.
+    "code_intel_communities_max_symbols": 5000,
     "code_intel_supported_extensions": [
         ".py",
         ".ts",

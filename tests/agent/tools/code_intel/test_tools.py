@@ -60,6 +60,7 @@ def test_semantic_layer_can_be_disabled(
         "callers",
         "callees",
         "impact",
+        "path",
     ]
 
 
@@ -82,6 +83,7 @@ def test_default_auto_stays_off_without_the_opt_in_marker(
         "callers",
         "callees",
         "impact",
+        "path",
     ]
 
 
@@ -103,6 +105,7 @@ def test_bge_is_not_a_code_intel_embedder(
         "callers",
         "callees",
         "impact",
+        "path",
     ]
 
 
@@ -112,6 +115,7 @@ def test_tool_names_and_scope_metadata(tools: list) -> None:
         "callers",
         "callees",
         "impact",
+        "path",
         "semantic_code_search",
     ]
     for tool in tools:
@@ -147,6 +151,29 @@ def test_impact_tool_returns_json(tools: list) -> None:
     assert any(entry["name"] in {"top_func", "TopFunc"} for entry in payload["affected"])
 
 
+def test_callees_carry_the_confidence_tag(tools: list) -> None:
+    payload = json.loads(tools[2]._run(symbol="top_func"))
+    assert payload["callees"]
+    assert all(callee["confidence"] in {"EXTRACTED", "INFERRED"} for callee in payload["callees"])
+    assert any(
+        callee["resolved"] is True and callee["confidence"] == "EXTRACTED"
+        for callee in payload["callees"]
+    )
+
+
+def test_path_tool_returns_the_hop_sequence(tools: list) -> None:
+    payload = json.loads(tools[4]._run(symbol_a="level3_fn", symbol_b="base_fn"))
+    assert payload["found"] is True
+    assert [hop["name"] for hop in payload["hops"]] == [
+        "level3_fn",
+        "level2_fn",
+        "level1_fn",
+        "base_fn",
+    ]
+    assert payload["hops"][0]["edge_type"] == "root"
+    assert all(hop["edge_type"] == "calls" for hop in payload["hops"][1:])
+
+
 def test_unknown_symbol_is_empty_not_error(tools: list) -> None:
     payload = json.loads(tools[1]._run(symbol="no_such_symbol_abc"))
     assert payload["count"] == 0
@@ -163,7 +190,8 @@ def test_args_schemas(tools: list) -> None:
     assert "symbol" in tools[1].args_schema.model_fields
     assert "symbol" in tools[2].args_schema.model_fields
     assert "symbol" in tools[3].args_schema.model_fields
-    assert set(tools[4].args_schema.model_fields) == {"query", "top_k"}
+    assert set(tools[4].args_schema.model_fields) == {"symbol_a", "symbol_b"}
+    assert set(tools[5].args_schema.model_fields) == {"query", "top_k"}
 
 
 # ---------------------------------------------------------------------------

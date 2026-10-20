@@ -200,6 +200,7 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
         "callers",
         "callees",
         "impact",
+        "path",
         "semantic_code_search",
         "lsp_goto_definition",
         "lsp_find_references",

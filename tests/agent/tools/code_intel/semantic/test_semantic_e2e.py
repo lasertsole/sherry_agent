@@ -36,7 +36,7 @@ def _tools(sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig, **k
     )
 
 
-def test_tool_surface_has_five_when_code_embedder_is_injected(
+def test_tool_surface_has_six_when_code_embedder_is_injected(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
     tools = _tools(sample_repo, index_db, intel_config)
@@ -45,6 +45,7 @@ def test_tool_surface_has_five_when_code_embedder_is_injected(
         "callers",
         "callees",
         "impact",
+        "path",
         "semantic_code_search",
     ]
     for tool in tools:
@@ -54,14 +55,14 @@ def test_tool_surface_has_five_when_code_embedder_is_injected(
 def test_semantic_tool_has_no_path_input(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
-    tool = _tools(sample_repo, index_db, intel_config)[4]
+    tool = _tools(sample_repo, index_db, intel_config)[5]
     assert set(tool.args_schema.model_fields) == {"query", "top_k"}
 
 
 def test_build_then_search_returns_relevant_fragment(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
-    tool = _tools(sample_repo, index_db, intel_config)[4]
+    tool = _tools(sample_repo, index_db, intel_config)[5]
 
     payload = json.loads(tool._run(query="top_func", top_k=5))
     assert payload["count"] >= 1
@@ -78,7 +79,7 @@ def test_build_then_search_returns_relevant_fragment(
 def test_semantic_tool_arun_returns_json(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
-    tool = _tools(sample_repo, index_db, intel_config)[4]
+    tool = _tools(sample_repo, index_db, intel_config)[5]
     payload = json.loads(asyncio.run(tool._arun(query="top_func")))
     assert payload["count"] >= 1
 
@@ -86,7 +87,7 @@ def test_semantic_tool_arun_returns_json(
 def test_semantic_tool_degrades_when_backend_is_down(
     sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig
 ) -> None:
-    tool = _tools(sample_repo, index_db, intel_config, embed_model=FailingEmbedding())[4]
+    tool = _tools(sample_repo, index_db, intel_config, embed_model=FailingEmbedding())[5]
 
     payload = json.loads(tool._run(query="top_func"))
     assert payload["count"] == 0

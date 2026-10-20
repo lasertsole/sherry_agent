@@ -29,7 +29,7 @@ Code Intel 用五个检索引擎回答代码理解问题，每个引擎对应一
 | 层 | 回答的问题 | 工具 | 开放范围 |
 |----|-----------|------|----------|
 | **关键词搜索** | 这个字面量或正则出现在哪里——内容里还是文件名里？ | `search_files` | 主代理 + `researcher` + `librarian` |
-| **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact` | `researcher` + `librarian` |
+| **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact`, `path` | `researcher` + `librarian` |
 | **ast-grep** | 哪些代码具有该结构形态，如何重写？ | `ast_grep_search`、`ast_grep_rewrite` | 所有子代理 |
 | **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
 | **语义搜索** | 哪个代码实现了这个概念？ | `semantic_code_search` | `researcher` + `librarian` |
@@ -92,7 +92,7 @@ child agent assembly (spawn/core.py)
 
 增量与上界：每个文件的 `mtime` 与 `size` 都会与 `index_meta` 比较；只有变化的文件才重新解析，被删除的文件会连同其已解析的入边一起清理，写入以 100 个文件为一批提交。遍历在 `code_intel_index_max_files`（5000）或 `code_intel_index_timeout_s`（60）处停止并报告 `truncated`。fail-open 以文件为单位：语法错误、超大文件（超过 1 MB）、未知扩展名或读取失败都会写入一条 `index_meta` 记录后跳过——语法错误的文件绝不会被部分索引。变更调用由实例锁串行化，连接使用 WAL 并设置 30 秒 busy timeout。
 
-查询在读取前先刷新增量索引，因此编辑后搜索不会返回陈旧符号，而目录未变化时只是一次廉价的空操作。四个工具如下：
+查询在读取前先刷新增量索引，因此编辑后搜索不会返回陈旧符号，而目录未变化时只是一次廉价的空操作。五个工具如下：
 
 | 工具 | 输入 | 输出 | 上界 |
 |------|------|------|------|
@@ -100,6 +100,42 @@ child agent assembly (spawn/core.py)
 | `callers` | 符号名 | 所有调用它的函数或方法，含调用点行号 | 精确名优先，模糊兜底 |
 | `callees` | 符号名 | 该符号发出的所有调用，已知时附带解析到的目标文件与行号 | 重复调用点去重 |
 | `impact` | 符号名 | 传递调用者（爆炸半径），含深度与经由的名字 | 深度 3，`truncated` 标志 |
+| `path` | 两个符号名 | 跨 calls/imports/inherits/mixins 的最短有向跳序列，每跳带边类型与 confidence | 深度 3，`truncated` 标志 |
+
+## 🕸️ 图边与路径查询
+
+索引不再只有调用边。三张并列表与 `call_edges` 并排，且从不改动后者：
+`import_edges`（模块级行使用 `importer_id = 0`）、`inherit_edges`
+（`inherit_type` = `class` / `interface` / `trait`）与 `mixin_edges`
+（`implements`、Rust trait impl、Go 嵌入）。首次打开旧库时由
+`CREATE TABLE IF NOT EXISTS` 原地升级。
+
+| 语言 | imports | 继承 | mixin |
+|------|---------|------|-------|
+| Python | `import a.b`、`from a.b import c` | 类基类 | — |
+| TypeScript | 默认 / 具名 / 命名空间 / 副作用 | `extends`（class、interface） | `implements` |
+| Rust | `use a::b::{c, d}` | trait 父约束 | `impl Trait for Type` |
+| Go | import 路径 | interface 嵌入 | struct 嵌入 |
+
+解析仍是基于名字的两遍流程；新表优先同语言匹配，因此 TypeScript 的 `Base`
+不会解析到 Python 的 `Base`。六个查询方法暴露它们：`imports_of`、
+`importers_of`、`inherits_from`、`subclasses_of`、`mixins_of`、
+`mixins_in_by`。`callers` 与 `callees` 在保持 `resolved` 布尔值不变的同时，
+新增 `confidence: "EXTRACTED"`（已解析）或 `"INFERRED"`（仅名字匹配）。
+
+第六个工具 `path(symbol_a, symbol_b)` 是跨四类边的有向双向 BFS——从 A 沿出边
+正向、从 B 沿入边反向——受 `code_intel_call_graph_max_depth` 约束。每一跳携带
+`edge_type`（`calls` / `imports` / `inherits` / `mixes_in`）与 `confidence`。
+`impact` 不变：仍是单向调用者爆炸半径。`god_nodes` 按已解析总度数排序；
+`communities` 按需运行 networkx Louvain（无 networkx 时退化为连通分量），
+`community_of` 查询单个符号所属社区。
+
+同一份索引还驱动
+`skills/builtin/code_wiki/scripts/core.py::export_wiki_from_index`——一个确定性的
+零 LLM 导出（README / architecture / modules / class diagram）。`sequences.md`
+仍由 LLM 生成，因为运行时调用流不在 AST 里。索引缺失或语言不支持时返回
+`{"fallback": true, "reason": ...}`，由技能的 LLM 流程接管。
+
 
 ## 🧬 第 2 层：ast-grep 结构化搜索与重写
 
