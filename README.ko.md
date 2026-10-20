@@ -373,6 +373,7 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 | `REASONER_LLM_*` | — | 사고 연쇄(Chain-of-thought) 추론 모델 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
+| `MODEL_PRICING_TABLE` | — | 세션 예산 비용 추정용 USD/1M token 가격표(사용자 편집 가능한 JSON 객체를 JSON 문자열로 저장; provider 직접 반환 cost와 로컬 litellm 캐시가 폴백) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 보안 스캐너 스위치(기본값 켜짐) |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 선택적 브라우저 에이전트(기본 꺼짐). 변경 후 재시작해야 도구가 등록됩니다 |
 | `TOOL_CALL_TIMEOUT_MINUTES`(sherry.jsonc) / `LOG_LEVEL` | — | 저장 설정일 뿐(기본값 5) — 도구 실행 경로가 소비하지 않음; 로그 레벨(INFO) |

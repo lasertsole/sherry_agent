@@ -32,6 +32,7 @@ from .middlewares import (
     ToolResourceLockMiddleware,
     ContextEvictionMiddleware,
     IterationBudget,
+    TokenBudget,
     HeartbeatStaleness,
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
@@ -314,6 +315,11 @@ def _build_middlewares(
         ToolSelectionMiddleware(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+        # Session-level token cap (optional; absent = pass-through) and usage
+        # accumulation. Inside IterationBudget's wrapping so the per-turn
+        # iteration cap is decided first, and outside the model call so the
+        # terminal message short-circuits before any provider request.
+        TokenBudget(),
         ToolGuardrails(),
         # Process-wide shell/code and per-session HITL resource locks. Registered
         # after ToolGuardrails (inner to it), so a blocked call never waits on a

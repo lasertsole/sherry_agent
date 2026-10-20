@@ -108,6 +108,26 @@ class TestWriteModelsConfig:
         with pytest.raises(ValueError, match="must be an integer"):
             mc.write_models_config({"AUXILIARY_LLM_MAX_TOKEN": "lots"})
 
+    def test_a_json_dict_value_stays_a_json_string_on_disk(self, models_file):
+        """The pricing table is one scalar line, not a nested multi-line object."""
+        mc.write_models_config(
+            {
+                "MODEL_PRICING_TABLE": (
+                    '{"gpt-4o": {"input": 2.5, "output": 10.0}, '
+                    '"_default": {"input": 0.5, "output": 1.5}}'
+                )
+            }
+        )
+
+        data = json5.loads(models_file.read_text(encoding="utf-8"))
+        assert isinstance(data["MODEL_PRICING_TABLE"], str)
+        table = json5.loads(data["MODEL_PRICING_TABLE"])
+        assert table["gpt-4o"] == {"input": 2.5, "output": 10.0}
+        shown = {
+            e["key"]: e["value"] for g in mc.read_models_config()["groups"] for e in g["entries"]
+        }
+        assert shown["MODEL_PRICING_TABLE"] == data["MODEL_PRICING_TABLE"]
+
     def test_appends_a_known_key_that_has_no_line(self, models_file):
         mc.write_models_config({"STT_API_NAME": "whisper-large"})
 

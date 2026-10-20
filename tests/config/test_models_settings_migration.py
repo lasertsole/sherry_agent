@@ -33,6 +33,17 @@ def test_existing_file_gains_both_optional_families(existing_models):
     assert data["COMPRESSION_LLM_MAX_OUTPUT_TOKEN"] == ""
 
 
+def test_existing_file_gains_the_pricing_table(existing_models):
+    ms.ensure_models_config_file()
+
+    data = json5.loads(existing_models.read_text(encoding="utf-8"))
+    assert data["MAIN_LLM_PROVIDER"] == "openai"
+    # The flat key/value file stores the table as a JSON STRING; the loader
+    # turns it back into an object.
+    table = json5.loads(data["MODEL_PRICING_TABLE"])
+    assert table["_default"] == {"input": 0.5, "output": 1.5}
+
+
 def test_the_append_is_idempotent(existing_models):
     ms.ensure_models_config_file()
     first = existing_models.read_text(encoding="utf-8")

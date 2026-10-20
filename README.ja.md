@@ -373,6 +373,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 | `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
+| `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | オプトインのブラウザエージェント（既定は無効）。変更後は再起動でツールが登録されます |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 保存設定のみ（デフォルト 5）— ツール実行パスは消費しません。ログレベル（INFO） |

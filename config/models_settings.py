@@ -132,9 +132,21 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "SKILL_SCANNER_TIMEOUT": 120,
     "SKILLSPECTOR_PROVIDER": "openai",
     "SKILLSPECTOR_MODEL": "",
+    # USD per 1M tokens. Stored as a JSON object (serialized as a JSON string
+    # in the flat .models file); the token-budget middleware resolves
+    # user table → litellm cache → _default. User-editable, no code change.
+    "MODEL_PRICING_TABLE": {
+        "glm-5": {"input": 0.5, "output": 1.5},
+        "deepseek-chat": {"input": 0.14, "output": 0.28},
+        "kimi-latest": {"input": 0.55, "output": 2.19},
+        "_default": {"input": 0.5, "output": 1.5},
+    },
 }
 
 MODEL_SETTING_KEYS: tuple[str, ...] = tuple(MODEL_SETTING_DEFAULTS)
+
+#: Keys whose value is a JSON object rather than a scalar.
+_JSON_DICT_KEYS = frozenset({"MODEL_PRICING_TABLE"})
 
 _INT_KEYS = frozenset(
     {
@@ -188,6 +200,16 @@ _DOTENV_COMMENT_RE = re.compile(r"^\s*#")
 
 def _coerce(key: str, value: Any) -> Any:
     """Coerce a parsed value to the key's declared type."""
+    if key in _JSON_DICT_KEYS:
+        if isinstance(value, dict):
+            return dict(value)
+        text = str(value).strip()
+        if not text:
+            return dict(MODEL_SETTING_DEFAULTS[key])
+        parsed = json5.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{key} must be a JSON object")
+        return parsed
     if key in _INT_KEYS:
         if key in _MAX_OUTPUT_KEYS and str(value).strip() == "":
             return ""
@@ -266,6 +288,7 @@ def ensure_models_config_file() -> None:
     unparseable file is never rewritten.
     """
     if MODELS_CONFIG_PATH.exists():
+        _ensure_pricing_table_key()
         _ensure_optional_family_keys()
         return
     text = _seed_text()
@@ -287,6 +310,43 @@ _OPTIONAL_FAMILY_TITLES: dict[str, str] = {
     "COMPRESSION_LLM_": "── 压缩模型 Compression model — empty provider/base "
     "follows AUXILIARY_LLM_* ──",
 }
+
+
+def _ensure_pricing_table_key() -> None:
+    """Add ``MODEL_PRICING_TABLE`` to an existing ``.models`` when absent.
+
+    The value is a JSON OBJECT, serialized as a JSON string so the flat
+    line-based file and the panel's key/value editor keep working unchanged.
+    Idempotent; an unparseable file is never rewritten.
+    """
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+        data = json5.loads(text)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict) or "MODEL_PRICING_TABLE" in data:
+        return
+    inner = json.dumps(MODEL_SETTING_DEFAULTS["MODEL_PRICING_TABLE"], ensure_ascii=False)
+    line = f'  "MODEL_PRICING_TABLE": {json.dumps(inner, ensure_ascii=False)},'
+
+    open_brace = -1
+    offset = 0
+    for source_line in text.splitlines(keepends=True):
+        if source_line.lstrip().startswith("//"):
+            offset += len(source_line)
+            continue
+        pos = source_line.find("{")
+        if pos != -1:
+            open_brace = offset + pos
+            break
+        offset += len(source_line)
+    if open_brace == -1:
+        return
+    updated = text[: open_brace + 1] + "\n" + line + text[open_brace + 1 :]
+    try:
+        MODELS_CONFIG_PATH.write_text(updated, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _ensure_optional_family_keys() -> None:
@@ -375,6 +435,8 @@ def render_model_value(value: Any) -> str:
     """The value as an environment string (bools as ``true``/``false``)."""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
     return str(value)
 
 

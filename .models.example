@@ -116,6 +116,12 @@
   "STT_API_BASE": "",
   "STT_API_KEY": "",
 
+  // ── Token 价格表 Token pricing (USD per 1M tokens, estimates only) ───────
+  // A JSON OBJECT stored as a JSON STRING so the flat key/value editor works.
+  // Lookup: provider-returned cost → this table → litellm cache → `_default`.
+  // User-editable; no code change. Set a model to adjust budget estimates.
+  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
+
   // ── 技能安全扫描器 SkillSpector scanner (its own LLM selection) ─────────
   // SKILL_SCANNER_ENABLED: master switch (1 = scan uploaded skills).
   // SKILL_SCANNER_LLM: opt-in AI analysis (1 = on). Requires a provider that

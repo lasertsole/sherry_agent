@@ -374,6 +374,7 @@ Fill in at least the main chat model in `.models` and, for web search, a Tavily 
 | `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
+| `MODEL_PRICING_TABLE` | — | USD per 1M-token price table for session-budget cost estimates (a user-editable JSON object stored as a JSON string; provider-returned cost and the local litellm cache are fallbacks) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switch (on by default); LLM semantic analysis is opt-in (off by default) and requires a provider supporting json_schema structured output |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | Opt-in browser agent (off by default); needs a restart to register its tools |
 | `TOOL_CALL_TIMEOUT_MINUTES` (sherry.jsonc) / `LOG_LEVEL` | — | Stored setting only (default 5) — no tool-execution path consumes it; log level (INFO) |

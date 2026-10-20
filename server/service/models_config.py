@@ -70,6 +70,9 @@ def _display_value(raw: str) -> str:
         return raw
     if isinstance(typed, bool):
         return "true" if typed else "false"
+    if isinstance(typed, dict):
+        # A one-line JSON object (the pricing table) edits as its JSON text.
+        return json.dumps(typed, ensure_ascii=False)
     return typed if isinstance(typed, str) else str(typed)
 
 
@@ -173,7 +176,15 @@ def write_models_config(changes: dict[str, str]) -> None:
     # Coerce BEFORE touching the file so a bad value aborts without a backup churn.
     typed_changes: dict[str, str] = {}
     for key, raw in changes.items():
-        typed_changes[key] = json.dumps(parse_model_value(key, raw), ensure_ascii=False)
+        parsed = parse_model_value(key, raw)
+        if isinstance(parsed, dict):
+            # Dict-valued keys (the pricing table) stay a JSON STRING on disk,
+            # so the line-based reader sees one scalar value per line.
+            typed_changes[key] = json.dumps(
+                json.dumps(parsed, ensure_ascii=False), ensure_ascii=False
+            )
+        else:
+            typed_changes[key] = json.dumps(parsed, ensure_ascii=False)
 
     text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
     backup_path = MODELS_CONFIG_PATH.with_name(MODELS_CONFIG_PATH.name + ".bak")

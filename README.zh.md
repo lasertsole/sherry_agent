@@ -373,6 +373,7 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
+| `MODEL_PRICING_TABLE` | — | 会话预算估算用的 USD/1M token 价格表（用户可编辑的 JSON 对象，存储为 JSON 字符串；provider 直返 cost 与本地 litellm 缓存是回退） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 安全扫描开关（默认开启） |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 可选的浏览器代理（默认关闭）；改动后需重启才会注册工具 |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 仅存储设置（默认 5）——没有任何工具执行路径消费它；日志级别（INFO） |

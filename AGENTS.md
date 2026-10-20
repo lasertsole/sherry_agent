@@ -930,6 +930,36 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
+## Session Token Budget (`agent/middlewares/token_budget/`)
+
+A session can carry an optional token CAP (`PUT /sessions/budget`,
+`StateKey.TOKEN_BUDGET_CAP`; `null` clears it, `0` means unlimited). The cap is
+optional and absent by default, so the middleware is a pure pass-through until
+someone sets one. `TokenBudget` sits beside `IterationBudget` in the main chain
+(always on, not gateable): `wrap_model_call` / `awrap_model_call` first check the
+cap and, once `TOKEN_BUDGET_USED >= cap`, return a terminal `AIMessage` WITHOUT
+calling the provider (the turn ends with a summary request). After a normal
+response it accumulates the provider-reported `usage_metadata` into
+`TOKEN_BUDGET_USED` (exact) and `TOKEN_BUDGET_COST` (estimated USD), dual-written
+to the mem + DB registers so a restart does not lose the counters. The cap/park
+twin (`TOKEN_BUDGET_CAP_PENDING`) uses the same busy → park / turn-end promote
+rule as the thinking/model controls; `POST /sessions/budget/reset` clears
+USED/COST/LIMITED but keeps the cap.
+
+Pricing is USER-CONFIGURABLE, not hardcoded: `.models` carries
+`MODEL_PRICING_TABLE` (a JSON object serialized as a JSON string so the flat
+key/value file editor keeps working; seeded from `.models.example`, and an
+existing `.models` gains it on import). Lookup order is provider-returned cost
+(OpenRouter-style `usage.cost` / `prompt_cost` + `completion_cost`) → the user
+table → the local litellm cache (`src/data/litellm_prices.json`, gitignored,
+refreshed by `scripts/sync_litellm_prices.py`) → the table's `_default`
+(`config/features/infra_side/model_pricing.py::resolve_model_pricing`). The cap
+uses tokens only; the cost is an estimate for display/warnings. A warning event
+(`budget_warning`) fires once at `MODEL_PRICING["budget_warn_threshold"]` (0.80)
+and a `budget_limited` event fires once when the cap is first reached; both are
+best-effort WS pushes. `GET /sessions/budget` reports
+`{cap, used, cost, limited, pending}`.
+
 ## TaskFlow Progress (`agent/tools/taskflow/progress_push.py`)
 
 Two reporting views, both pushed (never polled) to the chat's floating progress
@@ -1487,7 +1517,9 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   the config is read once at construction (change = restart).
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
-  finds the owning flow by scanning active flows' steps for the child key), and
+  finds the owning flow by scanning active flows' steps for the child key, then
+  scopes the resume to the flow's OWNER `session_id` — passing the child key
+  here made the scoped lookup miss every real flow and left it running), and
   `taskflow_resume` then dispatches the wave it unlocked
   (`auto_dispatch=True` default; `auto_dispatch=False` keeps the "unlock only"
   shape). The AI still supervises the exceptions — judge BLOCK, failures,
@@ -1499,6 +1531,39 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_replan`).
+- Orphaned TaskFlows are reconciled conservatively
+  (`agent/tools/taskflow/reconcile.py`, run once at sweeper startup and on every
+  sweep): a non-terminal flow is finalized (CANCELLED, unresolved steps
+  CANCELLED, wait cleared) only when the `runtime.hooks.SESSION_EXISTS` server
+  hook PROVES its owner session is gone, NO child run is live, and the owner has
+  stayed missing for `TASKFLOW_INFRA["orphan_grace_seconds"]` (300 s). A missing
+  hook, a raising callback or an unreadable store is UNKNOWN and does nothing;
+  live owners and live children always veto. It never kills a child session and
+  never deletes a row. `taskflow_cancel` / `taskflow_fail` likewise only RECORD
+  still-running children in `state["detached_child_session_keys"]` (surfaced by
+  `taskflow_summary`), leaving the sessions alive. The stale-WAITING scan now
+  inspects per-step child keys, so a batch-dispatched flow with a live child is
+  no longer falsely marked stale.
+- The orphan-cleanup plan's entry/runtime/lifecycle layers are wired:
+  `taskflow_create` applies a 24h default deadline
+  (`TASKFLOW_INFRA["default_deadline_hours"]`; 0 disables), a superseded
+  predecessor becomes CANCELLED with `terminal_reason="superseded"`, and
+  `task_flows` carries additive `created_at` / `updated_at` / `terminal_reason` /
+  `purge_pending` columns (with backfill). A 12h stale-running action
+  (`stale_action_hours`) fails RUNNING/WAITING flows with no activity, but a live
+  child or an unreadable liveness source vetoes. When a subagent's cleanup
+  finalizes, `fail_step_for_child` flips its still-DISPATCHED step to failed
+  (subagents are async tasks, not child OS processes, so the registry terminal
+  signal replaces the plan's PID-liveness probe). `taskflow_finish` has three
+  INDEPENDENT budgets — nudge / consecutive failures / protocol violation — and
+  auto-fails at the relevant limit (children are detached, never killed).
+  Per-session total-row soft/hard caps prune only terminal rows and refuse new
+  creates at the hard cap; a session purge records durable bits in
+  `purge_pending` and the sweeper replays failed todo / flow / dangling-pointer
+  clears. We deliberately do NOT run ZCode-style "fail every non-terminal flow
+  at agent construction": TaskFlow flows are cross-turn, so that would kill a
+  live flow; the boot owner/stale scans plus per-mutation timestamps are the
+  safe substitute.
 - a dispatch wave spawns CONCURRENTLY, bounded by
   `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the historical
   sequential behaviour) through `asyncio.gather` + a semaphore — the three

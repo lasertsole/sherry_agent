@@ -26,6 +26,7 @@ EXPECTED_ORDER = [
     "ToolSelectionMiddleware",
     "MultimodalProcessor",
     "IterationBudget",
+    "TokenBudget",
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "UserHooksMiddleware",

@@ -17,6 +17,17 @@ class StateKey(StrEnum):
 
     ITERATION_BUDGET = "iteration_budget"
     ITERATION_BUDGET_USED = "iteration_budget_used"
+
+    # Session-level token budget (client UI → /sessions/budget). The cap is
+    # optional (absent/0 = unlimited); USED/COST accumulate across turns and
+    # are never reset by the per-turn iteration budget. The pending twin parks
+    # a mid-turn cap change exactly like the other per-session controls.
+    TOKEN_BUDGET_CAP = "token_budget_cap"
+    TOKEN_BUDGET_CAP_PENDING = "token_budget_cap_pending"
+    TOKEN_BUDGET_USED = "token_budget_used"
+    TOKEN_BUDGET_COST = "token_budget_cost"
+    TOKEN_BUDGET_LIMITED = "token_budget_limited"
+
     TOOL_GUARDRAIL_STATE = "tool_guardrail_state"
     IS_STREAM_TURN = "is_stream_turn"
 
