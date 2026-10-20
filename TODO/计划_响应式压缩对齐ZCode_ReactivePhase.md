@@ -9,7 +9,7 @@
     - `agent/middlewares/summarization/overflow.py:625-720`（`_forced_recovery_request` / `_aforced_recovery_request` / `_execute_with_recovery` / `_aexecute_with_recovery`）
     - `agent/middlewares/summarization/overflow.py:105-112`（`PAYLOAD_TOO_LARGE: "T4"` / `CONTEXT_OVERFLOW: "T5"` 映射 + retry key）
     - `agent/middlewares/summarization/core.py:545, 551, 581, 606, 612, 623`（`_execute_with_recovery` / `_aexecute_with_recovery` 在 wrap_model_call 内的调用点）
-    - `pub/func/message/llm_error_classifier.py:96-97, 389-435`（`classify_provider_error` + `_CONTEXT_OVERFLOW_PATTERNS`）
+    - `pub/func/message/llm_error_classifier.py`（`classify_provider_error` + `_CONTEXT_OVERFLOW_SUBSTRINGS` / `_CONTEXT_OVERFLOW_REGEXES`）
   - **ZCode 参考**（对齐目标）：
     - `ZCode-main/.../packages/contracts/src/compact/index.ts:32-39, 114-117`（`CompactPhase` 四值：StandaloneTurn / PreRequest / MidTurn / **Reactive**）
     - `ZCode-main/.../packages/core/src/runtime/helpers/compact.ts:43`（`CompactPhase.Reactive` 触发点）
@@ -339,7 +339,7 @@ ZCode 把 T4（payload_too_large）和 T5（context_overflow）都归到 `Compac
 - `agent/middlewares/summarization/overflow.py:674-720`（`_execute_with_recovery` 主循环）
 - `agent/middlewares/summarization/core.py:533-632`（`wrap_model_call` / `awrap_model_call` 调用 `_execute_with_recovery`）
 - `agent/middlewares/summarization/core.py:575-579`（trajectory event `compact` 当前调用点）
-- `pub/func/message/llm_error_classifier.py:96-97, 389-435`（`classify_provider_error` + `_CONTEXT_OVERFLOW_PATTERNS`）
+- `pub/func/message/llm_error_classifier.py`（`classify_provider_error` + `_CONTEXT_OVERFLOW_SUBSTRINGS` / `_CONTEXT_OVERFLOW_REGEXES`）
 - `agent/trajectory_events.py`（trajectory event 写入 seam）
 
 ### ZCode 参考（对齐目标）
