@@ -1,0 +1,9 @@
+{
+  "captured_run": null,
+  "threshold_resolve_rate": 0.0,
+  "model": {},
+  "aggregate": {
+    "note": "no measured run yet; ToolBench needs TOOLBENCH_KEY, MAIN_LLM_API_KEY and an OpenAI-compatible judge key"
+  },
+  "tasks": []
+}

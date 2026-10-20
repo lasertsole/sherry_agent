@@ -14,7 +14,7 @@ Rules for entries:
 - a HARNESS problem is fixed in the suite, never filed against the model: the
   split between "the model failed" and "the harness failed" is the whole point
   of the external suites (`coding_capability` = self-designed; `swebench`,
-  `deepswe`, `terminal_bench` = external).
+  `deepswe`, `terminal_bench`, `agentbench`, `toolbench` = external).
 
 | # | Finding | Found by | Status |
 | --- | --- | --- | --- |
