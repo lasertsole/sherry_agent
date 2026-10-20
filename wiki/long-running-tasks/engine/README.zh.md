@@ -308,10 +308,12 @@ Progress Report: <flow_id>
 1. 读取所有 `waiting` flow。
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600`（默认 24 小时）。
 3. 对于带 `set_at` 的等待负载，当 `now - set_at <= timeout_secs` 时跳过。
-4. 通过 `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)` 检查子 Agent 存活。若子 Agent 仍存活则跳过；若存活检测的导入本身失败，则把子 Agent 当作已死亡。
+4. 对**每个** child key 检查存活——flow 行的 `child_session_key` 与各 step 的 `child_session_key`（批量派发只写 step 级 key）。任一子 Agent 存活则跳过；存活检测导入失败时只把该子 Agent 当作已死亡。
 5. 否则在 `wait_json` 中打上一个**非破坏性标记**：`stale_detected_at` 与 `stale_child_session_key`。
 
 空闲检测**从不自动把 flow 置为失败**——该标记只是提示性的，并且每个周期都会刷新。与此同时，`taskflow_summary` 会渲染等待状态，当等待超过 `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 小时）时打印 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`（`taskflow_summary.py:67-90`）。
+
+另外，sweeper 会做 **owner 孤儿对账**（`agent/tools/taskflow/reconcile.py`，启动时一次、之后每轮）：只有服务器 `SESSION_EXISTS` hook 证明 owner 会话已消失、没有存活的 child run，且 owner 持续缺失 `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）后，才把非终止 flow 置为 cancelled。hook 缺失或存储不可读视为 UNKNOWN（不动作）；live owner 与 live child 都会否决。它从不杀子会话、从不删行；`taskflow_cancel` / `taskflow_fail` 只把仍在运行的子会话记录到 `state["detached_child_session_keys"]`，由 `taskflow_summary` 展示。
 
 ## 📋 会话面板与隔离
 

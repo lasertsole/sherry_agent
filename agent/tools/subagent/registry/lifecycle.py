@@ -311,6 +311,22 @@ async def _finalize_cleanup(run: SubagentRunRecord, reason: str) -> None:
         _cleanup_generations.pop(run.run_id, None)
         return
 
+    # A child that ends without resuming its flow must not leave the step
+    # DISPATCHED forever. This is idempotent: announce normally resumes the
+    # step first, in which case there is no non-terminal matching step and
+    # this call is a no-op. It runs for BOTH cleanup modes (keep runs can also
+    # leave a dispatched step), and the flow itself stays open for the
+    # AI/deadline backstops (never kill a session here).
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+        await taskflow_store.fail_step_for_child(
+            run.child_session_key,
+            reason=f"subagent ended before resuming the flow (cleanup: {reason})",
+        )
+    except Exception as e:  # noqa: BLE001 - cleanup must never fail the run
+        logger.warning("TaskFlow child-death hook skipped for {}: {}", run.child_session_key, e)
+
     if run.cleanup == "delete" and not _should_retain_attachments(run):
         if run.attachments_dir:
             safe_remove_attachments_dir(run.attachments_dir, run.attachments_root_dir)

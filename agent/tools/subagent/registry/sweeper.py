@@ -113,9 +113,27 @@ async def _do_sweep() -> None:
     if expired_flows > 0:
         logger.warning("Sweeper: {} TaskFlow(s) exceeded deadline, marked as failed", expired_flows)
 
+    stale_running = await _sweep_stale_running_taskflows()
+    if stale_running > 0:
+        logger.warning(
+            "Sweeper: {} TaskFlow(s) had no activity past the stale threshold, marked failed",
+            stale_running,
+        )
+
     stale_waiting = await _scan_stale_waiting_taskflows()
     if stale_waiting > 0:
         logger.warning("Sweeper: {} TaskFlow(s) in stale WAITING state", stale_waiting)
+
+    orphaned_flows = await _reconcile_orphaned_taskflows()
+    if orphaned_flows > 0:
+        logger.warning(
+            "Sweeper: {} orphaned TaskFlow(s) (owner session gone) marked cancelled",
+            orphaned_flows,
+        )
+
+    purged = await _reconcile_purge_pending()
+    if purged > 0:
+        logger.info("Sweeper: replayed {} pending TaskFlow purge(s)", purged)
 
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
 
@@ -140,16 +158,20 @@ async def _expire_overdue_taskflows() -> int:
         for flow in overdue:
             deadline_ts = flow["deadline_ts"]
             try:
-                state = dict(flow.get("state") or {})
-                state["failure_reason"] = "Deadline exceeded: " + time.strftime(
+                reason = "Deadline exceeded: " + time.strftime(
                     "%Y-%m-%d %H:%M", time.localtime(deadline_ts)
                 )
+                state = dict(flow.get("state") or {})
+                state["failure_reason"] = reason
+                _fail_unresolved_steps(state, reason)
                 await taskflow_store.update_flow(
                     flow["flow_id"],
                     flow["expected_revision"],
                     session_id=flow["session_id"],
                     state=state,
                     status=TaskFlowStatus.FAILED.value,
+                    terminal_reason="deadline_exceeded",
+                    wait=None,
                 )
                 expired += 1
                 logger.warning("TaskFlow '{}' deadline exceeded, marked failed", flow["flow_id"])
@@ -159,6 +181,170 @@ async def _expire_overdue_taskflows() -> int:
     except Exception as e:
         logger.warning("TaskFlow deadline sweep failed: {}", e)
         return 0
+
+
+def _fail_unresolved_steps(state: dict, reason: str) -> None:
+    """Mark non-terminal steps failed so a failed flow has no ``dispatched`` ghosts."""
+    steps = state.get("steps") or []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        status = str(step.get("status") or "")
+        if status in ("done", "failed", "skipped", "cancelled"):
+            continue
+        step["status"] = "failed"
+        step["fail_reason"] = reason
+    state["steps"] = steps
+
+
+async def _sweep_stale_running_taskflows() -> int:
+    """Fail RUNNING/WAITING flows with no activity past the stale threshold.
+
+    A live child vetoes the failure (a legitimate long-running child may not
+    touch the flow until it finishes). An unavailable liveness source also
+    vetoes (cannot prove the child is dead). ``stale_action_hours=0`` disables
+    the pass. This is the action tier that catches a flow whose owner session
+    still exists but whose LLM walked away.
+    """
+    from config.features import TASKFLOW_INFRA
+    from agent.tools.taskflow.config import TaskFlowStatus
+    from agent.tools.taskflow.reconcile import child_session_keys
+    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+    hours = float(TASKFLOW_INFRA["stale_action_hours"])
+    if hours <= 0:
+        return 0
+    try:
+        from agent.tools.subagent.registry.helpers import is_live_unended_run
+        from agent.tools.subagent.registry.queries import get_run_by_child_session_key
+    except Exception:  # noqa: BLE001 - cannot prove a child dead -> do nothing
+        return 0
+
+    try:
+        threshold = time.time() - hours * 3600
+        candidates = await taskflow_store.get_stale_candidates(
+            statuses=(TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
+            action_before=threshold,
+        )
+    except Exception as e:  # noqa: BLE001 - lifecycle sweeps are fail-open
+        logger.warning("TaskFlow stale-running sweep failed to read the store: {}", e)
+        return 0
+
+    failed = 0
+    for flow in candidates:
+        try:
+            keys = child_session_keys(flow)
+            live = False
+            for key in keys:
+                run = get_run_by_child_session_key(key)
+                if run is not None and is_live_unended_run(run):
+                    live = True
+                    break
+            if live:
+                continue
+        except Exception:
+            # A lookup failure means UNKNOWN: never fail a flow whose child may run.
+            continue
+
+        reason = f"stale: no activity for more than {hours:.0f}h"
+        state = dict(flow.get("state") or {})
+        state["failure_reason"] = reason
+        _fail_unresolved_steps(state, reason)
+        try:
+            await taskflow_store.update_flow(
+                flow["flow_id"],
+                flow["expected_revision"],
+                session_id=flow["session_id"],
+                state=state,
+                status=TaskFlowStatus.FAILED.value,
+                terminal_reason="stale_swept",
+                wait=None,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.debug("TaskFlow stale sweep skipped {}: {}", flow["flow_id"], e)
+            continue
+        failed += 1
+        logger.warning(
+            "TaskFlow '{}' had no activity for > {:.0f}h; marked failed (stale_swept)",
+            flow["flow_id"],
+            hours,
+        )
+    return failed
+
+
+async def _reconcile_orphaned_taskflows() -> int:
+    """Cancel flows whose owner session is gone and whose children are settled.
+
+    The reconciler owns the conservative conditions (session proof, live-child
+    veto, grace window); this wrapper only isolates the sweeper from its
+    failures — an unavailable store or hook means "do nothing", never a crash.
+    """
+    try:
+        from agent.tools.taskflow.reconcile import reconcile_orphaned_flows
+
+        return len(await reconcile_orphaned_flows())
+    except Exception as exc:  # noqa: BLE001 - lifecycle sweeps are fail-open
+        logger.debug("TaskFlow orphan reconciliation skipped: {}", exc)
+        return 0
+
+
+async def _reconcile_purge_pending() -> int:
+    """Replay a session purge's durable intent bits (idempotent, every tick).
+
+    ``todos.db`` and ``taskflow_registry.db`` cannot share a transaction, so a
+    failed half of ``purge_session`` leaves ``purge_pending`` set. Each replay
+    repeats the delete/clear operation; success clears the bit, a second run is
+    a no-op. Any failure leaves the bit for the next tick.
+    """
+    from agent.tools.taskflow.config import (
+        PURGE_BIT_DANGLING_TODO_PTR,
+        PURGE_BIT_FLOWS_NOT_DELETED,
+        PURGE_BIT_TODOS_NOT_CLEARED,
+    )
+    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+    from agent.tools.todolist.registry import store_sqlite as todo_store
+
+    try:
+        pending = await taskflow_store.get_flows_with_purge_pending()
+    except Exception as exc:  # noqa: BLE001 - lifecycle sweeps are fail-open
+        logger.warning("TaskFlow purge replay could not read the store: {}", exc)
+        return 0
+
+    replayed = 0
+    for flow in pending:
+        flow_id = str(flow.get("flow_id") or "")
+        session_id = str(flow.get("session_id") or "")
+        bits = int(flow.get("purge_pending") or 0)
+        if not flow_id or not session_id:
+            continue
+        if bits & PURGE_BIT_TODOS_NOT_CLEARED:
+            try:
+                await todo_store.delete_todos_by_session(session_id)
+                await taskflow_store.clear_purge_bit_for_flow(
+                    flow_id, session_id, PURGE_BIT_TODOS_NOT_CLEARED
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("TaskFlow purge replay (todos) failed for {}: {}", flow_id, exc)
+        if bits & PURGE_BIT_FLOWS_NOT_DELETED:
+            try:
+                await taskflow_store.delete_flows_by_session(session_id)
+                await taskflow_store.clear_purge_bit_for_flow(
+                    flow_id, session_id, PURGE_BIT_FLOWS_NOT_DELETED
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("TaskFlow purge replay (flows) failed for {}: {}", flow_id, exc)
+        if bits & PURGE_BIT_DANGLING_TODO_PTR:
+            try:
+                linked = await todo_store.get_todos_by_flow(session_id, flow_id)
+                for todo in linked:
+                    await todo_store.clear_flow_link(session_id, int(todo["position"]))
+                await taskflow_store.clear_purge_bit_for_flow(
+                    flow_id, session_id, PURGE_BIT_DANGLING_TODO_PTR
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("TaskFlow purge replay (todo link) failed for {}: {}", flow_id, exc)
+        replayed += 1
+    return replayed
 
 
 async def _scan_stale_waiting_taskflows() -> int:
@@ -194,18 +380,34 @@ async def _scan_stale_waiting_taskflows() -> int:
             if waiting_secs <= timeout_secs:
                 continue
 
-            child_key = flow.get("child_session_key")
+            # A flow can bind children at the row level (taskflow_run_task) OR
+            # only on its steps (taskflow_dispatch deliberately leaves the row
+            # key untouched). Inspect BOTH; any live child keeps the flow out of
+            # the stale marker.
+            child_keys: list[str] = []
+            row_key = str(flow.get("child_session_key") or "").strip()
+            if row_key:
+                child_keys.append(row_key)
+            for step in (flow.get("state") or {}).get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                key = str(step.get("child_session_key") or "").strip()
+                if key and key not in child_keys:
+                    child_keys.append(key)
+
             child_live = False
-            if child_key:
+            for child_key in child_keys:
                 try:
                     from agent.tools.subagent.registry.queries import get_run_by_child_session_key
                     from agent.tools.subagent.registry.helpers import is_live_unended_run
 
                     run = get_run_by_child_session_key(child_key)
-                    child_live = run is not None and is_live_unended_run(run)
+                    if run is not None and is_live_unended_run(run):
+                        child_live = True
+                        break
                 except Exception:
-                    # Liveness cannot be verified -> treat the child as dead.
-                    child_live = False
+                    # Liveness cannot be verified -> treat that child as dead.
+                    continue
 
             if child_live:
                 logger.debug(
@@ -217,17 +419,17 @@ async def _scan_stale_waiting_taskflows() -> int:
 
             stale_count += 1
             logger.warning(
-                "TaskFlow '{}' in stale WAITING ({:.1f}h, child={}): "
+                "TaskFlow '{}' in stale WAITING ({:.1f}h, children={}): "
                 "child session appears inactive; consider resume or re-dispatch",
                 flow["flow_id"],
                 waiting_secs / 3600,
-                child_key,
+                child_keys,
             )
 
             # Non-destructive marker: refresh the wait payload in place.
             try:
                 wait["stale_detected_at"] = now
-                wait["stale_child_session_key"] = child_key
+                wait["stale_child_session_key"] = child_keys[0] if child_keys else None
                 await taskflow_store.update_flow(
                     flow["flow_id"],
                     flow["expected_revision"],
@@ -328,6 +530,15 @@ async def start_sweeper() -> None:
             logger.info("Boot: cleaned {} stale isolated workspace(s)", cleaned)
     except Exception:
         logger.debug("boot stale-workspace sweep skipped", exc_info=True)
+
+    # Startup is the moment crash leftovers are around: run the TaskFlow owner
+    # scan and the stale-running action once now instead of waiting a cycle.
+    reconciled = await _reconcile_orphaned_taskflows()
+    if reconciled:
+        logger.warning("Boot: reconciled {} orphaned TaskFlow(s)", reconciled)
+    stale = await _sweep_stale_running_taskflows()
+    if stale:
+        logger.warning("Boot: failed {} stale TaskFlow(s)", stale)
 
     _sweeper_task = asyncio.create_task(_sweep_loop())
 

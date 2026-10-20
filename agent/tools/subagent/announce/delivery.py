@@ -384,7 +384,17 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         if flow is None:
             return False
         flow_id = str(flow.get("flow_id") or "")
-        if not flow_id:
+        # The flow row is the authority on its owner. Passing the CHILD key here
+        # made the scoped get_flow() lookup miss every real flow (the owner is
+        # the parent session), so auto-resume never landed and the flow stayed
+        # running after its child completed.
+        owner_session_id = str(flow.get("session_id") or "").strip()
+        if not flow_id or not owner_session_id:
+            logger.warning(
+                "TaskFlow auto-resume skipped for run {}: flow={} has no owner session",
+                run.run_id,
+                flow_id or "<unknown>",
+            )
             return False
         from agent.tools.taskflow.tools.taskflow_resume import taskflow_resume
 
@@ -393,7 +403,7 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
             flow_id=flow_id,
             child_session_key=run.child_session_key,
             result=result_text,
-            session_id=run.child_session_key,
+            session_id=owner_session_id,
         )
         first_line = answer.splitlines()[0] if answer else ""
         if isinstance(answer, str) and answer.startswith("Error:"):

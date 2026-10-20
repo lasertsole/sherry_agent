@@ -155,7 +155,7 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 永続的フローを `INITIAL_REVISION = 1`、状態 `running` で作成。フロー id、状態、リビジョンを返します。id が既に使用中の場合 `FlowExistsError`（現在のリビジョンを含むエラー文字列を返し、再読み取り可能）。
 
-新しいフローが以前のフローを**置き換える**場合は `resumed_from=<前駆 flow_id>` を渡します：新フローは `resumed_from` を記録し、前駆には `superseded_by` が刻まれます——[フロー系譜](#フロー系譜)参照。未知の前駆は何かを作成する前に拒否され、自己参照も拒否されます。
+新しいフローが以前のフローを**置き換える**場合は `resumed_from=<predecessorflow_id>` を渡します：新フローは `resumed_from` を記録し、前駆には `superseded_by` が刻まれ、同時に `cancelled` かつ `terminal_reason="superseded"` になります——[フロー系譜](#フロー系譜)参照。未知の前駆は何かを作成する前に拒否され、自己参照も拒否されます。`deadline_hours` を省略すると `TASKFLOW_INFRA["default_deadline_hours"]`（24h）が適用され、総行数上限は `TASKFLOW_INFRA["max_total_flows_hard_cap"]`（soft 200 / hard 500）です。
 
 リソース上限（ここで強制、超過時は `Error:` テキスト）: フローあたり最大 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）ステップ、セッションあたり最大 `TASKFLOW_INFRA["max_flows_per_session"]`（20）の**アクティブ**フロー——running/waiting のみが対象で、完了・キャンセル済みフローはスロットを解放します（置き換えられたフローも同様）。`taskflow_plan` はプランナー呼び出しを消費する前に同じフロー数上限を適用します。
 
@@ -240,6 +240,8 @@ async def taskflow_resume(
 **実行順序** — ゲートは連結し、すべてステップ単位のオプトインです：`retry_policy`（分類された失敗、または `schema_validated=false` が、**判定呼び出しの前に**代替の子へ再ディスパッチ）→ `response_schema`（Tier 1、無料で検証。不一致は `schema_error` リトライ）→ `judge_criteria` / `validation_criteria`（Tier 2、補助 LLM の判定器）→ 呼び出し側が宣言する `step_outcome`（これらすべてに優先）。判定・予算・エビデンスを考慮した判定プロンプト・フェイルオープン規則・`done` の実際の意味は[判定ゲート](../gates/README.ja.md)にまとめています。
 
 **DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。書き込みは競合リトライ時に既に確定した判定を新読みの状態へ再適用するため、2 つの子が同時に完了しても両方の結果が着地します（[生成済み子エージェントを伴う競合リトライ](#生成済み子エージェントを伴う競合リトライ)参照）。`auto_dispatch=True`（既定）では新たに ready になった波が直ちに有界の同時バッチで spawn されます——[自動ディスパッチの波](#自動ディスパッチの波taskflow_resume)参照。`auto_dispatch=False` ならアンロックのみで、呼び出し側が `taskflow_dispatch` で明示的に行います。
+
+**自動 resume**（announce パイプライン）：ディスパッチ済みの子が完了すると、`_try_auto_resume_taskflow` が `child_session_key` で所有フローを探し、フローの **owner `session_id`** でこのツールを呼びます——child key を使ってはいけません（セッションスコープの検索がフローを見失います）。owner のない旧フローは自動パスをスキップし、結果は手動 resume 用にセッションへ届けられます。
 ### taskflow_set_waiting
 
 ```python
@@ -257,7 +259,7 @@ async def taskflow_set_waiting(
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-フロー状態全体を読み取り専用で再読します：status、revision、child_session_key、description、全ステップ（status、depends_on、child_session_key に加え、設定された期待——`response_schema` の properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、実行メタ情報、および `block_reason` / `fail_reason` / `skip_reason`）、ステータス別件数、results（各エントリの `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason`、記録があれば `token_usage`）、wait ペイロード、summary、failure_reason、cancel_reason。リビジョン競合後の指定再読ステップでもあります。
+フロー状態全体を読み取り専用で再読します：status、revision、child_session_key、description、全ステップ（status、depends_on、child_session_key に加え、設定された期待——`response_schema` の properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、実行メタ情報、および `block_reason` / `fail_reason` / `skip_reason`）、ステータス別件数、results（各エントリの `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason`、記録があれば `token_usage`）、wait ペイロード（`stale_detected_at` / `stale_child_session_key` の注意マーカーを含む）、summary、failure_reason、cancel_reason、`detached_child_session_keys`。リビジョン競合後の指定再読ステップでもあります。
 ### taskflow_progress
 
 ```python
@@ -305,9 +307,11 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続け、フローがキャンセルされるまで `taskflow_resume` で結果を届けられます。
+終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。`fail` / `cancel` は実行中の子セッションを**殺しません**：未解決ステップに残る child key は `state["detached_child_session_keys"]` に記録され、`taskflow_summary` が表示します。フローは終端なので、その後の結果で resume されることはありません——detached key を確認し、待つか明示的に停止するかを決めてください。
 
 `finish` は DONE への遷移を 4 つのチェックで順に守ります——**A** すべてのステップが `done` か `blocked`；**B** 未解決ステップを残さない（`failed`・`skipped`・`cancelled`・`blocked` は id と記録された理由つきで報告）；**C** フローの証跡に `FAIL` も `[stale]` 行もない；**E** オプトインの目標判定（フローのステップ数が `GOAL_GATE["min_steps"]`（3）以上のときのみ）。すべてのゲートはフェイルオープンで、拒否理由と目標ゲートの契約は[判定ゲート](../gates/README.ja.md)にまとめています。
+
+各拒否は層ごとの独立予算を消費します：A のディスパッチ済みステップは nudge（最大 2）、READY で未開始はプロトコル違反（streak 3）、その他の実拒否は `consecutive_failures`（上限 2）を加算します。上限到達で flow は自動失敗し、`terminal_reason="finish_gates_exhausted"` または `"protocol_violation_exhausted"` が付きます。`taskflow_resume` の進行で nudge/失敗予算はリセットされます。
 
 
 
@@ -429,4 +433,10 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 - **`done` ≠ 成功**：ステップ `done` は「結果が注入され、**かつそのステップに設定された品質ゲートをすべて通過した**」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来の意味に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子は `done` になります。閉ループに失敗を捕まえさせるには、期待を宣言する（`response_schema` の検証は判定器呼び出しより前で無料です）か結果を宣言します。`failed` は依存側をブロックし、`retry_policy` は予算が残る限り終了した子を再ディスパッチします（判定器は `block` 判定や予算枯渇で `blocked` を付けます）。 各ゲートが何をするかを含む完全な規則は[判定ゲート](../gates/README.ja.md)にあります。
 - **`taskflow_wait_all` タイムアウトは有界ポーリング**：完了しない子セッションが自動的にフローを失敗させることはない。タイムアウトは部分レポートを返す。
+- **デフォルト deadline と stale action は有界**：`deadline_hours` 省略時は 24h（`TASKFLOW_INFRA["default_deadline_hours"]`、0 で無効）。RUNNING/WAITING flow の `updated_at` が 12h（`stale_action_hours`）より古いと `stale_swept` で失敗しますが、live child（または生存確認不能）は拒否します。両スキャンは sweeper 起動時と毎サイクル実行。
+- **Finish は 3 層の独立予算**：nudge 最大 2、連続失敗 2、プロトコル違反 streak 3。いずれかを使い切ると flow を自動失敗（`finish_gates_exhausted` / `protocol_violation_exhausted`）し、実行中の子は detached として記録（殺しません）。`taskflow_resume` の進行で nudge/失敗予算をリセットし、実際の `done` 遷移でプロトコル streak もリセット。
+- **行数上限 + purge リプレイ**：`max_total_flows_per_session`（200）は最古の terminal/superseded 行だけを剪定し、`max_total_flows_hard_cap`（500）は新規作成を拒否。session purge は `purge_pending` に durable bit を書き、失敗した todo/flow/dangling-pointer 清理を sweeper が再実行。
+- **死んだ子はステップを終端化**：subagent cleanup が flow を resume しない場合、`fail_step_for_child` が DISPATCHED のステップを `failed` にします（冪等）。flow は replan/deadline 用に開いたまま、セッションは殺しません。
+- **Owner 孤立の照合は保守的**：サーバーの `SESSION_EXISTS` hook が owner の消滅を証明し、live child がなく、owner が `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）の間ずっと不在の場合にのみ、sweeper は非終端フローをキャンセルします。owner が生きているフロー（全 child が結果なしで終了していても）は自動キャンセルしません——`taskflow_wait_all` / `taskflow_summary` / deadline に任せます。hook 欠落・ストア不読・live child はスキャンを拒否します。
+- **Cancel/fail は detach のみ、kill しない**：`taskflow_cancel` / `taskflow_fail` は実行中の子セッションを残し、key を `detached_child_session_keys` に記録します。停止するかは操作者/agent が明示的に決めます。
 - **ステップ id は順次割当**：登録時に `step-{len(steps)+1}` を割当。ステップが並行して追加される場合、id は競合リトライ時に `build_state` 内で再計算。

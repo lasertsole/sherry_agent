@@ -6,7 +6,13 @@ from ..config import TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
-from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
+from ._shared import (
+    conflict_error,
+    detached_child_keys,
+    is_terminal,
+    not_found_error,
+    terminal_error,
+)
 from agent.tools.pub_base import SessionId
 
 
@@ -39,6 +45,11 @@ async def taskflow_fail(
     state = dict(flow["state"])
     if reason:
         state["failure_reason"] = reason
+    # A failed flow is terminal but never kills its still-running children;
+    # record them so they are visible instead of silently orphaned.
+    detached = detached_child_keys(list(state.get("steps") or []))
+    if detached:
+        state["detached_child_session_keys"] = detached
 
     try:
         updated = await store_sqlite.update_flow(
@@ -48,6 +59,7 @@ async def taskflow_fail(
             state=state,
             wait=None,
             status=TaskFlowStatus.FAILED.value,
+            terminal_reason="failed",
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

@@ -542,6 +542,59 @@ async def test_finish_fail_cancel_transitions(isolated_db: Path):
 
 
 @pytest.mark.asyncio
+async def test_cancel_and_fail_detach_children_without_killing_them(isolated_db: Path):
+    """A terminal flow records still-running children; it never kills them."""
+    tools = _tool_map()
+    steps = [
+        {
+            "step_id": "s1",
+            "task": "running",
+            "status": "dispatched",
+            "child_session_key": "child-live",
+        },
+        {
+            "step_id": "s2",
+            "task": "finished",
+            "status": "done",
+            "child_session_key": "child-done",
+        },
+    ]
+    for flow_id in ("flow-cancel", "flow-fail"):
+        await store_sqlite.create_flow(
+            flow_id,
+            {"steps": [dict(step) for step in steps], "results": []},
+            session_id=_SESSION,
+        )
+
+    await tools["taskflow_cancel"].coroutine(
+        session_id=_SESSION, flow_id="flow-cancel", reason="aborted"
+    )
+    await tools["taskflow_fail"].coroutine(
+        session_id=_SESSION, flow_id="flow-fail", reason="bad input"
+    )
+
+    cancelled = await store_sqlite.get_flow("flow-cancel", _SESSION)
+    failed = await store_sqlite.get_flow("flow-fail", _SESSION)
+    assert cancelled is not None
+    assert failed is not None
+    # Only the unresolved child is detached; the done step's child already settled.
+    assert cancelled["state"]["detached_child_session_keys"] == ["child-live"]
+    assert failed["state"]["detached_child_session_keys"] == ["child-live"]
+    # The child key is retained (the session is still alive, merely detached).
+    assert cancelled["state"]["steps"][0]["child_session_key"] == "child-live"
+    assert failed["state"]["steps"][0]["child_session_key"] == "child-live"
+    # Cancel still marks the unresolved step cancelled; fail leaves steps as-is.
+    assert cancelled["state"]["steps"][0]["status"] == "cancelled"
+    assert failed["state"]["steps"][0]["status"] == "dispatched"
+
+    from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
+
+    summary = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-cancel")
+    assert "detached children: child-live" in summary
+    assert "will not resume it" in summary
+
+
+@pytest.mark.asyncio
 async def test_unknown_flow_errors(isolated_db: Path):
     tools = _tool_map()
     out = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="ghost")

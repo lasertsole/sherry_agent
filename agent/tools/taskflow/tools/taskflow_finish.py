@@ -25,10 +25,11 @@ from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
-from config.features import GOAL_GATE
+from config.features import GOAL_GATE, TASKFLOW_INFRA
 from agent.tools.pub_base import SessionId
 from ._shared import (
     conflict_error,
+    detached_child_keys,
     is_terminal,
     not_found_error,
     step_status,
@@ -36,8 +37,9 @@ from ._shared import (
 )
 
 
-# Gate A passes a step in exactly these states; anything else is still pending.
-_FINISHABLE_STATUSES = (StepStatus.DONE.value, StepStatus.BLOCKED.value)
+# Gate A only considers work that has not settled yet; failed/skipped/cancelled
+# are Gate B's unresolved decisions.
+_PENDING_STATUSES = (StepStatus.READY.value, StepStatus.DISPATCHED.value)
 
 
 async def _goal_gate(flow: dict) -> str | None:
@@ -159,6 +161,74 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     return None
 
 
+async def _persist_finish_state(
+    flow_id: str, revision: int, session_id: str, state: dict
+) -> str | None:
+    """Persist the finish budgets; return an Error text on conflict/absence."""
+    try:
+        await store_sqlite.update_flow(flow_id, revision, session_id=session_id, state=state)
+    except FlowConflictError as exc:
+        return conflict_error(exc)
+    except FlowNotFoundError:
+        return not_found_error(flow_id)
+    return None
+
+
+async def _auto_fail_finish(
+    flow_id: str,
+    revision: int,
+    session_id: str,
+    state: dict,
+    *,
+    reason: str,
+    terminal_reason: str,
+) -> str:
+    """Terminal failure for a finish loop that exhausted its budget.
+
+    Children are NOT killed: still-running ones are recorded as detached, which
+    ``taskflow_summary`` surfaces. The flow becomes failed so the LLM cannot
+    keep spending finish calls on it.
+    """
+    state["failure_reason"] = reason
+    detached = detached_child_keys(list(state.get("steps") or []))
+    if detached:
+        state["detached_child_session_keys"] = detached
+    for step in state.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        status = step_status(step)
+        if status in (
+            StepStatus.DONE.value,
+            StepStatus.FAILED.value,
+            StepStatus.SKIPPED.value,
+            StepStatus.CANCELLED.value,
+        ):
+            continue
+        step["status"] = str(StepStatus.FAILED)
+        step["fail_reason"] = reason
+    try:
+        updated = await store_sqlite.update_flow(
+            flow_id,
+            revision,
+            session_id=session_id,
+            state=state,
+            wait=None,
+            status=TaskFlowStatus.FAILED.value,
+            terminal_reason=terminal_reason,
+        )
+    except FlowConflictError as exc:
+        return conflict_error(exc)
+    except FlowNotFoundError:
+        return not_found_error(flow_id)
+    await push_taskflow_progress(session_id)
+    return (
+        f"TaskFlow auto-failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
+        f"reason={terminal_reason}. Use taskflow_create(resumed_from='{flow_id}') to fork a "
+        "fresh plan, or taskflow_summary to inspect. Children still running are recorded "
+        "as detached, not killed."
+    )
+
+
 @tool("taskflow_finish")
 async def taskflow_finish(
     flow_id: str,
@@ -188,11 +258,78 @@ async def taskflow_finish(
 
     state = dict(flow["state"])
     steps = list(state.get("steps") or [])
+    nudge_max = int(TASKFLOW_INFRA["finish_nudge_max"])
+    failure_limit = int(TASKFLOW_INFRA["finish_failure_limit"])
+    protocol_limit = int(TASKFLOW_INFRA["finish_protocol_violation_limit"])
+
+    async def _reject(message: str) -> str:
+        """Count one real finish failure; auto-fail at the independent limit."""
+        count = int(state.get("consecutive_failures") or 0) + 1
+        state["consecutive_failures"] = count
+        if failure_limit > 0 and count >= failure_limit:
+            return await _auto_fail_finish(
+                flow_id,
+                revision,
+                session_id,
+                state,
+                reason=f"finish gates rejected {count} consecutive time(s): {message}",
+                terminal_reason="finish_gates_exhausted",
+            )
+        error = await _persist_finish_state(flow_id, revision, session_id, state)
+        if error is not None:
+            return error
+        suffix = f" (finish rejection {count}/{failure_limit})" if failure_limit > 0 else ""
+        return f"{message}{suffix}"
 
     # Gate A — DAG completeness: no step may still be ready or dispatched.
-    pending = [step for step in steps if step_status(step) not in _FINISHABLE_STATUSES]
+    # Failed/skipped/cancelled are NOT "pending work": Gate B reports them with
+    # their recorded reason (they need a decision, not a wait).
+    pending = [step for step in steps if step_status(step) in _PENDING_STATUSES]
     if pending:
-        return (
+        undispatched = [
+            step
+            for step in pending
+            if step_status(step) == StepStatus.READY.value and not step.get("child_session_key")
+        ]
+        if undispatched:
+            # Layer 3 — a finish claiming progress while nothing has started is
+            # a protocol violation; it has its own streak and does not consume
+            # the nudge/failure budgets.
+            streak = int(state.get("protocol_violation_streak") or 0) + 1
+            state["protocol_violation_streak"] = streak
+            if protocol_limit > 0 and streak >= protocol_limit:
+                return await _auto_fail_finish(
+                    flow_id,
+                    revision,
+                    session_id,
+                    state,
+                    reason=f"protocol violation streak {streak}: finish called before "
+                    "any pending step was dispatched",
+                    terminal_reason="protocol_violation_exhausted",
+                )
+            error = await _persist_finish_state(flow_id, revision, session_id, state)
+            if error is not None:
+                return error
+            return (
+                f"Error: Cannot finish: {len(undispatched)} step(s) have not started: "
+                f"{[step.get('step_id') for step in undispatched]}. Dispatch them first "
+                f"(protocol violation {streak}/{protocol_limit or '∞'})."
+            )
+
+        # Layer 1 — a gentle reminder for dispatched work: it does not consume
+        # the real-failure budget until the nudge allowance is exhausted.
+        nudge = int(state.get("finish_nudge_count") or 0) + 1
+        state["finish_nudge_count"] = nudge
+        if nudge <= nudge_max:
+            error = await _persist_finish_state(flow_id, revision, session_id, state)
+            if error is not None:
+                return error
+            return (
+                f"Error: Cannot finish: {len(pending)} step(s) not done/blocked: "
+                f"{[step.get('step_id') for step in pending]}. Use taskflow_wait_all, then "
+                f"taskflow_resume for settled children (nudge {nudge}/{nudge_max})."
+            )
+        return await _reject(
             f"Error: Cannot finish: {len(pending)} step(s) not done/blocked: "
             f"{[step.get('step_id') for step in pending]}"
         )
@@ -213,12 +350,12 @@ async def taskflow_finish(
             f"({step.get('fail_reason') or step.get('skip_reason') or 'no reason recorded'})"
             for step in failed
         ]
-        return (
+        return await _reject(
             f"Error: Cannot finish: {len(failed)} step(s) unresolved: {details}. "
             "Resume, retry or cancel them, or cancel the flow."
         )
     if blocked:
-        return (
+        return await _reject(
             f"Error: Cannot finish: {len(blocked)} step(s) are blocked: "
             f"{[step.get('block_reason', 'unknown') for step in blocked]}"
         )
@@ -226,14 +363,14 @@ async def taskflow_finish(
     # Gate C — the flow's aggregated evidence must be free of failing/stale rows.
     evidence_error = await _evidence_gate(flow, steps)
     if evidence_error is not None:
-        return evidence_error
+        return await _reject(evidence_error)
 
     # Gate E — the goal judge (opt-in: a flow with a description). Gates A-C
     # prove the machinery finished; this is the only gate that reads the
     # results against what the user actually asked for.
     goal_error = await _goal_gate(flow)
     if goal_error is not None:
-        return goal_error
+        return await _reject(goal_error)
 
     if summary:
         state["summary"] = summary
@@ -246,6 +383,7 @@ async def taskflow_finish(
             state=state,
             wait=None,
             status=TaskFlowStatus.DONE.value,
+            terminal_reason="completed",
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

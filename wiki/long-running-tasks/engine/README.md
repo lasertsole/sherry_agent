@@ -319,10 +319,12 @@ A flow parked with `taskflow_set_waiting` may have its child crash without ever 
 1. Read all `waiting` flows.
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600` (24 h by default).
 3. For a wait payload with `set_at`, skip while `now - set_at <= timeout_secs`.
-4. Check child liveness via `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)`. If the child is still live, skip; if the liveness import itself fails, the child is treated as dead.
+4. Check child liveness for **every** child key — the flow row's `child_session_key` AND each step's `child_session_key` (batch dispatch only writes per-step keys). Any live child skips the flow; if the liveness import itself fails, only that child is treated as dead.
 5. Otherwise stamp a **non-destructive marker** into `wait_json`: `stale_detected_at` and `stale_child_session_key`.
 
 The flow is **never auto-failed** by idle detection — the marker is advisory and refreshed each cycle. Independently, `taskflow_summary` renders the wait status and prints `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch` when the wait exceeds `TASKFLOW_INFRA["waiting_timeout_hours"]` (`taskflow_summary.py:67-90`).
+
+Separately, the sweeper reconciles **owner-orphaned** flows (`agent/tools/taskflow/reconcile.py`, once at startup and every cycle): it cancels a non-terminal flow only when the server `SESSION_EXISTS` hook proves the owner session is gone, no child run is live, and the owner stayed missing for `TASKFLOW_INFRA["orphan_grace_seconds"]` (300 s). A missing hook or unreadable store is UNKNOWN (no action); live owners and live children veto. It never kills a child session or deletes a row; `taskflow_cancel` / `taskflow_fail` merely record still-running children in `state["detached_child_session_keys"]`, which `taskflow_summary` surfaces.
 
 ## 📋 Session-Scoped Board & Isolation
 

@@ -308,10 +308,12 @@ Progress Report: <flow_id>
 1. 모든 `waiting` flow를 읽습니다.
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600`(기본 24시간).
 3. `set_at`이 있는 대기 페이로드에 대해 `now - set_at <= timeout_secs`인 동안 건너뜁니다.
-4. `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)`으로 자식 생존을 확인합니다. 자식이 아직 살아 있으면 건너뛰고, 생존 확인 임포트 자체가 실패하면 자식을 죽은 것으로 간주합니다.
+4. **모든** child key(flow 행의 `child_session_key`와 각 step의 `child_session_key`; 배치 디스패치는 step 쪽에만 기록)로 자식 생존을 확인합니다. 살아 있는 자식이 하나라도 있으면 건너뛰고, 생존 확인 임포트가 실패하면 그 자식만 죽은 것으로 간주합니다.
 5. 그렇지 않으면 `wait_json`에 **비파괴 마커**를 찍습니다: `stale_detected_at`, `stale_child_session_key`.
 
 유휴 감지는 flow를 **절대 자동 실패시키지 않습니다** — 마커는 권고용이며 주기마다 갱신됩니다. 이와 별개로 `taskflow_summary`는 대기 상태를 렌더링하고, 대기가 `TASKFLOW_INFRA["waiting_timeout_hours"]`(24시간)를 넘으면 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`를 출력합니다(`taskflow_summary.py:67-90`).
+
+또한 sweeper는 **owner 고아 flow**를 조정합니다(`agent/tools/taskflow/reconcile.py`, 시작 시 1회 + 매 주기): 서버의 `SESSION_EXISTS` hook이 owner 세션의 소멸을 증명하고, 살아 있는 child run이 없으며, owner가 `TASKFLOW_INFRA["orphan_grace_seconds"]`(300초) 동안 계속 없을 때만 비종료 flow를 cancelled로 만듭니다. hook 누락이나 저장소 읽기 실패는 UNKNOWN(아무 것도 하지 않음)입니다. live owner와 live child는 항상 거부합니다. 자식 세션을 죽이지 않고 행도 삭제하지 않습니다. `taskflow_cancel` / `taskflow_fail`은 실행 중인 자식을 `state["detached_child_session_keys"]`에 기록할 뿐이며, `taskflow_summary`가 이를 표시합니다.
 
 ## 📋 세션 보드와 격리
 

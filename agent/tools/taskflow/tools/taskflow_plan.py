@@ -140,6 +140,14 @@ async def taskflow_plan(
             f"(max {TASKFLOW_INFRA['max_flows_per_session']}). Finish or cancel existing "
             "flows before planning a new one."
         )
+    hard_cap = int(TASKFLOW_INFRA["max_total_flows_hard_cap"])
+    if hard_cap > 0:
+        total_flows = await store_sqlite.count_total_flows_for_session(session_id)
+        if total_flows >= hard_cap:
+            return (
+                f"Error: session has {total_flows} flow rows (hard cap {hard_cap}). "
+                "Cancel obsolete flows or clear the session before planning a new one."
+            )
 
     from models import build_taskflow_llm
 

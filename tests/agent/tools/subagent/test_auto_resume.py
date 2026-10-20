@@ -48,7 +48,7 @@ def flow_store(monkeypatch):
         async def get_flow_for_child_session(self, key):
             return self.flow
 
-    return _Store({"flow_id": "flow-1", "state": {}})
+    return _Store({"flow_id": "flow-1", "session_id": "sess-parent", "state": {}})
 
 
 @pytest.mark.asyncio
@@ -73,6 +73,26 @@ async def test_resume_runs_for_a_flow_owned_child(monkeypatch, flow_store):
     assert fake_resume.calls[0]["flow_id"] == "flow-1"
     assert fake_resume.calls[0]["child_session_key"] == "agent:main:subagent:c1"
     assert fake_resume.calls[0]["result"] == "step result"
+    # The resume is scoped to the flow's OWNER, never the child key.
+    assert fake_resume.calls[0]["session_id"] == "sess-parent"
+
+
+@pytest.mark.asyncio
+async def test_a_flow_without_an_owner_keeps_manual_behaviour(monkeypatch):
+    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+    async def _ownerless(key):
+        return {"flow_id": "flow-1", "session_id": "", "state": {}}
+
+    monkeypatch.setattr(taskflow_store, "get_flow_for_child_session", _ownerless)
+    import importlib
+
+    resume_mod = importlib.import_module("agent.tools.taskflow.tools.taskflow_resume")
+    fake_resume = _FakeResume()
+    monkeypatch.setattr(resume_mod, "taskflow_resume", fake_resume)
+
+    assert await delivery_mod._try_auto_resume_taskflow(_run()) is False
+    assert fake_resume.calls == []
 
 
 @pytest.mark.asyncio

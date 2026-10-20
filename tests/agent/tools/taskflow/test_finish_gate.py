@@ -83,7 +83,9 @@ async def test_finish_rejected_when_step_not_done(isolated_db: Path, ledger: Evi
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert out.startswith("Error: Cannot finish")
-    assert "not done/blocked" in out and "s2" in out
+    # A READY step with no child means nothing was started; that is the
+    # protocol-violation layer, not the dispatched-work nudge.
+    assert "have not started" in out and "s2" in out
 
 
 @pytest.mark.asyncio
@@ -206,3 +208,93 @@ async def test_finish_fail_open_when_evidence_collector_raises(
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert "TaskFlow finished" in out
+
+
+@pytest.mark.asyncio
+async def test_nudge_budget_only_then_failure_limit_auto_fails(
+    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
+):
+    from config.features import TASKFLOW_INFRA
+    from agent.tools.taskflow.config import TaskFlowStatus
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_nudge_max", 1)
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_failure_limit", 1)
+    await _seed_flow(
+        [
+            {
+                **_step("s1", "dispatched"),
+                "child_session_key": "agent:main:subagent:c1",
+            }
+        ]
+    )
+
+    first = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+    assert "nudge 1/1" in first
+
+    second = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+    assert "auto-failed" in second
+
+    flow = await store_sqlite.get_flow(FLOW, SESSION)
+    assert flow is not None
+    assert flow["status"] == TaskFlowStatus.FAILED.value
+    assert flow["terminal_reason"] == "finish_gates_exhausted"
+    assert flow["state"]["steps"][0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_protocol_violation_has_its_own_streak(
+    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
+):
+    from config.features import TASKFLOW_INFRA
+    from agent.tools.taskflow.config import TaskFlowStatus
+
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_nudge_max", 5)
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_failure_limit", 5)
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_protocol_violation_limit", 2)
+    await _seed_flow([_step("s1", "ready")])
+
+    first = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+    assert "have not started" in first and "protocol violation 1/2" in first
+
+    second = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+    assert "auto-failed" in second
+
+    flow = await store_sqlite.get_flow(FLOW, SESSION)
+    assert flow is not None
+    assert flow["status"] == TaskFlowStatus.FAILED.value
+    assert flow["terminal_reason"] == "protocol_violation_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_resume_resets_the_finish_budgets(isolated_db: Path):
+    await _seed_flow(
+        [
+            {
+                **_step("s1", "dispatched"),
+                "child_session_key": "agent:main:subagent:c1",
+            }
+        ]
+    )
+    flow = await store_sqlite.get_flow(FLOW, SESSION)
+    assert flow is not None
+    state = dict(flow["state"])
+    state["finish_nudge_count"] = 2
+    state["consecutive_failures"] = 2
+    state["protocol_violation_streak"] = 2
+    await store_sqlite.update_flow(FLOW, flow["expected_revision"], session_id=SESSION, state=state)
+
+    tools = {t.name: t for t in build_taskflow_tools()}
+    out = await tools["taskflow_resume"].coroutine(
+        session_id=SESSION,
+        flow_id=FLOW,
+        child_session_key="agent:main:subagent:c1",
+        result="step result",
+    )
+
+    assert "TaskFlow resumed" in out
+    fresh = await store_sqlite.get_flow(FLOW, SESSION)
+    assert fresh is not None
+    assert fresh["state"]["finish_nudge_count"] == 0
+    assert fresh["state"]["consecutive_failures"] == 0
+    assert fresh["state"]["protocol_violation_streak"] == 0
+    assert fresh["state"]["steps"][0]["status"] == "done"

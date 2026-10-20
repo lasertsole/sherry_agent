@@ -6,7 +6,14 @@ from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
-from ._shared import conflict_error, is_terminal, not_found_error, step_status, terminal_error
+from ._shared import (
+    conflict_error,
+    detached_child_keys,
+    is_terminal,
+    not_found_error,
+    step_status,
+    terminal_error,
+)
 from agent.tools.pub_base import SessionId
 
 
@@ -47,6 +54,11 @@ async def taskflow_cancel(
     # terminal. Steps already done stay done (their work happened).
     cancelled_steps = 0
     steps = list(state.get("steps") or [])
+    # Children still attached to unresolved steps keep running (cancel never
+    # kills a session); record them so the terminal flow cannot hide them.
+    detached = detached_child_keys(steps)
+    if detached:
+        state["detached_child_session_keys"] = detached
     for step in steps:
         if not isinstance(step, dict):
             continue
@@ -66,6 +78,7 @@ async def taskflow_cancel(
             state=state,
             wait=None,
             status=TaskFlowStatus.CANCELLED.value,
+            terminal_reason="cancelled",
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

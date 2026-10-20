@@ -110,6 +110,11 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
 ):
     # Given the real tool family, a recording dispatch seam, and a stub LLM that
     # answers the step judge with RETRY first and PASS second.
+    from config.features import TASKFLOW_INFRA
+
+    # This smoke intentionally drives several consecutive gate rejections; keep
+    # the new finish auto-fail budget above them.
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_failure_limit", 10)
     dispatches: list[str] = []
     monkeypatch.setattr(
         dispatch_mod,

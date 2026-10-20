@@ -374,6 +374,9 @@ async def taskflow_resume(
                     target["judge_feedback"] = step["judge_feedback"]
             fresh_state["results"] = fresh_results
             fresh_state["steps"] = fresh_steps
+            # This resume is progress: give the finish loop fresh budgets.
+            fresh_state["finish_nudge_count"] = 0
+            fresh_state["consecutive_failures"] = 0
             return fresh_state
 
         updated, error = await update_flow_with_conflict_retry(
@@ -433,6 +436,12 @@ async def taskflow_resume(
             unlocked_from_persisted["ids"] = unlock_dependents(fresh_steps)
             fresh_state["steps"] = fresh_steps
             fresh_state["results"] = fresh_results
+            # A resume is progress: reset the nudge and real-failure budgets.
+            # The protocol streak only clears when a step actually reached done.
+            fresh_state["finish_nudge_count"] = 0
+            fresh_state["consecutive_failures"] = 0
+            if decided_fields.get("status") == StepStatus.DONE.value:
+                fresh_state["protocol_violation_streak"] = 0
             return fresh_state
 
         updated, error = await update_flow_with_conflict_retry(

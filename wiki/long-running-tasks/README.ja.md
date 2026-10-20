@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、owner が消えた孤立 flow を照合し、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
@@ -257,7 +257,8 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 - **`done` だけでは成功を意味しません。** ステップの `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。期待が何も設定されていない場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は「結果が注入された」に退化するため、エラーを報告した子でも `done` になり後続をアンロックし得ます。期待を宣言するか `step_outcome="failure"` を宣言すれば、閉ループがそれを捕まえます——`failed` / `skipped` / `cancelled` は実際のステップ状態となり、失敗は依存側をアンロックせず、`taskflow_finish` も未解決ステップを残したまま完了しません。
 - **`taskflow_wait_all` は設計上 flow スコープ。** 指定 flow のディスパッチ済みステップに記録された子だけを待ち、未知/クリーンアップ済みの run は確定とみなします。「すべてのアクティブ flow を待つ」グローバルプリミティブはありません。
-- **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
+- **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。スキャンは flow 行と各 step の child key の両方を見るため、バッチディスパッチで生きた子がいる flow を誤ってマークしません。
+- **Owner 孤立の照合は証拠ベースで猶予付き。** サーバーの `SESSION_EXISTS` hook が owner セッションの消滅を証明し、生きている child run がなく、owner が `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）の間ずっと不在の場合にのみ、sweeper は flow を cancelled にします。hook 欠落やストア不読は UNKNOWN（何もしない）です。子セッションを殺さず、行も削除しません。`taskflow_cancel` / `taskflow_fail` は実行中の子を detached として記録するだけです。
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。

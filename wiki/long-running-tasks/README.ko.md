@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 14개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
+> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 14개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며 owner가 사라진 고아 flow를 조정하고, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
 사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
 
@@ -257,7 +257,8 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 - **`done` 자체가 성공은 아닙니다.** 단계의 `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. 기대가 아무것도 설정되지 않은 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 "결과가 주입됨"으로 퇴화하므로, 오류를 보고한 자식도 `done`이 되어 후속을 언락할 수 있습니다. 기대를 선언하거나 `step_outcome="failure"`를 선언하면 폐루프가 이를 잡습니다 — `failed` / `skipped` / `cancelled`는 이제 실제 단계 상태이고, 실패는 의존 단계를 언락하지 않으며, `taskflow_finish`도 미해결 단계를 남긴 채 완료하지 않습니다.
 - **`taskflow_wait_all`은 설계상 flow 범위입니다.** 주어진 flow의 디스패치된 단계에 기록된 자식만 기다리며, 알 수 없거나 이미 정리된 run은 정착으로 간주합니다. "모든 활성 flow 대기" 전역 프리미티브는 없습니다.
-- **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다.
+- **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다. 스캔은 flow 행과 각 step의 child key를 모두 확인하므로, 배치 디스패치에서 살아 있는 자식이 있는 flow를 잘못 표시하지 않습니다.
+- **Owner 고아 조정은 증거 기반이며 유예 기간이 있습니다.** 서버의 `SESSION_EXISTS` hook이 owner 세션의 소멸을 증명하고, 살아 있는 child run이 없으며, owner가 `TASKFLOW_INFRA["orphan_grace_seconds"]`(300초) 동안 계속 없을 때만 sweeper가 flow를 cancelled로 만듭니다. hook 누락이나 저장소 읽기 실패는 UNKNOWN(아무 것도 하지 않음)입니다. 자식 세션을 죽이지 않고 행도 삭제하지 않습니다. `taskflow_cancel` / `taskflow_fail`은 실행 중인 자식을 detached로 기록할 뿐입니다.
 - **압축 전 메모리 플러시는 잠재 상태입니다.** `Summarization`의 프로덕션 인스턴스(메인/서브)는 `memory_store` / `llm_factory`를 전달하지 않아, 호출 지점이 배선할 때까지 플러시가 실행되지 않습니다. 코드는 구현·테스트되었지만 현재 비활성입니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.

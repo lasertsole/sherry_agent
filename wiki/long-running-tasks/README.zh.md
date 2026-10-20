@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 14 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用 TaskFlow 决策模型（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
+> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 14 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用 TaskFlow 决策模型（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期、并对 owner 已消失的孤儿 flow 对账，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
 事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
@@ -257,7 +257,8 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 - **`done` 本身不等于成功。** 步骤的 `done` 表示「结果已注入，且该步骤配置的质量门全部通过」；未配置任何期望（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为「已注入结果」，因此报告错误的子 Agent 仍可能落到 `done` 并解锁后继。声明期望——或声明 `step_outcome="failure"`——闭环就会接住它：`failed` / `skipped` / `cancelled` 已是真实的步骤状态，失败永不解锁依赖者，`taskflow_finish` 也不会在有未解决步骤时完成流程。
 - **`taskflow_wait_all` 按设计限定于单个 flow。** 它只等待记录在给定 flow 的已派发步骤上的子 Agent，未知/已清理的 run 计入已落定。不存在“等待所有活动 flow”的全局原语。
-- **空闲检测是提示性的。** sweeper 会把 `stale_detected_at` / `stale_child_session_key` 写入 `wait_json`，但从不自动把过期 `waiting` flow 置为失败；需要人或模型对该标记采取行动。
+- **空闲检测是提示性的。** sweeper 会把 `stale_detected_at` / `stale_child_session_key` 写入 `wait_json`，但从不自动把过期 `waiting` flow 置为失败；需要人或模型对该标记采取行动。扫描现在同时检查 flow 行与各 step 的 child key，批量派发中有存活子会话时不会被误标。
+- **Owner 孤儿对账基于证据且有宽限期。** 只有服务器 `SESSION_EXISTS` hook 证明 owner 会话已消失、没有任何存活的子 run，且 owner 持续缺失 `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）后，sweeper 才会把 flow 置为 cancelled。hook 缺失或存储不可读时视为未知（不做任何事）；无 owner 的迁移前行交给 deadline/waiting 扫描。它从不杀子会话、从不删行；`taskflow_cancel` / `taskflow_fail` 只把仍在运行的子会话记录为 detached。
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。

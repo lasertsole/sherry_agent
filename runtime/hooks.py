@@ -67,6 +67,14 @@ Hook contracts (registration sites must provide these signatures; the
     agent-side producers (Summarization's compaction, the subagent lifecycle)
     call it instead of importing the server module. Missing hook -> the event
     is dropped (no ledger in this process, e.g. a bare unit test).
+
+``SESSION_EXISTS`` (``"session_exists"``)
+    ``(session_id: str) -> bool``: does the top-level session still have a
+    persisted conversation? Registered by the server assembly (the messages
+    store is its authority). The TaskFlow orphan reconciler uses it to prove a
+    flow's owner is gone before finalizing the flow. Missing hook or a raising
+    callback -> the caller must treat the answer as UNKNOWN and do nothing
+    (fail-open: never finalize a flow whose owner may still be alive).
 """
 
 from __future__ import annotations
@@ -82,6 +90,7 @@ __all__ = [
     "MAYBE_TRIGGER_AUTO_TURN",
     "RECORD_TRAJECTORY_EVENT",
     "SCAN_SKILL",
+    "SESSION_EXISTS",
     "WS_ACTIVE_TASKS",
     "clear",
     "register",
@@ -97,6 +106,7 @@ SCAN_SKILL = "scan_skill"
 BUILD_REJECT_MESSAGE = "build_reject_message"
 BUILD_BACKGROUND_AGENT_TOOLS = "build_background_agent_tools"
 BROWSER_MANAGER = "browser_manager"
+SESSION_EXISTS = "session_exists"
 
 _registry: dict[str, Callable[..., Any]] = {}
 

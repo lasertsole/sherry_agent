@@ -229,6 +229,30 @@ def mark_step_done(steps: list[dict], child_session_key: str) -> str | None:
     return None
 
 
+def detached_child_keys(steps: list[dict]) -> list[str]:
+    """Child keys still attached to unresolved steps, in step order.
+
+    Used when a flow is forced terminal (cancel/fail): those children may still
+    be running, so the flow RECORDS them as detached instead of killing them.
+    A settled step's child (done / failed / skipped / cancelled) is not listed.
+    """
+    keys: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step_status(step) in (
+            StepStatus.DONE.value,
+            StepStatus.FAILED.value,
+            StepStatus.SKIPPED.value,
+            StepStatus.CANCELLED.value,
+        ):
+            continue
+        key = str(step.get("child_session_key") or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
 def unlock_dependents(steps: list[dict]) -> list[str]:
     """Move blocked steps with satisfied deps to ready; return their ids.
 

@@ -153,6 +153,12 @@ async def _assert_transition_allowed(todo: dict, session_id: str) -> None:
     if flow_id and step_id:
         status, problem = await _read_taskflow_step_status(str(flow_id), str(step_id), session_id)
         if problem is not None:
+            if "not found" in problem:
+                raise TodoStoreError(
+                    f"Cannot mark todo completed: {problem}. The linked flow no longer "
+                    "exists (deleted or typo'd). Rewrite this todo WITHOUT flow_id/step_id "
+                    "to clear the barrier, or delete the todo."
+                )
             raise TodoStoreError(
                 f"Cannot mark todo completed: {problem}. Call taskflow_wait_all then "
                 "taskflow_resume to inject the result before marking completed."

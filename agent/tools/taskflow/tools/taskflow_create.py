@@ -29,7 +29,9 @@ async def taskflow_create(
     revision conflicts instead of silent last-write-wins.
 
     Pass deadline_hours to set an overall deadline (e.g. 24.0 for 24 hours);
-    the sweeper marks the flow as failed once the deadline passes.
+    the sweeper marks the flow as failed once the deadline passes. Omitting it
+    applies ``TASKFLOW_INFRA["default_deadline_hours"]`` (24h); pass 0 to
+    disable the deadline for this flow, or a larger value for a known long run.
 
     Pass resumed_from=<predecessor flow_id> when this flow REPLACES an earlier
     one (e.g. the old flow went stale): the new flow records the lineage and the
@@ -74,8 +76,19 @@ async def taskflow_create(
             f"(max {TASKFLOW_INFRA['max_flows_per_session']}). Finish or cancel existing "
             "flows before creating new ones."
         )
+    hard_cap = int(TASKFLOW_INFRA["max_total_flows_hard_cap"])
+    if hard_cap > 0:
+        total_flows = await store_sqlite.count_total_flows_for_session(session_id)
+        if total_flows >= hard_cap:
+            return (
+                f"Error: session has {total_flows} flow rows (hard cap {hard_cap}). "
+                "Call taskflow_summary to inspect stale flows, taskflow_cancel obsolete "
+                "ones, or clear the session to reset."
+            )
 
     deadline_ts = None
+    if deadline_hours is None:
+        deadline_hours = TASKFLOW_INFRA["default_deadline_hours"]
     if deadline_hours is not None and deadline_hours > 0:
         deadline_ts = time.time() + (deadline_hours * 3600)
 
