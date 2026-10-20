@@ -115,3 +115,21 @@ class TestWriteModelsConfig:
         assert data["STT_API_NAME"] == "whisper-large"
         # The append did not disturb the existing lines.
         assert data["MAIN_LLM_PROVIDER"] == "openai"
+
+
+class TestWriteMaxOutputTokens:
+    def test_enforces_the_8k_output_floor(self, models_file):
+        with pytest.raises(ValueError, match="8K"):
+            mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "4096"})
+
+    def test_accepts_an_empty_output_cap(self, models_file):
+        mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": ""})
+
+        text = models_file.read_text(encoding="utf-8")
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": ""' in text
+
+    def test_accepts_a_valid_output_cap(self, models_file):
+        mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "32768"})
+
+        text = models_file.read_text(encoding="utf-8")
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": 32768' in text

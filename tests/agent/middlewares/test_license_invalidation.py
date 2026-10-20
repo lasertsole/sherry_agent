@@ -94,14 +94,14 @@ def _read_result(call_id: str, text: str) -> ToolMessage:
 def _compress_sync(messages: list, session_id: str, cutoff: int, monkeypatch):
     _disable_nudges(monkeypatch)
     middleware = _make_middleware()
-    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs: cutoff)
+    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs, session_id="": cutoff)
     return middleware._apply_compression_under_lock(_request(messages, session_id), session_id)
 
 
 async def _compress_async(messages: list, session_id: str, cutoff: int, monkeypatch):
     _disable_nudges(monkeypatch)
     middleware = _make_middleware()
-    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs: cutoff)
+    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs, session_id="": cutoff)
     return await middleware._aapply_compression_under_lock(
         _request(messages, session_id), session_id
     )

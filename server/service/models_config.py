@@ -16,6 +16,7 @@ import json
 import re
 
 from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from config.models_settings import (
     MODELS_CONFIG_PATH,
     MODEL_SETTING_DEFAULTS,
@@ -30,6 +31,10 @@ OTHER_GROUP = "other"
 
 # MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+
+# MAX_OUTPUT keys: empty is valid (provider default), a set value must satisfy
+# the 8K business floor (M9) — otherwise the next boot would abort.
+MAX_OUTPUT_KEYS = frozenset({"MAIN_LLM_MAX_OUTPUT_TOKEN", "AUXILIARY_LLM_MAX_OUTPUT_TOKEN"})
 
 # ``"KEY": value,`` — the line shape of the template and of every write.
 _ASSIGN_RE = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(.+?)\s*,?\s*$')
@@ -131,6 +136,24 @@ def write_models_config(changes: dict[str, str]) -> None:
         if num < MIN_REQUIRED_MAX_TOKEN:
             raise ValueError(
                 f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+            )
+
+    # OUTPUT cap guard: empty means "provider default"; a set value below 8K is
+    # refused so the save cannot create a boot-aborting file.
+    for key, value in changes.items():
+        if key not in MAX_OUTPUT_KEYS:
+            continue
+        raw = str(value).strip()
+        if not raw:
+            continue
+        try:
+            num = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be an integer, got: {value}") from None
+        if num < MIN_MAX_OUTPUT_TOKEN:
+            raise ValueError(
+                f"{key} must be empty or >= {MIN_MAX_OUTPUT_TOKEN} (8K); got {num}. "
+                "Refusing to save."
             )
 
     # Coerce BEFORE touching the file so a bad value aborts without a backup churn.

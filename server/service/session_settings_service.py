@@ -61,7 +61,15 @@ _VALID_LEVELS = _valid_levels()
 
 #: Descriptor fields accepted by ``PUT /sessions/model`` (unknown keys are
 #: rejected so a typo in the client cannot silently store junk).
-_OVERRIDE_FIELDS = ("id", "label", "provider", "model", "base_url", "api_key")
+_OVERRIDE_FIELDS = (
+    "id",
+    "label",
+    "provider",
+    "model",
+    "base_url",
+    "api_key",
+    "context_window",
+)
 #: Upper bound per string field (credentials/urls stay far below this).
 _MAX_FIELD_LEN = 512
 
@@ -348,6 +356,14 @@ def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
             continue
         if len(value) > _MAX_FIELD_LEN:
             raise ValueError(f"'profile.{field}' exceeds {_MAX_FIELD_LEN} characters")
+        if field == "context_window":
+            try:
+                window = int(value)
+            except ValueError:
+                raise ValueError("'profile.context_window' must be an integer") from None
+            if window <= 0:
+                raise ValueError("'profile.context_window' must be positive")
+            value = str(window)
         cleaned[field] = value
     return cleaned
 

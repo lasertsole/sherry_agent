@@ -434,7 +434,9 @@ class TestCompressionPathWiring:
 
         monkeypatch.setattr(nudge_mod, "update_todos_from_compaction", _runner)
         _patch_todos(monkeypatch, [{"content": "ship", "status": "pending"}])
-        monkeypatch.setattr(Summarization, "_determine_cutoff", lambda self, messages: 0)
+        monkeypatch.setattr(
+            Summarization, "_determine_cutoff", lambda self, messages, session_id="": 0
+        )
 
         await _make_summarization()._aapply_compression_under_lock(
             _request(_large_history(turns=6, out_chars=10), sid), sid

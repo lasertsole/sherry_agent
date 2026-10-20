@@ -139,11 +139,21 @@ class ThinkingControlMiddleware(AgentMiddleware):
 
         from models import build_main_llm_for_profile
 
+        context_window: int | None = None
+        raw_window = override.get("context_window")
+        if raw_window:
+            try:
+                parsed = int(raw_window)
+            except (TypeError, ValueError):
+                parsed = 0
+            if parsed > 0:
+                context_window = parsed
         return build_main_llm_for_profile(
             provider=override.get("provider"),
             model=override["model"],
             api_key=override.get("api_key"),
             base_url=override.get("base_url"),
+            context_window=context_window,
             temperature=self._temperature,
             custom_mapping=custom_mapping,
             **thinking_kwargs,
@@ -160,7 +170,8 @@ class ThinkingControlMiddleware(AgentMiddleware):
         if not override:
             return "env"
         fields = "|".join(
-            str(override.get(field) or "") for field in ("provider", "model", "base_url", "api_key")
+            str(override.get(field) or "")
+            for field in ("provider", "model", "base_url", "api_key", "context_window")
         )
         digest = hashlib.blake2s(fields.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
         return f"{override.get('model')}#{digest}"

@@ -709,6 +709,8 @@ export interface SessionModelProfile {
   base_url?: string;
   /** Gateway credential; absent = keep the env one. */
   api_key?: string;
+  /** The model's context window (decimal string); absent = the env window. */
+  context_window?: string;
 }
 
 /** A stored override as returned by the backend (credential masked). */

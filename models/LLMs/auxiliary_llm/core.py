@@ -30,6 +30,10 @@ from models.LLMs.base_local_llama import LocalLlamaChatBase
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.auxiliary_llm.local_adapters import LocalStructuredOutput, LocalToolBinder
 from models.env_builder import ModelEnvBuilder, read_env
+from models.LLMs.provider_max_output import (
+    configured_max_output,
+    resolve_max_output_kwargs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +91,11 @@ def build_auxiliary_llm(temperature: float | None = None):
                 # the model is never streamed.
                 "timeout": LLM_CLIENT_DEFAULTS["aux_timeout"],
                 "profile": {"max_input_tokens": _max_tokens},
+                **resolve_max_output_kwargs(
+                    _provider,
+                    os.getenv("AUXILIARY_LLM_API_NAME"),
+                    configured_max_output("AUXILIARY_LLM_MAX_OUTPUT_TOKEN"),
+                ),
             }
         )
 

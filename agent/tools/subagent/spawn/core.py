@@ -1355,14 +1355,26 @@ def _assert_child_token_floor() -> None:
     Child LLM construction would otherwise inherit the floor implicitly — this
     is the same guard the main agent applies.
     """
-    from config.features import LLM_CLIENT_DEFAULTS, assert_max_token_valid
+    from config.features import (
+        LLM_CLIENT_DEFAULTS,
+        assert_max_output_valid,
+        assert_max_token_valid,
+    )
 
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
     assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
     assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+    assert_max_output_valid(
+        "MAIN_LLM_MAX_OUTPUT_TOKEN", int(_main_out_raw) if _main_out_raw else None
+    )
+    assert_max_output_valid(
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN", int(_aux_out_raw) if _aux_out_raw else None
+    )
 
 
 def _assemble_child_tools(

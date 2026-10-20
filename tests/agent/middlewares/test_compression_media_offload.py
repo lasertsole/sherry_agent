@@ -184,7 +184,7 @@ class TestCompressionIntegration:
         mw = _make_middleware(model)
         media_msg = HumanMessage(content=[_image_block(_data_url(_PNG))])
         messages = [media_msg, AIMessage(content="ok"), HumanMessage(content="tail question")]
-        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs: 2)
+        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs, session_id="": 2)
 
         result = mw._apply_compression_under_lock(_request(messages, sid), sid)
 
@@ -203,7 +203,7 @@ class TestCompressionIntegration:
         mw = _make_middleware(model)
         media_msg = HumanMessage(content=[_image_block(_data_url(_PNG))])
         messages = [media_msg, AIMessage(content="ok"), HumanMessage(content="tail question")]
-        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs: 2)
+        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs, session_id="": 2)
 
         result = asyncio.run(mw._aapply_compression_under_lock(_request(messages, sid), sid))
 
@@ -219,7 +219,7 @@ class TestCompressionIntegration:
         mw = _make_middleware(model)
         media_msg = HumanMessage(content=[_image_block(_data_url(_PNG))])
         messages = [HumanMessage(content="q1"), AIMessage(content="a1"), media_msg]
-        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs: 2)
+        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs, session_id="": 2)
 
         result = mw._apply_compression_under_lock(_request(messages, sid), sid)
 
@@ -233,7 +233,7 @@ class TestCompressionIntegration:
         mw = _make_middleware(model)
         media_msg = HumanMessage(content=[_image_block(_data_url(_PNG))])
         messages = [media_msg, AIMessage(content="ok"), HumanMessage(content="tail")]
-        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs: 2)
+        monkeypatch.setattr(mw, "_determine_cutoff", lambda msgs, session_id="": 2)
 
         result = mw._apply_compression_under_lock(_request(messages, sid), sid)
 

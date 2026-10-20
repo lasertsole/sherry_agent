@@ -130,6 +130,12 @@ class TestCompressionNudgeDispatch:
         even when every todo is complete — that path used to hand the fork the
         whole conversation and to wait for a window to fill.
         """
+        from config.features import SUMMARIZATION
+
+        # This test pins the nudge seam, not the new preventive layer: let the
+        # LLM summary run (microcompact can otherwise bring the history under
+        # the threshold and skip it — covered by test_microcompact.py).
+        monkeypatch.setitem(SUMMARIZATION, "microcompact_enabled", False)
         calls: list[str] = []
 
         async def _memory(session_id: str, system_prompt: str, messages: list) -> None:
@@ -162,7 +168,9 @@ class TestCompressionNudgeDispatch:
             calls.append("memory")
 
         monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
-        monkeypatch.setattr(Summarization, "_determine_cutoff", lambda self, messages: 0)
+        monkeypatch.setattr(
+            Summarization, "_determine_cutoff", lambda self, messages, session_id="": 0
+        )
 
         await _make_summarization()._aapply_compression_under_lock(
             _request(_large_history(turns=6, out_chars=10), sid), sid

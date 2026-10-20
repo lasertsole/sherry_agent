@@ -65,7 +65,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "todoread",
         "knowledge",
     ),
-    "memory": ("memory", "message_search"),
+    "memory": ("memory", "message_search", "compact_now"),
     "skills": ("skill_manage", "skill_list", "skill_view"),
     "subagents": (
         "sessions_spawn",

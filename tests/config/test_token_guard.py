@@ -9,9 +9,11 @@ import pytest
 from config.features import (
     MIN_REQUIRED_MAX_TOKEN,
     TokenGuardError,
+    assert_max_output_valid,
     assert_max_token_valid,
 )
 from config.features.agent_side import token_guard
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,3 +41,19 @@ class TestAssertMaxTokenValid:
 
     def test_value_above_minimum_passes(self):
         assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", MIN_REQUIRED_MAX_TOKEN * 2)
+
+
+class TestAssertMaxOutputValid:
+    def test_unset_is_valid(self):
+        assert_max_output_valid("MAIN_LLM_MAX_OUTPUT_TOKEN", None)
+
+    def test_below_8k_raises(self):
+        with pytest.raises(TokenGuardError, match="8K"):
+            assert_max_output_valid("MAIN_LLM_MAX_OUTPUT_TOKEN", MIN_MAX_OUTPUT_TOKEN - 1)
+
+    def test_at_8k_passes(self):
+        assert_max_output_valid("MAIN_LLM_MAX_OUTPUT_TOKEN", MIN_MAX_OUTPUT_TOKEN)
+
+    def test_error_names_the_key(self):
+        with pytest.raises(TokenGuardError, match="AUXILIARY_LLM_MAX_OUTPUT_TOKEN"):
+            assert_max_output_valid("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", 4096)

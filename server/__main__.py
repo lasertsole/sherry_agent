@@ -84,7 +84,11 @@ def main() -> None:
     # MAX_TOKEN gate (config.features.token_guard): both agents must run on a
     # >= 128K context window. Fail fast BEFORE any agent-core work, so a
     # misconfigured .env can never serve a crippled agent.
-    from config.features import LLM_CLIENT_DEFAULTS, assert_max_token_valid
+    from config.features import (
+        LLM_CLIENT_DEFAULTS,
+        assert_max_output_valid,
+        assert_max_token_valid,
+    )
 
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
@@ -105,9 +109,23 @@ def main() -> None:
     # aborts, exactly like a server.
     _unconfigured = _main_val is None and not _aux_raw
     _desktop = os.getenv("SHERRY_DESKTOP", "").strip().lower() in {"1", "true", "yes", "on"}
+    _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    try:
+        _main_out = int(_main_out_raw) if _main_out_raw else None
+        _aux_out = int(_aux_out_raw) if _aux_out_raw else None
+    except ValueError as exc:
+        logger.critical(
+            "STARTUP ABORTED: MAIN_LLM_MAX_OUTPUT_TOKEN / AUXILIARY_LLM_MAX_OUTPUT_TOKEN "
+            "must be integers or empty ({})",
+            exc,
+        )
+        raise SystemExit(1) from exc
     try:
         assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
         assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+        assert_max_output_valid("MAIN_LLM_MAX_OUTPUT_TOKEN", _main_out)
+        assert_max_output_valid("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", _aux_out)
     except Exception as e:
         if _desktop and _unconfigured:
             logger.warning(

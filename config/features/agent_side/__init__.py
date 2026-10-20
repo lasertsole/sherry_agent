@@ -148,6 +148,7 @@ from .completion_judge import (
 from .token_guard import (
     MIN_REQUIRED_MAX_TOKEN as MIN_REQUIRED_MAX_TOKEN,
     TokenGuardError as TokenGuardError,
+    assert_max_output_valid as assert_max_output_valid,
     assert_max_token_valid as assert_max_token_valid,
 )
 from .code_intel import (

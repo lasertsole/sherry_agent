@@ -16,6 +16,11 @@
   // Context window; drives the summarization trigger threshold.
   // MUST be >= 131072 (128K) — the server refuses to start below this.
   "MAIN_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap (NOT the context window). Empty = do not send the
+  // field; the provider applies its own default (OpenAI-compatible APIs: 4096).
+  // When set it must be >= 8192 (8K): thinking-mode reasoning and the visible
+  // answer share this budget, so a smaller value truncates the reply.
+  "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
   // Universal reasoning/thinking switch (maps to the right payload per provider).
   "MAIN_LLM_ENABLE_THINKING": false,
   // Optional reasoning effort for OpenAI-family models (low / medium / high).
@@ -31,6 +36,9 @@
   // MUST be >= 131072 (128K): an unset value falls back to 121072 (<128K),
   // which blocks startup too (the floor applies in local mode as well).
   "AUXILIARY_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap (same rule as MAIN_LLM_MAX_OUTPUT_TOKEN: empty =
+  // provider default, set = >= 8192/8K).
+  "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
 
   // ── 推理模型 Reasoner model ──────────────────────────────────────────────
   "REASONER_LLM_PROVIDER": "",

@@ -797,3 +797,16 @@ def test_the_middleware_reads_the_custom_mapping(monkeypatch):
         assert current_session_model_config("s7")["custom_mapping"]["level_map"]["high"] == "full"
     finally:
         state_register_mem.clear_session("s7")
+
+
+def test_service_model_override_accepts_a_context_window(registers):
+    descriptor = {**_DESCRIPTOR, "context_window": " 32768 "}
+    service.set_main_model_override("m6", descriptor)
+
+    assert service.get_main_model_override("m6")["context_window"] == "32768"
+
+
+def test_service_model_override_rejects_a_bad_context_window(registers):
+    for bad in ("abc", "0", "-1", "1.5"):
+        with pytest.raises(ValueError):
+            service.set_main_model_override("m6", {**_DESCRIPTOR, "context_window": bad})

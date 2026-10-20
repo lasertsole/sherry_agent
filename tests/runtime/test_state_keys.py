@@ -68,6 +68,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "SUMMARIZATION_LAST_STRATEGY": "summarization_last_strategy",
     "SUMMARIZATION_SKIP_LLM": "summarization_skip_llm",
     "SUMMARIZATION_FORCE_RECOVERY": "summarization_force_recovery",
+    "SUMMARIZATION_COMPACT_REQUESTED": "summarization_compact_requested",
     "NUDGE_PLAN_EXTRACTION_LOCK": "nudge_plan_extraction_lock",
     "NUDGE_PLAN_EXTRACTION_FIRED": "nudge_plan_extraction_fired",
     "NUDGE_PLAN_SNAPSHOT_HASH": "nudge_plan_snapshot_hash",

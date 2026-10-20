@@ -59,6 +59,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "MAIN_LLM_API_BASE": "",
     "MAIN_LLM_API_KEY": "",
     "MAIN_LLM_MAX_TOKEN": 131072,
+    "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
     "MAIN_LLM_ENABLE_THINKING": False,
     "MAIN_LLM_REASONING_EFFORT": "",
     # Auxiliary model
@@ -68,6 +69,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "AUXILIARY_LLM_API_BASE": "",
     "AUXILIARY_LLM_API_KEY": "",
     "AUXILIARY_LLM_MAX_TOKEN": 131072,
+    "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
     # Reasoner model
     "REASONER_LLM_PROVIDER": "",
     "REASONER_LLM_NAME": "",
@@ -121,12 +123,17 @@ MODEL_SETTING_KEYS: tuple[str, ...] = tuple(MODEL_SETTING_DEFAULTS)
 _INT_KEYS = frozenset(
     {
         "MAIN_LLM_MAX_TOKEN",
+        "MAIN_LLM_MAX_OUTPUT_TOKEN",
         "AUXILIARY_LLM_MAX_TOKEN",
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
         "SKILL_SCANNER_ENABLED",
         "SKILL_SCANNER_LLM",
         "SKILL_SCANNER_TIMEOUT",
     }
 )
+# Output-cap keys: unlike the context-window keys, an EMPTY string is a valid
+# value meaning "do not send the field" (provider default).
+_MAX_OUTPUT_KEYS = frozenset({"MAIN_LLM_MAX_OUTPUT_TOKEN", "AUXILIARY_LLM_MAX_OUTPUT_TOKEN"})
 _BOOL_KEYS = frozenset(
     {
         "MAIN_LLM_ENABLE_THINKING",
@@ -153,6 +160,8 @@ _DOTENV_COMMENT_RE = re.compile(r"^\s*#")
 def _coerce(key: str, value: Any) -> Any:
     """Coerce a parsed value to the key's declared type."""
     if key in _INT_KEYS:
+        if key in _MAX_OUTPUT_KEYS and str(value).strip() == "":
+            return ""
         return int(value)
     if key in _BOOL_KEYS:
         if isinstance(value, bool):

@@ -14,6 +14,7 @@ semantics.
 
 import asyncio
 import re
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,10 +36,11 @@ from pub.func.message.tool_args_truncate import truncate_tool_args
 from pub.func.message.tool_output_dedup import dedup_tool_outputs
 from pub.func.message.tool_output_prune import prune_tool_outputs
 from pub.func.message.turn_utils import split_into_turns, split_turn
-from runtime import state_register_mem
+from runtime import StateKey, state_register_mem
 
 from .compaction_lock import CompactionLock, CompactionLockError
 from .media_offload import offload_inline_media
+from .microcompact import maybe_local_microcompact
 from .state_aliases import _LAST_USER_QUESTION_KEY, _PREVIOUS_FILE_OPS_KEY, _SKIP_LLM_KEY
 from .summarization_components import MessageTruncator, find_tool_name
 from .summary_generation import (
@@ -119,8 +121,51 @@ def _invalidate_compressed_read_licenses(
 class CompressionMixin:
     """Budget-based cutoff, multi-strategy pipeline, under-lock application."""
 
-    def _calculate_preserve_budget(self) -> int:
-        ctx = self._main_llm_context_window
+    def _session_context_window(self, session_id: str = "") -> int:
+        """The context window for THIS session (a declared override wins).
+
+        The env ``MAIN_LLM_MAX_TOKEN`` is the process default; a per-session
+        model profile may declare a SMALLER ``context_window``. Compression
+        must budget against the window the session actually runs on, otherwise
+        a model downshift over-commits until the provider rejects the request.
+        """
+        override = state_register_mem.get_state(session_id, StateKey.LLM_MAIN_MODEL, None)
+        if isinstance(override, dict):
+            raw = override.get("context_window")
+            if raw:
+                try:
+                    value = int(raw)
+                except (TypeError, ValueError):
+                    value = 0
+                if value > 0:
+                    return value
+        return int(self._main_llm_context_window or 0)
+
+    def _output_reserve(self, session_id: str = "") -> int:
+        """Tokens reserved for the model's output side (ZCode outputReserve).
+
+        The provider's context window is shared by input + output. When an
+        explicit output cap is configured, the compaction threshold must leave
+        it free; an unset cap keeps the legacy formula (M3: reserve 0).
+        """
+        try:
+            from models.LLMs.main_llm import get_max_output_tokens
+
+            max_output = get_max_output_tokens()
+        except Exception:  # noqa: BLE001 - a model import problem must not break compaction
+            return 0
+        if not max_output or max_output <= 0:
+            return 0
+        ctx = self._session_context_window(session_id) or max_output
+        return min(int(max_output), int(ctx))
+
+    def _effective_context_window(self, session_id: str = "") -> int:
+        """Context window minus the output reserve (0 when unconfigured)."""
+        ctx = self._session_context_window(session_id)
+        return max(int(ctx) - self._output_reserve(session_id), 0)
+
+    def _calculate_preserve_budget(self, session_id: str = "") -> int:
+        ctx = self._effective_context_window(session_id)
         if ctx:
             budget = int(ctx * PRESERVE_RATIO)
             return min(MAX_PRESERVE_TOKENS, max(MIN_PRESERVE_TOKENS, budget))
@@ -175,10 +220,10 @@ class CompressionMixin:
 
         current_tokens = self._estimate_tokens(current_messages)
         skip_llm = state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False)
-        budget = self._calculate_preserve_budget()
+        budget = self._calculate_preserve_budget(session_id)
 
         if current_tokens > budget * 2 or skip_llm or non_llm_reduced == 0:
-            cutoff = self._determine_cutoff(current_messages)
+            cutoff = self._determine_cutoff(current_messages, session_id)
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
@@ -266,10 +311,10 @@ class CompressionMixin:
 
         current_tokens = self._estimate_tokens(current_messages)
         skip_llm = state_register_mem.get_state(session_id, _SKIP_LLM_KEY, False)
-        budget = self._calculate_preserve_budget()
+        budget = self._calculate_preserve_budget(session_id)
 
         if current_tokens > budget * 2 or skip_llm or non_llm_reduced == 0:
-            cutoff = self._determine_cutoff(current_messages)
+            cutoff = self._determine_cutoff(current_messages, session_id)
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
@@ -339,8 +384,8 @@ class CompressionMixin:
             override_kwargs["system_message"] = SystemMessage(content=system_prompt)
         return request.override(**override_kwargs)
 
-    def _determine_cutoff(self, messages: list[AnyMessage]) -> int:
-        budget = self._calculate_preserve_budget()
+    def _determine_cutoff(self, messages: list[AnyMessage], session_id: str = "") -> int:
+        budget = self._calculate_preserve_budget(session_id)
         turns = split_into_turns(messages)
 
         total = 0
@@ -419,6 +464,20 @@ class CompressionMixin:
         total_reduced += reduced
         if reduced > 0:
             logger.debug("Tool args truncation reduced ~{} tokens, session={}", reduced, session_id)
+
+        # Microcompact (ZCode parity): clear OLD tool results locally. It runs
+        # after the existing non-LLM strategies and never removes messages.
+        current, reduced = maybe_local_microcompact(
+            current,
+            auto_compact_threshold=self._calculate_preserve_budget(session_id) * 2,
+            last_assistant_completed_at_ms=self._last_assistant_completed_ms.get(session_id),
+            now_ms=time.monotonic() * 1000,
+        )
+        total_reduced += reduced
+        if reduced > 0:
+            logger.debug(
+                "Microcompact cleared old tool results, ~{} tokens, session={}", reduced, session_id
+            )
 
         return current, total_reduced
 

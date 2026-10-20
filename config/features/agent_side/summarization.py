@@ -68,6 +68,13 @@ class SummarizationConfig(TypedDict):
     overflow_clip_enabled: bool
     overflow_clip_max_remove: int
     overflow_clip_min_keep: int
+    microcompact_enabled: bool
+    microcompact_keep_recent_tool_results: int
+    microcompact_idle_threshold_minutes: int
+    microcompact_min_token_savings: int
+    microcompact_threshold_ratio: float
+    microcompact_buffer_tokens: int
+    microcompact_compactable_tools: frozenset[str]
 
 
 SUMMARIZATION: SummarizationConfig = {
@@ -129,4 +136,24 @@ SUMMARIZATION: SummarizationConfig = {
     "overflow_clip_enabled": True,
     "overflow_clip_max_remove": 10,
     "overflow_clip_min_keep": 5,
+    # Microcompact (ZCode parity): clear OLD tool results locally, no LLM.
+    "microcompact_enabled": True,
+    "microcompact_keep_recent_tool_results": 5,
+    "microcompact_idle_threshold_minutes": 60,
+    "microcompact_min_token_savings": 256,
+    "microcompact_threshold_ratio": 0.9,
+    "microcompact_buffer_tokens": 2_000,
+    "microcompact_compactable_tools": frozenset(
+        {
+            "read_file",
+            "terminal",
+            "python_repl",
+            "execute_code",
+            "web_search",
+            "web_fetch",
+            "search_files",
+            "patch_file",
+            "write_file",
+        }
+    ),
 }
