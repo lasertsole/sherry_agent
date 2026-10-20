@@ -1,7 +1,7 @@
 # 计划：响应式压缩对齐 ZCode Reactive phase（显式化 + 可观测性）
 
 - 建档日期：2026-10-19
-- 状态：**计划（未开工）**
+- 状态：**已落地（2026-10-20）**——§2 枚举、§3 trajectory phase/reason、§4 日志显式化均实现；§5 抽公开 method 为可选项未做（`compact_now` 已覆盖用户主动压缩）；§6 保留 T4/T5 细分（推荐方案）。
 - **重要事实**：sherry **已经有响应式压缩**——`agent/middlewares/summarization/overflow.py` 的 T4(`payload_too_large`)/ T5(`context_overflow`)forced-recovery loop 就是 provider 报错后的响应式压缩。本 TODO 不是从零实现，是**对齐 ZCode `CompactPhase.Reactive` 的显式化设计**——加 phase 标记、可观测性、reason 分类。
 - **硬约束**：**不破坏 T1-T5 现有行为**——T4/T5 forced-recovery loop 的核心逻辑（`classify_provider_error` → forced compression → retry handler）一字不改，详见 §1
 - 关联代码：

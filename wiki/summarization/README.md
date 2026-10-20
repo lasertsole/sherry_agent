@@ -4,7 +4,7 @@
 
 > How the agent keeps long conversations inside the model's context window: five trigger points watch the whole lifecycle (before the turn, before every model call, after every model response, and on provider overflow errors), a pure 4-route router picks the cheapest fix (truncate big tool results and oversized tool-call args first, AI-compact only when forced), and anti-thrash guards make sure compression can never spiral.
 
-Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
+Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, `agent/middlewares/summarization/microcompact.py`, `agent/tools/compact_now.py`, `models/LLMs/provider_max_output.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -13,6 +13,7 @@ Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/s
   - [🧭 Lifecycle: Five Trigger Points (T1–T5)](triggers/README.md#-lifecycle-five-trigger-points-t1t5)
   - [🚦 The Four-Route Overflow Decision](triggers/README.md#-the-four-route-overflow-decision)
 - [Token Estimation (No Tokenizer)](#-token-estimation-no-tokenizer)
+- [Output Caps, Microcompact & User-Requested Compaction](#-output-caps-microcompact--user-requested-compaction)
 - [Compression Internals](internals/README.md)
   - [✂️ The Truncate Track: Budget Truncation & the TTL Module](internals/README.md#-the-truncate-track-budget-truncation--the-ttl-module)
   - [🔁 The Compact Track: Inside `_apply_compression`](internals/README.md#-the-compact-track-inside-_apply_compression)
@@ -74,6 +75,26 @@ A content **list** is counted block by block, never by JSON-serializing the whol
 
 `pub/func/message/estimate_msg_tokens.py` is now a backward-compatible re-export of the same helpers. The estimator is fast, stable across runs (same input → same number → reproducible tests), and intentionally conservative-approximate. Nothing in the trigger/budget path depends on a model tokenizer.
 
+## 🧢 Output Caps, Microcompact & User-Requested Compaction
+
+### Per-provider output caps
+`MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN` (`.models`) separate the per-request output cap from the context window. Empty = no field is sent (provider default); a set value must be >= 8192 (8K) and is refused at boot, `built_agent()`, subagent spawn, model build and `PUT /models-config`. `models/LLMs/provider_max_output.py` maps the provider to the keyword `init_chat_model` accepts: `max_tokens` for OpenAI-compatible providers, Azure and Anthropic; `max_completion_tokens` for OpenAI o-series/gpt-5; `max_output_tokens` for Google/Vertex and the Responses family. An unknown gateway gets no field. The thinking-budget base uses the configured cap when set.
+
+### Effective context window
+`_effective_context_window()` = `ctx - min(max_output, ctx)`. The preserve budget (`_calculate_preserve_budget`) and the overflow budget (`_usable_budget`) use it, so an explicit output cap is never over-committed. Unset keeps reserve `0` and the legacy formulas byte-identical.
+
+### Microcompact
+`microcompact.py` runs at the end of `_run_non_llm_strategies`. Trigger: 60-minute idle (process-local completion clock) or tokens >= `min(auto_threshold * 0.9, auto_threshold - 2000)`. It replaces OLD compactable tool results with `[Old tool result content cleared]`, keeping the newest 5 messages, skipping media/already-cleared results, and discarding a pass that saves < 256 tokens. It is LLM-free and keeps the `ToolMessage` pairing fields.
+
+### User-requested compaction
+The `compact_now` main tool queues `SUMMARIZATION_COMPACT_REQUESTED`; the next model call's T2 dispatch runs one compaction with trigger `USER`, bypasses anti-thrash and records `{trigger: user_requested, phase: standalone_turn}`. It is a tool (the model calls it when the user asks), not a client `/compact` command.
+
+### ModelDownshift
+A session model profile may declare `context_window` (a decimal string in the client descriptor, validated by the backend sanitizer). `_session_context_window(session_id)` feeds that window into the preserve and overflow budgets, so a switch to a smaller model compacts at the next pre-request check; the compact event is labelled `reason=model_downshift`. An absent field keeps the env window.
+
+### Phase & reason observability
+Every compact path emits one trajectory `compact` event carrying `phase` (`standalone_turn` / `pre_request` / `post_response` / `reactive` / `mid_turn`), `reason` (`context_limit` / `provider_overflow` / `user_requested` / `model_downshift`) and the unchanged `trigger` (`T1`–`T5` / `USER`), plus `messages_before`, `messages_after` and `route`. T1/T2/T3/user-requested compactions share `_finish_compact`; the T4/T5 forced-recovery path records from `_finish_forced_recovery`, so the labels derive from the real trigger and cannot drift.
+
 ## ⚙️ Configuration Reference
 
 All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict). Values marked ◆ are consumed by the live code paths; values marked ○ are defined or imported but **not consumed** by any live path (see Honesty & Limitations).
@@ -111,6 +132,13 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `INEFFECTIVE_THRESHOLD` ◆ | `2` | governor: consecutive ineffective → skip LLM |
 | `MIN_EFFECTIVENESS_PCT` ◆ | `0.05` | governor: token-reduction effectiveness |
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | exempt from every shrink strategy |
+| `MICROCOMPACT_ENABLED` ◆ | `True` | microcompact master switch |
+| `MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS` ◆ | `5` | newest messages never compacted |
+| `MICROCOMPACT_IDLE_THRESHOLD_MINUTES` ◆ | `60` | idle-time trigger |
+| `MICROCOMPACT_MIN_TOKEN_SAVINGS` ◆ | `256` | discard a pass below this saving |
+| `MICROCOMPACT_THRESHOLD_RATIO` ◆ | `0.9` | token-pressure band vs the auto threshold |
+| `MICROCOMPACT_BUFFER_TOKENS` ◆ | `2_000` | pressure band leaves this headroom |
+| `MICROCOMPACT_COMPACTABLE_TOOLS` ◆ | 9 tool names | only these results are compacted |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | last-turn compression gate |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO section caps |
 | `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | document array caps (plan notes / eviction pointers) |
@@ -131,7 +159,14 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` bands, candidate rules, stable route strings |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | In-place truncation, pairing invariant, non-empty placeholders, registry bound, budget truncation |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 status, text hints, 7 overflow patterns, cause-chain depth, read-only guarantees |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 status, text hints, 7 substring + 25 provider overflow patterns, NON_OVERFLOW exclusions, Cerebras bodyless, cause-chain depth, read-only guarantees |
+| `tests/models/test_provider_max_output.py` | 15 | provider field mapping, Responses floor, 8K business floor, unknown-gateway skip |
+| `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | effective window, preserve/usable budgets, pressure bands, reserve clamp |
+| `tests/agent/middlewares/test_microcompact.py` | 7 | token/idle triggers, keep-recent, media/cleared skips, min savings, kill switch |
+| `tests/agent/tools/test_compact_now.py` | 4 | queue flags, no-session refusal, T2 USER dispatch |
+| `tests/agent/middlewares/test_phase.py` | 9 | T1-T5/USER derive the expected phase+reason; unknown trigger falls back |
+| `tests/agent/middlewares/test_trajectory_phase.py` | 6 | `_finish_compact` (T1/T2/T3/USER) and `_finish_forced_recovery` (T4/T5) events keep legacy fields and add phase/reason |
+| `tests/agent/middlewares/test_model_downshift.py` | 4 | session `context_window` drives the budget; compact event reason=model_downshift; no override keeps context_limit |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file recoverable slice: original path + 1-based offset notice, no line skip, absolute page numbering, byte-identical generic marker, protected / under-budget / fallback paths |
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
@@ -153,10 +188,13 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
-The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **7155 passed / 12 skipped / 0 failed** (GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P).
+The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **8240 passed / 13 skipped / 0 failed** (GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P).
 
 ## ⚠️ Honesty & Limitations
 
+- **ModelDownshift runs at the next pre-request check, not as a switch-time hook.** The model override (with its context window) lands at the turn boundary; the following T1/T2 sees the smaller window and compacts if needed.
+- **Microcompact can preempt the LLM summary.** When clearing old tool results alone brings the history under the preserve budget, the compact route is skipped; the memory-review nudge then does not fire (no messages were discarded).
+- **`compact_now` is a tool, not a client command.** The model calls it when the user asks; there is no `/compact` composer command.
 - **Tail retention is budget-based, not a message count.** The preserve budget is `PRESERVE_RATIO` × window clamped to [2 000, 15 000], plus the router's `TRUNCATABLE_RECENT_SKIP` margin; the constructor takes no `keep` argument.
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).

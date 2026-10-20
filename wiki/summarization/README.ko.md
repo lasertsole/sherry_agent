@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, `agent/middlewares/summarization/microcompact.py`, `agent/tools/compact_now.py`, `models/LLMs/provider_max_output.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -13,6 +13,7 @@
   - [🧭 라이프사이클: 다섯 개의 트리거 지점 (T1–T5)](triggers/README.ko.md#-라이프사이클-다섯-개의-트리거-지점-t1t5)
   - [🚦 4-경로 오버플로 라우팅 결정](triggers/README.ko.md#-4-경로-오버플로-라우팅-결정)
 - [토큰 추정 (토크나이저 없음)](#-토큰-추정-토크나이저-없음)
+- [출력 상한, Microcompact, 사용자 요청 압축](#-출력-상한-microcompact-사용자-요청-압축)
 - [압축 내부](internals/README.ko.md)
   - [✂️ 트렁케이트 트랙: 예산 트렁케이션과 TTL 모듈](internals/README.ko.md#-트렁케이트-트랙-예산-트렁케이션과-ttl-모듈)
   - [🔁 컴팩트 트랙: `_apply_compression` 내부](internals/README.ko.md#-컴팩트-트랙-_apply_compression-내부)
@@ -74,6 +75,26 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 
 `pub/func/message/estimate_msg_tokens.py`는 이제 같은 헬퍼들의 하위 호환 re-export입니다. 빠르고, 실행 간 안정적이며(같은 입력 → 같은 숫자 → 재현 가능한 테스트), 의도적으로 보수적으로 근사합니다. 트리거/예산 경로의 어떤 것도 모델 토크나이저에 의존하지 않습니다.
 
+## 🧢 출력 상한, Microcompact, 사용자 요청 압축
+
+### provider별 출력 상한
+`MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN`(`.models`)은 요청당 출력 상한을 컨텍스트 윈도우와 분리합니다. 비어 있으면 필드를 보내지 않고(provider 기본값), 설정값은 8192(8K) 이상이어야 하며 boot, `built_agent()`, 서브에이전트 spawn, 모델 구성, `PUT /models-config` 저장 시 검증됩니다. `models/LLMs/provider_max_output.py`가 provider를 `init_chat_model`이 받는 키워드로 매핑합니다: OpenAI 호환 / Azure / Anthropic은 `max_tokens`, OpenAI o 시리즈/gpt-5는 `max_completion_tokens`, Google/Vertex와 Responses 계열은 `max_output_tokens`. 알 수 없는 gateway에는 필드를 보내지 않습니다. thinking 예산 기반은 설정 시 이 상한을 사용합니다.
+
+### 유효 컨텍스트 윈도우
+`_effective_context_window()` = `ctx - min(max_output, ctx)`. 보존 예산(`_calculate_preserve_budget`)과 overflow 예산(`_usable_budget`)이 이를 사용하므로 명시적 출력 상한을 초과 예약하지 않습니다. 미설정이면 reserve는 `0`이고 기존 공식은 바이트 단위로 동일합니다.
+
+### Microcompact
+`microcompact.py`는 `_run_non_llm_strategies` 끝에서 실행됩니다. 트리거: 60분 유휴(프로세스 내부 완료 시계) 또는 token >= `min(auto_threshold * 0.9, auto_threshold - 2000)`. 오래된 compactable 도구 결과를 `[Old tool result content cleared]`로 바꾸고, 최근 5개 메시지는 유지하며, 미디어/이미 정리된 결과는 건너뛰고, 절감이 256 token 미만이면 그 회차를 버립니다. LLM 호출이 없고 `ToolMessage` 페어링 필드는 유지합니다.
+
+### 사용자 요청 압축
+메인 도구 `compact_now`가 `SUMMARIZATION_COMPACT_REQUESTED`를 기록합니다. 다음 모델 호출의 T2 디스패치가 trigger `USER`로 한 번 압축하고 anti-thrash를 우회하며 `{trigger: user_requested, phase: standalone_turn}`을 기록합니다. 도구이며(사용자가 요청할 때 모델이 호출), 클라이언트 `/compact` 명령이 아닙니다.
+
+### ModelDownshift
+session 모델 profile은 `context_window`(클라이언트 descriptor의 십진 문자열, 백엔드 sanitizer가 검증)를 선언할 수 있습니다. `_session_context_window(session_id)`가 그 윈도우를 보존/overflow 예산에 사용하므로 더 작은 모델로 전환하면 다음 pre-request 검사에서 압축합니다. compact 이벤트에는 `reason=model_downshift`가 붙습니다. 선언이 없으면 env 윈도우를 유지합니다.
+
+### Phase 및 reason 관측성
+모든 compact 경로는 trajectory `compact` 이벤트를 하나 발행하며 `phase`(`standalone_turn` / `pre_request` / `post_response` / `reactive` / `mid_turn`), `reason`(`context_limit` / `provider_overflow` / `user_requested` / `model_downshift`), 그대로인 `trigger`(`T1`–`T5` / `USER`), `messages_before`, `messages_after`, `route`를 담습니다. T1/T2/T3/사용자 요청은 `_finish_compact`를 공유하고 T4/T5 forced-recovery는 `_finish_forced_recovery`에서 기록하므로 라벨이 실제 트리거에서 파생되어 드리프트하지 않습니다.
+
 ## ⚙️ 설정 참조
 
 모든 임계값은 `config/features/agent_side/summarization.py`(SUMMARIZATION TypedDict)에 있습니다. ◆ 표시 상수는 살아있는 코드 경로가 소비합니다; ○ 표시 상수는 정의 또는 임포트는 되지만 살아있는 경로는 **소비하지 않습니다**("정직함과 한계" 참조).
@@ -111,6 +132,13 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | `INEFFECTIVE_THRESHOLD` ◆ | `2` | 거버너: 연속 무효 → LLM 스킵 |
 | `MIN_EFFECTIVENESS_PCT` ◆ | `0.05` | 거버너: 토큰 축소 유효성 |
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | 모든 축소 전략에서 면제 |
+| `MICROCOMPACT_ENABLED` ◆ | `True` | microcompact 마스터 스위치 |
+| `MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS` ◆ | `5` | 최근 N개 메시지는 압축하지 않음 |
+| `MICROCOMPACT_IDLE_THRESHOLD_MINUTES` ◆ | `60` | 유휴 시간 트리거 |
+| `MICROCOMPACT_MIN_TOKEN_SAVINGS` ◆ | `256` | 이 절감량 미만이면 회차 폐기 |
+| `MICROCOMPACT_THRESHOLD_RATIO` ◆ | `0.9` | auto threshold 대비 토큰 압력대 |
+| `MICROCOMPACT_BUFFER_TOKENS` ◆ | `2_000` | 압력대가 남기는 여유 |
+| `MICROCOMPACT_COMPACTABLE_TOOLS` ◆ | 9개 도구 이름 | 이 결과만 압축 |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | 마지막 턴 압축 게이트 |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO 섹션 상한 |
 | `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | 문서 배열 상한(계획 노트 / 퇴출 포인터) |
@@ -131,7 +159,14 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` 밴드, 후보 규칙, 안정적 라우트 문자열 |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 제자리 트렁케이션, 페어링 불변식, 비어 있지 않은 플레이스홀더, 레지스트리 한계, 예산 트렁케이션 |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 상태, 텍스트 힌트, 7개 오버플로 패턴, cause 체인 깊이, 읽기 전용 보장 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 상태, 텍스트 힌트, 7개 substring + 25개 provider 오버플로 패턴, NON_OVERFLOW 제외, Cerebras bodyless, cause 체인 깊이, 읽기 전용 보장 |
+| `tests/models/test_provider_max_output.py` | 15 | provider 필드 매핑, Responses 하한, 8K 업무 하한, 알 수 없는 gateway 건너뛰기 |
+| `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | 유효 윈도우, 보존/가용 예산, 압력대, reserve 클램프 |
+| `tests/agent/middlewares/test_microcompact.py` | 7 | token/유휴 트리거, 최근 유지, 미디어/정리됨 건너뛰기, 최소 절감, 킬 스위치 |
+| `tests/agent/tools/test_compact_now.py` | 4 | 큐 플래그, 세션 없음 거부, T2 USER 디스패치 |
+| `tests/agent/middlewares/test_phase.py` | 9 | T1-T5/USER가 기대하는 phase+reason 도출; 알 수 없는 트리거는 폴백 |
+| `tests/agent/middlewares/test_trajectory_phase.py` | 6 | `_finish_compact`(T1/T2/T3/USER)와 `_finish_forced_recovery`(T4/T5)가 기존 필드를 유지하고 phase/reason 추가 |
+| `tests/agent/middlewares/test_model_downshift.py` | 4 | session `context_window`가 예산을 구동; compact 이벤트 reason=model_downshift; override 없으면 context_limit |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 중복 제거 / 프루닝 / 타깃 트렁케이트 / 턴 유틸리티에 도구 인자 트렁케이트 추가: 머리+꼬리 형식, 작은 인자 스킵, 확보량 클램프, 보호 도구, 최근 스킵, 페어링 및 무변경 |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 복구 가능 슬라이스: 원본 경로 + 1-based 이어읽기 offset 안내, 행 스킵 없음, 절대 페이지 번호, 일반 마커 바이트 동일, 보호 / 예산 내 / 폴백 경로 |
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
@@ -153,10 +188,13 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
-전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **7155 passed / 12 skipped / 0 failed** (GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P).
+전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **8240 passed / 13 skipped / 0 failed** (GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P).
 
 ## ⚠️ 정직함과 한계
 
+- **ModelDownshift는 전환 시점 훅이 아니라 다음 pre-request 검사에서 실행됩니다.** 모델 override(context window 포함)는 턴 경계에서 반영되고, 이어지는 T1/T2가 더 작은 윈도우를 보고 필요하면 압축합니다.
+- **Microcompact가 LLM 요약을 앞지를 수 있습니다.** 오래된 도구 결과 정리만으로 이력이 보존 예산 아래로 내려가면 compact 경로가 건너뛰어지고 memory-review nudge도 실행되지 않습니다(메시지가 버려지지 않았기 때문).
+- **`compact_now`는 도구이며 클라이언트 명령이 아닙니다.** 사용자가 요청할 때 모델이 호출하며, 입력창에 `/compact` 명령은 없습니다.
 - **꼬리 보존은 예산 기반이며 메시지 개수가 아닙니다.** 보존 예산은 `PRESERVE_RATIO` × 윈도우를 [2 000, 15 000]으로 클램프하고 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. 생성자는 `keep` 인자를 받지 않습니다.
 - **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).

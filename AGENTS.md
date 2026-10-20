@@ -559,6 +559,46 @@ reconnects, then applies frames; there is no polling interval. The code
 embedder publishes the same event with `kind: "code_embedder"` and keeps its own
 `/code-embedder/*` snapshot pair.
 
+## Compression Thresholds, Microcompact & Output Caps (ZCode/PI parity)
+
+- **Per-model output caps** — `MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN`
+  live in `.models` beside the context-window keys. Empty means "do not send a
+  field" (provider default); a set value must be >= 8192 (8K) and is refused at
+  boot, at `built_agent()`/spawn validation, at model build and at the
+  `/models-config` save (M9). `models/LLMs/provider_max_output.py` maps the
+  provider to the kwarg `init_chat_model`'s class accepts — `max_tokens` for
+  OpenAI-compatible providers, Azure and Anthropic; `max_output_tokens` for
+  Google Generative AI / Vertex; an unknown gateway gets no field (M4). When
+  thinking is enabled the budget headroom is based on the configured cap, not
+  the legacy `MAIN_LLM_OUTPUT_MAX_TOKEN`.
+- **Output reserve** — `CompressionMixin._effective_context_window()` =
+  `ctx - min(max_output, ctx)`; `_calculate_preserve_budget`, `OverflowMixin._usable_budget`
+  and `_preemptive_check` use it. Unset keeps reserve 0 and the legacy formulas
+  byte-identical (M3).
+- **Microcompact** — `agent/middlewares/summarization/microcompact.py` runs at
+  the end of `_run_non_llm_strategies`: on a 60-minute idle (process-local
+  completion clock) or at `min(auto_threshold * 0.9, auto_threshold - 2000)` it
+  replaces OLD tool results with `[Old tool result content cleared]` (newest 5
+  kept, media/already-cleared skipped, min 256-token savings). No LLM call.
+- **User-requested compaction** — the `compact_now` main tool (memory catalogue
+  group) queues `StateKey.SUMMARIZATION_COMPACT_REQUESTED`; the next model
+  call's T2 dispatch runs one compaction with trigger `USER`, bypasses the
+  anti-thrash gate and records a `{trigger: user_requested, phase: standalone_turn}`
+  trajectory event.
+- **ModelDownshift** — a session model profile may carry an optional
+  `context_window` (decimal string; client descriptor + backend sanitizer).
+  `_session_context_window(session_id)` feeds it into the preserve/overflow
+  budgets, so a switch to a smaller window compacts at the next pre-request
+  check and the compact event carries `reason=model_downshift`. An absent field
+  keeps the env window. It is a threshold effect, not a switch-time hook.
+- **Compact phase/reason** — `phase.py` derives `CompactPhase` (standalone_turn /
+  pre_request / post_response / reactive / mid_turn) and `CompactReason`
+  (context_limit / provider_overflow / user_requested / model_downshift) from the
+  existing trigger string; every compact path emits one trajectory event with
+  `phase`, `reason`, the unchanged `trigger`, `messages_before`, `messages_after`
+  and `route`. T1/T2/T3/user compactions share `_finish_compact`; T4/T5 record
+  from `_finish_forced_recovery`.
+
 ## Tool Parallel Safety (`agent/safe_tool_node.py`)
 
 LangGraph's ToolNode gathers **every** tool call in one model batch. Sherry

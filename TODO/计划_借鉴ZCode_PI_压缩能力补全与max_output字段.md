@@ -1,7 +1,10 @@
 # 计划：借鉴 ZCode 压缩能力补全 + 借鉴 PI per-provider max_output 字段
 
 - 建档日期：2026-10-19
-- 状态：**计划（未开工）**
+- 状态：**已落地（2026-10-20）**
+  - §2 per-provider max_output（MAIN/AUX；空=不传，配置 >= 8192，boot/build/save 三处校验）、§3 output reserve（未配置时保持旧公式）、§4 microcompact、§5 compact_now（工具 + T2 用户请求分发，trigger=USER）。
+  - §6 ModelDownshift：session model profile 新增可选 `context_window`（client descriptor + backend sanitizer）；压缩中间件按 session 窗口计算阈值，切到更小窗口后下一次 pre-request 自动压缩，trajectory `reason=model_downshift`。
+  - M8：`CompactPhase`/`CompactReason` 已由 `计划_响应式压缩对齐ZCode_ReactivePhase.md` §2 落地，compact 事件统一带 `phase`/`reason`/`trigger`。
 - **文档范围**：两个主题，五个任务，依赖关系明确：
   - **任务一（§2）**：借鉴 PI agent 加 per-provider `max_output_tokens` 字段（**基础设施，最先做**）
   - **任务二（§3）**：借鉴 ZCode 改进压缩阈值公式（用 §2 的 max_output 算 output reserve，对齐 ZCode `effective context window = ctx - outputReserve`）

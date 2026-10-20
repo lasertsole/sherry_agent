@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`, `agent/middlewares/summarization/microcompact.py`, `agent/tools/compact_now.py`, `models/LLMs/provider_max_output.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -13,6 +13,7 @@
   - [🧭 生命周期：五个触发点（T1–T5）](triggers/README.zh.md#-生命周期五个触发点t1t5)
   - [🚦 四路溢出路由决策](triggers/README.zh.md#-四路溢出路由决策)
 - [Token 估算（无分词器）](#-token-估算无分词器)
+- [输出上限、Microcompact 与用户主动压缩](#-输出上限microcompact-与用户主动压缩)
 - [压缩内部机制](internals/README.zh.md)
   - [✂️ 截断轨道：预算截断与 TTL 模块](internals/README.zh.md#-截断轨道预算截断与-ttl-模块)
   - [🔁 压缩轨道：`_apply_compression` 内部](internals/README.zh.md#-压缩轨道_apply_compression-内部)
@@ -74,6 +75,26 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 
 `pub/func/message/estimate_msg_tokens.py` 现为同一组 helper 的向后兼容 re-export。它快、跨运行稳定（相同输入 → 相同数字 → 测试可复现），并且有意做成保守近似。触发/预算路径上的任何环节都不依赖模型分词器。
 
+## 🧢 输出上限、Microcompact 与用户主动压缩
+
+### 每 provider 输出上限
+`MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN`（`.models`）把单次请求的输出上限与上下文窗口分开。留空 = 不传字段（provider 默认值）；配置值必须 >= 8192（8K），并在 boot、`built_agent()`、子代理 spawn、模型构建与 `PUT /models-config` 保存时校验。`models/LLMs/provider_max_output.py` 把 provider 映射到 `init_chat_model` 接受的字段：OpenAI 兼容 / Azure / Anthropic 用 `max_tokens`；OpenAI o 系/gpt-5 用 `max_completion_tokens`；Google/Vertex 与 Responses 家族用 `max_output_tokens`。未知 gateway 不传字段。thinking 预算基数在配置后使用该上限。
+
+### 有效上下文窗口
+`_effective_context_window()` = `ctx - min(max_output, ctx)`。保留预算（`_calculate_preserve_budget`）与 overflow 预算（`_usable_budget`）都使用它，因此显式 output 上限不会被过度占用。未配置时 reserve 为 `0`，旧公式逐字节不变。
+
+### Microcompact
+`microcompact.py` 在 `_run_non_llm_strategies` 末尾运行。触发：空闲 60 分钟（进程内完成时钟）或 token >= `min(auto_threshold * 0.9, auto_threshold - 2000)`。它把旧的 compactable 工具结果替换为 `[Old tool result content cleared]`，保留最近 5 条消息，跳过媒体/已清理结果，节省不足 256 token 则放弃本次。无 LLM 调用，并保留 `ToolMessage` 配对字段。
+
+### 用户主动压缩
+主代理工具 `compact_now` 写入 `SUMMARIZATION_COMPACT_REQUESTED`；下一次模型调用的 T2 分发以 trigger `USER` 执行一次压缩，绕过 anti-thrash，并记录 `{trigger: user_requested, phase: standalone_turn}`。它是工具（用户要求时由模型调用），不是客户端 `/compact` 命令。
+
+### ModelDownshift
+session 模型 profile 可以声明 `context_window`（客户端 descriptor 中的十进制字符串，由后端 sanitizer 校验）。`_session_context_window(session_id)` 把该窗口用于保留预算与 overflow 预算，因此切到更小模型后会在下一次 pre-request 检查时压缩；compact 事件标记 `reason=model_downshift`。未声明时保持 env 窗口。
+
+### Phase 与 reason 可观测性
+每条 compact 路径都会发出一条 trajectory `compact` 事件，携带 `phase`（`standalone_turn` / `pre_request` / `post_response` / `reactive` / `mid_turn`）、`reason`（`context_limit` / `provider_overflow` / `user_requested` / `model_downshift`）与保持不变的 `trigger`（`T1`–`T5` / `USER`），外加 `messages_before`、`messages_after` 与 `route`。T1/T2/T3/用户主动压缩共用 `_finish_compact`；T4/T5 forced-recovery 由 `_finish_forced_recovery` 记录，标签从真实 trigger 推导，不会漂移。
+
 ## ⚙️ 配置参考
 
 所有阈值集中在 `config/features/agent_side/summarization.py`（SUMMARIZATION TypedDict）。标 ◆ 的常量被存活代码路径消费；标 ○ 的常量虽有定义或导入、但**没有**被任何存活路径消费（见"诚实与局限"）。
@@ -111,6 +132,13 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | `INEFFECTIVE_THRESHOLD` ◆ | `2` | 控制器：连续无效 → 跳过 LLM |
 | `MIN_EFFECTIVENESS_PCT` ◆ | `0.05` | 控制器：token 缩减有效性 |
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | 豁免于一切收缩策略 |
+| `MICROCOMPACT_ENABLED` ◆ | `True` | microcompact 总开关 |
+| `MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS` ◆ | `5` | 最近 N 条消息永不压缩 |
+| `MICROCOMPACT_IDLE_THRESHOLD_MINUTES` ◆ | `60` | 空闲触发阈值 |
+| `MICROCOMPACT_MIN_TOKEN_SAVINGS` ◆ | `256` | 低于此节省量则放弃本次 |
+| `MICROCOMPACT_THRESHOLD_RATIO` ◆ | `0.9` | 相对 auto threshold 的 token 压力带 |
+| `MICROCOMPACT_BUFFER_TOKENS` ◆ | `2_000` | 压力带预留的余量 |
+| `MICROCOMPACT_COMPACTABLE_TOOLS` ◆ | 9 个工具名 | 只有这些结果会被压缩 |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | 最后一回合压缩闸门 |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO 段落上限 |
 | `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | 文档数组上限（计划注意事项 / 驱逐指针） |
@@ -131,7 +159,14 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` 各档位、候选规则、稳定路由字符串 |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 原地截断、配对不变量、非空占位符、注册表上限、预算截断 |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 状态码、文本提示、7 种溢出模式、cause 链深度、只读保证 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 状态码、文本提示、7 个 substring + 25 个 provider 溢出模式、NON_OVERFLOW 排除、Cerebras 无 body、cause 链深度、只读保证 |
+| `tests/models/test_provider_max_output.py` | 15 | provider 字段映射、Responses 下限、8K 业务下限、未知 gateway 跳过 |
+| `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | 有效窗口、保留/可用预算、压力带、reserve 截断 |
+| `tests/agent/middlewares/test_microcompact.py` | 7 | token/空闲触发、保留最近、媒体/已清理跳过、最小节省、总开关 |
+| `tests/agent/tools/test_compact_now.py` | 4 | 排队标志、无会话拒绝、T2 USER 分发 |
+| `tests/agent/middlewares/test_phase.py` | 9 | T1-T5/USER 推导正确的 phase+reason；未知 trigger 回落 |
+| `tests/agent/middlewares/test_trajectory_phase.py` | 6 | `_finish_compact`（T1/T2/T3/USER）与 `_finish_forced_recovery`（T4/T5）事件保留旧字段并追加 phase/reason |
+| `tests/agent/middlewares/test_model_downshift.py` | 4 | session `context_window` 驱动预算；compact 事件 reason=model_downshift；无 override 保持 context_limit |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 可找回切片：原路径 + 1-based 续读 offset 通知、不跳行、页码绝对定位、通用标记逐字节一致、受保护 / 未超预算 / 回退路径 |
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
@@ -153,10 +188,13 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
-全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**7155 passed / 12 skipped / 0 failed**（GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P）。
+全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**8240 passed / 13 skipped / 0 failed**（GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P）。
 
 ## ⚠️ 诚实与局限
 
+- **ModelDownshift 在下一次 pre-request 检查时执行，而不是切换时的 hook。** 模型 override（含其 context window）在 turn 边界生效；随后的 T1/T2 看到更小窗口并在需要时压缩。
+- **Microcompact 可能抢先于 LLM 摘要。** 当仅清理旧工具结果就把历史降到保留预算以下时，compact 路径会被跳过；此时不会触发 memory-review nudge（没有消息被丢弃）。
+- **`compact_now` 是工具，不是客户端命令。** 用户要求时由模型调用；输入框没有 `/compact` 命令。
 - **尾部保留由预算决定，不是消息条数。** 保留预算为 `PRESERVE_RATIO` × 窗口、夹在 [2 000, 15 000]，再加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距；构造函数不接受 `keep` 参数。
 - **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。

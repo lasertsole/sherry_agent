@@ -4,7 +4,7 @@
 
 > エージェントが長い会話をモデルのコンテキストウィンドウの中に収め続ける仕組み: 5つのトリガーポイントがライフサイクル全体（ターン開始前、すべてのモデル呼び出し前、すべてのモデル応答後、プロバイダのオーバーフローエラー時）を監視し、純粋関数型の4ルートルーターが最も安価な修復手段を選び（まず大きいツール結果と過大なツール呼び出し引数を切り詰め、強制されたときだけ AI 圧縮）、アンチスラッシングガードが圧縮の暴走を構造的に防ぎます。
 
-一次情報: `agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
+一次情報: `agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`, `agent/middlewares/summarization/microcompact.py`, `agent/tools/compact_now.py`, `models/LLMs/provider_max_output.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -13,6 +13,7 @@
   - [🧭 ライフサイクル：5つのトリガーポイント（T1–T5）](triggers/README.ja.md#-ライフサイクル5つのトリガーポイントt1t5)
   - [🚦 4ルート・オーバーフロー判定](triggers/README.ja.md#-4ルートオーバーフロー判定)
 - [トークン推定（トークナイザなし）](#-トークン推定トークナイザなし)
+- [出力上限、Microcompact、ユーザー主導の圧縮](#-出力上限microcompactユーザー主導の圧縮)
 - [圧縮の内部](internals/README.ja.md)
   - [✂️ 切り詰めトラック：予算切り詰めとTTLモジュール](internals/README.ja.md#-切り詰めトラック予算切り詰めとttlモジュール)
   - [🔁 圧縮トラック：`_apply_compression` の内部](internals/README.ja.md#-圧縮トラック_apply_compression-の内部)
@@ -74,6 +75,26 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 
 `pub/func/message/estimate_msg_tokens.py` は同じヘルパー群の後方互換 re-export になりました。速く、実行間で安定し（同じ入力 → 同じ数値 → 再現可能なテスト）、意図的に保守的な近似です。トリガー/予算経路のどの部分もモデルのトークナイザに依存しません。
 
+## 🧢 出力上限、Microcompact、ユーザー主導の圧縮
+
+### provider ごとの出力上限
+`MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN`（`.models`）は、リクエストごとの出力上限をコンテキストウィンドウから分離します。空 = フィールドを送らない（provider の既定値）。設定値は 8192（8K）以上が必要で、boot、`built_agent()`、サブエージェント spawn、モデル構築、`PUT /models-config` 保存時に検証されます。`models/LLMs/provider_max_output.py` が provider を `init_chat_model` の受け付けるキーワードへ変換します：OpenAI 互換 / Azure / Anthropic は `max_tokens`、OpenAI o 系/gpt-5 は `max_completion_tokens`、Google/Vertex と Responses 系は `max_output_tokens`。未知の gateway にはフィールドを送りません。thinking の予算基数は設定時この上限を使います。
+
+### 有効コンテキストウィンドウ
+`_effective_context_window()` = `ctx - min(max_output, ctx)`。保持予算（`_calculate_preserve_budget`）と overflow 予算（`_usable_budget`）がこれを使うため、明示した出力上限を超えて予約しません。未設定なら reserve は `0` で、旧式はバイト単位で不変です。
+
+### Microcompact
+`microcompact.py` は `_run_non_llm_strategies` の末尾で実行されます。トリガー：60 分のアイドル（プロセス内の完了時計）または token >= `min(auto_threshold * 0.9, auto_threshold - 2000)`。古い compactable なツール結果を `[Old tool result content cleared]` に置き換え、直近 5 メッセージを残し、メディア/既にクリア済みの結果を除外し、節約が 256 token 未満ならその回を破棄します。LLM 呼び出しはなく、`ToolMessage` のペアリング項目は保持します。
+
+### ユーザー主導の圧縮
+メインツール `compact_now` が `SUMMARIZATION_COMPACT_REQUESTED` を書き込みます。次のモデル呼び出しの T2 ディスパッチが trigger `USER` で 1 回圧縮し、anti-thrash を迂回して `{trigger: user_requested, phase: standalone_turn}` を記録します。ツールであり（ユーザーの要求時にモデルが呼ぶ）、クライアントの `/compact` コマンドではありません。
+
+### ModelDownshift
+session のモデル profile は `context_window`（クライアント descriptor の十进制文字列、バックエンド sanitizer が検証）を宣言できます。`_session_context_window(session_id)` がそのウィンドウを保持予算と overflow 予算に使い、小さいモデルへ切り替えると次の pre-request チェックで圧縮します。compact イベントは `reason=model_downshift` を持ちます。未宣言なら env ウィンドウのままです。
+
+### Phase と reason の観測性
+すべての compact 経路は trajectory `compact` イベントを 1 つ発行し、`phase`（`standalone_turn` / `pre_request` / `post_response` / `reactive` / `mid_turn`）、`reason`（`context_limit` / `provider_overflow` / `user_requested` / `model_downshift`）、不変の `trigger`（`T1`–`T5` / `USER`）、`messages_before`、`messages_after`、`route` を持ちます。T1/T2/T3/ユーザー要求は `_finish_compact` を共有し、T4/T5 forced-recovery は `_finish_forced_recovery` から記録するため、ラベルは実トリガーから導出されドリフトしません。
+
 ## ⚙️ 設定リファレンス
 
 すべての閾値は `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict) にあります。◆ 印の定数は生きているコード経路が消費します; ○ 印の定数は定義またはインポートはされているものの、生きている経路では**消費されません**（「正直な限界」参照）。
@@ -111,6 +132,13 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | `INEFFECTIVE_THRESHOLD` ◆ | `2` | ガバナ: 連続無効 → LLM スキップ |
 | `MIN_EFFECTIVENESS_PCT` ◆ | `0.05` | ガバナ: トークン削減の有効性 |
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | すべての縮小戦略から免除 |
+| `MICROCOMPACT_ENABLED` ◆ | `True` | microcompact のマスタースイッチ |
+| `MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS` ◆ | `5` | 直近 N メッセージは圧縮しない |
+| `MICROCOMPACT_IDLE_THRESHOLD_MINUTES` ◆ | `60` | アイドル時間トリガー |
+| `MICROCOMPACT_MIN_TOKEN_SAVINGS` ◆ | `256` | この節約量未満なら回を破棄 |
+| `MICROCOMPACT_THRESHOLD_RATIO` ◆ | `0.9` | auto threshold に対するトークン圧力帯 |
+| `MICROCOMPACT_BUFFER_TOKENS` ◆ | `2_000` | 圧力帯が残す余裕 |
+| `MICROCOMPACT_COMPACTABLE_TOOLS` ◆ | 9 個のツール名 | これらの結果だけを圧縮 |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | 最終ターン圧縮ゲート |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO セクション上限 |
 | `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | ドキュメント配列上限（計画ノート / 退避ポインタ） |
@@ -131,7 +159,14 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | :---- | :---- | :----- |
 | `tests/pub/func/message/test_overflow_router.py` | 29 | `compute_pressure` / `find_truncatable_tool_results` / `decide_route` の各バンド、候補規則、安定したルート文字列 |
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | その場での切り詰め、ペアリング不変量、空でないプレースホルダ、レジストリ上限、予算切り詰め |
-| `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 ステータス、テキストヒント、7 つのオーバーフローパターン、cause チェーン深さ、読み取り専用保証 |
+| `tests/pub/func/message/test_llm_error_classifier.py` | 74 | 413 ステータス、テキストヒント、7 つの substring + 25 の provider オーバーフローパターン、NON_OVERFLOW 除外、Cerebras bodyless、cause チェーン深さ、読み取り専用保証 |
+| `tests/models/test_provider_max_output.py` | 15 | provider フィールド対応、Responses 下限、8K 業務下限、未知 gateway のスキップ |
+| `tests/agent/middlewares/test_preserve_budget_with_output_reserve.py` | 5 | 有効ウィンドウ、保持/可用予算、圧力帯、reserve クランプ |
+| `tests/agent/middlewares/test_microcompact.py` | 7 | token/アイドルトリガー、直近保持、メディア/クリア済みスキップ、最小節約、キルスイッチ |
+| `tests/agent/tools/test_compact_now.py` | 4 | キュー用フラグ、セッションなし拒否、T2 USER ディスパッチ |
+| `tests/agent/middlewares/test_phase.py` | 9 | T1-T5/USER が期待する phase+reason を導出；未知トリガーはフォールバック |
+| `tests/agent/middlewares/test_trajectory_phase.py` | 6 | `_finish_compact`（T1/T2/T3/USER）と `_finish_forced_recovery`（T4/T5）が旧フィールドを保ち phase/reason を追加 |
+| `tests/agent/middlewares/test_model_downshift.py` | 4 | session `context_window` が予算を駆動；compact イベント reason=model_downshift；override 無しは context_limit |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 重複排除 / プルーン / ターゲット切り詰め / ターンユーティリティ、さらにツール引数切り詰め: 先頭+末尾形式、小さい引数のスキップ、解放量のクランプ、保護対象ツール、直近スキップ、ペアリングと無ミューテーション |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file の復元可能スライス: 元パス + 1-based 継続 offset 通知、行スキップなし、ページ番号の絶対性、汎用マーカーのバイト一致、保護 / 予算内 / フォールバック経路 |
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
@@ -153,10 +188,13 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
-プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **7155 passed / 12 skipped / 0 failed** で合格（GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P）。
+プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **8240 passed / 13 skipped / 0 failed** で合格（GROUP A 6767P/1S + GROUP B 1385P/12S + GROUP C 88P）。
 
 ## ⚠️ 正直な限界
 
+- **ModelDownshift は切替時フックではなく、次の pre-request チェックで実行されます。** モデル override（context window 込み）はターン境界で反映され、続く T1/T2 が小さいウィンドウを見て必要なら圧縮します。
+- **Microcompact が LLM 要約を先取りすることがあります。** 古いツール結果の削除だけで履歴が保持予算以下になると、compact 経路はスキップされ、memory-review nudge も発火しません（メッセージは破棄されていないため）。
+- **`compact_now` はツールであり、クライアントコマンドではありません。** ユーザーの要求時にモデルが呼びます。入力欄に `/compact` コマンドはありません。
 - **末尾保持は予算ベースであり、メッセージ件数ではありません。** 保持予算は `PRESERVE_RATIO` × ウィンドウを [2 000, 15 000] にクランプし、ルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。コンストラクタは `keep` 引数を受け取りません。
 - **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
