@@ -460,7 +460,11 @@
       "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
       "testOk": "连通正常（{ms} ms）",
       "testFailed": "连通失败（{ms} ms）",
-      "testRequestFailed": "请求失败：后端未响应"
+      "testRequestFailed": "请求失败：后端未响应",
+      "groupTaskflow": "TaskFlow 决策模型",
+      "groupCompression": "压缩模型",
+      "followsAuxiliary": "Provider 与 API Base 均为空 —— 该组跟随辅助模型（AUXILIARY_LLM_*）。",
+      "compressionScope": "用于 LLM 摘要与 memory_flush；记忆回顾走主模型，计划提炼走辅助模型。"
     },
     "memory": {
       "addEntry": "添加条目",

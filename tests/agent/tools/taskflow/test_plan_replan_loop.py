@@ -39,7 +39,7 @@ class _FakeLLM:
 def planner(monkeypatch):
     def _install(answer) -> _FakeLLM:
         llm = _FakeLLM(answer if isinstance(answer, str) else json.dumps(answer))
-        monkeypatch.setattr("models.build_auxiliary_llm", lambda **_kw: llm)
+        monkeypatch.setattr("models.build_taskflow_llm", lambda **_kw: llm)
         return llm
 
     return _install

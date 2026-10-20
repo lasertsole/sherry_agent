@@ -111,13 +111,25 @@ def main() -> None:
     _desktop = os.getenv("SHERRY_DESKTOP", "").strip().lower() in {"1", "true", "yes", "on"}
     _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
     _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    # Optional independent families: only a SET value is validated — an unset
+    # family follows AUXILIARY_LLM (whose own gates run above).
+    _optional_token_keys = ("TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN")
+    _optional_output_keys = (
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+    )
     try:
         _main_out = int(_main_out_raw) if _main_out_raw else None
         _aux_out = int(_aux_out_raw) if _aux_out_raw else None
+        _optional_tokens = {
+            key: int(raw) for key in _optional_token_keys if (raw := os.getenv(key, "").strip())
+        }
+        _optional_outputs = {
+            key: int(raw) for key in _optional_output_keys if (raw := os.getenv(key, "").strip())
+        }
     except ValueError as exc:
         logger.critical(
-            "STARTUP ABORTED: MAIN_LLM_MAX_OUTPUT_TOKEN / AUXILIARY_LLM_MAX_OUTPUT_TOKEN "
-            "must be integers or empty ({})",
+            "STARTUP ABORTED: MAX_TOKEN / MAX_OUTPUT_TOKEN values must be integers or empty ({})",
             exc,
         )
         raise SystemExit(1) from exc
@@ -126,6 +138,10 @@ def main() -> None:
         assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
         assert_max_output_valid("MAIN_LLM_MAX_OUTPUT_TOKEN", _main_out)
         assert_max_output_valid("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", _aux_out)
+        for _key, _value in _optional_tokens.items():
+            assert_max_token_valid(_key, _value)
+        for _key, _value in _optional_outputs.items():
+            assert_max_output_valid(_key, _value)
     except Exception as e:
         if _desktop and _unconfigured:
             logger.warning(

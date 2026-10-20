@@ -460,7 +460,11 @@
       "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
       "testOk": "接続 OK（{ms} ms）",
       "testFailed": "接続失敗（{ms} ms）",
-      "testRequestFailed": "リクエスト失敗: バックエンドが応答しません"
+      "testRequestFailed": "リクエスト失敗: バックエンドが応答しません",
+      "groupTaskflow": "TaskFlow 決定モデル",
+      "groupCompression": "圧縮モデル",
+      "followsAuxiliary": "Provider と API Base が空のため、このグループは補助モデル（AUXILIARY_LLM_*）に従います。",
+      "compressionScope": "LLM 要約と memory_flush に使用します。メモリレビューはメインモデル、計画抽出は補助モデルを使用します。"
     },
     "memory": {
       "addEntry": "項目を追加",

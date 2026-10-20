@@ -163,10 +163,15 @@ When the config is valid, or when the fetch fails, the toast stays silent. The s
 `client/app/pages/home/components/ConfigPanel.vue`:
 
 - When the env tab exposes any `*_MAX_TOKEN` key (`hasMaxTokenKeys`, line 344), an amber banner renders `config.env.maxTokenHint` (line 211).
-- On save, `persistEnvChanges()` pre-validates both token keys (lines 379 to 389). A non-integer or sub-`131072` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
+- On save, `persistEnvChanges()` pre-validates the guarded token keys (lines 379 to 389). A non-integer or sub-`131072` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
 
 ```ts
-const TOKEN_KEYS = ['MAIN_LLM_MAX_TOKEN', 'AUXILIARY_LLM_MAX_TOKEN'];
+const TOKEN_KEYS = [
+  'MAIN_LLM_MAX_TOKEN',
+  'AUXILIARY_LLM_MAX_TOKEN',
+  'TASKFLOW_LLM_MAX_TOKEN',
+  'COMPRESSION_LLM_MAX_TOKEN'
+];
 const MIN_TOKEN = 131072;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {

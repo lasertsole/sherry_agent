@@ -163,10 +163,15 @@ if (!cfg.valid) {
 `client/app/pages/home/components/ConfigPanel.vue`:
 
 - 環境タブが `*_MAX_TOKEN` キーを一つでも公開すると（`hasMaxTokenKeys`、344 行目）、琥珀色のバナーが `config.env.maxTokenHint`（211 行目）を描画します。
-- 保存時に `persistEnvChanges()` が両方のトークンキーを事前検証します（379 行目から 389 行目）。非整数または `131072` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
+- 保存時に `persistEnvChanges()` が保護されたトークンキーを事前検証します（379 行目から 389 行目）。非整数または `131072` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
 
 ```ts
-const TOKEN_KEYS = ['MAIN_LLM_MAX_TOKEN', 'AUXILIARY_LLM_MAX_TOKEN'];
+const TOKEN_KEYS = [
+  'MAIN_LLM_MAX_TOKEN',
+  'AUXILIARY_LLM_MAX_TOKEN',
+  'TASKFLOW_LLM_MAX_TOKEN',
+  'COMPRESSION_LLM_MAX_TOKEN'
+];
 const MIN_TOKEN = 131072;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {

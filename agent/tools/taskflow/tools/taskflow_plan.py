@@ -141,10 +141,10 @@ async def taskflow_plan(
             "flows before planning a new one."
         )
 
-    from models import build_auxiliary_llm
+    from models import build_taskflow_llm
 
     try:
-        llm = build_auxiliary_llm(temperature=0)
+        llm = build_taskflow_llm(temperature=0)
         response = await llm.ainvoke(
             [
                 {"role": "system", "content": _SYSTEM_PROMPT},

@@ -22,7 +22,7 @@ import json_repair
 from loguru import logger
 
 from config.features import STEP_JUDGE
-from models import build_auxiliary_llm
+from models import build_taskflow_llm
 
 
 class StepVerdict(StrEnum):
@@ -167,7 +167,7 @@ async def judge_step_result(
         evidence_summary if STEP_JUDGE["evidence_aware"] else None,
     )
     try:
-        llm = build_auxiliary_llm(temperature=0)
+        llm = build_taskflow_llm(temperature=0)
         response = await llm.ainvoke(
             [
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT},

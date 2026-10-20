@@ -188,7 +188,7 @@ sherry_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # Opt-in login protection (account + session)
 │
-├── evals/                  # Evaluation framework (dispatcher + 9 suites)
+├── evals/                  # Evaluation framework (dispatcher + 11 suites)
 │   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # Sandbox that redirects repo writes during a run
 │   ├── graph_rag/          # RAGAS metrics for the graph-RAG pipeline
@@ -369,6 +369,8 @@ Fill in at least the main chat model in `.models` and, for web search, a Tavily 
 | `TAVILY_API_KEY` | ✅ for web search | Enables the web search tool |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | Self-hosted SearXNG as the (or an alternative) web-search backend; without `TAVILY_API_KEY` it is the only one. Configure it in the 模型联网 panel; Tavily failures fall back to it automatically |
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 131072 (128K) |
+| `TASKFLOW_LLM_*` | — | TaskFlow decision model (plan / replan / step judge / goal gate). An empty provider + API base follows `AUXILIARY_LLM_*`; local mode reuses the auxiliary GGUF. `TASKFLOW_LLM_MAX_TOKEN` must be >= 131072 (128K) |
+| `COMPRESSION_LLM_*` | — | Compression model (LLM summary + memory flush). Memory review uses `MAIN_LLM` and plan extraction uses `AUXILIARY_LLM_*`; an empty provider + API base follows `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
@@ -485,12 +487,14 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 | `swebench` | External SWE-bench_Lite instances through the same harness (pinned base commit + per-instance venv + the instance's own FAIL_TO_PASS / PASS_TO_PASS verdict; the agent sees the problem statement only) |
 | `deepswe` | External DeepSWE tasks in the benchmark's own Docker image: the agent edits a bind-mounted checkout, `terminal` runs in the container, and the task's separate verifier image grades the agent's diff (gold patch checked first) |
 | `terminal_bench` | External Terminal-Bench tasks: the task image is built, the agent works inside it, and its own `run-tests.sh` pytest verdict judges the run (oracle checked first; multi-service tasks are reported unsupported) |
+| `agentbench` | External [AgentBench](https://github.com/THUDM/AgentBench) DBBench test set: official questions/tables from a pinned checkout, materialised in SQLite, graded by AgentBench's own comparison rules (INSERT/DELETE/UPDATE rows are reported unsupported; MySQL→SQLite dialect is documented) |
+| `toolbench` | External [ToolBench](https://github.com/OpenBMB/ToolBench) test instructions: official `test_query_ids`, tool calls through the official RapidAPI proxy, official answer format, and the official ToolEval evaluator imported from the pinned repository (data mirror: [Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)) |
 
 Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
 
-`deepswe` and `terminal_bench` are container-backed and need a working Docker daemon; without one they SKIP loudly and exit non-zero (a skipped suite is not a pass). Their task trees are cloned into `~/.cache/sherry_evals` (override with `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR`), never inside the repository; `--dry-run` validates a task selection without Docker.
+`deepswe` and `terminal_bench` are container-backed and need a working Docker daemon; `toolbench` needs `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY` and an OpenAI-compatible ToolEval judge key; `agentbench` needs `MAIN_LLM_API_KEY`. Without their prerequisites all four SKIP loudly and exit non-zero (a skipped suite is not a pass). Task trees and benchmark data are cloned/downloaded into `~/.cache/sherry_evals` (override with `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`), never inside the repository; `--dry-run` validates a task selection without Docker, a model or the large ToolBench download.
 
-`coding_capability`, `swebench`, `deepswe` and `terminal_bench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
+`coding_capability`, `swebench`, `deepswe`, `terminal_bench`, `agentbench` and `toolbench` additionally keep a version-controlled baseline (in their suite directories), point the workspace at a throwaway directory (`SHERRY_WORKSPACE_DIR`) so a run never touches the live persona, and exit non-zero when they drop below the baseline threshold or a task errors; provider-side failures are reported as invalid runs and excluded from the rate.
 
 ---
 

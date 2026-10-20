@@ -122,7 +122,7 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
             '{"verdict": "pass", "reason": "criteria met"}',
         ]
     )
-    monkeypatch.setattr(step_judge, "build_auxiliary_llm", judge_llm)
+    monkeypatch.setattr(step_judge, "build_taskflow_llm", judge_llm)
 
     criteria = "output must contain PASS"
     tools = _tools()

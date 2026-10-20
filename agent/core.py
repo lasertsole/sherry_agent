@@ -9,7 +9,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
-from models import build_main_llm, build_auxiliary_llm
+from models import build_main_llm, build_auxiliary_llm, build_compression_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
@@ -242,10 +242,10 @@ def _agent_holder_count(graph: Any) -> int:
 def _assert_max_token() -> None:
     """MAX_TOKEN guard, runtime second line of defense.
 
-    Even if the server booted with a valid .env, a mid-run edit that drops
-    either value below 128K still refuses to build the graph. TokenGuardError
-    propagates to the caller (server/service/messages.py surfaces it as a WS
-    error chunk).
+    Even if the server booted with a valid .env, a mid-run edit that drops a
+    configured value below its floor still refuses to build the graph.
+    TokenGuardError propagates to the caller (server/service/messages.py
+    surfaces it as a WS error chunk).
     """
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
@@ -261,12 +261,23 @@ def _assert_max_token() -> None:
     assert_max_output_valid(
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN", int(_aux_out_raw) if _aux_out_raw else None
     )
+    # The two optional families are validated only when set: an unset family
+    # follows the auxiliary model, whose own check already ran above.
+    for _key in ("TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"):
+        _raw = os.getenv(_key, "").strip()
+        if _raw:
+            assert_max_token_valid(_key, int(_raw))
+    for _key in ("TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"):
+        _raw = os.getenv(_key, "").strip()
+        if _raw:
+            assert_max_output_valid(_key, int(_raw))
 
 
 def _build_middlewares(
     *,
     fallback_chain: Any,
     auxiliary_llm: Any,
+    compression_llm: Any = None,
     main_llm_context_window: int,
     compression_trigger_ratio: float,
     temperature: float | None = None,
@@ -361,7 +372,10 @@ def _build_middlewares(
         LLMRetryMiddleware(fallback_chain=fallback_chain),
         Summarization(
             need_update_system_prompt=True,
-            model=auxiliary_llm,
+            # COMPRESSION_LLM_* when configured, else the auxiliary instance
+            # (the fallback lives in the factory; a bare `_build_middlewares`
+            # call in tests can still pass None and keep the old wiring).
+            model=compression_llm or auxiliary_llm,
             main_llm_context_window=main_llm_context_window,
             trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
         ),
@@ -394,6 +408,10 @@ async def _build_graph(
 
     main_llm = build_main_llm()
     auxiliary_llm = build_auxiliary_llm()
+    # COMPRESSION_LLM_* when configured, else an auxiliary instance (the
+    # factory's fallback) — the auxiliary build above stays for the other
+    # consumers, notably the summary's memory-review nudges.
+    compression_llm = build_compression_llm()
     fallback_chain = build_fallback_chain()
 
     # Assemble the pipeline, then fail fast BEFORE the expensive create_agent()
@@ -401,6 +419,7 @@ async def _build_graph(
     agent_middleware = _build_middlewares(
         fallback_chain=fallback_chain,
         auxiliary_llm=auxiliary_llm,
+        compression_llm=compression_llm,
         main_llm_context_window=main_llm_context_window,
         compression_trigger_ratio=compression_trigger_ratio,
         temperature=temperature,

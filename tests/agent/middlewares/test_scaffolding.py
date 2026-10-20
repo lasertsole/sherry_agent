@@ -155,6 +155,20 @@ class TestActualChainCompliance:
         validate_required_middleware(middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
         assert SUBAGENT_REQUIRED_CLASSES <= {type(mw) for mw in middleware}
 
+    def test_compression_llm_is_injected_into_summarization(self):
+        """The compression family feeds the summarizer's own model (C1)."""
+        compression = object()
+        middleware = _build_middlewares(
+            fallback_chain=None,
+            auxiliary_llm=object(),
+            compression_llm=compression,
+            main_llm_context_window=_CONTEXT_WINDOW,
+            compression_trigger_ratio=0.8,
+        )
+
+        summarization = next(mw for mw in middleware if isinstance(mw, Summarization))
+        assert summarization._model is compression
+
     @pytest.mark.asyncio
     async def test_build_graph_validates_before_create_agent(self, monkeypatch):
         """The main graph must fail the build, not call create_agent, when a
@@ -174,6 +188,7 @@ class TestActualChainCompliance:
         monkeypatch.setattr(agent_core, "build_async_sqlite_checkpointer", _checkpointer)
         monkeypatch.setattr(agent_core, "build_main_llm", lambda: object())
         monkeypatch.setattr(agent_core, "build_auxiliary_llm", lambda: object())
+        monkeypatch.setattr(agent_core, "build_compression_llm", lambda: object())
         monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
         monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
         monkeypatch.setattr(agent_core, "_build_middlewares", lambda **_: [])

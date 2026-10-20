@@ -282,7 +282,7 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths); at resume time a criteria-bearing step is judged by the auxiliary-LLM step judge (`agent/tools/taskflow/step_judge.py`, `pass` / `retry` / `block`, fail-open). The whole gate stack — the failure classifier, the Tier 1 schema gate, the judge's budget and evidence-aware prompt, `step_outcome` precedence, and what `done` really means — is documented in [Judgement Gates](../gates/README.md).
+`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths); at resume time a criteria-bearing step is judged by the TaskFlow decision LLM's step judge (`TASKFLOW_LLM_*`, auxiliary fallback unless configured; `agent/tools/taskflow/step_judge.py`, `pass` / `retry` / `block`, fail-open). The whole gate stack — the failure classifier, the Tier 1 schema gate, the judge's budget and evidence-aware prompt, `step_outcome` precedence, and what `done` really means — is documented in [Judgement Gates](../gates/README.md).
 
 
 ## 📊 Progress Report

@@ -201,7 +201,8 @@
                   :group="group.name"
                   :keys="group.entries.map(e => e.key)"
                   :values="groupValues[group.name] ?? {}"
-                  :group-title="group.name"
+                  :group-title="groupTitle(group.name)"
+                  :download-group="downloadGroupFor(group.name)"
                   @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
                   v-else
@@ -371,6 +372,24 @@ const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
 const setBackground = chatBackgroundStore.setBackground;
 
 const { t } = useI18n({ useScope: 'local' });
+
+/** Localized headings for the two optional internal model families. */
+const GROUP_TITLE_KEYS: Record<string, string> = {
+  TASKFLOW_LLM: 'config.llm.groupTaskflow',
+  COMPRESSION_LLM: 'config.llm.groupCompression'
+};
+const groupTitle = (name: string): string => (GROUP_TITLE_KEYS[name] ? t(GROUP_TITLE_KEYS[name]!) : name);
+
+/**
+ * Local-model prefetch family behind a group's built-in local entry. The two
+ * internal families reuse the auxiliary GGUF (no second download), so their
+ * download box reports / downloads the auxiliary family.
+ */
+const LOCAL_DOWNLOAD_GROUP: Record<string, string> = {
+  TASKFLOW_LLM: 'AUXILIARY_LLM',
+  COMPRESSION_LLM: 'AUXILIARY_LLM'
+};
+const downloadGroupFor = (name: string): string => LOCAL_DOWNLOAD_GROUP[name] ?? name;
 
 const emits = defineEmits<{ saved: [] }>();
 

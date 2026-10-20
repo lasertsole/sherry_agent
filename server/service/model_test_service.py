@@ -7,7 +7,8 @@ anything to ``.env``, so a profile can be verified BEFORE it is applied.
 
 What is tested per group:
 
-* chat groups (``MAIN_LLM`` / ``AUXILIARY_LLM`` / ``REASONER_LLM``) — one
+* chat groups (``MAIN_LLM`` / ``AUXILIARY_LLM`` / ``TASKFLOW_LLM`` /
+  ``COMPRESSION_LLM`` / ``REASONER_LLM``) — one
   minimal completion through the same builder the app uses
   (``build_main_llm_for_profile``), so the probe exercises the real client
   (provider quirks, normalizing wrapper, retries) rather than a bare HTTP call;
@@ -40,6 +41,8 @@ __all__ = ["SUPPORTED_GROUPS", "test_model_group"]
 SUPPORTED_GROUPS: tuple[str, ...] = (
     "MAIN_LLM",
     "AUXILIARY_LLM",
+    "TASKFLOW_LLM",
+    "COMPRESSION_LLM",
     "REASONER_LLM",
     "EMBEDDING",
     "RERANKER",
@@ -51,7 +54,13 @@ _PING_TIMEOUT_S = 20.0
 #: Longest error / reply text served back to the panel.
 _DETAIL_CHARS = 400
 
-_CHAT_GROUPS = ("MAIN_LLM", "AUXILIARY_LLM", "REASONER_LLM")
+_CHAT_GROUPS = (
+    "MAIN_LLM",
+    "AUXILIARY_LLM",
+    "TASKFLOW_LLM",
+    "COMPRESSION_LLM",
+    "REASONER_LLM",
+)
 
 
 def _param(params: dict[str, str], *suffixes: str) -> str:

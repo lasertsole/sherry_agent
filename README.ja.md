@@ -187,7 +187,7 @@ sherry_agent/
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
-├── evals/                  # 評価フレームワーク（dispatcher + 9 スイート）
+├── evals/                  # 評価フレームワーク（dispatcher + 11 スイート）
 │   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
 │   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
@@ -368,6 +368,8 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 | `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
 | `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `COMPRESSION_LLM_*` | — | 圧縮モデル（LLM 要約 + memory_flush）。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
 | `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
@@ -484,12 +486,14 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
 | `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |
 | `terminal_bench` | 外部 Terminal-Bench タスク：タスクイメージをビルドし、agent がコンテナ内で作業し、タスク自身の `run-tests.sh` の pytest 判定で評価（先に oracle を自己検査。マルチサービス構成のタスクは非対応と明示） |
+| `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench テストセット：固定 commit の公式問題とテーブルを SQLite に materialize し、AgentBench 自身の比較ルールで判定（INSERT/DELETE/UPDATE 行は非対応と明示。MySQL→SQLite の方言差は記録） |
+| `toolbench` | 外部 [ToolBench](https://github.com/OpenBMB/ToolBench) テスト命令：公式 `test_query_ids`、ツール呼び出しは公式 RapidAPI プロキシ経由、公式 answer 形式に変換し、固定 commit のリポジトリから読み込んだ公式 ToolEval で判定（データミラー：[Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)） |
 
-すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。
+各スイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスへリダイレクト）、レポートは `evals/results/<suite>/<run_id>/` に書き出されます。このディレクトリは **gitignore** 済みで、実行ごとのレポートはコミットしません。
 
-`deepswe` と `terminal_bench` はコンテナベースで、動作する Docker daemon が必要です。無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーは `~/.cache/sherry_evals` に clone し（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` で上書き可能）、リポジトリ内には置きません。Docker なしで選択を検証するには `--dry-run` を使います。
+`deepswe` と `terminal_bench` はコンテナベースで、動作する Docker daemon が必要です。`toolbench` は `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY`、OpenAI 互換の ToolEval judge key が必要です。`agentbench` は `MAIN_LLM_API_KEY` が必要です。前提条件が無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーとベンチマークデータは `~/.cache/sherry_evals` に clone / ダウンロードし（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` で上書き可能）、リポジトリ内には置きません。`--dry-run` は Docker・モデル・ToolBench の大容量ダウンロード無しで選択を検証できます。
 
-`coding_capability`、`swebench`、`deepswe`、`terminal_bench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
+`coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench`、`toolbench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
 
 ---
 

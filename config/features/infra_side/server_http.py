@@ -107,6 +107,8 @@ SERVER_HTTP: ServerHttpConfig = {
     "env_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
+        "TASKFLOW_LLM_",
+        "COMPRESSION_LLM_",
         "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
@@ -124,6 +126,8 @@ SERVER_HTTP: ServerHttpConfig = {
     "env_model_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
+        "TASKFLOW_LLM_",
+        "COMPRESSION_LLM_",
         "REASONER_LLM_",
         "ITTT_",
         "VTTT_",

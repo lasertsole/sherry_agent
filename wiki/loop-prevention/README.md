@@ -94,7 +94,7 @@ Context overflow is a loop of its own: the provider rejects an oversized request
 | Stage | Mechanism | LLM cost | When it runs |
 |---|---|---|---|
 | **1. Overflow tail clip (P1-2)** | `clip_overflow_tail` (`pub/func/message/overflow_clip.py`) stubs the trailing contiguous `ToolMessage` batch | none | before every non-`fits` route (T1/T2/T3) and before each T4/T5 recovery step |
-| **2. Existing route** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | auxiliary-LLM call on compact routes | only when the clip alone does not bring the estimate back under the line |
+| **2. Existing route** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | LLM call on compact routes (`COMPRESSION_LLM_*`, auxiliary fallback) | only when the clip alone does not bring the estimate back under the line |
 | **3. Forced recovery (T4/T5)** | clip first, then compact + budget truncation, retried up to `MAX_OVERFLOW_RETRIES` (3) | 1 call per compact step | after a provider payload-too-large / context-overflow error |
 
 The clip never removes, reorders, or injects a message: it replaces content through `ToolMessage.model_copy`, so `id` / `tool_call_id` / `name` / `additional_kwargs` survive and tool pairing plus the persistence watermark stay intact. An insufficient clip is discarded and the existing route runs on the exact original list.
@@ -200,7 +200,8 @@ unreadable probe never blocks progress.
 
 ### Step level: `StepJudge` + bounded retry
 
-`agent/tools/taskflow/step_judge.py` is an auxiliary-LLM discriminator at
+`agent/tools/taskflow/step_judge.py` is a TaskFlow-decision-LLM (`TASKFLOW_LLM_*`,
+auxiliary fallback unless configured) discriminator at
 temperature 0 that reviews a dispatched step's result against its
 `validation_criteria` and returns `pass` / `retry` / `block`. It engages only
 when the step carries criteria (set by `taskflow_run_task` or
@@ -250,7 +251,7 @@ the loop here is the gate that reads it:
 | **C — flow evidence** | the flow's evidence has no `FAIL` and no `[stale]` row | `failing verification evidence` / `stale evidence` |
 
 Every gate is fail-open: an unreadable ledger passes rather than blocking a
-finish. An opt-in fourth check, **Gate E**, asks an auxiliary model whether the
+finish. An opt-in fourth check, **Gate E**, asks the TaskFlow decision model (`TASKFLOW_LLM_*`, auxiliary fallback) whether the
 collected results satisfy the flow's `description` — it runs only for a flow of
 `GOAL_GATE["min_steps"]` (3) steps or more, because a smaller flow's work is
 already judged at the child level.

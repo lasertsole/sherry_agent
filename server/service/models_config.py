@@ -30,11 +30,25 @@ MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
 OTHER_GROUP = "other"
 
 # MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_TOKEN",
+        "AUXILIARY_LLM_MAX_TOKEN",
+        "TASKFLOW_LLM_MAX_TOKEN",
+        "COMPRESSION_LLM_MAX_TOKEN",
+    }
+)
 
 # MAX_OUTPUT keys: empty is valid (provider default), a set value must satisfy
 # the 8K business floor (M9) — otherwise the next boot would abort.
-MAX_OUTPUT_KEYS = frozenset({"MAIN_LLM_MAX_OUTPUT_TOKEN", "AUXILIARY_LLM_MAX_OUTPUT_TOKEN"})
+MAX_OUTPUT_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_OUTPUT_TOKEN",
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+    }
+)
 
 # ``"KEY": value,`` — the line shape of the template and of every write.
 _ASSIGN_RE = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(.+?)\s*,?\s*$')

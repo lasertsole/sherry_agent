@@ -106,9 +106,14 @@ const localState = (overrides: Record<string, unknown> = {}) => ({
   ...overrides
 });
 
-const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
+const mountPanel = (
+  group = 'MAIN_LLM',
+  keys: string[] = KEYS,
+  values: Record<string, string> = ENV_VALUES,
+  downloadGroup?: string
+) =>
   mount(LlmModelManager, {
-    props: { group, keys, values, groupTitle: group },
+    props: { group, keys, values, groupTitle: group, ...(downloadGroup ? { downloadGroup } : {}) },
     global: { stubs }
   });
 
@@ -697,6 +702,60 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     });
     await flushPromises();
     expect(card.text()).toContain('20%');
+    wrapper.unmount();
+  });
+
+  it('badges an unconfigured internal family as following the auxiliary model', async () => {
+    const keys = [
+      'TASKFLOW_LLM_MODEL_LOCAL',
+      'TASKFLOW_LLM_PROVIDER',
+      'TASKFLOW_LLM_API_NAME',
+      'TASKFLOW_LLM_API_BASE',
+      'TASKFLOW_LLM_API_KEY',
+      'TASKFLOW_LLM_MAX_TOKEN'
+    ];
+    const values = Object.fromEntries(keys.map(key => [key, key === 'TASKFLOW_LLM_MAX_TOKEN' ? '131072' : '']));
+    makeStore([], null, 'TASKFLOW_LLM');
+    const wrapper = mountPanel('TASKFLOW_LLM', keys, values);
+    await expand(wrapper);
+    await buttonFor(wrapper, '添加模型')!.trigger('click');
+
+    expect(wrapper.find('[data-test="follows-auxiliary"]').exists()).toBe(true);
+
+    // A provider turns the family into its own configuration: badge gone.
+    const providerInput = wrapper.findAll('input.inp')[0]!;
+    await providerInput.setValue('openai');
+    expect(wrapper.find('[data-test="follows-auxiliary"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('reads the auxiliary download family for an internal family', async () => {
+    const keys = ['TASKFLOW_LLM_MODEL_LOCAL', 'TASKFLOW_LLM_MAX_TOKEN'];
+    const values: Record<string, string> = {
+      TASKFLOW_LLM_MODEL_LOCAL: 'false',
+      TASKFLOW_LLM_MAX_TOKEN: '131072'
+    };
+    makeStore([{ id: 't1', label: 'tf', params: { ...values } }], 't1', 'TASKFLOW_LLM');
+    downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({
+      models: {
+        AUXILIARY_LLM: localState({
+          state: 'ready',
+          ready: true,
+          downloaded_bytes: 641_517_466,
+          total_bytes: 641_517_466,
+          percent: 100,
+          files_done: 1,
+          files: [{ name: 'Qwen3.5-9B-Q4_K_M.gguf', exists: true, fallback_ready: false }]
+        })
+      }
+    });
+    const wrapper = mountPanel('TASKFLOW_LLM', keys, values, 'AUXILIARY_LLM');
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await flushPromises();
+
+    expect(downloadsApi.fetchModelDownloadsStatus).toHaveBeenCalled();
+    expect(wrapper.get('[data-test="local-model-download"]').text()).toContain('本地模型已下载');
     wrapper.unmount();
   });
 });

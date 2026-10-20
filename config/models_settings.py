@@ -70,6 +70,22 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "AUXILIARY_LLM_API_KEY": "",
     "AUXILIARY_LLM_MAX_TOKEN": 131072,
     "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
+    # TaskFlow decision model (empty provider / base = follow AUXILIARY_LLM)
+    "TASKFLOW_LLM_MODEL_LOCAL": False,
+    "TASKFLOW_LLM_PROVIDER": "",
+    "TASKFLOW_LLM_API_NAME": "",
+    "TASKFLOW_LLM_API_BASE": "",
+    "TASKFLOW_LLM_API_KEY": "",
+    "TASKFLOW_LLM_MAX_TOKEN": 131072,
+    "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
+    # Compression model (empty provider / base = follow AUXILIARY_LLM)
+    "COMPRESSION_LLM_MODEL_LOCAL": False,
+    "COMPRESSION_LLM_PROVIDER": "",
+    "COMPRESSION_LLM_API_NAME": "",
+    "COMPRESSION_LLM_API_BASE": "",
+    "COMPRESSION_LLM_API_KEY": "",
+    "COMPRESSION_LLM_MAX_TOKEN": 131072,
+    "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
     # Reasoner model
     "REASONER_LLM_PROVIDER": "",
     "REASONER_LLM_NAME": "",
@@ -126,6 +142,10 @@ _INT_KEYS = frozenset(
         "MAIN_LLM_MAX_OUTPUT_TOKEN",
         "AUXILIARY_LLM_MAX_TOKEN",
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+        "TASKFLOW_LLM_MAX_TOKEN",
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
         "SKILL_SCANNER_ENABLED",
         "SKILL_SCANNER_LLM",
         "SKILL_SCANNER_TIMEOUT",
@@ -133,11 +153,20 @@ _INT_KEYS = frozenset(
 )
 # Output-cap keys: unlike the context-window keys, an EMPTY string is a valid
 # value meaning "do not send the field" (provider default).
-_MAX_OUTPUT_KEYS = frozenset({"MAIN_LLM_MAX_OUTPUT_TOKEN", "AUXILIARY_LLM_MAX_OUTPUT_TOKEN"})
+_MAX_OUTPUT_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_OUTPUT_TOKEN",
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+    }
+)
 _BOOL_KEYS = frozenset(
     {
         "MAIN_LLM_ENABLE_THINKING",
         "AUXILIARY_LLM_MODEL_LOCAL",
+        "TASKFLOW_LLM_MODEL_LOCAL",
+        "COMPRESSION_LLM_MODEL_LOCAL",
         "ITTT_MODEL_LOCAL",
         "VTTT_MODEL_LOCAL",
         "RERANKER_MODEL_LOCAL",
@@ -227,8 +256,17 @@ def _seed_text() -> str:
 
 
 def ensure_models_config_file() -> None:
-    """Seed ``.models`` from the shipped template when it does not exist."""
+    """Seed ``.models`` from the shipped template when it does not exist.
+
+    An EXISTING file also gains the two optional internal families
+    (``TASKFLOW_LLM_*`` / ``COMPRESSION_LLM_*``) when it has none of their
+    keys: they shipped after most files were created, and the 模型配置 panel
+    only renders keys the file contains. The append is additive — a family
+    that is already (even partially) present is left untouched, and an
+    unparseable file is never rewritten.
+    """
     if MODELS_CONFIG_PATH.exists():
+        _ensure_optional_family_keys()
         return
     text = _seed_text()
     if not text:
@@ -236,6 +274,65 @@ def ensure_models_config_file() -> None:
     try:
         MODELS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MODELS_CONFIG_PATH.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+#: Optional internal model families added after the split-out file shipped.
+#: A file without ANY of a family's keys gets the whole block appended so the
+#: panel can render it; the values are the typed defaults.
+_OPTIONAL_FAMILY_TITLES: dict[str, str] = {
+    "TASKFLOW_LLM_": "── TaskFlow 决策模型 TaskFlow decision model — "
+    "empty provider/base follows AUXILIARY_LLM_* ──",
+    "COMPRESSION_LLM_": "── 压缩模型 Compression model — empty provider/base "
+    "follows AUXILIARY_LLM_* ──",
+}
+
+
+def _ensure_optional_family_keys() -> None:
+    """Append a missing optional family block to an existing ``.models``."""
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+        data = json5.loads(text)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    blocks: list[str] = []
+    for prefix, title in _OPTIONAL_FAMILY_TITLES.items():
+        family_keys = [key for key in MODEL_SETTING_KEYS if key.startswith(prefix)]
+        if any(key in data for key in family_keys):
+            continue
+        blocks.append(f"  // {title}")
+        blocks.extend(
+            f'  "{key}": {json.dumps(MODEL_SETTING_DEFAULTS[key])},' for key in family_keys
+        )
+        blocks.append("")
+    if not blocks:
+        return
+
+    # Insert the block right after the document's opening brace: every emitted
+    # line carries its own trailing comma, so this stays valid JSON5 whether the
+    # existing object is multi-line, one-line, or empty — and no existing line
+    # (or trailing comment) has to be rewritten.
+    open_brace = -1
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("//"):
+            offset += len(line)
+            continue
+        pos = line.find("{")
+        if pos != -1:
+            open_brace = offset + pos
+            break
+        offset += len(line)
+    if open_brace == -1:
+        return
+    blocks.append("")
+    updated = text[: open_brace + 1] + "\n" + "\n".join(blocks) + text[open_brace + 1 :]
+    try:
+        MODELS_CONFIG_PATH.write_text(updated, encoding="utf-8")
     except OSError:
         pass
 

@@ -17,10 +17,16 @@
 /**
  * Keys whose context window must stay at or above {@link MIN_REQUIRED_MAX_TOKEN}.
  *
- * Only the two the agent cannot boot without are guarded; `REASONER_LLM_MAX_TOKEN`
+ * The two REQUIRED families plus the two optional internal families
+ * (TaskFlow decisions / compression) are guarded; `REASONER_LLM_MAX_TOKEN`
  * and the other media-model budgets are intentionally left free.
  */
-export const MAX_TOKEN_GUARD_KEYS = ['MAIN_LLM_MAX_TOKEN', 'AUXILIARY_LLM_MAX_TOKEN'] as const;
+export const MAX_TOKEN_GUARD_KEYS = [
+  'MAIN_LLM_MAX_TOKEN',
+  'AUXILIARY_LLM_MAX_TOKEN',
+  'TASKFLOW_LLM_MAX_TOKEN',
+  'COMPRESSION_LLM_MAX_TOKEN'
+] as const;
 
 /** Smallest accepted context window (tokens) for the guarded keys. */
 export const MIN_REQUIRED_MAX_TOKEN = 131072;

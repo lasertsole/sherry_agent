@@ -49,7 +49,7 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 箇所 | トリガー | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| メインエージェント（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| メインエージェント（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `compression_llm`（`COMPRESSION_LLM_*`、未設定時は補助モデル） | `True` |
 | ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py:909`） | `("messages", 40)` **または** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（デフォルト） |
 
 どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）を渡します。

@@ -102,6 +102,8 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
     monkeypatch.setattr(agent_core, "build_async_sqlite_checkpointer", _checkpointer)
     monkeypatch.setattr(agent_core, "build_main_llm", lambda: _MainLLM())
     monkeypatch.setattr(agent_core, "build_auxiliary_llm", lambda: object())
+    _compression = object()
+    monkeypatch.setattr(agent_core, "build_compression_llm", lambda: _compression)
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)

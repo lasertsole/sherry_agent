@@ -133,3 +133,46 @@ class TestWriteMaxOutputTokens:
 
         text = models_file.read_text(encoding="utf-8")
         assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": 32768' in text
+
+
+class TestOptionalInternalFamilies:
+    """The TaskFlow-decision and compression families use the same guards."""
+
+    def test_groups_render_in_the_canonical_position(self, tmp_path, monkeypatch):
+        path = tmp_path / ".models"
+        path.write_text(
+            '{\n  "MAIN_LLM_PROVIDER": "openai",\n'
+            '  "TASKFLOW_LLM_PROVIDER": "",\n'
+            '  "COMPRESSION_LLM_PROVIDER": "",\n'
+            '  "REASONER_LLM_PROVIDER": ""\n}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mc, "MODELS_CONFIG_PATH", path)
+
+        payload = mc.read_models_config()
+
+        assert [g["name"] for g in payload["groups"]] == [
+            "MAIN_LLM",
+            "TASKFLOW_LLM",
+            "COMPRESSION_LLM",
+            "REASONER_LLM",
+        ]
+        assert all(g["kind"] == "model" for g in payload["groups"])
+
+    @pytest.mark.parametrize("key", ["TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"])
+    def test_enforces_the_128k_floor(self, models_file, key):
+        with pytest.raises(ValueError, match="128K"):
+            mc.write_models_config({key: "65536"})
+
+        mc.write_models_config({key: "131072"})
+        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == 131072
+
+    @pytest.mark.parametrize(
+        "key", ["TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"]
+    )
+    def test_enforces_the_8k_output_floor(self, models_file, key):
+        with pytest.raises(ValueError, match="8K"):
+            mc.write_models_config({key: "4096"})
+
+        mc.write_models_config({key: ""})
+        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == ""

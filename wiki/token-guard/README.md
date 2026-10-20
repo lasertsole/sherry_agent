@@ -26,7 +26,7 @@ The guard is one invariant, enforced in four independent places:
 > **Both LLMs the agent runs on must reserve a context window of at least 128K tokens (`131_072`).**
 
 - The **main LLM** (`MAIN_LLM_MAX_TOKEN`) drives the summarization trigger and the whole conversation budget.
-- The **auxiliary LLM** (`AUXILIARY_LLM_MAX_TOKEN`) is used for compaction, memory work, tool-output summaries, and every non-main subagent role.
+- The **auxiliary LLM** (`AUXILIARY_LLM_MAX_TOKEN`) is the fallback for compaction, memory work, tool-output summaries, and every non-main subagent role. Two optional families can take over part of that work: `COMPRESSION_LLM_*` (the summarization middleware's own model) and `TASKFLOW_LLM_*` (plan / replan / step judge / goal gate). Both follow the auxiliary model when unconfigured.
 
 The threshold lives in exactly one module, `config/features/agent_side/token_guard.py`:
 
@@ -75,11 +75,18 @@ from config.features import (
 | :------ | :------ | :------- | :--------------------- |
 | `MAIN_LLM_MAX_TOKEN` | Main model context window | `>= 131072` | `131072` |
 | `AUXILIARY_LLM_MAX_TOKEN` | Auxiliary model context window | `>= 131072` | `131072` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow decision model window (optional) | unset = follows auxiliary; set `>= 131072` | `131072` |
+| `COMPRESSION_LLM_MAX_TOKEN` | Compression model window (optional) | unset = follows auxiliary; set `>= 131072` | `131072` |
 
 Both keys are also registered in the config-write allow-list `TOKEN_KEYS` (`server/service/models_config.py`; `.env` itself no longer accepts the model keys):
 
 ```python
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset({
+    "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_TOKEN",
+})
 ```
 
 ### Effective-value resolution
@@ -95,6 +102,7 @@ Consequences worth memorizing:
 
 - An **unset `MAIN_LLM_MAX_TOKEN`** resolves to `None` and is always rejected, even on a stock boot.
 - An **unset `AUXILIARY_LLM_MAX_TOKEN`** resolves to `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`, which is below the floor, so it is rejected too. Leaving it out is not a shortcut.
+- The two **optional** keys are validated only when set: an unset family follows the auxiliary model (whose own check already ran). A set value below 128K is refused by the save path and aborts the next boot.
 - Local auxiliary mode (`AUXILIARY_LLM_MODEL_LOCAL=true`) does not change this, because no exemption exists (see [Limitations](#%EF%B8%8F-limitations--non-goals)).
 
 ## 🧭 Operating Guide

@@ -187,7 +187,7 @@ sherry_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │
-├── evals/                  # 评估框架（dispatcher + 9 个套件）
+├── evals/                  # 评估框架（dispatcher + 11 个套件）
 │   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
 │   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
@@ -368,6 +368,8 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 | `TAVILY_API_KEY` | 使用联网搜索时必填 | 启用联网搜索工具 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 自托管 SearXNG，作为联网搜索的后端（或 Tavily 的替代）；未配 `TAVILY_API_KEY` 时它是唯一后端。在「模型联网」面板中配置；Tavily 失效时自动降级到它 |
 | `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要 + memory_flush）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
@@ -484,12 +486,14 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
 | `deepswe` | 外部 DeepSWE 任务，在基准自己的 Docker 镜像中运行：agent 编辑绑定挂载的 checkout，`terminal` 在容器内执行，任务独立的 verifier 镜像对 agent 的 diff 判分（先跑 gold patch 自检） |
 | `terminal_bench` | 外部 Terminal-Bench 任务：构建任务镜像，agent 在容器内工作，由任务自己的 `run-tests.sh` pytest 判定（先跑 oracle 自检；多服务任务会明确标为不支持） |
+| `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench 测试集：固定 commit 的官方问题与表格，materialize 到 SQLite，用 AgentBench 自己的比对规则判定（INSERT/DELETE/UPDATE 行明确标为不支持；MySQL→SQLite 方言差异已记录） |
+| `toolbench` | 外部 [ToolBench](https://github.com/OpenBMB/ToolBench) 测试指令：官方 `test_query_ids`，工具调用走官方 RapidAPI 代理，输出官方 answer 格式，判定用固定 commit 仓库里的官方 ToolEval（数据镜像：[Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)） |
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
 
-`deepswe` 与 `terminal_bench` 依赖可用的 Docker daemon；缺失时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树克隆到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker 时校验任务选择。
+`deepswe` 与 `terminal_bench` 依赖可用的 Docker daemon；`toolbench` 需要 `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY` 与 OpenAI 兼容的 ToolEval judge key；`agentbench` 需要 `MAIN_LLM_API_KEY`。缺少前置条件时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树与基准数据克隆/下载到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker、模型或 ToolBench 大文件下载时校验任务选择。
 
-`coding_capability`、`swebench`、`deepswe` 与 `terminal_bench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
+`coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench` 与 `toolbench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
 
 ---
 

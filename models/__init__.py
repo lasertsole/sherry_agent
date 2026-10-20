@@ -6,6 +6,8 @@ _MODULE_MAP = {
     "build_main_llm_for_profile": ".LLMs",
     "build_reasoner_model": ".LLMs",
     "build_auxiliary_llm": ".LLMs",
+    "build_taskflow_llm": ".LLMs",
+    "build_compression_llm": ".LLMs",
     "NormalizingChatModel": ".LLMs",
     "ReasoningChatOpenAI": ".LLMs",
     "build_reasoning_kwargs": ".LLMs",

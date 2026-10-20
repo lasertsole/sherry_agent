@@ -40,6 +40,35 @@
   // provider default, set = >= 8192/8K).
   "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
 
+  // ── TaskFlow 决策模型 TaskFlow decision model ────────────────────────────
+  // Used by: taskflow_plan / taskflow_replan / step_judge / taskflow_finish.
+  // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
+  // true = local GGUF: reuses the auxiliary model's weights (no second download).
+  // MUST be >= 131072 (128K): a replan prompt carries every done step's result.
+  "TASKFLOW_LLM_MODEL_LOCAL": false,
+  "TASKFLOW_LLM_PROVIDER": "",
+  "TASKFLOW_LLM_API_NAME": "",
+  "TASKFLOW_LLM_API_BASE": "",
+  "TASKFLOW_LLM_API_KEY": "",
+  "TASKFLOW_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
+
+  // ── 压缩模型 Compression model ──────────────────────────────────────────
+  // Used by: SummarizationMiddleware (LLM summary + memory_flush).
+  // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
+  // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
+  // true = local GGUF: reuses the auxiliary model's weights (no second download).
+  // MUST be >= 131072 (128K): the prompt carries the discarded slice verbatim.
+  "COMPRESSION_LLM_MODEL_LOCAL": false,
+  "COMPRESSION_LLM_PROVIDER": "",
+  "COMPRESSION_LLM_API_NAME": "",
+  "COMPRESSION_LLM_API_BASE": "",
+  "COMPRESSION_LLM_API_KEY": "",
+  "COMPRESSION_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
+
   // ── 推理模型 Reasoner model ──────────────────────────────────────────────
   "REASONER_LLM_PROVIDER": "",
   "REASONER_LLM_NAME": "",

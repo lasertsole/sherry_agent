@@ -26,7 +26,7 @@
 > **Agent 所运行的两个 LLM 都必须预留至少 128K token（`131_072`）的上下文窗口。**
 
 - **主 LLM**（`MAIN_LLM_MAX_TOKEN`）驱动摘要触发阈值与整段对话的预算。
-- **辅助 LLM**（`AUXILIARY_LLM_MAX_TOKEN`）用于压缩、记忆整理、工具输出摘要，以及所有非主 Agent 的子 Agent 角色。
+- **辅助 LLM**（`AUXILIARY_LLM_MAX_TOKEN`）是压缩、记忆整理、工具输出摘要以及所有非主 Agent 子 Agent 角色的回退模型。两个可选家族可接管其中一部分：`COMPRESSION_LLM_*`（压缩中间件自己的模型）与 `TASKFLOW_LLM_*`（plan / replan / 步骤判定 / 目标达成判定）；未配置时都跟随辅助模型。
 
 阈值只存在于一个模块 `config/features/agent_side/token_guard.py`：
 
@@ -75,11 +75,18 @@ from config.features import (
 | :------ | :------ | :------- | :--------------------- |
 | `MAIN_LLM_MAX_TOKEN` | 主模型上下文窗口 | `>= 131072` | `131072` |
 | `AUXILIARY_LLM_MAX_TOKEN` | 辅助模型上下文窗口 | `>= 131072` | `131072` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 决策模型窗口（可选） | 未设为跟随辅助；设置则 `>= 131072` | `131072` |
+| `COMPRESSION_LLM_MAX_TOKEN` | 压缩模型窗口（可选） | 未设为跟随辅助；设置则 `>= 131072` | `131072` |
 
 两个键同时登记在配置写入白名单 `TOKEN_KEYS` 中（`server/service/models_config.py`；`.env` 本身已不再接受模型键）：
 
 ```python
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset({
+    "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_TOKEN",
+})
 ```
 
 ### 有效值解析
@@ -95,6 +102,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 - **`MAIN_LLM_MAX_TOKEN` 未设**时解析为 `None`，会被无条件拒绝，即便是全新部署也一样。
 - **`AUXILIARY_LLM_MAX_TOKEN` 未设**时解析为 `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`，低于下限，同样被拒绝。省略它并不是捷径。
+- 两个**可选**键只在设置时校验：未配置的家族跟随辅助模型（后者的校验已经跑过）。设置为低于 128K 的值会被保存路径拒绝，并阻断下一次启动。
 - 本地辅助模式（`AUXILIARY_LLM_MODEL_LOCAL=true`）不会改变这一点，因为不存在豁免（见[局限](#%EF%B8%8F-局限与非目标)）。
 
 ## 🧭 运维指南

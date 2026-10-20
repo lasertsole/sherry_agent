@@ -91,11 +91,11 @@ async def _goal_gate(flow: dict) -> str | None:
         "'GOAL_MET: <one-line reason>' or 'GOAL_NOT_MET: <what is missing>'."
     )
     try:
-        # Imported at call time (like the other auxiliary-model call sites): the
+        # Imported at call time (like the other decision-model call sites): the
         # constructor seam stays patchable and no model client is built at import.
-        from models import build_auxiliary_llm
+        from models import build_taskflow_llm
 
-        llm = build_auxiliary_llm(temperature=0)
+        llm = build_taskflow_llm(temperature=0)
         response = await llm.ainvoke(
             [
                 {"role": "system", "content": _GOAL_GATE_SYSTEM_PROMPT},

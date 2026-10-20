@@ -510,9 +510,10 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
 - **`.env`** — TRACKED in git. Non-secret application configuration only
   (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
 - **`.models`** (gitignored; template `.models.example`) — the model families:
-  provider / endpoint / key / local-model switch for main, auxiliary, reasoner,
-  ITTT, VTTT, TTI, reranker, embedding and STT, plus the scanner's LLM
-  selection. Loaded by `config/models_settings.py`.
+  provider / endpoint / key / local-model switch for main, auxiliary, TaskFlow
+  decisions, compression, reasoner, ITTT, VTTT, TTI, reranker, embedding and
+  STT, plus the scanner's LLM selection. Loaded by
+  `config/models_settings.py`.
 - **`.network`** (gitignored; template `.network.example`) — network services:
   `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
   and `LANGSMITH_*` tracing (moved out of `sherry.jsonc`, which is tracked and
@@ -528,6 +529,34 @@ variable → `.models` / `.network` → legacy `.env` → registry default**: th
 hydration skips an already-set key, and `config.path` hydrates BEFORE it
 (re)loads the environment file — `config.path.load_env()` is the single reload
 seam (bare `load_dotenv(..., override=True)` calls were replaced by it).
+
+Two OPTIONAL internal families are configured here too, both system-level (they
+are deliberately NOT part of the per-session agent config):
+
+- `TASKFLOW_LLM_*` — the TaskFlow decision model. It serves the four internal
+  calls `taskflow_plan` / `taskflow_replan` / `step_judge` / `taskflow_finish`
+  (temperature 0). Non-taskflow callers stay on auxiliary: the subagent
+  completion judge, the spawn/steer branches and plan extraction.
+- `COMPRESSION_LLM_*` — the summarization middleware's own model: the LLM
+  summary (`_create_summary` / `_acreate_summary`) and `run_memory_flush`. It
+  does NOT serve memory review (the MAIN model, cache-warm by design) or plan
+  extraction (the auxiliary model).
+
+Both are built by `models/LLMs/family_llm.py::build_family_llm` (exposed as
+`build_taskflow_llm` / `build_compression_llm`): an empty provider + api_base
+falls back to `build_auxiliary_llm()` (an existing deployment is unchanged), a
+remote configuration builds the same client shape as auxiliary (bounded
+timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
+the auxiliary GGUF — there is no second local model to download. A configured
+`*_MAX_TOKEN` must be >= 131072 (128K) and `*_MAX_OUTPUT_TOKEN` empty or
+>= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
+abort, exactly like the main/auxiliary keys. The 模型配置 tab renders both
+families as model-profile cards, whose local entry reports the aux family's
+download progress; a pre-existing `.models` gains a wholly missing family block
+on import (`ensure_models_config_file`), because the panel only renders keys the
+file contains. A configured-but-unbuildable remote model (unknown provider)
+logs a warning and falls back to auxiliary instead of stranding TaskFlow or
+compression.
 
 Drift is refused, not merged: `server/service/env.py` treats the moved keys as
 `SPLIT_OUT_KEYS` (the two registries are the source of truth) — a legacy `.env`
@@ -1311,8 +1340,9 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 
 `tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
 
-`evals/` sits beside the pytest tree: a homegrown, sandboxed framework with nine
-registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag` suite
+`evals/` sits beside the pytest tree: a homegrown, sandboxed framework with
+eleven registered suites (`uv run python evals/evals.py [suite]`; the `graph_rag`
+suite
 needs the eval-only dependency group — `uv run --group evals python
 evals/evals.py graph_rag` — because `ragas` (and the `langchain-community` it
 hard-imports) is the harness's only consumer and stays out of the shipped
@@ -1322,21 +1352,35 @@ instance's own FAIL_TO_PASS/PASS_TO_PASS verdict; the test patch is applied by
 the JUDGE and a gold-patch miss aborts before any model call), `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
-task's separate verifier image grades the agent's `git diff`), and
+task's separate verifier image grades the agent's `git diff`),
 `terminal_bench` (Terminal-Bench tasks: the task image is built, the agent works
 inside it through the same bridge, and the task's `run-tests.sh` pytest verdict
-judges the run; multi-service compose tasks are reported unsupported). Both new
-suites need Docker, clone their task trees into `~/.cache/sherry_evals` (never
-the repo), have a `--dry-run`, and SKIP loudly with a non-zero exit when Docker
-is absent. `coding_capability` is the coding baseline — it drives the REAL main
+judges the run; multi-service compose tasks are reported unsupported),
+`agentbench` (AgentBench's official DBBench test set —
+https://github.com/THUDM/AgentBench, `data/dbbench/standard.jsonl` from a pinned
+checkout, its official table rows materialised in SQLite, the official
+`execute_sql` / `commit_final_answer` function names, and AgentBench's own
+comparison rules; INSERT/DELETE/UPDATE rows are reported unsupported), and
+`toolbench` (ToolBench's official test instructions + official
+`test_query_ids` — https://github.com/OpenBMB/ToolBench, with the data mirror
+https://huggingface.co/datasets/Adorg/ToolBench pinned for reproducibility — tool
+execution through the official RapidAPI proxy, the
+official answer format, and the official ToolEval evaluator imported from the
+pinned repository). No suite invents its own questions: the container suites
+clone their task trees into `~/.cache/sherry_evals` (never the repo); the two
+new suites download the benchmarks' own data into the same cache and need
+their own keys (`TOOLBENCH_KEY`, `MAIN_LLM_API_KEY`, an OpenAI-compatible
+ToolEval judge key); every external suite has a `--dry-run` and SKIPS loudly
+with a non-zero exit when its prerequisites are absent.
+`coding_capability` is the coding baseline — it drives the REAL main
 agent (`server.service.messages.async_generate`) over a self-designed task set,
 judges every task with that repository's own `python -m pytest`, fails a task
 whose diff touched the tests, pins the thinking switch, and reports provider
 failures as invalid runs (excluded from the pass rate) instead of capability.
 The suites that repoint `config.path.WORKSPACE_DIR` through
-`SHERRY_WORKSPACE_DIR` (coding_capability, swebench, deepswe, terminal_bench)
-re-exec in their own process; `baseline.json` next to each suite is the
-version-controlled reference (threshold + model id).
+`SHERRY_WORKSPACE_DIR` (coding_capability, swebench, deepswe, terminal_bench,
+agentbench, toolbench) re-exec in their own process; `baseline.json` next to
+each suite is the version-controlled reference (threshold + model id).
 
 **IMPORTANT**: `tests/agent/tools/subagent/conftest.py` installs sys.modules stubs at collection time. When running multiple test dirs in one process, use the stub-tolerant loading pattern from `tests/agent/tools/taskflow/conftest.py`. The split runner (`tests/run_tests_split.py`) avoids this by running groups in separate processes.
 

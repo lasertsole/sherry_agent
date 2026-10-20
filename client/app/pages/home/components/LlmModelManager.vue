@@ -70,6 +70,19 @@
       <div
         v-if="selected"
         class="flex flex-col gap-2">
+        <!-- Optional internal families: say what the card serves and that an
+             empty Provider + API Base means "follow the auxiliary model". -->
+        <p
+          v-if="props.group === 'COMPRESSION_LLM' && !isLocalEntrySelected"
+          class="m-0 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+          {{ t('config.llm.compressionScope') }}
+        </p>
+        <p
+          v-if="isInternalFamily && followsAuxiliary && !isLocalEntrySelected"
+          class="m-0 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+          data-test="follows-auxiliary">
+          {{ t('config.llm.followsAuxiliary') }}
+        </p>
         <div
           v-for="key in paramKeys"
           :key="key"
@@ -248,6 +261,11 @@ const props = defineProps<{
   values: Record<string, string>;
   /** Group heading shown above the panel. */
   groupTitle?: string;
+  /**
+   * Model-download family behind the built-in local entry. Defaults to the
+   * group itself; the optional internal families reuse the auxiliary GGUF.
+   */
+  downloadGroup?: string;
 }>();
 
 const emit = defineEmits<{
@@ -266,6 +284,13 @@ const collapsed = ref(true);
 
 /** Profiles of this group (reactive). */
 const profiles = computed(() => store.listFor(props.group));
+
+/**
+ * The model-download family behind this panel's built-in local entry. The
+ * optional internal families (TaskFlow decisions / compression) reuse the
+ * auxiliary GGUF, so their download box reports that family.
+ */
+const downloadFamily = computed(() => props.downloadGroup || props.group);
 
 // Stored data may exceed the cap (older payloads / hand-edited storage):
 // trim once on panel setup, by creation time, keeping the oldest entries.
@@ -377,7 +402,7 @@ async function refreshLocalDownload(): Promise<void> {
     const payload = await fetchModelDownloadsStatus();
     // A frame that arrived while the request was in flight is newer.
     if (seqAtRequest !== localFrameSeq) return;
-    localDownload.value = payload?.models?.[props.group] ?? null;
+    localDownload.value = payload?.models?.[downloadFamily.value] ?? null;
     localDownloadError.value = '';
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
@@ -386,7 +411,7 @@ async function refreshLocalDownload(): Promise<void> {
 
 function applyLocalDownloadFrame(payload: unknown): void {
   const content = (payload as ModelDownloadUpdate | null)?.content;
-  if (content?.kind !== 'local' || content.family !== props.group || !content.status) return;
+  if (content?.kind !== 'local' || content.family !== downloadFamily.value || !content.status) return;
   localFrameSeq += 1;
   localDownload.value = content.status;
   localDownloadError.value = '';
@@ -401,7 +426,7 @@ async function downloadLocalModel(): Promise<void> {
   localDownloadError.value = '';
   const seqAtRequest = localFrameSeq;
   try {
-    const state = await startModelDownload(props.group);
+    const state = await startModelDownload(downloadFamily.value);
     if (state && seqAtRequest === localFrameSeq) localDownload.value = state;
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
@@ -435,6 +460,23 @@ const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER'))
 const nameKey = computed(
   () => props.keys.find(k => k.endsWith('_API_NAME')) ?? props.keys.find(k => k.endsWith('_NAME')) ?? ''
 );
+
+/** The two optional internal families the backend can follow the auxiliary model with. */
+const INTERNAL_FAMILIES = ['TASKFLOW_LLM', 'COMPRESSION_LLM'] as const;
+const isInternalFamily = computed(() => (INTERNAL_FAMILIES as readonly string[]).includes(props.group));
+
+/**
+ * True when this internal family is UNCONFIGURED, i.e. its provider and API
+ * base are both empty and the backend factory falls back to the auxiliary
+ * model. Shown as a badge so the empty form is not mistaken for "broken".
+ */
+const followsAuxiliary = computed(() => {
+  if (!isInternalFamily.value) return false;
+  const baseKey = props.keys.find(k => k.endsWith('_API_BASE'));
+  const provider = (draft.value[providerKey.value] ?? '').trim();
+  const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
+  return !provider && !base;
+});
 
 /**
  * True when the profile is the one applied to `.env` for this group.
@@ -506,7 +548,15 @@ const showFlash = (text: string, isError = false) => {
  * chat families, embeddings and the cloud reranker. The media groups need a real
  * image / audio payload, so their button stays disabled with a reason.
  */
-const TESTABLE_GROUPS = ['MAIN_LLM', 'AUXILIARY_LLM', 'REASONER_LLM', 'EMBEDDING', 'RERANKER'] as const;
+const TESTABLE_GROUPS = [
+  'MAIN_LLM',
+  'AUXILIARY_LLM',
+  'TASKFLOW_LLM',
+  'COMPRESSION_LLM',
+  'REASONER_LLM',
+  'EMBEDDING',
+  'RERANKER'
+] as const;
 
 /** Whether the 测试 button can run for the current group / selection. */
 const canTest = computed(

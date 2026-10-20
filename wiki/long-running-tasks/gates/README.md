@@ -37,7 +37,7 @@ When the step declares `response_schema`, the result is parsed (`structured_resu
 - **The shape is also enforced at generation time.** When a step declares `response_schema`, the child agent is built with LangChain's `response_format` (a raw schema resolves to `AutoStrategy`: the provider's native structured output where supported, else a structured-output tool call), so obvious misses are stopped at the model instead of at this validator. The schema text stays in the child's system prompt as the prompt-level fallback, and this Tier-1 check stays as the second net — a provider edge case or a model that never calls the structured-output tool still gets caught here. `sessions_spawn` exposes the same `output_schema` field, so a tool-driven child can be constrained the same way.
 - **A pass** stores `structured_result` + `schema_validated=true` and continues to Tier 2. Structure alone never proves the content is right — that is the whole reason the second tier exists.
 
-### Tier 2 — semantics (auxiliary LLM)
+### Tier 2 — semantics (TaskFlow decision LLM)
 
 With `judge_criteria` (or the legacy `validation_criteria`) on the step, `judge_step_result` (`step_judge.py`, temperature 0) reviews the result — the validated `structured_result` when there is one, else the result text — and returns one of three verdicts:
 

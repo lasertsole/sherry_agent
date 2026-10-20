@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 14 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用辅助 LLM 判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
+> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 14 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，用 TaskFlow 决策模型（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）判别携带验收标准的步骤结果（`pass` / `retry` / `block`），按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
 事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
@@ -265,7 +265,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
-- **有标准时结果校验由判别器执行。** 携带标准的步骤在恢复时由辅助 LLM 步骤判别器审查：`retry` 会在步骤自身重试预算内重新派发；`block`（或预算耗尽）会把步骤标记为 `blocked`。判别器失败开放，因此模型报错或响应无法解析时降级为 `pass`——并不存在“结果一定满足标准”的硬保证，只有在步骤被接受前的一次尽力而为判定。
+- **有标准时结果校验由判别器执行。** 携带标准的步骤在恢复时由 TaskFlow 决策模型的步骤判别器（`TASKFLOW_LLM_*`，未配置时回退辅助 LLM）审查：`retry` 会在步骤自身重试预算内重新派发；`block`（或预算耗尽）会把步骤标记为 `blocked`。判别器失败开放，因此模型报错或响应无法解析时降级为 `pass`——并不存在“结果一定满足标准”的硬保证，只有在步骤被接受前的一次尽力而为判定。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
 - **`taskflow_list` 是会话作用域的。** 不存在全局跨会话面板：所有读取都在 SQL 层按所属 `session_id` 过滤，因此一个会话无法枚举另一个会话的 flow。隔离前写入的行（`session_id = ''`）对会话读取不可见，但 sweeper 的跨会话截止/空闲扫描仍能看到它们。
 - **知识存储以计划身份为键，而非计划名。** 访问由归属校验把关（`ownership.is_plan_associated()`：本会话的 `plan_ref`、todo 的 `plan_ref`，或 `session_ids` 含本会话的 boulder work），存储目录由规范化计划路径派生——`workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的路径)[:12]`，目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。**计划文件不同**的同名计划在两个会话中**物理隔离**（各自写自己的 key 目录）；通过 boulder `session_ids` 协同**同一计划文件**的会话解析出同一路径，共享同一目录。计划文件无法解析的会话写入兜底身份 `session-<sha1(session_id)[:8]>`（全 id 哈希让前 8 字符相同的会话 id 不再相撞）。旧的名称为键目录保持可读；写入总是落在 key 目录；`clear_session` 删除本会话私有身份目录，保留与其他会话共享的计划。子 Agent 边界依旧绝对——`knowledge` 是 `main_only`。

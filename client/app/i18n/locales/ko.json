@@ -460,7 +460,11 @@
       "testUnsupported": "이 그룹은 이미지 / 오디오 입력이 필요해 연결 테스트를 할 수 없습니다",
       "testOk": "연결 정상({ms} ms)",
       "testFailed": "연결 실패({ms} ms)",
-      "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음"
+      "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음",
+      "groupTaskflow": "TaskFlow 결정 모델",
+      "groupCompression": "압축 모델",
+      "followsAuxiliary": "Provider와 API Base가 비어 있어 이 그룹은 보조 모델(AUXILIARY_LLM_*)을 따릅니다.",
+      "compressionScope": "LLM 요약과 memory_flush에 사용됩니다. 메모리 리뷰는 메인 모델, 계획 추출은 보조 모델을 사용합니다."
     },
     "memory": {
       "addEntry": "항목 추가",

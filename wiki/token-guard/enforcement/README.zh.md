@@ -163,10 +163,15 @@ if (!cfg.valid) {
 `client/app/pages/home/components/ConfigPanel.vue`：
 
 - 当环境标签暴露任意 `*_MAX_TOKEN` 键（`hasMaxTokenKeys`，第 344 行）时，渲染一条琥珀色横幅显示 `config.env.maxTokenHint`（第 211 行）。
-- 保存时，`persistEnvChanges()` 会预校验两个 token 键（第 379 至 389 行）。非整数或低于 `131072` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
+- 保存时，`persistEnvChanges()` 会预校验受保护的 token 键（第 379 至 389 行）。非整数或低于 `131072` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
 
 ```ts
-const TOKEN_KEYS = ['MAIN_LLM_MAX_TOKEN', 'AUXILIARY_LLM_MAX_TOKEN'];
+const TOKEN_KEYS = [
+  'MAIN_LLM_MAX_TOKEN',
+  'AUXILIARY_LLM_MAX_TOKEN',
+  'TASKFLOW_LLM_MAX_TOKEN',
+  'COMPRESSION_LLM_MAX_TOKEN'
+];
 const MIN_TOKEN = 131072;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {

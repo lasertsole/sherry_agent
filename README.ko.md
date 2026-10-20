@@ -187,7 +187,7 @@ sherry_agent/
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │
-├── evals/                  # 평가 프레임워크(dispatcher + 9개 스위트)
+├── evals/                  # 평가 프레임워크(dispatcher + 11개 스위트)
 │   ├── evals.py            # 스위트 러너: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 실행 중 저장소 쓰기를 리디렉션하는 샌드박스
 │   ├── graph_rag/          # 그래프 RAG 파이프라인의 RAGAS 지표
@@ -368,6 +368,8 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 | `TAVILY_API_KEY` | 웹 검색 사용 시 ✅ | 웹 검색 도구 활성화 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 자체 호스팅 SearXNG를 웹 검색의 백엔드(또는 Tavily의 대안)로 사용. `TAVILY_API_KEY`가 없으면 유일한 백엔드입니다. 「모델 검색」 패널에서 설정하며, Tavily 실패 시 자동으로 이쪽으로 폴백합니다 |
 | `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 131072 (128K) 이상이어야 합니다 |
+| `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 131072 (128K) 이상이어야 합니다 |
+| `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약 + memory_flush). 메모리 리뷰는 `MAIN_LLM`, 계획 추출은 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
 | `REASONER_LLM_*` | — | 사고 연쇄(Chain-of-thought) 추론 모델 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
@@ -484,12 +486,14 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `swebench` | 외부 SWE-bench_Lite 인스턴스를 같은 harness로 실행(pinned base commit + 인스턴스별 venv + 인스턴스 자체의 FAIL_TO_PASS / PASS_TO_PASS 판정. agent는 문제 설명만 봄) |
 | `deepswe` | 외부 DeepSWE 작업을 벤치마크 자체 Docker 이미지에서 실행: agent는 bind mount된 checkout을 편집하고 `terminal`은 컨테이너 안에서 실행되며, 작업 전용 verifier 이미지가 diff를 채점(먼저 gold patch 자체 점검) |
 | `terminal_bench` | 외부 Terminal-Bench 작업: 작업 이미지를 빌드하고 agent가 컨테이너 안에서 작업하며, 작업 자체의 `run-tests.sh` pytest 판정으로 평가(먼저 oracle 자체 점검, 다중 서비스 작업은 미지원으로 명시) |
+| `agentbench` | 외부 [AgentBench](https://github.com/THUDM/AgentBench) DBBench 테스트 세트: 고정 commit의 공식 질문과 테이블을 SQLite로 materialize하고 AgentBench 자체 비교 규칙으로 판정(INSERT/DELETE/UPDATE 행은 미지원으로 명시, MySQL→SQLite 방언 차이는 기록) |
+| `toolbench` | 외부 [ToolBench](https://github.com/OpenBMB/ToolBench) 테스트 지시문: 공식 `test_query_ids`, 도구 호출은 공식 RapidAPI 프록시 경유, 공식 answer 형식으로 변환하고 고정 commit 저장소의 공식 ToolEval로 판정(데이터 미러: [Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)) |
 
-모든 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기가 임시 샌드박스로 리디렉션됨), 리포트를 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 리포트는 절대 커밋되지 않습니다.
+각 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기는 임시 샌드박스로 리디렉션), 보고서는 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 보고서는 커밋하지 않습니다.
 
-`deepswe`와 `terminal_bench`는 컨테이너 기반이며 동작하는 Docker daemon이 필요합니다. 없으면 **명시적으로 SKIP하고 0이 아닌 코드로 종료**합니다(건너뛴 스위트는 통과가 아님). 작업 트리는 `~/.cache/sherry_evals`에 clone하며(`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR`로 재정의 가능) 저장소 안에는 두지 않습니다. Docker 없이 선택을 검증하려면 `--dry-run`을 사용하세요.
+`deepswe`와 `terminal_bench`는 컨테이너 기반이며 동작하는 Docker daemon이 필요합니다. `toolbench`는 `TOOLBENCH_KEY`, `MAIN_LLM_API_KEY`, OpenAI 호환 ToolEval judge key가 필요합니다. `agentbench`는 `MAIN_LLM_API_KEY`가 필요합니다. 전제 조건이 없으면 **명시적으로 SKIP하고 0이 아닌 코드로 종료**합니다(건너뛴 스위트는 통과가 아님). 작업 트리와 벤치마크 데이터는 `~/.cache/sherry_evals`에 clone/다운로드하며(`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE`로 재정의 가능) 저장소 안에는 두지 않습니다. `--dry-run`은 Docker, 모델, ToolBench 대용량 다운로드 없이 선택을 검증합니다.
 
-`coding_capability`, `swebench`, `deepswe`, `terminal_bench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
+`coding_capability`, `swebench`, `deepswe`, `terminal_bench`, `agentbench`, `toolbench`는 각각 버전 관리되는 베이스라인(각 스위트 디렉터리 내)을 유지하고, `SHERRY_WORKSPACE_DIR`로 workspace를 일회용 디렉터리로 지정해 실행이 실제 페르소나를 건드리지 않게 하며, 베이스라인 임계값 아래로 떨어지거나 작업이 오류를 내면 0이 아닌 코드로 종료합니다. 프로바이더 측 장애는 invalid run으로 보고되어 통과율에서 제외됩니다.
 
 ---
 

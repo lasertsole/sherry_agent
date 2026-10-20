@@ -26,7 +26,7 @@
 > **エージェントが動かす両方の LLM が、少なくとも 128K トークン（`131_072`）のコンテキストウィンドウを確保しなければなりません。**
 
 - **メイン LLM**（`MAIN_LLM_MAX_TOKEN`）は要約のトリガーしきい値と、会話全体の予算を左右します。
-- **補助 LLM**（`AUXILIARY_LLM_MAX_TOKEN`）は圧縮、メモリ処理、ツール出力の要約、そしてメイン以外のすべてのサブエージェントロールで使われます。
+- **補助 LLM**（`AUXILIARY_LLM_MAX_TOKEN`）は圧縮、メモリ処理、ツール出力の要約、そしてメイン以外のすべてのサブエージェントロールのフォールバックです。2 つの任意ファミリが一部を引き継げます: `COMPRESSION_LLM_*`（圧縮ミドルウェア自身のモデル）と `TASKFLOW_LLM_*`（plan / replan / ステップ判定 / 目標達成判定）。未設定ならどちらも補助モデルに従います。
 
 しきい値はただ一つのモジュール `config/features/agent_side/token_guard.py` に存在します:
 
@@ -75,11 +75,18 @@ from config.features import (
 | :------ | :------ | :------- | :--------------------- |
 | `MAIN_LLM_MAX_TOKEN` | メインモデルのコンテキストウィンドウ | `>= 131072` | `131072` |
 | `AUXILIARY_LLM_MAX_TOKEN` | 補助モデルのコンテキストウィンドウ | `>= 131072` | `131072` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 決定モデルのウィンドウ（任意） | 未設定なら補助に従う。設定時は `>= 131072` | `131072` |
+| `COMPRESSION_LLM_MAX_TOKEN` | 圧縮モデルのウィンドウ（任意） | 未設定なら補助に従う。設定時は `>= 131072` | `131072` |
 
 両キーは設定書き込みの許可リスト `TOKEN_KEYS` にも登録されています（`server/service/models_config.py`。`.env` 自体はモデルキーを受け付けません）:
 
 ```python
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset({
+    "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_TOKEN",
+})
 ```
 
 ### 有効値の解決
@@ -95,6 +102,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 - **`MAIN_LLM_MAX_TOKEN` が未設定**なら `None` に解決され、まっさらな起動でも常に拒否されます。
 - **`AUXILIARY_LLM_MAX_TOKEN` が未設定**なら `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072` に解決され、下限を下回るため同様に拒否されます。省略は近道ではありません。
+- 2 つの**任意**キーは設定時のみ検証されます。未設定のファミリは補助モデルに従います（補助側の検証は既に実行済み）。128K 未満の値を設定すると保存経路が拒否し、次回起動が中断します。
 - ローカル補助モード（`AUXILIARY_LLM_MODEL_LOCAL=true`）でもこれは変わりません。免除が存在しないからです（[制限](#%EF%B8%8F-制限と非目標)を参照）。
 
 ## 🧭 運用ガイド

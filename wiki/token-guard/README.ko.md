@@ -26,7 +26,7 @@
 > **에이전트가 실행하는 두 LLM 모두 최소 128K 토큰(`131_072`)의 컨텍스트 윈도우를 확보해야 합니다.**
 
 - **메인 LLM**(`MAIN_LLM_MAX_TOKEN`)은 요약 트리거 임계값과 대화 전체 예산을 좌우합니다.
-- **보조 LLM**(`AUXILIARY_LLM_MAX_TOKEN`)은 압축, 메모리 작업, 도구 출력 요약, 그리고 메인이 아닌 모든 서브에이전트 역할에 쓰입니다.
+- **보조 LLM**(`AUXILIARY_LLM_MAX_TOKEN`)은 압축, 메모리 작업, 도구 출력 요약, 그리고 메인이 아닌 모든 서브에이전트 역할의 폴백입니다. 두 선택 패밀리가 일부를 넘겨받을 수 있습니다: `COMPRESSION_LLM_*`(압축 미들웨어 자체 모델)과 `TASKFLOW_LLM_*`(plan / replan / 단계 판정 / 목표 달성 판정). 미설정 시 둘 다 보조 모델을 따릅니다.
 
 임계값은 단 하나의 모듈 `config/features/agent_side/token_guard.py`에 존재합니다:
 
@@ -75,11 +75,18 @@ from config.features import (
 | :------ | :------ | :------- | :--------------------- |
 | `MAIN_LLM_MAX_TOKEN` | 메인 모델 컨텍스트 윈도우 | `>= 131072` | `131072` |
 | `AUXILIARY_LLM_MAX_TOKEN` | 보조 모델 컨텍스트 윈도우 | `>= 131072` | `131072` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 결정 모델 윈도우(선택) | 미설정 시 보조 모델을 따름; 설정 시 `>= 131072` | `131072` |
+| `COMPRESSION_LLM_MAX_TOKEN` | 압축 모델 윈도우(선택) | 미설정 시 보조 모델을 따름; 설정 시 `>= 131072` | `131072` |
 
 두 키는 설정 쓰기 허용 목록 `TOKEN_KEYS`에도 등록되어 있습니다(`server/service/models_config.py`; `.env` 자체는 모델 키를 받지 않습니다):
 
 ```python
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset({
+    "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_TOKEN",
+})
 ```
 
 ### 유효값 해석
@@ -95,6 +102,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 - **`MAIN_LLM_MAX_TOKEN` 미설정**은 `None`으로 해석되어, 갓 배포한 상태에서도 항상 거부됩니다.
 - **`AUXILIARY_LLM_MAX_TOKEN` 미설정**은 `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`로 해석되어 하한 미만이므로 마찬가지로 거부됩니다. 생략은 지름길이 아닙니다.
+- 두 **선택** 키는 설정된 경우에만 검증됩니다: 미설정 패밀리는 보조 모델을 따릅니다(보조 쪽 검증은 이미 수행됨). 128K 미만으로 설정하면 저장 경로가 거부하고 다음 부팅이 중단됩니다.
 - 로컬 보조 모드(`AUXILIARY_LLM_MODEL_LOCAL=true`)도 이를 바꾸지 않습니다. 면제가 존재하지 않기 때문입니다([한계](#%EF%B8%8F-한계와-비목표) 참조).
 
 ## 🧭 운영 가이드
