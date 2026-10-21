@@ -11,13 +11,13 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
+**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 概要と脅威モデル
 
 | ループの高さ | 見た目 | 防御 |
 |---|---|---|
-| **テキストデスループ** (モデル呼び出し 1 回) | 同じ文 / 同じ文字列が永遠にストリーミングされる | `OutputRepetitionGuard` (ワーカー) + `RepetitionGuardWrapper` (メインエージェントのストリーム) |
+| **テキストデスループ** (モデル呼び出し 1 回) | 同じ文 / 同じ文字列が永遠にストリーミングされる | モデルファミリー別サンプリングペナルティ (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (ワーカー) + `RepetitionGuardWrapper` (メインエージェントのストリーム) |
 | **ツール病理ループ** (ターン 1 回) | 同じ失敗するツール呼び出し、ピンポンペア、引数の改変 | `ToolGuardrails`: 5 種類の病理 → WARN → BLOCK → HALT、リカバリモード付き |
 | **無限ターン** | モデル/ツール呼び出しが止まらない | `IterationBudget` (メイン 90 / ワーカー 60、合算呼び出し) |
 | **切断リトライスパイラル** | `max_tokens` で切断されたツール呼び出しがゴミ引数のまま実行 → エラー → モデルが再発行し、反復回数を無駄に焼く | `MaxTokensBoostMiddleware`: ミドルウェア内の有界再呼び出し(3 リトライ、ブースト上限、予算 +0) |
@@ -99,7 +99,9 @@
 
 ▶️ 詳細: [コンテキスト統治](../context-governance/README.ja.md)
 
-### ターンレベル: テキストデスループ、`OutputRepetitionGuard` + `RepetitionGuardWrapper`
+### ターンレベル: テキストデスループ、サンプリング時の予防 + `OutputRepetitionGuard`
+
+**サンプリング時の予防** (`models/LLMs/provider_repetition_penalty.py`): すべてのチャットファミリーは OpenAI 互換 / Google プロバイダーへ `frequency_penalty` / `presence_penalty` (既定 0.3 / 0.2) を送り、Ollama にはネイティブの `repeat_penalty` (1.1) を送ります。Anthropic、Bedrock、OpenAI 推論モデル (o シリーズ / gpt-5、API がこのパラメータを拒否します)、未知のゲートウェイには何も送りません。`.models` のファミリー別キー (`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`、補助 / TaskFlow / 圧縮 / 推論モデルも同様) はグローバルな `REPETITION_PENALTY` を値ごとに上書きします: 空欄は既定値、設定値は [-2, 2] の有限数でなければなりません。モデル設定パネルは各ペアを数値入力にし、非数値キーを拒否し、範囲外の値を入力時にクランプします。これはトークンが生成される*前に*反復確率を下げ、下記のガードは事後に反応するため、二層は補完関係にあります。
 
 **呼び出し間検知** (`OutputRepetitionGuard`、ワーカーパイプラインのミドルウェア):
 

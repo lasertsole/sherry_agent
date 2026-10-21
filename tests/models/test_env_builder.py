@@ -98,6 +98,20 @@ class TestBuilder:
 class TestPerModelKwargs:
     """Each model's assembled client kwargs, key-for-key."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_penalty_env(self, monkeypatch):
+        """Keep the expected penalty defaults independent of a local `.models`."""
+        for prefix in (
+            "MAIN_LLM",
+            "AUXILIARY_LLM",
+            "TASKFLOW_LLM",
+            "COMPRESSION_LLM",
+            "REASONER_LLM",
+        ):
+            for kind in ("FREQUENCY_PENALTY", "PRESENCE_PENALTY"):
+                monkeypatch.delenv(f"{prefix}_{kind}", raising=False)
+        yield
+
     def test_ittt_remote_kwargs(self, monkeypatch):
         monkeypatch.setenv("ITTT_MODEL_LOCAL", "false")
         monkeypatch.setenv("ITTT_MODEL_PROVIDER", "openai")
@@ -155,6 +169,8 @@ class TestPerModelKwargs:
             "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
             "profile": {"max_input_tokens": 131072},
+            "frequency_penalty": 0.3,
+            "presence_penalty": 0.2,
         }
 
     def test_reasoner_kwargs(self, monkeypatch):
@@ -174,7 +190,19 @@ class TestPerModelKwargs:
             "max_retries": LLM_CLIENT_DEFAULTS["reasoner_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["reasoner_timeout"],
             "profile": {"max_input_tokens": 64000},
+            # o4-mini is an OpenAI reasoning model: its API rejects penalties.
         }
+
+    def test_reasoner_kwargs_non_reasoning_model_gets_penalties(self, monkeypatch):
+        monkeypatch.setenv("REASONER_LLM_PROVIDER", "openai")
+        monkeypatch.setenv("REASONER_LLM_NAME", "gpt-4o-mini")
+        monkeypatch.setenv("REASONER_LLM_API_KEY", "sk-rea")
+        monkeypatch.setenv("REASONER_LLM_API_BASE", "https://rea.invalid/v1")
+        monkeypatch.setenv("REASONER_LLM_MAX_TOKEN", "64000")
+        module = _load("_reasoner_env_builder_penalty", "models/LLMs/reasoner_llm.py")
+
+        assert module.model_config["frequency_penalty"] == 0.3
+        assert module.model_config["presence_penalty"] == 0.2
 
     def test_auxiliary_remote_kwargs(self, monkeypatch):
         monkeypatch.setenv("AUXILIARY_LLM_MODEL_LOCAL", "false")
@@ -202,4 +230,6 @@ class TestPerModelKwargs:
             "max_retries": LLM_CLIENT_DEFAULTS["aux_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["aux_timeout"],
             "profile": {"max_input_tokens": 65536},
+            "frequency_penalty": 0.3,
+            "presence_penalty": 0.2,
         }

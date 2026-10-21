@@ -15,6 +15,7 @@ from models.LLMs.reasoning_payload import (
 )
 from models.env_builder import ModelEnvBuilder, clean_client_kwargs
 from models.LLMs.provider_max_output import configured_max_output, resolve_max_output_kwargs
+from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kwargs
 
 #: The level a plain ON maps to (the shared declarative config).
 _DEFAULT_ON_LEVEL = THINKING_LEVEL_CONFIG["default_level"]
@@ -108,6 +109,7 @@ model_config: dict[str, Any] = ModelEnvBuilder(
         "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
         "profile": {"max_input_tokens": max_tokens},  # Set model context window size
         **resolve_max_output_kwargs(model_provider, api_name, MAX_OUTPUT_TOKENS),
+        **family_repetition_penalty_kwargs("MAIN_LLM", model_provider, api_name),
     }
 )
 # Pristine snapshot of the client config BEFORE the reasoning payload and the
@@ -351,6 +353,7 @@ def _profile_client_config(
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
             "profile": {"max_input_tokens": context_window if context_window else max_tokens},
             **resolve_max_output_kwargs(effective_provider, model, MAX_OUTPUT_TOKENS),
+            **family_repetition_penalty_kwargs("MAIN_LLM", effective_provider, model),
         }
     )
     reasoning, budget_enabled, level_used = _reasoning_for_state(

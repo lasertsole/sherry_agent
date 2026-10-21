@@ -21,6 +21,11 @@
   // When set it must be >= 8192 (8K): thinking-mode reasoning and the visible
   // answer share this budget, so a smaller value truncates the reply.
   "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
+  // Sampling-time repetition penalty in [-2.0, 2.0]; empty = global default.
+  // OpenAI-compatible / Google only; Anthropic and OpenAI reasoning models
+  // (o-series / gpt-5) reject the parameter and are skipped.
+  "MAIN_LLM_FREQUENCY_PENALTY": "",
+  "MAIN_LLM_PRESENCE_PENALTY": "",
   // Universal reasoning/thinking switch (maps to the right payload per provider).
   "MAIN_LLM_ENABLE_THINKING": false,
   // Optional reasoning effort for OpenAI-family models (low / medium / high).
@@ -39,6 +44,9 @@
   // Per-request output cap (same rule as MAIN_LLM_MAX_OUTPUT_TOKEN: empty =
   // provider default, set = >= 8192/8K).
   "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "AUXILIARY_LLM_FREQUENCY_PENALTY": "",
+  "AUXILIARY_LLM_PRESENCE_PENALTY": "",
 
   // ── TaskFlow 决策模型 TaskFlow decision model ────────────────────────────
   // Used by: taskflow_plan / taskflow_replan / step_judge / taskflow_finish.
@@ -53,6 +61,9 @@
   "TASKFLOW_LLM_MAX_TOKEN": 131072,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "TASKFLOW_LLM_FREQUENCY_PENALTY": "",
+  "TASKFLOW_LLM_PRESENCE_PENALTY": "",
 
   // ── 压缩模型 Compression model ──────────────────────────────────────────
   // Used by: SummarizationMiddleware (LLM summary + memory_flush).
@@ -68,6 +79,9 @@
   "COMPRESSION_LLM_MAX_TOKEN": 131072,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
+  "COMPRESSION_LLM_PRESENCE_PENALTY": "",
 
   // ── 推理模型 Reasoner model ──────────────────────────────────────────────
   "REASONER_LLM_PROVIDER": "",
@@ -75,6 +89,9 @@
   "REASONER_LLM_API_BASE": "",
   "REASONER_LLM_API_KEY": "",
   "REASONER_LLM_MAX_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "REASONER_LLM_FREQUENCY_PENALTY": "",
+  "REASONER_LLM_PRESENCE_PENALTY": "",
 
   // ── 图生文 Image-to-Text model ───────────────────────────────────────────
   "ITTT_MODEL_LOCAL": false,

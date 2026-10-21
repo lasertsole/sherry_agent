@@ -11,13 +11,13 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 개요와 위협 모델
 
 | 루프 고도 | 모습 | 방어 |
 |---|---|---|
-| **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
+| **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | 모델 패밀리별 샘플링 페널티 (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
 | **무한 턴** | 모델/도구 호출이 끝나지 않음 | `IterationBudget` (메인 90 / 워커 60, 합산 호출) |
 | **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
@@ -98,7 +98,9 @@
 
 ▶️ 전체 상세: [컨텍스트 거버넌스](../context-governance/README.ko.md)
 
-### 턴 수준: 텍스트 데스 루프, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
+### 턴 수준: 텍스트 데스 루프, 샘플링 시점 예방 + `OutputRepetitionGuard`
+
+**샘플링 시점 예방** (`models/LLMs/provider_repetition_penalty.py`): 모든 채팅 패밀리는 OpenAI 호환 / Google 프로바이더에 `frequency_penalty` / `presence_penalty` (기본 0.3 / 0.2)를 보내고, Ollama에는 네이티브 `repeat_penalty` (1.1)를 보냅니다. Anthropic, Bedrock, OpenAI 추론 모델 (o 시리즈 / gpt-5, API가 이 파라미터를 거부함), 알 수 없는 게이트웨이에는 아무 필드도 보내지 않습니다. `.models`의 패밀리별 키 (`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`, 보조 / TaskFlow / 압축 / 추론 모델도 동일)는 전역 `REPETITION_PENALTY`를 값 단위로 덮어씁니다: 비우면 기본값, 설정값은 [-2, 2] 범위의 유한수여야 합니다. 모델 설정 패널은 각 쌍을 숫자 입력으로 렌더링하고 비숫자 키를 거부하며 범위를 벗어난 값을 입력 즉시 클램프합니다. 이는 토큰이 생성되기 *전에* 반복 확률을 낮추고, 아래 가드들은 사후에 반응하므로 두 계층은 상호 보완적입니다.
 
 **교차 호출 감지** (`OutputRepetitionGuard`, 워커 파이프라인의 미들웨어):
 

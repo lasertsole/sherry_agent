@@ -11,13 +11,13 @@ Two design rules run through every guard below:
 1. **Degrade, never crash.** Protection never takes the process down: background services *stop*, turns *end gracefully*, and the boot gate *narrows the footprint* to HTTP-only mode.
 2. **Always leave a hatch.** Every breaker has a documented manual reset (REST endpoint, state-file delete, or process restart).
 
-**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
+**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 Overview & Threat Model
 
 | Loop altitude | What it looks like | Defense |
 |---|---|---|
-| **Text death loop** (one model call) | Same sentence / character run streamed forever | `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
+| **Text death loop** (one model call) | Same sentence / character run streamed forever | Per-family sampling penalty (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
 | **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 60 worker combined calls) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
@@ -101,7 +101,9 @@ The clip never removes, reorders, or injects a message: it replaces content thro
 
 ▶️ Full detail: [Context Governance](../context-governance/README.md)
 
-### Turn level: text death loops, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
+### Turn level: text death loops, sampling-time prevention + `OutputRepetitionGuard`
+
+**Prevention at sampling time** (`models/LLMs/provider_repetition_penalty.py`): every chat family sends `frequency_penalty` / `presence_penalty` (defaults 0.3 / 0.2) to OpenAI-compatible and Google providers, and Ollama's native `repeat_penalty` (1.1); Anthropic, Bedrock, an OpenAI reasoning model (o-series / gpt-5, whose API rejects the field) and an unknown gateway receive no field. The per-family `.models` keys (`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`, likewise for auxiliary, TaskFlow, compression and reasoner) override the global `REPETITION_PENALTY` one value at a time: empty means "use the default", and a set value must be a finite number in [-2, 2]. The model-configuration panel renders each pair as a number input that rejects non-numeric keystrokes and clamps out-of-range values. This lowers the probability of a repeated token *before* it is emitted; the guards below still react after the fact, so the two layers are complementary.
 
 **Cross-call detection** (`OutputRepetitionGuard`, middleware in the worker pipeline):
 

@@ -55,6 +55,8 @@ from .agent_side import (
     MODEL_BACKEND as MODEL_BACKEND,
     REASONING_BUDGET as REASONING_BUDGET,
     REPETITION_GUARD as REPETITION_GUARD,
+    REPETITION_PENALTY as REPETITION_PENALTY,
+    RepetitionPenaltyConfig as RepetitionPenaltyConfig,
     STEP_JUDGE as STEP_JUDGE,
     SUBAGENT_INFRA as SUBAGENT_INFRA,
     SubagentIsolationConfig as SubagentIsolationConfig,

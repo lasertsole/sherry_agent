@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (79 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (80 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -600,6 +600,18 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   Google Generative AI / Vertex; an unknown gateway gets no field (M4). When
   thinking is enabled the budget headroom is based on the configured cap, not
   the legacy `MAIN_LLM_OUTPUT_MAX_TOKEN`.
+- **Sampling-time repetition penalties** — every chat family carries a
+  `*_FREQUENCY_PENALTY` / `*_PRESENCE_PENALTY` pair in `.models` (main,
+  auxiliary, TaskFlow, compression, reasoner). Empty uses the global
+  `REPETITION_PENALTY` defaults (0.3 / 0.2); a set value must be a finite number
+  in [-2, 2] and is refused by `/models-config` otherwise.
+  `models/LLMs/provider_repetition_penalty.py` maps it per provider:
+  OpenAI-compatible and Google get both fields, Ollama additionally gets its
+  native `repeat_penalty` (1.1), and Anthropic / Bedrock / an OpenAI reasoning
+  model (o-series / gpt-5, whose API rejects the parameter) / an unknown
+  gateway get none (M4). The 模型配置 panel renders each pair as a number input that
+  rejects non-numeric keystrokes and clamps to the range; this is preventive,
+  and `OutputRepetitionGuard` remains the reactive backstop.
 - **Output reserve** — `CompressionMixin._effective_context_window()` =
   `ctx - min(max_output, ctx)`; `_calculate_preserve_budget`, `OverflowMixin._usable_budget`
   and `_preemptive_check` use it. Unset keeps reserve 0 and the legacy formulas
@@ -1279,9 +1291,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 51 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 52 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 79 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 80 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |

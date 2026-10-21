@@ -31,6 +31,7 @@ from models.LLMs.provider_max_output import (
     configured_max_output,
     resolve_max_output_kwargs,
 )
+from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kwargs
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.env_builder import ModelEnvBuilder, read_env
 
@@ -99,6 +100,11 @@ def build_family_llm(prefix: str, temperature: float | None = None) -> Any:
                     os.getenv(f"{prefix}_PROVIDER"),
                     os.getenv(f"{prefix}_API_NAME"),
                     configured_max_output(f"{prefix}_MAX_OUTPUT_TOKEN"),
+                ),
+                **family_repetition_penalty_kwargs(
+                    prefix,
+                    os.getenv(f"{prefix}_PROVIDER"),
+                    os.getenv(f"{prefix}_API_NAME"),
                 ),
             }
         )

@@ -34,6 +34,7 @@ from models.LLMs.provider_max_output import (
     configured_max_output,
     resolve_max_output_kwargs,
 )
+from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +96,11 @@ def build_auxiliary_llm(temperature: float | None = None):
                     _provider,
                     os.getenv("AUXILIARY_LLM_API_NAME"),
                     configured_max_output("AUXILIARY_LLM_MAX_OUTPUT_TOKEN"),
+                ),
+                **family_repetition_penalty_kwargs(
+                    "AUXILIARY_LLM",
+                    _provider,
+                    os.getenv("AUXILIARY_LLM_API_NAME"),
                 ),
             }
         )

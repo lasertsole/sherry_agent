@@ -87,7 +87,9 @@
           v-for="key in paramKeys"
           :key="key"
           class="flex flex-col gap-1">
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{ key }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{
+            isPenaltyKey(key) ? penaltyLabel(key) : key
+          }}</span>
           <!-- 128K floor, shown on the input it constrains instead of once at the
                top of the tab; hidden for the built-in local entry, whose budget the
                backend never reads. -->
@@ -96,7 +98,35 @@
             class="m-0 text-xs text-amber-600 dark:text-amber-400">
             {{ t('config.env.maxTokenHint') }}
           </p>
+          <p
+            v-if="isPenaltyKey(key) && !isLocalEntrySelected"
+            class="m-0 text-xs text-gray-400 dark:text-gray-500">
+            {{ t('config.llm.penaltyHint', { min: PENALTY_MIN, max: PENALTY_MAX }) }}
+          </p>
+          <!-- Penalty keys use a native number input: type/min/max constrain the
+               spinner, and save/apply/test refuse a typed out-of-range value. -->
+          <input
+            v-if="isPenaltyKey(key)"
+            type="number"
+            :min="PENALTY_MIN"
+            :max="PENALTY_MAX"
+            :step="PENALTY_STEP"
+            :value="draft[key] ?? ''"
+            :disabled="isLocalEntrySelected"
+            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
+            :aria-label="penaltyLabel(key)"
+            :class="[
+              'w-full rounded-md border border-solid bg-white px-2 py-1.5 font-mono text-xs text-gray-900 focus:border-theme-main focus:outline-none disabled:opacity-60 dark:bg-gray-900 dark:text-gray-100',
+              isInvalidPenalty(key) ? 'border-red-400' : 'border-gray-200 dark:border-gray-700'
+            ]"
+            data-test="model-penalty-input"
+            :data-key="key"
+            inputmode="decimal"
+            @keydown="onPenaltyKeydown"
+            @input="onPenaltyInput(key, $event)"
+            @change="clampPenalty(key)" />
           <InputText
+            v-else
             v-model="draft[key]"
             :disabled="isLocalEntrySelected"
             :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
@@ -334,6 +364,105 @@ const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value
  * @param key
  */
 const guardedTokenKey = (key: string): boolean => (MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key);
+
+/** Sampling penalty range shared by the input attributes and the save guard. */
+const PENALTY_MIN = -2;
+const PENALTY_MAX = 2;
+const PENALTY_STEP = 0.1;
+
+/**
+ * Whether a parameter is a per-model repetition-penalty override.
+ * @param key
+ */
+const isPenaltyKey = (key: string): boolean => key.endsWith('_FREQUENCY_PENALTY') || key.endsWith('_PRESENCE_PENALTY');
+
+/**
+ * Localized label for a penalty field; other parameters keep their raw env key.
+ * @param key
+ */
+const penaltyLabel = (key: string): string =>
+  key.endsWith('_FREQUENCY_PENALTY') ? t('config.llm.frequencyPenalty') : t('config.llm.presencePenalty');
+
+/**
+ * Whether the draft's penalty value is non-empty and outside the valid range.
+ * Empty is valid (it means "use the global default").
+ * @param key
+ */
+const isInvalidPenalty = (key: string): boolean => {
+  const raw = (draft.value[key] ?? '').trim();
+  if (!raw) return false;
+  const value = Number(raw);
+  return !Number.isFinite(value) || value < PENALTY_MIN || value > PENALTY_MAX;
+};
+
+/** Penalty fields currently blocking save/apply/test. */
+const invalidPenaltyKeys = computed(() => props.keys.filter(key => isPenaltyKey(key) && isInvalidPenalty(key)));
+
+/**
+ * Reject a non-numeric keystroke BEFORE it reaches the input. `type=number`
+ * still admits `e`/`E`/`+` (scientific notation), which parse as a number but
+ * are not what a penalty field means; modifiers stay untouched so copy/paste
+ * and select-all keep working.
+ * @param event Keydown event.
+ */
+const onPenaltyKeydown = (event: KeyboardEvent): void => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.key.length > 1) return; // Backspace / Arrow / Tab / Enter / …
+  if (!/^[0-9.-]$/.test(event.key)) event.preventDefault();
+};
+
+/**
+ * Accept only digits / one dot / a leading minus, and clamp a complete
+ * out-of-range number as it is typed. A lone "-" stays in the draft so a
+ * negative value can be completed; save/apply/test still treat it as invalid
+ * until it parses.
+ * @param key
+ * @param event Native input event.
+ */
+const onPenaltyInput = (key: string, event: Event): void => {
+  const input = event.target as HTMLInputElement;
+  const raw = input.value;
+  if (raw === '' || raw === '-') {
+    draft.value[key] = raw;
+    return;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    // The browser hands back "" for an unparseable number, but a pasted
+    // multi-dot / multi-sign string can still slip through in some engines.
+    draft.value[key] = '';
+    input.value = '';
+    return;
+  }
+  if (value < PENALTY_MIN || value > PENALTY_MAX) {
+    const clamped = Math.min(PENALTY_MAX, Math.max(PENALTY_MIN, value));
+    const text = String(Number(clamped.toFixed(2)));
+    draft.value[key] = text;
+    input.value = text;
+    return;
+  }
+  draft.value[key] = raw;
+};
+
+/**
+ * Clamp a penalty to the allowed range (and two decimals) on blur/change.
+ * Empty and non-numeric input become empty, i.e. "unset".
+ * @param key
+ */
+const clampPenalty = (key: string): void => {
+  const raw = (draft.value[key] ?? '').trim();
+  if (!raw || raw === '-' || raw === '.') {
+    draft.value[key] = '';
+    return;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    draft.value[key] = '';
+    return;
+  }
+  const clamped = Math.min(PENALTY_MAX, Math.max(PENALTY_MIN, value));
+  draft.value[key] = String(Number(clamped.toFixed(2)));
+};
 
 /**
  * The built-in "local model" entry: the group's live `.env` parameters with the
@@ -582,6 +711,10 @@ const runTest = async () => {
     showFlash(t('config.llm.requiredMissing'), true);
     return;
   }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
+    return;
+  }
   testing.value = true;
   testResult.value = null;
   try {
@@ -627,6 +760,10 @@ const saveProfile = () => {
   if (!selected.value || isLocalEntrySelected.value) return; // built-in entry is not saveable
   if (missingRequired.value) {
     showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
     return;
   }
   const params: Record<string, string> = { ...draft.value };
@@ -699,6 +836,10 @@ const applyProfile = () => {
   if (!selected.value) return;
   if (missingRequired.value) {
     showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
     return;
   }
   const flagKey = localFlagKey.value;

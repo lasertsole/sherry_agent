@@ -11,13 +11,13 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
+**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 总览与威胁模型
 
 | 循环高度 | 表现形式 | 防御手段 |
 |---|---|---|
-| **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
+| **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | 按模型族的采样惩罚（`frequency_penalty` / `presence_penalty`）→ `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
 | **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / worker 60 次，合并计数） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
@@ -95,7 +95,9 @@
 
 ▶️ 完整细节：[上下文治理](../context-governance/README.zh.md)
 
-### 回合级：文字死亡循环，`OutputRepetitionGuard` + `RepetitionGuardWrapper`
+### 回合级：文字死亡循环，采样时预防 + `OutputRepetitionGuard`
+
+**采样时预防**（`models/LLMs/provider_repetition_penalty.py`）：每个对话模型族向 OpenAI 兼容与 Google 提供商发送 `frequency_penalty` / `presence_penalty`（默认 0.3 / 0.2），Ollama 发送原生 `repeat_penalty`（1.1）；Anthropic、Bedrock、OpenAI 推理模型（o 系列 / gpt-5，其 API 拒绝该参数）与未知网关不发送任何字段。`.models` 的按族键（`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`，辅助 / TaskFlow / 压缩 / 推理模型同理）逐个值覆盖全局 `REPETITION_PENALTY`：留空表示使用默认值，设值必须是 [-2, 2] 内的有限数字。模型配置面板把每一对渲染为数字输入框，非数字按键被拒绝，越界值在输入时即被夹回范围。它在 token 生成*之前*降低重复概率；下面的护栏仍在事后兜底，两层互补。
 
 **跨调用检测**（`OutputRepetitionGuard`，worker 管线中的中间件）：
 

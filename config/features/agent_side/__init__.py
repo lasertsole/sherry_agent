@@ -47,6 +47,10 @@ from .repetition_guard import (
     RepetitionGuardConfig as RepetitionGuardConfig,
     REPETITION_GUARD as REPETITION_GUARD,
 )
+from .repetition_penalty import (
+    RepetitionPenaltyConfig as RepetitionPenaltyConfig,
+    REPETITION_PENALTY as REPETITION_PENALTY,
+)
 from .llm_retry import (
     LlmRetryConfig as LlmRetryConfig,
     LLM_RETRY as LLM_RETRY,

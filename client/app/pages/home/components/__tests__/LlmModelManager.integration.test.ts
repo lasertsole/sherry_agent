@@ -758,4 +758,85 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(wrapper.get('[data-test="local-model-download"]').text()).toContain('本地模型已下载');
     wrapper.unmount();
   });
+
+  it('renders the per-model penalty fields as range-constrained number inputs', async () => {
+    const keys = [...KEYS, 'MAIN_LLM_FREQUENCY_PENALTY', 'MAIN_LLM_PRESENCE_PENALTY'];
+    const values = {
+      ...ENV_VALUES,
+      MAIN_LLM_FREQUENCY_PENALTY: '0.3',
+      MAIN_LLM_PRESENCE_PENALTY: '0.2'
+    };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const inputs = wrapper.findAll('[data-test="model-penalty-input"]');
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+      expect(input.attributes('type')).toBe('number');
+      expect(input.attributes('min')).toBe('-2');
+      expect(input.attributes('max')).toBe('2');
+      expect(input.attributes('step')).toBe('0.1');
+    }
+    expect((inputs[0]!.element as HTMLInputElement).value).toBe('0.3');
+    expect((inputs[1]!.element as HTMLInputElement).value).toBe('0.2');
+    wrapper.unmount();
+  });
+
+  it('clamps a typed penalty into [-2, 2] and rounds on change', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_FREQUENCY_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_FREQUENCY_PENALTY: '0.3' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const input = wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_FREQUENCY_PENALTY"]');
+    await input.setValue('5');
+    expect((input.element as HTMLInputElement).value).toBe('2');
+
+    await input.setValue('-9');
+    expect((input.element as HTMLInputElement).value).toBe('-2');
+
+    await input.setValue('0.333');
+    await input.trigger('change');
+    expect((input.element as HTMLInputElement).value).toBe('0.33');
+    wrapper.unmount();
+  });
+
+  it('blocks e/E/+ keystrokes so only a decimal number can be entered', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_PRESENCE_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_PRESENCE_PENALTY: '' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const input = wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_PRESENCE_PENALTY"]')
+      .element as HTMLInputElement;
+    for (const key of ['e', 'E', '+', 'a']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    for (const key of ['5', '.', '-', 'Backspace']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    wrapper.unmount();
+  });
+
+  it('sends an empty penalty as "use the global default" on apply', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_FREQUENCY_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_FREQUENCY_PENALTY: '0.3' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    await wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_FREQUENCY_PENALTY"]').setValue('');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect(payload.params.MAIN_LLM_FREQUENCY_PENALTY).toBe('');
+    wrapper.unmount();
+  });
 });

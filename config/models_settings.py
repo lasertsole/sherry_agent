@@ -34,6 +34,7 @@ overlaid from a legacy ``.env`` (the pre-split spelling — including the old
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import MutableMapping
@@ -60,6 +61,9 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "MAIN_LLM_API_KEY": "",
     "MAIN_LLM_MAX_TOKEN": 131072,
     "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
+    # Sampling-time repetition penalties (empty = REPETITION_PENALTY default).
+    "MAIN_LLM_FREQUENCY_PENALTY": "",
+    "MAIN_LLM_PRESENCE_PENALTY": "",
     "MAIN_LLM_ENABLE_THINKING": False,
     "MAIN_LLM_REASONING_EFFORT": "",
     # Auxiliary model
@@ -70,6 +74,8 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "AUXILIARY_LLM_API_KEY": "",
     "AUXILIARY_LLM_MAX_TOKEN": 131072,
     "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
+    "AUXILIARY_LLM_FREQUENCY_PENALTY": "",
+    "AUXILIARY_LLM_PRESENCE_PENALTY": "",
     # TaskFlow decision model (empty provider / base = follow AUXILIARY_LLM)
     "TASKFLOW_LLM_MODEL_LOCAL": False,
     "TASKFLOW_LLM_PROVIDER": "",
@@ -78,6 +84,8 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "TASKFLOW_LLM_API_KEY": "",
     "TASKFLOW_LLM_MAX_TOKEN": 131072,
     "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
+    "TASKFLOW_LLM_FREQUENCY_PENALTY": "",
+    "TASKFLOW_LLM_PRESENCE_PENALTY": "",
     # Compression model (empty provider / base = follow AUXILIARY_LLM)
     "COMPRESSION_LLM_MODEL_LOCAL": False,
     "COMPRESSION_LLM_PROVIDER": "",
@@ -86,12 +94,16 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "COMPRESSION_LLM_API_KEY": "",
     "COMPRESSION_LLM_MAX_TOKEN": 131072,
     "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
+    "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
+    "COMPRESSION_LLM_PRESENCE_PENALTY": "",
     # Reasoner model
     "REASONER_LLM_PROVIDER": "",
     "REASONER_LLM_NAME": "",
     "REASONER_LLM_API_BASE": "",
     "REASONER_LLM_API_KEY": "",
     "REASONER_LLM_MAX_TOKEN": "",
+    "REASONER_LLM_FREQUENCY_PENALTY": "",
+    "REASONER_LLM_PRESENCE_PENALTY": "",
     # Image-to-Text model
     "ITTT_MODEL_LOCAL": False,
     "ITTT_MODEL_PROVIDER": "",
@@ -147,6 +159,24 @@ MODEL_SETTING_KEYS: tuple[str, ...] = tuple(MODEL_SETTING_DEFAULTS)
 
 #: Keys whose value is a JSON object rather than a scalar.
 _JSON_DICT_KEYS = frozenset({"MODEL_PRICING_TABLE"})
+
+#: Per-family sampling-time repetition penalties. Empty = use the global
+#: REPETITION_PENALTY default; a set value must be a finite number in
+#: [-2.0, 2.0] (OpenAI / Google penalty range).
+_PENALTY_PREFIXES: tuple[str, ...] = (
+    "MAIN_LLM",
+    "AUXILIARY_LLM",
+    "TASKFLOW_LLM",
+    "COMPRESSION_LLM",
+    "REASONER_LLM",
+)
+_PENALTY_KEYS = frozenset(
+    f"{prefix}_{kind}"
+    for prefix in _PENALTY_PREFIXES
+    for kind in ("FREQUENCY_PENALTY", "PRESENCE_PENALTY")
+)
+PENALTY_MIN = -2.0
+PENALTY_MAX = 2.0
 
 _INT_KEYS = frozenset(
     {
@@ -210,6 +240,19 @@ def _coerce(key: str, value: Any) -> Any:
         if not isinstance(parsed, dict):
             raise ValueError(f"{key} must be a JSON object")
         return parsed
+    if key in _PENALTY_KEYS:
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{key} must be a number between {PENALTY_MIN} and {PENALTY_MAX}"
+            ) from None
+        if not math.isfinite(number) or not (PENALTY_MIN <= number <= PENALTY_MAX):
+            raise ValueError(f"{key} must be between {PENALTY_MIN} and {PENALTY_MAX}")
+        return number
     if key in _INT_KEYS:
         if key in _MAX_OUTPUT_KEYS and str(value).strip() == "":
             return ""
@@ -290,6 +333,7 @@ def ensure_models_config_file() -> None:
     if MODELS_CONFIG_PATH.exists():
         _ensure_pricing_table_key()
         _ensure_optional_family_keys()
+        _ensure_penalty_keys()
         return
     text = _seed_text()
     if not text:
@@ -393,6 +437,74 @@ def _ensure_optional_family_keys() -> None:
     updated = text[: open_brace + 1] + "\n" + "\n".join(blocks) + text[open_brace + 1 :]
     try:
         MODELS_CONFIG_PATH.write_text(updated, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _ensure_penalty_keys() -> None:
+    """Add the per-family penalty keys to an existing ``.models`` when absent.
+
+    The keys ship beside each family's output-token cap; an older file gets
+    them inserted after that anchor (or after ``*_MAX_TOKEN`` for the reasoner,
+    which has no output cap), falling back to the family's last existing key
+    when neither anchor is present. A family with NO keys at all is left alone
+    (the panel does not render it either). Idempotent; an unparseable file is
+    never touched.
+    """
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+        data = json5.loads(text)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    lines = text.splitlines(keepends=True)
+    changed = False
+    for prefix in _PENALTY_PREFIXES:
+        missing = [
+            key
+            for key in (f"{prefix}_FREQUENCY_PENALTY", f"{prefix}_PRESENCE_PENALTY")
+            if key not in data
+        ]
+        if not missing:
+            continue
+        anchor = (
+            f"{prefix}_MAX_OUTPUT_TOKEN"
+            if f"{prefix}_MAX_OUTPUT_TOKEN" in data
+            else f"{prefix}_MAX_TOKEN"
+            if f"{prefix}_MAX_TOKEN" in data
+            else ""
+        )
+        target = -1
+        if anchor:
+            for index, line in enumerate(lines):
+                match = _TEMPLATE_ASSIGN_RE.match(line)
+                if match and match.group(2) == anchor:
+                    target = index
+                    break
+        if target == -1:
+            # A partially hand-written family (provider/name only) still gets
+            # the pair, after its last line.
+            for index, line in enumerate(lines):
+                match = _TEMPLATE_ASSIGN_RE.match(line)
+                if match and match.group(2).startswith(f"{prefix}_"):
+                    target = index
+        if target == -1:
+            continue  # the family itself is absent — nothing to extend
+        line = lines[target]
+        indent = line[: len(line) - len(line.lstrip())]
+        stripped = line.rstrip("\r\n")
+        newline = line[len(stripped) :]
+        if not stripped.rstrip().endswith(","):
+            lines[target] = stripped.rstrip() + "," + (newline or "\n")
+        insert = [f'{indent}"{key}": "",' + (newline or "\n") for key in missing]
+        lines[target + 1 : target + 1] = insert
+        changed = True
+    if not changed:
+        return
+    try:
+        MODELS_CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
     except OSError:
         pass
 
