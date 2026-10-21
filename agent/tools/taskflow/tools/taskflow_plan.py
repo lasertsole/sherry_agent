@@ -10,6 +10,7 @@ with ``taskflow_update_steps`` and then starts it with ``taskflow_dispatch`` or
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from langchain_core.tools import tool
@@ -20,10 +21,12 @@ from config.features import TASKFLOW_INFRA
 
 from ..config import StepStatus
 from ..registry import store_sqlite
+from ..registry.store_sqlite import FlowExistsError
 from ._shared import (
     bind_flow_todo,
     compensate_flow_without_todo,
     default_state,
+    is_terminal,
     new_step,
     requester_session_key,
 )
@@ -128,14 +131,26 @@ async def taskflow_plan(
         return "Error: goal is required"
     flow_id = (flow_id or "").strip()
     if not flow_id:
-        flow_id = f"plan-{abs(hash(goal)) % 10**10}"
+        # Stable across processes (hash() is randomized per interpreter). The
+        # session id is part of the seed because flow_id is a GLOBAL primary key
+        # while ownership is per-session: two sessions planning the same goal
+        # must get different ids, or the second insert collides.
+        seed = f"{session_id}\x1f{goal}".encode()
+        flow_id = f"plan-{hashlib.sha256(seed).hexdigest()[:10]}"
     limit = max(1, min(int(max_steps or 8), PLAN_MAX_STEPS))
 
     existing = await store_sqlite.get_flow(flow_id, session_id)
     if existing is not None:
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: flow_id '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass another flow_id to plan new work"
+            )
         return (
-            f"Error: flow_id '{flow_id}' already exists "
-            f"(status={existing['status']}); pass another flow_id"
+            f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Inspect with taskflow_summary; dispatch with "
+            "taskflow_dispatch if it is still pending."
         )
 
     # Refuse BEFORE spending a planner call: the flow could not be created anyway.
@@ -178,7 +193,25 @@ async def taskflow_plan(
 
     state = default_state(goal, None, creator_session_key=requester_session_key(session_id))
     state["steps"] = steps
-    flow = await store_sqlite.create_flow(flow_id, state, session_id=session_id)
+    try:
+        flow = await store_sqlite.create_flow(flow_id, state, session_id=session_id)
+    except FlowExistsError:
+        # Race: another turn inserted the same stable id after our read. Treat
+        # it as the same idempotent answer rather than surfacing a raw conflict.
+        existing = await store_sqlite.get_flow(flow_id, session_id)
+        if existing is None:
+            return f"Error: flow_id '{flow_id}' already exists; pass another flow_id"
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: flow_id '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass another flow_id to plan new work"
+            )
+        return (
+            f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Inspect with taskflow_summary; dispatch with "
+            "taskflow_dispatch if it is still pending."
+        )
 
     # Same entry defense as taskflow_create: a planned flow must own a GC root
     # from birth. The goal is the natural todo text.

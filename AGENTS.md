@@ -1551,6 +1551,19 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_replan`).
+- TaskFlow dispatch is **serialized per flow** and planning is idempotent:
+  `_dispatch.flow_dispatch_lock(flow_id)` (process-local, keyed by loop + flow)
+  wraps the manual `taskflow_dispatch` read → validate → spawn → persist body
+  and the resume auto-dispatch wave, which re-checks each step is still `ready`
+  after acquiring it — two dispatchers cannot spawn the same step twice. A
+  multi-process deployment would need a DB lease. `taskflow_plan` generates
+  `plan-<sha256(session_id + goal)[:10]>` (stable across processes, session
+  scoped because `flow_id` is a global PK); repeating a goal/session returns
+  the existing non-terminal flow as an idempotent success, and a duplicate
+  non-terminal `taskflow_create` does the same (terminal flows still error).
+  A new signature-based tool-loop middleware was **not** added: 204 historical
+  tool calls showed zero consecutive same-name + same-args successful mutating
+  runs; `ToolGuardrails` remains the detector.
 - TaskFlow orphan collection is a **tri-color GC plus liveness** (v3), replacing
   the per-scenario fixes: every `taskflow_create`/`taskflow_plan` binds a
   flow-level `pending` todo (the GC root; `step_id` empty, so it stays active

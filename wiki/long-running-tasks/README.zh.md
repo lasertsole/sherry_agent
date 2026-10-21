@@ -30,6 +30,7 @@
 - [证据账本](gates/evidence-ledger/README.zh.md)
 - [并发 Lane](lanes/README.zh.md)
 - [三色孤儿回收](#-三色孤儿回收)
+- [派发串行化与幂等规划](#-dispatch-serialization--idempotent-planning)
 - [配置注册表](#-配置注册表)
 - [架构图](#-架构图)
 - [API 参考](#-api-参考)
@@ -69,19 +70,28 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_create` 与 `taskflow_plan` �
 
 来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_tri_color_gc.py`。
 
+## 🔒 Dispatch Serialization & Idempotent Planning
+
+- `taskflow_plan` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。
+- `taskflow_create` 对重复的**非终态** `flow_id` 返回幂等成功（revision + status）；终态 flow 或属于其他 session 的 id 仍返回错误。
+- 手动 `taskflow_dispatch` 与 `taskflow_resume` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
+- **Mutating 重复测量（2026-10-22）：** 225 个 checkpoint 线程、204 次工具调用——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——**没有出现**连续同工具 + 同参数且成功的 mutating 调用。因此没有新增 `ToolCallSignature` 中间件；`ToolGuardrails` 继续负责循环检测，只有遥测出现真实重复时才考虑增加 mutating 计数。
+
+来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`。
+
 ## ⚙️ 配置注册表
 
 所有可调项都放在 `config/features/` 下，它是一个**按对象划分的 `TypedDict` 包**——而不是单个庞大的模块。它分为三部分：
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **51** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
+| `config/features/agent_side/` | **52** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
 | `config/features/infra_side/` | **28** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **79 个 feature 对象**——Agent 侧 51 + 基础设施侧 28——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **80 个 feature 对象**——Agent 侧 52 + 基础设施侧 28——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -280,7 +290,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 79。** 配置注册表包含 79 个 feature 对象（Agent 侧 51 + 基础设施侧 28）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG` 和 `MODEL_DOWNLOADS`（其环境来源的默认值由专门的构建器测试覆盖）。
+- **注册表规模是 80。** 配置注册表包含 80 个 feature 对象（Agent 侧 52 + 基础设施侧 28）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG` 和 `MODEL_DOWNLOADS`（其环境来源的默认值由专门的构建器测试覆盖）。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。

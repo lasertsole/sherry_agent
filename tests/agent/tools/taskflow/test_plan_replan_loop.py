@@ -122,13 +122,55 @@ async def test_plan_drops_dependencies_on_unknown_steps(isolated_db, planner):
 
 
 @pytest.mark.asyncio
-async def test_plan_rejects_an_existing_flow_id(isolated_db, planner):
+async def test_plan_returns_an_existing_non_terminal_flow_idempotently(isolated_db, planner):
     planner([{"step_id": "step-1", "task": "x"}])
     await _seed_flow("flow-dup", [new_step("step-1", "existing")])
 
     out = await plan_mod.taskflow_plan.coroutine(goal="g", flow_id="flow-dup", session_id=_SESSION)
 
-    assert out.startswith("Error: flow_id 'flow-dup' already exists")
+    assert out.startswith("TaskFlow already planned (idempotent)"), out
+    assert "flow_id=flow-dup" in out
+    assert "nothing new was created" in out
+
+
+@pytest.mark.asyncio
+async def test_plan_generated_flow_id_is_stable_and_idempotent(isolated_db, planner):
+    llm = planner([{"step_id": "step-1", "task": "x"}])
+
+    first = await plan_mod.taskflow_plan.coroutine(goal="ship stable", session_id=_SESSION)
+    assert first.startswith("TaskFlow planned"), first
+    flow_id = first.split("flow_id=", 1)[1].split(",", 1)[0]
+
+    second = await plan_mod.taskflow_plan.coroutine(goal="ship stable", session_id=_SESSION)
+
+    assert second.startswith("TaskFlow already planned (idempotent)"), second
+    assert f"flow_id={flow_id}" in second
+    # The duplicate short-circuits BEFORE a second planner call.
+    assert len(llm.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_plan_generated_flow_ids_are_session_scoped(isolated_db, planner):
+    planner([{"step_id": "step-1", "task": "x"}])
+
+    first = await plan_mod.taskflow_plan.coroutine(goal="same goal", session_id="sess-a")
+    second = await plan_mod.taskflow_plan.coroutine(goal="same goal", session_id="sess-b")
+
+    id_a = first.split("flow_id=", 1)[1].split(",", 1)[0]
+    id_b = second.split("flow_id=", 1)[1].split(",", 1)[0]
+    assert id_a != id_b
+    assert await store_sqlite.get_flow(id_a, "sess-a") is not None
+    assert await store_sqlite.get_flow(id_b, "sess-b") is not None
+
+
+@pytest.mark.asyncio
+async def test_plan_terminal_flow_id_still_errors(isolated_db, planner):
+    await _seed_flow("flow-done", [new_step("step-1", "x")])
+    await store_sqlite.update_flow("flow-done", 1, session_id=_SESSION, status="done")
+
+    out = await plan_mod.taskflow_plan.coroutine(goal="g", flow_id="flow-done", session_id=_SESSION)
+
+    assert out.startswith("Error: flow_id 'flow-done' already exists and is terminal"), out
 
 
 @pytest.mark.asyncio

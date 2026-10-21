@@ -13,6 +13,7 @@ from ._shared import (
     bind_flow_todo,
     compensate_flow_without_todo,
     default_state,
+    is_terminal,
     requester_session_key,
 )
 from agent.tools.pub_base import SessionId
@@ -104,10 +105,17 @@ async def taskflow_create(
         existing = await store_sqlite.get_flow(flow_id, session_id)
         if existing is None:
             return f"Error: TaskFlow '{flow_id}' already exists; choose a different flow_id."
-        revision = existing["expected_revision"]
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: TaskFlow '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass a different flow_id, or create "
+                f"the successor with resumed_from='{flow_id}'."
+            )
         return (
-            f"Error: TaskFlow '{flow_id}' already exists (revision={revision}). "
-            "Re-read it with taskflow_summary."
+            f"TaskFlow already exists (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Re-read it with taskflow_summary, or continue "
+            "it with taskflow_resume."
         )
 
     # Entry defense: the flow's GC root. The flow and todo live in separate

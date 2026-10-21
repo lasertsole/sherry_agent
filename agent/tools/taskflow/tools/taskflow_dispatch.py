@@ -64,7 +64,31 @@ async def taskflow_dispatch(
     A step carrying a retry_policy that was already dispatched once consumes
     one retry from its budget (retry_count is incremented); once the budget is
     exhausted the step is rejected before any spawn.
+
+    The whole read → validate → spawn → persist sequence runs under the
+    flow-local dispatch lock, so a concurrent manual dispatch (or a resume's
+    auto-dispatch wave) sees the winner's ``dispatched`` status and refuses to
+    spawn the same step twice.
     """
+    flow_id = (flow_id or "").strip()
+    if not flow_id:
+        return "Error: flow_id is required"
+    async with _dispatch.flow_dispatch_lock(flow_id):
+        return await _taskflow_dispatch_locked(
+            flow_id=flow_id,
+            step_ids=step_ids,
+            expected_revision=expected_revision,
+            session_id=session_id,
+        )
+
+
+async def _taskflow_dispatch_locked(
+    flow_id: str,
+    step_ids: list[str],
+    expected_revision: int | None = None,
+    session_id: SessionId = "",
+) -> str:
+    """Body of the dispatch tool; the caller already holds the flow lock."""
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return "Error: flow_id is required"

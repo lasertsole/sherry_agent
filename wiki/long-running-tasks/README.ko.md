@@ -30,6 +30,7 @@
 - [증거 원장](gates/evidence-ledger/README.ko.md)
 - [동시성 레인](lanes/README.ko.md)
 - [삼색 고아 GC](#-삼색-고아-gc)
+- [디스패치 직렬화와 멱등 플래닝](#-dispatch-serialization--idempotent-planning)
 - [설정 레지스트리](#-설정-레지스트리)
 - [아키텍처 다이어그램](#-아키텍처-다이어그램)
 - [API 레퍼런스](#-api-레퍼런스)
@@ -69,19 +70,28 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 
 
 출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
 
+## 🔒 Dispatch Serialization & Idempotent Planning
+
+- `taskflow_plan`이 자동 생성하는 id가 이제 **안정적**입니다: `plan-<sha256(session_id + goal)[:10]>`. 같은 세션에서 같은 goal을 다시 계획하면 기존 **비터미널** 플로우를 멱등 성공으로 반환하고 두 번째 플로우를 만들지 않습니다. 터미널 플로우는 여전히 오류입니다(다른 id 또는 후속 플로우 사용). `flow_id`는 전역 기본 키이고 소유권은 세션 단위이므로 seed에 session id를 포함합니다.
+- `taskflow_create`는 중복된 **비터미널** `flow_id`를 멱등 성공(revision + status)으로 반환합니다. 터미널 플로우나 다른 세션이 소유한 id는 계속 오류입니다.
+- 수동 `taskflow_dispatch`와 `taskflow_resume`의 auto-dispatch wave는 `_dispatch.flow_dispatch_lock(flow_id)`를 공유합니다: read → validate → spawn → persist 전체를 플로우 단위로 직렬화하고, wave는 락 획득 후 각 step이 여전히 `ready`인지 다시 확인합니다. 락은 **프로세스 로컬**입니다(단일 백엔드 프로세스, TaskFlow는 main-only). 다중 프로세스 배포에는 DB lease가 필요합니다.
+- **mutating 반복 측정(2026-10-22):** 225개 checkpoint 스레드, 204개 도구 호출 — 122 `ast_grep_search`, 34 `terminal`, 23 `execute_code`, 10 `explore`, 5 `ast_grep_rewrite`, 5 `question`, 3 `write_file`, 1 `python_repl`, 1 `sessions_spawn` — 연속 동일 이름 + 동일 인자의 성공 mutating 호출은 **0건**이었습니다. 따라서 `ToolCallSignature` 미들웨어를 추가하지 않았고, `ToolGuardrails`가 계속 루프 감지를 담당합니다. 실제 반복이 텔레메트리로 확인될 때만 mutating 카운터를 재검토합니다.
+
+출처: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`; 테스트: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`.
+
 ## ⚙️ 설정 레지스트리
 
 모든 조정 값은 `config/features/` 아래에 있으며, 이는 **객체별 `TypedDict` 패키지**입니다 — 단일 거대 모듈이 아닙니다. 세 부분으로 나뉩니다:
 
 | 부분 | 내용 |
 | :--- | :--- |
-| `config/features/agent_side/` | **51**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
+| `config/features/agent_side/` | **52**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
 | `config/features/infra_side/` | **28**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드) |
 | `config/features/_env.py` | 유일한 공유 환경 헬퍼 |
 
 각 모듈은 `class XxxConfig(TypedDict)`와 모듈 수준 상수 `XXX: XxxConfig = {…}`를 정의합니다. 환경 인식 모듈은 빌더 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`를 정의하고 `env or os.environ`을 읽어 임포트 시 상수를 구체화합니다. 환경 헬퍼는 `_env_int(name, default, env)`(`config/features/_env.py:9`)이며, `1/true/yes/on`과 `0/false/no/off/""`를 받아들이고 예외를 던지지 않습니다.
 
-레지스트리는 현재 **79개 feature 객체**를 보유합니다 — 에이전트 측 51 + 인프라 측 28 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
+레지스트리는 현재 **80개 feature 객체**를 보유합니다 — 에이전트 측 52 + 인프라 측 28 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
 
 이 문서와 가장 관련 있는 상수:
 
@@ -280,7 +290,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **압축 전 메모리 플러시는 잠재 상태입니다.** `Summarization`의 프로덕션 인스턴스(메인/서브)는 `memory_store` / `llm_factory`를 전달하지 않아, 호출 지점이 배선할 때까지 플러시가 실행되지 않습니다. 코드는 구현·테스트되었지만 현재 비활성입니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
-- **레지스트리 규모는 79입니다.** 설정 레지스트리는 79개 feature 객체(에이전트 측 51 + 인프라 측 28)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`를 빠뜨립니다(환경에서 오는 기본값은 전용 빌더 테스트가 커버합니다).
+- **레지스트리 규모는 80입니다.** 설정 레지스트리는 80개 feature 객체(에이전트 측 52 + 인프라 측 28)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`를 빠뜨립니다(환경에서 오는 기본값은 전용 빌더 테스트가 커버합니다).
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_dispatch`와 `taskflow_wait_all`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
 - **TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_resume`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.

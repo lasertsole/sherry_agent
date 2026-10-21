@@ -4,7 +4,45 @@ The subagent runtime is imported lazily inside ``dispatch_child`` so this
 module stays importable without the spawn pipeline (the family's standalone
 load contract). Tools MUST call it module-qualified (``_dispatch.dispatch_child``)
 so tests can substitute the seam without touching the real pipeline.
+
+``flow_dispatch_lock`` is the process-local serialization point for one flow's
+dispatch critical section: the manual ``taskflow_dispatch`` and the resume's
+auto-dispatch wave both enter it BEFORE reading the flow, so two dispatchers
+cannot both observe a step as ``ready`` and spawn it. The key includes the
+running loop id, so tests that create a fresh loop per test never share a lock
+across loops; the weak values let an idle flow's lock disappear.
 """
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import weakref
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+_DISPATCH_LOCKS: weakref.WeakValueDictionary[tuple[int, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+_DISPATCH_LOCKS_GUARD = threading.Lock()
+
+
+@asynccontextmanager
+async def flow_dispatch_lock(flow_id: str) -> AsyncIterator[None]:
+    """Serialize dispatch work for ``flow_id`` on the current event loop.
+
+    Process-local by design: a single backend process owns a flow's dispatches,
+    and TaskFlow tools are main-only. A multi-process deployment would need a
+    DB-backed lease, not a wider in-process lock.
+    """
+    key = (id(asyncio.get_running_loop()), flow_id)
+    with _DISPATCH_LOCKS_GUARD:
+        lock = _DISPATCH_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _DISPATCH_LOCKS[key] = lock
+    async with lock:
+        yield
 
 
 async def dispatch_child(

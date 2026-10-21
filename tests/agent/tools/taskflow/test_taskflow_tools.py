@@ -389,15 +389,34 @@ def test_family_loads_without_p0_1_wiring():
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_duplicate(isolated_db: Path):
+async def test_create_returns_an_existing_non_terminal_flow_idempotently(isolated_db: Path):
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(
+    first = await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="first"
     )
     out = await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="second"
     )
-    assert "already exists" in out
+    assert first.startswith("TaskFlow created"), first
+    assert out.startswith("TaskFlow already exists (idempotent)"), out
+    assert "flow_id=flow-1" in out
+    assert "nothing new was created" in out
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_terminal_flow_still_errors(isolated_db: Path):
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-done", description="first"
+    )
+    await store_sqlite.update_flow("flow-done", 1, session_id=_SESSION, status="done")
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-done", description="second"
+    )
+
+    assert out.startswith("Error: TaskFlow 'flow-done' already exists and is terminal"), out
+    assert "resumed_from" in out
 
 
 @pytest.mark.asyncio
