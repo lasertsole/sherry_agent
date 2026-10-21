@@ -1529,6 +1529,27 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_replan`).
+- TaskFlow orphan collection is a **tri-color GC plus liveness** (v3), replacing
+  the per-scenario fixes: every `taskflow_create`/`taskflow_plan` binds a
+  flow-level `pending` todo (the GC root; `step_id` empty, so it stays active
+  until the whole flow is terminal) — a missing `todo_content` falls back to the
+  description/flow id rather than creating an unrooted flow. The sweeper marks
+  active-todo `flow_id`s as the reachable/black set and fails non-terminal,
+  non-superseded flows with no root and an `updated_at` older than
+  `TASKFLOW_INFRA["tri_color_grace_seconds"]` (300 s — the grace covers the
+  create/bind race between the two SQLite files) as `orphan_unreferenced`.
+  Liveness then handles stuck-but-referenced flows: a child-session flow with
+  no live run is collected after the short grace, a main-session flow is
+  collected after `stale_action_hours` (12 h) of inactivity
+  (`session_dead` when no socket/turn/run exists, `stale_swept` when the
+  session is live), a live child vetoes, and active todos referencing a
+  failed/cancelled flow are cancelled. Both passes run at boot (before the
+  first 60 s tick) and every tick; `task_flows` gains additive `updated_at`
+  (bumped by every mutation) and `terminal_reason` columns. A superseded
+  predecessor becomes `cancelled`/`superseded`; `taskflow_finish` has three
+  independent budgets (nudge / consecutive failures / protocol violations)
+  that auto-fail and record detached children; terminal rows are pruned to
+  `max_total_flows_per_session` (200) on a debounced post-mutation pass.
 - a dispatch wave spawns CONCURRENTLY, bounded by
   `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the historical
   sequential behaviour) through `asyncio.gather` + a semaphore — the three

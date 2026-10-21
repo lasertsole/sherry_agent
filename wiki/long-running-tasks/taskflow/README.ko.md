@@ -293,7 +293,7 @@ async def taskflow_update_steps(
 async def taskflow_list(status_filter: str = "active") -> str
 ```
 
-이 세션의 플로우에 대한 읽기 전용 보드: `"active"`(running + waiting), `"all"`(종단 상태 포함), 또는 정확한 상태 이름. 모든 읽기는 소유 `session_id`로 SQL 필터링되며, 렌더링된 표는 설명을 40자로 제한하고 플로우의 활동 타임스탬프에서 `updated_at`을 파생합니다.
+이 세션의 플로우에 대한 읽기 전용 보드: `"active"`(running + waiting), `"all"`(종단 상태 포함), 또는 정확한 상태 이름. 모든 읽기는 소유 `session_id`로 SQL 필터링되며, 렌더링된 표는 설명을 40자로 제한하고 flow 행의 `updated_at`을 읽습니다(값이 없는 구행은 기존 활동 스탬프로 폴백).
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

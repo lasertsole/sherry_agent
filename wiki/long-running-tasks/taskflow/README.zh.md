@@ -293,7 +293,7 @@ async def taskflow_update_steps(
 async def taskflow_list(status_filter: str = "active") -> str
 ```
 
-本会话流的只读面板：`"active"`（running + waiting）、`"all"`（含终态）或精确状态名。每次读取都在 SQL 中按所属 `session_id` 过滤；渲染表格将描述截断为 40 字符，并从流的活动时间戳推导 `updated_at`。
+本会话流的只读面板：`"active"`（running + waiting）、`"all"`（含终态）或精确状态名。每次读取都在 SQL 中按所属 `session_id` 过滤；渲染表格将描述截断为 40 字符，并直接从 flow 行读取 `updated_at`（没有该列值的旧行回退到旧活动时间戳）。
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

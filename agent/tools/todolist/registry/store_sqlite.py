@@ -197,6 +197,8 @@ async def replace_all(session_id: str, todos: list[dict]) -> None:
     """Replace the session's entire todo list: DELETE + INSERT in one transaction.
 
     ``todos`` is the full list, not a delta. An empty list clears the session.
+    The DELETE and every INSERT commit together, so the tri-color sweep's mark
+    query can never observe the empty window between them.
     """
     session_id = (session_id or "").strip()
     if not session_id:
@@ -234,6 +236,60 @@ async def delete_todos_by_session(session_id: str) -> int:
     await ensure_db()
     async with _connect() as db:
         cursor = await db.execute(f"DELETE FROM {TABLE_NAME} WHERE session_id = ?", (session_id,))
+        await db.commit()
+        return int(cursor.rowcount or 0)
+
+
+async def get_active_flow_ids(session_id: str) -> set[str]:
+    """Flow ids referenced by this session's non-terminal todos (the GC roots)."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT DISTINCT flow_id FROM {TABLE_NAME} "
+            "WHERE session_id = ? AND status NOT IN (?, ?) "
+            "AND flow_id IS NOT NULL AND flow_id != ''",
+            (session_id, "completed", "cancelled"),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
+async def append_todo(session_id: str, todo: dict) -> None:
+    """Append one todo at the next free position (a single INSERT, no replace).
+
+    Used by ``taskflow_create`` to bind a new flow to its GC root without
+    clobbering a concurrent ``todowrite`` replacement.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id must be a non-empty string")
+    row = list(_normalize_rows(session_id, [todo])[0])
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT COALESCE(MAX(position), -1) + 1 FROM {TABLE_NAME} WHERE session_id = ?",
+            (session_id,),
+        ) as cursor:
+            result = await cursor.fetchone()
+        row[4] = int(result[0]) if result else 0
+        await db.execute(_INSERT_SQL, tuple(row))
+        await db.commit()
+
+
+async def cancel_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
+    """Cancel active todos that reference one of ``flow_ids``."""
+    ids = [flow_id for flow_id in flow_ids if flow_id]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET status = ? "
+            "WHERE session_id = ? AND status NOT IN (?, ?) "
+            f"AND flow_id IN ({placeholders})",
+            ("cancelled", session_id, "completed", "cancelled", *ids),
+        )
         await db.commit()
         return int(cursor.rowcount or 0)
 

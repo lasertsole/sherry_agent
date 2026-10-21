@@ -39,6 +39,11 @@ from .registry import store_sqlite as store
 # without the taskflow package.
 _TASKFLOW_STEP_DONE = "done"
 
+# TaskFlow terminal statuses: a FLOW-level todo (flow_id with no step_id) is a
+# GC root for the whole flow, so it may only be completed once the flow itself
+# is terminal. A step-level link keeps the existing per-step barrier.
+_TASKFLOW_TERMINAL = frozenset({"done", "failed", "cancelled"})
+
 # Session state key holding the plan file pointer (session-scoped
 # ``workspace/sessions/<id>/plans/*.md``) that the prompt builder reads to
 # locate the plan's knowledge summary.
@@ -163,6 +168,19 @@ async def _assert_transition_allowed(todo: dict, session_id: str) -> None:
                 f"(flow {flow_id}) is '{status}'. Call taskflow_wait_all then "
                 "taskflow_resume to inject the result before marking completed."
             )
+    elif flow_id:
+        # Flow-level root: the whole flow must be terminal first. This is what
+        # keeps a multi-step flow alive while an early step is done.
+        flow = await _load_flow(str(flow_id), session_id)
+        if flow is None:
+            # The flow was pruned/removed; there is no running work left to
+            # gate. Refusing here would strand the todo forever.
+            return
+        if str(flow.get("status") or "") not in _TASKFLOW_TERMINAL:
+            raise TodoStoreError(
+                f"Cannot mark todo completed: TaskFlow flow '{flow_id}' is "
+                f"'{flow.get('status')}'. Finish or cancel the flow first."
+            )
 
 
 async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
@@ -218,14 +236,60 @@ class TodoService:
         return latest
 
     @staticmethod
+    async def add_todo(
+        session_id: str,
+        *,
+        content: str,
+        flow_id: str | None = None,
+        step_id: str | None = None,
+        category: str | None = None,
+    ) -> list[dict]:
+        """Append one pending todo (used by the TaskFlow entry binding).
+
+        Unlike ``update_todos`` this is a single INSERT, so it cannot clobber a
+        concurrent full replacement. The category vocabulary is default-
+        downgraded like every other write.
+        """
+        item = _validate_todos(
+            [
+                {
+                    "content": content,
+                    "status": "pending",
+                    "category": category or DEFAULT_CATEGORY,
+                    "flow_id": flow_id,
+                    "step_id": step_id,
+                }
+            ]
+        )[0]
+        await store.append_todo(session_id, item)
+        latest = await store.get_todos(session_id)
+        await _push_todo_update(session_id, latest)
+        return latest
+
+    @staticmethod
     async def get_todos(session_id: str) -> list[dict]:
         """Read the session's todos from the store."""
         return await store.get_todos(session_id)
+
+    @staticmethod
+    async def get_active_flow_ids(session_id: str) -> set[str]:
+        """The session's GC roots: flow ids referenced by active todos."""
+        return await store.get_active_flow_ids(session_id)
+
+    @staticmethod
+    async def cancel_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
+        """Cancel active todos whose referenced flows are already terminal-failed."""
+        cancelled = await store.cancel_todos_for_flows(session_id, flow_ids)
+        if cancelled:
+            latest = await store.get_todos(session_id)
+            await _push_todo_update(session_id, latest)
+        return cancelled
 
 
 __all__ = [
     "TodoService",
     "TodoStoreError",
+    "_TASKFLOW_TERMINAL",
     "_assert_transition_allowed",
     "_push_todo_update",
     "_read_taskflow_step_status",

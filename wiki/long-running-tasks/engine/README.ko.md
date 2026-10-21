@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-스키마에는 **`updated_at` 컬럼이 없습니다**(마이그레이션 없음). 따라서 `_last_activity_ts()`(`taskflow_list.py:28`)는 "마지막 업데이트"를 flow 어딘가에 영속된 활동 스탬프의 최댓값으로 도출합니다 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 이를 UTC 타임스탬프로 렌더링합니다(스탬프가 전혀 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
+스키마에는 이제 `updated_at` REAL 컬럼이 있습니다(증분 마이그레이션; `update_flow`와 `create_flow`가 매번 기록). `_last_activity_ts()`는 이 시계를 먼저 읽고, 없으면 기존 활동 스탬프의 최댓값 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 으로 폴백해 UTC 타임스탬프로 렌더링합니다(둘 다 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
 
 ### 세션 소유의 세 가지 계획 도구 패밀리
 

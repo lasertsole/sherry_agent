@@ -352,7 +352,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-The schema has **no `updated_at` column** (migration-free). `_last_activity_ts()` (`taskflow_list.py:28`) therefore derives "last updated" as the maximum of the activity stamps persisted anywhere on the flow — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has no stamp at all). An empty registry returns `No task flows found`.
+The schema now carries an `updated_at` REAL column (additive migration; every `update_flow` and `create_flow` stamps it). `_last_activity_ts()` reads that clock first and falls back to the maximum of the legacy activity stamps — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has neither). An empty registry returns `No task flows found`.
 
 ### The three session-owned planning families
 

@@ -389,11 +389,17 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         from agent.tools.taskflow.tools.taskflow_resume import taskflow_resume
 
         result_text = (run.completion.result_text or "").strip()
+        # Resume is scoped to the flow's OWNER session. Passing the child key
+        # here made the session-scoped lookup miss every real flow, so the
+        # auto-resume silently failed and the flow waited for a manual turn.
+        owner_session_id = str(flow.get("session_id") or "").strip()
+        if not owner_session_id:
+            return False
         answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
             flow_id=flow_id,
             child_session_key=run.child_session_key,
             result=result_text,
-            session_id=run.child_session_key,
+            session_id=owner_session_id,
         )
         first_line = answer.splitlines()[0] if answer else ""
         if isinstance(answer, str) and answer.startswith("Error:"):

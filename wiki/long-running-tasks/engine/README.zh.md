@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-表结构**没有 `updated_at` 列**（无需迁移）。因此 `_last_activity_ts()`（`taskflow_list.py:28`）把“最后更新”推导为 flow 上任何位置持久化的活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（flow 完全没有时间戳时为 `-`）。空注册表返回 `No task flows found`。
+表结构现在有 `updated_at` REAL 列（增量迁移；每次 `update_flow` 与 `create_flow` 都会写入）。`_last_activity_ts()` 先读该时钟，缺失时回退到旧活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（两者都没有时为 `-`）。空注册表返回 `No task flows found`。
 
 ### 三个会话所有的规划工具族
 

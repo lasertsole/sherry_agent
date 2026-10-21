@@ -29,6 +29,7 @@
 - [判断门](gates/README.zh.md)
 - [证据账本](gates/evidence-ledger/README.zh.md)
 - [并发 Lane](lanes/README.zh.md)
+- [三色孤儿回收](#-三色孤儿回收)
 - [配置注册表](#-配置注册表)
 - [架构图](#-架构图)
 - [API 参考](#-api-参考)
@@ -37,7 +38,7 @@
 
 ## 🎯 概览
 
-长时任务栈让主 Agent 能把一个多回合的任务分解为一个**持久化 flow**，其步骤之间可以互相依赖，把每个就绪步骤派发给子 Agent 执行，并在进程重启后继续存在。共有六个子系统协作：
+长时任务栈让主 Agent 能把一个多回合的任务分解为一个**持久化 flow**，其步骤之间可以互相依赖，把每个就绪步骤派发给子 Agent 执行，并在进程重启后继续存在。共有七个子系统协作：
 
 | # | 子系统 | 入口 | 持久化位置 |
 | :- | :--- | :--- | :--- |
@@ -47,8 +48,26 @@
 | 4 | **空闲检测** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` 中的过期标记 |
 | 5 | **压缩前落盘** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
 | 6 | **连续性与自动恢复** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 提示词区块 |
+| 7 | **三色孤儿回收** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 活跃 `todos` |
 
 贯穿始终的设计契约是**错误即文本**：工具从不把业务错误抛给模型，而是返回以 `Error:` 开头的人类可读字符串。每个后台钩子都是**失败开放（fail-open）**的——注册表不可用或 sweeper 崩溃只会退化为“没有长时任务上下文”，绝不会破坏一个回合。
+
+## ♻️ 三色孤儿回收
+
+TaskFlow 靠**活跃 todo 根**保活。`taskflow_create` 与 `taskflow_plan` 在创建时绑定一条流级 `pending` todo（一行，`step_id` 为空）；该 todo 只能在 flow 终态后才能完成，`todowrite` 必须把它带上。sweeper 在启动时和每个 tick 跑两个互补的扫描：
+
+| 阶段 | 条件 | 动作 |
+| :--- | :--- | :--- |
+| 三色 mark | todo 状态为 `pending`/`in_progress` 且带 `flow_id` | 该 flow 标黑（可达） |
+| 三色 sweep | 非终态、未被 supersede、无活跃根，且 `updated_at` 早于 `tri_color_grace_seconds`（300 秒） | `failed` / `orphan_unreferenced` |
+| 子会话 liveness | session key 为 `agent:*:subagent:*` 或 `agent:*:swarm:*`，没有活 run，且超过同一 grace | `failed` / `session_dead` |
+| 流级 liveness | 主会话 `stale_action_hours`（12 小时）无活动，且无活子代理 | `failed` / `stale_swept` 或 `session_dead` |
+| 僵尸 todo | 活跃 todo 引用已 failed/cancelled 的 flow | todo 标 `cancelled` |
+| prune | 终态/superseded 行超过 `max_total_flows_per_session`（200） | 删除最旧的 |
+
+活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_finish` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败并记录 detached 子代理。`todowrite` 全量替换是一个事务，mark 查询看不到 DELETE 与 INSERT 之间的空窗。
+
+来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_tri_color_gc.py`。
 
 ## ⚙️ 配置注册表
 

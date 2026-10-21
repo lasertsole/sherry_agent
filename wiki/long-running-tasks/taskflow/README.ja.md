@@ -293,7 +293,7 @@ async def taskflow_update_steps(
 async def taskflow_list(status_filter: str = "active") -> str
 ```
 
-このセッションのフローの読み取り専用ボード：`"active"`（running + waiting）、`"all"`（終端ステータスを含む）、または正確なステータス名。すべての読み取りは所有する `session_id` で SQL フィルタされ、レンダリング表は説明を 40 文字に制限し、フローのアクティビティタイムスタンプから `updated_at` を導出します。
+このセッションのフローの読み取り専用ボード：`"active"`（running + waiting）、`"all"`（終端ステータスを含む）、または正確なステータス名。すべての読み取りは所有する `session_id` で SQL フィルタされ、レンダリング表は説明を 40 文字に制限し、flow 行の `updated_at` を読みます（値の無い旧行は従来の活動スタンプへフォールバック）。
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

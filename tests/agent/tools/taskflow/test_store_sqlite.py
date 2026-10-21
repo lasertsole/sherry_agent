@@ -539,6 +539,8 @@ async def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "session_id": "TEXT",
         "resumed_from": "TEXT",
         "superseded_by": "TEXT",
+        "updated_at": "REAL",
+        "terminal_reason": "TEXT",
     }
 
 

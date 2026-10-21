@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-スキーマに **`updated_at` 列はありません**（移行不要）。そのため `_last_activity_ts()`（`taskflow_list.py:28`）は「最終更新」を、flow 上のどこかに永続化された活動スタンプの最大値として導出します——`wait.set_at`、各 `step.dispatched_at`、各 `result.injected_at`——これを UTC タイムスタンプとして描画します（スタンプが全く無い flow は `-`）。空のレジストリは `No task flows found` を返します。
+スキーマは `updated_at` REAL 列を持つようになりました（増分移行。`update_flow` と `create_flow` が毎回刻みます）。`_last_activity_ts()` はこの時計を優先し、無ければ従来の活動スタンプの最大値——`wait.set_at`、各 `step.dispatched_at`、各 `result.injected_at`——にフォールバックし、UTC タイムスタンプとして描画します（どちらも無い flow は `-`）。空のレジストリは `No task flows found` を返します。
 
 ### セッション所有の 3 つの計画ツールファミリ
 

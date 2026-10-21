@@ -1,7 +1,7 @@
 # 计划：taskflow 孤儿流清理——三色标记法统一 GC + liveness 补充
 
 - 建档日期：2026-10-21
-- 状态：方案设计（v3，三色标记统一 GC 替代 v2 的 per-scenario 修复），未开工
+- 状态：**已实现（2026-10-21）**。落地时的安全调整：入口 todo 是**流级根**（无 `step_id`，flow 终态前不可完成；`todo_content` 缺省回退 description/flow id，避免旧调用方直接失败）；三色增加 `tri_color_grace_seconds=300` 覆盖跨 SQLite 文件的创建/绑定竞态；session 级 liveness 只回收**已过 inactivity 阈值**的 flow（子代理 session 用短 grace），不会在启动时因没有 socket 批量误杀；live child 同时否决三色与 liveness；prune 采用 200 行上限，未加 hard cap。
 - 来源：审计发现（孤儿 taskflow 7 种产生路径）+ JVM 三色标记法类比 + 跨项目调研（hermes/openclaw/ZCode）
 - 严重性：高（生产环境 `taskflow_registry.db` 无界增长 + 子代理死后残留 + 跨 store 不一致）
 - **本计划替代** `TODO/计划_taskflow孤儿流清理与防御性兜底.md`（v2）——v2 的 6 个 per-scenario 修复被三色标记统一机制替代，保留 liveness 补充层

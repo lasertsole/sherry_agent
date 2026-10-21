@@ -29,6 +29,7 @@
 - [판정 게이트](gates/README.ko.md)
 - [증거 원장](gates/evidence-ledger/README.ko.md)
 - [동시성 레인](lanes/README.ko.md)
+- [삼색 고아 GC](#-삼색-고아-gc)
 - [설정 레지스트리](#-설정-레지스트리)
 - [아키텍처 다이어그램](#-아키텍처-다이어그램)
 - [API 레퍼런스](#-api-레퍼런스)
@@ -37,7 +38,7 @@
 
 ## 🎯 개요
 
-장시간 실행 작업 스택은 메인 에이전트가 멀티턴 작업을 **영속 flow**로 분해하고, 단계들이 서로 의존할 수 있게 하며, 준비된 각 단계를 자식 서브에이전트로 디스패치하고, 프로세스 재시작을 견디게 합니다. 여섯 개의 하위 시스템이 협력합니다:
+장시간 실행 작업 스택은 메인 에이전트가 멀티턴 작업을 **영속 flow**로 분해하고, 단계들이 서로 의존할 수 있게 하며, 준비된 각 단계를 자식 서브에이전트로 디스패치하고, 프로세스 재시작을 견디게 합니다. 일곱 개의 하위 시스템이 협력합니다:
 
 | # | 하위 시스템 | 진입점 | 영속 위치 |
 | :- | :--- | :--- | :--- |
@@ -47,8 +48,26 @@
 | 4 | **유휴 감지** | sweeper `_scan_stale_waiting_taskflows` | `wait_json`의 오래된 마커 |
 | 5 | **압축 전 플러시** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
 | 6 | **연속성 / 자동 재개** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 프롬프트 블록 |
+| 7 | **삼색 고아 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 활성 `todos` |
 
 전체를 관통하는 설계 계약은 **오류를 텍스트로 반환**하는 것입니다: 도구는 비즈니스 오류를 모델에 던지지 않고 `Error:`로 시작하는 사람이 읽을 수 있는 문자열을 반환합니다. 모든 백그라운드 훅은 **페일오픈(fail-open)**입니다 — 레지스트리를 쓸 수 없거나 sweeper가 죽어도 "장시간 작업 컨텍스트 없음"으로 퇴화할 뿐, 턴을 깨뜨리지 않습니다.
+
+## ♻️ 삼색 고아 GC
+
+TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 `taskflow_plan`은 생성 시 플로우 수준 `pending` todo를 한 행 바인딩하며(`step_id` 없음), 이 todo는 플로우가 터미널이 된 뒤에만 완료할 수 있습니다. `todowrite`는 이를 이어서 포함해야 합니다. sweeper는 부팅 시와 매 tick마다 두 개의 보완 패스를 실행합니다:
+
+| 패스 | 조건 | 동작 |
+| :--- | :--- | :--- |
+| 삼색 mark | todo 상태가 `pending`/`in_progress`이고 `flow_id`가 있음 | 해당 플로우를 검정(도달 가능)으로 표시 |
+| 삼색 sweep | 비터미널·supersede되지 않음·활성 루트 없음, `updated_at`이 `tri_color_grace_seconds`(300초)보다 오래됨 | `failed` / `orphan_unreferenced` |
+| 자식 세션 liveness | session key가 `agent:*:subagent:*` 또는 `agent:*:swarm:*`, 라이브 run 없음, 같은 grace 초과 | `failed` / `session_dead` |
+| 플로우 liveness | 메인 세션이 `stale_action_hours`(12시간) 무활동, 라이브 자식 없음 | `failed` / `stale_swept` 또는 `session_dead` |
+| 좀비 todo | 활성 todo가 failed/cancelled 플로우를 참조 | todo를 `cancelled` |
+| prune | 터미널/superseded 행이 `max_total_flows_per_session`(200) 초과 | 가장 오래된 행 삭제 |
+
+라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_finish`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록합니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 mark 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
+
+출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
 
 ## ⚙️ 설정 레지스트리
 

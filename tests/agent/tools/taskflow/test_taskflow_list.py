@@ -16,6 +16,7 @@ formatter and the sync query are exercised in isolation.
 """
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -192,6 +193,19 @@ async def test_list_renders_updated_at_and_dash_when_absent(isolated_db: Path):
         session_id=_SESSION,
     )
     await store_sqlite.create_flow("flow-bare", _state("no timestamps"), session_id=_SESSION)
+    # The activity clock is now a column. Pin the stamped row to its state
+    # timestamp and make the bare row genuinely clock-less, so this test still
+    # pins both the stamp choice and the "-" fallback. Finish the sync schema
+    # init FIRST, or its one-time NULL backfill would immediately refill the
+    # bare row.
+    store_sqlite._ensure_tables_sync()
+    conn = sqlite3.connect(isolated_db)
+    try:
+        conn.execute("UPDATE task_flows SET updated_at = 2000.0 WHERE flow_id = 'flow-stamped'")
+        conn.execute("UPDATE task_flows SET updated_at = NULL WHERE flow_id = 'flow-bare'")
+        conn.commit()
+    finally:
+        conn.close()
 
     out = await taskflow_list.coroutine(
         session_id=_SESSION,

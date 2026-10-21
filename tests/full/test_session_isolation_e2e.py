@@ -136,6 +136,16 @@ def flow_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(flow_store, "_init_loop", None)
     monkeypatch.setattr(flow_store, "_init_lock", asyncio.Lock())
     monkeypatch.setattr(flow_store, "_sync_tables_ready", False)
+
+    # taskflow_create binds a flow-level todo as its GC root; isolate the todo
+    # store too or this e2e would write into the repository's real todos.db.
+    todos_dir = tmp_path / "todos"
+    monkeypatch.setattr(todo_store, "_DB_DIR", todos_dir)
+    monkeypatch.setattr(todo_store, "_DB_PATH", todos_dir / "todos.db")
+    monkeypatch.setattr(todo_store, "_initialized", False)
+    monkeypatch.setattr(todo_store, "_init_loop", None)
+    monkeypatch.setattr(todo_store, "_init_lock", asyncio.Lock())
+    monkeypatch.setattr(todo_store, "_sync_tables_ready", False)
     return db_dir
 
 

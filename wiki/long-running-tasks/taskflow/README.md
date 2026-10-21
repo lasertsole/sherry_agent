@@ -297,7 +297,7 @@ Full replacement of the flow's steps list (like `todowrite` for TaskFlow): steps
 async def taskflow_list(status_filter: str = "active") -> str
 ```
 
-Read-only board of this session's flows: `"active"` (running + waiting), `"all"` (terminal statuses included), or an exact status name. Every read filters the owning `session_id` in SQL; the rendered table caps the description at 40 chars and derives `updated_at` from the flow's activity stamps.
+Read-only board of this session's flows: `"active"` (running + waiting), `"all"` (terminal statuses included), or an exact status name. Every read filters the owning `session_id` in SQL; the rendered table caps the description at 40 chars and reads `updated_at` from the flow row (falling back to the legacy activity stamps for rows without the column value).
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

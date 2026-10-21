@@ -66,6 +66,7 @@ async def taskflow_cancel(
             state=state,
             wait=None,
             status=TaskFlowStatus.CANCELLED.value,
+            terminal_reason="cancelled",
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

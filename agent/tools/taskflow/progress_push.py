@@ -21,6 +21,7 @@ client recovers the panel with one round trip and no separate endpoint:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from loguru import logger
@@ -30,7 +31,16 @@ from runtime.session.ws_push import broadcast_to_session
 
 from .registry import store_sqlite
 
-__all__ = ["flow_progress", "progress_payload", "push_taskflow_progress", "TASKFLOW_UPDATED_EVENT"]
+__all__ = [
+    "flow_progress",
+    "maybe_prune_terminal_flows",
+    "progress_payload",
+    "push_taskflow_progress",
+    "TASKFLOW_UPDATED_EVENT",
+]
+
+#: Per-session monotonic timestamp of the last background prune.
+_LAST_PRUNE: dict[str, float] = {}
 
 #: The frame event name (client-side `ws:taskflow_updated` mitt event).
 TASKFLOW_UPDATED_EVENT = "taskflow_updated"
@@ -104,6 +114,32 @@ def progress_payload(session_id: str) -> dict[str, Any]:
     }
 
 
+async def maybe_prune_terminal_flows(session_id: str) -> None:
+    """Best-effort, debounced prune of old terminal/superseded flow rows.
+
+    Called after every mutation (including the quiet no-socket case). Active
+    rows are never touched; failures are swallowed so a maintenance sweep can
+    never break a tool call.
+    """
+    from config.features import TASKFLOW_INFRA
+
+    session_id = (session_id or "").strip()
+    if not session_id or int(TASKFLOW_INFRA["max_total_flows_per_session"]) <= 0:
+        return
+    now = time.monotonic()
+    last = _LAST_PRUNE.get(session_id)
+    debounce = float(TASKFLOW_INFRA["prune_debounce_seconds"])
+    if last is not None and now - last < debounce:
+        return
+    _LAST_PRUNE[session_id] = now
+    try:
+        deleted = await store_sqlite.prune_session_flows(session_id)
+        if deleted:
+            logger.info("TaskFlow prune removed {} old terminal row(s) for {}", deleted, session_id)
+    except Exception as exc:  # noqa: BLE001 - maintenance only
+        logger.debug("TaskFlow prune skipped for {}: {}", session_id, exc)
+
+
 async def push_taskflow_progress(session_id: str) -> None:
     """Best-effort ``taskflow_updated`` push to the session's websocket.
 
@@ -114,6 +150,12 @@ async def push_taskflow_progress(session_id: str) -> None:
     session_id = (session_id or "").strip()
     if not session_id:
         return
+    # Maintenance runs even with no viewer (the early return below is about the
+    # frame, not the store). It is awaited rather than backgrounded: a fire-and-
+    # forget task outliving a request/test loop is exactly the aiosqlite
+    # "event loop is closed" noise we do not want. The debounce keeps the cost
+    # to one count/delete per session per interval.
+    await maybe_prune_terminal_flows(session_id)
     try:
         # Quiet no-op before the (store-reading) payload build: with no live
         # viewer there is nothing to fan out to. A socket that connects between

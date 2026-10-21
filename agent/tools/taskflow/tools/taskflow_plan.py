@@ -20,7 +20,13 @@ from config.features import TASKFLOW_INFRA
 
 from ..config import StepStatus
 from ..registry import store_sqlite
-from ._shared import default_state, new_step, requester_session_key
+from ._shared import (
+    bind_flow_todo,
+    compensate_flow_without_todo,
+    default_state,
+    new_step,
+    requester_session_key,
+)
 
 #: Steps beyond this are dropped (the planner is told, but never trusted).
 PLAN_MAX_STEPS = 12
@@ -174,9 +180,21 @@ async def taskflow_plan(
     state["steps"] = steps
     flow = await store_sqlite.create_flow(flow_id, state, session_id=session_id)
 
+    # Same entry defense as taskflow_create: a planned flow must own a GC root
+    # from birth. The goal is the natural todo text.
+    try:
+        await bind_flow_todo(session_id, flow_id, goal)
+    except Exception as exc:  # noqa: BLE001 - report the compensated outcome
+        await compensate_flow_without_todo(flow)
+        return (
+            f"Error: TaskFlow '{flow_id}' was planned but its todo could not be "
+            f"bound ({type(exc).__name__}: {exc}); the flow was failed so it cannot "
+            "outlive its root. Retry the plan."
+        )
+
     lines = [
         f"TaskFlow planned: flow_id={flow_id}, revision={flow['expected_revision']}, "
-        f"steps={len(steps)} (nothing dispatched)",
+        f"steps={len(steps)} (nothing dispatched); todo bound: {goal}",
     ]
     for step in steps:
         deps = ",".join(step.get("depends_on") or []) or "-"

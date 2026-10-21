@@ -83,7 +83,8 @@ async def test_finish_rejected_when_step_not_done(isolated_db: Path, ledger: Evi
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert out.startswith("Error: Cannot finish")
-    assert "not done/blocked" in out and "s2" in out
+    assert "have not started" in out and "s2" in out
+    assert "protocol violation" in out
 
 
 @pytest.mark.asyncio

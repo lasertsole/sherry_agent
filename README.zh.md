@@ -330,7 +330,7 @@ sherry_agent/
 | **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
-| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门、三色孤儿回收与跨轮次记忆连续性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
 | **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |

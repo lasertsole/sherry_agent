@@ -141,6 +141,18 @@ def isolated_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     # pytest-asyncio creates a new loop per test.
     monkeypatch.setattr(store_sqlite, "_init_lock", asyncio.Lock())
     monkeypatch.setattr(store_sqlite, "_sync_tables_ready", False)
+
+    # A taskflow_create now binds a todo (the flow's GC root), so the todolist
+    # store must be isolated in the same fixture or every taskflow test would
+    # write into the repository's real todos.db.
+    from agent.tools.todolist.registry import store_sqlite as todo_store
+
+    monkeypatch.setattr(todo_store, "_DB_DIR", tmp_path)
+    monkeypatch.setattr(todo_store, "_DB_PATH", tmp_path / "todos.db")
+    monkeypatch.setattr(todo_store, "_initialized", False)
+    monkeypatch.setattr(todo_store, "_init_loop", None)
+    monkeypatch.setattr(todo_store, "_init_lock", asyncio.Lock())
+    monkeypatch.setattr(todo_store, "_sync_tables_ready", False)
     return db_path
 
 
