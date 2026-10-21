@@ -174,7 +174,7 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     incremental chain (v1..v18): messages base columns plus every additive
     column (images/audios/videos, model tokens, origin, reasoning_tokens,
     idempotency_key, context_eligible, parent_message_id, compacted,
-    compaction_checkpoint_id), all named indexes, both FTS5 tables with their
+    compaction_checkpoint_id, turn_id), all named indexes, both FTS5 tables with their
     six sync triggers, and the auxiliary tables (message_embeddings,
     compression_locks, events, context_epoch, session_leafs,
     compaction_checkpoints, persisted_message_ids).
@@ -184,6 +184,9 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         turn_num INTEGER NOT NULL,
         session_id TEXT NOT NULL,
+        -- Per-conversation-turn uuid stamped by the persist batch. NULL = a
+        -- row written before the stamp existed; '' = no turn scope active.
+        turn_id TEXT,
         role TEXT NOT NULL,
         content TEXT,
         tool_call_id TEXT,
@@ -217,6 +220,8 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num);
+    CREATE INDEX IF NOT EXISTS idx_messages_turn_id
+        ON messages(session_id, turn_id) WHERE turn_id IS NOT NULL AND turn_id != '';
     CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role);
     CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency
@@ -374,6 +379,7 @@ _HEAL_MESSAGE_COLUMN_DDL: tuple[tuple[str, str], ...] = (
     ("reasoning_tokens", "ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER"),
     ("tool_duration_ms", "ALTER TABLE messages ADD COLUMN tool_duration_ms INTEGER"),
     ("idempotency_key", "ALTER TABLE messages ADD COLUMN idempotency_key TEXT"),
+    ("turn_id", "ALTER TABLE messages ADD COLUMN turn_id TEXT"),
     (
         "context_eligible",
         "ALTER TABLE messages ADD COLUMN context_eligible INTEGER NOT NULL DEFAULT 1",
@@ -393,6 +399,8 @@ _HEAL_MESSAGE_COLUMN_DDL: tuple[tuple[str, str], ...] = (
 _HEAL_INDEX_DDL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(session_id, timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_messages_turn_num ON messages(session_id, turn_num)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_turn_id "
+    "ON messages(session_id, turn_id) WHERE turn_id IS NOT NULL AND turn_id != ''",
     "CREATE INDEX IF NOT EXISTS idx_messages_session_role ON messages(session_id, role)",
     "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(session_id, parent_message_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_idempotency "

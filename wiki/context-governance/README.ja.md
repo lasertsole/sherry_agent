@@ -20,6 +20,7 @@
   - [🖼️ メディア・ガバナンス（オフロード、参照、トークン分類）](eviction/README.ja.md#%EF%B8%8F-メディアガバナンスオフロード参照トークン分類)
   - [⚡ オーバーフロー・テールクリップ（P1-2）](eviction/README.ja.md#-オーバーフローテールクリップp1-2)
   - [🧵 チェーン要約のフィルタリング](eviction/README.ja.md#-チェーン要約のフィルタリング)
+- [Message 行のターン識別子](#-message-行のターン識別子)
 - [相互作用と順序保証](#-相互作用と順序保証)
 - [設定](#%EF%B8%8F-設定)
 - [テストマップ](#-テストマップ)
@@ -88,6 +89,17 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
 | 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
 | FACTS.md | `workspace/memory/FACTS.md`（memory ツール target `facts`） | — | モジュール非依存の広範な落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
+
+## 🧵 Message 行のターン識別子
+
+各 message 行は 2 種類のターン識別子を持ちます：
+
+| 識別子 | 粒度 | 書き込み先 |
+| :--- | :--- | :--- |
+| `turn_num` | 1 回の persist batch | `messages.turn_num` |
+| `turn_id` | 1 回の conversation turn | `messages.turn_id` と `additional_kwargs["turn_id"]` |
+
+`_persist_batch` は server が登録した `GET_CURRENT_TURN_ID` ランタイムフック（`turn_scope`）を解決し、同じターンの全 batch に同じ `turn_id` を刻みます（複数の `turn_num` が 1 つの `turn_id` を共有できます）。フックは `server.service.trajectory_store.install_turn_id_hook` が登録し、server 未組立またはスコープ外では `""` に降格、旧行は `NULL` のままです。`(session_id, turn_id)` の部分インデックスは両方を除外します。これは `messages` と `trajectory_events.turn_id` の join キーです；テストは `tests/context_engine/test_turn_id_stamp.py`。
 
 ## 🔗 相互作用と順序保証
 

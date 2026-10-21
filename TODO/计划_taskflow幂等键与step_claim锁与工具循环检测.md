@@ -78,7 +78,7 @@ class TaskflowCreateSchema(BaseModel):
 def _taskflow_create_tool(
     # ... 现有参数 ...
     idempotency_key: str | None = None,
-    todo_content: str,  # §1.1a 入口防御（孤儿计划已加）
+    todo_content: str = "",  # 入口防御：缺省回退 description/flow id，绑定流级 GC root
     session_id: Annotated[str, InjectedState("session_id")] = "",
 ) -> str:
     # 1. 幂等查重——在创建前查
@@ -94,7 +94,7 @@ def _taskflow_create_tool(
     # 2. 创建 flow（现有逻辑 + idempotency_key 写入行）
     flow = await store.create_flow(session_id=session_id, idempotency_key=idempotency_key, ...)
 
-    # 3. 自动建 todo（孤儿计划 §1.1a）
+    # 3. 自动建 todo（流级 GC root，已随入口防御落地）
     ...
 ```
 

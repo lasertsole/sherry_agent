@@ -150,7 +150,7 @@ ZCode 在**数据模型层**就把 turn 的 rows 分成三类：
 
 - **F2 message store 不动**：`get_messages_by_turn` 是 derived 查询，不改 schema
 - **F7 fail-open**：`latest_assistant_text is None` 时退化到线性展示
-- **turn_id 来源**：sherry 的 messages 表是否带 turn_id？需要核实——如果不带，要么从 trajectory_store 关联，要么给 messages 表加 turn_id 列
+- **turn_id 来源**：`messages.turn_id` 基础设施已落地；当前折叠实现仍按已加载的 message 分组派生，不改 schema/WS（见状态说明）
 - **性能**：每个 turn 结束时 build_turn_render_unit——如果 turn 有 50 条 messages，分类是 O(N)，可接受
 
 **验收**：F2 + F4 + F7。新建 `tests/server/test_turn_render_service.py`。

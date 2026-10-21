@@ -20,6 +20,7 @@ Agent 产出的每条消息都有双重价值：既是**原始历史**（真实�
   - [🖼️ 媒体治理（卸载、引用与 token 分型）](eviction/README.zh.md#%EF%B8%8F-媒体治理卸载引用与-token-分型)
   - [⚡ 溢出尾部裁剪（P1-2）](eviction/README.zh.md#-溢出尾部裁剪p1-2)
   - [🧵 链式摘要过滤](eviction/README.zh.md#-链式摘要过滤)
+- [Message 行上的 Turn 身份](#-message-行上的-turn-身份)
 - [交互与顺序保证](#-交互与顺序保证)
 - [配置](#%EF%B8%8F-配置)
 - [测试地图](#-测试地图)
@@ -87,6 +88,17 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
 | 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
 | FACTS.md | `workspace/memory/FACTS.md`（memory 工具 target `facts`） | — | 跨计划、不绑定模块的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
+
+## 🧵 Message 行上的 Turn 身份
+
+每条 message 行携带两种不同的 turn 标识：
+
+| 标识 | 粒度 | 写在哪里 |
+| :--- | :--- | :--- |
+| `turn_num` | 每次 persist batch | `messages.turn_num` |
+| `turn_id` | 一次 conversation turn | `messages.turn_id` 与 `additional_kwargs["turn_id"]` |
+
+`_persist_batch` 通过 server 注册的 `GET_CURRENT_TURN_ID` 运行时缝隙（`turn_scope`）取值，把同一个 `turn_id` 写到该轮的所有 batch；因此多个 `turn_num` 可以共享一个 `turn_id`。hook 由 `server.service.trajectory_store.install_turn_id_hook` 注册；没有 server 组装或没有活跃 scope 时降级为空字符串，旧行保持 `NULL`。`(session_id, turn_id)` 部分索引跳过这两种值。它是 `messages` 与 `trajectory_events.turn_id` 的 join 键；测试见 `tests/context_engine/test_turn_id_stamp.py`。
 
 ## 🔗 交互与顺序保证
 

@@ -4,7 +4,7 @@
 - 状态：方案设计（v3，改用 `turn_id` + 合并 `get_turn_messages` 到 `message_search`），未开工
 - 来源：用户需求 + 调研（message_search 工具 API、turn_id 生命周期、压缩路径 emission、4 个同级项目 turn_id 模型）
 - 严重性：中（压缩后原始会话细节丢失，message_search 无法语义回溯被压缩的内容）
-- **前置**：`TODO/计划_基础设施_stamp_turn_id到messages表.md`——stamp `turn_id`（per-conversation-turn uuid）到 `messages` 表 + `additional_kwargs`。本计划的 `turn_id` 分组依赖它
+- **前置（已落地）**：`messages.turn_id` + `additional_kwargs["turn_id"]` 由 `_persist_batch` stamp；`GET_CURRENT_TURN_ID` 运行时缝隙已注册。基础设施计划已执行并删除
 
 ---
 
@@ -20,19 +20,19 @@ sherry 的滚动摘要（单层、替换式）在压缩时把最旧的 N 条消�
 
 | 决策点 | 选择 | 理由 |
 |---|---|---|
-| Turn 标识 | **`turn_id`**（per-conversation-turn uuid） | 基础设施计划 stamp 后 `messages` 表有 `turn_id` 列，全局唯一，可直接 `WHERE turn_id = ?` fetch。跟 codex/claudecode/hermes 对齐 |
+| Turn 标识 | **`turn_id`**（per-conversation-turn uuid） | 基础设施已 stamp，`messages` 表有 `turn_id` 列，全局唯一，可直接 `WHERE turn_id = ?` fetch。跟 codex/claudecode/hermes 对齐 |
 | Brief 生成 | **LLM 在现有压缩 pass 里多输出** | 压缩 LLM 已在被丢弃切片上跑，让它额外产 per-turn brief。边际多几百 output token |
 | 存储 | **新 `turn_summaries` 表** | MesMemory 加一张表 + FTS5 + embeddings |
 | 工具合并 | **`get_turn_messages` 合并到 `message_search`** | 加 `turn_id` 参数做 fetch 模式，不新增独立工具。`message_search` 已是多模式工具（browse/FTS/semantic），加 fetch 模式不违和 |
 
-### 0.2 前置依赖
+### 0.2 前置依赖（已落地）
 
-**`TODO/计划_基础设施_stamp_turn_id到messages表.md`** 必须先落地：
-- `messages` 表加 `turn_id TEXT` 列（per-conversation-turn uuid，由 `turn_scope` 在 turn 开始时赋值，`_persist_batch` stamp）
-- `additional_kwargs["turn_id"]` stamp 到 in-memory BaseMessage（压缩路径从 `messages_to_summarize` 直接读）
-- `runtime/hooks.py` 加 `GET_CURRENT_TURN_ID` 缝隙（让 `_persist_batch` 读 `current_turn_id` contextvar）
+基础设施已经完成：
+- `messages` 表有 `turn_id TEXT` 列（per-conversation-turn uuid，由 `turn_scope` 在 turn 开始时赋值，`_persist_batch` stamp）
+- `additional_kwargs["turn_id"]` 已 stamp 到 in-memory BaseMessage（压缩路径从 `messages_to_summarize` 直接读）
+- `runtime/hooks.py` 的 `GET_CURRENT_TURN_ID` 缝隙已注册（`_persist_batch` 读 `current_turn_id` contextvar）
 
-基础设施落地后，每条 message 行同时有 `turn_num`（per-persist-batch 整数，MesMemory 内部 bookkeeping）和 `turn_id`（per-conversation-turn uuid）。**本计划只用 `turn_id`，不碰 `turn_num`**。
+现在每条 message 行同时有 `turn_num`（per-persist-batch 整数，MesMemory 内部 bookkeeping）和 `turn_id`（per-conversation-turn uuid）。**本计划只用 `turn_id`，不碰 `turn_num`**。
 
 ---
 
@@ -573,8 +573,8 @@ turn_index_brief_max_tokens: int    # 每个 brief 的 token 上限（head/tail 
 
 ## 4. 优先级与分阶段落地
 
-**P0（基础设施前置）**：
-- `TODO/计划_基础设施_stamp_turn_id到messages表.md`——stamp `turn_id` 到 `messages` 表 + `additional_kwargs`
+**P0（基础设施前置，已完成）**：
+- `turn_id` 已 stamp 到 `messages` 表 + `additional_kwargs`（基础设施计划已执行并删除）
 
 **P1（最小可用路径：模型能搜到 turn_id 并取回原始消息）**：
 - §1.5 schema 加 `turn_summaries` + FTS 表
@@ -661,4 +661,4 @@ turn_index_brief_max_tokens: int    # 每个 brief 的 token 上限（head/tail 
 
 ## 8. 一句话
 
-压缩 LLM 在现有 pass 里多产一个瞬态 `turn_index` 字段（per-turn brief + `turn_id`），`_serialize_for_summary` 用 `<turn id="turn_id">` 包裹让 LLM 直接看到并抄 turn_id（不需要 `turn_seq → turn_id` 映射）。`_finalize_summary_doc` 内的 `_validate_and_consume_turn_index` 校验 turn_id + **代码兜底**（LLM 不产或漏产的 turn 用第一条 user 消息截断作 brief，source="code"），`truncate_by_tokens` 截断（CJK head/tail），按信息量降序排前 15，写入新 `turn_summaries` 表（FTS5 + embeddings，key = `turn_id`），然后清空不 carry forward（四层防御防积累）。`message_search` 加 `turn_id` + `search_turns` 参数：`search_turns=True` 搜 turn brief 返回 `{turn_id, brief}`；`turn_id=...` 直接 `WHERE turn_id = ?` fetch 完整对话轮。同一工具两步回召，不新增独立工具。前置依赖 `TODO/计划_基础设施_stamp_turn_id到messages表.md`。
+压缩 LLM 在现有 pass 里多产一个瞬态 `turn_index` 字段（per-turn brief + `turn_id`），`_serialize_for_summary` 用 `<turn id="turn_id">` 包裹让 LLM 直接看到并抄 turn_id（不需要 `turn_seq → turn_id` 映射）。`_finalize_summary_doc` 内的 `_validate_and_consume_turn_index` 校验 turn_id + **代码兜底**（LLM 不产或漏产的 turn 用第一条 user 消息截断作 brief，source="code"），`truncate_by_tokens` 截断（CJK head/tail），按信息量降序排前 15，写入新 `turn_summaries` 表（FTS5 + embeddings，key = `turn_id`），然后清空不 carry forward（四层防御防积累）。`message_search` 加 `turn_id` + `search_turns` 参数：`search_turns=True` 搜 turn brief 返回 `{turn_id, brief}`；`turn_id=...` 直接 `WHERE turn_id = ?` fetch 完整对话轮。同一工具两步回召，不新增独立工具。前置 `turn_id` 基础设施已落地（计划已执行并删除）。

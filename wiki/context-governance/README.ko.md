@@ -20,6 +20,7 @@
   - [🖼️ 미디어 거버넌스 (오프로드, 참조, 토큰 분류)](eviction/README.ko.md#%EF%B8%8F-미디어-거버넌스-오프로드-참조-토큰-분류)
   - [⚡ 오버플로 테일 클립 (P1-2)](eviction/README.ko.md#-오버플로-테일-클립-p1-2)
   - [🧵 체인 요약 필터링](eviction/README.ko.md#-체인-요약-필터링)
+- [Message 행의 턴 식별자](#-message-행의-턴-식별자)
 - [상호작용과 순서 보장](#-상호작용과-순서-보장)
 - [설정](#%EF%B8%8F-설정)
 - [테스트 맵](#-테스트-맵)
@@ -88,6 +89,17 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
 | 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
 | FACTS.md | `workspace/memory/FACTS.md`(memory 도구 target `facts`) | — | 모듈 비의존적 광범위 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
+
+## 🧵 Message 행의 턴 식별자
+
+각 message 행은 두 가지 턴 식별자를 가집니다:
+
+| 식별자 | 단위 | 기록 위치 |
+| :--- | :--- | :--- |
+| `turn_num` | persist batch 하나 | `messages.turn_num` |
+| `turn_id` | conversation turn 하나 | `messages.turn_id` 및 `additional_kwargs["turn_id"]` |
+
+`_persist_batch`는 server가 등록한 `GET_CURRENT_TURN_ID` 런타임 훅(`turn_scope`)을 해석해 한 턴의 모든 batch에 같은 `turn_id`를 기록합니다. 따라서 여러 `turn_num`이 하나의 `turn_id`를 공유할 수 있습니다. 훅은 `server.service.trajectory_store.install_turn_id_hook`이 등록하며, server 미조립 또는 스코프 밖에서는 `""`로 저하되고 구행은 `NULL`로 남습니다. `(session_id, turn_id)` 부분 인덱스는 두 값을 모두 건너뜁니다. 이것이 `messages`와 `trajectory_events.turn_id`의 join 키입니다; 테스트는 `tests/context_engine/test_turn_id_stamp.py`.
 
 ## 🔗 상호작용과 순서 보장
 

@@ -1132,6 +1132,16 @@ completion records `turn_end` (total ms + TTFB), and agent-side producers
 `offset`); writes are per-session pruned to `TRAJECTORY["max_turns_per_session"]`.
 Everything in the ledger is fail-open: a metrics write never breaks a turn.
 
+The message store now carries the same identity: `messages.turn_id` (additive
+`TEXT` column + a partial `(session_id, turn_id)` index) is stamped by
+`_persist_batch` from the server-owned `current_turn_id` contextvar through
+`runtime.hooks.GET_CURRENT_TURN_ID` (`context_engine` never imports `server`).
+Every persist batch of one conversation turn therefore shares the uuid while
+keeping its own per-batch `turn_num`; the same values also ride on
+`BaseMessage.additional_kwargs["turn_id"] / ["turn_num"]`. A missing hook or an
+inactive scope stamps `""`; rows written before the column stay `NULL`. This is
+the join key between `messages` and `trajectory_events.turn_id`.
+
 ## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the

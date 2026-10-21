@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from pydantic import Field, validate_call
 from langchain_core.messages import BaseMessage
 
+from runtime import hooks
+
 
 # Lazy shared connection; created on first DB access, not at import.
 # Resolved through :func:`_shared_db` so importing this module has no I/O side
@@ -414,6 +416,17 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
             insert_rows.append(row)
             paired.append((m, row))
 
+    # The conversation-turn uuid comes from the server-owned contextvar via a
+    # runtime hook (context_engine must not import server). Missing hook or no
+    # active turn scope (bare unit test / eval) degrades to "".
+    turn_id = ""
+    resolver = hooks.resolve(hooks.GET_CURRENT_TURN_ID)
+    if callable(resolver):
+        try:
+            turn_id = str(resolver() or "")
+        except Exception:  # noqa: BLE001 - a hook failure must not drop a batch
+            turn_id = ""
+
     # Assign the turn number atomically. Re-read MAX(turn_num) and
     # insert while holding the module-level lock, so two concurrent writers on
     # the same session can never observe the same MAX and silently merge two
@@ -429,6 +442,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
         current_turn = get_max_turn_num(session_id) + 1
         for index, (message, row) in enumerate(paired):
             row["turn_num"] = current_turn
+            row["turn_id"] = turn_id
             row["timestamp"] = base_timestamp
             row["ts_ms"] = turn_ms
             row["idempotency_key"] = _idempotency_key(
@@ -452,6 +466,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                 INSERT OR IGNORE INTO messages (
                     session_id,
                     turn_num,
+                    turn_id,
                     role,
                     content,
                     tool_call_id,
@@ -479,6 +494,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                 ) VALUES (
                     :session_id,
                     :turn_num,
+                    :turn_id,
                     :role,
                     :content,
                     :tool_call_id,
@@ -517,6 +533,10 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
     # the same message list is skipped instead of double-written.
     for message in pending:
         message.additional_kwargs[_DB_PERSISTED_KEY] = True
+        # Carry the same identifiers on the in-memory object, so compression
+        # and search paths can group by conversation turn without a DB read.
+        message.additional_kwargs["turn_num"] = current_turn
+        message.additional_kwargs["turn_id"] = turn_id
 
     # No-op in autocommit mode; kept so the batch also commits as one unit if
     # the connection ever switches to implicit-transaction mode.

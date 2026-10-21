@@ -20,6 +20,7 @@ Every message the agent produces is valuable twice: once as **raw history** (wha
   - [🖼️ Media Governance (Offload, Reference & Token Classing)](eviction/README.md#%EF%B8%8F-media-governance-offload-reference--token-classing)
   - [⚡ Overflow Tail Clip (P1-2)](eviction/README.md#-overflow-tail-clip-p1-2)
   - [🧵 Chain-Summary Filtering](eviction/README.md#-chain-summary-filtering)
+- [Turn Identity on Message Rows](#-turn-identity-on-message-rows)
 - [Interactions & Ordering](#-interactions--ordering)
 - [Configuration](#%EF%B8%8F-configuration)
 - [Testing Map](#-testing-map)
@@ -91,6 +92,17 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 | Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), native history stripping, or compression-time offload (`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/` (durable copies; compression-time offload names by `sha256[:16]` and dedups); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
 | Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
 | FACTS.md | `workspace/memory/FACTS.md` (memory tool target `facts`) | — | broad, module-independent pitfalls and conventions: compression-time memory review + completed-plan extraction | memory file (1 375-char limit; overflow drops the oldest entries first) | injected into every system prompt as a resident FACTS memory block |
+
+## 🧵 Turn Identity on Message Rows
+
+Every message row carries two different turn identifiers:
+
+| Identifier | Granularity | Written where |
+| :--- | :--- | :--- |
+| `turn_num` | one persist batch | `messages.turn_num` |
+| `turn_id` | one conversation turn | `messages.turn_id` and `additional_kwargs["turn_id"]` |
+
+`_persist_batch` resolves the server-owned `GET_CURRENT_TURN_ID` runtime hook (`turn_scope`) and stamps the same `turn_id` on every batch of one turn, so several `turn_num` values can share one `turn_id`. The hook is installed by `server.service.trajectory_store.install_turn_id_hook`; without a server assembly or an active scope it degrades to `""`, and older rows stay `NULL`. The `(session_id, turn_id)` partial index skips both values. This is the join key between `messages` and `trajectory_events.turn_id`; tests live in `tests/context_engine/test_turn_id_stamp.py`.
 
 ## 🔗 Interactions & Ordering
 

@@ -33,6 +33,7 @@ __all__ = [
     "current_turn_id",
     "get_trajectory_store",
     "install_trajectory_hooks",
+    "install_turn_id_hook",
     "project_frame",
     "record_event",
     "turn_scope",
@@ -343,6 +344,23 @@ def install_trajectory_hooks() -> None:
     from runtime import hooks
 
     hooks.register(hooks.RECORD_TRAJECTORY_EVENT, record_event)
+
+
+def install_turn_id_hook() -> None:
+    """Expose the active conversation-turn uuid to the message store.
+
+    ``context_engine`` cannot import ``server``; it resolves this hook while
+    persisting a batch and stamps ``messages.turn_id``. The contextvar is read
+    at call time (inside ``asyncio.to_thread`` it is inherited from the turn's
+    context), so a persisted row always carries the turn that produced it.
+    Idempotent; an unassembled process resolves no hook and stamps ``""``.
+    """
+    from runtime import hooks
+
+    def _current_turn_id() -> str:
+        return current_turn_id.get()
+
+    hooks.register(hooks.GET_CURRENT_TURN_ID, _current_turn_id)
 
 
 def project_frame(
