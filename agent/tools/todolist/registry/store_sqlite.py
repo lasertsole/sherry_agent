@@ -250,23 +250,6 @@ async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     return [_row_to_todo(row) for row in rows]
 
 
-async def clear_flow_link(session_id: str, position: int) -> int:
-    """Drop a todo's TaskFlow pointers (flow_id + step_id); idempotent.
-
-    Used when a flow is purged: a dangling pointer would otherwise permanently
-    block the todo's completion. Returns the affected row count.
-    """
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(
-            f"UPDATE {TABLE_NAME} SET flow_id = NULL, step_id = NULL "
-            "WHERE session_id = ? AND position = ?",
-            (session_id, int(position)),
-        )
-        await db.commit()
-        return int(cursor.rowcount or 0)
-
-
 def get_todos_sync(session_id: str) -> list[dict]:
     """Synchronously read the session's todos (stdlib sqlite3, no event loop).
 

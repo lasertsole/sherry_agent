@@ -21,12 +21,10 @@ client recovers the panel with one round trip and no separate endpoint:
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from loguru import logger
 
-from config.features import TASKFLOW_INFRA
 from runtime.session.relation_register import relation_register
 from runtime.session.ws_push import broadcast_to_session
 
@@ -106,23 +104,6 @@ def progress_payload(session_id: str) -> dict[str, Any]:
     }
 
 
-#: Per-session debounce for the terminal-row prune (seconds are config).
-_PRUNE_DEBOUNCE: dict[str, float] = {}
-
-
-async def _maybe_prune_session(session_id: str) -> None:
-    """Prune old terminal rows at most once per debounce window (best-effort)."""
-    now = time.time()
-    last = _PRUNE_DEBOUNCE.get(session_id, 0.0)
-    if now - last < float(TASKFLOW_INFRA["prune_debounce_seconds"]):
-        return
-    _PRUNE_DEBOUNCE[session_id] = now
-    try:
-        await store_sqlite.prune_session_flows(session_id)
-    except Exception as e:  # noqa: BLE001 - pruning is housekeeping, never fatal
-        logger.debug("TaskFlow prune skipped for {}: {}", session_id, e)
-
-
 async def push_taskflow_progress(session_id: str) -> None:
     """Best-effort ``taskflow_updated`` push to the session's websocket.
 
@@ -133,9 +114,6 @@ async def push_taskflow_progress(session_id: str) -> None:
     session_id = (session_id or "").strip()
     if not session_id:
         return
-    # Housekeeping runs whether or not a viewer is attached (a mutation is the
-    # natural place to bound the session's terminal-row accumulation).
-    await _maybe_prune_session(session_id)
     try:
         # Quiet no-op before the (store-reading) payload build: with no live
         # viewer there is nothing to fan out to. A socket that connects between

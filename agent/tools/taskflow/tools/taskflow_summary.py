@@ -105,15 +105,6 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
         lines.append(f"failure_reason: {state['failure_reason']}")
     if state.get("cancel_reason"):
         lines.append(f"cancel_reason: {state['cancel_reason']}")
-    if flow.get("terminal_reason"):
-        lines.append(f"terminal_reason: {flow['terminal_reason']}")
-    detached = state.get("detached_child_session_keys")
-    if detached:
-        lines.append(
-            "detached children: "
-            + ", ".join(str(key) for key in detached)
-            + " (flow is terminal; their results will not resume it)"
-        )
     return "\n".join(lines)
 
 

@@ -7,16 +7,6 @@ TABLE_NAME = "task_flows"
 # Every flow starts at this revision; every mutation bumps it by exactly 1.
 INITIAL_REVISION = 1
 
-# Durable cross-store purge intent (task_flows.purge_pending). todos.db and
-# taskflow_registry.db are separate files, so a session purge records what still
-# needs replaying instead of pretending it was atomic.
-PURGE_BIT_TODOS_NOT_CLEARED = 1
-PURGE_BIT_FLOWS_NOT_DELETED = 2
-PURGE_BIT_DANGLING_TODO_PTR = 4
-PURGE_BITS_ALL = (
-    PURGE_BIT_TODOS_NOT_CLEARED | PURGE_BIT_FLOWS_NOT_DELETED | PURGE_BIT_DANGLING_TODO_PTR
-)
-
 
 class TaskFlowStatus(StrEnum):
     """Lifecycle status of a task flow (openclaw managedFlows semantics)."""

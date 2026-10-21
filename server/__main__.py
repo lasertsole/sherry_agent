@@ -185,30 +185,6 @@ def main() -> None:
         lambda: [build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()],
     )
 
-    def _session_exists(session_id: str) -> bool:
-        """Does this top-level session still have a persisted message?
-
-        The TaskFlow orphan reconciler treats False as PROOF the owner is gone;
-        an unreadable store therefore answers True (UNKNOWN / fail-open), so a
-        transient DB problem can never cancel a live flow.
-        """
-        try:
-            from context_engine.store.db import get_db
-
-            row = (
-                get_db()
-                .execute(
-                    "SELECT 1 FROM messages WHERE session_id = ? LIMIT 1",
-                    (session_id,),
-                )
-                .fetchone()
-            )
-        except Exception:  # noqa: BLE001 - fail-open: never claim an owner is missing
-            return True
-        return row is not None
-
-    hooks.register(hooks.SESSION_EXISTS, _session_exists)
-
     init_agent_core()
 
     if not tripped:

@@ -155,7 +155,7 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 创建持久化流，初始 `INITIAL_REVISION = 1`，状态为 `running`。返回流 id、状态和版本号。如果 id 已被占用则抛出 `FlowExistsError`（返回错误字符串，含当前版本号以便重读）。
 
-当新流**取代**旧流时传 `resumed_from=<predecessorflow_id>`：新流记录 `resumed_from`，前驱被盖上 `superseded_by`，并同时变为 `cancelled` 且 `terminal_reason="superseded"` —— 见[血缘指针](#血缘指针)。未知的前驱在创建任何东西之前就被拒绝；自引用同样被拒绝。省略 `deadline_hours` 时应用 `TASKFLOW_INFRA["default_deadline_hours"]`（24h）；总行数上限为 `TASKFLOW_INFRA["max_total_flows_hard_cap"]`（soft 200 / hard 500）。
+当新流**取代**旧流时传 `resumed_from=<前驱 flow_id>`：新流记录 `resumed_from`，前驱被盖上 `superseded_by` —— 见[血缘指针](#血缘指针)。未知的前驱在创建任何东西之前就被拒绝；自引用同样被拒绝。
 
 资源上限（在此强制，超限返回 `Error:` 文本）：单个流最多 `TASKFLOW_INFRA["max_steps_per_flow"]`（20）步；单个会话最多 `TASKFLOW_INFRA["max_flows_per_session"]`（20）个**活跃**流——只计 running/waiting，完成或取消的流会释放名额（被取代的流同样释放）。`taskflow_plan` 在花费 planner 调用之前应用同一流数上限。
 
@@ -239,9 +239,7 @@ async def taskflow_resume(
 
 **执行顺序** —— 各道门串联、且每个都按步骤可选：`retry_policy`（分类出的失败，或 `schema_validated=false`，在**任何判别调用之前**把步骤重新派发到替换子代理）→ `response_schema`（Tier 1，免费校验；未通过即 `schema_error` 重试）→ `judge_criteria` / `validation_criteria`（Tier 2，辅助 LLM 判别）→ 调用方声明的 `step_outcome`，它压倒以上全部。判定取值、预算、证据感知的判别提示词、fail-open 规则与 `done` 的真实含义，统一记录在[判断门](../gates/README.zh.md)。
 
-**DAG 记录**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时新就绪的波次会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_resume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_dispatch`。
-
-**自动 resume**（announce 管线）：已派发子会话完成时，`_try_auto_resume_taskflow` 先按 `child_session_key` 找到所属 flow，再用 flow 的 **owner `session_id`** 调用本工具——绝不能用 child key，否则 session 作用域查询会找不到 flow。无 owner 的迁移前 flow 跳过自动路径，结果仍投递给会话供手动 resume。
+**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时新就绪的波次会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_resume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_dispatch`。
 ### taskflow_set_waiting
 
 ```python
@@ -259,7 +257,7 @@ async def taskflow_set_waiting(
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-只读地重读整个流状态：状态、revision、child_session_key、description、全部步骤（含状态、depends_on、child_session_key，以及配置的期望——`response_schema` 的 properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、执行元信息和任何 `block_reason` / `fail_reason` / `skip_reason`）、各状态计数、结果（每条含 `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason` 以及记录到的 `token_usage`）、wait 负载（含 `stale_detected_at` / `stale_child_session_key` 提示标记）、summary、failure_reason、cancel_reason 与 `detached_child_session_keys`。也是版本冲突后的指定重读步骤。
+只读地重读整个流状态：状态、revision、child_session_key、description、全部步骤（含状态、depends_on、child_session_key，以及配置的期望——`response_schema` 的 properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、执行元信息和任何 `block_reason` / `fail_reason` / `skip_reason`）、各状态计数、结果（每条含 `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason` 以及记录到的 `token_usage`）、wait 负载、summary、failure_reason、cancel_reason。也是版本冲突后的指定重读步骤。
 ### taskflow_progress
 
 ```python
@@ -307,11 +305,9 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。`fail` / `cancel` **不会杀死**仍在运行的子会话：仍挂在未完成步骤上的 child key 会记录到 `state["detached_child_session_keys"]`，由 `taskflow_summary` 展示。flow 已终态，这些子会话之后的结果无法再 resume 它——请查看 detached key 后决定等待还是显式停止。
+终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话会继续运行；在流被取消之前，它们的结果仍可通过 `taskflow_resume` 送达。
 
 `finish` 按顺序用四项检查把守 DONE 转换——**A** 每个步骤都是 `done` 或 `blocked`；**B** 不留未决步骤（`failed`、`skipped`、`cancelled`、`blocked` 的步骤按 id 附原因报出）；**C** 流程证据中没有 `FAIL`、也没有 `[stale]` 行；**E** 可选的目标准入门（流程步骤数达到 `GOAL_GATE["min_steps"]`（3）及以上）。每道门都 fail-open；拒绝文本与目标门的契约记录在[判断门](../gates/README.zh.md)。
-
-每次拒绝消耗各自层的独立预算：A 中已派发步骤是 nudge（最多 2 次），READY 且从未启动是协议违规（streak 3），其余真实拒绝累加 `consecutive_failures`（上限 2）。达到对应上限时 flow 自动失败，`terminal_reason="finish_gates_exhausted"` 或 `"protocol_violation_exhausted"`；`taskflow_resume` 的推进会重置 nudge/失败预算。
 
 
 
@@ -433,10 +429,4 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 - **`done` ≠ 成功**：步骤 `done` 表示"结果已注入**且该步骤配置的质量门全部通过**"。在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义，因此除非调用方声明 `step_outcome="failure"`，失败的子代理仍会落到 `done`。要让闭环接住失败：声明期望（`response_schema` 的校验是免费的，且在判别调用之前执行）或声明结果；`failed` 会让依赖者保持阻塞，而 `retry_policy` 仍在预算内重新派发已结束的子代理（判别器对 `block` 判定或预算耗尽依旧标记 `blocked`）。 完整规则与每道门各自的作用见[判断门](../gates/README.zh.md)。
 - **`taskflow_wait_all` 超时为有界轮询**：永不完成的子代理会话不会自动使流失败。超时返回部分报告。
-- **默认 deadline + stale action 都有界**：省略 `deadline_hours` 时应用 24h（`TASKFLOW_INFRA["default_deadline_hours"]`，传 0 关闭）。RUNNING/WAITING flow 的 `updated_at` 超过 12h（`stale_action_hours`）会被标记 `stale_swept` 失败，但 live child（或无法读取存活信息）会否决。两个扫描都在 sweeper 启动时和每轮运行。
-- **Finish 有三层独立预算**：nudge 最多 2 次、连续失败 2 次、协议违规 streak 3 次。任一层耗尽都会自动失败 flow（`finish_gates_exhausted` / `protocol_violation_exhausted`），并把仍在运行的子会话记录为 detached（绝不杀死）。`taskflow_resume` 推进会重置 nudge/失败预算；真正进入 `done` 还会重置协议 streak。
-- **行数封顶 + purge 重放**：`max_total_flows_per_session`（200）只裁剪最旧的 terminal/superseded 行；`max_total_flows_hard_cap`（500）拒绝新建。会话 purge 在 `purge_pending` 写 durable bit；sweeper 重放失败的 todo/flow/dangling-pointer 清理，不会丢失。
-- **死子会话会终结其步骤**：子代理 cleanup 未 resume flow 时，`fail_step_for_child` 把仍为 DISPATCHED 的步骤标为 `failed`（幂等）。flow 保持打开交给 replan/deadline；不杀任何会话。
-- **Owner 孤儿对账是保守的**：只有服务器 `SESSION_EXISTS` hook 证明 owner 已消失、没有任何 live child、且 owner 持续缺失 `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）后，sweeper 才取消非终态 flow。owner 仍存活（即使所有 child 都已结束但无结果）的 flow 不会自动取消；交给 `taskflow_wait_all` / `taskflow_summary` / deadline。hook 缺失、存储不可读或 live child 都会否决扫描。
-- **Cancel/fail 只 detach，不 kill**：`taskflow_cancel` / `taskflow_fail` 保留仍在运行的子会话，并把 key 记录到 `detached_child_session_keys`；是否停止由操作者/agent 显式决定。
 - **步骤 id 为顺序分配**：注册时分配 `step-{len(steps)+1}`。如果步骤被并发追加，id 在冲突重试时由 `build_state` 重新计算。

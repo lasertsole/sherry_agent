@@ -262,22 +262,3 @@ def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "plan_ref": "TEXT",
         "created_at": "TIMESTAMP",
     }
-
-
-@pytest.mark.asyncio
-async def test_clear_flow_link_drops_both_pointers(isolated_db: Path):
-    await store_sqlite.replace_all(
-        "sess-1",
-        [
-            _todo("linked", position=0, flow_id="flow-1", step_id="step-1"),
-            _todo("plain", position=1),
-        ],
-    )
-
-    cleared = await store_sqlite.clear_flow_link("sess-1", 0)
-
-    assert cleared == 1
-    todos = await store_sqlite.get_todos("sess-1")
-    assert todos[0]["flow_id"] is None
-    assert todos[0]["step_id"] is None
-    assert todos[1]["content"] == "plain"

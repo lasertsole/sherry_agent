@@ -155,7 +155,7 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 
 영속적 플로우를 `INITIAL_REVISION = 1`, 상태 `running`으로 생성. 플로우 id, 상태, 리비전을 반환. id가 이미 사용 중이면 `FlowExistsError` (현재 리비전을 포함한 에러 문자열 반환, 재조회 가능).
 
-새 플로우가 이전 플로우를 **대체**할 때는 `resumed_from=<predecessorflow_id>`를 전달합니다: 새 플로우는 `resumed_from`을 기록하고 전임자에는 `superseded_by`가 찍히며 동시에 `cancelled` 및 `terminal_reason="superseded"`가 됩니다——[플로우 계보](#플로우-계보) 참조. 알 수 없는 전임자는 아무것도 생성하기 전에 거부되고, 자기 참조도 거부됩니다. `deadline_hours`를 생략하면 `TASKFLOW_INFRA["default_deadline_hours"]`(24h)가 적용되고, 총 행 수 상한은 `TASKFLOW_INFRA["max_total_flows_hard_cap"]`(soft 200 / hard 500)입니다.
+새 플로우가 이전 플로우를 **대체**할 때는 `resumed_from=<전임 flow_id>`를 전달합니다: 새 플로우는 `resumed_from`을 기록하고 전임자에는 `superseded_by`가 찍힙니다——[플로우 계보](#플로우-계보) 참조. 알 수 없는 전임자는 아무것도 생성하기 전에 거부되고, 자기 참조도 거부됩니다.
 
 리소스 상한 (여기서 강제, 초과 시 `Error:` 텍스트): 플로우당 최대 `TASKFLOW_INFRA["max_steps_per_flow"]` (20)단계, 세션당 최대 `TASKFLOW_INFRA["max_flows_per_session"]` (20)개의 **활성** 플로우 — running/waiting만 해당하며 완료/취소된 플로우는 슬롯을 반환합니다(대체된 플로우도 마찬가지). `taskflow_plan`은 플래너 호출을 소비하기 전에 동일한 플로우 수 상한을 적용합니다.
 
@@ -240,8 +240,6 @@ async def taskflow_resume(
 **실행 순서** — 게이트는 서로 연결되며 모두 단계 단위 선택입니다: `retry_policy`(분류된 실패 또는 `schema_validated=false`가 **판정 호출 전에** 대체 자식으로 재디스패치) → `response_schema`(Tier 1, 무료 검증; 불일치는 `schema_error` 재시도) → `judge_criteria` / `validation_criteria`(Tier 2, 보조 LLM 판정기) → 호출자가 선언한 `step_outcome`(이 모두에 우선). 판정·예산·증거 인식 판정 프롬프트·페일오픈 규칙·`done`의 실제 의미는 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
 
 **DAG 기록**: 게이트를 통과하면 해당 단계를 `done`으로 만들고 `unlock_dependents()`를 호출해 의존성이 충족된 `blocked` 단계를 `ready`로 옮깁니다. `failed` 단계는 의존 단계를 `blocked`로 남기고, `skipped`/`cancelled` 단계는 `skipped`를 의존 단계로 전파합니다. 언락된 단계 id를 반환합니다. 쓰기는 충돌 재시도 시 이미 확정된 판정을 새로 읽은 상태에 재적용하므로 두 자식이 동시에 완료해도 두 결과 모두 착지합니다([이미 생성된 자식 에이전트를 동반한 충돌 재시도](#이미-생성된-자식-에이전트를-동반한-충돌-재시도) 참조). `auto_dispatch=True`(기본)이면 새로 ready가 된 웨이브가 즉시 유계 동시 배치로 spawn됩니다——[자동 디스패치 웨이브](#자동-디스패치-웨이브-taskflow_resume) 참조. `auto_dispatch=False`면 언락만 하고 호출자가 `taskflow_dispatch`로 명시적으로 처리합니다.
-
-**자동 resume**(announce 파이프라인): 디스패치된 자식이 완료되면 `_try_auto_resume_taskflow`가 `child_session_key`로 소유 플로우를 찾고, 플로우의 **owner `session_id`**로 이 도구를 호출합니다——child key를 쓰면 세션 범위 조회가 플로우를 놓칩니다. owner가 없는 레거시 플로우는 자동 경로를 건너뛰고 결과는 수동 resume을 위해 세션에 전달됩니다.
 ### taskflow_set_waiting
 
 ```python
@@ -259,7 +257,7 @@ async def taskflow_set_waiting(
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-플로우 상태 전체를 읽기 전용으로 다시 읽습니다: status, revision, child_session_key, description, 모든 단계(status, depends_on, child_session_key와 설정된 기대 — `response_schema`의 properties/required, `judge_criteria`, `judge_model`, `input_bindings`, `expected_params`, 실행 메타데이터, 그리고 `block_reason` / `fail_reason` / `skip_reason`), 상태별 개수, results(각 항목의 `step_id`, `schema_validated`, `structured_result`, `step_outcome`, `judge_verdict` / `judge_reason`, 기록이 있으면 `token_usage`), wait 페이로드(`stale_detected_at` / `stale_child_session_key` 주의 마커 포함), summary, failure_reason, cancel_reason, `detached_child_session_keys`. 리비전 충돌 후의 지정 재읽기 단계이기도 합니다.
+플로우 상태 전체를 읽기 전용으로 다시 읽습니다: status, revision, child_session_key, description, 모든 단계(status, depends_on, child_session_key와 설정된 기대 — `response_schema`의 properties/required, `judge_criteria`, `judge_model`, `input_bindings`, `expected_params`, 실행 메타데이터, 그리고 `block_reason` / `fail_reason` / `skip_reason`), 상태별 개수, results(각 항목의 `step_id`, `schema_validated`, `structured_result`, `step_outcome`, `judge_verdict` / `judge_reason`, 기록이 있으면 `token_usage`), wait 페이로드, summary, failure_reason, cancel_reason. 리비전 충돌 후의 지정 재읽기 단계이기도 합니다.
 ### taskflow_progress
 
 ```python
@@ -307,11 +305,9 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. `fail` / `cancel`은 실행 중인 자식 세션을 **죽이지 않습니다**: 미해결 단계에 남은 child key는 `state["detached_child_session_keys"]`에 기록되고 `taskflow_summary`가 표시합니다. 플로우는 종단이므로 이후 결과로 resume될 수 없습니다——detached key를 확인하고 기다릴지 명시적으로 중지할지 결정하세요.
+종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 기록합니다. 디스패치된 자식 세션은 계속 돌고, 플로우가 취소되기 전까지 `taskflow_resume`으로 결과를 전달할 수 있습니다.
 
 `finish`는 DONE 전환을 네 검사로 순서대로 지킵니다——**A** 모든 단계가 `done` 또는 `blocked`; **B** 미해결 단계를 남기지 않음(`failed`·`skipped`·`cancelled`·`blocked`는 id와 기록된 이유와 함께 보고); **C** 플로우 증거에 `FAIL`도 `[stale]` 행도 없음; **E** 옵트인 목표 판정(플로우 단계 수가 `GOAL_GATE["min_steps"]`(3) 이상일 때만). 모든 게이트는 페일오픈이며, 거부 문구와 목표 게이트의 계약은 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
-
-각 거부는 계층별 독립 예산을 소모합니다: A의 디스패치된 단계는 nudge(최대 2), READY이며 시작되지 않은 단계는 프로토콜 위반(streak 3), 그 밖의 실제 거부는 `consecutive_failures`(상한 2)를 증가시킵니다. 상한에 도달하면 flow가 자동 실패하며 `terminal_reason="finish_gates_exhausted"` 또는 `"protocol_violation_exhausted"`가 기록됩니다. `taskflow_resume` 진행은 nudge/실패 예산을 리셋합니다.
 
 
 
@@ -433,10 +429,4 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 - **`done` ≠ 성공**: 단계 `done`은 "결과가 주입되었고 **그 단계에 설정된 품질 게이트를 모두 통과했다**"는 뜻입니다. **기대가 아무것도 설정되지 않은** 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 예전 의미로 퇴화하므로, 호출자가 `step_outcome="failure"`를 선언하지 않으면 실패한 자식이 `done`이 됩니다. 폐루프가 실패를 잡게 하려면 기대를 선언하거나(`response_schema` 검증은 판정기 호출 전에 무료로 실행됩니다) 결과를 선언하십시오. `failed`는 의존 단계를 막고, `retry_policy`는 예산이 남는 동안 종료된 자식을 재디스패치합니다(판정기는 `block` 판정이나 예산 소진 시 `blocked`를 붙입니다). 각 게이트가 무엇을 하는지 포함한 전체 규칙은 [판정 게이트](../gates/README.ko.md)에 있습니다.
 - **`taskflow_wait_all` 타임아웃은 유계 폴링**: 완료되지 않는 자식 세션이 자동으로 플로우를 실패시키지 않음. 타임아웃은 부분 보고서 반환.
-- **기본 deadline과 stale action은 유계**: `deadline_hours` 생략 시 24h(`TASKFLOW_INFRA["default_deadline_hours"]`, 0이면 비활성). RUNNING/WAITING flow의 `updated_at`이 12h(`stale_action_hours`)보다 오래되면 `stale_swept`로 실패하지만, live child(또는 생존 확인 불가)는 거부합니다. 두 스캔 모두 sweeper 시작 시와 매 주기 실행.
-- **Finish는 3개의 독립 예산**: nudge 최대 2, 연속 실패 2, 프로토콜 위반 streak 3. 하나라도 소진되면 flow를 자동 실패(`finish_gates_exhausted` / `protocol_violation_exhausted`)하고 실행 중 자식은 detached로 기록(죽이지 않음). `taskflow_resume` 진행은 nudge/실패 예산을 리셋하고, 실제 `done` 전이는 프로토콜 streak도 리셋.
-- **행 수 상한 + purge 리플레이**: `max_total_flows_per_session`(200)은 가장 오래된 terminal/superseded 행만 정리하고, `max_total_flows_hard_cap`(500)은 새 생성을 거부. session purge는 `purge_pending`에 durable bit를 쓰고, 실패한 todo/flow/dangling-pointer 정리를 sweeper가 재실행.
-- **죽은 자식은 단계를 종료**: subagent cleanup이 flow를 resume하지 않으면 `fail_step_for_child`가 DISPATCHED 단계를 `failed`로 표시(멱등). flow는 replan/deadline을 위해 열린 채로 두고 세션은 죽이지 않습니다.
-- **Owner 고아 조정은 보수적**: 서버의 `SESSION_EXISTS` hook이 owner 소멸을 증명하고, live child가 없으며, owner가 `TASKFLOW_INFRA["orphan_grace_seconds"]`(300초) 동안 계속 없을 때만 sweeper가 비종료 플로우를 취소합니다. owner가 살아 있는 플로우(모든 child가 결과 없이 종료되었더라도)는 자동 취소하지 않습니다——`taskflow_wait_all` / `taskflow_summary` / deadline에 맡깁니다. hook 누락, 저장소 읽기 실패, live child는 스캔을 거부합니다.
-- **Cancel/fail은 detach만 하고 kill하지 않음**: `taskflow_cancel` / `taskflow_fail`은 실행 중인 자식 세션을 남기고 key를 `detached_child_session_keys`에 기록합니다. 중지 여부는 운영자/agent가 명시적으로 결정합니다.
 - **단계 id는 순차 할당**: 등록 시 `step-{len(steps)+1}` 할당. 단계가 동시에 추가되는 경우, id는 충돌 재시도 시 `build_state` 내에서 재계산.

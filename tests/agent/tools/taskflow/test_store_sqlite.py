@@ -539,10 +539,6 @@ async def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "session_id": "TEXT",
         "resumed_from": "TEXT",
         "superseded_by": "TEXT",
-        "created_at": "REAL",
-        "updated_at": "REAL",
-        "terminal_reason": "TEXT",
-        "purge_pending": "INTEGER",
     }
 
 
@@ -580,97 +576,3 @@ def test_full_persistence_across_restart_new_event_loop(
     assert flow["state"]["results"] == ["r1"]
     assert flow["state"]["description"] == "restart probe"
     assert flow["session_id"] == _SESSION
-
-
-@pytest.mark.asyncio
-async def test_lifecycle_timestamps_and_terminal_reason(isolated_db: Path):
-    flow = await store_sqlite.create_flow("flow-1", _make_state(), session_id=_SESSION)
-    assert flow["created_at"] is not None
-    assert flow["updated_at"] is not None
-    assert flow["terminal_reason"] is None
-    assert flow["purge_pending"] == 0
-    created = flow["created_at"]
-
-    await asyncio.sleep(0.01)
-    updated = await store_sqlite.update_flow(
-        "flow-1", flow["expected_revision"], session_id=_SESSION, state=_make_state("moved")
-    )
-
-    assert updated["updated_at"] is not None and updated["updated_at"] > created
-    assert updated["created_at"] == created
-
-    terminal = await store_sqlite.update_flow(
-        "flow-1",
-        updated["expected_revision"],
-        session_id=_SESSION,
-        status=TaskFlowStatus.FAILED.value,
-        terminal_reason="stale_swept",
-    )
-    assert terminal["terminal_reason"] == "stale_swept"
-
-
-@pytest.mark.asyncio
-async def test_stale_candidates_exclude_superseded_and_respect_updated_at(
-    isolated_db: Path,
-):
-    old = await store_sqlite.create_flow("flow-old", _make_state(), session_id=_SESSION)
-    await store_sqlite.create_flow("flow-new", _make_state(), session_id=_SESSION)
-    # Force one flow's activity into the past.
-    await store_sqlite.update_flow(
-        "flow-old", old["expected_revision"], session_id=_SESSION, state=_make_state()
-    )
-    await store_sqlite.mark_flow_superseded("flow-old", "flow-new", session_id=_SESSION)
-
-    candidates = await store_sqlite.get_stale_candidates(
-        statuses=(TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
-        action_before=1e12,
-    )
-
-    # The superseded predecessor is terminal now, so it is not a candidate.
-    ids = {flow["flow_id"] for flow in candidates}
-    assert "flow-old" not in ids
-    assert "flow-new" in ids
-
-
-@pytest.mark.asyncio
-async def test_prune_keeps_active_and_bounds_terminal_rows(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
-    from config.features import TASKFLOW_INFRA
-
-    monkeypatch.setitem(TASKFLOW_INFRA, "max_total_flows_per_session", 3)
-    await store_sqlite.create_flow("active", _make_state(), session_id=_SESSION)
-    for index in range(4):
-        flow = await store_sqlite.create_flow(f"done-{index}", _make_state(), session_id=_SESSION)
-        await store_sqlite.update_flow(
-            f"done-{index}",
-            flow["expected_revision"],
-            session_id=_SESSION,
-            status=TaskFlowStatus.DONE.value,
-            terminal_reason="completed",
-        )
-
-    removed = await store_sqlite.prune_session_flows(_SESSION)
-
-    assert removed == 2
-    remaining = store_sqlite.get_all_flows_sync(_SESSION, "all")
-    names = {flow["flow_id"] for flow in remaining}
-    assert "active" in names
-    assert len(remaining) == 3
-    assert "done-0" not in names and "done-1" not in names
-
-
-@pytest.mark.asyncio
-async def test_purge_bits_are_set_and_cleared(isolated_db: Path):
-    from agent.tools.taskflow.config import PURGE_BITS_ALL, PURGE_BIT_TODOS_NOT_CLEARED
-
-    await store_sqlite.create_flow("flow-1", _make_state(), session_id=_SESSION)
-    await store_sqlite.mark_purge_pending(_SESSION, mask=PURGE_BITS_ALL)
-    flow = await store_sqlite.get_flow("flow-1", _SESSION)
-    assert flow is not None and flow["purge_pending"] == PURGE_BITS_ALL
-
-    await store_sqlite.clear_purge_bit(_SESSION, PURGE_BIT_TODOS_NOT_CLEARED)
-    flow = await store_sqlite.get_flow("flow-1", _SESSION)
-    assert flow is not None
-    assert flow["purge_pending"] == PURGE_BITS_ALL & ~PURGE_BIT_TODOS_NOT_CLEARED
-    assert len(await store_sqlite.get_flows_with_purge_pending()) == 1

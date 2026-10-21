@@ -267,7 +267,6 @@ async def test_completed_todo_with_missing_flow_is_blocked(
         )
 
     assert "flow-gone" in str(excinfo.value)
-    assert "Rewrite this todo WITHOUT flow_id/step_id" in str(excinfo.value)
     assert await store_sqlite.get_todos("sess-1") == []
 
 

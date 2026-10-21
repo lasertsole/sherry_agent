@@ -85,11 +85,9 @@ async def test_replacing_a_flow_stamps_both_pointers(isolated_db: Path):
     assert predecessor is not None
     assert predecessor["superseded_by"] == "flow-new"
     assert predecessor["resumed_from"] is None
-    # Lineage does not bump the revision, but the predecessor becomes terminal:
-    # a superseded plan must not stay in the active set forever.
+    # Lineage is metadata: the predecessor's content and revision are untouched.
     assert predecessor["expected_revision"] == 1
-    assert predecessor["status"] == TaskFlowStatus.CANCELLED.value
-    assert predecessor["terminal_reason"] == "superseded"
+    assert predecessor["status"] == TaskFlowStatus.RUNNING.value
 
 
 @pytest.mark.asyncio

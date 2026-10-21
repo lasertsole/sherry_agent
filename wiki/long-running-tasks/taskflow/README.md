@@ -153,11 +153,11 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
                          deadline_hours: float | None = None, resumed_from: str | None = None) -> str
 ```
 
-Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. `FlowExistsError` if the id is already taken (returns an error string with the current revision for re-read). Omitting `deadline_hours` applies `TASKFLOW_INFRA["default_deadline_hours"]` (24h); pass `0` to disable it or a larger value for a known long run.
+Creates a durable flow at `INITIAL_REVISION = 1` with status `running`. Returns the flow id, status, and revision. `FlowExistsError` if the id is already taken (returns an error string with the current revision for re-read).
 
-Pass `resumed_from=<predecessor flow_id>` when the flow REPLACES an earlier one: the new flow records `resumed_from`, the predecessor is stamped `superseded_by` AND becomes `cancelled` with `terminal_reason="superseded"` — see [Flow Lineage](#flow-lineage). An unknown predecessor is refused before anything is created; a self-reference is refused too.
+Pass `resumed_from=<predecessor flow_id>` when the flow REPLACES an earlier one: the new flow records `resumed_from` and the predecessor is stamped `superseded_by` — see [Flow Lineage](#flow-lineage). An unknown predecessor is refused before anything is created; a self-reference is refused too.
 
-Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_INFRA["max_steps_per_flow"]` (20) steps per flow, at most `TASKFLOW_INFRA["max_flows_per_session"]` (20) ACTIVE flows per session — running/waiting ones only, a finished or cancelled flow releases its slot (a superseded one releases it too) — and at most `TASKFLOW_INFRA["max_total_flows_hard_cap"]` (500) total rows per session (the soft cap 200 is pruned from terminal rows). `taskflow_plan` applies the same ceilings before it spends a planner call.
+Resource ceilings (enforced here, refused as `Error:` text): at most `TASKFLOW_INFRA["max_steps_per_flow"]` (20) steps per flow, and at most `TASKFLOW_INFRA["max_flows_per_session"]` (20) ACTIVE flows per session — running/waiting ones only, a finished or cancelled flow releases its slot (a superseded one releases it too). `taskflow_plan` applies the same flow ceiling before it spends a planner call.
 
 ### taskflow_run_task
 
@@ -242,8 +242,6 @@ Injects a completed child session result into the flow state (idempotent). Appen
 
 **DAG bookkeeping**: a successful gate marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`; a `failed` step leaves its dependents `blocked`, and a `skipped`/`cancelled` step cascades `skipped` into them. Returns the unlocked step ids. The write re-applies the already-decided verdict onto the freshly-read state on a conflict retry, so two children completing at the same moment both land (see [Conflict Retry with Spawned Children](#conflict-retry-with-spawned-children)). With `auto_dispatch=True` (the default) the newly-ready wave is spawned immediately in a bounded concurrent batch — see [Auto-Dispatch Wave](#auto-dispatch-wave-taskflow_resume); pass `auto_dispatch=False` to unlock only and dispatch explicitly via `taskflow_dispatch`.
 
-**Automatic resume** (announce pipeline): when a dispatched child completes, `_try_auto_resume_taskflow` finds the owning flow by `child_session_key` and calls this tool with the flow's OWNER `session_id` — never the child key, which would make the session-scoped lookup miss the flow. If the flow has no owner (a legacy row) the automatic path is skipped and the result is delivered to the session for manual resume.
-
 ### taskflow_set_waiting
 
 ```python
@@ -261,7 +259,7 @@ Parks the flow in `waiting` state, recording what it is waiting for. The wait pa
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-Read-only re-read of the full flow state: status, revision, child_session_key, description, all steps (with status, depends_on, child_session_key, plus the configured expectations — `response_schema` properties/required, `judge_criteria`, `judge_model`, `input_bindings`, `expected_params`, execution metadata and any `block_reason` / `fail_reason` / `skip_reason`), step status counts, results (each with its `step_id`, `schema_validated`, `structured_result`, `step_outcome`, `judge_verdict` / `judge_reason` and `token_usage` when recorded), wait payload (including a `stale_detected_at` / `stale_child_session_key` advisory marker), summary, failure_reason, cancel_reason and `detached_child_session_keys`. Also the designated re-read step after a revision conflict.
+Read-only re-read of the full flow state: status, revision, child_session_key, description, all steps (with status, depends_on, child_session_key, plus the configured expectations — `response_schema` properties/required, `judge_criteria`, `judge_model`, `input_bindings`, `expected_params`, execution metadata and any `block_reason` / `fail_reason` / `skip_reason`), step status counts, results (each with its `step_id`, `schema_validated`, `structured_result`, `step_outcome`, `judge_verdict` / `judge_reason` and `token_usage` when recorded), wait payload, summary, failure_reason, cancel_reason. Also the designated re-read step after a revision conflict.
 
 ### taskflow_progress
 
@@ -311,11 +309,9 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-Terminal transitions. `finish` records a `summary`, `fail` records a `failure_reason`, `cancel` records a `cancel_reason` in the flow state. Neither `fail` nor `cancel` kills a running child session: children still attached to unresolved steps are recorded in `state["detached_child_session_keys"]` and surfaced by `taskflow_summary`. The flow is terminal, so those later results cannot resume it — inspect the detached keys and decide whether to wait or stop the children explicitly.
+Terminal transitions. `finish` records a `summary`, `fail` records a `failure_reason`, `cancel` records a `cancel_reason` in the flow state. Already-dispatched child sessions keep running; their results are still deliverable via `taskflow_resume` until the flow was cancelled.
 
 `finish` gates the DONE transition on four checks, in order — **A** every step is `done` or `blocked`; **B** no unresolved step remains (a `failed`, `skipped`, `cancelled` or `blocked` step is reported by id with its recorded reason); **C** the flow's evidence carries no `FAIL` and no `[stale]` row; **E** the opt-in goal judge, for a flow of `GOAL_GATE["min_steps"]` (3) steps or more. Every gate is fail-open; the reject reasons and the goal gate's contract are documented in [Judgement Gates](../gates/README.md).
-
-Each rejection consumes its layer's PRE-PERSISTED budget (none is persisted globally): **A**'s dispatched branch is a nudge (max 2), a READY step that never started is a protocol violation (streak 3), and every real gate rejection increments `consecutive_failures` (limit 2); at the relevant limit the flow is auto-failed with `terminal_reason="finish_gates_exhausted"` or `"protocol_violation_exhausted"`. A `taskflow_resume` progress resets the nudge/failure budgets; a real step `done` transition also resets the protocol streak.
 
 
 
@@ -457,10 +453,4 @@ Consequences: `get_active_flows_sync` excludes a superseded flow even while its 
 
 - **`done` ≠ success**: step `done` means "a result was injected *and the step's configured gates passed*". With **no** expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to the old meaning, so a failed child still lands `done` unless the caller reports `step_outcome="failure"`. To make the closure catch a failure: declare an expectation (a `response_schema` is validated for free, before any judge call) or report the outcome; `failed` then blocks its dependents, and `retry_policy` still re-dispatches a settled child while budget remains (the step judge keeps marking `blocked` on a `block` verdict or an exhausted budget). The full rule, with what each gate does about it, is in [Judgement Gates](../gates/README.md).
 - **`taskflow_wait_all` timeout is bounded polling**: a never-settling child session does not automatically fail the flow. The timeout returns a partial report.
-- **Default deadline + stale action are bounded**: omitting `deadline_hours` applies 24h (`TASKFLOW_INFRA["default_deadline_hours"]`; pass 0 to disable). A RUNNING/WAITING flow whose `updated_at` is older than 12h (`stale_action_hours`) is failed as `stale_swept`, but a live child (or an unreadable liveness source) vetoes. Both scans run at sweeper startup and every cycle.
-- **Finish has three independent budgets**: nudge max 2, consecutive failures 2, protocol-violation streak 3. Exhausting one auto-fails the flow (`finish_gates_exhausted` / `protocol_violation_exhausted`) and records running children as detached (never kills them). `taskflow_resume` progress resets the nudge/failure budgets; a real `done` transition also resets the protocol streak.
-- **Row caps + purge replay**: `max_total_flows_per_session` (200) prunes only the oldest terminal/superseded rows; `max_total_flows_hard_cap` (500) refuses new creates. A session purge records durable `purge_pending` bits; the sweeper replays a failed todo/flow/dangling-pointer clear rather than losing it.
-- **A dead child finalizes its step**: when subagent cleanup runs without a flow resume, `fail_step_for_child` marks the still-DISPATCHED step `failed` (idempotent). The flow stays open for replan / the deadline; no session is killed.
-- **Owner-orphan reconciliation is conservative**: the sweeper cancels a non-terminal flow only when the server's `SESSION_EXISTS` hook proves its owner is gone, no child run is live, and the owner has stayed missing for `TASKFLOW_INFRA["orphan_grace_seconds"]` (300 s). A live owner — even one whose children all settled without a result — is never auto-cancelled; use `taskflow_wait_all` / `taskflow_summary` / the deadline. A missing hook, an unreadable store or a live child vetoes the scan.
-- **Cancel/fail detach, never kill**: `taskflow_cancel` / `taskflow_fail` leave still-running child sessions alive and record their keys in `detached_child_session_keys`; stopping them is an explicit operator/agent decision.
 - **Step ids are sequential**: `step-{len(steps)+1}` assigned at registration time. If steps are appended concurrently, the id is re-computed inside `build_state` on conflict retry.

@@ -68,26 +68,8 @@ async def test_create_with_deadline(isolated_db: Path):
 
 
 @pytest.mark.asyncio
-async def test_create_without_deadline_applies_the_default(isolated_db: Path):
-    """deadline_hours=None applies the 24h default deadline."""
-    before = time.time()
-    out = await taskflow_create.coroutine(
-        session_id=_SESSION, flow_id="flow-1", description="no explicit deadline"
-    )
-
-    flow = await store_sqlite.get_flow("flow-1", _SESSION)
-    assert flow is not None
-    assert flow["deadline_ts"] is not None
-    assert before + 24 * 3600 <= flow["deadline_ts"] <= time.time() + 24 * 3600
-    assert "deadline=" in out
-
-
-@pytest.mark.asyncio
-async def test_default_deadline_zero_disables(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    """default_deadline_hours=0 restores the opt-in-only behaviour."""
-    from config.features import TASKFLOW_INFRA
-
-    monkeypatch.setitem(TASKFLOW_INFRA, "default_deadline_hours", 0)
+async def test_create_without_deadline(isolated_db: Path):
+    """deadline_hours=None leaves deadline_ts NULL and appends no deadline text."""
     out = await taskflow_create.coroutine(
         session_id=_SESSION, flow_id="flow-1", description="no deadline"
     )
@@ -128,10 +110,8 @@ async def test_summary_shows_exceeded(isolated_db: Path):
 
 @pytest.mark.asyncio
 async def test_summary_no_deadline(isolated_db: Path):
-    """An explicit deadline_hours=0 opts out; the summary has no deadline line."""
-    await taskflow_create.coroutine(
-        session_id=_SESSION, flow_id="flow-1", description="plain", deadline_hours=0
-    )
+    """No deadline set -> the summary contains no deadline line at all."""
+    await taskflow_create.coroutine(session_id=_SESSION, flow_id="flow-1", description="plain")
 
     out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 

@@ -70,36 +70,6 @@ def _patch_child_liveness(
     monkeypatch.setattr(registry_helpers, "is_live_unended_run", lambda r: live)
 
 
-async def _create_waiting_with_steps(
-    flow_id: str,
-    *,
-    hours_ago: float,
-    child_keys: list[str],
-) -> dict:
-    """A WAITING flow whose children live only on its STEPS (batch dispatch)."""
-    steps = [
-        {
-            "step_id": f"step-{index}",
-            "task": "task",
-            "status": "dispatched",
-            "child_session_key": key,
-        }
-        for index, key in enumerate(child_keys, start=1)
-    ]
-    flow = await store_sqlite.create_flow(
-        flow_id,
-        {"description": flow_id, "steps": steps, "results": []},
-        session_id=_SESSION,
-    )
-    return await store_sqlite.update_flow(
-        flow_id,
-        flow["expected_revision"],
-        session_id=_SESSION,
-        wait={"reason": "awaiting child result", "set_at": time.time() - hours_ago * 3600},
-        status=TaskFlowStatus.WAITING.value,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Summary rendering
 # ---------------------------------------------------------------------------
@@ -232,45 +202,3 @@ async def test_stale_marker_in_wait_payload(isolated_db: Path, monkeypatch: pyte
     marker = flow["wait"]["stale_detected_at"]
     assert before <= marker <= time.time()
     assert flow["wait"]["stale_child_session_key"] is None
-
-
-@pytest.mark.asyncio
-async def test_batch_dispatch_with_a_live_step_child_is_not_stale(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """A dispatched flow's children live on its steps; any live one vetoes."""
-    await _create_waiting_with_steps(
-        "flow-1", hours_ago=_STALE_HOURS, child_keys=["child-dead", "child-live"]
-    )
-    monkeypatch.setattr(
-        registry_queries,
-        "get_run_by_child_session_key",
-        lambda key: object() if key == "child-live" else None,
-    )
-    monkeypatch.setattr(registry_helpers, "is_live_unended_run", lambda _run: True)
-
-    stale = await sweeper._scan_stale_waiting_taskflows()
-
-    assert stale == 0
-    flow = await store_sqlite.get_flow("flow-1", _SESSION)
-    assert flow is not None
-    assert "stale_detected_at" not in flow["wait"]
-
-
-@pytest.mark.asyncio
-async def test_batch_dispatch_with_all_step_children_dead_is_marked(
-    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """With no live step child the flow is marked (advisory), naming one key."""
-    await _create_waiting_with_steps(
-        "flow-1", hours_ago=_STALE_HOURS, child_keys=["child-a", "child-b"]
-    )
-    _patch_child_liveness(monkeypatch, run=None, live=False)
-
-    stale = await sweeper._scan_stale_waiting_taskflows()
-
-    assert stale == 1
-    flow = await store_sqlite.get_flow("flow-1", _SESSION)
-    assert flow is not None
-    assert flow["wait"]["stale_child_session_key"] == "child-a"
-    assert flow["status"] == TaskFlowStatus.WAITING.value

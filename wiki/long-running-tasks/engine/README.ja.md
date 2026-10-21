@@ -308,12 +308,10 @@ Progress Report: <flow_id>
 1. すべての `waiting` flow を読み込む。
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600`（既定 24 時間）。
 3. `set_at` を持つ待機ペイロードについて、`now - set_at <= timeout_secs` の間はスキップ。
-4. **すべての** child key（flow 行の `child_session_key` と各 step の `child_session_key`。バッチディスパッチは step 側にのみ書く）で子の生存を確認。生きている子が 1 つでもあればスキップ；生存確認のインポートが失敗した場合はその子だけ死亡とみなす。
+4. `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)` で子の生存を確認。子がまだ生きていればスキップ；生存確認のインポート自体が失敗した場合は子を死亡とみなす。
 5. それ以外の場合は `wait_json` に**非破壊マーカー**を刻む：`stale_detected_at` と `stale_child_session_key`。
 
 アイドル検出が flow を**自動的に失敗させることは決してありません**——マーカーは助言的で、サイクルごとに更新されます。これとは独立に、`taskflow_summary` は待機ステータスを描画し、待機が `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 時間）を超えると `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch` を出力します（`taskflow_summary.py:67-90`）。
-
-さらに sweeper は **owner 孤立 flow** を照合します（`agent/tools/taskflow/reconcile.py`、起動時に 1 回＋毎サイクル）：サーバーの `SESSION_EXISTS` hook が owner セッションの消滅を証明し、生きている child run がなく、owner が `TASKFLOW_INFRA["orphan_grace_seconds"]`（300 秒）の間ずっと不在の場合にのみ、非終端 flow を cancelled にします。hook 欠落やストア不読は UNKNOWN（何もしない）です。live owner と live child は常に拒否します。子セッションを殺さず、行も削除しません。`taskflow_cancel` / `taskflow_fail` は実行中の子を `state["detached_child_session_keys"]` に記録するだけで、`taskflow_summary` がそれを表示します。
 
 ## 📋 セッションボードと分離
 

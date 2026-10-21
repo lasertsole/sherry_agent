@@ -73,52 +73,18 @@ async def purge_session(session_id: str) -> None:
     logger.debug(f"Cleared {deleted} mes_memory message row(s) for session_id={session_id}")
 
     # (2) Session-scoped planning stores — todos + task flows.
-    #
-    # They live in two separate SQLite files, so a purge cannot be atomic.
-    # Record durable intent on the flow rows first, then perform each delete
-    # independently and clear its bit only on success. A failure leaves the bit
-    # set for the sweeper's replay (agent/tools/subagent/registry/sweeper.py).
-    from agent.tools.taskflow.config import (
-        PURGE_BITS_ALL,
-        PURGE_BIT_DANGLING_TODO_PTR,
-        PURGE_BIT_FLOWS_NOT_DELETED,
-        PURGE_BIT_TODOS_NOT_CLEARED,
-    )
-    from agent.tools.taskflow.registry import store_sqlite as taskflow_store
-    from agent.tools.todolist.registry import store_sqlite as todo_store
-
     try:
-        await taskflow_store.mark_purge_pending(session_id, mask=PURGE_BITS_ALL)
-    except Exception as e:
-        logger.warning(f"Could not record purge intent for session_id={session_id}: {e}")
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+        from agent.tools.todolist.registry import store_sqlite as todo_store
 
-    cleared_todos = 0
-    try:
         cleared_todos = await todo_store.delete_todos_by_session(session_id)
-        await taskflow_store.clear_purge_bit(session_id, PURGE_BIT_TODOS_NOT_CLEARED)
-    except Exception as e:
-        logger.warning(f"Failed to clear todos for session_id={session_id}: {e}")
-
-    cleared_flows = 0
-    try:
-        flow_ids = await taskflow_store.get_flow_ids_by_session(session_id)
-        # A todo linked to a purged flow would be permanently blocked by the
-        # completion barrier; clear those pointers before deleting the flows.
-        for flow_id in flow_ids:
-            linked = await todo_store.get_todos_by_flow(session_id, flow_id)
-            for todo in linked:
-                await todo_store.clear_flow_link(session_id, int(todo["position"]))
         cleared_flows = await taskflow_store.delete_flows_by_session(session_id)
-        await taskflow_store.clear_purge_bit(
-            session_id, PURGE_BIT_FLOWS_NOT_DELETED | PURGE_BIT_DANGLING_TODO_PTR
+        logger.debug(
+            f"Cleared {cleared_todos} todo row(s) and {cleared_flows} taskflow row(s) "
+            f"for session_id={session_id}"
         )
     except Exception as e:
-        logger.warning(f"Failed to clear taskflows for session_id={session_id}: {e}")
-
-    logger.debug(
-        f"Cleared {cleared_todos} todo row(s) and {cleared_flows} taskflow row(s) "
-        f"for session_id={session_id}"
-    )
+        logger.warning(f"Failed to clear planning stores for session_id={session_id}: {e}")
 
     # (3) sqlite checkpointer — checkpoints + writes for this thread.
     await delete_thread_history(session_id=session_id)

@@ -35,7 +35,6 @@ import asyncio
 import json
 import sqlite3
 import threading
-import time
 from pathlib import Path
 
 import aiosqlite
@@ -72,18 +71,14 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     deadline_ts REAL,
     session_id TEXT NOT NULL DEFAULT '',
     resumed_from TEXT,
-    superseded_by TEXT,
-    created_at REAL,
-    updated_at REAL,
-    terminal_reason TEXT,
-    purge_pending INTEGER NOT NULL DEFAULT 0
+    superseded_by TEXT
 );
 """
 
 _SELECT_COLUMNS_SQL = (
     f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
     f"total_tokens, total_cost, token_budget, deadline_ts, session_id, "
-    f"resumed_from, superseded_by, created_at, updated_at, terminal_reason, purge_pending "
+    f"resumed_from, superseded_by "
     f"FROM {TABLE_NAME}"
 )
 
@@ -126,29 +121,6 @@ _LINEAGE_COLUMN_DDL: tuple[str, ...] = (
     f"ALTER TABLE {TABLE_NAME} ADD COLUMN superseded_by TEXT",
 )
 
-# Lifecycle/audit columns (orphan-prevention plan §1.1):
-# * created_at / updated_at drive stale-running detection; every update bumps
-#   updated_at, so an idle RUNNING flow becomes visible without a heartbeat.
-# * terminal_reason records why a flow left the active set (deadline_exceeded /
-#   stale_swept / superseded / finish_gates_exhausted / ...).
-# * purge_pending is a durable bitfield for a cross-store purge that could not
-#   finish atomically (todos.db and taskflow_registry.db are separate files).
-_LIFECYCLE_COLUMN_DDL: tuple[str, ...] = (
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN created_at REAL",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN updated_at REAL",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN terminal_reason TEXT",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0",
-)
-_LIFECYCLE_BACKFILL: tuple[str, ...] = (
-    # Old rows have no timestamps. A deadline is the best historical activity
-    # hint we have; otherwise epoch 0 makes them stale (deliberately: an
-    # ownerless ancient row is a cleanup candidate, and the reconciler still
-    # requires proof of a missing owner / no live child before acting).
-    f"UPDATE {TABLE_NAME} SET created_at = COALESCE(deadline_ts, 0) WHERE created_at IS NULL",
-    f"UPDATE {TABLE_NAME} SET updated_at = COALESCE(created_at, deadline_ts, 0) "
-    "WHERE updated_at IS NULL",
-)
-
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
 # ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
 # database that predates them converges on its next open, not just a fresh one.
@@ -161,10 +133,6 @@ _INDEX_DDL: tuple[str, ...] = (
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_deadline ON {TABLE_NAME}(deadline_ts) "
     "WHERE deadline_ts IS NOT NULL",
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_session_status ON {TABLE_NAME}(session_id, status)",
-    f"CREATE INDEX IF NOT EXISTS idx_taskflow_stale_sweep ON {TABLE_NAME}"
-    "(session_id, status, updated_at) WHERE status IN ('running', 'waiting')",
-    f"CREATE INDEX IF NOT EXISTS idx_taskflow_purge_pending ON {TABLE_NAME}"
-    "(session_id, purge_pending) WHERE purge_pending != 0",
 )
 
 
@@ -258,10 +226,6 @@ def _row_to_flow(row: tuple) -> dict:
         session_id,
         resumed_from,
         superseded_by,
-        created_at,
-        updated_at,
-        terminal_reason,
-        purge_pending,
     ) = row
     return {
         "flow_id": flow_id,
@@ -277,10 +241,6 @@ def _row_to_flow(row: tuple) -> dict:
         "session_id": session_id or "",
         "resumed_from": resumed_from or None,
         "superseded_by": superseded_by or None,
-        "created_at": float(created_at) if created_at is not None else None,
-        "updated_at": float(updated_at) if updated_at is not None else None,
-        "terminal_reason": terminal_reason or None,
-        "purge_pending": int(purge_pending or 0),
     }
 
 
@@ -298,8 +258,6 @@ class _TaskFlowRepository(BaseSQLiteRepository):
             _DEADLINE_COLUMN_DDL,
             _SESSION_ID_COLUMN_DDL,
             *_LINEAGE_COLUMN_DDL,
-            *_LIFECYCLE_COLUMN_DDL,
-            *_LIFECYCLE_BACKFILL,
         )
 
     def _index_ddls(self) -> tuple[str, ...]:
@@ -340,7 +298,6 @@ async def create_flow(
     if not session_id:
         raise ValueError("session_id must be a non-empty string")
     await ensure_db()
-    now = time.time()
     columns = [
         "flow_id",
         "state_json",
@@ -349,10 +306,8 @@ async def create_flow(
         "status",
         "child_session_key",
         "session_id",
-        "created_at",
-        "updated_at",
     ]
-    placeholders = ["?", "?", "NULL", "?", "?", "?", "?", "?", "?"]
+    placeholders = ["?", "?", "NULL", "?", "?", "?", "?"]
     params: list[object] = [
         flow_id,
         _dump_json(state),
@@ -360,8 +315,6 @@ async def create_flow(
         status,
         child_session_key,
         session_id,
-        now,
-        now,
     ]
     if deadline_ts is not None:
         columns.append("deadline_ts")
@@ -402,39 +355,20 @@ async def get_flow(flow_id: str, session_id: str) -> dict | None:
 
 
 async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: str) -> bool:
-    """Stamp a predecessor flow's ``superseded_by`` and make it terminal.
+    """Stamp a predecessor flow's ``superseded_by`` back-pointer.
 
-    Lineage metadata plus a terminal transition: a predecessor that is still
-    non-terminal becomes ``cancelled`` with ``terminal_reason='superseded'`` so
-    it cannot stay in the active set forever (the active-flow reads also filter
-    ``superseded_by IS NULL``, but a terminal status is the durable truth). An
-    already-terminal predecessor keeps its status/reason — the back-pointer is
-    still updated (idempotent re-entry).
-
-    The write deliberately does NOT bump ``expected_revision``: a caller holding
-    the predecessor's revision is not invalidated by a lineage stamp. Returns
-    True when one row matched, False when the flow is absent FOR THIS SESSION.
+    Lineage metadata, not flow state: the write is a plain session-scoped UPDATE
+    that deliberately does NOT bump ``expected_revision`` (a superseded predecessor
+    keeps its content, so a caller holding its revision is not invalidated — and
+    bumping would make the successor's create path able to lose a race it should
+    not have to run). Returns True when one row matched, False when the flow is
+    absent FOR THIS SESSION.
     """
     await ensure_db()
-    terminal = tuple(sorted(TERMINAL_STATUSES))
-    placeholders = ", ".join("?" for _ in terminal)
     async with _connect() as db:
         cursor = await db.execute(
-            f"UPDATE {TABLE_NAME} SET superseded_by = ?, updated_at = ?, "
-            f"status = CASE WHEN status IN ({placeholders}) THEN status ELSE ? END, "
-            f"terminal_reason = CASE WHEN status IN ({placeholders}) "
-            "THEN terminal_reason ELSE ? END "
-            "WHERE flow_id = ? AND session_id = ?",
-            (
-                superseded_by,
-                time.time(),
-                *terminal,
-                TaskFlowStatus.CANCELLED.value,
-                *terminal,
-                "superseded",
-                flow_id,
-                session_id,
-            ),
+            f"UPDATE {TABLE_NAME} SET superseded_by = ? WHERE flow_id = ? AND session_id = ?",
+            (superseded_by, flow_id, session_id),
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -453,13 +387,11 @@ async def update_flow(
     total_cost: float | None = None,
     token_budget: int | None = None,
     deadline_ts: float | None | _Unset = UNSET,
-    terminal_reason: str | None | _Unset = UNSET,
 ) -> dict:
     """Optimistic-locking mutation of one flow row owned by ``session_id``.
 
-    Every call bumps ``expected_revision`` by exactly 1, refreshes ``updated_at``
-    (the stale-running sweep's activity signal), and requires the row to still
-    be at ``expected_revision``:
+    Every call bumps ``expected_revision`` by exactly 1 and requires the row
+    to still be at ``expected_revision``:
 
     * ``state``: replace state_json when not None.
     * ``wait``: replace wait_json; None clears it; UNSET keeps it.
@@ -467,7 +399,6 @@ async def update_flow(
     * ``child_session_key``: replace when not UNSET.
     * ``total_tokens``/``total_cost``/``token_budget``: replace when not None.
     * ``deadline_ts``: replace when not UNSET and not None.
-    * ``terminal_reason``: replace when not UNSET (None clears it).
 
     Returns the updated flow dict. Raises FlowNotFoundError when no flow with
     that id exists FOR THIS SESSION (a flow owned by another session is
@@ -500,13 +431,8 @@ async def update_flow(
     if not isinstance(deadline_ts, _Unset) and deadline_ts is not None:
         assignments.append("deadline_ts = ?")
         params.append(float(deadline_ts))
-    if not isinstance(terminal_reason, _Unset):
-        assignments.append("terminal_reason = ?")
-        params.append(terminal_reason)
     if not assignments:
         raise ValueError("update_flow called with nothing to update")
-    assignments.append("updated_at = ?")
-    params.append(time.time())
 
     new_revision = int(expected_revision) + 1
     assignments.append("expected_revision = ?")
@@ -549,26 +475,6 @@ async def get_overdue_flows(now_ts: float) -> list[dict]:
             + " WHERE deadline_ts IS NOT NULL AND deadline_ts < ? "
             + f"AND status NOT IN ({placeholders})",
             (now_ts, *terminal),
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [_row_to_flow(row) for row in rows]
-
-
-async def get_non_terminal_flows() -> list[dict]:
-    """Every non-terminal flow, across sessions (system-level orphan sweep).
-
-    Session-scoped readers must keep using :func:`get_active_flows_sync`; this
-    query exists for the reconciler, which must see rows whose owner session is
-    already gone. Rows written before session isolation (``session_id = ''``)
-    are included, so the caller can decide how to treat an ownerless legacy row.
-    """
-    await ensure_db()
-    terminal = tuple(sorted(TERMINAL_STATUSES))
-    placeholders = ", ".join("?" for _ in terminal)
-    async with _connect() as db:
-        async with db.execute(
-            _SELECT_COLUMNS_SQL + f" WHERE status NOT IN ({placeholders})",
-            terminal,
         ) as cursor:
             rows = await cursor.fetchall()
     return [_row_to_flow(row) for row in rows]
@@ -733,183 +639,3 @@ async def delete_flows_by_session(session_id: str) -> int:
         cursor = await db.execute(f"DELETE FROM {TABLE_NAME} WHERE session_id = ?", (session_id,))
         await db.commit()
         return int(cursor.rowcount or 0)
-
-
-async def get_stale_candidates(*, statuses: tuple[str, ...], action_before: float) -> list[dict]:
-    """Non-terminal, non-superseded flows idle since before *action_before*.
-
-    The sweep target for the stale-running pass. NULL timestamps (a database
-    that predates the lifecycle columns) are read as epoch 0, so an ancient row
-    is a candidate; the caller still vetoes live children.
-    """
-    await ensure_db()
-    placeholders = ", ".join("?" for _ in statuses)
-    async with _connect() as db:
-        async with db.execute(
-            _SELECT_COLUMNS_SQL
-            + f" WHERE status IN ({placeholders})"
-            + " AND COALESCE(updated_at, 0) < ?"
-            + " AND superseded_by IS NULL"
-            + " ORDER BY COALESCE(updated_at, 0)",
-            (*statuses, action_before),
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [_row_to_flow(row) for row in rows]
-
-
-async def fail_step_for_child(child_session_key: str, *, reason: str) -> str | None:
-    """Mark the step bound to *child_session_key* failed (idempotent).
-
-    A subagent that ends without resuming its flow leaves the step
-    ``dispatched`` forever. The cleanup hook calls this with the child key; it
-    finds the owning flow, flips only the matching non-terminal step to
-    ``failed`` and records the reason. The flow itself is left running so the
-    AI can replan / fail it with the normal tools (the stale sweep and deadline
-    remain the backstops). Returns the flow id when a step was changed.
-    """
-    key = (child_session_key or "").strip()
-    if not key:
-        return None
-    flow = await get_flow_for_child_session(key)
-    if flow is None:
-        return None
-    flow_id = str(flow["flow_id"])
-    owner = str(flow["session_id"])
-    current = flow
-    for _attempt in range(int(TASKFLOW_INFRA["persist_max_attempts"])):
-        state = dict(current.get("state") or {})
-        steps = [
-            dict(step) if isinstance(step, dict) else step for step in state.get("steps") or []
-        ]
-        changed = False
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            if str(step.get("child_session_key") or "") != key:
-                continue
-            status = str(step.get("status") or "")
-            if status in (
-                TaskFlowStatus.DONE.value,
-                "done",
-                "failed",
-                "skipped",
-                "cancelled",
-            ):
-                continue
-            step["status"] = "failed"
-            step["fail_reason"] = reason
-            changed = True
-        if not changed:
-            return None
-        state["steps"] = steps
-        try:
-            await update_flow(
-                flow_id,
-                int(current["expected_revision"]),
-                session_id=owner,
-                state=state,
-            )
-            return flow_id
-        except FlowConflictError:
-            fresh = await get_flow(flow_id, owner)
-            if fresh is None or fresh["status"] in TERMINAL_STATUSES:
-                return None
-            current = fresh
-        except FlowNotFoundError:
-            return None
-    return None
-
-
-async def count_total_flows_for_session(session_id: str) -> int:
-    """Count every flow row owned by the session (active + terminal + superseded)."""
-    await ensure_db()
-    async with _connect() as db:
-        async with db.execute(
-            f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE session_id = ?", (session_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-    return int(row[0]) if row else 0
-
-
-async def get_flow_ids_by_session(session_id: str) -> list[str]:
-    """All flow ids owned by the session (used by the purge replay)."""
-    await ensure_db()
-    async with _connect() as db:
-        async with db.execute(
-            f"SELECT flow_id FROM {TABLE_NAME} WHERE session_id = ?", (session_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [str(row[0]) for row in rows]
-
-
-async def prune_session_flows(session_id: str) -> int:
-    """Delete the oldest terminal/superseded flows until the total fits the cap.
-
-    Active (running/waiting) rows are NEVER deleted. ``max_total_flows_per_session=0``
-    disables pruning. Returns the number of rows removed.
-    """
-    keep = int(TASKFLOW_INFRA["max_total_flows_per_session"])
-    if keep <= 0:
-        return 0
-    total = await count_total_flows_for_session(session_id)
-    excess = total - keep
-    if excess <= 0:
-        return 0
-    await ensure_db()
-    terminal = tuple(sorted(TERMINAL_STATUSES))
-    placeholders = ", ".join("?" for _ in terminal)
-    async with _connect() as db:
-        cursor = await db.execute(
-            f"DELETE FROM {TABLE_NAME} WHERE rowid IN ("
-            f"SELECT rowid FROM {TABLE_NAME} WHERE session_id = ? "
-            f"AND (status IN ({placeholders}) OR superseded_by IS NOT NULL) "
-            "ORDER BY COALESCE(updated_at, 0) ASC LIMIT ?)",
-            (session_id, *terminal, excess),
-        )
-        await db.commit()
-        return int(cursor.rowcount or 0)
-
-
-async def mark_purge_pending(session_id: str, *, mask: int) -> None:
-    """Set durable purge-intent bits on every flow row of the session."""
-    await ensure_db()
-    async with _connect() as db:
-        await db.execute(
-            f"UPDATE {TABLE_NAME} SET purge_pending = purge_pending | ? WHERE session_id = ?",
-            (int(mask), session_id),
-        )
-        await db.commit()
-
-
-async def clear_purge_bit(session_id: str, bit: int) -> None:
-    """Clear one purge-intent bit on every flow row of the session (idempotent)."""
-    await ensure_db()
-    async with _connect() as db:
-        await db.execute(
-            f"UPDATE {TABLE_NAME} SET purge_pending = purge_pending & ~? WHERE session_id = ?",
-            (int(bit), session_id),
-        )
-        await db.commit()
-
-
-async def clear_purge_bit_for_flow(flow_id: str, session_id: str, bit: int) -> None:
-    """Clear one purge-intent bit on one flow row (idempotent)."""
-    await ensure_db()
-    async with _connect() as db:
-        await db.execute(
-            f"UPDATE {TABLE_NAME} SET purge_pending = purge_pending & ~? "
-            "WHERE flow_id = ? AND session_id = ?",
-            (int(bit), flow_id, session_id),
-        )
-        await db.commit()
-
-
-async def get_flows_with_purge_pending() -> list[dict]:
-    """Flows carrying a non-zero purge-intent bitfield (sweeper replay input)."""
-    await ensure_db()
-    async with _connect() as db:
-        async with db.execute(
-            _SELECT_COLUMNS_SQL + " WHERE purge_pending != 0 ORDER BY updated_at"
-        ) as cursor:
-            rows = await cursor.fetchall()
-    return [_row_to_flow(row) for row in rows]
