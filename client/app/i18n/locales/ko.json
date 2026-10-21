@@ -55,6 +55,11 @@
     "toolNoOutput": "출력 없음",
     "toolResult": "실행 결과",
     "toolRunning": "실행 중…",
+    "turnHistoryTools": "실행한 도구: {n}",
+    "turnHistoryThinking": "사고 과정",
+    "turnHistoryWork": "실행 과정",
+    "turnHistoryExpand": "실행 내역 펼치기",
+    "turnHistoryCollapse": "실행 내역 접기",
     "removeImage": "이미지 제거",
     "removeAudio": "오디오 제거",
     "removeVideo": "비디오 제거"

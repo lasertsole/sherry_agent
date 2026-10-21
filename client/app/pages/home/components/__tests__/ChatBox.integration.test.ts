@@ -471,6 +471,115 @@ describe('ChatBox scroll-up history hooks (integration, backend mocked)', () => 
   });
 });
 
+describe('ChatBox turn history fold (integration, backend mocked)', () => {
+  const settledTurn = (): MessageItem[] => [
+    base({ id: 1, role: CHAT_ROLE.USER, content: '查一下' }),
+    base({ id: 2, role: CHAT_ROLE.AI, content: 'let me check' }),
+    base({
+      id: 3,
+      role: CHAT_ROLE.TOOL,
+      content: 'file body',
+      toolName: 'read_file',
+      toolStatus: 'done',
+      toolDurationMs: 1200
+    }),
+    base({ id: 4, role: CHAT_ROLE.AI, content: 'final answer', reasoning: 'final thought' })
+  ];
+
+  it('collapses tool work and reasoning behind a summary, keeping the final answer visible', async () => {
+    const wrapper = mount(ChatBox, { props: { messages: settledTurn() } });
+
+    expect(wrapper.text()).toContain('final answer');
+    expect(wrapper.text()).not.toContain('let me check');
+    expect(wrapper.text()).not.toContain('read_file');
+    expect(wrapper.text()).not.toContain('思考过程');
+    const trigger = wrapper.get('[data-test="turn-history-status"]');
+    expect(trigger.text()).toContain('已执行工具 1 个');
+    expect(trigger.text()).toContain('1.2s');
+    expect(trigger.attributes('aria-expanded')).toBe('false');
+
+    await trigger.trigger('click');
+    expect(wrapper.text()).toContain('let me check');
+    expect(wrapper.text()).toContain('read_file');
+    expect(wrapper.text()).toContain('思考过程');
+    expect(wrapper.get('[data-test="turn-history-status"]').attributes('aria-expanded')).toBe('true');
+
+    await wrapper.get('[data-test="turn-history-status"]').trigger('click');
+    expect(wrapper.text()).not.toContain('let me check');
+    expect(wrapper.text()).not.toContain('思考过程');
+  });
+
+  it('leaves a running turn linear', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: '查一下' }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'working' }),
+          base({
+            id: 3,
+            role: CHAT_ROLE.TOOL,
+            content: '',
+            toolName: 'read_file',
+            toolStatus: 'running'
+          }),
+          base({ id: 4, role: CHAT_ROLE.AI, content: 'partial', streaming: true })
+        ]
+      }
+    });
+
+    expect(wrapper.find('[data-test="turn-history-status"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('working');
+    expect(wrapper.text()).toContain('partial');
+  });
+
+  it('does not fold an ordinary answer with nothing behind it', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'hello' })
+        ]
+      }
+    });
+    expect(wrapper.find('[data-test="turn-history-status"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('hello');
+  });
+
+  it('folds reasoning on a lone answer but leaves the answer visible', async () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 1, role: CHAT_ROLE.AI, content: 'answer', reasoning: 'thought' })]
+      }
+    });
+
+    expect(wrapper.get('[data-test="turn-history-status"]').text()).toContain('思考过程');
+    expect(wrapper.text()).toContain('answer');
+    expect(wrapper.text()).not.toContain('thought');
+
+    await wrapper.get('[data-test="turn-history-status"]').trigger('click');
+    expect(wrapper.text()).toContain('思考过程');
+  });
+
+  it('fails open when the turn ended on a tool call', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.AI, content: 'working' }),
+          base({
+            id: 2,
+            role: CHAT_ROLE.TOOL,
+            content: '',
+            toolName: 'terminal',
+            toolStatus: 'running'
+          })
+        ]
+      }
+    });
+    expect(wrapper.find('[data-test="turn-history-status"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('working');
+  });
+});
+
 describe('ChatBox streaming bubble (integration, backend mocked)', () => {
   it('renders only the tail of a very long streaming answer, then the full text when settled', async () => {
     // A single multi-thousand-line row re-laid-out on every flush starved the

@@ -55,6 +55,11 @@
     "toolNoOutput": "出力なし",
     "toolResult": "実行結果",
     "toolRunning": "実行中…",
+    "turnHistoryTools": "実行したツール: {n}",
+    "turnHistoryThinking": "思考プロセス",
+    "turnHistoryWork": "実行プロセス",
+    "turnHistoryExpand": "実行履歴を展開",
+    "turnHistoryCollapse": "実行履歴を折りたたむ",
     "removeImage": "画像を削除",
     "removeAudio": "音声を削除",
     "removeVideo": "動画を削除"

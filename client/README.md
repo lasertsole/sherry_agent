@@ -9,6 +9,7 @@
 Built with **Tauri 2 + Nuxt 4 (Vue 3 + TypeScript)**:
 
 - **Streaming chat** — agent responses stream over WebSockets (`/sessions/agent/ws`) with typed chunks (`text` / `reasoning` / `tool_start` / `tool_end` / `tool_result`) and HITL (human-in-the-loop) approval cards
+- **Collapsible turn history** — a settled turn with tool/reasoning work shows one execution summary plus the final answer; expanding it restores the tool cards, intermediate messages and reasoning
 - **Offline-first history** — Dexie.js (IndexedDB) caches conversation history, subagent run records, character profiles, and the chat background image; history requests are cache-first and fetch only missing turns
 - **Rich tooling UI** — skill manager, cron jobs, heartbeat editor, channel settings, log viewer (server + client logs), statistics charts, subagent flow graph, knowledge-graph viewer
 - **Dark/Light mode + i18n** — `@nuxtjs/color-mode` theming and 4 locales (`zh` / `en` / `ja` / `ko`)

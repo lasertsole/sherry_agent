@@ -1,7 +1,7 @@
 # 计划：借鉴 ZCode turn 折叠展示（协议层分类 + structured_response 增强）
 
 - 建档日期：2026-10-19
-- 状态：**计划（未开工）**
+- 状态：**已实现（2026-10-20，视图层派生分类）**。折叠由已加载的 message 分组派生（`client/app/composables/use-chat-turn-fold.ts`），未新增服务端 render_unit API/WS frame：message 行只有 `turn_num`、trajectory 账本不含 assistant 文本，服务端分类只会重复客户端已有的行；structured_response 摘要仍为未启用的可选项。
 - **文档范围**：让 sherry 前端能像 ZCode 一样折叠单轮 turn 的执行流程（工具调用、reasoning）而直接展示最终结果（assistant text）。**主方案是协议层分类（借鉴 ZCode + 复用 sherry 已有 trajectory_store turn_id 分组），可选增强用 langchain structured_response 让 LLM 生成语义化摘要**。
 - **硬约束**：**不破坏现有 WS message 协议 + 不破坏现有 message store + 不强制 LLM 配合**（structured_response 是可选增强，不是必做），详见 §1
 - 关联代码：

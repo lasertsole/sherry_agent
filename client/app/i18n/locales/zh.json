@@ -55,6 +55,11 @@
     "toolNoOutput": "无输出",
     "toolResult": "执行结果",
     "toolRunning": "执行中…",
+    "turnHistoryTools": "已执行工具 {n} 个",
+    "turnHistoryThinking": "思考过程",
+    "turnHistoryWork": "执行过程",
+    "turnHistoryExpand": "展开执行过程",
+    "turnHistoryCollapse": "收起执行过程",
     "removeImage": "移除图片",
     "removeAudio": "移除音频",
     "removeVideo": "移除视频"

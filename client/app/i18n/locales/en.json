@@ -55,6 +55,11 @@
     "toolNoOutput": "No output",
     "toolResult": "Result",
     "toolRunning": "Running…",
+    "turnHistoryTools": "Tools executed: {n}",
+    "turnHistoryThinking": "Thinking process",
+    "turnHistoryWork": "Execution process",
+    "turnHistoryExpand": "Expand execution history",
+    "turnHistoryCollapse": "Collapse execution history",
     "removeImage": "Remove image",
     "removeAudio": "Remove audio",
     "removeVideo": "Remove video"

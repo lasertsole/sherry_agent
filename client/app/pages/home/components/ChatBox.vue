@@ -69,8 +69,20 @@
                 {{ carrier.content }}
               </div>
             </div>
+            <!-- Settled turn with work behind it: the execution history folds
+                 behind this summary row, while the final assistant answer stays
+                 visible below. An ineligible group (running, interrupted, or a
+                 lone answer) renders linearly exactly as before. -->
+            <ChatTurnHistoryStatus
+              v-if="groupFold(vRow.index).eligible"
+              :label="foldLabel(groupFold(vRow.index))"
+              :expanded="expandedTurnHistory.has(groupFold(vRow.index).key)"
+              :expand-label="t('chatBox.turnHistoryExpand')"
+              :collapse-label="t('chatBox.turnHistoryCollapse')"
+              class="ml-[52px]"
+              @toggle="toggleTurnHistory(groupFold(vRow.index).key)" />
             <div
-              v-for="message in regularMessages(rowGroup(vRow.index))"
+              v-for="message in groupMessages(rowGroup(vRow.index))"
               :key="message.id"
               :class="[
                 'flex justify-start gap-3 min-w-0',
@@ -80,7 +92,10 @@
               <ChatMessageAvatar
                 :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
                 :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName"
-                :hidden="isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL" />
+                :hidden="
+                  (isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))) ||
+                  message.role === CHAT_ROLE.TOOL
+                " />
               <!-- Message body -->
               <div
                 :class="[
@@ -104,7 +119,9 @@
                 </div>
                 <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
                 <ChatThinkingBlock
-                  v-if="message.role === CHAT_ROLE.AI && message.reasoning"
+                  v-if="
+                    message.role === CHAT_ROLE.AI && message.reasoning && !isFoldedFinal(message, rowGroup(vRow.index))
+                  "
                   :reasoning="message.reasoning ?? ''"
                   :expanded="expandedThinking.has(message.id)"
                   :consecutive="isConsecutive(message.id)"
@@ -132,7 +149,9 @@
                     message.role === CHAT_ROLE.USER
                       ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
                       : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
-                    { 'rounded-xl': isConsecutive(message.id) }
+                    {
+                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))
+                    }
                   ]">
                   <ChatCopyButton
                     v-if="canCopyMessage(message)"
@@ -251,7 +270,9 @@
 // Methods/types
 import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
-import { formatCompactTimeString } from '@/common/utils';
+import { formatCompactTimeString, formatToolDuration } from '@/common/utils';
+// Value is auto-imported by Nuxt; only the type needs an explicit import.
+import type { TurnFoldView } from '@/composables/use-chat-turn-fold';
 import { useI18n } from 'vue-i18n';
 // Render subcomponents (explicit imports: bare Vitest mounts have no Nuxt
 // component auto-registration, and the page-level convention is explicit
@@ -262,6 +283,7 @@ import ChatToolCard from '@/components/chat/ChatToolCard.vue';
 import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
+import ChatTurnHistoryStatus from '@/components/chat/ChatTurnHistoryStatus.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
 import ProgressFloat from './ProgressFloat.vue';
 
@@ -349,11 +371,58 @@ const {
   expandedThinking,
   expandedCarriers,
   expandedLongMessages,
+  expandedTurnHistory,
   toggleToolCard,
   toggleThinking,
   toggleCarrier,
+  toggleTurnHistory,
   toggleLongMessage
 } = useChatCardExpansion();
+
+/**
+ * Fold classification for one virtual row's assistant work group.
+ * @param rowIndex Virtual row index (the group is `rowGroup(rowIndex)`).
+ */
+const groupFold = (rowIndex: number): TurnFoldView => classifyTurnFold(regularMessages(rowGroup(rowIndex)));
+
+/**
+ * Rows rendered for one group: everything when the group is not foldable or is
+ * expanded, otherwise only the settled final answer.
+ * @param group Turn group in render order.
+ */
+const groupMessages = (group: MessageItem[]): MessageItem[] => {
+  const rows = regularMessages(group);
+  const fold = classifyTurnFold(rows);
+  if (!fold.eligible || expandedTurnHistory.has(fold.key)) return rows;
+  return fold.finalMessage ? [fold.finalMessage] : rows;
+};
+
+/**
+ * Whether a row is the final answer of a COLLAPSED fold. Its reasoning moves
+ * into the hidden history, so the visible answer renders without the thinking
+ * block (expanding the fold brings it back).
+ * @param message Row being rendered.
+ * @param group Its turn group.
+ */
+const isFoldedFinal = (message: MessageItem, group: MessageItem[]): boolean => {
+  const fold = classifyTurnFold(regularMessages(group));
+  return fold.eligible && !expandedTurnHistory.has(fold.key) && fold.finalMessage?.id === message.id;
+};
+
+/**
+ * Summary shown on the fold trigger: what happened, plus the measured tool time
+ * when the backend reported one.
+ * @param fold Classified turn.
+ */
+const foldLabel = (fold: TurnFoldView): string => {
+  const parts: string[] = [];
+  if (fold.toolCount > 0) parts.push(t('chatBox.turnHistoryTools', { n: fold.toolCount }));
+  else if (fold.hasReasoning) parts.push(t('chatBox.turnHistoryThinking'));
+  else parts.push(t('chatBox.turnHistoryWork'));
+  const duration = formatToolDuration(fold.durationMs);
+  if (duration) parts.push(duration);
+  return parts.join(' · ');
+};
 
 /**
  * Header label of a neutral (injector-origin) card, by the row's `origin`.

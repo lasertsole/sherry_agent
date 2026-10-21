@@ -75,6 +75,12 @@ export interface MessageItem {
   toolEndedAtMs?: number;
   /** Tool status: running=calling, done=completed, failed=rejected/failed, error=execution error (only set when role=TOOL) */
   toolStatus?: 'running' | 'done' | 'failed' | 'error';
+  /**
+   * Whether an AI row declares tool calls (history rows only). The fold
+   * classifier treats such a row as unfinished work, never as the final answer:
+   * its tool results may be missing or still running.
+   */
+  hasToolCalls?: boolean;
   /** Tool call arguments (only set when role=TOOL and a tool_result has been received) */
   toolArgs?: Record<string, unknown>;
   /** Tool execution result text (only set when role=TOOL and a tool_result has been received) */
