@@ -1,10 +1,12 @@
 # 计划：压缩时输出 per-turn brief + turn_id 索引，让 message_search 语义回溯压缩前会话
 
 - 建档日期：2026-10-21
-- 状态：方案设计（v3，改用 `turn_id` + 合并 `get_turn_messages` 到 `message_search`），未开工
+- 状态：**[存在质疑]** 方案设计（v3，改用 `turn_id` + 合并 `get_turn_messages` 到 `message_search`），未开工
 - 来源：用户需求 + 调研（message_search 工具 API、turn_id 生命周期、压缩路径 emission、4 个同级项目 turn_id 模型）
 - 严重性：中（压缩后原始会话细节丢失，message_search 无法语义回溯被压缩的内容）
 - **前置（已落地）**：`messages.turn_id` + `additional_kwargs["turn_id"]` 由 `_persist_batch` stamp；`GET_CURRENT_TURN_ID` 运行时缝隙已注册。基础设施计划已执行并删除
+
+> ⚠️ **[存在质疑]（2026-10-21）**：`render_summary_markdown` 段落的“它只进 transcript 的 `<summary>` 块”表述与当前代码不符。当前 `render_summary_markdown` 只渲染 SummaryDoc 的基础 section，`turn_index` 既不会进入 `<summary>`，也不会自动出现在主 agent 的上下文里；真正进入 `<summary>` 的是 `render_summary_markdown` 的输出，结构化 `summary_doc` JSON 走 `AIMessage.additional_kwargs`。另外，若 `_finalize_summary_doc` 先无条件清空 `turn_index`，`_build_new_messages` 根本拿不到它——需要先核实“消费 / 清空 / 渲染”的顺序与主 agent 的可见性，再决定是否按本计划实现。主 agent 若要看到 per-turn brief，目前只能通过 `message_search` 检索（计划目标），不是常驻上下文。
 
 ---
 
