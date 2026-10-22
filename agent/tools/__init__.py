@@ -25,6 +25,7 @@ from .python_repl import build_python_repl_tool
 from .question import build_question_tool
 from .compact_now import build_compact_now_tool
 from .plan_mode import build_plan_mode_tools
+from .checkpoint_tools import build_checkpoint_tool
 from .memory import build_memory_tool, memory_store as memory_store
 from .message_search import build_message_search_tool
 from .taskflow import build_taskflow_tools
@@ -70,6 +71,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_knowledge_tools,
     build_question_tool,
     build_plan_mode_tools,
+    build_checkpoint_tool,
     build_compact_now_tool,
 ]
 

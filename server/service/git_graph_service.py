@@ -27,6 +27,7 @@ from pathlib import Path
 from loguru import logger
 
 from config.features import GIT_GRAPH
+from agent.tools.pub_base import shadow_git
 from runtime.session.project_dir import current_project_dir, project_dir_source
 
 __all__ = [
@@ -77,15 +78,14 @@ class GraphPage:
 
 
 def _run(root: Path, args: list[str]) -> subprocess.CompletedProcess[str] | None:
-    """Run ``git <args>`` bounded; ``None`` when git is missing or timed out."""
+    """Run ``git <args>`` against the SHADOW store, bounded.
+
+    ``None`` when git is missing or timed out. The user's own ``.git`` is never
+    read here: every command carries ``GIT_DIR``/``GIT_WORK_TREE``/index of the
+    project's shadow store.
+    """
     try:
-        return subprocess.run(
-            ["git", *args],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=GIT_GRAPH["timeout_s"],
-        )
+        return shadow_git.run_shadow(root, args, timeout=GIT_GRAPH["timeout_s"])
     except FileNotFoundError:
         logger.info("git graph: git binary not available")
         return None
@@ -131,6 +131,10 @@ def _parse_log(stdout: str) -> list[dict]:
         if len(parts) < 6:
             continue
         full, parents, author, date, refs, subject = parts[:6]
+        fields = shadow_git._parse_message(subject)
+        if fields.get("type") != "unknown":
+            subject = shadow_git._summary(fields)
+            refs = ""
         commits.append(
             {
                 "hash": full,
@@ -146,22 +150,19 @@ def _parse_log(stdout: str) -> list[dict]:
 
 
 def _header(root: Path) -> tuple[bool, str, str, bool, int, bool]:
-    """``(available, reason, branch, detached, dirty, dirty_capped)``."""
-    probe = _run(root, ["rev-parse", "--is-inside-work-tree"])
-    if probe is None:
-        return False, "git-unavailable", "", False, 0, False
-    if probe.returncode != 0 or probe.stdout.strip() != "true":
-        return False, "not-a-repository", "", False, 0, False
+    """``(available, reason, branch, detached, dirty, dirty_capped)``.
 
-    branch = ""
-    detached = False
-    head = _run(root, ["rev-parse", "--abbrev-ref", "HEAD"])
-    if head is not None and head.returncode == 0:
-        name = head.stdout.strip()
-        # A repository without commits answers "HEAD" here as well; the log then
-        # comes back empty and the panel says so.
-        detached = name == "HEAD"
-        branch = _text(name)
+    Shadow history is always available when git can run; the "branch" the panel
+    names is the single checkpoint chain. Dirty counts compare the work tree
+    with the shadow index (never the user's repository).
+    """
+    head = shadow_git.shadow_head(root)
+    if head is None:
+        # A missing git binary and an empty shadow store look the same here;
+        # the first snapshot creates the store lazily.
+        if _run(root, ["--version"]) is None:
+            return False, "git-unavailable", "", False, 0, False
+        return True, "", "checkpoint", False, 0, False
 
     dirty = 0
     capped = False
@@ -170,7 +171,7 @@ def _header(root: Path) -> tuple[bool, str, str, bool, int, bool]:
         lines = [line for line in status.stdout.splitlines() if line.strip()]
         capped = len(lines) > GIT_GRAPH["max_status_entries"]
         dirty = min(len(lines), GIT_GRAPH["max_status_entries"])
-    return True, "", branch, detached, dirty, capped
+    return True, "", "checkpoint", False, dirty, capped
 
 
 def _local_branches(root: Path) -> list[str]:
@@ -244,7 +245,7 @@ def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> Grap
         dirty_capped=capped,
         commits=commits[:page_size],
         has_more=has_more,
-        branches=_local_branches(root),
+        branches=[],
     )
 
 
@@ -257,12 +258,9 @@ def _stderr_tail(completed: subprocess.CompletedProcess[str] | None) -> str:
 
 
 def _require_repository(root: Path) -> None:
-    """Refuse a write outside a usable repository (the read paths say so in JSON)."""
-    probe = _run(root, ["rev-parse", "--is-inside-work-tree"])
-    if probe is None:
-        raise GitActionError("git is not available on the server", 503)
-    if probe.returncode != 0 or probe.stdout.strip() != "true":
-        raise GitActionError("the working directory is not a git repository", 400)
+    """Refuse a write when the project has no shadow checkpoint yet."""
+    if shadow_git.shadow_head(root) is None:
+        raise GitActionError("the project has no shadow checkpoints yet", 400)
 
 
 #: ``git reset`` modes the panel may ask for (``--hard`` discards the working
@@ -285,39 +283,17 @@ def reset_to(session_id: str, target: str, mode: str) -> GraphPage:
         raise GitActionError("invalid commit")
     root = current_project_dir(session_id)
     _require_repository(root)
-    verify = _run(root, ["rev-parse", "--verify", f"{clean_target}^{{commit}}"])
-    if verify is None:
-        raise GitActionError("git is not available on the server", 503)
-    if verify.returncode != 0:
-        raise GitActionError(f"unknown commit: {clean_target}", 404)
-    result = _run(root, ["reset", f"--{mode}", clean_target])
-    if result is None or result.returncode != 0:
-        raise GitActionError(_stderr_tail(result), 409)
-    logger.info("git graph: reset --{} to {} in {}", mode, clean_target[:8], root)
+    try:
+        shadow_git.restore_checkpoint(session_id, clean_target, project_root=root)
+    except (ValueError, RuntimeError) as exc:
+        raise GitActionError(str(exc), 409) from exc
+    logger.info("git graph: restored shadow checkpoint {} in {}", clean_target[:8], root)
     return read_graph(session_id)
 
 
 def checkout_ref(session_id: str, ref: str) -> GraphPage:
-    """Check out a branch (or any resolvable ref): the panel's 切换分支 action.
-
-    A conflicting checkout fails inside git and its stderr comes back as-is; a
-    ref git does not know is refused before anything is touched.
-    """
-    clean_ref = ref.strip()
-    if not clean_ref or clean_ref.startswith("-"):
-        raise GitActionError("invalid ref")
-    root = current_project_dir(session_id)
-    _require_repository(root)
-    verify = _run(root, ["rev-parse", "--verify", f"{clean_ref}^{{commit}}"])
-    if verify is None:
-        raise GitActionError("git is not available on the server", 503)
-    if verify.returncode != 0:
-        raise GitActionError(f"unknown ref: {clean_ref}", 404)
-    result = _run(root, ["checkout", clean_ref])
-    if result is None or result.returncode != 0:
-        raise GitActionError(_stderr_tail(result), 409)
-    logger.info("git graph: checked out {} in {}", clean_ref, root)
-    return read_graph(session_id)
+    """Shadow history has a single chain — there are no branches to switch."""
+    raise GitActionError("shadow checkpoints do not have branches", 400)
 
 
 @dataclass(frozen=True)
@@ -454,20 +430,15 @@ def _blob(root: Path, revision: str) -> tuple[str | None, str]:
         return None, "missing"
     if size > GIT_GRAPH["max_diff_bytes"]:
         return None, "too-large"
-    blob = subprocess.run(
-        ["git", "show", revision],
-        cwd=str(root),
-        capture_output=True,
-        timeout=GIT_GRAPH["timeout_s"],
-    )
-    if blob.returncode != 0:
-        return None, "missing"
-    if b"\x00" in blob.stdout[:8192]:
-        return None, "binary"
     try:
-        return blob.stdout.decode("utf-8"), ""
+        blob = _run(root, ["show", revision])
     except UnicodeDecodeError:
         return None, "binary"
+    if blob is None or blob.returncode != 0:
+        return None, "missing"
+    if "\x00" in blob.stdout[:8192]:
+        return None, "binary"
+    return blob.stdout, ""
 
 
 def _aligned_rows(old_text: str, new_text: str) -> tuple[list[DiffRow], bool]:

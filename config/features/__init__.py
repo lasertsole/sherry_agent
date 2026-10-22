@@ -57,6 +57,8 @@ from .agent_side import (
     REPETITION_GUARD as REPETITION_GUARD,
     REPETITION_PENALTY as REPETITION_PENALTY,
     RepetitionPenaltyConfig as RepetitionPenaltyConfig,
+    SHADOW_GIT as SHADOW_GIT,
+    ShadowGitConfig as ShadowGitConfig,
     STEP_JUDGE as STEP_JUDGE,
     SUBAGENT_INFRA as SUBAGENT_INFRA,
     SubagentIsolationConfig as SubagentIsolationConfig,

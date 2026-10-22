@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (80 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (81 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -1294,9 +1294,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 52 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 53 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 80 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 81 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
@@ -1460,23 +1460,20 @@ each suite is the version-controlled reference (threshold + model id).
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
-- a session's BOUND project directory must be a git repository before anything
-  writes into it (`agent/tools/pub_base/git_ensure.py::ensure_git_for_writes`):
-  the first write probes `git rev-parse --is-inside-work-tree` (true for the
-  root, a subdirectory OR a linked worktree, so the isolated-worktree children
-  never re-init) and runs a plain `git init` when the directory is not yet a
-  repository; a failed init REFUSES the write with a message naming the
-  directory and the reason (writes without version control are the thing the
-  gate exists to prevent). An UNBOUND session is untouched — its writes resolve
-  against the process default exactly as before. All four write doors are
-  gated (`write_file` / `patch_file` / `terminal` / `python_repl`, the last two
-  because a shell or `open(path,'w')` writes without ever touching the file
-  tools; command parsing is deliberately NOT attempted), while read operations
-  are not. The result is cached per RESOLVED ROOT (a project-directory switch
-  misses the cache and re-probes; `clear_git_ready()` forces a re-check), and a
-  FAILED init is never cached — the next write retries. `git init` uses git's
-  own defaults: no `--bare`, no `--initial-branch`, no user.name/email
-  handling, no auto-commit.
+- a session's BOUND project directory is snapshotted into
+  `<project>/.sherry/shadow-git` before the first write of each turn
+  (`agent/tools/pub_base/shadow_git.py::ensure_checkpoint`): write_file,
+  patch_file, terminal and python_repl all call it, and it is fail-open — a
+  broken store logs a warning and the write proceeds. The user's `.git` is
+  NEVER initialized, staged, committed, reset, checked out or worktree'd; the
+  shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation and a
+  single `refs/heads/main` chain. `info/exclude` carries the deny patterns
+  (secrets, bulk dirs and the shadow store) before `git add -A`; snapshots are
+  pruned to `SHADOW_GIT["max_snapshots"]`. Restore takes a pre-restore snapshot
+  and supports one file or the whole tree; the `checkpoint` tool exposes
+  list/show/restore. The git-graph panel reads the shadow chain (branch label
+  `checkpoint`), and `git_head` announces `checkpoint@<hash>`. An UNBOUND
+  session is untouched, and reads are never gated.
 - the three tool classes that used to inherit from the archived
   `langchain-community` / `langchain-experimental` base classes
   (``FormattedWriteFileTool``, ``SafeShellTool``, ``TimedPythonREPLTool``) are

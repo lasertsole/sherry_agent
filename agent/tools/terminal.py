@@ -55,11 +55,11 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 from langchain_core.tools import ToolException
 
 from agent.tools.pub_base import (
-    ensure_git_for_writes,
     SessionId,
     _extract_session_id,
     resolve_tool_session_id,
 )
+from agent.tools.pub_base.shadow_git import ensure_checkpoint
 
 
 from agent.tools.pub_base.env_scrub import scrub_env
@@ -532,14 +532,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         bound_session = resolve_tool_session_id(session_id, run_manager)
         cwd = self._resolve_cwd(bound_session)
         writable_roots = self._session_writable_roots(bound_session)
-        # A bound project directory must be a git repository before a command
-        # runs: `echo > file` / `cp` / `mv` write without ever touching
-        # write_file, so the gate cannot live only in the file tools. Command
-        # parsing is deliberately NOT attempted (the check is cached per root,
-        # so a read command pays one dict lookup).
-        git_ok, git_error = ensure_git_for_writes(bound_session)
-        if not git_ok:
-            return git_error
+        # A command can write (`echo > file`, cp, mv) without the file tools;
+        # take the turn's shadow snapshot before it runs. Fail-open.
+        ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
         env = scrub_env()
         if sandbox:
@@ -721,10 +716,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         bound_session = resolve_tool_session_id(session_id, run_manager)
         cwd = self._resolve_cwd(bound_session)
         writable_roots = self._session_writable_roots(bound_session)
-        # Same gate as the sync path (see its comment): a shell can write files.
-        git_ok, git_error = ensure_git_for_writes(bound_session)
-        if not git_ok:
-            return git_error
+        # Same fail-open snapshot as the sync path.
+        ensure_checkpoint(bound_session, reason=f"before_write:terminal:{cmd_str[:120]}")
 
         env = scrub_env()
 

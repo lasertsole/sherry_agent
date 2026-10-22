@@ -51,6 +51,10 @@ from .repetition_penalty import (
     RepetitionPenaltyConfig as RepetitionPenaltyConfig,
     REPETITION_PENALTY as REPETITION_PENALTY,
 )
+from .shadow_git import (
+    ShadowGitConfig as ShadowGitConfig,
+    SHADOW_GIT as SHADOW_GIT,
+)
 from .llm_retry import (
     LlmRetryConfig as LlmRetryConfig,
     LLM_RETRY as LLM_RETRY,

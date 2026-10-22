@@ -15,7 +15,7 @@
   - [3. 경로별 잠금](#3-경로별-잠금)
   - [4. 잔여 파일 청소](#4-잔여-파일-청소)
 - [읽기 우선 라이선스](#-읽기-우선-라이선스)
-- [쓰기 전 git 준비](#-쓰기-전-git-준비)
+- [Shadow git 체크포인트](#-shadow-git-체크포인트-기존-git-준비-게이트-제거)
 - [격리 서브에이전트 워크스페이스 (git worktree)](#-격리-서브에이전트-워크스페이스-git-worktree)
 - [대안과 실측](#%EF%B8%8F-대안과-실측)
 - [리소스 파일과 인코딩](#%EF%B8%8F-리소스-파일과-인코딩)
@@ -35,7 +35,7 @@
 4. `write_file`의 읽기 우선 라이선스——이미 있는 파일은 그것을 읽은 세션만 덮어쓸 수 있습니다(아래 해당 절).
 5. `sweep_stale_temp_files`——`kill -9`가 남긴 것은 그 디렉터리에 대한 다음 쓰기가 청소합니다.
 6. 격리 서브에이전트 워크스페이스——선택적 git worktree로, 변경은 잠금 아래 병합되고 충돌은 보고됩니다.
-7. 쓰기 전 git 준비 게이트——바인딩된 프로젝트 디렉터리는 쓰기 전에 git 저장소가 됩니다(안 되면 거부)(두 절 아래 참조).
+7. Shadow git 체크포인트——각 턴의 첫 쓰기에서 프로젝트를 `.sherry/shadow-git`에 스냅샷하며 사용자의 `.git`은 건드리지 않습니다.
 
 ## 🧱 각 계층
 
@@ -66,13 +66,13 @@
 
 임시 파일 생성과 replace 사이에 하드 킬된 경우에만 `.sherry-tmp-*.swp`가 남을 수 있습니다. 나머지 모든 실패 경로는 그것을 unlink합니다. 같은 디렉터리에 대한 다음 쓰기가 1시간을 넘긴 잔여를 청소합니다(`sweep_stale_temp_files`): 살아 있는 쓰는 자의 임시 파일은 몇 초밖에 살지 않으며, 나이 임계값이 바로 그것과 거리를 두기 위한 장치입니다. 청소는 결코 예외를 던지지 않습니다——디렉터리를 읽지 못하는 스캔이, 그것이 앞서는 쓰기를 실패시켜서는 안 됩니다.
 
-## 🔒 쓰기 전 git 준비
+## 🔒 Shadow git 체크포인트 (기존 git 준비 게이트 제거)
 
-**프로젝트 디렉터리**를 바인딩한 세션은 git 저장소 안에만 쓸 수 있습니다. 해석된 루트마다 **첫** 쓰기가 `git rev-parse --is-inside-work-tree`를 확인하고——저장소 루트, 그 하위 디렉터리, 링크된 worktree 모두 참이라 격리 서브에이전트 워크스페이스가 두 번 init되지 않습니다——아직 저장소가 아니면 평범한 `git init`을 실행합니다. init이 실패하면 **쓰기를 거부**합니다: `write_file`과 `patch_file`은 오류 결과를 반환하고, `terminal`과 `python_repl`은 실행하지 않고 그 메시지를 반환합니다. 메시지에는 디렉터리와 git 자체의 실패 이유가 들어갑니다. 버전 관리 없는 쓰기가 바로 이 게이트가 막으려는 대상이며, 조용히 진행하는 것은 선택지가 아닙니다.
+바인딩된 프로젝트는 더 이상 저장소로 초기화되지 않습니다. sherry는 사용자의 `.git`에서 `git init` / `add` / `commit` / `reset` / `checkout` / worktree를 실행하지 않습니다. 각 턴의 첫 쓰기에서 `shadow_git.ensure_checkpoint()`(write_file, patch_file, terminal, python_repl)가 `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`을 분리해 `.sherry/shadow-git/`에 스냅샷합니다. 실패해도 쓰기는 계속됩니다(fail-open).
 
-네 개의 쓰기 입구가 모두 게이트되고, 두 실행 도구는 **호출마다** 게이트됩니다: 셸(`echo > f`, `cp`, `mv`)과 Python(`open(path, 'w')`)은 파일 도구를 거치지 않고 쓸 수 있기 때문입니다. 읽기 명령과 쓰기 명령을 구분하려면 셸 문법을 해석해야 합니다. 검사 결과는 **해석된 루트 단위**로 캐시되고(프로젝트 디렉터리를 바꾸면 캐시 미스로 다시 탐색합니다. `clear_git_ready()`로 강제 재검사할 수 있습니다), **실패한 init은 절대 캐시되지 않습니다**——다음 쓰기가 재시도합니다——첫 검사 이후 비용은 집합 조회 한 번입니다.
+store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 비밀, 대용량 디렉터리, shadow store 자체를 `git add -A` 전에 기록하고 최근 `SHADOW_GIT["max_snapshots"]`(20)개만 유지합니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. `checkpoint` 도구가 list / show / restore를 제공하고 git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
 
-**바인딩 없는** 세션은 전혀 영향받지 않습니다: 쓰기는 프로세스 기본 루트로 해석되어 이전과 똑같이 동작합니다. `git init`은 git 자체 기본값을 씁니다——`--bare` 없음, `--initial-branch` 없음, `user.name` / `user.email` 처리 없음(사용자가 git을 설정하기 전까지 이후 `git commit`은 실패하지만 이는 의도적으로 범위 밖입니다), 자동 커밋도 없음. 읽기는 게이트되지 않습니다: `read_file`, `search_files`, 평범한 `cat`은 저장소 없는 디렉터리에서도 그대로 동작합니다.
+읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다.
 
 ## 📖 읽기 우선 라이선스
 
@@ -105,7 +105,7 @@
 - **미추적 파일**은 개별 복사됩니다: `git stash create`는 결코 그것들을 나르지 않으므로, 이 단계가 없으면 자식은 사용자가 방금 만든 파일을 보지 못합니다;
 - 물질화되는 것은 git이 실제로 무시하는 경로뿐이며, 캐시(`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build` 등)는 복사도 병합도 되지 않습니다.
 
-저장소가 아닌 프로젝트는 먼저 초기화됩니다: `git init`, 거부 패턴을 `.git/info/exclude`에(**`git add -A` 전에**——비밀·용량·저장소 상태는 그 베이스라인 커밋의 역사에 결코 들어가지 않으며 나중에 지워도 되돌릴 수 없습니다), 커밋 한 번, 그리고 복원 방법을 적은 `.sherry-isolation-repo` 마커(`rm -rf .git .sherry-isolation-repo`). sherry는 결코 push하지 않고, 리모트를 추가하지 않으며, 역사를 다시 쓰지 않습니다.
+베이스라인은 사용자 저장소의 커밋이 아니라 프로젝트의 **shadow 체크포인트**입니다. 거부 패턴은 `.sherry/shadow-git/info/exclude`에 있고 worktree는 shadow store에 등록되며 `.git`이나 `.sherry-isolation-repo` 마커는 만들지 않습니다. sherry는 결코 push하지 않고 리모트를 추가하지 않으며 사용자 역사를 다시 쓰지 않습니다.
 
 물질화 링크를 거치는 읽기는 격리 내부로 남습니다: `resolve_external_path`는 그 실행의 매니페스트가 기록한 경로만 면제하므로, 트리 안의 `src/…`는 HITL '외부 파일' 승인을 일으키지 않고 트리 밖을 가리키는 임의의 심볼릭 링크는 여전히 확인을 요구합니다.
 
@@ -164,7 +164,7 @@
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |
-| `agent/tools/pub_base/git_ensure.py` | 쓰기 경로의 git 준비 게이트(탐색·init·루트 단위 캐시) |
+| `agent/tools/pub_base/shadow_git.py` | 프로젝트별 shadow store, 자동 스냅샷, 복원, 이력 읽기 |
 | `agent/tools/subagent/isolation/worktree.py` | 더러운 베이스라인, auto-init과 거부 목록, worktree 수명주기 |
 | `agent/tools/subagent/isolation/materialize.py` | 무시·미추적 경로 물질화 |
 | `agent/tools/subagent/isolation/tree.py` | 워크스페이스 worktree, 매니페스트, 폐기 |

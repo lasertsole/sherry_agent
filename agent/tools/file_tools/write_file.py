@@ -30,7 +30,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 
 from agent.tools.pub_base import SessionId
-from agent.tools.pub_base import ensure_git_for_writes
+from agent.tools.pub_base.shadow_git import ensure_checkpoint
 from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
@@ -172,13 +172,11 @@ class FormattedWriteFileTool(BaseTool):
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
 
-        # A session with a BOUND project directory writes into a git tree or not
-        # at all: the first write initializes a missing repository and a failed
-        # init refuses the write (see pub_base/git_ensure). An unbound session is
-        # untouched.
-        git_ok, git_error = ensure_git_for_writes(session_id)
-        if not git_ok:
-            return tool_error(git_error)
+        # Take one shadow snapshot before the first write of this turn. It is
+        # fail-open: a broken shadow store never blocks the write.
+        ensure_checkpoint(
+            session_id, reason=f"before_write:write_file:{display_path(resolved, root)}"
+        )
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)

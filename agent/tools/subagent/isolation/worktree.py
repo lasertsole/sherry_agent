@@ -20,13 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from loguru import logger
 
 from config.features import SUBAGENT_ISOLATION
+from agent.tools.pub_base import shadow_git
 
 from .gitrun import run_git
 
@@ -67,87 +66,25 @@ def _repo_toplevel(project_root: Path) -> str | None:
 
 
 def ensure_repository(project_root: Path) -> bool:
-    """Make *project_root* a repository root, initializing one when needed.
+    """Shadow git needs no user repository; keep the name for callers.
 
-    An existing repository (whose root IS the project root) is left completely
-    alone. A fresh one gets an ``.git/info/exclude`` carrying the configured
-    deny patterns BEFORE the baseline commit, then one commit, then the marker
-    file that documents how to undo the initialization.
-
-    :returns: True when this call initialized the repository.
-    :raises OSError: ``git`` is missing or a step failed.
+    The shadow store is initialized lazily by the first snapshot. The user's
+    ``.git`` is never created or modified here.
     """
-    toplevel = _repo_toplevel(project_root)
-    if toplevel is not None and Path(toplevel).resolve() == project_root.resolve():
-        return False
-
-    logger.info("Isolation requires a repository; initializing one at {}", project_root)
-    run_git(project_root, ["init", "-q"], check=True)
-
-    # The exclude file must exist BEFORE `git add -A`: what git ever commits
-    # stays in the object database even after the file is deleted.
-    exclude = project_root / ".git" / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
-    header = "# sherry isolation baseline: never committed (secrets, bulk, repository state)"
-    lines = [header, *SUBAGENT_ISOLATION["deny_patterns"]]
-    exclude.write_text(
-        existing
-        + ("\n" if existing and not existing.endswith("\n") else "")
-        + "\n".join(lines)
-        + "\n",
-        encoding="utf-8",
-    )
-
-    run_git(project_root, ["add", "-A"], check=True)
-    run_git(
-        project_root,
-        [
-            "-c",
-            "user.name=sherry-isolation",
-            "-c",
-            "user.email=sherry-isolation@localhost",
-            "commit",
-            "-q",
-            "-m",
-            SUBAGENT_ISOLATION["baseline_commit_message"],
-        ],
-        check=True,
-    )
-
-    marker = project_root / SUBAGENT_ISOLATION["repo_marker_name"]
-    marker.write_text(
-        "\n".join(
-            [
-                "This .git directory was created by sherry for subagent workspace isolation.",
-                f"created_at: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-                "sherry never pushes, never adds a remote, and never rewrites history.",
-                "To undo: stop any running subagent, then delete this file and the .git directory:",
-                f"    rm -rf {project_root / '.git'} {marker}",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return True
+    if shadow_git.shadow_head(project_root) is None:
+        shadow_git.take_snapshot(project_root, "manual:isolation baseline")
+    return False
 
 
 def baseline_revision(project_root: Path) -> str:
-    """The revision an isolated run should start from.
-
-    A dirty working tree becomes a stash commit (``git stash create`` leaves the
-    stash stack alone), so the child sees the user's uncommitted edits; a clean
-    tree simply starts from HEAD.
-
-    :raises OSError: The project has neither uncommitted changes nor a commit.
-    """
-    dirty = run_git(project_root, ["stash", "create"])
-    if dirty.returncode == 0 and dirty.stdout.strip():
-        return dirty.stdout.strip()
-    head = run_git(project_root, ["rev-parse", "HEAD"])
-    if head.returncode == 0 and head.stdout.strip():
-        return head.stdout.strip()
-    raise OSError(f"project has no baseline revision: {project_root}")
+    """The shadow chain's current tip (creating a first snapshot if needed)."""
+    if shadow_git.shadow_head(project_root) is None:
+        shadow_git.take_snapshot(project_root, "manual:isolation baseline")
+    head = run_git(project_root, ["rev-parse", shadow_git.SHADOW_REF])
+    sha = head.stdout.strip()
+    if head.returncode != 0 or not sha:
+        raise OSError(f"shadow git has no baseline for {project_root}")
+    return sha
 
 
 def create_worktree(project_root: Path, tree: Path, child_session_key: str) -> WorktreeBase:

@@ -116,6 +116,10 @@ class WorkspaceNoticeMiddleware(AgentMiddleware):
             session_id = str((state or {}).get("session_id") or "").strip()
             if not session_id:
                 return None
+            # One shadow snapshot per turn: reset the per-turn dedup here.
+            from agent.tools.pub_base.shadow_git import new_turn
+
+            new_turn(session_id)
             directory = str(current_project_dir(session_id))
             notices: list[HumanMessage] = []
             switched = False

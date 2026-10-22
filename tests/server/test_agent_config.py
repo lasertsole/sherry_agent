@@ -21,6 +21,13 @@ from pathlib import Path
 
 import pytest
 
+# The subagent conftest installs a minimal ``skills.loader`` stub when the real
+# module has not been imported yet. This suite needs the real catalogue, so
+# replace a stub left behind by an earlier-collected test.
+if "skills.loader" in sys.modules and not hasattr(sys.modules["skills.loader"], "skills_catalog"):
+    sys.modules.pop("skills.loader", None)
+import skills.loader  # noqa: E402,F401
+
 _ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 _real_tools_module = None
 

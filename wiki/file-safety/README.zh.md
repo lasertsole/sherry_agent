@@ -15,7 +15,7 @@
   - [3. 按路径锁](#3-按路径锁)
   - [4. 残留清扫](#4-残留清扫)
 - [先读后写许可证](#-先读后写许可证)
-- [写操作前的 git 就绪](#-写操作前的-git-就绪)
+- [Shadow git 快照](#-shadow-git-快照原-git-就绪门已移除)
 - [隔离子代理工作区（git worktree）](#-隔离子代理工作区git-worktree)
 - [备选方案与实测](#%EF%B8%8F-备选方案与实测)
 - [资源文件与编码](#%EF%B8%8F-资源文件与编码)
@@ -35,7 +35,7 @@
 4. `write_file` 的先读后写许可证——已存在的文件只能被读过它的会话覆盖（见下文对应小节）。
 5. `sweep_stale_temp_files`——`kill -9` 的残留由下一次写入该目录时清扫。
 6. 隔离子代理工作区——可选的 git worktree，改动在锁下合并回主树，冲突被如实报告。
-7. 写前 git 就绪门——绑定的项目目录先成为 git 仓库（否则拒绝写入），然后才允许写入（见下两节）。
+7. Shadow git 快照——每轮第一次写入把项目快照到 `.sherry/shadow-git`；用户的 `.git` 完全不被触碰。
 
 ## 🧱 各层机制
 
@@ -66,13 +66,13 @@
 
 只有在临时文件创建到 replace 之间被硬杀，才可能留下 `.sherry-tmp-*.swp`；其余每个失败路径都会 unlink 它。下一次写入同一目录时会清扫其中超过 1 小时的残留（`sweep_stale_temp_files`）：活着的写者的临时文件只有几秒寿命，年龄阈值正是用来与它保持距离的。清扫从不抛异常——一次读不动目录的扫描绝不能让它所服务的那次写入失败。
 
-## 🔒 写操作前的 git 就绪
+## 🔒 Shadow git 快照（原 git 就绪门已移除）
 
-绑定**项目目录**的会话，只能写入 git 仓库。每个解析出的根目录的**首次**写入会探测 `git rev-parse --is-inside-work-tree`——仓库根、其子目录、或链接的 worktree 都算通过（所以隔离子代理工作区不会被重复 init）——不是仓库时执行一次朴素的 `git init`。init 失败**拒绝写入**：`write_file` 与 `patch_file` 返回错误结果，`terminal` 与 `python_repl` 直接返回该消息而不执行；消息里带上目录与 git 自己的失败原因。没有版本控制的写入正是这道门要阻止的事，静默放行不是一个选项。
+绑定项目目录**不再**被初始化成仓库：sherry 不在用户 `.git` 里执行 `git init` / `add` / `commit` / `reset` / `checkout` / worktree。每轮第一次写入时，`shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）通过 `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE` 隔离，把项目快照到 `.sherry/shadow-git/`。快照是 fail-open 的：store 坏了只记 warning，写入继续。
 
-四个写入入口都被门控，两个执行类工具是**每次调用**都门控：shell（`echo > f`、`cp`、`mv`）和 Python（`open(path, 'w')`）都能绕开文件工具写文件，而区分读命令与写命令意味着解析 shell 语法。检查结果按**解析后的根目录**缓存（切换项目目录会未命中并重新探测；`clear_git_ready()` 可强制重查），**失败的 init 从不缓存**——下次写入会重试——首次检查之后的开销只是一次集合查找。
+store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` 在 `git add -A` 之前写入密钥、体积目录和 shadow store 自身的排除规则，只保留最近 `SHADOW_GIT["max_snapshots"]`（20）个。恢复前先拍 `pre-restore` 快照（撤销的撤销），支持单文件或整棵树；`checkpoint` 工具向 agent 暴露 list / show / restore。侧栏 git graph 读取这条快照链（分支标签 `checkpoint`），不再读用户历史。
 
-**未绑定**的会话完全不受影响：写入仍按进程默认根解析，行为与从前一致。`git init` 用 git 自身默认值——不加 `--bare`、不加 `--initial-branch`、不处理 `user.name` / `user.email`（用户没配置 git 时后续 `git commit` 会失败，这被有意排除在范围之外），也不自动提交。读操作永不被门控：`read_file`、`search_files` 与普通 `cat` 在没有仓库的目录里照常工作。
+读取路径不设门，非 git 目录也是正常结果。shadow store 随项目走（clone 也会带上）；`SHADOW_GIT["enabled"]=False` 时所有钩子退化为 no-op。
 
 ## 📖 先读后写许可证
 
@@ -161,7 +161,7 @@
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |
-| `agent/tools/pub_base/git_ensure.py` | 写路径的 git 就绪门（探测、init、按根缓存） |
+| `agent/tools/pub_base/shadow_git.py` | 按项目的 shadow store、自动快照、恢复与快照历史读取 |
 | `agent/tools/subagent/isolation/worktree.py` | 脏基线、auto-init 与拒入清单、worktree 生命周期 |
 | `agent/tools/subagent/isolation/materialize.py` | 忽略/未跟踪路径物化 |
 | `agent/tools/subagent/isolation/tree.py` | 工作区 worktree、清单、销毁 |

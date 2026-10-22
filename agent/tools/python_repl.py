@@ -37,11 +37,11 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 from config.path import ROOT_DIR
 from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base import (
-    ensure_git_for_writes,
     SessionId,
     _extract_session_id,
     resolve_tool_session_id,
 )
+from agent.tools.pub_base.shadow_git import ensure_checkpoint
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import kill_process_tree
@@ -281,12 +281,12 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
-        # A bound project directory must be a git repository before code runs:
-        # python can write files (open(path, 'w')) without touching the file
-        # tools, so the gate cannot live only in write_file / patch_file.
-        git_ok, git_error = ensure_git_for_writes(resolve_tool_session_id(session_id, run_manager))
-        if not git_ok:
-            return git_error
+        # Python can write files without the file tools; take the turn's shadow
+        # snapshot first (fail-open).
+        ensure_checkpoint(
+            resolve_tool_session_id(session_id, run_manager),
+            reason=f"before_write:python_repl:{query[:120]}",
+        )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
         result, ran_sandboxed = _run_with_timeout(
             query,
@@ -311,10 +311,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
-        # Same gate as the sync path (see its comment).
-        git_ok, git_error = ensure_git_for_writes(resolve_tool_session_id(session_id, run_manager))
-        if not git_ok:
-            return git_error
+        # Same fail-open snapshot as the sync path.
+        ensure_checkpoint(
+            resolve_tool_session_id(session_id, run_manager),
+            reason=f"before_write:python_repl:{query[:120]}",
+        )
         session_cwd = _resolve_session_cwd(run_manager, session_id)
         proc_out: list[subprocess.Popen[bytes]] = []
         try:

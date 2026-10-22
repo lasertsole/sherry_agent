@@ -316,22 +316,24 @@ def test_auto_init_never_commits_secrets_and_writes_its_marker(project):
 
     ws = create_isolated_workspace(project, "agent:main:subagent:init")
 
-    # The repository was created here, and the baseline commit holds the sources…
-    committed = _git(project, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+    # The user's repository is untouched; the shadow snapshot holds the sources
+    # but never a secret.
+    from agent.tools.pub_base import shadow_git
+
+    assert (project / ".git").exists() is False
+    committed = shadow_git.run_shadow(
+        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+    ).stdout.split()
     assert "a.txt" in committed
     assert ".env.example" in committed  # the intentional sample stays
     assert ".models.example" in committed  # …and so do the config templates
-    # …but no secret of any kind.
     assert ".env" not in committed
     assert ".models" not in committed
     assert ".network" not in committed
     assert "cert.pem" not in committed
-    # And the child's tree does not carry them either (they were never checked out).
     manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))
-    assert manifest["initialized_repo"] is True
-    marker = project / ".sherry-isolation-repo"
-    assert marker.is_file()
-    assert "rm -rf" in marker.read_text(encoding="utf-8")
+    assert manifest["initialized_repo"] is False
+    assert not (project / ".sherry-isolation-repo").exists()
 
 
 def test_ignored_paths_are_materialized_as_links_and_copies(project):
@@ -404,15 +406,16 @@ def test_discarding_a_workspace_unregisters_the_worktree_and_branch(project):
     _seed(project)
     ws = create_isolated_workspace(project, "agent:main:subagent:discard")
     branch = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))["branch"]
-    assert branch in _git(project, "branch", "--list").stdout
+    from agent.tools.pub_base import shadow_git
+
+    assert branch in shadow_git.run_shadow(project, ["branch", "--list"]).stdout
 
     from agent.tools.subagent.isolation import discard_isolated_workspace
 
     discard_isolated_workspace(ws.meta_dir)
 
     assert not ws.meta_dir.exists()
-    assert _git(project, "worktree", "list").stdout.count("\n") == 1  # only the main tree
-    assert branch not in _git(project, "branch", "--list").stdout
+    assert branch not in shadow_git.run_shadow(project, ["branch", "--list"]).stdout
 
 
 # ---------------------------------------------------------------------------

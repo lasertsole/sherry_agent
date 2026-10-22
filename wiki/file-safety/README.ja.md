@@ -15,7 +15,7 @@
   - [3. パス単位ロック](#3-パス単位ロック)
   - [4. 残留ファイルの掃除](#4-残留ファイルの掃除)
 - [読み取り先行ライセンス](#-読み取り先行ライセンス)
-- [書き込み前の git 準備](#-書き込み前の-git-準備)
+- [Shadow git チェックポイント](#-shadow-git-チェックポイント旧-git-準備ゲートは廃止)
 - [隔離サブエージェントワークスペース（git worktree）](#-隔離サブエージェントワークスペースgit-worktree)
 - [代替案と実測](#%EF%B8%8F-代替案と実測)
 - [リソースファイルとエンコーディング](#%EF%B8%8F-リソースファイルとエンコーディング)
@@ -35,7 +35,7 @@
 4. `write_file` の読み取り先行ライセンス——既存ファイルを上書きできるのは、それを読んだセッションだけ（後述の専用節）。
 5. `sweep_stale_temp_files`——`kill -9` の置き土産は、そのディレクトリへの次の書き込みが掃除する。
 6. 隔離サブエージェントワークスペース——任意参加の git worktree。変更はロックの下でマージされ、衝突は報告される。
-7. 書き込み前の git 準備ゲート——バインドされたプロジェクトディレクトリは、書き込みの前に git リポジトリにされる（できなければ拒否）（2 つ下の節を参照）。
+7. Shadow git チェックポイント——各ターンの最初の書き込みでプロジェクトを `.sherry/shadow-git` にスナップショットし、ユーザーの `.git` には触れません。
 
 ## 🧱 各レイヤー
 
@@ -66,13 +66,13 @@
 
 一時ファイルの作成から replace の間にハードキルされた場合だけ、`.sherry-tmp-*.swp` が残り得ます。他のすべての失敗経路はそれを unlink します。同じディレクトリへの次の書き込みが 1 時間を超えた残留を掃除します（`sweep_stale_temp_files`）：生きた書き手の一時ファイルは数秒の寿命しかなく、年齢しきい値はまさにそれと距離を取るためのものです。掃除は決して例外を投げません——ディレクトリを読めない走査が、それが先行する書き込みを失敗させてはならないからです。
 
-## 🔒 書き込み前の git 準備
+## 🔒 Shadow git チェックポイント（旧 git 準備ゲートは廃止）
 
-**プロジェクトディレクトリ**をバインドしたセッションは、git リポジトリの中にしか書き込めません。解決されたルートごとに**最初**の書き込みが `git rev-parse --is-inside-work-tree` を調べ——リポジトリのルート、そのサブディレクトリ、リンクされた worktree のいずれでも真なので、隔離サブエージェントのワークスペースが二重に init されることはありません——まだリポジトリでなければ素の `git init` を実行します。init が失敗すると**書き込みを拒否**します：`write_file` と `patch_file` はエラー結果を返し、`terminal` と `python_repl` は実行せずにそのメッセージを返します。メッセージにはディレクトリと git 自身の失敗理由が含まれます。バージョン管理なしの書き込みこそ、このゲートが防ぐ対象であり、黙って進めるという選択肢はありません。
+バインドされたプロジェクトは**もう**リポジトリに初期化されません。sherry はユーザーの `.git` で `git init` / `add` / `commit` / `reset` / `checkout` / worktree を実行しません。各ターンの最初の書き込みで `shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）が `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` を分離し、`.sherry/shadow-git/` にスナップショットします。失敗しても書き込みは続行します（fail-open）。
 
-4 つの書き込みドアすべてがゲートされ、2 つの実行ツールは**毎回の呼び出し**でゲートされます：シェル（`echo > f`、`cp`、`mv`）も Python（`open(path, 'w')`）も、ファイルツールを通らずに書けるからです。読み取りコマンドと書き込みコマンドを区別するにはシェル構文の解析が必要になります。チェック結果は**解決済みルート単位**でキャッシュされ（プロジェクトディレクトリを切り替えるとキャッシュミスとなり再探索します。`clear_git_ready()` で強制的に再チェックできます）、**失敗した init は決してキャッシュされません**——次の書き込みが再試行します——初回チェック以降のコストは集合参照 1 回分です。
+store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（20）個だけ保持します。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
 
-**未バインド**のセッションは一切影響を受けません：書き込みはプロセス既定のルートに対して解決され、以前とまったく同じに振る舞います。`git init` は git 自身の既定値を使います——`--bare` なし、`--initial-branch` なし、`user.name` / `user.email` の扱いなし（ユーザーが git を設定するまで後の `git commit` は失敗しますが、これは意図的に範囲外です）、自動コミットもなし。読み取りは決してゲートされません：`read_file`、`search_files`、素の `cat` はリポジトリのないディレクトリでもそのまま動きます。
+読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。
 
 ## 📖 読み取り先行ライセンス
 
@@ -105,7 +105,7 @@
 - **未追跡ファイル**は個別にコピーされます：`git stash create` は決してそれらを運ばないため、この段がなければ子はユーザーが今作ったファイルを見られません；
 - 物化されるのは git が実際に無視しているパスだけであり、キャッシュ（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` など）はコピーもマージもされません。
 
-リポジトリでないプロジェクトは先に初期化されます：`git init`、拒否パターンを `.git/info/exclude` へ（**`git add -A` の前に**——秘密・容量・リポジトリ状態はそのベースラインコミットの履歴に決して入らず、後から消しても救えません）、一度のコミット、そして復元方法を記した `.sherry-isolation-repo` マーカー（`rm -rf .git .sherry-isolation-repo`）。sherry は決して push せず、リモートを追加せず、履歴を書き換えません。
+ベースラインはユーザーリポジトリのコミットではなく、プロジェクトの **shadow チェックポイント** です。拒否パターンは `.sherry/shadow-git/info/exclude` にあり、worktree は shadow store に登録され、`.git` や `.sherry-isolation-repo` マーカーは作りません。sherry は決して push せず、リモートを追加せず、ユーザーの履歴を書き換えません。
 
 物化リンクを経由する読み取りは隔離の内側のままです：`resolve_external_path` はその実行のマニフェストが記録したパスだけを免除するので、ツリー内の `src/…` は HITL の「外部ファイル」承認を起こさず、ツリー外への任意のシンボリックリンクは依然として確認を求めます。
 
@@ -165,7 +165,7 @@
 | `agent/tools/pub_base/path_lock.py` | プロセス内パス単位ロックのレジストリ |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 読み取り先行ライセンスのレジストリ |
-| `agent/tools/pub_base/git_ensure.py` | 書き込み経路の git 準備ゲート（探索・init・ルート単位のキャッシュ） |
+| `agent/tools/pub_base/shadow_git.py` | プロジェクト別 shadow store、自動スナップショット、復元、履歴読み取り |
 | `agent/tools/subagent/isolation/worktree.py` | ダーティなベースライン、auto-init と拒否リスト、worktree ライフサイクル |
 | `agent/tools/subagent/isolation/materialize.py` | 無視・未追跡パスの物化 |
 | `agent/tools/subagent/isolation/tree.py` | ワークスペースの worktree、マニフェスト、破棄 |

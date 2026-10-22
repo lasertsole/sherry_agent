@@ -15,7 +15,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
   - [3. Per-path locks](#3-per-path-locks)
   - [4. Leftover sweep](#4-leftover-sweep)
 - [Read-before-write license](#-read-before-write-license)
-- [Git readiness before writes](#-git-readiness-before-writes)
+- [Shadow git checkpoints](#-shadow-git-checkpoints-the-git-readiness-gate-is-gone)
 - [Isolated subagent workspaces (git worktrees)](#-isolated-subagent-workspaces-git-worktrees)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
 - [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
@@ -35,7 +35,7 @@ Seven mechanisms answer that, in the order a write meets them:
 4. `write_file`'s read-before-write license — an existing file may only be overwritten by a session that has read it (§ next but one).
 5. `sweep_stale_temp_files` — a `kill -9` leftover is swept by the next write into that directory.
 6. Isolated subagent workspaces — an opt-in git worktree whose changes merge back under a lock, conflicts reported.
-7. The git-readiness gate — a bound project directory is made a git repository (or is refused) before anything writes into it (§ two sections down).
+7. Shadow git checkpoints — the first write of each turn snapshots the project into `.sherry/shadow-git`; the user's `.git` is never touched.
 
 ## 🧱 The Layers
 
@@ -66,13 +66,13 @@ The rule that surprises people: **lock files are never deleted.** The lock lives
 
 Only a hard kill between the temporary file's creation and the replace can leave a `.sherry-tmp-*.swp` behind; every failure path unlinks it. The next write into the same directory sweeps those older than 1 hour (`sweep_stale_temp_files`): a live writer's temporary file is seconds old, so the age threshold is what keeps the sweep away from it. The sweep never raises — a scan that cannot read the directory must not fail the write it precedes.
 
-## 🔒 Git readiness before writes
+## 🔒 Shadow git checkpoints (the git-readiness gate is gone)
 
-A session with a **bound project directory** may only write into a git repository. The first write per resolved root probes `git rev-parse --is-inside-work-tree` — true for the repository root, a subdirectory of it, or a linked worktree, so an isolated subagent workspace never re-initializes — and runs a plain `git init` when the directory is not a repository yet. A failed init **refuses the write**: `write_file` and `patch_file` return an error tool result, `terminal` and `python_repl` return the message instead of running, and the message names the directory together with git's own reason. Writes without version control are exactly what the gate exists to prevent, so silently proceeding is not an option.
+A bound project directory is **never** turned into a repository: there is no `git init`, `add`, `commit`, `reset`, `checkout` or worktree in the user's `.git`. The first write of each turn calls `shadow_git.ensure_checkpoint()` (write_file, patch_file, terminal, python_repl), which snapshots the project into `.sherry/shadow-git/` with `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation. The snapshot is fail-open: a broken store logs a warning and the write proceeds.
 
-All four write doors are gated, and the two execution tools are gated on EVERY call: a shell (`echo > f`, `cp`, `mv`) or Python (`open(path, 'w')`) writes without ever touching the file tools, and telling read commands from write commands would mean parsing shell syntax. The check is cached per RESOLVED ROOT (a project-directory switch misses the cache and re-probes; `clear_git_ready()` forces a re-check), a FAILED init is never cached — the next write retries — and the cost after the first check is one set lookup.
+The store holds a single `refs/heads/main` chain of `commit-tree` snapshots. `info/exclude` carries the deny patterns (secrets, bulky directories and the shadow store itself) before `git add -A`; at most `SHADOW_GIT["max_snapshots"]` (20) are kept. Restore takes a `pre-restore` snapshot first (undo the undo), supports one file or the whole tree, and the `checkpoint` tool exposes list / show / restore to the agent. The git-graph panel reads this chain (branch label `checkpoint`); it no longer reads the user's history.
 
-A session with **no binding** is untouched: its writes resolve against the process default and behave exactly as before. `git init` uses git's own defaults — no `--bare`, no `--initial-branch`, no `user.name` / `user.email` handling (a later `git commit` fails until the user configures git, which is deliberately out of scope) and no automatic initial commit. Reads are never gated: `read_file`, `search_files` and a plain `cat` all work in a directory without a repository.
+Reads are never gated, and a directory that is not a repository is a normal answer. The shadow store lives with the project, so it follows a clone; `SHADOW_GIT["enabled"]=False` makes every hook a no-op.
 
 ## 📖 Read-before-write license
 
@@ -105,7 +105,7 @@ The baseline is the DIRTY working tree: `git stash create` turns the user's unco
 - **untracked files** are copied individually: `git stash create` never carries them, so without this step the child would be blind to a file the user just created;
 - only paths git actually IGNORES are materialized, and the caches (`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build`, …) are neither copied nor merged.
 
-A project that is not a repository is initialized first: `git init`, the deny patterns into `.git/info/exclude` **before** `git add -A` (secrets, bulk and repository state can never enter that baseline commit's history — deleting them afterwards would not help), one commit, and a `.sherry-isolation-repo` marker that documents the undo (`rm -rf .git .sherry-isolation-repo`). Sherry never pushes, never adds a remote and never rewrites history.
+The baseline is the project's **shadow checkpoint**, not a user-repository commit: the deny patterns live in `.sherry/shadow-git/info/exclude`, the worktree is registered in the shadow store, and no `.git` or `.sherry-isolation-repo` marker is created. Sherry never pushes, never adds a remote and never rewrites the user's history.
 
 A read that goes through a materialized link stays inside the run: `resolve_external_path` exempts exactly the paths the run's manifest recorded, so the HITL "external file" prompt does not fire on `src/…` inside the tree while an arbitrary symlink out of it still prompts.
 
@@ -169,7 +169,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 | `agent/tools/pub_base/path_lock.py` | In-process per-path lock registry |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecars, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | The read-before-write license registry |
-| `agent/tools/pub_base/git_ensure.py` | The git-readiness gate for the write path (probe, init, per-root cache) |
+| `agent/tools/pub_base/shadow_git.py` | Per-project shadow store, auto snapshots, restore and checkpoint reads |
 | `agent/tools/subagent/isolation/worktree.py` | Dirty baseline, auto-init + deny list, worktree lifecycle |
 | `agent/tools/subagent/isolation/materialize.py` | Ignored / untracked path materialization |
 | `agent/tools/subagent/isolation/tree.py` | Workspace worktree, manifest, discard |
