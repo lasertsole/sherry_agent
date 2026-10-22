@@ -484,5 +484,4 @@ Layer 4: confirm_all → approved=False（每个命令都弹卡片，Layer 5/6 �
 
 ### 关联 TODO
 
-- 跟 `计划_reminder高优先级置于消息尾部.md` 正交
 - 跟 `计划_中断系统多项目借鉴.md` 相关——后者调研了六项目的 HITL 机制，本文档是其落地之一
