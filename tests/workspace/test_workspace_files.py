@@ -72,7 +72,7 @@ def test_role_statement_reaches_the_system_prompt(tmp_path, monkeypatch):
     class FakeMemoryStore:
         """Stand-in for agent.tools.memory.memory_store (no live reads)."""
 
-        def format_for_system_prompt(self, target: str):
+        def format_for_system_prompt(self, target: str, session_id: str | None = None):
             """Return a fixed block for the memory targets."""
             return {"memory": "MEMORY-V1", "user": "USER-V1", "facts": None}.get(target)
 
@@ -108,7 +108,7 @@ def test_emptied_persona_file_drops_out_of_the_prompt(tmp_path, monkeypatch):
     class FakeMemoryStore:
         """Stand-in for agent.tools.memory.memory_store (no live reads)."""
 
-        def format_for_system_prompt(self, target: str):
+        def format_for_system_prompt(self, target: str, session_id: str | None = None):
             """No memory blocks in this test."""
             return None
 

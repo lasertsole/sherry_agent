@@ -127,7 +127,7 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"` (`workspace/memory/MEMORY.md`) | 2200 chars (`MEMORY_TOOL["memory_char_limit"]`) |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"` (`workspace/memory/USER.md`) | 1375 chars (`MEMORY_TOOL["user_char_limit"]`) |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` (`workspace/memory/FACTS.md`; template per language under `workspace/template/<lang>/FACTS.md`) | 1375 chars (`MEMORY_TOOL["facts_char_limit"]`); an over-limit `add` rolls the oldest entries off |
+| FACTS.md | `<project>/.sherry/memory/FACTS.md` when the session is bound (global fallback `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`; template per language under `workspace/template/<lang>/FACTS.md`) | 1375 chars (`MEMORY_TOOL["facts_char_limit"]`); an over-limit `add` rolls the oldest entries off |
 | plan knowledge | `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/` — identity-keyed) | `task-<n>.json`, `wave-<n>.json`, `plan-summary.json` per plan; prompt-guided field caps (150 / 100 chars) |
 | skills | `config.path.AUTO_SKILLS_DIR` (`skills/auto/`) | `SKILL.md` plus `references/`, `templates/`, `scripts/` support files |
 | todos | `agent/tools/todolist/data/todos.db` (`store_sqlite._DB_PATH`) | session-scoped list, full-replacement writes |

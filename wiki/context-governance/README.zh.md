@@ -87,7 +87,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
 | 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
 | 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
-| FACTS.md | `workspace/memory/FACTS.md`（memory 工具 target `facts`） | — | 跨计划、不绑定模块的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
+| FACTS.md | `<project>/.sherry/memory/FACTS.md`（会话绑定的项目；全局回退 `workspace/memory/FACTS.md`；memory 工具 target `facts`） | — | 跨计划、不绑定模块的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
 ## 🧵 Message 行上的 Turn 身份
 
@@ -127,9 +127,11 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 ## 🧱 稳定系统提示词与提醒层
 
-系统提示词只承载**稳定**内容：persona 文件、memory 块与技能索引。所有**实时**视图——计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引——改为在每轮首个模型调用时以 `<system-reminder source="…">` HumanMessage 注入（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 目录）。两个原因：首个 token 每轮都变的提示词会让提供方的前缀缓存从那里起全部失效（persona 也被连累）；而只在缓存未命中时重建的提示词，在下一次重建之前展示的是**过期**的 todo 列表。
+系统提示词只承载**稳定**内容：persona 文件、memory 块与技能索引。所有**实时**视图——计划模式、工作目录、项目指令（`AGENTS.md`，回退 `CLAUDE.md`）、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引——改为在每轮首个模型调用时以 `<system-reminder source="…">` HumanMessage 注入（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 目录）。两个原因：首个 token 每轮都变的提示词会让提供方的前缀缓存从那里起全部失效（persona 也被连累）；而只在缓存未命中时重建的提示词，在下一次重建之前展示的是**过期**的 todo 列表。
 
 冻结的记忆快照有一个刻意的例外。切换会话模型会进入新的提供方缓存命名空间；切换思考模式经实测在同一前缀上把 `cache_read` 打到 0——两种情况下缓存本来就要冷。`ThinkingControlMiddleware` 的 `before_model` 钩子比较本轮 `(thinking key, profile fingerprint, mapping fingerprint)` 与上次实际应用值（进程级保存，因为图每轮重建），变化时在 `system_prompt_injection` 之前重载 `MemoryStore` 快照并从两个寄存器删除 `StateKey.SYSTEM_PROMPT`。切换后的首轮首个模型调用因此能看到会话中途写入的 `FACTS.md` / `MEMORY.md` / `USER.md`。首轮、控制未变、重载失败都保留原缓存；没有发送就不会触发。
+
+项目级 FACTS.md 让目录切换也成为缓存事件：生效根目录变化时 `WorkspaceNoticeMiddleware` 从两个寄存器删除 `StateKey.SYSTEM_PROMPT`，切换后首轮首个模型调用因此从**新**项目重建 FACTS 块。同一轮的 `project_instructions` 提醒会重新读取该项目的 `AGENTS.md`（回退 `CLAUDE.md`），并靠 `only_if_changed` 每份不同内容只注入一次。
 
 | 关注点 | 规则 |
 |---|---|

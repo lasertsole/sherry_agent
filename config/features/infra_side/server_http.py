@@ -153,7 +153,7 @@ SERVER_HTTP: ServerHttpConfig = {
             "WORKSPACE_TEMPLATE_LANG",
         }
     ),
-    "memory_system_file_names": ["MEMORY.md", "USER.md"],
+    "memory_system_file_names": ["MEMORY.md", "USER.md", "FACTS.md"],
     "memory_max_content_length": 8000,
     "system_prompt_max_content_length": 12000,
 }

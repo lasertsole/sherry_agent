@@ -127,7 +127,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"`（`workspace/memory/FACTS.md`；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
+| FACTS.md | 会话绑定项目时为 `<project>/.sherry/memory/FACTS.md`（全局回退 `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
 | plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——按身份为键） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件 |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |

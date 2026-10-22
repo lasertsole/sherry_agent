@@ -88,7 +88,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
 | 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
 | 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
-| FACTS.md | `workspace/memory/FACTS.md`(memory 도구 target `facts`) | — | 모듈 비의존적 광범위 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
+| FACTS.md | `<project>/.sherry/memory/FACTS.md`(세션에 바인딩된 프로젝트; 전역 폴백 `workspace/memory/FACTS.md`; memory 도구 target `facts`) | — | 모듈 비의존적 광범위 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
 ## 🧵 Message 행의 턴 식별자
 
@@ -128,9 +128,11 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 
 ## 🧱 안정적인 시스템 프롬프트와 리마인더 층
 
-시스템 프롬프트에는 **안정적** 내용만 들어갑니다: persona 파일, memory 블록, 스킬 인덱스. 모든 **라이브** 뷰 — 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스 — 는 대신 각 턴의 첫 모델 호출에 `<system-reminder source="…">` HumanMessage로 주입됩니다(`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 카탈로그). 이유는 두 가지입니다: 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것(persona 포함)의 prefix 캐시를 무효화합니다; 캐시 미스에서만 재구성되는 프롬프트는 다음 재구성까지 **오래된** todo 목록을 보여줍니다.
+시스템 프롬프트에는 **안정적** 내용만 들어갑니다: persona 파일, memory 블록, 스킬 인덱스. 모든 **라이브** 뷰 — 플랜 모드, 작업 디렉터리, 프로젝트 지시(`AGENTS.md`, 폴백 `CLAUDE.md`), todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스 — 는 대신 각 턴의 첫 모델 호출에 `<system-reminder source="…">` HumanMessage로 주입됩니다(`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 카탈로그). 이유는 두 가지입니다: 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것(persona 포함)의 prefix 캐시를 무효화합니다; 캐시 미스에서만 재구성되는 프롬프트는 다음 재구성까지 **오래된** todo 목록을 보여줍니다.
 
 동결된 메모리 스냅샷에는 의도적인 예외가 하나 있습니다. 세션 모델 전환은 새로운 provider 캐시 네임스페이스로 들어가고, 사고 모드 전환은 동일한 prefix에서 `cache_read`가 0이 되는 것이 실측되었습니다——어느 쪽이든 캐시는 이미 차갑습니다. `ThinkingControlMiddleware`의 `before_model` 훅은 해당 턴의 `(thinking key, profile fingerprint, mapping fingerprint)`을 마지막 적용 값과 비교하고(그래프가 매 턴 재구성되므로 프로세스 수준에서 보관), 변경이 있으면 `system_prompt_injection` 전에 `MemoryStore` 스냅샷을 다시 로드하고 두 레지스터에서 `StateKey.SYSTEM_PROMPT`를 삭제합니다. 전환된 턴의 첫 모델 호출은 세션 중간에 기록된 `FACTS.md` / `MEMORY.md` / `USER.md`를 봅니다. 첫 턴, 변경 없음, 재로드 실패는 캐시를 유지하며, 전송이 없으면 발화하지 않습니다.
+
+프로젝트 단위 FACTS.md 때문에 디렉터리 전환도 캐시 이벤트입니다: 유효 루트가 바뀌면 `WorkspaceNoticeMiddleware`가 두 레지스터에서 `StateKey.SYSTEM_PROMPT`를 삭제하므로, 전환된 턴의 첫 모델 호출이 **새** 프로젝트에서 FACTS 블록을 재구성합니다. 같은 턴의 `project_instructions` 리마인더는 해당 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`)를 다시 읽고, `only_if_changed`로 내용이 달라질 때만 재주입합니다.
 
 | 관심사 | 규칙 |
 |---|---|

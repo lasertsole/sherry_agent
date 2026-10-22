@@ -127,7 +127,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"`（`workspace/memory/FACTS.md`、4 言語テンプレートは `workspace/template/<lang>/FACTS.md`） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）；`add` が上限超過時は最古の項目から破棄 |
+| FACTS.md | セッションがプロジェクトにバインドされている場合は `<project>/.sherry/memory/FACTS.md`（グローバルフォールバック `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`、4 言語テンプレートは `workspace/template/<lang>/FACTS.md`） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）；`add` が上限超過時は最古の項目から破棄 |
 | plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——アイデンティティ・キー） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |

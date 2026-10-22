@@ -155,7 +155,7 @@ SPOT_DEFAULTS = [
     (MAX_TOKENS_BOOST, "max_cap", 32_768),
     (MAX_TOKENS_BOOST, "max_retries", 3),
     (SUBAGENT_ISOLATION, "branch_prefix", "sherry/"),
-    (SUBAGENT_ISOLATION, "repo_marker_name", ".sherry-isolation-repo"),
+    (SUBAGENT_ISOLATION, "repo_marker_name", ".sherry/isolation-repo"),
     (SUBAGENT_ISOLATION, "include_copy", [".omo"]),
     (SUBAGENT_INFRA, "registry_store_busy_timeout_ms", 5000),
     (SUBAGENT_INFRA, "registry_init_wait_timeout_s", 10.0),

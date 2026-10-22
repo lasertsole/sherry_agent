@@ -51,7 +51,7 @@ _MEMORY_REVIEW_PROMPT = (
 )
 
 
-def _render_facts_context() -> tuple[str, str]:
+def _render_facts_context(session_id: str) -> tuple[str, str]:
     """Return ``(current FACTS.md content, formatted char limit)`` for nudge prompts.
 
     Reads the live content (not the frozen system-prompt snapshot) so a
@@ -59,13 +59,13 @@ def _render_facts_context() -> tuple[str, str]:
     """
     from agent.tools.memory import memory_store
 
-    content = memory_store.format_live_content("facts")
+    content = memory_store.format_live_content("facts", session_id)
     return content or "(FACTS.md is empty)", f"{memory_store.facts_char_limit:,}"
 
 
-def _render_prompt_facts(template: str) -> str:
+def _render_prompt_facts(template: str, session_id: str) -> str:
     """Substitute the FACTS placeholders (injected content may contain braces)."""
-    facts_block, facts_limit = _render_facts_context()
+    facts_block, facts_limit = _render_facts_context(session_id)
     return template.replace("{facts_limit}", facts_limit).replace("{facts_block}", facts_block)
 
 
@@ -882,7 +882,9 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
                     "session_id": session_id,
                     "messages": [
                         *sanitized,
-                        HumanMessage(content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT)),
+                        HumanMessage(
+                            content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT, session_id)
+                        ),
                     ],
                 }
             )
@@ -974,7 +976,7 @@ async def _run_plan_extraction(session_id: str) -> None:
         system_prompt = _get_and_reload_system_prompt(session_id)
         context_str = json.dumps(context, ensure_ascii=False, indent=2)
         prompt = _render_prompt_facts(
-            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
+            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str), session_id
         )
 
         async with lane_slot(LaneType.NUDGE):

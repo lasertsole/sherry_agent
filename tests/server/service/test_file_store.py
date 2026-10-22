@@ -260,3 +260,58 @@ class TestServiceWiring:
         # raw length ≤ 2000 but task text > 2000: budget trips
         with pytest.raises(ValueError, match="Content too long for heartbeat file"):
             heartbeat_service.write_heartbeat_file({"HEARTBEAT.md": "- " + ("y" * 2100)})
+
+
+class TestProjectFacts:
+    """FACTS.md follows the session's project; MEMORY/USER stay global."""
+
+    def test_a_bound_session_reads_the_project_facts(self, tmp_path, monkeypatch):
+        from server.service import memory as memory_service
+
+        global_dir = tmp_path / "memory"
+        project = tmp_path / "project"
+        (project / ".sherry" / "memory").mkdir(parents=True)
+        (project / ".sherry" / "memory" / "FACTS.md").write_text("project fact", encoding="utf-8")
+        (global_dir).mkdir()
+        (global_dir / "MEMORY.md").write_text("m1", encoding="utf-8")
+        monkeypatch.setattr(memory_service, "MEMORY_DIR", global_dir)
+        monkeypatch.setattr(
+            memory_service, "_read_session_root", lambda sid: project if sid == "sess-p" else None
+        )
+
+        assert memory_service.read_memory_files("sess-p") == {
+            "MEMORY.md": "m1",
+            "FACTS.md": "project fact",
+        }
+
+    def test_a_bound_session_writes_the_project_facts(self, tmp_path, monkeypatch):
+        from server.service import memory as memory_service
+
+        global_dir = tmp_path / "memory"
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setattr(memory_service, "MEMORY_DIR", global_dir)
+        monkeypatch.setattr(
+            memory_service, "_read_session_root", lambda sid: project if sid == "sess-p" else None
+        )
+
+        memory_service.write_memory_files(
+            {"USER.md": "user global", "FACTS.md": "project fact"}, "sess-p"
+        )
+
+        assert (global_dir / "USER.md").read_text(encoding="utf-8") == "user global"
+        assert not (global_dir / "FACTS.md").exists()
+        assert (project / ".sherry" / "memory" / "FACTS.md").read_text(
+            encoding="utf-8"
+        ) == "project fact"
+
+    def test_an_unbound_session_uses_the_global_facts(self, tmp_path, monkeypatch):
+        from server.service import memory as memory_service
+
+        global_dir = tmp_path / "memory"
+        monkeypatch.setattr(memory_service, "MEMORY_DIR", global_dir)
+        monkeypatch.setattr(memory_service, "_read_session_root", lambda sid: None)
+
+        memory_service.write_memory_files({"FACTS.md": "global fact"}, "sess-u")
+
+        assert (global_dir / "FACTS.md").read_text(encoding="utf-8") == "global fact"

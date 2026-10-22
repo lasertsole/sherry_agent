@@ -49,7 +49,7 @@ class _FakeFactsStore:
     def __init__(self, content: str = "KNOWN-FACT: test_auth_17 needs network") -> None:
         self.content = content
 
-    def format_live_content(self, target: str) -> str:
+    def format_live_content(self, target: str, session_id: str | None = None) -> str:
         assert target == "facts"
         return self.content
 
@@ -101,7 +101,7 @@ class TestFactsRendering:
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
 
         rendered = nudge_mod._render_prompt_facts(
-            "limit={facts_limit}\n<facts>\n{facts_block}\n</facts>"
+            "limit={facts_limit}\n<facts>\n{facts_block}\n</facts>", "sess-nudge"
         )
 
         assert "1,375" in rendered
@@ -112,7 +112,7 @@ class TestFactsRendering:
     def test_render_prompt_facts_marks_empty_store(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore(content=""))
 
-        rendered = nudge_mod._render_prompt_facts("{facts_block}")
+        rendered = nudge_mod._render_prompt_facts("{facts_block}", "sess-nudge")
 
         assert "(FACTS.md is empty)" in rendered
 

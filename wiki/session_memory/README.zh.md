@@ -26,13 +26,13 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 记忆文件
 
-三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 在首次使用时从 `workspace/template/<lang>/FACTS.md` 懒创建；压缩前 memory flush 不写该文件。快照在会话内保持冻结，例外是会话的模型或思考控制发生变化：这类切换后提供方前缀缓存本已变冷，下一轮的 `before_model` 钩子会重载快照并失效缓存的系统提示词，使会话中途的记忆写入在当轮首个模型调用即可见。
+三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 是项目级的：会话绑定项目目录后读写 `<project>/.sherry/memory/FACTS.md`，并在该项目首条消息时懒创建（从 `workspace/template/<lang>/FACTS.md` seed）。项目文件不存在时回退读全局 `workspace/memory/FACTS.md`；MEMORY.md / USER.md 始终全局。压缩前 memory flush 不写 FACTS.md。快照在会话内保持冻结，例外是会话的模型或思考控制发生变化：这类切换后提供方前缀缓存本已变冷，下一轮的 `before_model` 钩子会重载快照并失效缓存的系统提示词，使会话中途的记忆写入在当轮首个模型调用即可见。
 
 | 文件 | 用途 | 上限 | 维护者 |
 |---|---|---|---|
 | `workspace/memory/MEMORY.md` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） | `memory` 工具（`memory` 目标：memory review nudge、memory flush） |
 | `workspace/memory/USER.md` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） | `memory` 工具（`user` 目标：memory review nudge、memory flush） |
-| `workspace/memory/FACTS.md` | 跨计划普适的坑与约定；每次系统提示都会注入 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`），超限滚动淘汰最旧条目 | `memory` 工具（`facts` 目标：memory review / plan extraction nudge） |
+| `<project>/.sherry/memory/FACTS.md`（全局回退：`workspace/memory/FACTS.md`） | 跨计划普适的坑与约定；每次系统提示都会注入 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`），超限滚动淘汰最旧条目 | `memory` 工具（`facts` 目标：memory review / plan extraction nudge） |
 
 ## MesMemory 迁移（v10–v17）
 

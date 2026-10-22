@@ -68,7 +68,7 @@ CODE_INTEL: CodeIntelConfig = {
         "venv",
         "dist",
         "build",
-        ".codeintel",
+        ".sherry",
         ".codegraph",
         ".mypy_cache",
         ".ruff_cache",

@@ -128,9 +128,22 @@ class WorkspaceNoticeMiddleware(AgentMiddleware):
             # baseline silently — the agent is not told about a change that never
             # happened.
             previous = announced_project_dir(session_id)
+            if project_dir_source(session_id) == _SESSION_SOURCE and (
+                previous is None or previous != directory
+            ):
+                from runtime.session.project_dir import maybe_create_sherry_dir
+
+                maybe_create_sherry_dir(session_id)
             if previous is None:
                 record_announced_project_dir(session_id, directory)
             elif previous != directory:
+                # The system prompt embeds the project-level FACTS block; a
+                # directory switch must invalidate the cached prompt so the new
+                # project's facts are resolved on this turn's first call.
+                from runtime import StateKey, state_register_db, state_register_mem
+
+                state_register_mem.delete_state(session_id, StateKey.SYSTEM_PROMPT)
+                state_register_db.delete_state(session_id, StateKey.SYSTEM_PROMPT)
                 notices.append(
                     _notice(
                         PROJECT_DIR_NOTICE_METADATA,

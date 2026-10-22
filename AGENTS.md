@@ -104,8 +104,8 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     aupdate_state announcement, which fired per switch)
   │    (DynamicReminderMiddleware injects the LIVE views as
   │     `<system-reminder source="…">` messages once per turn's first model call:
-  │     plan mode, working directory, todo list, boulder, TaskFlow board,
-  │     continuity, knowledge index — the catalogue in
+  │     plan mode, working directory, project instructions, todo list, boulder,
+  │     TaskFlow board, continuity, knowledge index — the catalogue in
   │     `agent/middlewares/reminder_catalog/` decides what, at which priority, with
   │     which cooldown and under a 30 000-char total budget (lowest priority
   │     dropped first). Priority is the BUDGET order; delivery reverses the kept
@@ -324,6 +324,56 @@ and does not follow a later parent switch. `sessions_spawn(cwd=...)` overrides
 it. The prompt gains a `## Current Working Directory` block naming the effective
 root, and marks an unbound session with 未绑定项目目录 instead of quietly
 pointing the model at the sherry checkout.
+
+**The root is a small project-level config surface.** `.sherry/` is the ONE
+hidden entry sherry creates inside a project:
+
+```
+<project>/.sherry/
+├── codeintel/index.db    # per-project code index (was .codeintel/)
+├── shadow-git/           # per-project write snapshots
+└── memory/FACTS.md       # per-project pitfalls/conventions
+```
+
+It is created LAZILY by `runtime/session/project_dir.py::maybe_create_sherry_dir`,
+called from `WorkspaceNoticeMiddleware` before it records the announced baseline:
+only when `project_dir_source(session_id) == "session"` (a process default never
+counts), the root is the first announced one or differs from it, and `.sherry/`
+does not exist. Binding alone creates nothing; the first MESSAGE does. An
+existing shell is never recreated, and a missing `memory/FACTS.md` is seeded from
+`workspace/template/<lang>/FACTS.md` (a user-authored file is never overwritten).
+The code index and shadow git also create their own subtrees on first use, so a
+missing `.sherry/` is never an error. `CODE_INTEL_DIR` (the ast-grep binary cache
+under SHERRY_HOME) and `.sherry-tmp-*.swp` (same-filesystem atomic replace) are
+deliberately NOT part of this directory.
+
+**Project instructions**: the builder in `workspace/prompt_builder.py` reads
+`<root>/AGENTS.md` and falls back to `CLAUDE.md`. It is
+registered as the `project_instructions` reminder source
+(`agent/middlewares/reminder_catalog/sources.py`, priority 62 between continuity
+65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`) —
+never the cached system prompt, so a large file cannot invalidate the provider
+prefix cache and a directory switch automatically re-reads the new project's
+file. No nested traversal (git root → cwd) yet, no file creation, no
+`.gitignore` edits.
+
+**FACTS.md is per-project; MEMORY.md / USER.md stay global.** `MemoryStore`
+resolves `facts` through `_project_facts_path` → `session_workspace_root(sid) /
+".sherry" / "memory" / "FACTS.md"` when the session is bound, else the global
+`MEMORY_DIR/FACTS.md`. Writes create the project directory; reads fall back to
+the global file until the project copy exists, and the first write seeds the
+project file from that fallback. The memory tool has no session parameter, so
+`runtime/session/context.py` carries the turn's session in a ContextVar set by
+`server/service/trajectory_store.py::turn_scope` (async tool calls inherit it;
+task-local, so concurrent sessions never share it). `load_from_disk()` still
+loads the GLOBAL stores at boot; the project FACTS block is resolved when the
+prompt is built, and `format_for_system_prompt("facts", session_id)` prefers the
+project file. A directory switch deletes `StateKey.SYSTEM_PROMPT` from both
+registers (the `ThinkingControl` exception's mechanism, applied at the workspace
+notice), so the switched turn rebuilds its FACTS block from the new project.
+The nudges read/write the same per-session path (`_render_prompt_facts` now
+takes the session id), and `GET/PUT /memory` accepts an optional `session_id`
+that resolves FACTS the same way while MEMORY/USER stay global.
 
 The external-path HITL gate agrees with that root: `resolve_external_path`'s
 first check is "inside `ROOT_DIR` **or inside the session's project directory**"
@@ -1653,7 +1703,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   starts when the tool actually executes. The client shows a live ticker while running and the measured value when
   settled (`formatToolDuration`: <1s → `850ms`, <10s → `1.2s`, else whole seconds), and nothing when unknown.
 - the code-intelligence index follows the SESSION's project directory
-  (`agent/tools/code_intel/roots.py::index_db_for_root` → `<root>/.codeintel/index.db`),
+  (`agent/tools/code_intel/roots.py::index_db_for_root` → `<root>/.sherry/codeintel/index.db`),
   so alternating between projects no longer rebuilds one shared index (the stored
   paths are project-relative); `code_intel_index_db_path` pins one and
   `SHERRY_CODE_INTEL_DB` overrides the path, with the shared `CODE_INTEL_DIR`

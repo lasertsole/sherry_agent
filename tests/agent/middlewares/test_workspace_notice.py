@@ -401,3 +401,44 @@ class TestGitHeadNotice:
         assert announced_git_head(SESSION) is None
         assert prime_git_head_from_store() == 1
         assert announced_git_head(SESSION) == token
+
+    def test_the_first_turn_creates_dot_sherry_for_a_bound_project(self, tmp_path, monkeypatch):
+        """Condition ④: binding alone creates nothing; the first message does."""
+        root = tmp_path / "project"
+        root.mkdir()
+        template_dir = tmp_path / "template"
+        template_dir.mkdir()
+        (template_dir / "FACTS.md").write_text("TEMPLATE", encoding="utf-8")
+        monkeypatch.setattr(
+            "config.path.resolve_workspace_template_dir", lambda lang=None: template_dir
+        )
+        _bind(str(root))
+
+        assert _run(WorkspaceNoticeMiddleware(), [HumanMessage("开始")]) is None
+
+        assert (root / ".sherry" / "memory" / "FACTS.md").read_text(encoding="utf-8") == "TEMPLATE"
+
+    def test_an_unbound_default_directory_never_gets_a_dot_sherry(self, tmp_path, monkeypatch):
+        default = tmp_path / "default"
+        default.mkdir()
+        monkeypatch.setattr(notice_core, "current_project_dir", lambda _sid: default)
+
+        assert _run(WorkspaceNoticeMiddleware(), [HumanMessage("开始")]) is None
+
+        assert not (default / ".sherry").exists()
+
+    def test_a_directory_switch_invalidates_the_cached_system_prompt(self):
+        """FACTS.md is per-project, so the cached prompt must rebuild on a switch."""
+        import runtime
+
+        _bind(_ROOT_A)
+        record_announced_project_dir(SESSION, _ROOT_A)
+        state_register_mem.set_state(SESSION, StateKey.SYSTEM_PROMPT, "CACHED")
+        runtime.state_register_db.set_state(SESSION, StateKey.SYSTEM_PROMPT, "CACHED")
+        _bind(_ROOT_C)
+
+        update = _run(WorkspaceNoticeMiddleware(), [HumanMessage("换项目")])
+
+        assert update is not None
+        assert state_register_mem.get_state(SESSION, StateKey.SYSTEM_PROMPT, None) is None
+        assert runtime.state_register_db.get_state(SESSION, StateKey.SYSTEM_PROMPT, None) is None

@@ -42,6 +42,7 @@ from typing import Any, Literal, override
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
 from agent.tools.pub_base.file_lock import flock_path
+from runtime.session.context import get_current_session_id
 
 ENTRY_DELIMITER = "\n§\n"
 # Subset of invisible chars for injection detection
@@ -158,7 +159,10 @@ class MemoryStore:
         mem_dir.mkdir(parents=True, exist_ok=True)
 
         for target in ("user", "memory", "facts"):
-            path: Path = self._path_for(target)
+            # Boot loads the GLOBAL store: MEMORY/USER live there, and the global
+            # FACTS.md is the fallback a project without its own copy reads. A
+            # project's FACTS.md is resolved per session on demand.
+            path: Path = self._global_path_for(target)
             with self._file_lock(path):
                 self._reload_target(target)
 
@@ -192,28 +196,65 @@ class MemoryStore:
         with flock_path(path.with_suffix(path.suffix + ".lock"), timeout_s=None):
             yield
 
-    @staticmethod
-    def _path_for(target: str) -> Path:
-        mem_dir = MEMORY_DIR
-        if target == "user":
-            return mem_dir / "USER.md"
-        if target == "facts":
-            return mem_dir / "FACTS.md"
-        return mem_dir / "MEMORY.md"
+    def _resolution_session(self, session_id: str | None = None) -> str:
+        """Explicit session, else the turn's contextvar, else "" (global)."""
+        return str(session_id or get_current_session_id() or "")
 
-    def _reload_target(self, target: str):
+    def _project_facts_path(self, session_id: str | None = None) -> Path | None:
+        """The project-level FACTS.md path when this session is explicitly bound.
+
+        Only a session binding counts: an unbound session keeps the global
+        store, so the process default directory never grows a ``.sherry/`` from
+        an ordinary FACTS write.
+        """
+        sid = self._resolution_session(session_id)
+        if not sid:
+            return None
+        try:
+            from agent.tools.pub_base.path_utils import session_workspace_root
+
+            root = session_workspace_root(sid)
+        except Exception:
+            return None
+        return Path(root) / ".sherry" / "memory" / "FACTS.md" if root is not None else None
+
+    def _path_for(
+        self, target: str, session_id: str | None = None, *, for_read: bool = False
+    ) -> Path:
+        if target == "facts":
+            project = self._project_facts_path(session_id)
+            if project is not None and (not for_read or project.exists()):
+                return project
+            return MEMORY_DIR / "FACTS.md"
+        return self._global_path_for(target)
+
+    @staticmethod
+    def _global_path_for(target: str) -> Path:
+        if target == "user":
+            return MEMORY_DIR / "USER.md"
+        if target == "facts":
+            return MEMORY_DIR / "FACTS.md"
+        return MEMORY_DIR / "MEMORY.md"
+
+    def _reload_target(self, target: str, session_id: str | None = None):
         """Re-read entries from disk into in-memory state.
 
-        Called under file lock to get the latest state before mutating.
+        Called under file lock to get the latest state before mutating. Facts
+        read the project file when it exists; an absent project file falls back
+        to the global legacy file (C7), while a write seeds the project copy.
         """
-        fresh = self._read_file(self._path_for(target))
+        fresh = self._read_file(self._path_for(target, session_id, for_read=True))
         fresh = list(dict.fromkeys(fresh))  # deduplicate
         self._set_entries(target, fresh)
 
-    def save_to_disk(self, target: str):
+    def save_to_disk(self, target: str, session_id: str | None = None):
         """Persist entries to the appropriate file. Called after every mutation."""
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        self._write_file(self._path_for(target), self._entries_for(target))
+        path = self._path_for(target, session_id)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        self._write_file(path, self._entries_for(target))
 
     def _entries_for(self, target: str) -> list[str]:
         if target == "user":
@@ -511,26 +552,33 @@ class MemoryStore:
 
         return self._success_response(target, "Entry removed.")
 
-    def format_for_system_prompt(self, target: str) -> str | None:
-        """
-        Return the frozen snapshot for system prompt injection.
+    def format_for_system_prompt(self, target: str, session_id: str | None = None) -> str | None:
+        """Return the frozen memory block for prompt injection.
 
-        This returns the state captured at load_from_disk() time, NOT the live
-        state. Mid-session writes do not affect this. This keeps the system
-        prompt stable across all turns, preserving the prefix cache.
-
-        Returns None if the snapshot is empty (no entries at load time).
+        MEMORY.md / USER.md use the process-wide snapshot. FACTS.md is
+        per-project: when the session is bound and its project file exists, the
+        project file is rendered (the system prompt is cached, so this is frozen
+        between rebuilds); an absent project file falls back to the global
+        snapshot. Returns None for an empty block.
         """
+        if target == "facts":
+            project = self._project_facts_path(session_id)
+            if project is not None and project.exists():
+                entries = self._read_file(project)
+                block = self._render_block("facts", entries) if entries else ""
+                return block or None
         block = self._system_prompt_snapshot.get(target, "")
         return block if block else None
 
-    def format_live_content(self, target: str) -> str:
+    def format_live_content(self, target: str, session_id: str | None = None) -> str:
         """Return the store's current on-disk content, delimiter-joined.
 
         Unlike ``format_for_system_prompt`` this reads the file, so nudge
         prompts can hand the model the latest state; returns "" when empty.
         """
-        return ENTRY_DELIMITER.join(self._read_file(self._path_for(target)))
+        return ENTRY_DELIMITER.join(
+            self._read_file(self._path_for(target, session_id, for_read=True))
+        )
 
     # -- Internal helpers --
 

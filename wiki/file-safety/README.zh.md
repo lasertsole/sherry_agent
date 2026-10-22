@@ -105,7 +105,7 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 - **未跟踪文件**逐个复制：`git stash create` 从不携带它们，少了这一步子代理就看不到用户刚建的文件；
 - 只有 git 真正忽略的路径才会被物化；缓存（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` 等）既不复制也不合并。
 
-不是仓库的项目会先被初始化：`git init`，把拒入规则写进 `.git/info/exclude`（**在** `git add -A` **之前**——秘密、体积与仓库状态永远不会进入那次基线提交的历史，事后删除也救不回来），提交一次，并写下 `.sherry-isolation-repo` 标记说明恢复方式（`rm -rf .git .sherry-isolation-repo`）。sherry 永不 push、不加 remote、不改写历史。
+基线不是用户仓库的提交，而是项目的 **shadow 检查点**：拒入规则写在 `.sherry/shadow-git/info/exclude`，worktree 注册在 shadow store 中，不创建 `.git`，也不写 `.sherry-isolation-repo` 标记。sherry 永不 push、不加 remote、不改写用户历史。
 
 经物化链接的读取仍算隔离内部：`resolve_external_path` 只豁免该运行清单里记录过的路径，所以树内 `src/…` 不会触发 HITL「外部文件」审批，而树外任意软链依然会问。
 

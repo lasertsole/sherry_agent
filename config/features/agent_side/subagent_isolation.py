@@ -67,7 +67,7 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
     # Live mutable task state: a boulder/progress file shared by two concurrent
     # worktrees would corrupt, so it is copied and merged back.
     "include_copy": [".omo"],
-    "repo_marker_name": ".sherry-isolation-repo",
+    "repo_marker_name": ".sherry/isolation-repo",
     # Secrets first (history keeps what was ever committed), then bulk, then the
     # repository's own state. The ``*.example`` templates stay as the intentional
     # samples; ``.models`` / ``.network`` are this project's gitignored secret
@@ -100,7 +100,7 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
         "build/",
         ".next/",
         ".cache/",
-        ".sherry-isolation-repo",
+        ".sherry",
     ],
     "baseline_commit_message": "sherry: isolation baseline",
     "branch_prefix": "sherry/",

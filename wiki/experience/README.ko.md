@@ -127,7 +127,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`(`workspace/memory/MEMORY.md`) | 2200자(`MEMORY_TOOL["memory_char_limit"]`) |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`(`workspace/memory/USER.md`) | 1375자(`MEMORY_TOOL["user_char_limit"]`) |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"`(`workspace/memory/FACTS.md`; 4개 언어 템플릿은 `workspace/template/<lang>/FACTS.md`) | 1375자(`MEMORY_TOOL["facts_char_limit"]`); `add`가 상한을 넘으면 가장 오래된 항목부터 제거 |
+| FACTS.md | 세션이 프로젝트에 바인딩되어 있으면 `<project>/.sherry/memory/FACTS.md`(전역 폴백 `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`; 4개 언어 템플릿은 `workspace/template/<lang>/FACTS.md`) | 1375자(`MEMORY_TOOL["facts_char_limit"]`); `add`가 상한을 넘으면 가장 오래된 항목부터 제거 |
 | plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/` — 아이덴티티 키) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
 | todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |

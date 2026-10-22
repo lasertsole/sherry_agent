@@ -58,11 +58,15 @@ def turn_scope(turn_id: str, session_id: str) -> Iterator[None]:
     stream's yield sites. One scope keeps the two in lockstep — a log line and a
     ledger row for the same event always carry the same turn.
     """
+    from runtime.session.context import reset_current_session_id, set_current_session_id
+
     token = current_turn_id.set(turn_id)
+    session_token = set_current_session_id(session_id)
     try:
         with logger.contextualize(turn_id=turn_id, session_id=session_id):
             yield
     finally:
+        reset_current_session_id(session_token)
         current_turn_id.reset(token)
 
 

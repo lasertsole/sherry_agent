@@ -52,11 +52,13 @@ class AgentPromptDataProvider:
 
         return steps_summary(steps)
 
-    def format_memory_for_system_prompt(self, target: str) -> str | None:
-        """Return the frozen memory snapshot block for ``memory`` / ``user``."""
+    def format_memory_for_system_prompt(
+        self, target: str, session_id: str | None = None
+    ) -> str | None:
+        """Return the frozen memory block for ``memory`` / ``user`` / ``facts``."""
         from agent.tools.memory import memory_store
 
-        return memory_store.format_for_system_prompt(target)
+        return memory_store.format_for_system_prompt(target, session_id)
 
     def build_todolist_knowledge_block(self, session_id: str) -> str:
         """Render the current plan's knowledge summary."""

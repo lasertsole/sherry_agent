@@ -213,6 +213,28 @@ def _build_project_dir_block(session_id: str) -> str:
         return ""
 
 
+def _build_project_instructions_block(session_id: str) -> str:
+    """Read the project's AGENTS.md (fallback CLAUDE.md) as live instructions.
+
+    The file is user-owned project content, not sherry state: no directory is
+    created here. Returns "" when neither file exists or is empty.
+    """
+    try:
+        from runtime.session.project_dir import current_project_dir
+
+        root = Path(current_project_dir(session_id))
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            path = root / name
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace").strip()
+            if content:
+                return content
+    except Exception:
+        logger.debug("prompt builder: project instructions read failed", exc_info=True)
+    return ""
+
+
 def _build_boulder_block(session_id: str) -> str:
     """Render the active/paused work pointer. Returns "" on none or any failure."""
     try:
@@ -425,9 +447,9 @@ def build_system_prompt(
             file_paths.extend(
                 content
                 for content in (
-                    provider.format_memory_for_system_prompt("memory"),
-                    provider.format_memory_for_system_prompt("user"),
-                    provider.format_memory_for_system_prompt("facts"),
+                    provider.format_memory_for_system_prompt("memory", session_id),
+                    provider.format_memory_for_system_prompt("user", session_id),
+                    provider.format_memory_for_system_prompt("facts", session_id),
                 )
                 if content
             )

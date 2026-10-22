@@ -163,8 +163,17 @@ class TestRegistration:
             "boulder_status",
             "continuity_context",
             "project_dir_notice",
+            "project_instructions",
             "knowledge_index",
         } <= set(_isolated_catalog["real"])
+
+    def test_the_project_instructions_source_is_change_gated(self, _isolated_catalog):
+        source = _isolated_catalog["real"]["project_instructions"]
+
+        assert source.priority == 62, "between continuity (65) and the dir notice (60)"
+        assert source.budget_chars == 8_000
+        assert source.only_if_changed is True
+        assert source.channel is ReminderChannel.CURRENT_TURN
 
     def test_an_unconsumed_channel_is_refused(self):
         with pytest.raises(ValueError, match="no consumer yet"):

@@ -88,7 +88,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
 | メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
 | 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
-| FACTS.md | `workspace/memory/FACTS.md`（memory ツール target `facts`） | — | モジュール非依存の広範な落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
+| FACTS.md | `<project>/.sherry/memory/FACTS.md`（セッションにバインドされたプロジェクト；グローバルフォールバック `workspace/memory/FACTS.md`；memory ツール target `facts`） | — | モジュール非依存の広範な落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
 ## 🧵 Message 行のターン識別子
 
@@ -128,9 +128,11 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 
 ## 🧱 安定したシステムプロンプトとリマインダー層
 
-システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
+システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
 
 凍結されたメモリスナップショットには意図的な例外が 1 つあります。セッションのモデル切替は新しい provider キャッシュ名前空間に入り、思考モード切替は同一プレフィックスで `cache_read` が 0 になることを実測済みです——どちらもキャッシュは元々冷えます。`ThinkingControlMiddleware` の `before_model` フックは、そのターンの `(thinking key, profile fingerprint, mapping fingerprint)` を最後に適用した値と比較し（グラフは毎ターン再構築されるためプロセスレベルで保持）、変化があれば `system_prompt_injection` より前に `MemoryStore` のスナップショットを再読み込みし、両レジスタから `StateKey.SYSTEM_PROMPT` を削除します。切替後のターンの最初のモデル呼び出しは、セッション途中に書かれた `FACTS.md` / `MEMORY.md` / `USER.md` を見ます。初回ターン、変化なし、再読み込み失敗ではキャッシュを保持し、送信なしでは発火しません。
+
+プロジェクト単位の FACTS.md により、ディレクトリ切替もキャッシュイベントになります：有効ルートが変わると `WorkspaceNoticeMiddleware` が両レジスタから `StateKey.SYSTEM_PROMPT` を削除するため、切替後のターンの最初のモデル呼び出しは**新しい**プロジェクトから FACTS ブロックを再構築します。同じターンの `project_instructions` リマインダーはそのプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
 
 | 関心事 | ルール |
 |---|---|

@@ -92,8 +92,10 @@ class PromptDataProvider(Protocol):
         """Count taskflow steps per status (all statuses zero-filled)."""
         ...
 
-    def format_memory_for_system_prompt(self, target: str) -> str | None:
-        """Return the frozen memory block for ``memory`` / ``user``, else ``None``."""
+    def format_memory_for_system_prompt(
+        self, target: str, session_id: str | None = None
+    ) -> str | None:
+        """Return the frozen memory block for ``memory`` / ``user`` / ``facts``."""
         ...
 
     def build_todolist_knowledge_block(self, session_id: str) -> str:

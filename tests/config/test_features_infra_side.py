@@ -412,7 +412,11 @@ class TestCollectionFieldTypes:
 
     def test_list_field_is_list(self) -> None:
         assert isinstance(fs.SERVER_HTTP["memory_system_file_names"], list)
-        assert fs.SERVER_HTTP["memory_system_file_names"] == ["MEMORY.md", "USER.md"]
+        assert fs.SERVER_HTTP["memory_system_file_names"] == [
+            "MEMORY.md",
+            "USER.md",
+            "FACTS.md",
+        ]
 
 
 class TestPackageAggregator:
