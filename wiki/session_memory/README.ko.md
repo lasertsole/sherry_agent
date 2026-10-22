@@ -26,7 +26,7 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 
 ## 메모리 파일
 
-세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 첫 사용 시 `workspace/template/<lang>/FACTS.md`에서 지연 생성됩니다. 압축 전 memory flush는 이 파일을 쓰지 않습니다.
+세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 첫 사용 시 `workspace/template/<lang>/FACTS.md`에서 지연 생성됩니다. 압축 전 memory flush는 이 파일을 쓰지 않습니다. 스냅샷은 세션 동안 동결되지만, 세션의 모델 또는 사고 제어가 바뀌면 예외입니다: 이런 전환 뒤에는 provider의 prefix 캐시가 이미 차가우므로 다음 턴의 `before_model` 훅이 스냅샷을 다시 로드하고 캐시된 시스템 프롬프트를 무효화하여, 세션 중간의 메모리 쓰기가 그 턴의 첫 모델 호출에서 보이게 합니다.
 
 | 파일 | 용도 | 상한 | 유지보수자 |
 |---|---|---|---|

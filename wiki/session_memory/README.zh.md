@@ -26,7 +26,7 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 记忆文件
 
-三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 在首次使用时从 `workspace/template/<lang>/FACTS.md` 懒创建；压缩前 memory flush 不写该文件。
+三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 在首次使用时从 `workspace/template/<lang>/FACTS.md` 懒创建；压缩前 memory flush 不写该文件。快照在会话内保持冻结，例外是会话的模型或思考控制发生变化：这类切换后提供方前缀缓存本已变冷，下一轮的 `before_model` 钩子会重载快照并失效缓存的系统提示词，使会话中途的记忆写入在当轮首个模型调用即可见。
 
 | 文件 | 用途 | 上限 | 维护者 |
 |---|---|---|---|

@@ -13,8 +13,9 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 
 import models
+import agent.middlewares.thinking_control.core as tc_core
 from agent.middlewares.thinking_control import ThinkingControlMiddleware
-from runtime import state_register_mem
+from runtime import StateKey, state_register_db, state_register_mem
 
 pytestmark = [pytest.mark.unit]
 
@@ -56,6 +57,9 @@ def sid():
     s = "thinking-test-1"
     yield s
     state_register_mem.clear_session(s)
+    state_register_db.delete_state(s, StateKey.SYSTEM_PROMPT)
+    tc_core._last_applied.pop(s, None)
+    tc_core._applied_model_configs.pop(s, None)
 
 
 def _make_request(model=_FakeModel("base"), session_id="thinking-test-1"):
@@ -239,6 +243,12 @@ _PROFILE = {
     "model": "kimi-k2",
     "base_url": "https://api.moonshot.cn/v1",
     "api_key": "sk-kimi",
+}
+_PROFILE_B = {
+    **_PROFILE,
+    "id": "p2",
+    "label": "Kimi K3",
+    "model": "kimi-k3",
 }
 
 
@@ -479,3 +489,236 @@ class TestAppliedConfigPublication:
         assert config is not None
         assert config["thinking_kwargs"] == {"thinking": False, "thinking_floor": True}
         assert config["override"] == _PROFILE
+
+
+# ----------------------------------------------------------------------
+# frozen memory snapshot refresh on a model / thinking switch
+# ----------------------------------------------------------------------
+
+_MAPPING_KEY = StateKey.CUSTOM_THINKING_MAPPING
+_MAPPING_A = {
+    "wire_format": "custom",
+    "wire_field": "thinking.type",
+    "level_map": {"off": "off", "high": "on"},
+}
+_MAPPING_B = {
+    "wire_format": "custom",
+    "wire_field": "thinking.type",
+    "level_map": {"off": "off", "high": "full"},
+}
+
+
+def _apply_once(mw, sid):
+    """Run the wrap path once, recording this turn's applied control."""
+    mw.wrap_model_call(_make_request(session_id=sid), lambda _request: "ok")
+
+
+def _prime_prompt(sid, value="OLD"):
+    state_register_mem.set_state(sid, StateKey.SYSTEM_PROMPT, value)
+    state_register_db.set_state(sid, StateKey.SYSTEM_PROMPT, value)
+
+
+def _cached_prompt(sid):
+    return (
+        state_register_mem.get_state(sid, StateKey.SYSTEM_PROMPT, None),
+        state_register_db.get_state(sid, StateKey.SYSTEM_PROMPT, None),
+    )
+
+
+@pytest.fixture
+def refresh_calls(monkeypatch):
+    """Replace the disk reload with a recorder that publishes a fresh snapshot."""
+    from agent.tools.memory import memory_store
+
+    calls: list[bool] = []
+
+    def _load():
+        calls.append(True)
+        memory_store._system_prompt_snapshot = {
+            "memory": "",
+            "user": "",
+            "facts": "FRESH",
+        }
+
+    monkeypatch.setattr(memory_store, "load_from_disk", _load)
+    return calls
+
+
+class TestFrozenSnapshotRefresh:
+    """A switch reloads the snapshot before the first model call of the turn."""
+
+    def test_a_model_switch_refreshes_the_snapshot(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)
+        # The graph (and this middleware) is rebuilt for the next turn; the
+        # detection state is process-level by design.
+        mw = ThinkingControlMiddleware()
+        assert mw.before_model({"session_id": sid}) is None
+
+        assert refresh_calls == [True]
+        assert _cached_prompt(sid) == (None, None)
+
+    def test_a_thinking_switch_refreshes_the_snapshot(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _FLAG_KEY, True)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        state_register_mem.set_state(sid, _FLAG_KEY, "max")
+        mw = ThinkingControlMiddleware()
+        assert asyncio.run(mw.abefore_model({"session_id": sid})) is None
+
+        assert refresh_calls == [True]
+        assert _cached_prompt(sid) == (None, None)
+
+    def test_a_gateway_change_with_the_same_model_name_refreshes(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        state_register_mem.set_state(
+            sid,
+            _MODEL_KEY,
+            {**_PROFILE, "base_url": "https://other-gateway.example/v1"},
+        )
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == [True]
+        assert _cached_prompt(sid) == (None, None)
+
+    def test_a_custom_mapping_change_refreshes(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _MAPPING_KEY, _MAPPING_A)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        state_register_mem.set_state(sid, _MAPPING_KEY, _MAPPING_B)
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == [True]
+        assert _cached_prompt(sid) == (None, None)
+
+    def test_clearing_the_model_control_refreshes(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        state_register_mem.delete_state(sid, _MODEL_KEY)
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == [True]
+        assert _cached_prompt(sid) == (None, None)
+
+    def test_an_unchanged_control_keeps_the_cache(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _FLAG_KEY, True)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == []
+        assert _cached_prompt(sid) == ("OLD", "OLD")
+
+    def test_the_first_turn_keeps_the_initial_snapshot(self, sid, refresh_calls):
+        _prime_prompt(sid)
+
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == []
+        assert _cached_prompt(sid) == ("OLD", "OLD")
+
+    def test_the_learned_off_floor_is_not_a_second_switch(self, sid, refresh_calls):
+        state_register_mem.set_state(sid, _FLAG_KEY, False)
+        prior = ThinkingControlMiddleware()
+        prior._off_floor_learned = True
+        _apply_once(prior, sid)
+        _prime_prompt(sid)
+
+        # The next turn's fresh instance starts unlearned and computes "off";
+        # the previous turn applied "off_floor". Same user-visible choice.
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert refresh_calls == []
+        assert _cached_prompt(sid) == ("OLD", "OLD")
+
+    def test_a_reload_failure_leaves_the_cached_prompt(self, sid, monkeypatch):
+        from agent.tools.memory import memory_store
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)
+
+        def _boom():
+            raise OSError("memory file unreadable")
+
+        monkeypatch.setattr(memory_store, "load_from_disk", _boom)
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        assert _cached_prompt(sid) == ("OLD", "OLD")
+
+    def test_the_first_model_call_after_a_switch_uses_the_fresh_snapshot(
+        self, sid, refresh_calls, monkeypatch
+    ):
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        from agent.middlewares.system_prompt import core as sp_core
+        from agent.middlewares.system_prompt.core import system_prompt_injection
+        from agent.tools.memory import memory_store
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)
+
+        monkeypatch.setattr(
+            sp_core,
+            "build_system_prompt",
+            lambda session_id="": memory_store.format_for_system_prompt("facts") or "",
+        )
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        captured: dict[str, ModelRequest] = {}
+
+        def handler(request):
+            captured["request"] = request
+            return AIMessage(content="ok")
+
+        request = ModelRequest(
+            model=_FakeModel("base"),
+            messages=[HumanMessage(content="q")],
+            state={"session_id": sid},
+        )
+        system_prompt_injection.wrap_model_call(request, handler)
+
+        assert captured["request"].system_message.content == "FRESH"
+
+    def test_the_refresh_reads_mid_session_writes_from_disk(self, sid, tmp_path, monkeypatch):
+        from agent.tools import memory as memory_mod
+
+        store = memory_mod.MemoryStore()
+        monkeypatch.setattr(memory_mod, "MEMORY_DIR", tmp_path)
+        monkeypatch.setattr(memory_mod, "memory_store", store)
+        (tmp_path / "FACTS.md").write_text("old fact", encoding="utf-8")
+        (tmp_path / "MEMORY.md").write_text("", encoding="utf-8")
+        (tmp_path / "USER.md").write_text("", encoding="utf-8")
+        store.load_from_disk()
+        assert "old fact" in (store.format_for_system_prompt("facts") or "")
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        _apply_once(ThinkingControlMiddleware(), sid)
+        _prime_prompt(sid)
+
+        # A mid-session write only touches the file; the frozen snapshot must
+        # still be stale until the switch-triggered reload runs.
+        with (tmp_path / "FACTS.md").open("a", encoding="utf-8") as handle:
+            handle.write("\n§\nnew fact")
+        assert "new fact" not in (store.format_for_system_prompt("facts") or "")
+
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)
+        assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
+
+        refreshed = store.format_for_system_prompt("facts") or ""
+        assert "old fact" in refreshed and "new fact" in refreshed
+        assert _cached_prompt(sid) == (None, None)

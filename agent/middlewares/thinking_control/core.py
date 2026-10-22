@@ -34,6 +34,15 @@ Design notes
     * Timing: the swap happens at model-call time, and the HTTP layer refuses
       writes while a turn is in flight — so a switch lands on the NEXT turn,
       never in the middle of one.
+    * Frozen-memory refresh: the memory store's system-prompt snapshot is
+      frozen for the session's lifetime to protect the prefix cache. A model
+      switch starts a new cache namespace, and a thinking switch was measured
+      to drop cache_read to 0 on an identical prefix (DeepSeek, 2026-10-22), so
+      the cache is already cold. The ``before_model`` hook detects either
+      switch at the first model call of a turn and reloads the snapshot +
+      invalidates ``StateKey.SYSTEM_PROMPT``; the prompt then rebuilds with
+      the mid-session FACTS/MEMORY/USER writes on the FIRST call, not after a
+      tool-loop step.
     * Disable ladder: gateways whose server default is thinking ON need an
       explicit disable payload; ALWAYS-THINK models (glm-5 series) reject it
       with a "不支持关闭思考" 400. On that rejection the off request is retried
@@ -41,7 +50,9 @@ Design notes
       is cached, so later off calls skip the failed rung. The retry keeps the
       session's model override.
     * Fail-open: any variant build failure logs a warning and returns the
-      original request; the turn proceeds with the env-default model.
+      original request; the turn proceeds with the env-default model. A
+      snapshot reload failure logs and leaves the cached prompt in place
+      rather than replacing it with a half-read one.
 """
 
 import hashlib
@@ -79,6 +90,22 @@ THINKING_LEVEL_TOKEN_SET = _thinking_level_tokens()
 _applied_model_configs: dict[str, dict[str, Any]] = {}
 
 
+#: The last (thinking key, profile fingerprint, custom-mapping fingerprint)
+#: applied to a session's main-chain call. PROCESS-level, not instance-level:
+#: the WS turn runner calls ``built_agent(force_rebuild=True)`` every turn, so
+#: a middleware instance never survives to see the previous turn and could not
+#: detect a switch. ``off_floor`` is normalized to ``off`` — it is the learned
+#: fallback for the same request choice, not a second user-visible switch.
+_last_applied: dict[str, tuple[str | None, str, str]] = {}
+
+
+def _mapping_signature(custom_mapping: dict | None) -> str:
+    """A stable fingerprint of the session's custom wire mapping."""
+    if not custom_mapping:
+        return "builtin"
+    return repr(sorted((str(k), repr(v)) for k, v in custom_mapping.items()))
+
+
 def current_session_model_config(session_id: str | None) -> dict[str, Any] | None:
     """The model config this session's last main-chain call used, when known.
 
@@ -98,8 +125,6 @@ class ThinkingControlMiddleware(AgentMiddleware):
     def __init__(self, temperature: float | None = None) -> None:
         self._temperature = temperature
         self._variants: dict[str, Any] = {}
-        # Last applied choice per session, for change-only logging.
-        self._last_applied: dict[str, tuple[Any, Any]] = {}
         # Learned capability: the gateway rejects the disable payload.
         self._off_floor_learned = False
 
@@ -184,12 +209,10 @@ class ThinkingControlMiddleware(AgentMiddleware):
     ) -> Any:
         # The mapping participates in the signature: editing it must build a
         # fresh client, while two calls with the same mapping share one.
-        mapping_sig = (
-            repr(sorted((str(k), repr(v)) for k, v in custom_mapping.items()))
-            if custom_mapping
-            else "builtin"
+        signature = (
+            f"{cache_key or 'default'}::{self._override_signature(override)}"
+            f"::{_mapping_signature(custom_mapping)}"
         )
-        signature = f"{cache_key or 'default'}::{self._override_signature(override)}::{mapping_sig}"
         cached = self._variants.get(signature)
         if cached is None:
             cached = self._build(cache_key, override, custom_mapping)
@@ -213,7 +236,9 @@ class ThinkingControlMiddleware(AgentMiddleware):
 
         Mem-register only (no blocking I/O on the loop). A malformed override
         (no usable model name) is ignored, mirroring the service's validation;
-        so is a custom mapping without a usable level map.
+        so is a custom mapping without a usable level map. PURE: recording the
+        applied control is :meth:`_record_control`, so ``before_model`` can
+        compare against the PREVIOUS turn before the wrap call updates it.
         """
         from runtime import state_register_mem
 
@@ -231,16 +256,118 @@ class ThinkingControlMiddleware(AgentMiddleware):
         )
         if cache_key is None and override is None and custom_mapping is None:
             return None, None, None
-        applied = (cache_key, (override or {}).get("model"))
-        if self._last_applied.get(session_id) != applied:
+        return cache_key, override, custom_mapping
+
+    def _control_signature(
+        self,
+        cache_key: str | None,
+        override: dict | None,
+        custom_mapping: dict | None,
+    ) -> tuple[str | None, str, str]:
+        """The cache-relevant identity of one request configuration.
+
+        Thinking key + profile fingerprint (provider/model/base/key/window) +
+        mapping fingerprint. Any change means the provider is looking at a
+        different request configuration, so the frozen prompt may be reloaded
+        without extra cache cost.
+        """
+        thinking = "off" if cache_key == "off_floor" else cache_key
+        return (
+            thinking,
+            self._override_signature(override),
+            _mapping_signature(custom_mapping),
+        )
+
+    def _record_control(
+        self,
+        session_id: str,
+        cache_key: str | None,
+        override: dict | None,
+        custom_mapping: dict | None,
+    ) -> None:
+        """Record the control the wrap call is about to apply (change-only log)."""
+        applied = self._control_signature(cache_key, override, custom_mapping)
+        if _last_applied.get(session_id) != applied:
             logger.info(
                 "Model control: session {} → model={} thinking={} (model call override)",
                 session_id,
                 (override or {}).get("model") or "env",
                 cache_key or "env-default",
             )
-            self._last_applied[session_id] = applied
-        return cache_key, override, custom_mapping
+            _last_applied[session_id] = applied
+
+    @staticmethod
+    def _session_id(state: Any) -> str:
+        if not hasattr(state, "get"):
+            return ""
+        return str((state or {}).get("session_id") or "")
+
+    def _refresh_frozen_snapshot_if_switched(self, state: Any) -> bool:
+        """Reload the frozen memory snapshot when the request config changed.
+
+        Runs as a ``before_model`` hook, i.e. BEFORE the outermost
+        ``system_prompt_injection.wrap_model_call`` resolves the prompt, so the
+        first model call of the switched turn already sees the new snapshot.
+        A first turn has no previous control to compare (the agent's own
+        ``init()`` already loaded the snapshot) and stays untouched.
+        """
+        session_id = self._session_id(state)
+        if not session_id:
+            return False
+
+        cache_key, override, custom_mapping = self._read_controls(session_id)
+        applied = self._control_signature(cache_key, override, custom_mapping)
+        last = _last_applied.get(session_id)
+        if last is None or last == applied:
+            return False
+
+        try:
+            from agent.tools.memory import memory_store
+
+            memory_store.load_from_disk()
+        except Exception:
+            # Fail-open: a half-read snapshot must not replace the frozen one,
+            # and a broken memory file must never break the turn.
+            logger.exception(
+                "ThinkingControlMiddleware: memory snapshot reload failed for session {}",
+                session_id,
+            )
+            return False
+
+        from runtime import state_register_db, state_register_mem
+
+        state_register_mem.delete_state(session_id, StateKey.SYSTEM_PROMPT)
+        state_register_db.delete_state(session_id, StateKey.SYSTEM_PROMPT)
+        # Record now, not only in the wrap layer: an outer middleware (the
+        # token budget) can short-circuit the model call, and a short-circuited
+        # turn must not reload the whole memory store again next turn.
+        self._record_control(session_id, cache_key, override, custom_mapping)
+        logger.info(
+            "ThinkingControlMiddleware: request config changed for session {} "
+            "({} → {}), refreshed the frozen memory snapshot + invalidated "
+            "the system prompt cache",
+            session_id,
+            last,
+            applied,
+        )
+        return True
+
+    def before_model(self, state: Any, runtime: Any = None) -> dict[str, Any] | None:
+        """Sync path of the frozen-snapshot refresh (see the async sibling)."""
+        self._refresh_frozen_snapshot_if_switched(state)
+        return None
+
+    async def abefore_model(self, state: Any, runtime: Any = None) -> dict[str, Any] | None:
+        """Refresh the frozen memory snapshot when model/thinking switched.
+
+        The refresh is intentionally synchronous: ``load_from_disk`` takes the
+        memory file lock for a few milliseconds and this runs only on an
+        actual switch, never on every model call. The prompt-cache delete must
+        complete before ``system_prompt_injection`` runs, and both state
+        registers are synchronous.
+        """
+        self._refresh_frozen_snapshot_if_switched(state)
+        return None
 
     def _maybe_swap(self, request: Any) -> tuple[Any, str | None, dict | None]:
         """Return (request, applied_thinking_key, override) — original when no-op."""
@@ -250,6 +377,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
             return request, None, None
 
         cache_key, override, custom_mapping = self._read_controls(session_id)
+        self._record_control(session_id, cache_key, override, custom_mapping)
         if cache_key is None and override is None and custom_mapping is None:
             _applied_model_configs[session_id] = self._descriptor(None, None, None)
             return request, None, None

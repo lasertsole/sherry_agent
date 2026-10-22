@@ -26,7 +26,7 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Memory Files
 
-The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is lazily created from `workspace/template/<lang>/FACTS.md` on first use; it is not written by the pre-compression memory flush.
+The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is lazily created from `workspace/template/<lang>/FACTS.md` on first use; it is not written by the pre-compression memory flush. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
 
 | File | Purpose | Limit | Maintainer |
 |---|---|---|---|

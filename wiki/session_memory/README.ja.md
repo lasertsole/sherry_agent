@@ -26,7 +26,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 ## メモリファイル
 
-3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は初回使用時に `workspace/template/<lang>/FACTS.md` から遅延作成される。圧縮前 memory flush は同ファイルを書かない。
+3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は初回使用時に `workspace/template/<lang>/FACTS.md` から遅延作成される。圧縮前 memory flush は同ファイルを書かない。スナップショットはセッション中凍結されるが、セッションのモデルまたは思考制御が変わったときは例外である: その切替後は provider の prefix キャッシュが既に冷えているため、次ターンの `before_model` フックがスナップショットを再読み込みしてキャッシュ済みシステムプロンプトを無効化し、セッション途中のメモリ書き込みがそのターンの最初のモデル呼び出しで見えるようになる。
 
 | ファイル | 用途 | 上限 | メンテナ |
 |---|---|---|---|

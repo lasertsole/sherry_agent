@@ -133,6 +133,8 @@ The interaction map:
 
 The system prompt holds **stable** content only: persona files, the memory blocks and the skills index. Every LIVE view — plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index — is injected instead as a `<system-reminder source="…">` HumanMessage on each turn's first model call (`DynamicReminderMiddleware` + the catalogue in `agent/middlewares/reminder_catalog/`). Two reasons: a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it (persona included), and a prompt that is only rebuilt on a cache miss shows a STALE todo list between rebuilds.
 
+The frozen memory snapshot has one deliberate exception. A session model switch starts a new provider cache namespace, and a thinking switch was measured to drop `cache_read` to 0 on an identical prefix; the cache is already cold either way. `ThinkingControlMiddleware`'s `before_model` hook compares the turn's `(thinking key, profile fingerprint, mapping fingerprint)` with the last applied one (process-level, because the graph is rebuilt every turn) and, on a change, reloads `MemoryStore`'s snapshot and deletes `StateKey.SYSTEM_PROMPT` from both registers before `system_prompt_injection` runs. The first model call of the switched turn therefore sees mid-session `FACTS.md` / `MEMORY.md` / `USER.md` writes. A first turn, an unchanged control, and a failed reload all keep the cached prompt; no turn is triggered without a send.
+
 | Concern | Rule |
 |---|---|
 | What is injected | One reminder per source whose builder returned text: priority order, tagged `origin=<source id>`, `provenance="reminder_catalog"`, `internal=True` |

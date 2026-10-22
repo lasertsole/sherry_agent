@@ -151,7 +151,18 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     into the memory review's cache-warm rebuild (the published descriptor
   │     carries it). Anthropic has an adaptive branch, Bedrock splits Claude
   │     from GPT, and the headroom scales per level via
-  │     REASONING_BUDGET["thinking_budgets"]
+  │     REASONING_BUDGET["thinking_budgets"]. The middleware also refreshes the
+  │     frozen memory snapshot when the request configuration changes: a
+  │     model switch starts a new prefix-cache namespace and a thinking switch
+  │     was measured to zero cache_read on an identical prefix (DeepSeek,
+  │     2026-10-22), so `before_model` compares the turn's (thinking key,
+  │     profile fingerprint, custom-mapping fingerprint) against the last
+  │     applied one — process-level because the graph is rebuilt every turn —
+  │     and, on a change, reloads `MemoryStore.load_from_disk()` and deletes
+  │     `StateKey.SYSTEM_PROMPT` from both registers BEFORE
+  │     `system_prompt_injection` resolves the prompt. The switched turn's
+  │     first model call therefore sees mid-session FACTS/MEMORY/USER writes;
+  │     first turns, unchanged controls, and reload failures keep the cache.
   │
   ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(8)
   │         + file_tools + web_search + web_fetch + terminal + python_repl + question + ...
