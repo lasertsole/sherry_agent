@@ -27,7 +27,12 @@ from ..types.delivery import DeliveryContext
 from ..config import get_config
 from .idempotency import build_idempotency_key
 from .dispatch import AnnounceDeliveryResult, run_announce_dispatch
-from .completion_message import STATUS_COMPLETED, STATUS_FAILED, build_completion_message
+from .completion_message import (
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_INTERRUPTED,
+    build_completion_message,
+)
 
 _delivered_keys: set[str] = set()  # In-memory idempotency tracking
 _delivery_mirror: dict[str, str] = {}  # Content-based deduplication mirror
@@ -193,10 +198,18 @@ def _trigger_auto_turn(session_key: str, injection: HumanMessage):
 
 
 def _resolve_builder_status(run: SubagentRunRecord) -> str:
-    """Map a registry outcome to the completion-message vocabulary (frozen: ok→completed, else failed)."""
+    """Map a registry outcome to the completion-message vocabulary.
+
+    ``ok → completed`` and ``killed by user_stop → interrupted`` are the two
+    distinct terminal stories the parent must see; everything else is failed.
+    """
     outcome = run.execution.outcome
     status = outcome.status if outcome is not None else RunOutcomeStatus.UNKNOWN
-    return STATUS_COMPLETED if status == RunOutcomeStatus.OK else STATUS_FAILED
+    if status == RunOutcomeStatus.OK:
+        return STATUS_COMPLETED
+    if status == RunOutcomeStatus.KILLED and "user_stop" in (outcome.error or "").lower():
+        return STATUS_INTERRUPTED
+    return STATUS_FAILED
 
 
 async def _route_completion_injection(run: SubagentRunRecord) -> None:
@@ -229,9 +242,15 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     content = run.completion.result_text or ""
     if len(content) > 4000:  # mirrors the user-facing completion message budget
         content = content[:4000] + "\n... [truncated]"
-    injection = build_completion_message(run, content, _resolve_builder_status(run))
+    builder_status = _resolve_builder_status(run)
+    injection = build_completion_message(run, content, builder_status)
 
     try:
+        # A user-stopped child is information for the NEXT turn, never a reason
+        # to start one automatically (the user just pressed stop).
+        if builder_status == STATUS_INTERRUPTED:
+            await _enqueue_steering(bare, injection)
+            return
         state = _detect_session_state(bare)
         if state.busy:
             await _enqueue_steering(bare, injection)
@@ -533,7 +552,11 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
 
     status_text = "completed successfully"
     if ctx.outcome.status == "killed":
-        status_text = "killed"
+        status_text = (
+            "interrupted by the user"
+            if "user_stop" in (ctx.outcome.error or "").lower()
+            else "killed"
+        )
     elif ctx.outcome.status == "error":
         status_text = f"failed: {ctx.outcome.error or 'unknown error'}"
     elif ctx.outcome.status == "timeout":

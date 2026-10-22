@@ -39,6 +39,7 @@ class BackgroundTask:
     command: str
     output_path: Path | None
     started_at: float  # time.monotonic()
+    pgid: int | None = None  # process-group id recorded at spawn (tree cleanup)
     status: str = "running"  # running | completed | failed | killed
     exit_code: int | None = None
     live: bool = False  # whether a watcher still holds the process handle
@@ -100,21 +101,27 @@ class BackgroundTaskRegistry:
         task.live = False
 
     def kill_session_tasks(self, session_id: str) -> int:
-        """SIGTERM every still-running task of one session (session deletion).
+        """Kill the process TREE of every still-running task of one session.
 
-        Best-effort by design: the process may already be gone, and the session
-        directory (which holds the output files) is removed right after by the
-        caller. Returns how many signals were sent.
+        Session deletion is the one place a background task is not preserved.
+        The group recorded at spawn is killed (SIGTERM → bounded SIGKILL), so a
+        background shell's children do not survive the cleanup. Best-effort by
+        design; the session directory is removed right after by the caller.
         """
-        import os
-        import signal
+        from types import SimpleNamespace
+
+        from agent.tools.pub_base.process_reap import kill_process_tree
 
         killed = 0
         for task in self.list_session(session_id):
             if task.status != "running" or task.pid is None:
                 continue
             try:
-                os.kill(task.pid, signal.SIGTERM)
+                kill_process_tree(
+                    SimpleNamespace(pid=task.pid),
+                    pgid=task.pgid or task.pid,
+                    grace=1.0,
+                )
                 killed += 1
             except (OSError, ProcessLookupError):
                 pass  # already dead: the watcher already recorded that

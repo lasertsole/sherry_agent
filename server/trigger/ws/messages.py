@@ -163,6 +163,45 @@ async def _cancel_session(session_id: str) -> None:
         logger.info(f"Agent WS stop requested (no active task): session_id={session_id}")
 
 
+async def _stop_child_runs(session_id: str) -> int:
+    """Cancel this session's running subagents when the USER stops the turn.
+
+    Deliberately NOT inside :func:`_cancel_session`: that helper is also used by
+    HITL resume and send-now, where killing the session's children would change
+    their semantics. The registry kill path already cancels the child task by
+    run_id (`task_refs.cancel_task`) and persists KILLED + reconciliation, so no
+    session flag or middleware is needed.
+    """
+    from agent.tools.subagent.control.kill import (
+        kill_subagent_run_with_cascade,
+        list_killable_children,
+    )
+    from agent.tools.subagent.registry.session_keys import denormalize_session_key
+
+    requester_key = denormalize_session_key(session_id)
+    try:
+        killable = list_killable_children(requester_key)
+    except Exception as exc:  # noqa: BLE001 - stop must never be blocked by cleanup
+        logger.warning("Agent WS stop: child lookup failed for {}: {}", session_id, exc)
+        return 0
+
+    killed = 0
+    for run in killable:
+        try:
+            await kill_subagent_run_with_cascade(
+                run.run_id,
+                reason="user_stop",
+                cascade=True,
+                requester_session_key=requester_key,
+            )
+            killed += 1
+        except Exception as exc:  # noqa: BLE001 - fail-open per child
+            logger.warning("Agent WS stop: killing child run {} failed: {}", run.run_id, exc)
+    if killed:
+        logger.info("Agent WS stop propagated to {} child run(s): {}", killed, session_id)
+    return killed
+
+
 # ---------------------------------------------------------------------------
 # Frame handlers — one per ``type`` we accept, keyed by _FRAME_HANDLERS below.
 # A frame WITHOUT a known type is a generation request (the historical default).
@@ -172,6 +211,7 @@ async def _cancel_session(session_id: str) -> None:
 async def _handle_stop(websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]) -> None:
     """``stop``: cancel the running turn and ack on this (possibly separate) socket."""
     await _cancel_session(session_id)
+    await _stop_child_runs(session_id)
     await _send_ws(
         websocket,
         {

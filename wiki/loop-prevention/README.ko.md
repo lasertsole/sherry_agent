@@ -120,6 +120,13 @@
 
 턴당 1분 타이머(`timer_call_register`)를 등록해 `heartbeat_iter` / `heartbeat_tool` 카운터를 마지막 관측값과 비교합니다. 진행이 있으면 스테일 카운터가 리셋됩니다; 유휴 에이전트에서 **7** 사이클(약 7분), 도구 실행 중에는 **20** 사이클(약 20분) 동안 진행이 없으면 killed 플래그가 설정되고, 다음 에이전트 루프 진입 시 `HeartbeatTimeoutError`를 던져 턴을 우아하게 끝냅니다. 메인과 워커 에이전트 모두에 등록되며, 턴 단위 상태는 `before_agent`에서 리셋되고 타이머는 `after_agent`에서 해제됩니다.
 
+### 턴 수준: 사용자 중단, 하위 에이전트 전파, 프로세스 트리
+
+- `stop`은 **세션 범위**입니다. 해당 세션의 메인 턴을 취소하고, **사용자 stop 경로에서만** 기존 cascade kill로 그 세션의 killable 하위 에이전트를 종료합니다(`run_id` 기준 task cancel + 영속 KILLED/reconciliation). 다른 세션의 메인/하위 에이전트는 영향을 받지 않습니다. HITL resume / send-now의 기존 의미는 유지됩니다.
+- 포그라운드 `terminal` / `python_repl` / PTC는 별도 프로세스 그룹/세션에서 실행됩니다(POSIX `start_new_session`, Windows 새 프로세스 그룹). 취소/타임아웃 시 **그룹**에 SIGTERM → 제한된 대기 → SIGKILL(Windows `taskkill /T /F`)을 보냅니다. `python_repl`의 스레드 내 자식 프로세스도 남지 않습니다.
+- 명시적 `terminal(run_in_background=True)` 작업은 stop 시 유지되고, 세션 삭제 시 기록된 pgid 그룹을 종료합니다. shell 내부 `&` / `nohup`은 포그라운드로 취급되어 그룹과 함께 종료됩니다. bwrap/seatbelt는 프로세스 그룹과 백엔드 네임스페이스로 처리하며, `setsid` 탈출은 P2 경계입니다.
+- 사용자 stop으로 종료된 하위 에이전트는 `[subagent:... interrupted]`로 통지되며(failed 아님), steering queue에 들어가 다음 턴을 기다립니다. 자동 턴은 시작하지 않습니다. 메인 턴의 `[interrupted]` marker는 그대로입니다.
+
 ### 파이프라인 수준: 서브에이전트 완료 drain + announce 재시도
 
 **주입 drain** (`agent/middlewares/subagent_completion_drain/core.py`): 세션의 `SteeringQueue`를 재수화하고 비우는 `before_model` 미들웨어로, 다음 모델 호출 직전에 대기 중인 완료 캐리어를 주입합니다. SQLite 행은 drain 시 `CONSUMED`로 표시되므로 체크포인트 리플레이(HITL 재개)가 같은 완료를 다시 주입할 수 없습니다. 이 미들웨어는 완전히 fail-open입니다: 모든 실패는 로그로 남기고 삼켜지며, 부모 턴은 주입 없이 계속됩니다. 이것이 '이미 끝난 자식을 부모가 영원히 기다리는' 루프를 닫습니다.

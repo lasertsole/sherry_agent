@@ -121,6 +121,13 @@
 
 ターンごとに 1 分タイマー(`timer_call_register`)を登録し、`heartbeat_iter` / `heartbeat_tool` カウンタを前回の観測値と比較します。進行があれば stale カウンタはリセットされます。アイドル状態のエージェントで **7** サイクル(約 7 分)、ツール実行中は **20** サイクル(約 20 分)進行がないと killed フラグが立ち、次のエージェントループ突入時に `HeartbeatTimeoutError` を投げてターンを安全に終わらせます。メインとワーカーの両エージェントに登録され、ターン単位状態は `before_agent` でリセット、タイマーは `after_agent` で解除されます。
 
+### ターンレベル: ユーザー中断、子エージェントへの伝播、プロセスツリー
+
+- `stop` は**セッション単位**です。対象セッションのメイン turn をキャンセルし、**ユーザー stop の経路だけ**で既存の cascade kill によりそのセッションの killable な子エージェントを停止します（`run_id` の task cancel + 永続 KILLED/reconciliation）。他のセッションのメインエージェントや子エージェントには影響しません。HITL resume / send-now の意味は変えません。
+- フォアグラウンドの `terminal` / `python_repl` / PTC は独立したプロセスグループ/セッションで起動します（POSIX `start_new_session`、Windows は新しいプロセスグループ）。キャンセル/タイムアウト時は**グループ**へ SIGTERM → 有界待機 → SIGKILL（Windows `taskkill /T /F`）。`python_repl` のスレッド内子プロセスも残りません。
+- 明示的な `terminal(run_in_background=True)` は stop 時に保持され、セッション削除時に記録した pgid のグループを停止します。shell 内の `&` / `nohup` はフォアグラウンド扱いでグループごと停止します。bwrap/seatbelt はプロセスグループとバックエンドの名前空間で対応し、`setsid` による脱出は P2 の境界です。
+- ユーザー stop で停止した子エージェントは `[subagent:... interrupted]` として通知され（failed ではない）、steering queue に入って次 turn を待ちます。自動 turn は開始しません。メイン turn の `[interrupted]` marker は従来どおりです。
+
 ### パイプラインレベル: サブエージェント完了ドレイン + announce 再試行
 
 **注入ドレイン** (`agent/middlewares/subagent_completion_drain/core.py`): セッションの `SteeringQueue` を再水和して排出する `before_model` ミドルウェアで、次のモデル呼び出しの直前に待機中の完了キャリアを注入します。SQLite 行はドレイン時に `CONSUMED` と印付かれるため、チェックポイント再生(HITL 再開)が同じ完了を再注入することは決してありません。このミドルウェアは完全に fail-open です: すべての失敗はログに記録して飲み込まれ、親ターンは注入なしで続行します。これが「すでに終わった子を親が永遠に待つ」ループを塞ぎます。

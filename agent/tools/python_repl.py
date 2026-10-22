@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import sys
+import os
 from pathlib import Path
 import json
 import textwrap
@@ -43,7 +44,7 @@ from agent.tools.pub_base import (
 )
 
 from agent.tools.pub_base.env_scrub import scrub_env
-from agent.tools.pub_base.process_reap import reap_process
+from agent.tools.pub_base.process_reap import kill_process_tree
 from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
@@ -60,6 +61,14 @@ PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
 #: sweep contract): the JSON envelope and the stderr fallback are files, never
 #: pipes, so a killed grandchild cannot keep a pipe open.
 _REPL_TMP_PREFIX = ".sherry-tmp-repl-"
+
+
+def _process_group_kwargs() -> dict[str, Any]:
+    """Isolate the REPL child so a cancellation can kill its whole tree."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
 
 # Path-hardening assessment — deliberately NO deny-read scan here:
 # the wrapper's restricted builtins already omit `open` / `__import__`, so a
@@ -131,6 +140,7 @@ def _run_with_timeout(
     cwd: str | None = None,
     writable_roots: list[Path] | None = None,
     session_id: str = "",
+    proc_out: list[subprocess.Popen[bytes]] | None = None,
     **_kwargs: Any,
 ) -> tuple[str, bool]:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
@@ -193,13 +203,16 @@ def _run_with_timeout(
                 stderr=stderr_handle,
                 env=env,
                 cwd=cwd or str(ROOT_DIR),
+                **_process_group_kwargs(),
             )
+            if proc_out is not None:
+                proc_out.append(proc)
             stdout_handle.close()
             stderr_handle.close()
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             if proc:
-                reap_process(proc)
+                kill_process_tree(proc, grace=1.0)
             logger.warning("python_repl timed out after {}s", timeout)
             return (
                 f"Python REPL execution timed out after {timeout} seconds. "
@@ -303,14 +316,23 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         if not git_ok:
             return git_error
         session_cwd = _resolve_session_cwd(run_manager, session_id)
-        result, ran_sandboxed = await asyncio.to_thread(
-            _run_with_timeout,
-            query,
-            PYTHON_REPL_TIMEOUT,
-            sandbox,
-            session_cwd,
-            [Path(session_cwd)] if session_cwd else None,
-        )
+        proc_out: list[subprocess.Popen[bytes]] = []
+        try:
+            result, ran_sandboxed = await asyncio.to_thread(
+                _run_with_timeout,
+                query,
+                PYTHON_REPL_TIMEOUT,
+                sandbox,
+                session_cwd,
+                [Path(session_cwd)] if session_cwd else None,
+                proc_out=proc_out,
+            )
+        except asyncio.CancelledError:
+            # to_thread cannot cancel the blocking wait, so the child would
+            # outlive the turn. Kill its whole group explicitly first.
+            if proc_out:
+                kill_process_tree(proc_out[0], grace=1.0)
+            return "Python REPL execution was cancelled (process tree killed)."
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
         )

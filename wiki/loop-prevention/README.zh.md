@@ -117,6 +117,13 @@
 
 每回合注册一个 1 分钟定时器（`timer_call_register`），比较 `heartbeat_iter` / `heartbeat_tool` 计数器与上次观测值。任何进展都会重置陈旧计数；空闲 Agent 连续 **7** 个周期（约 7 分钟）无进展，或处于工具内部时连续 **20** 个周期（约 20 分钟）无进展，就设置 killed 标志，下一次进入 agent 循环时抛出 `HeartbeatTimeoutError`，让回合优雅结束。主 Agent 与 worker Agent 都有注册；每回合状态在 `before_agent` 重置，定时器在 `after_agent` 注销。
 
+### 回合级：用户中断、子代理传播与进程树
+
+- `stop` 是**会话隔离**的：取消该会话的主 turn；仅在**用户 stop** 路径，通过现有 cascade kill 终止该会话的 killable 子代理（按 `run_id` 取消 task + 持久化 KILLED/reconciliation）。其他会话的主 Agent 与子代理不受影响；HITL resume / send-now 保持原有语义。
+- 前台 `terminal`、`python_repl`、PTC 现在运行在独立进程组/会话中（POSIX `start_new_session`；Windows 新进程组）。取消/超时向**进程组**发 SIGTERM，有界等待后 SIGKILL（Windows `taskkill /T /F`）；`python_repl` 不再把线程里的子进程留在后台。
+- 显式 `terminal(run_in_background=True)` 的任务在 stop 时保留；会话删除时按记录的 pgid 杀整个后台进程组。shell 内部 `&` / `nohup` 属于前台进程树，会随组一起被杀。bwrap/seatbelt 由进程组/后端命名空间覆盖；主动 `setsid` 逃逸是文档化的 P2 边界。
+- 被用户 stop 杀掉的子代理回报 `[subagent:... interrupted]`（不是 failed），并进入 steering queue 等待下一轮，不自动开新 turn。主 turn 仍保留现有 `[interrupted]` marker。
+
 ### 管线级：子 Agent 完成 drain + announce 重试
 
 **注入 drain**（`agent/middlewares/subagent_completion_drain/core.py`）：一个 `before_model` 中间件，负责把会话的 `SteeringQueue` 重新水合并排空，在下一次模型调用之前注入排队的完成载体。SQLite 行在 drain 时标记为 `CONSUMED`，因此检查点回放（HITL 恢复）绝不可能再次注入同一条完成通知。该中间件完全 fail-open：所有失败都记日志后吞掉，父回合在没有注入的情况下继续。它封死了"子 Agent 早已完成、父 Agent 却永远等待"这条循环。

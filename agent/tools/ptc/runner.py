@@ -30,7 +30,6 @@ import os
 from pathlib import Path
 import secrets
 import shutil
-import signal
 import subprocess  # noqa: S404 - intentional isolated child spawn
 import sys
 import tempfile
@@ -41,7 +40,7 @@ from loguru import logger
 
 from config.path import ROOT_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
-from agent.tools.pub_base.process_reap import reap_process
+from agent.tools.pub_base.process_reap import kill_process_tree, reap_process
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 
@@ -167,11 +166,11 @@ def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
     """Kill the child and any grandchildren it spawned."""
     if proc.poll() is not None:
         return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    outcome = kill_process_tree(proc, grace=1.0)
+    if outcome == "exited":
         return
-    except (AttributeError, ProcessLookupError, PermissionError, OSError):
-        pass
+    # ``kill_process_tree`` already falls back to reap_process on platforms
+    # without killpg; this is only a final belt-and-braces direct kill.
     try:
         proc.kill()
     except OSError:

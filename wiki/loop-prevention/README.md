@@ -123,6 +123,13 @@ The clip never removes, reorders, or injects a message: it replaces content thro
 
 Registers a 1-minute timer per turn (`timer_call_register`) that compares `heartbeat_iter` / `heartbeat_tool` counters against the last observation. Any progress resets the stale counter; no progress for **7** cycles (~7 min) on an idle agent or **20** cycles (~20 min) while inside a tool sets a killed flag, and the next agent-loop entry raises `HeartbeatTimeoutError`, ending the turn gracefully. Registered on both main and worker agents; per-turn state resets in `before_agent`, the timer is unregistered in `after_agent`.
 
+### Turn level: user cancellation, child fan-out & process trees
+
+- `stop` is **session-scoped**: it cancels that session's main turn and, on the USER stop path only, kills that session's killable subagent runs through the existing cascade kill (`run_id`-keyed task cancel + persisted KILLED/reconciliation). Other sessions' main agents and children are untouched; HITL resume / send-now keep their previous semantics.
+- Foreground `terminal`, `python_repl` and PTC now run in their own process group/session (POSIX `start_new_session`; Windows a new process group). Cancellation/timeout sends SIGTERM to the GROUP, waits a bounded grace, then SIGKILLs it (Windows `taskkill /T /F`). `python_repl` no longer leaves its thread's child running.
+- Explicit `terminal(run_in_background=True)` tasks are preserved on stop; session deletion kills their recorded process-group ID. Shell-internal `&` / `nohup` children are foreground and are killed with the group. bwrap/seatbelt are covered by the group plus the backend namespace; a deliberate `setsid` escape is a documented P2 boundary.
+- A child killed by a user stop is reported as `[subagent:... interrupted]` (not failed) and queued for the next turn instead of starting an auto-turn. The main interrupted turn keeps the existing `[interrupted]` marker.
+
 ### Pipeline level: subagent completion drain + announce retry
 
 **Injection drain** (`agent/middlewares/subagent_completion_drain/core.py`): a `before_model` middleware that rehydrates and drains the session's `SteeringQueue`, injecting queued completion carriers right before the next model call. SQLite rows are marked `CONSUMED` on drain, so a checkpoint replay (HITL resume) can never re-inject the same completion. The middleware is fully fail-open: every failure is logged and swallowed, and the parent turn continues without injection. This closes the "parent waits forever for a child that already finished" loop.

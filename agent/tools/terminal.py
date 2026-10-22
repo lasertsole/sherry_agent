@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import locale
 import asyncio
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -62,7 +63,7 @@ from agent.tools.pub_base import (
 
 
 from agent.tools.pub_base.env_scrub import scrub_env
-from agent.tools.pub_base.process_reap import areap_process, reap_process
+from agent.tools.pub_base.process_reap import akill_process_tree, kill_process_tree
 from agent.tools.pub_base.shell_resolver import resolve_windows_bash
 from agent.tools.pub_base.stdout_fd import (
     discard_stdout_tmp,
@@ -84,6 +85,18 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
+
+
+def _process_group_kwargs() -> dict[str, Any]:
+    """Make the child a process-group leader so a tree kill cannot escape.
+
+    POSIX uses ``start_new_session`` (the PID becomes the PGID); Windows uses a
+    new process group, which ``taskkill /T`` walks. The background path also
+    records the PGID for the eventual session-cleanup kill.
+    """
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 def _resolve_timeout(requested: int | None) -> int:
@@ -399,6 +412,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=subprocess.STDOUT,
                         cwd=cwd,
                         env=env,
+                        **_process_group_kwargs(),
                     )
                 else:
                     proc = subprocess.Popen(
@@ -408,6 +422,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=subprocess.STDOUT,
                         cwd=cwd,
                         env=env,
+                        **_process_group_kwargs(),
                     )
             else:
                 proc = subprocess.Popen(
@@ -416,6 +431,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                     stderr=subprocess.STDOUT,
                     cwd=cwd or str(ROOT_DIR),
                     env=env,
+                    **_process_group_kwargs(),
                 )
             # The child holds its own descriptor; drop ours so the file is
             # complete the moment the child exits.
@@ -435,7 +451,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         except subprocess.TimeoutExpired:
             # Bounded cleanup: kill, then wait with a deadline.
             if proc:
-                reap_process(proc)
+                kill_process_tree(proc)
             discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}",
@@ -624,6 +640,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                     stderr=asyncio.subprocess.STDOUT,
                     env=spawn_env,
                     cwd=cwd or str(ROOT_DIR),
+                    **_process_group_kwargs(),
                 )
             else:
                 bash_exe = resolve_windows_bash()
@@ -636,6 +653,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=asyncio.subprocess.STDOUT,
                         env=env,
                         cwd=cwd or str(ROOT_DIR),
+                        **_process_group_kwargs(),
                     )
                 else:
                     proc = await asyncio.create_subprocess_shell(
@@ -644,6 +662,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=asyncio.subprocess.STDOUT,
                         env=env,
                         cwd=cwd or str(ROOT_DIR),
+                        **_process_group_kwargs(),
                     )
         except Exception as exc:  # noqa: BLE001 - a refused spawn must not leak the file
             from agent.tools.terminal_bg_registry import discard_background_output
@@ -655,6 +674,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             handle.close()  # the child holds its own descriptor
 
         task.pid = proc.pid
+        task.pgid = proc.pid  # start_new_session/creationflags made it the leader
         task.live = True
         background_registry.register(task)
         background_registry.start_watcher(task_id, proc, session_id)
@@ -740,6 +760,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                     stderr=asyncio.subprocess.STDOUT,
                     env=spawn_env,
                     cwd=cwd,
+                    **_process_group_kwargs(),
                 )
                 ran_sandboxed = True
             else:
@@ -755,6 +776,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),
                         env=env,
+                        **_process_group_kwargs(),
                     )
                 else:
                     proc = await asyncio.create_subprocess_shell(
@@ -763,6 +785,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=cwd or str(ROOT_DIR),
                         env=env,
+                        **_process_group_kwargs(),
                     )
             tmp_handle.close()
             tmp_handle = None
@@ -783,7 +806,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             return self._record_verification(cmd_str, output, run_manager, sandboxed=ran_sandboxed)
         except TimeoutError:
             if proc:
-                await areap_process(proc)
+                await akill_process_tree(proc)
             discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}", effective_timeout, cmd_str[:120]
@@ -798,11 +821,13 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             )
         except asyncio.CancelledError:
             if proc:
-                proc.kill()
+                # Kill the whole foreground process group, not just the shell:
+                # a pipeline/subshell would otherwise survive the stop.
+                await akill_process_tree(proc, grace=1.0)
             discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning("terminal command cancelled: {}", cmd_str[:120])
             return self._record_verification(
-                cmd_str, "Terminal command was cancelled.", run_manager
+                cmd_str, "Terminal command was cancelled (process tree killed).", run_manager
             )
         except Exception as e:
             discard_stdout_tmp(tmp_handle, tmp_path)
