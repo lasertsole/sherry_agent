@@ -83,7 +83,7 @@ executor child agent
 
 **签名保真。** stub 参数取自 `tool_call_schema` 而非 `args_schema`，因此框架注入的参数（例如 `session_id`）永远不会成为可调用参数。必填字段渲染为必填参数；可选字段以 Python 字面量形式渲染其默认值，而无法用字面量表达的默认值回退为 `None`——无论如何，真实工具会对每次调用重新校验。生成的模块还携带三个绝不触碰 RPC 桥的本地辅助函数：`json_parse`（宽松的 `json.loads`）、`shell_quote`（`shlex.quote`）与 `retry`（指数退避）。
 
-**产物与生命周期。** 每次调用都会获得全新的 `sherry_ptc_*` 临时目录，内含 `sherry_tools.py` 与包装脚本；子进程唯一的路径增补是 `PYTHONPATH=<tmpdir>`。子进程环境还携带本次运行的一次性 RPC token（`SHERRY_PTC_RPC_TOKEN`），生成的 stub 读取它并在每次请求中发送；token 由 `secrets.token_urlsafe` 生成，仅内存存活，绝不写入 `sherry_tools.py` 或任何其它文件。当后端可用时，子进程 argv 还会经 `backend.wrap([sys.executable, script_path], env)` 包装（即[工具沙箱](../sandbox/README.zh.md)中的沙箱路径）；进程仍以 `start_new_session=True` 派生，超时即对整组发 SIGKILL。包装器把用户脚本的 stdout 与 stderr 捕获进缓冲区，向真实 stdout 打印单个 JSON 信封，runner 据此归类出 `status` 字段。`finally` 块停止 RPC 服务、join 其线程、删除临时目录，并在子进程意外存活时再次击杀。
+**产物与生命周期。** 每次调用都会获得全新的 `sherry_ptc_*` 临时目录，内含 `sherry_tools.py` 与包装脚本；子进程唯一的路径增补是 `PYTHONPATH=<tmpdir>`。子进程环境还携带本次运行的一次性 RPC token（`SHERRY_PTC_RPC_TOKEN`），生成的 stub 读取它并在每次请求中发送；token 由 `secrets.token_urlsafe` 生成，仅内存存活，绝不写入 `sherry_tools.py` 或任何其它文件。当后端可用时，子进程 argv 还会经 `backend.wrap(argv, env, writable_roots, allow_network=True)` 包装（即[工具沙箱](../sandbox/README.zh.md)中的沙箱路径）；进程仍以 `start_new_session=True` 派生，超时即对整组发 SIGKILL。包装器把用户脚本的 stdout 与 stderr 捕获进缓冲区，向真实 stdout 打印单个 JSON 信封，runner 据此归类出 `status` 字段。`finally` 块停止 RPC 服务、join 其线程、删除临时目录，并在子进程意外存活时再次击杀。
 
 **子会话。** `spawn/core.py` 把本次运行的 `child_session_key` 作为工具的会话传入，`rpc_server.py` 则通过 runnable config 把它注入每次 `ainvoke` 调用。脚本无法提供或伪造会话：`session_id` 根本不是工具参数。
 
@@ -116,7 +116,7 @@ executor child agent
 
 ## ⚠️ 限制
 
-- **它本身并不是 OS 级沙箱。** 受限命名空间与导入守卫约束的是字面脚本能指称的名字，但 `getattr` 及其他内省 builtins 仍然可用，因此有决心的脚本可以沿可达对象继续走，触及其字面表面之外的更多能力。这属于受限命名空间层级——与既有 `python_repl` 包装器 builtins 同级。在此之上，只要存在可用的后端，子进程 argv 现在就会被 `terminal` 与 `python_repl` 所解析的同一套 OS 原生沙箱后端（Linux 的 bubblewrap、macOS 的 Seatbelt）包装，从而获得它们的写包含与敏感路径读屏蔽。仍有两个诚实的提醒：`SANDBOX_POLICY=auto`（默认）且无可用后端时，运行会在恰好一条 loguru 警告后降级为无沙箱；而 bwrap 构造使用了 `--unshare-all`，它同时隔离网络命名空间——在真实 bwrap 下 loopback RPC 桥是否仍可达，未在真实 Linux 机器上验证。后端本身见[工具沙箱](../sandbox/README.zh.md)。
+- **它本身并不是 OS 级沙箱。** 受限命名空间与导入守卫约束的是字面脚本能指称的名字，但 `getattr` 及其他内省 builtins 仍然可用，因此有决心的脚本可以沿可达对象继续走，触及其字面表面之外的更多能力。这属于受限命名空间层级——与既有 `python_repl` 包装器 builtins 同级。在此之上，只要存在可用的后端，子进程 argv 现在就会被 `terminal` 与 `python_repl` 所解析的同一套 OS 原生沙箱后端（Linux 的 bubblewrap、macOS 的 Seatbelt）包装，从而获得它们的写包含与敏感路径读屏蔽。仍有两个诚实的提醒：`SANDBOX_POLICY=auto`（默认）且无可用后端时，运行会在恰好一条 loguru 警告后降级为无沙箱；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`——子进程必须能连到父进程的 loopback RPC 监听，私有网络命名空间会让工具桥不可达。写/读沙箱不变。后端本身见[工具沙箱](../sandbox/README.zh.md)。
 - **超时取消是尽力而为。** 当工具调用超出派发窗口，服务会取消自己持有的 future，但已开始在父循环上执行的协程仍可能跑完；脚本收到超时错误，而工具的副作用可能仍在继续。
 - **每次调用都付启动成本。** 没有预热池：每次 `execute_code` 都创建临时目录、生成 stub、启动 RPC 线程与全新解释器，再全部拆除。一次再简单的调用也要付出一次进程启动。
 - **子进程的工作目录是仓库根目录。** runner 将子进程的 `cwd` 默认为 `ROOT_DIR`，且 PTC 工具不会转发子代理的派生工作目录，因此脚本内的相对路径从仓库根解析，而不是从 executor 的派生位置。

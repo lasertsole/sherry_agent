@@ -38,7 +38,7 @@ from typing import Any
 
 from loguru import logger
 
-from config.path import ROOT_DIR
+from config.path import ROOT_DIR, TEMP_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import kill_process_tree, reap_process
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
@@ -51,6 +51,12 @@ from .stub_generator import PTC_RPC_TOKEN_ENV, generate_stub, tool_specs_from_ba
 #: Prefix for the per-call temporary directory (also used by orphan checks).
 PTC_TMP_PREFIX = "sherry_ptc_"
 
+#: The per-call scripts live under the process TEMP_DIR, which the sandbox
+#: backends always bind writable. The OS /tmp is masked by bwrap's
+#: ``--tmpfs /tmp``, so a script written there is invisible inside the sandbox
+#: ("can't open file '/tmp/sherry_ptc_.../script.py'").
+_PTC_TMP_ROOT = Path(TEMP_DIR)
+
 #: Temp-file prefix for the child's stdout/stderr envelopes (the shared sweep contract).
 _PTC_TMP_PREFIX = ".sherry-tmp-ptc-"
 
@@ -60,7 +66,11 @@ class PtcSandboxUnavailableError(RuntimeError):
 
 
 def _resolve_sandboxed_argv(
-    argv: list[str], env: dict[str, str], writable_roots: list[Path]
+    argv: list[str],
+    env: dict[str, str],
+    writable_roots: list[Path],
+    *,
+    allow_network: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """Wrap ``argv`` with the OS-native backend per the ``SANDBOX_POLICY`` mapping.
 
@@ -90,7 +100,7 @@ def _resolve_sandboxed_argv(
             f"(policy={policy.value}) — degrading to unsandboxed execution"
         )
         return argv, env
-    return backend.wrap(argv, env, writable_roots)
+    return backend.wrap(argv, env, writable_roots, allow_network=allow_network)
 
 
 _SCRIPT_TEMPLATE = """\
@@ -253,7 +263,8 @@ async def run_ptc(
     )
     host, port = server.start()
 
-    tmpdir = tempfile.mkdtemp(prefix=PTC_TMP_PREFIX)
+    _PTC_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+    tmpdir = tempfile.mkdtemp(prefix=PTC_TMP_PREFIX, dir=_PTC_TMP_ROOT)
     serve_thread = threading.Thread(target=server.serve_forever, name="ptc-rpc", daemon=True)
     proc: subprocess.Popen[str] | None = None
     try:
@@ -272,7 +283,14 @@ async def run_ptc(
         try:
             # The child's write surface is its own working directory (the
             # session's project root, resolved by the tool before the call).
-            argv, env = _resolve_sandboxed_argv(argv, env, [Path(cwd or str(ROOT_DIR))])
+            # Network is kept: the child calls BACK to this process's loopback
+            # RPC listener for every tool invocation.
+            argv, env = _resolve_sandboxed_argv(
+                argv,
+                env,
+                [Path(cwd or str(ROOT_DIR))],
+                allow_network=True,
+            )
         except PtcSandboxUnavailableError as exc:
             return _result("sandbox_unavailable", "", str(exc), -1, 0)
 

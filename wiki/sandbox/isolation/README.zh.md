@@ -70,7 +70,7 @@ bwrap
 - `BwrapBackend.probe()`：以 3 秒超时冒烟运行 `bwrap --ro-bind / / --proc /proc --dev /dev true`。二进制存在并不代表可用；Ubuntu 24.04+ 的 AppArmor 非特权 user namespace 限制可以在 uid-map 阶段杀死所有 bwrap，所以真实的冒烟运行才是诚实的检查。
 - `SeatbeltBackend.probe()`：仅 `shutil.which("sandbox-exec")`；sbpl 没有基于退出码的冒烟探测可用。
 
-**PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`auto` 记录恰好一条警告后降级为无沙箱运行。一个诚实的提醒：`--unshare-all` 同时隔离网络命名空间，因此在真实 bwrap 下 PTC 子进程到父进程的 loopback RPC 桥可能不可达（未在真实 Linux 机器上验证）。见 [PTC 页](../../ptc/README.zh.md)。
+**PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`auto` 记录恰好一条警告后降级为无沙箱运行。PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net`：子进程必须能连到父进程的 loopback RPC 监听，写/读沙箱不变。见 [PTC 页](../../ptc/README.zh.md)。
 
 ### 3. 危险命令拦截（仅 terminal）
 

@@ -70,7 +70,7 @@ bwrap
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true`를 3초 타임아웃으로 스모크 실행. 바이너리 존재만으로는 부족합니다. Ubuntu 24.04+의 AppArmor 비특권 user namespace 제한은 uid-map 단계에서 모든 bwrap을 죽일 수 있으므로, 실제 스모크 실행만이 정직한 확인입니다.
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")`만 확인. sbpl에는 종료 코드 기반 스모크 프로브가 없습니다.
 
-**PTC는 이 백엔드를 재사용합니다.** `execute_code`(프로그래매틱 도구 호출)는 `sandbox` 플래그가 없으므로 모든 정책에서 `sandbox=True` 호출처럼 동작합니다: 쓸 수 있는 백엔드는 `[sys.executable, script_path]`를 감싸고, `SANDBOX_POLICY=required`인데 백엔드가 없으면 spawn하지 않고 `status: "sandbox_unavailable"` 엔벨로프를 반환하며, `auto`는 정확히 한 줄의 경고를 남기고 샌드박스 없이 강등합니다. 정직한 주의 하나: `--unshare-all`은 네트워크 네임스페이스도 비공유로 만들므로, 실제 bwrap 아래에서 PTC 자식에서 부모로 가는 loopback RPC 브리지는 도달 불가일 수 있습니다(실제 Linux 머신에서 미검증). [PTC 페이지](../../ptc/README.ko.md)를 보십시오.
+**PTC는 이 백엔드를 재사용합니다.** `execute_code`(프로그래매틱 도구 호출)는 `sandbox` 플래그가 없으므로 모든 정책에서 `sandbox=True` 호출처럼 동작합니다: 쓸 수 있는 백엔드는 `[sys.executable, script_path]`를 감싸고, `SANDBOX_POLICY=required`인데 백엔드가 없으면 spawn하지 않고 `status: "sandbox_unavailable"` 엔벨로프를 반환하며, `auto`는 정확히 한 줄의 경고를 남기고 샌드박스 없이 강등합니다. PTC는 `allow_network=True`를 넘기므로 bwrap은 `--unshare-all` 옆에 `--share-net`을 추가합니다: 자식이 부모의 loopback RPC 리스너에 도달해야 하며, 쓰기/읽기 샌드박스는 그대로입니다. [PTC 페이지](../../ptc/README.ko.md)를 보십시오.
 
 ### 3. 위험 명령 게이트 (terminal 전용)
 

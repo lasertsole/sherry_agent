@@ -161,7 +161,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + 敏感文件正则 + HITL 审批门。没有任何机制阻止写到项目根目录之外，而且**读保护不可用**：没有操作系统后端就没有读遮蔽，应用层正则只是唯一的读取门禁。
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **`python_repl` 没有对应的敏感文件正则。** terminal 专属门禁（[隔离 §3](isolation/README.zh.md#3-危险命令拦截仅-terminal)）不覆盖它；它的包装脚本则限制内建（安全子集省略了 `open` / `__import__`）——这是一道不同且更窄的控制。
-- **PTC 继承同一套后端的局限。** `execute_code` 现在会在后端可用时用 L2 后端包装子进程，但在 `SANDBOX_POLICY=auto`（默认）且无可用后端的主机上，仍会在一条警告后无沙箱运行；而且 bwrap 构造使用的 `--unshare-all` 同时隔离网络命名空间——在真实 bwrap 下 loopback RPC 桥是否仍可达尚未验证。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
+- **PTC 继承同一套后端的局限。** `execute_code` 现在会在后端可用时用 L2 后端包装子进程，但在 `SANDBOX_POLICY=auto`（默认）且无可用后端的主机上，仍会在一条警告后无沙箱运行；PTC 传入 `allow_network=True`，bwrap 因此在 `--unshare-all` 旁加上 `--share-net` 以保持 loopback RPC 桥可达；`terminal` 与 `python_repl` 仍使用私有网络命名空间。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
 - **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行（证据账本记为 `sandboxed: false`，启动日志也会点名）。这是"可用性优先于严格性"的有意取舍；出厂默认已改为 `required`，并且 `SANDBOX_STRICT_BOOT=1` 会直接拒绝启动。
 - **命令路径筛查是缓解层，不是屏障。** 它只拒绝**字面点名**硬拒路径（凭据/系统文件、YOLO 拒绝名单）的命令，其余一律交给沙箱；`base64 -d | sh`、用碎片拼出的变量、以及 `cd` + 相对路径都天然绕过它。真正的边界是 OS 沙箱。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。

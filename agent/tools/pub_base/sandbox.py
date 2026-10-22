@@ -153,7 +153,12 @@ class SandboxBackend(ABC):
 
     @abstractmethod
     def wrap(
-        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: Sequence[Path],
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict]:
         """Wrap a command argv + environment for sandboxed execution.
 
@@ -165,6 +170,10 @@ class SandboxBackend(ABC):
         forgot to pass it, which is exactly the write bypass this contract
         exists to close. An empty list is a caller bug and raises ``ValueError``
         (fail-closed).
+
+        ``allow_network`` keeps the host network namespace for callers that
+        must reach a parent-owned loopback socket (PTC's RPC bridge). It is
+        opt-in and false by default; the write/read sandbox still applies.
 
         Returns the (wrapped argv, scrubbed env) tuple to be exec'd directly
         (list form, no shell).

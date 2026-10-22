@@ -37,7 +37,14 @@ class _RecordingBackend:
     def probe(self) -> bool:
         return True
 
-    def wrap(self, cmd: list[str], env: dict, writable_roots: list[Path]):
+    def wrap(
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: list[Path],
+        *,
+        allow_network: bool = False,
+    ):
         self.roots.append(list(writable_roots))
         return ["sandboxed", *cmd], env
 

@@ -41,7 +41,9 @@ except ImportError:  # pragma: no cover
         def probe(self) -> bool: ...
 
         @abstractmethod
-        def wrap(self, cmd: list[str], env: dict, writable_roots) -> tuple[list[str], dict]: ...
+        def wrap(
+            self, cmd: list[str], env: dict, writable_roots, *, allow_network: bool = False
+        ) -> tuple[list[str], dict]: ...
 
     def normalize_writable_roots(writable_roots):  # type: ignore[misc]
         raise RuntimeError("the shared sandbox contract is unavailable")
@@ -216,7 +218,12 @@ class BwrapBackend(SandboxBackend):
         return ok
 
     def wrap(
-        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: Sequence[Path],
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict]:
         """Wrap cmd into a bwrap argv; the env allowlist is injected via --setenv.
 
@@ -224,6 +231,11 @@ class BwrapBackend(SandboxBackend):
         ``normalize_writable_roots``): everything else stays read-only under the
         ``--ro-bind / /`` base mount, so a command cannot write outside the
         session's project directory.
+
+        ``allow_network=True`` adds ``--share-net`` beside ``--unshare-all``:
+        PTC's child must reach the parent's loopback RPC listener, which a
+        private network namespace makes unreachable. The write/read sandbox is
+        unchanged.
         """
         argv: list[str] = [
             "bwrap",
@@ -240,6 +252,7 @@ class BwrapBackend(SandboxBackend):
             "--proc",
             "/proc",
             "--unshare-all",
+            *(["--share-net"] if allow_network else []),
             "--die-with-parent",
             "--new-session",
             "--clearenv",

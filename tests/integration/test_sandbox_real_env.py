@@ -90,7 +90,7 @@ def _bwrap_run(cmd: list[str], wrap_env: dict[str, str] | None = None, timeout: 
     """
     if wrap_env is None:
         wrap_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-    argv, _ = BwrapBackend().wrap(cmd, wrap_env)
+    argv, _ = BwrapBackend().wrap(cmd, wrap_env, [TEMP_DIR])
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
