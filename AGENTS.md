@@ -590,11 +590,14 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
 
 ## Compression Thresholds, Microcompact & Output Caps (ZCode/PI parity)
 
-- **Per-model output caps** — `MAIN_LLM_MAX_OUTPUT_TOKEN` / `AUXILIARY_LLM_MAX_OUTPUT_TOKEN`
-  live in `.models` beside the context-window keys. Empty means "do not send a
+- **Per-model output caps** — every chat family carries its own
+  `*_MAX_OUTPUT_TOKEN` in `.models` (main / auxiliary / TaskFlow / compression /
+  reasoner) beside the context-window keys. Empty means "do not send a
   field" (provider default); a set value must be >= 8192 (8K) and is refused at
   boot, at `built_agent()`/spawn validation, at model build and at the
-  `/models-config` save (M9). `models/LLMs/provider_max_output.py` maps the
+  `/models-config` save (M9). The 模型配置 panel labels it 最大输出窗口 and every
+  model category title carries a help mark describing its purpose/use cases
+  (four languages). `models/LLMs/provider_max_output.py` maps the
   provider to the kwarg `init_chat_model`'s class accepts — `max_tokens` for
   OpenAI-compatible providers, Azure and Anthropic; `max_output_tokens` for
   Google Generative AI / Vertex; an unknown gateway gets no field (M4). When

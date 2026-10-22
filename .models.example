@@ -89,6 +89,8 @@
   "REASONER_LLM_API_BASE": "",
   "REASONER_LLM_API_KEY": "",
   "REASONER_LLM_MAX_TOKEN": "",
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
   "REASONER_LLM_FREQUENCY_PENALTY": "",
   "REASONER_LLM_PRESENCE_PENALTY": "",

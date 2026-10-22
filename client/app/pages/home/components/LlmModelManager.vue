@@ -2,19 +2,37 @@
   <div
     class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800"
     :data-test="`model-profile-${group}`">
-    <!-- Group header doubles as the collapse toggle; panels start collapsed
-         so a long model list does not push the other groups off screen. -->
-    <button
-      type="button"
-      class="flex w-full cursor-pointer items-center gap-2 text-left"
-      :aria-expanded="!collapsed"
-      :aria-label="collapsed ? t('config.llm.expand') : t('config.llm.collapse')"
-      @click="collapsed = !collapsed">
-      <i
-        :class="['pi text-xs text-gray-400', collapsed ? 'pi-chevron-right' : 'pi-chevron-down']"
-        aria-hidden="true"></i>
-      <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ groupTitle }}</span>
-    </button>
+    <!-- Group header: the chevron + title toggle the panel; the help mark is a
+         SEPARATE button beside it (a button inside a button is invalid HTML). -->
+    <div class="flex w-full items-center gap-1.5">
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        :aria-expanded="!collapsed"
+        :aria-label="collapsed ? t('config.llm.expand') : t('config.llm.collapse')"
+        @click="collapsed = !collapsed">
+        <i
+          :class="['pi text-xs text-gray-400', collapsed ? 'pi-chevron-right' : 'pi-chevron-down']"
+          aria-hidden="true"></i>
+        <span class="truncate text-xs font-semibold text-gray-500 dark:text-gray-400">{{ groupTitle }}</span>
+      </button>
+      <button
+        v-if="groupHelpKey"
+        type="button"
+        class="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border border-solid border-gray-300 !p-0 text-[10px] leading-none text-gray-400 transition-colors hover:border-theme-main hover:text-theme-main dark:border-gray-600"
+        data-test="model-group-help"
+        :aria-label="t('config.llm.groupHelpLabel', { group: groupTitle })"
+        :aria-expanded="helpOpen"
+        @click.stop="helpOpen = !helpOpen">
+        ?
+      </button>
+    </div>
+    <p
+      v-if="helpOpen && groupHelpKey"
+      class="m-0 whitespace-pre-line rounded bg-sky-50 px-2 py-1 text-[11px] leading-relaxed text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
+      data-test="model-group-help-text">
+      {{ t(groupHelpKey) }}
+    </p>
 
     <div
       v-if="!collapsed"
@@ -87,9 +105,11 @@
           v-for="key in paramKeys"
           :key="key"
           class="flex flex-col gap-1">
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{
-            isPenaltyKey(key) ? penaltyLabel(key) : key
-          }}</span>
+          <span
+            class="text-xs text-gray-500 dark:text-gray-400"
+            :title="key"
+            >{{ paramLabel(key) }}</span
+          >
           <!-- 128K floor, shown on the input it constrains instead of once at the
                top of the tab; hidden for the built-in local entry, whose budget the
                backend never reads. -->
@@ -312,6 +332,27 @@ const store = useLlmProfilesStore();
 /** Collapsed by default; the header toggles it. */
 const collapsed = ref(true);
 
+/** Help popover for this category; closed by default (same click-to-read shape
+ * as the nudge hint: hover tooltips are unreachable inside the model panel). */
+const helpOpen = ref(false);
+
+/** Group name → the four-language help message key. Every model category that
+ * renders this manager has one; plain env groups never reach this component. */
+const GROUP_HELP_KEYS: Record<string, string> = {
+  MAIN_LLM: 'config.llm.modelHelp.main',
+  AUXILIARY_LLM: 'config.llm.modelHelp.auxiliary',
+  TASKFLOW_LLM: 'config.llm.modelHelp.taskflow',
+  COMPRESSION_LLM: 'config.llm.modelHelp.compression',
+  REASONER_LLM: 'config.llm.modelHelp.reasoner',
+  ITTT: 'config.llm.modelHelp.ittt',
+  VTTT: 'config.llm.modelHelp.vttt',
+  TTI: 'config.llm.modelHelp.tti',
+  RERANKER: 'config.llm.modelHelp.reranker',
+  EMBEDDING: 'config.llm.modelHelp.embedding',
+  STT: 'config.llm.modelHelp.stt'
+};
+const groupHelpKey = computed(() => GROUP_HELP_KEYS[props.group] ?? '');
+
 /** Profiles of this group (reactive). */
 const profiles = computed(() => store.listFor(props.group));
 
@@ -382,6 +423,18 @@ const isPenaltyKey = (key: string): boolean => key.endsWith('_FREQUENCY_PENALTY'
  */
 const penaltyLabel = (key: string): string =>
   key.endsWith('_FREQUENCY_PENALTY') ? t('config.llm.frequencyPenalty') : t('config.llm.presencePenalty');
+
+/**
+ * Localized label for the two token-budget fields; every other parameter keeps
+ * its raw env key (the key stays available as the label's tooltip).
+ * @param key
+ */
+const paramLabel = (key: string): string => {
+  if (isPenaltyKey(key)) return penaltyLabel(key);
+  if (key.endsWith('_MAX_OUTPUT_TOKEN')) return t('config.llm.maxOutputLabel');
+  if (key.endsWith('_MAX_TOKEN')) return t('config.llm.maxContextLabel');
+  return key;
+};
 
 /**
  * Whether the draft's penalty value is non-empty and outside the valid range.

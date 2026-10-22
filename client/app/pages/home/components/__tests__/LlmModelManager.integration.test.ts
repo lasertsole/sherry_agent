@@ -567,14 +567,10 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     // One guarded key in this panel → exactly one hint, and the free
     // REASONER_LLM_MAX_TOKEN (deliberately below 128K) must not carry it.
     expect(countHints(wrapper)).toBe(1);
-    const tokenBlock = wrapper
-      .findAll('div')
-      .find(d => d.find('span').exists() && d.find('span').text() === 'MAIN_LLM_MAX_TOKEN');
-    expect(tokenBlock?.text()).toContain('必须 >= 131072 (128K)');
-    const freeBlock = wrapper
-      .findAll('div')
-      .find(d => d.find('span').exists() && d.find('span').text() === 'REASONER_LLM_MAX_TOKEN');
-    expect(freeBlock?.text()).not.toContain('131072 (128K)');
+    const tokenSpan = wrapper.get('span[title="MAIN_LLM_MAX_TOKEN"]');
+    expect(tokenSpan.element.parentElement?.textContent ?? '').toContain('必须 >= 131072 (128K)');
+    const freeSpan = wrapper.get('span[title="REASONER_LLM_MAX_TOKEN"]');
+    expect(freeSpan.element.parentElement?.textContent ?? '').not.toContain('131072 (128K)');
   });
 
   it('hides the 128K warning for the built-in local entry (its budget is unused)', async () => {
@@ -837,6 +833,23 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
 
     const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
     expect(payload.params.MAIN_LLM_FREQUENCY_PENALTY).toBe('');
+    wrapper.unmount();
+  });
+
+  it('labels the token budgets and opens a four-language category help', async () => {
+    const keys = [...KEYS, 'MAIN_LLM_MAX_OUTPUT_TOKEN'];
+    const values = { ...ENV_VALUES, MAIN_LLM_MAX_OUTPUT_TOKEN: '' };
+    makeStore([{ id: 'p1', label: 'm', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    expect(wrapper.find('span[title="MAIN_LLM_MAX_TOKEN"]').text()).toContain('上下文窗口');
+    expect(wrapper.find('span[title="MAIN_LLM_MAX_OUTPUT_TOKEN"]').text()).toContain('最大输出窗口');
+
+    const help = wrapper.get('[data-test="model-group-help"]');
+    expect(wrapper.find('[data-test="model-group-help-text"]').exists()).toBe(false);
+    await help.trigger('click');
+    expect(wrapper.get('[data-test="model-group-help-text"]').text()).toContain('主对话模型');
     wrapper.unmount();
   });
 });

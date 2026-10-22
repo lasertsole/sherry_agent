@@ -204,6 +204,17 @@ class TestPerModelKwargs:
         assert module.model_config["frequency_penalty"] == 0.3
         assert module.model_config["presence_penalty"] == 0.2
 
+    def test_reasoner_output_cap_reaches_the_provider(self, monkeypatch):
+        monkeypatch.setenv("REASONER_LLM_PROVIDER", "openai")
+        monkeypatch.setenv("REASONER_LLM_NAME", "gpt-4o-mini")
+        monkeypatch.setenv("REASONER_LLM_API_KEY", "sk-rea")
+        monkeypatch.setenv("REASONER_LLM_API_BASE", "https://rea.invalid/v1")
+        monkeypatch.setenv("REASONER_LLM_MAX_TOKEN", "64000")
+        monkeypatch.setenv("REASONER_LLM_MAX_OUTPUT_TOKEN", "32768")
+        module = _load("_reasoner_env_builder_cap", "models/LLMs/reasoner_llm.py")
+
+        assert module.model_config["max_tokens"] == 32768
+
     def test_auxiliary_remote_kwargs(self, monkeypatch):
         monkeypatch.setenv("AUXILIARY_LLM_MODEL_LOCAL", "false")
         monkeypatch.setenv("AUXILIARY_LLM_PROVIDER", "openai")

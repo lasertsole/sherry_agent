@@ -102,6 +102,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "REASONER_LLM_API_BASE": "",
     "REASONER_LLM_API_KEY": "",
     "REASONER_LLM_MAX_TOKEN": "",
+    "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
     "REASONER_LLM_FREQUENCY_PENALTY": "",
     "REASONER_LLM_PRESENCE_PENALTY": "",
     # Image-to-Text model
@@ -201,6 +202,7 @@ _MAX_OUTPUT_KEYS = frozenset(
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
         "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
         "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+        "REASONER_LLM_MAX_OUTPUT_TOKEN",
     }
 )
 _BOOL_KEYS = frozenset(
@@ -333,6 +335,7 @@ def ensure_models_config_file() -> None:
     if MODELS_CONFIG_PATH.exists():
         _ensure_pricing_table_key()
         _ensure_optional_family_keys()
+        _ensure_output_cap_keys()
         _ensure_penalty_keys()
         return
     text = _seed_text()
@@ -437,6 +440,59 @@ def _ensure_optional_family_keys() -> None:
     updated = text[: open_brace + 1] + "\n" + "\n".join(blocks) + text[open_brace + 1 :]
     try:
         MODELS_CONFIG_PATH.write_text(updated, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _ensure_output_cap_keys() -> None:
+    """Add a missing per-family ``*_MAX_OUTPUT_TOKEN`` to an existing file.
+
+    The five chat families all gain the output-cap field (the reasoner shipped
+    without one). An older file may contain the family's other keys but not this
+    one, so the key is inserted after ``*_MAX_TOKEN``; a family with no keys at
+    all is left alone. Idempotent; an unparseable file is never rewritten.
+    """
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+        data = json5.loads(text)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    lines = text.splitlines(keepends=True)
+    changed = False
+    for prefix in _PENALTY_PREFIXES:
+        key = f"{prefix}_MAX_OUTPUT_TOKEN"
+        if key in data:
+            continue
+        if not any(name.startswith(f"{prefix}_") for name in data):
+            continue
+        target = -1
+        for index, line in enumerate(lines):
+            match = _TEMPLATE_ASSIGN_RE.match(line)
+            if match and match.group(2) == f"{prefix}_MAX_TOKEN":
+                target = index
+                break
+        if target == -1:
+            for index, line in enumerate(lines):
+                match = _TEMPLATE_ASSIGN_RE.match(line)
+                if match and match.group(2).startswith(f"{prefix}_"):
+                    target = index
+        if target == -1:
+            continue
+        line = lines[target]
+        indent = line[: len(line) - len(line.lstrip())]
+        stripped = line.rstrip("\r\n")
+        newline = line[len(stripped) :]
+        if not stripped.rstrip().endswith(","):
+            lines[target] = stripped.rstrip() + "," + (newline or "\n")
+        lines[target + 1 : target + 1] = [f'{indent}"{key}": "",' + (newline or "\n")]
+        changed = True
+    if not changed:
+        return
+    try:
+        MODELS_CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
     except OSError:
         pass
 

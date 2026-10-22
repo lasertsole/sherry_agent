@@ -132,3 +132,24 @@ def test_the_penalty_append_is_idempotent(tmp_path, monkeypatch):
 
     assert path.read_text(encoding="utf-8") == first
     assert first.count('"MAIN_LLM_FREQUENCY_PENALTY"') == 1
+
+
+def test_an_older_file_gains_every_chat_family_output_cap(tmp_path, monkeypatch):
+    path = tmp_path / ".models"
+    path.write_text(
+        '{\n  "MAIN_LLM_MAX_TOKEN": 131072,\n'
+        '  "AUXILIARY_LLM_MAX_TOKEN": 131072,\n'
+        '  "REASONER_LLM_MAX_TOKEN": ""\n}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ms, "MODELS_CONFIG_PATH", path)
+
+    ms.ensure_models_config_file()
+
+    data = json5.loads(path.read_text(encoding="utf-8"))
+    assert data["MAIN_LLM_MAX_OUTPUT_TOKEN"] == ""
+    assert data["AUXILIARY_LLM_MAX_OUTPUT_TOKEN"] == ""
+    assert data["REASONER_LLM_MAX_OUTPUT_TOKEN"] == ""
+    # The new key sits before the reasoner's penalty pair (anchor is MAX_TOKEN).
+    text = path.read_text(encoding="utf-8")
+    assert text.index('"REASONER_LLM_MAX_TOKEN"') < text.index('"REASONER_LLM_MAX_OUTPUT_TOKEN"')
