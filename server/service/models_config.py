@@ -174,6 +174,36 @@ def write_models_config(changes: dict[str, str]) -> None:
                 "Refusing to save."
             )
 
+    # The main output cap must fit INSIDE the main context window: a cap equal
+    # to or larger than the window leaves no input budget and would make the
+    # compression line collapse to 0. Compare the post-save values, taking the
+    # current file into account when only one side is being changed.
+    file_values: dict[str, str] = {}
+    try:
+        for line in MODELS_CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            match = None if _COMMENT_RE.match(line) else _ASSIGN_RE.match(line)
+            if match is not None:
+                file_values[match.group(1)] = _display_value(match.group(2))
+    except OSError:
+        file_values = {}
+    effective_max_token = str(
+        changes.get("MAIN_LLM_MAX_TOKEN", file_values.get("MAIN_LLM_MAX_TOKEN", ""))
+    ).strip()
+    effective_max_output = str(
+        changes.get("MAIN_LLM_MAX_OUTPUT_TOKEN", file_values.get("MAIN_LLM_MAX_OUTPUT_TOKEN", ""))
+    ).strip()
+    if effective_max_token and effective_max_output:
+        try:
+            token_num = int(effective_max_token)
+            output_num = int(effective_max_output)
+        except (TypeError, ValueError):
+            token_num = output_num = 0
+        if token_num > 0 and output_num >= token_num:
+            raise ValueError(
+                "MAIN_LLM_MAX_OUTPUT_TOKEN must be smaller than MAIN_LLM_MAX_TOKEN; "
+                f"got output={output_num} >= window={token_num}. Refusing to save."
+            )
+
     # Coerce BEFORE touching the file so a bad value aborts without a backup churn.
     typed_changes: dict[str, str] = {}
     for key, raw in changes.items():

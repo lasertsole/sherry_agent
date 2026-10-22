@@ -83,6 +83,7 @@ def test_usage_without_a_finished_turn_has_no_total(monkeypatch):
     monkeypatch.setattr(service, "_reported_prompt_tokens", lambda sid: 0)
     monkeypatch.setattr(service, "_system_prompt_text", lambda sid: "")
 
+    monkeypatch.setattr(service, "_max_output_tokens", lambda: None)
     usage = service.get_context_usage("s1")
 
     assert usage == {
@@ -93,8 +94,41 @@ def test_usage_without_a_finished_turn_has_no_total(monkeypatch):
         "tools": 2_000,
         "messages": 0,
         "cache_hit_ratio": None,
+        "max_output": None,
+        "compress_tokens": 51_200,
         "compress_ratio": 0.8,
     }
+
+
+def test_usage_uses_window_minus_max_output(monkeypatch):
+    monkeypatch.setattr(service, "main_llm_context_window", 100_000)
+    monkeypatch.setattr(service, "_reported_prompt_tokens", lambda sid: 0)
+    monkeypatch.setattr(service, "_system_prompt_text", lambda sid: "")
+    monkeypatch.setattr(service, "_max_output_tokens", lambda: 10_000)
+
+    usage = service.get_context_usage("s1")
+
+    assert usage["window"] == 100_000
+    assert usage["max_output"] == 10_000
+    assert usage["compress_tokens"] == 90_000
+    assert usage["compress_ratio"] == 0.9
+
+
+def test_usage_uses_the_session_context_window_override(monkeypatch):
+    monkeypatch.setattr(service, "main_llm_context_window", 100_000)
+    monkeypatch.setattr(service, "_reported_prompt_tokens", lambda sid: 0)
+    monkeypatch.setattr(service, "_system_prompt_text", lambda sid: "")
+    monkeypatch.setattr(service, "_max_output_tokens", lambda: None)
+    monkeypatch.setattr(
+        "server.service.session_settings_service.get_main_model_override",
+        lambda sid, mask_secrets=False: {"model": "m", "context_window": "40000"},
+    )
+
+    usage = service.get_context_usage("s1")
+
+    assert usage["window"] == 40_000
+    assert usage["compress_tokens"] == 32_000
+    assert usage["compress_ratio"] == 0.8
 
 
 def test_cache_hit_ratio_averages_the_session(monkeypatch):

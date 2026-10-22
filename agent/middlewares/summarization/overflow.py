@@ -160,11 +160,12 @@ class OverflowMixin:
         local_est = self._estimate_tokens(messages)
         reported = self._get_reported_tokens(messages)
         effective = max(local_est, reported) if reported > 0 else local_est
-        pressure = effective / ctx_window
-
-        if pressure >= COMPRESSION_TRIGGER_RATIO:
+        threshold = self._compression_threshold(session_id)
+        if threshold <= 0:
+            return None
+        if effective >= threshold:
             return "compact"
-        if pressure >= PREEMPTIVE_TRUNCATE_RATIO:
+        if effective >= self._truncate_threshold(session_id):
             return "truncate_only"
         return None
 
@@ -206,7 +207,18 @@ class OverflowMixin:
         system_est = self._estimate_system_prompt_tokens(session_id)
         pressure = compute_pressure(est, None, system_est)
         truncatable = find_truncatable_tool_results(list(messages))
-        route = decide_route(pressure, int(ctx_window), usable, truncatable)
+        if self._has_output_cap():
+            route = decide_route(
+                pressure,
+                int(ctx_window),
+                usable,
+                truncatable,
+                compression_threshold=self._compression_threshold(session_id),
+                truncate_threshold=self._truncate_threshold(session_id),
+            )
+        else:
+            # No output cap: keep the historical budget-relative 80% band.
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
         logger.debug(
             "Overflow route decision: est={} system_est={} usable={} "
             "candidates={} route={} session={}",
@@ -251,6 +263,7 @@ class OverflowMixin:
         usable: int,
         threshold_ratio: float,
         trigger: str,
+        threshold_tokens: int | None = None,
     ) -> list[AnyMessage] | None:
         """P1-2 no-LLM tail clip: the first move on every overflow path.
 
@@ -269,12 +282,15 @@ class OverflowMixin:
         existing route keeps operating on the exact original list.
         """
         est = estimate_messages_tokens(list(messages), reported_tokens=0)
-        target = est - int(usable * threshold_ratio)
+        budget = (
+            int(threshold_tokens) if threshold_tokens is not None else int(usable * threshold_ratio)
+        )
+        target = est - budget
         clipped = clip_overflow_tail(cast("list[BaseMessage]", list(messages)), max(target, 0))
         if clipped is None:
             return None
         new_est = estimate_messages_tokens(list(clipped), reported_tokens=0)
-        if new_est >= usable * threshold_ratio:
+        if new_est >= budget:
             logger.debug(
                 "Overflow tail clip insufficient: trigger={}, old_tokens={}, "
                 "new_tokens={}, target_tokens={} (degrading to the existing route)",
@@ -411,6 +427,9 @@ class OverflowMixin:
                 messages,
                 usable=usable,
                 threshold_ratio=COMPRESSION_TRIGGER_RATIO,
+                threshold_tokens=(
+                    self._compression_threshold(session_id) if self._has_output_cap() else None
+                ),
                 trigger=trigger,
             )
             if clipped is not None:
@@ -427,7 +446,11 @@ class OverflowMixin:
             # Recheck: truncation freed less than estimated and pressure is
             # still at/above threshold_compact → compact backstop; otherwise
             # pass through WITHOUT compression.
-            if usable > 0 and new_tokens >= usable * COMPRESSION_TRIGGER_RATIO:
+            if usable > 0 and new_tokens >= (
+                self._compression_threshold(session_id)
+                if self._has_output_cap()
+                else int(usable * COMPRESSION_TRIGGER_RATIO)
+            ):
                 return request, ROUTE_COMPACT_THEN_TRUNCATE
             return request, None
 
@@ -515,10 +538,26 @@ class OverflowMixin:
         # reported wins (compute_pressure takes the max) — T3 is
         # real-token driven, NOT estimate-driven like T1/T2.
         pressure = compute_pressure(est, reported, system_est)
-        if pressure < usable * COMPRESSION_TRIGGER_RATIO:
+        compression_threshold = (
+            self._compression_threshold(session_id)
+            if self._has_output_cap()
+            else int(usable * COMPRESSION_TRIGGER_RATIO)
+        )
+        if pressure < compression_threshold:
             return None
         truncatable = find_truncatable_tool_results(list(messages))
-        route = decide_route(pressure, int(ctx_window), usable, truncatable)
+        if self._has_output_cap():
+            route = decide_route(
+                pressure,
+                int(ctx_window),
+                usable,
+                truncatable,
+                compression_threshold=self._compression_threshold(session_id),
+                truncate_threshold=self._truncate_threshold(session_id),
+            )
+        else:
+            # No output cap: keep the historical budget-relative 80% band.
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
         if route == ROUTE_FITS:
             return None
         return reported, route, est, usable, pressure

@@ -215,6 +215,10 @@ const percentLabel = computed(() => `${(percent.value * 100).toFixed(1)}%`);
 
 /** Where the red dashed compression threshold sits on the bar (share of window). */
 const compressPercent = computed(() => {
+  const tokens = usage.value?.compress_tokens ?? 0;
+  const window = usage.value?.window ?? 0;
+  if (window > 0 && tokens > 0) return Math.min((tokens / window) * 100, 100);
+  // Older backends only sent the ratio.
   const ratio = usage.value?.compress_ratio ?? 0;
   return Math.min(Math.max(ratio * 100, 0), 100);
 });

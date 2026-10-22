@@ -154,6 +154,12 @@ class TestWriteMaxOutputTokens:
         text = models_file.read_text(encoding="utf-8")
         assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": 32768' in text
 
+    def test_rejects_an_output_cap_not_smaller_than_the_window(self, models_file):
+        with pytest.raises(ValueError, match="smaller than MAIN_LLM_MAX_TOKEN"):
+            mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "131072"})
+
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN"' not in models_file.read_text(encoding="utf-8")
+
 
 class TestOptionalInternalFamilies:
     """The TaskFlow-decision and compression families use the same guards."""

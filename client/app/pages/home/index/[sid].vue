@@ -363,6 +363,14 @@
                     :title="t('hitl.approveDirTooltip')"
                     @click="handleHitlDecision('approve_dir')" />
                   <Button
+                    v-if="(hitlRequest?.allowed_decisions ?? []).includes('session')"
+                    :label="t('hitl.approveSession')"
+                    icon="pi pi-bookmark"
+                    severity="secondary"
+                    size="small"
+                    :title="t('hitl.approveSessionTooltip')"
+                    @click="handleHitlDecision('session')" />
+                  <Button
                     :label="t('hitl.approve')"
                     icon="pi pi-check"
                     size="small"
@@ -1060,6 +1068,8 @@ onUnmounted(() => {
       "approve": "批准",
       "approveDir": "批准整个目录",
       "approveDirTooltip": "允许整个目录（本会话内有效，子代理同样适用），目录内文件不再弹出审批",
+      "approveSession": "本会话允许",
+      "approveSessionTooltip": "允许本会话内执行相同命令，不再弹出审批（前两个词匹配，如 \"git push\" 覆盖所有 git push 子命令）",
       "reject": "拒绝",
       "title": "操作需要审批",
       "tool": "工具",
@@ -1078,6 +1088,8 @@ onUnmounted(() => {
       "approve": "Approve",
       "approveDir": "Approve Entire Directory",
       "approveDirTooltip": "Allow the entire directory for this session (also inherited by subagents) — files inside never prompt again",
+      "approveSession": "Allow for Session",
+      "approveSessionTooltip": "Allow the same command for this session — no more prompts (matches the first two words, e.g. \"git push\" covers all git push subcommands)",
       "reject": "Reject",
       "title": "Action Requires Approval",
       "tool": "Tool",
@@ -1096,6 +1108,8 @@ onUnmounted(() => {
       "approve": "承認",
       "approveDir": "ディレクトリ全体を承認",
       "approveDirTooltip": "ディレクトリ全体を許可します（このセッション内有効、サブエージェントにも継承）。配下のファイルでは確認ダイアログは表示されません",
+      "approveSession": "セッション内で許可",
+      "approveSessionTooltip": "このセッション内で同じコマンドを許可し、確認を省略（先頭2語でマッチ、\"git push\" はすべての git push サブコマンドをカバー）",
       "reject": "拒否",
       "title": "操作の承認が必要です",
       "tool": "ツール",
@@ -1114,6 +1128,8 @@ onUnmounted(() => {
       "approve": "승인",
       "approveDir": "디렉터리 전체 승인",
       "approveDirTooltip": "디렉터리 전체를 허용합니다(이 세션에 한정, 하위 에이전트에도 상속). 디렉터리 내 파일은 다시 승인을 요구하지 않습니다",
+      "approveSession": "세션 내 허용",
+      "approveSessionTooltip": "이 세션 내에서 동일한 명령을 허용하고 확인을 생략 (처음 두 단어로 매칭, \"git push\"는 모든 git push 하위 명령을 포함)",
       "reject": "거부",
       "title": "작업 승인이 필요합니다",
       "tool": "도구",

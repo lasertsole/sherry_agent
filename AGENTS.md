@@ -639,10 +639,19 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   gateway get none (M4). The 模型配置 panel renders each pair as a number input that
   rejects non-numeric keystrokes and clamps to the range; this is preventive,
   and `OutputRepetitionGuard` remains the reactive backstop.
-- **Output reserve** — `CompressionMixin._effective_context_window()` =
-  `ctx - min(max_output, ctx)`; `_calculate_preserve_budget`, `OverflowMixin._usable_budget`
-  and `_preemptive_check` use it. Unset keeps reserve 0 and the legacy formulas
-  byte-identical (M3).
+- **Compression line** — `agent/middlewares/summarization/thresholds.py` is the
+  single source: with `MAIN_LLM_MAX_OUTPUT_TOKEN` set, the line is
+  `context_window - max_output` (the full input budget); unset keeps the legacy
+  80% behavior (the overflow router keeps its budget-relative band when no cap
+  is set, so existing timing is unchanged). `GET /context_usage` returns
+  `max_output`, `compress_tokens` and `compress_ratio = compress_tokens/window`;
+  the ring/dashed line/percent label use that ratio, never a local 0.8. A cap
+  equal to or larger than the window is refused by `/models-config`
+  (`max_output < MAIN_LLM_MAX_TOKEN`) and clamps to a 0% line at runtime.
+  `CompressionMixin._effective_context_window()` remains
+  `ctx - min(max_output, ctx)` for preserve/overflow budgets; `_preemptive_check`
+  compares absolute thresholds and the soft truncate line scales with the hard
+  line (0.70/0.80) only when a cap is set.
 - **Microcompact** — `agent/middlewares/summarization/microcompact.py` runs at
   the end of `_run_non_llm_strategies`: on a 60-minute idle (process-local
   completion clock) or at `min(auto_threshold * 0.9, auto_threshold - 2000)` it
@@ -1512,6 +1521,7 @@ each suite is the version-controlled reference (threshold + model id).
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_plan`'s planner may emit the field and `taskflow_update_steps` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file), and a watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg_list` / `terminal_bg_output` (both `scope=main_only`, catalogue group `terminal`) are how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
+- terminal HITL cards can offer **本会话允许** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
 - the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`).

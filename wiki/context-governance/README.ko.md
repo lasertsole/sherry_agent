@@ -147,6 +147,10 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 
 메인과 서브에이전트는 `src/checkpoints/sqlite.db`를 공유합니다. 메인 턴이 끝나면 `on_turn_finished`가 해당 세션의 thread를 최신 최상위 checkpoint와 그 writes(`aget_state`가 읽는 행)만 남깁니다. child의 `_release_child_resources`도 자기 thread에 같은 처리를 합니다. `tools:*` / `model:*` 행은 삭제되며, 최상위 행이 없으면 최신 행을 fallback으로 남깁니다. HITL pending 세션은 중단된 그래프를 턴 종료로 보지 않으므로 건너뜁니다. 메인 세션 삭제는 모든 하위 run을 억제·kill한 뒤 각 하위의 registry 행, checkpoint thread, 세션 디렉터리, 계획 데이터, 첨부를 삭제합니다. 부팅 시 `init_registry()` 후 한 번의 sweep이 루트 메인 세션이나 부모 run이 사라진 모든 run 하위 트리를 삭제합니다. 모든 cleanup 경로는 페일오픈이며 멱등입니다.
 
+## 📏 압축 라인과 컨텍스트 사용량
+
+압축 라인은 `agent/middlewares/summarization/thresholds.py`가 계산하는 **절대 token 수**입니다: `MAIN_LLM_MAX_OUTPUT_TOKEN`이 설정되면 `window - max_output`, 미설정이면 기존 80% 동작을 유지합니다(미설정 시 overflow router는 기존 예산 상대 밴드를 유지). `GET /context_usage`는 `max_output`, `compress_tokens`, `compress_ratio = compress_tokens / window`를 반환하고 링과 빨간 점선은 그 비율을 사용합니다. 출력 상한이 윈도우 이상이면 `/models-config`가 저장을 거부하고, 기존 파일은 런타임에 0% 라인으로 클램프합니다. `compression_reserve_tokens`는 압축 후 목표 예산이며 압축 라인에는 포함되지 않습니다.
+
 ## 🛠️ 설정
 
 `TOOL_RESULT_EVICTION`(`config/features/agent_side/tool_result_eviction.py`):

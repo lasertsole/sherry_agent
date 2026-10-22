@@ -147,6 +147,10 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 メインとサブエージェントは `src/checkpoints/sqlite.db` を共有します。メインターンの終了後、`on_turn_finished` はそのセッションの thread を最新のトップレベル checkpoint とその writes（`aget_state` が読む行）だけに削減します。child の `_release_child_resources` も自分の thread に同じ処理を行います。`tools:*` / `model:*` の行は削除され、トップレベル行が無い場合は最新行を fallback として残します。HITL pending のセッションは、中断中のグラフをターン終了と見なさないためスキップします。メインセッションの削除は全子孫 run を抑制・kill してから、各子孫の registry 行、checkpoint thread、session ディレクトリ、計画データ、添付を削除します。起動時は `init_registry()` の後に 1 回 sweep を実行し、ルートのメインセッションまたは親 run が消えた全 run サブツリーを削除します。すべての cleanup はフェイルオープンで冪等です。
 
+## 📏 圧縮ラインとコンテキスト使用量
+
+圧縮ラインは `agent/middlewares/summarization/thresholds.py` が計算する**絶対 token 数**です：`MAIN_LLM_MAX_OUTPUT_TOKEN` が設定されていれば `window - max_output`、未設定なら従来の 80% を維持します（未設定時、overflow router は従来の予算相対バンドのまま）。`GET /context_usage` は `max_output`、`compress_tokens`、`compress_ratio = compress_tokens / window` を返し、リングと赤い破線はその比率を使います。出力上限がウィンドウ以上なら `/models-config` は保存を拒否し、旧ファイルは実行時に 0% ラインへクランプします。`compression_reserve_tokens` は圧縮後の目標予算であり、圧縮ラインには含めません。
+
 ## 🛠️ 設定
 
 `TOOL_RESULT_EVICTION`（`config/features/agent_side/tool_result_eviction.py`）：

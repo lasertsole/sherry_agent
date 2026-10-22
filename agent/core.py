@@ -50,12 +50,21 @@ from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddle
 from .middlewares.reminder_catalog import DynamicReminderMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.thinking_control import ThinkingControlMiddleware
+from .middlewares.summarization.thresholds import resolve_compression_threshold
 from .middlewares.todo_continuation import PlanContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.skill_write_provider import register_skill_write_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
 from .safe_tool_node import install_safe_tool_node
+
+
+def _main_max_output() -> int | None:
+    """The configured main output cap, resolved lazily (model import is heavy)."""
+    from models.LLMs.main_llm import get_max_output_tokens
+
+    return get_max_output_tokens()
+
 
 # One process-level patch, before any create_agent() call. It is a no-op when
 # TOOL_PARALLEL["enabled"] is false.
@@ -383,7 +392,16 @@ def _build_middlewares(
             # call in tests can still pass None and keep the old wiring).
             model=compression_llm or auxiliary_llm,
             main_llm_context_window=main_llm_context_window,
-            trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
+            trigger=[
+                (
+                    "tokens",
+                    resolve_compression_threshold(
+                        main_llm_context_window,
+                        _main_max_output(),
+                        fallback_ratio=compression_trigger_ratio,
+                    )[0],
+                )
+            ],
         ),
         # Registered LAST = the innermost wrap_model_call layer, closest to the
         # raw model call: a tool call whose arguments fail JSON parsing

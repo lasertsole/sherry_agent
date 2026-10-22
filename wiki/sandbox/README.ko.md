@@ -135,6 +135,8 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **approve**: `{"decisions": [{"type": "approve"}]}`로 재개. 호출이 즉시 실행됩니다(env는 세척됨, OS 샌드박스 없음).
 - **reject**: `{"decisions": [{"type": "reject", "message": "..."}]}`로 재개. 도구 결과가 오류 `ToolMessage`(`User denied: <msg>. <BLOCKED_MESSAGE>`)가 되고 아무것도 실행되지 않습니다.
 
+터미널 승인 카드는 백엔드가 `allowed_decisions`에 `session`을 넣은 경우에만 **세션 내 허용**을 표시합니다(카드에 도달한 캐시 가능한 일반 명령). 선택하면 명령의 처음 두 단어 패턴이 session allowlist에 기록되어 이후 일치 명령은 카드를 띄우지 않습니다. **approve**는 여전히 이번 한 번만 허용합니다. 위험 명령, confirm-all 모드, clawhub 원격 실행은 session 캐시를 제공하거나 기록하지 않으며, 이전에 일치 패턴이 저장되어 있어도 위험 명령은 session allowlist를 건너뜁니다.
+
 ## 🧪 테스트
 
 | 테스트 스위트 | 커버 범위 |

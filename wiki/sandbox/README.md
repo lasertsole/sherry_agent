@@ -135,6 +135,8 @@ When the model requests `sandbox=False` in the main session (non-YOLO), the grap
 - **approve**: resume with `{"decisions": [{"type": "approve"}]}`; the call runs immediately (env scrubbed, no OS sandbox).
 - **reject**: resume with `{"decisions": [{"type": "reject", "message": "..."}]}`; the tool result becomes an error `ToolMessage` (`User denied: <msg>. <BLOCKED_MESSAGE>`) and nothing executes.
 
+The terminal approval card also offers **Allow for Session** only when the backend sends `session` in `allowed_decisions`: a cacheable ordinary command that actually reached the card. Choosing it writes the command's first two-word pattern to the session allowlist, so later matching commands skip the card; **approve** remains one-shot. Dangerous commands, confirm-all mode and clawhub remote execution never offer or write the session cache, and a dangerous command skips the session allowlist even when a matching pattern was stored earlier.
+
 ## 🧪 Testing
 
 | Suite | Covers |

@@ -150,6 +150,10 @@ The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `Tod
 
 The main and subagent graphs share `src/checkpoints/sqlite.db`. After a main turn, `on_turn_finished` prunes that session's thread to its newest top-level checkpoint plus its writes (the row `aget_state` reads); a child's `_release_child_resources` does the same for its own thread. `tools:*` / `model:*` rows are deleted; a missing top-level row keeps the newest row as a fallback. HITL-pending sessions are skipped because a suspended graph is not a turn end. Deleting a main session first suppresses and kills its descendant runs, then removes every descendant's registry row, checkpoint thread, session folder, planning rows and attachments. At boot, after `init_registry()`, one sweep deletes every run subtree whose root main session or parent run no longer exists. All cleanup paths are fail-open and idempotent.
 
+## 📏 Compression Line & Context Usage
+
+The compression line is an ABSOLUTE token count owned by `agent/middlewares/summarization/thresholds.py`: with `MAIN_LLM_MAX_OUTPUT_TOKEN` set it is `window - max_output`; unset keeps the legacy 80% behavior (the overflow router keeps its budget-relative band when unset). `GET /context_usage` returns `max_output`, `compress_tokens` and `compress_ratio = compress_tokens / window`; the ring and red dashed line use that ratio. A cap equal to or larger than the window is refused by `/models-config`; an old file clamps to a 0% line at runtime. `compression_reserve_tokens` remains a post-compaction target, not part of the line.
+
 ## 🛠️ Configuration
 
 `TOOL_RESULT_EVICTION` (`config/features/agent_side/tool_result_eviction.py`):

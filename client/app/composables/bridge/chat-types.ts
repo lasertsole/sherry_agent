@@ -81,7 +81,7 @@ export interface HitlInterruptData {
 
 /** HITL decision sent by the client to resume the agent. */
 export interface HitlResponse {
-  decision: 'approve' | 'approve_dir' | 'reject' | 'edit' | 'yolo';
+  decision: 'approve' | 'approve_dir' | 'reject' | 'session' | 'edit' | 'yolo';
   message?: string;
   edited_args?: Record<string, unknown>;
 }

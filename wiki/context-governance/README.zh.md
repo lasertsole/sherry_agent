@@ -146,6 +146,10 @@ todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuati
 
 主代理与子代理共用 `src/checkpoints/sqlite.db`。主代理 turn 结束后，`on_turn_finished` 把该 session 的 thread 裁到最新顶层 checkpoint 及其 writes（即 `aget_state` 读取的那一份）；child 的 `_release_child_resources` 对自己的 thread 做同样处理。`tools:*` / `model:*` 行会删除；没有顶层行时保留最新行兜底。HITL pending 的 session 会跳过，因为挂起的图不算 turn 结束。删除主 session 时先抑制并 kill 所有后代 run，再删除每个后代的 registry 行、checkpoint thread、session 目录、计划数据和附件。启动时 `init_registry()` 之后执行一次 sweep，删除根主 session 或父 run 已不存在的所有 run 子树。所有清理路径都 fail-open 且幂等。
 
+## 📏 压缩线与上下文用量
+
+压缩线是由 `agent/middlewares/summarization/thresholds.py` 统一计算的**绝对 token 数**：设置 `MAIN_LLM_MAX_OUTPUT_TOKEN` 时为 `window - max_output`；未设置时保留原有 80% 行为（未设置时 overflow router 仍使用预算相对区间）。`GET /context_usage` 返回 `max_output`、`compress_tokens` 和 `compress_ratio = compress_tokens / window`，圆环与红色虚线使用该比例。最大输出窗口大于等于上下文窗口时 `/models-config` 拒绝保存；旧文件在运行时钳到 0% 线。`compression_reserve_tokens` 仍是压缩后的目标预算，不再参与压缩线。
+
 ## 🛠️ 配置
 
 `TOOL_RESULT_EVICTION`（`config/features/agent_side/tool_result_eviction.py`）：

@@ -77,7 +77,7 @@ describe('useHitlApproval decision forwarding', () => {
     vi.stubGlobal('useAccessModeStore', () => ({ markYolo: state.markYolo }));
   });
 
-  it.each(['approve', 'approve_dir', 'yolo', 'reject'] as const)(
+  it.each(['approve', 'approve_dir', 'session', 'yolo', 'reject'] as const)(
     'sends the %s decision verbatim on the persistent socket',
     decision => {
       const { hitl, isSending } = makeHarness();

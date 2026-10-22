@@ -222,10 +222,24 @@ def test_pipeline_session_allowlist(tmp_path, unit_test_config):
     pipeline = ApprovalPipeline(cfg, MagicMock())
     session_id = "sess-session-allow"
     _clean_state(session_id, "permanent", "session_approved")
-    state_register_mem.set_state(session_id, "hitl:session_approved", ["pip install*"])
-    result = pipeline.check_command("pip install requests", session_id)
+    state_register_mem.set_state(session_id, "hitl:session_approved", ["git status*"])
+    result = pipeline.check_command("git status -s", session_id)
     assert result.approved is True
     assert result.decision == ApprovalDecision.SESSION
+
+
+def test_pipeline_dangerous_command_skips_the_session_allowlist(tmp_path, unit_test_config):
+    """Layer 6 is skipped for a dangerous command, even with a matching pattern."""
+    cfg = HITLConfig()
+    pipeline = ApprovalPipeline(cfg, MagicMock())
+    session_id = "sess-session-allow-danger"
+    _clean_state(session_id, "permanent", "session_approved")
+    state_register_mem.set_state(session_id, "hitl:session_approved", ["pip install*"])
+
+    result = pipeline.check_command("pip install requests", session_id)
+
+    assert result.approved is False
+    assert result.decision is None
 
 
 def test_pipeline_safe_command_auto_approve(tmp_path, unit_test_config):

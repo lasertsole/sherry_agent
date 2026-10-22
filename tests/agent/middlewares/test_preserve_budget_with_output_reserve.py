@@ -58,16 +58,20 @@ def test_usable_budget_subtracts_both_reserves(monkeypatch: pytest.MonkeyPatch):
     assert harness._usable_budget() == 32768 - 16000
 
 
-def test_preemptive_pressure_uses_the_effective_window(monkeypatch: pytest.MonkeyPatch):
+def test_preemptive_pressure_uses_the_window_minus_output_line(monkeypatch: pytest.MonkeyPatch):
     _patch_output(monkeypatch, 16384)
     harness = _Harness(32768)
+
+    # The absolute line is 32768 - 16384 = 16384: 13000 fits, 17000 compacts.
     monkeypatch.setattr(harness, "_estimate_tokens", lambda messages: 13000)
-
-    # 13000 / 16384 = 0.79 -> soft overflow (truncate); 13000 / 32768 = 0.40 fits.
-    assert harness._preemptive_check([], "s") == "truncate_only"
-
-    _patch_output(monkeypatch, None)
     assert harness._preemptive_check([], "s") is None
+    monkeypatch.setattr(harness, "_estimate_tokens", lambda messages: 17000)
+    assert harness._preemptive_check([], "s") == "compact"
+
+    # No cap keeps the legacy 80% line (32768 * 0.8 = 26214).
+    _patch_output(monkeypatch, None)
+    monkeypatch.setattr(harness, "_estimate_tokens", lambda messages: 27000)
+    assert harness._preemptive_check([], "s") == "compact"
 
 
 def test_reserve_is_clamped_to_the_context_window(monkeypatch: pytest.MonkeyPatch):

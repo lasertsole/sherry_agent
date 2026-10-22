@@ -389,7 +389,11 @@ export interface ContextUsage {
   messages: number;
   /** Session-wide cached-prompt share (cached / prompt tokens), null when unknown. */
   cache_hit_ratio: number | null;
-  /** Pressure at which summarization compacts the session (share of the window). */
+  /** Configured main-model output cap, null when unset. */
+  max_output: number | null;
+  /** Absolute token line at which summarization compacts. */
+  compress_tokens: number;
+  /** compress_tokens / window (kept for clients that only know the ratio). */
   compress_ratio: number;
 }
 
@@ -412,6 +416,8 @@ export async function fetchContextUsage(sessionId: string): Promise<ContextUsage
     tools: Number(res.tools ?? 0),
     messages: Number(res.messages ?? 0),
     cache_hit_ratio: typeof res.cache_hit_ratio === 'number' ? res.cache_hit_ratio : null,
+    max_output: typeof res.max_output === 'number' ? res.max_output : null,
+    compress_tokens: Number(res.compress_tokens ?? 0),
     compress_ratio: Number(res.compress_ratio ?? 0)
   };
 }

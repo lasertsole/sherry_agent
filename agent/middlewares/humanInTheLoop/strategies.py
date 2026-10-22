@@ -23,7 +23,7 @@ from langgraph.errors import GraphInterrupt
 from .approval import is_confirm_all_mode, is_yolo_mode, set_session_yolo
 from .approval_scope import NO_OPERATOR_MESSAGE
 from .approval_store import ApprovalVerdict
-from .detection import detect_clawhub_command
+from .detection import detect_clawhub_command, detect_dangerous_command
 from .types import (
     HITL_CONFIRMED_TOOLS_KEY,
     ApprovalDecision,
@@ -183,6 +183,15 @@ class TerminalApprovalHandler(ToolApprovalHandler):
                     else f"Dangerous command: {command}"
                 )
             )
+            is_dangerous = bool(detect_dangerous_command(command))
+            is_confirm_all = is_confirm_all_mode(mw.config, ctx.session_id)
+            # Only an ordinary command that reached the card may write a session
+            # cache. Dangerous commands, confirm-all and clawhub remote execution
+            # always ask again.
+            can_cache = not is_dangerous and not is_confirm_all and not clawhub_tag
+            allowed_decisions = (
+                ["approve", "session", "reject"] if can_cache else ["approve", "reject"]
+            )
             action_request = ActionRequest(
                 name=tool_name,
                 args=tool_args,
@@ -190,7 +199,7 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             )
             review_config = ReviewConfig(
                 action_name=tool_name,
-                allowed_decisions=["approve", "reject"],
+                allowed_decisions=allowed_decisions,
             )
             try:
                 hitl_response = interrupt(
@@ -203,6 +212,14 @@ class TerminalApprovalHandler(ToolApprovalHandler):
                 decision_type = decisions[0]["type"] if decisions else ""
                 if decision_type == "yolo":
                     set_session_yolo(ctx.session_id)
+                    ctx.outcome.approve(tool_call)
+                elif decision_type == "session" and can_cache:
+                    mw.approval._apply_decision(
+                        result.pattern_key or "escalated",
+                        ApprovalDecision.SESSION,
+                        ctx.session_id,
+                        command,
+                    )
                     ctx.outcome.approve(tool_call)
                 elif decision_type == "approve":
                     ctx.outcome.approve(tool_call)

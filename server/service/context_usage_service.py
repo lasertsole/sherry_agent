@@ -29,8 +29,8 @@ from functools import lru_cache
 from typing import Any
 
 from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
-from config.features import SUMMARIZATION
 from context_engine import get_db, get_history_by_turn_page
+from agent.middlewares.summarization.thresholds import resolve_compression_threshold
 from models.LLMs.main_llm import max_tokens as main_llm_context_window
 from pub.func.estimate_tokens import estimate_json_tokens, estimate_text_tokens
 from runtime import StateKey, state_register_mem
@@ -154,6 +154,33 @@ def _cache_hit_ratio(session_id: str) -> float | None:
     return min(int(cached) / total, 1.0)
 
 
+def _effective_window(session_id: str) -> int:
+    """The session's actual main context window (profile override wins)."""
+    try:
+        from server.service.session_settings_service import get_main_model_override
+
+        override = get_main_model_override(session_id, mask_secrets=True) or {}
+        raw = override.get("context_window")
+        if raw:
+            value = int(raw)
+            if value > 0:
+                return value
+    except Exception:
+        logger.debug("context usage: session window override read failed", exc_info=True)
+    return int(main_llm_context_window or 0)
+
+
+def _max_output_tokens() -> int | None:
+    """Configured main output cap (None/0 means unset)."""
+    try:
+        from models.LLMs.main_llm import get_max_output_tokens
+
+        return get_max_output_tokens()
+    except Exception:
+        logger.debug("context usage: max-output read failed", exc_info=True)
+        return None
+
+
 def get_context_usage(session_id: str) -> dict[str, int | float | None]:
     """Return the session's context accounting.
 
@@ -166,13 +193,17 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
             "tools":           int,          # tool-schema estimate
             "messages":        int,          # remainder (never negative)
             "cache_hit_ratio": float | None, # session-wide cached-prompt share
-            "compress_ratio":  float         # pressure at which summarization compacts
+            "max_output":       int | None,  # configured main output cap
+            "compress_tokens":  int,         # absolute compaction line
+            "compress_ratio":   float        # compress_tokens / window (client display)
         }
     """
     if not session_id or not str(session_id).strip():
         raise ValueError("session_id is required")
 
-    window = int(main_llm_context_window or 0)
+    window = _effective_window(session_id)
+    max_output = _max_output_tokens()
+    compress_tokens, compress_ratio = resolve_compression_threshold(window, max_output)
     total = _reported_prompt_tokens(session_id)
     prompt = _system_prompt_text(session_id)
     persona_prompt, skill_index = _split_skill_index(prompt) if prompt else ("", "")
@@ -203,7 +234,9 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
         "tools": tools,
         "messages": messages,
         "cache_hit_ratio": _cache_hit_ratio(session_id),
-        "compress_ratio": float(SUMMARIZATION["compression_trigger_ratio"]),
+        "max_output": max_output if max_output and max_output > 0 else None,
+        "compress_tokens": compress_tokens,
+        "compress_ratio": compress_ratio,
     }
 
 
@@ -358,7 +391,7 @@ async def get_context_content(session_id: str) -> dict[str, Any]:
         state_error = str(error) or error.__class__.__name__
 
     return {
-        "window": int(main_llm_context_window or 0),
+        "window": _effective_window(session),
         "system_prompt": prompt,
         "system_tokens": estimate_text_tokens(prompt) if prompt else 0,
         "tools": tools,

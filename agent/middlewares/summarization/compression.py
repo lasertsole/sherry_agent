@@ -42,6 +42,7 @@ from .compaction_lock import CompactionLock, CompactionLockError
 from .media_offload import offload_inline_media
 from .microcompact import maybe_local_microcompact
 from .state_aliases import _LAST_USER_QUESTION_KEY, _PREVIOUS_FILE_OPS_KEY, _SKIP_LLM_KEY
+from .thresholds import resolve_compression_threshold, resolve_truncate_threshold
 from .summarization_components import MessageTruncator, find_tool_name
 from .summary_generation import (
     _SUMMARY_CLOSE_TAG,
@@ -141,6 +142,15 @@ class CompressionMixin:
                     return value
         return int(self._main_llm_context_window or 0)
 
+    @staticmethod
+    def _max_output_for_line() -> int | None:
+        try:
+            from models.LLMs.main_llm import get_max_output_tokens
+
+            return get_max_output_tokens()
+        except Exception:  # noqa: BLE001 - a model import problem must not break compaction
+            return None
+
     def _output_reserve(self, session_id: str = "") -> int:
         """Tokens reserved for the model's output side (ZCode outputReserve).
 
@@ -148,16 +158,26 @@ class CompressionMixin:
         explicit output cap is configured, the compaction threshold must leave
         it free; an unset cap keeps the legacy formula (M3: reserve 0).
         """
-        try:
-            from models.LLMs.main_llm import get_max_output_tokens
-
-            max_output = get_max_output_tokens()
-        except Exception:  # noqa: BLE001 - a model import problem must not break compaction
-            return 0
+        max_output = self._max_output_for_line()
         if not max_output or max_output <= 0:
             return 0
         ctx = self._session_context_window(session_id) or max_output
         return min(int(max_output), int(ctx))
+
+    def _has_output_cap(self) -> bool:
+        """Whether the absolute window - max_output line applies."""
+        max_output = self._max_output_for_line()
+        return bool(max_output and max_output > 0)
+
+    def _compression_threshold(self, session_id: str = "") -> int:
+        """Absolute prompt-token line: window - max_output, else 80% of window."""
+        return resolve_compression_threshold(
+            self._session_context_window(session_id), self._max_output_for_line()
+        )[0]
+
+    def _truncate_threshold(self, session_id: str = "") -> int:
+        """Soft preemptive-truncate line, proportional to the compression line."""
+        return resolve_truncate_threshold(self._compression_threshold(session_id))
 
     def _effective_context_window(self, session_id: str = "") -> int:
         """Context window minus the output reserve (0 when unconfigured)."""

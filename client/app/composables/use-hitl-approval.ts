@@ -98,7 +98,10 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
    * @param decision
    * @param message
    */
-  const handleHitlDecision = (decision: 'approve' | 'approve_dir' | 'reject' | 'yolo', message: string = '') => {
+  const handleHitlDecision = (
+    decision: 'approve' | 'approve_dir' | 'reject' | 'session' | 'yolo',
+    message: string = ''
+  ) => {
     const sid = sessionId.value;
     if (!sid) {
       hitlRequest.value = null;

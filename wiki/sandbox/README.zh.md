@@ -136,6 +136,8 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **approve**：以 `{"decisions": [{"type": "approve"}]}` 恢复；调用立即执行（环境已清洗，无操作系统沙箱）。
 - **reject**：以 `{"decisions": [{"type": "reject", "message": "..."}]}` 恢复；工具结果变成错误 `ToolMessage`（`User denied: <msg>. <BLOCKED_MESSAGE>`），什么都不会执行。
 
+终端审批卡片只有在后端把 `session` 放进 `allowed_decisions` 时才显示 **本会话允许**：即真正到达卡片的可缓存普通命令。选择后会把命令前两个词的模式写入 session allowlist，后续匹配命令不再弹卡；**approve** 仍只放行本次。危险命令、变更前确认模式和 clawhub 远程执行不提供也不写入 session 缓存；即使之前存过匹配模式，危险命令也会跳过 session allowlist。
+
 ## 🧪 测试
 
 | 测试套件 | 覆盖内容 |

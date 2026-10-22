@@ -135,6 +135,8 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **approve**: `{"decisions": [{"type": "approve"}]}` で再開。呼び出しは即座に実行されます(env は洗浄済み、OS サンドボックスなし)。
 - **reject**: `{"decisions": [{"type": "reject", "message": "..."}]}` で再開。ツール結果はエラー `ToolMessage`(`User denied: <msg>. <BLOCKED_MESSAGE>`)になり、何も実行されません。
 
+端末承認カードは、バックエンドが `allowed_decisions` に `session` を含めた場合だけ **セッション内で許可** を表示します（カードに到達したキャッシュ可能な通常コマンド）。選ぶとコマンドの先頭 2 語パターンが session allowlist に書き込まれ、以後の一致コマンドはカードを出しません。**approve** は今回限りのままです。危険コマンド、confirm-all モード、clawhub リモート実行は session キャッシュを提供も書き込みもしません。以前に一致パターンが保存されていても、危険コマンドは session allowlist をスキップします。
+
 ## 🧪 テスト
 
 | テストスイート | カバー範囲 |

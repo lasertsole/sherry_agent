@@ -1300,6 +1300,20 @@ async def _execute_subagent_scoped(
         await _finalize_child_run(run, outcome, result_text)
 
 
+def _compression_threshold_for_children(context_window: int) -> int:
+    """The main-model compression line shared by child Summarization triggers."""
+    from config.features import SUMMARIZATION
+    from models.LLMs.main_llm import get_max_output_tokens
+
+    from agent.middlewares.summarization.thresholds import resolve_compression_threshold
+
+    return resolve_compression_threshold(
+        context_window,
+        get_max_output_tokens(),
+        fallback_ratio=SUMMARIZATION["compression_trigger_ratio"],
+    )[0]
+
+
 def _build_child_middlewares(
     *,
     auxiliary_llm: Any,
@@ -1322,7 +1336,7 @@ def _build_child_middlewares(
         ToolResourceLockMiddleware,
     )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
-    from config.features import ITERATION_BUDGET, SUMMARIZATION
+    from config.features import ITERATION_BUDGET
 
     return [
         Summarization(
@@ -1332,7 +1346,7 @@ def _build_child_middlewares(
                 ("messages", 40),
                 (
                     "tokens",
-                    int(main_llm_context_window * SUMMARIZATION["compression_trigger_ratio"]),
+                    _compression_threshold_for_children(main_llm_context_window),
                 ),
             ],
         ),
