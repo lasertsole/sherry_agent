@@ -1022,6 +1022,22 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
     """
     child_checkpointer = getattr(child_agent, "checkpointer", None)
     if child_checkpointer is not None:
+        # Keep this child thread to one readable top-level checkpoint (plus its
+        # writes). The child is no longer running here; tools/model namespaces
+        # are safe to drop, while the latest top-level row is what
+        # sessions_messages reads after a timeout/kill.
+        cleaner = getattr(child_checkpointer, "aclean_thread_checkpoints", None)
+        if callable(cleaner):
+            try:
+                from pub.func import rand_str_to_int
+
+                await cleaner(str(rand_str_to_int(run.child_session_key)))
+            except Exception:
+                logger.warning(
+                    "Failed to prune child checkpoints for {}",
+                    run.run_id,
+                    exc_info=True,
+                )
         try:
             await child_checkpointer.aclose()
         except Exception:

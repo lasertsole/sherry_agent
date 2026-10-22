@@ -184,3 +184,4 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 - The parent-turn gate reasons over a text evidence summary and its `FAIL` / `[stale]` markers, not over a structured ledger.
 - `aggregate_deps` concatenates raw dependency results — it does not summarize, so very large results grow the dispatched task text.
 - Child context isolation is fixed by design: there is no mode that inherits the parent transcript.
+- Child checkpoints are kept latest-only after a run: the child's own checkpoint thread retains the newest top-level checkpoint and its writes; `tools:*` / `model:*` namespaces are pruned. Deleting a main session cascades to every descendant run; the boot sweep deletes orphan subtrees whose root session is gone.

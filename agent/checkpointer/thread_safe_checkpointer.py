@@ -308,6 +308,73 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
             deleted_writes=total_del_write,
         )
 
+    async def aclean_thread_checkpoints(self, thread_id: str) -> dict[str, int]:
+        """Keep one checkpoint for ``thread_id`` and delete every other row for it.
+
+        The kept row is the newest **top-level** checkpoint (``checkpoint_ns=''``)
+        — the one ``aget_state`` / ``sessions_messages`` reads. If the thread has
+        no top-level row (legacy damage), the newest row in any namespace is
+        kept as a fallback so the thread is never emptied. Writes are kept only
+        for the selected ``(checkpoint_ns, checkpoint_id)`` pair.
+
+        A separate connection is used, mirroring ``aclean_old_checkpoints``:
+        this never contends with the child's checkpointer connection. No VACUUM
+        here — per-child VACUUM would be expensive; the global cleanup keeps the
+        10 MB freelist threshold.
+        """
+        if not str(thread_id).strip():
+            return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
+
+        import aiosqlite
+        from pathlib import Path
+        from config import SRC_DIR
+
+        db_path = Path((SRC_DIR / "checkpoints" / "sqlite.db").resolve())
+        if not db_path.exists():
+            return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
+
+        async with aiosqlite.connect(str(db_path), check_same_thread=False) as conn:
+            cursor = await conn.execute(
+                "SELECT checkpoint_ns, checkpoint_id FROM checkpoints "
+                "WHERE thread_id = ? "
+                "ORDER BY (checkpoint_ns = '') DESC, rowid DESC LIMIT 1",
+                (str(thread_id),),
+            )
+            keep = await cursor.fetchone()
+            await cursor.close()
+
+            if keep is None:
+                cursor = await conn.execute(
+                    "DELETE FROM writes WHERE thread_id = ?", (str(thread_id),)
+                )
+                deleted_writes = cursor.rowcount
+                await cursor.close()
+                await conn.commit()
+                return dict(kept=0, deleted_checkpoints=0, deleted_writes=deleted_writes)
+
+            keep_ns, keep_id = keep
+            cursor = await conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id = ? "
+                "AND NOT (checkpoint_ns = ? AND checkpoint_id = ?)",
+                (str(thread_id), keep_ns, keep_id),
+            )
+            deleted_checkpoints = cursor.rowcount
+            await cursor.close()
+            cursor = await conn.execute(
+                "DELETE FROM writes WHERE thread_id = ? "
+                "AND NOT (checkpoint_ns = ? AND checkpoint_id = ?)",
+                (str(thread_id), keep_ns, keep_id),
+            )
+            deleted_writes = cursor.rowcount
+            await cursor.close()
+            await conn.commit()
+
+        return dict(
+            kept=1,
+            deleted_checkpoints=deleted_checkpoints,
+            deleted_writes=deleted_writes,
+        )
+
     def get_delta_channel_history(
         self,
         *,

@@ -253,6 +253,22 @@ async def on_turn_finished(
     completion instead.
     """
     if not is_hitl_pending(session_id):
+        # Keep the finished main thread to one top-level checkpoint before the
+        # drain can start the next turn. Scoped to THIS session: a global scan
+        # would race other live sessions.
+        try:
+            from agent.checkpointer.async_sqlite_checkpointer import prune_session_checkpoints
+
+            pruned = await prune_session_checkpoints(session_id)
+            if pruned.get("deleted_checkpoints") or pruned.get("deleted_writes"):
+                logger.debug(
+                    "TurnRunner: pruned checkpoint history for {}: {}",
+                    session_id,
+                    pruned,
+                )
+        except Exception as e:  # pragma: no cover - cleanup must never break a turn
+            logger.warning(f"TurnRunner: checkpoint prune failed for {session_id}: {e}")
+
         try:
             promoted = await promote_pending_settings(session_id)
         except Exception as e:  # pragma: no cover - promotion must never break the turn

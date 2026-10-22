@@ -146,6 +146,10 @@ The frozen memory snapshot has one deliberate exception. A session model switch 
 
 The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `TodoContinuationEnforcer`; it supervises the plan = todos + TaskFlow flows) counts turns without a `todowrite` call and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), appends a `[REMINDER: TODO TRACKING]` nudge to the continuation directive — the one shape the snapshot-based stagnation check cannot catch (an agent advancing TaskFlow clears the streak while the todo list rots).
 
+## 🧹 Checkpoint Retention & Orphan Session Sweep
+
+The main and subagent graphs share `src/checkpoints/sqlite.db`. After a main turn, `on_turn_finished` prunes that session's thread to its newest top-level checkpoint plus its writes (the row `aget_state` reads); a child's `_release_child_resources` does the same for its own thread. `tools:*` / `model:*` rows are deleted; a missing top-level row keeps the newest row as a fallback. HITL-pending sessions are skipped because a suspended graph is not a turn end. Deleting a main session first suppresses and kills its descendant runs, then removes every descendant's registry row, checkpoint thread, session folder, planning rows and attachments. At boot, after `init_registry()`, one sweep deletes every run subtree whose root main session or parent run no longer exists. All cleanup paths are fail-open and idempotent.
+
 ## 🛠️ Configuration
 
 `TOOL_RESULT_EVICTION` (`config/features/agent_side/tool_result_eviction.py`):

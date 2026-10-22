@@ -20,6 +20,15 @@ async def _init_registry_once() -> None:
         from agent.tools.subagent.registry import init_registry
 
         await init_registry()
+        # One boot pass: runs whose root main session (or parent run) no longer
+        # exists are deleted together with their descendants. Registry restore
+        # has already finalized PENDING rows, and boot has no active turns.
+        try:
+            from server.service.orphan_session_sweep import sweep_orphaned_subagent_sessions
+
+            await sweep_orphaned_subagent_sessions()
+        except Exception:
+            logger.warning("Boot orphan subagent sweep skipped", exc_info=True)
         logger.info("Subagent registry initialized via server startup hook")
     except Exception as e:  # pragma: no cover - startup robustness
         logger.exception("Failed to initialize subagent registry at startup: {}", e)

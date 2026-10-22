@@ -143,6 +143,10 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 
 todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(`TodoContinuationEnforcer`에서 개명; 감독하는 "플랜" = todos + TaskFlow flows)는 `todowrite`를 호출하지 않은 턴 수를 세고, `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 넛지를 덧붙입니다 — 스냅샷 기반 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다).
 
+## 🧹 checkpoint 보존과 고아 세션 정리
+
+메인과 서브에이전트는 `src/checkpoints/sqlite.db`를 공유합니다. 메인 턴이 끝나면 `on_turn_finished`가 해당 세션의 thread를 최신 최상위 checkpoint와 그 writes(`aget_state`가 읽는 행)만 남깁니다. child의 `_release_child_resources`도 자기 thread에 같은 처리를 합니다. `tools:*` / `model:*` 행은 삭제되며, 최상위 행이 없으면 최신 행을 fallback으로 남깁니다. HITL pending 세션은 중단된 그래프를 턴 종료로 보지 않으므로 건너뜁니다. 메인 세션 삭제는 모든 하위 run을 억제·kill한 뒤 각 하위의 registry 행, checkpoint thread, 세션 디렉터리, 계획 데이터, 첨부를 삭제합니다. 부팅 시 `init_registry()` 후 한 번의 sweep이 루트 메인 세션이나 부모 run이 사라진 모든 run 하위 트리를 삭제합니다. 모든 cleanup 경로는 페일오픈이며 멱등입니다.
+
 ## 🛠️ 설정
 
 `TOOL_RESULT_EVICTION`(`config/features/agent_side/tool_result_eviction.py`):

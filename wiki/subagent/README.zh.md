@@ -184,3 +184,4 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 - 父回合门禁依据文本证据摘要及其 `FAIL` / `[stale]` 标记推理，而非结构化账本。
 - `aggregate_deps` 拼接原始依赖结果——不做摘要，因此超大结果会撑大派发任务文本。
 - 子上下文独立是设计上的固定行为：不存在继承父会话记录的模式。
+- 子代理运行结束后，其 checkpoint 只保留最新：child thread 只留最新顶层 checkpoint 及其 writes，`tools:*` / `model:*` 命名空间被裁剪。删除主 session 会级联删除所有后代 run；启动 sweep 会删除根 session 已不存在的孤儿子树。

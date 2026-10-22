@@ -25,11 +25,38 @@ def _session_folder(session_id: str) -> str:
 
 
 async def purge_session(session_id: str) -> None:
-    """Purge every trace of a session across all stores.
+    """Purge a session and its whole sub-agent descendant tree.
+
+    Continuity is saved for the MAIN session first, then the descendant
+    registry rows/checkpoints/session data are removed, then the main session's
+    own stores are purged.
+    """
+    if not is_safe_session_id(session_id):
+        raise ValueError(f"invalid session_id: {session_id!r}")
+    try:
+        from context_engine.session_continuity import auto_save_on_session_end
+
+        await auto_save_on_session_end(session_id)
+    except Exception:  # non-critical: must not block session cleanup
+        logger.debug(
+            "session continuity save failed on session end (continuing): session_id={}",
+            session_id,
+            exc_info=True,
+        )
+    try:
+        await purge_subagent_subtree_for_session(session_id)
+    except Exception as e:  # a broken child tree must not keep the main session
+        logger.warning(f"Failed to purge the subagent subtree for {session_id}: {e}")
+    await purge_session_data(session_id)
+
+
+async def purge_session_data(session_id: str) -> None:
+    """Purge one session's own stores (no descendant traversal).
+
+    Shared by the main-session purge and by each child's cascade purge. The
+    caller owns continuity saving and any sub-agent tree work.
 
     Deletes, in order:
-      0. Save the session end state for cross-session continuity —
-         BEFORE any deletion, so the tail messages still exist.
       1. The session's rows from the context engine SQLite store
          (``mes_memory.db`` messages table).
       2. The session's todo rows (``todos.db``) and task-flow rows
@@ -52,17 +79,6 @@ async def purge_session(session_id: str) -> None:
     """
     if not is_safe_session_id(session_id):
         raise ValueError(f"invalid session_id: {session_id!r}")
-    # (0) Session continuity: persist the tail state before deletion.
-    try:
-        from context_engine.session_continuity import auto_save_on_session_end
-
-        await auto_save_on_session_end(session_id)
-    except Exception:  # non-critical: must not block session cleanup
-        logger.debug(
-            "session continuity save failed on session end (continuing): session_id={}",
-            session_id,
-            exc_info=True,
-        )
 
     # (1) Context engine mes_memory store — messages for this session. The bulk
     # DELETE is blocking SQLite, so it runs on a worker thread (audit-hygiene:
@@ -129,3 +145,91 @@ async def purge_session(session_id: str) -> None:
 
     # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
+
+
+async def purge_subagent_subtree_for_session(
+    main_session_id: str, *, reason: str = "session_purge"
+) -> dict[str, int]:
+    """Delete every descendant sub-agent run of one session, leaf stores included.
+
+    Collects the whole requester tree BEFORE deleting registry rows (otherwise
+    the BFS loses its edges), suppresses announce/delivery, kills live children,
+    then purges each child's checkpoints, session folder, planning stores,
+    state registers, attachments and registry row. Fail-open per child.
+    """
+    from agent.tools.subagent.control.kill import kill_subagent_run_admin
+    from agent.tools.subagent.registry import (
+        get_run,
+        is_live_unended_run,
+        list_descendant_runs,
+        remove_run,
+        update_run,
+    )
+    from agent.tools.subagent.registry.helpers import safe_remove_attachments_dir
+    from agent.tools.subagent.registry.session_keys import denormalize_session_key
+
+    root = denormalize_session_key(main_session_id)
+    runs = list_descendant_runs(root)
+    if not runs:
+        return dict(descendants=0, checkpoints=0, registry_rows=0, attachments=0, errors=0)
+
+    # Suppress delivery/announce before killing: a cancelled child must not
+    # re-create a registry row or announce after this purge.
+    for run in runs:
+        try:
+            update_run(
+                run.run_id,
+                suppress_announce_reason=reason,
+                suppress_completion_delivery=True,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to suppress subagent run {} during purge", run.run_id, exc_info=True
+            )
+
+    for run in runs:
+        current = get_run(run.run_id) or run
+        if is_live_unended_run(current):
+            try:
+                await kill_subagent_run_admin(current.run_id, reason=reason)
+            except Exception:
+                logger.warning(
+                    "Failed to kill subagent run {} during purge", current.run_id, exc_info=True
+                )
+
+    deleted_checkpoints = 0
+    deleted_rows = 0
+    deleted_attachments = 0
+    errors = 0
+    for run in runs:
+        try:
+            await purge_session_data(run.child_session_key)
+            await remove_run(run.run_id)
+            deleted_rows += 1
+            if run.attachments_dir:
+                safe_remove_attachments_dir(run.attachments_dir, run.attachments_root_dir)
+                deleted_attachments += 1
+            # The checkpoint row count is not returned by delete_thread_history;
+            # the call itself is the deletion. Count one logical thread per run.
+            deleted_checkpoints += 1
+        except Exception:
+            errors += 1
+            logger.warning("Failed to purge subagent run {}", run.run_id, exc_info=True)
+
+    logger.info(
+        "Purged subagent subtree of {}: descendants={}, registry_rows={}, "
+        "checkpoint_threads={}, attachments={}, errors={}",
+        main_session_id,
+        len(runs),
+        deleted_rows,
+        deleted_checkpoints,
+        deleted_attachments,
+        errors,
+    )
+    return dict(
+        descendants=len(runs),
+        checkpoints=deleted_checkpoints,
+        registry_rows=deleted_rows,
+        attachments=deleted_attachments,
+        errors=errors,
+    )

@@ -188,6 +188,16 @@ User message → Robyn WS → agent.core.built_agent() graph
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
 
+     Checkpoint retention is latest-only per thread: a child's
+     `_release_child_resources` prunes its thread to the newest top-level
+     checkpoint + its writes (tools/model namespaces dropped), and a main
+     `on_turn_finished` does the same for its session before the drain starts
+     (HITL-pending sessions skip it). Deleting a main session cascades through
+     every descendant run: suppress/kill, then delete each child's registry row,
+     checkpoint thread, session dir, planning rows and attachments. After
+     `init_registry()` a boot sweep deletes every orphan subtree whose root main
+     session or parent run is gone, in one fail-open pass.
+
      Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
      reviewer / librarian) may only spawn its own functional role (same role =
      same tool allow-list; MAIN and general stay unrestricted), so a read-only

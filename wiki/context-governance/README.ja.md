@@ -143,6 +143,10 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 
 todo リストにはもう 1 つの防護があります: `PlanContinuationEnforcer`（`TodoContinuationEnforcer` から改名。監督する「プラン」= todos + TaskFlow flows）は `todowrite` を呼ばないターン数を数え、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` を追記します——スナップショット方式の停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。
 
+## 🧹 checkpoint 保持と孤児セッション掃除
+
+メインとサブエージェントは `src/checkpoints/sqlite.db` を共有します。メインターンの終了後、`on_turn_finished` はそのセッションの thread を最新のトップレベル checkpoint とその writes（`aget_state` が読む行）だけに削減します。child の `_release_child_resources` も自分の thread に同じ処理を行います。`tools:*` / `model:*` の行は削除され、トップレベル行が無い場合は最新行を fallback として残します。HITL pending のセッションは、中断中のグラフをターン終了と見なさないためスキップします。メインセッションの削除は全子孫 run を抑制・kill してから、各子孫の registry 行、checkpoint thread、session ディレクトリ、計画データ、添付を削除します。起動時は `init_registry()` の後に 1 回 sweep を実行し、ルートのメインセッションまたは親 run が消えた全 run サブツリーを削除します。すべての cleanup はフェイルオープンで冪等です。
+
 ## 🛠️ 設定
 
 `TOOL_RESULT_EVICTION`（`config/features/agent_side/tool_result_eviction.py`）：
