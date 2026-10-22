@@ -239,6 +239,18 @@ def test_execute_job_path_records_last_status_error(env):
     assert env.svc.get_failure_state(job.id)["consecutive_failures"] == 1
 
 
+def test_cron_delivery_carries_the_execution_slot_as_message_id(env):
+    """The delivery uses the run slot so the existing client_msg_id dedup can see it."""
+    job = _add_job(env)
+    job._run_id = "cron:job00001:1700000000000"
+    env.agent.behavior = None
+
+    asyncio.run(env.svc._on_cron_job(job))
+
+    msg = env.bus.inbound[-1]
+    assert msg.metadata["message_id"] == "cron:job00001:1700000000000"
+
+
 def test_degraded_backoff_gate_skips_execution(env):
     """Inside the backoff window the agent call is skipped (no raise, no count)."""
     job = _add_job(env)

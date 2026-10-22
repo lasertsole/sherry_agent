@@ -280,6 +280,13 @@ curl -X POST http://127.0.0.1:8080/cron -H "Content-Type: application/json" \
 curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/json" -d '{"id": "a1b2c3d4", "force": true}'
 ```
 
+## 실행 클레임과 배달 멱등성
+
+- 프로세스 전역 `threading.RLock`과 인메모리 `_running_jobs` 집합으로 실행을 클레임합니다. cron tick(cron loop)과 `run_job`(server loop)이 이를 공유하므로 동시 tick/수동 Run은 두 번째 agent turn을 시작하지 않고 건너뜁니다. running은 영속화하지 않으며 프로세스 재시작 시 사라집니다.
+- `_execute_job`은 agent 실행 **전에** `next_run_at_ms`를 전진(슬롯 소비)시키고 저장합니다. 결과 배달 후 크래시가 나도 재시작 시 같은 slot을 다시 fire하지 않습니다. 실행 후 처리에서 반복 작업의 slot을 다시 전진시키면 안 됩니다(one-shot `at`만 disable/delete).
+- 배달은 `metadata["message_id"]="cron:<job>:<slot>"`을 실어 input queue의 `client_msg_id` 중복 제거를 재사용합니다. 이 조회는 ACTIVE 행만 보므로 활성 구간 보강일 뿐 크래시 보장은 아닙니다. 크래시 이중 배달을 막는 것은 사전 next_run 전진입니다.
+- `run_job`은 disabled 또는 already running이면 False를 반환합니다. `force`는 disabled만 우회하고 running 클레임은 우회하지 않습니다.
+
 ## 스케줄링 의미론
 
 | 유형 | 동작 |

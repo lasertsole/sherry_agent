@@ -277,6 +277,13 @@ curl -X POST http://127.0.0.1:8080/cron -H "Content-Type: application/json" \
 curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/json" -d '{"id": "a1b2c3d4", "force": true}'
 ```
 
+## Execution Claim & Delivery Idempotency
+
+- One process-wide `threading.RLock` plus an in-memory `_running_jobs` set claims an execution. The cron tick (cron loop) and `run_job` (server loop) share it, so a concurrent tick or manual Run skips instead of starting a second agent turn. Nothing is persisted; a process restart clears it.
+- `_execute_job` pre-advances `next_run_at_ms` (consuming the slot) and saves BEFORE the agent runs. A crash after the result was delivered therefore cannot refire that slot; the post-run path must not advance a recurring job a second time (only one-shot `at` jobs are disabled/deleted).
+- The delivery carries `metadata["message_id"]="cron:<job>:<slot>"`, reusing the input queue's `client_msg_id` dedup. That lookup only sees ACTIVE rows, so it is an active-window supplement, not the crash guarantee; the pre-advance is what closes the crash double-send.
+- `run_job` returns False when disabled or already running. `force` bypasses only the disabled check, never the running claim.
+
 ## Scheduling Semantics
 
 | Kind | Behavior |
