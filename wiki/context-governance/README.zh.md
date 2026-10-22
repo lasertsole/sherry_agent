@@ -133,7 +133,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 | 关注点 | 规则 |
 |---|---|
-| 注入什么 | 每个 builder 返回文本的来源各注入一条提醒：按优先级排序，标记 `origin=<来源 id>`、`provenance="reminder_catalog"`、`internal=True` |
+| 注入什么 | 每个 builder 返回文本的来源各注入一条提醒：预算顺序为高→低，投递时反转为低→高，使最高优先级位于尾部；标记 `origin=<来源 id>`、`provenance="reminder_catalog"`、`internal=True` |
 | 预算 | 每次调用全部来源合计 `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超预算时整条丢弃优先级最低者，绝不把一条提醒截成半句 |
 | 节流 | 来源可声明 `cooldown_turns`（TaskFlow 看板 / boulder：5）与 `only_if_changed`（内容相同不重复注入）；节流状态只为**真正注入过**的来源推进 |
 | 压缩之后 | 压缩会重置目录，于是下一轮从 live state 重新注入每个来源——提醒层不依赖历史是否幸存 |

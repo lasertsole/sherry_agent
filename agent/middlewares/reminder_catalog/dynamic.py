@@ -80,7 +80,12 @@ class DynamicReminderMiddleware(AgentMiddleware):
                     content=wrap_reminder(source_id, content),
                     metadata=system_reminder_metadata(source_id),
                 )
-                for source_id, content in injections.items()
+                # resolve_injections returns high→low (its descending sort is
+                # for budget allocation). Reverse for delivery so the highest
+                # priority view — plan mode, then the todo list — lands at the
+                # TAIL, closest to the generation point where recency bias
+                # gives it the strongest attention.
+                for source_id, content in reversed(list(injections.items()))
             ]
             logger.debug(
                 "DynamicReminderMiddleware: injecting {} reminder(s) for session {} (turn {}): {}",

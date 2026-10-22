@@ -134,7 +134,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 
 | 関心事 | ルール |
 |---|---|
-| 何を注入するか | builder がテキストを返したソースごとに 1 件: 優先度順、`origin=<ソース ID>`、`provenance="reminder_catalog"`、`internal=True` |
+| 何を注入するか | builder がテキストを返したソースごとに 1 件: 予算順は高→低、配信時は低→高に反転して最高優先度を末尾に置く。`origin=<ソース ID>`、`provenance="reminder_catalog"`、`internal=True` |
 | 予算 | 呼び出しごとに全ソース合計で `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超過時は最低優先度を丸ごと落とし、途中で切ることはしない |
 | スロットル | ソースは `cooldown_turns`（TaskFlow ボード / boulder: 5）と `only_if_changed`（同一内容は繰り返さない）を宣言できる。管理状態は実際に注入されたソースだけ進む |
 | 圧縮後 | 圧縮がカタログをリセットするため、次のターンに全ソースが live state から再注入される——リマインダー層は履歴の生存に依存しない |

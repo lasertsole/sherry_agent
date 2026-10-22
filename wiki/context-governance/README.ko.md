@@ -134,7 +134,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 
 | 관심사 | 규칙 |
 |---|---|
-| 무엇을 주입하나 | builder가 텍스트를 돌려준 소스마다 리마인더 1건: 우선순위 순, `origin=<소스 id>`, `provenance="reminder_catalog"`, `internal=True` |
+| 무엇을 주입하나 | builder가 텍스트를 돌려준 소스마다 리마인더 1건: 예산 순서는 높음→낮음, 전달 시 낮음→높음으로 뒤집어 최고 우선순위를 꼬리에 둡니다; `origin=<소스 id>`, `provenance="reminder_catalog"`, `internal=True` |
 | 예산 | 호출마다 모든 소스 합계 `REMINDER_CATALOG["total_budget_chars"]`(30 000) — 초과 시 최저 우선순위를 통째로 버리고 문장 중간을 자르지 않습니다 |
 | 스로틀 | 소스는 `cooldown_turns`(TaskFlow 보드 / boulder: 5)와 `only_if_changed`(동일 내용은 반복하지 않음)를 선언할 수 있습니다; 상태는 실제로 주입된 소스만 진행됩니다 |
 | 압축 후 | 압축이 카탈로그를 리셋하므로 다음 턴에 모든 소스가 live state에서 재주입됩니다 — 리마인더 층은 기록의 생존에 의존하지 않습니다 |

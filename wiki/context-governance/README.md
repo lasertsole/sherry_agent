@@ -137,7 +137,7 @@ The frozen memory snapshot has one deliberate exception. A session model switch 
 
 | Concern | Rule |
 |---|---|
-| What is injected | One reminder per source whose builder returned text: priority order, tagged `origin=<source id>`, `provenance="reminder_catalog"`, `internal=True` |
+| What is injected | One reminder per source whose builder returned text: budget order high→low, delivered low→high so the highest priority sits at the tail, tagged `origin=<source id>`, `provenance="reminder_catalog"`, `internal=True` |
 | Budget | `REMINDER_CATALOG["total_budget_chars"]` (30 000) across all sources per call — the lowest priority is dropped whole, never truncated mid-thought |
 | Throttle | A source may declare `cooldown_turns` (TaskFlow board / boulder: 5) and `only_if_changed` (an identical payload is not repeated); the bookkeeping advances only for sources actually injected |
 | After compression | The compaction resets the catalogue, so the next turn re-injects every source from live state — the reminder layer does not depend on history surviving |
