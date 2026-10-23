@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import posixpath
 import re
 import shlex
 import signal
@@ -152,6 +153,87 @@ def _resolve_root(creator_session_key: str, session_keys: Sequence[str]) -> Path
     return resolve_default_project_dir()
 
 
+def _normalize_path(value: object, root: Path) -> str:
+    """Normalize a declared or recorded path to a project-relative POSIX form."""
+    text = str(value or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    path = Path(text)
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return path.resolve().as_posix()
+    return posixpath.normpath(text)
+
+
+def _path_covers(declared: str, touched: str) -> bool:
+    """True when a declared file/dir and a touched path overlap."""
+    if not declared or not touched:
+        return False
+    return (
+        declared == touched
+        or touched.startswith(declared.rstrip("/") + "/")
+        or declared.startswith(touched.rstrip("/") + "/")
+    )
+
+
+def prioritized_sessions(
+    steps: Sequence[dict],
+    session_keys: Sequence[str],
+    creator_session_key: str = "",
+) -> list[str]:
+    """Steps whose declared ``file_deps`` another session wrote, in step order.
+
+    Derived at finish time, never persisted: a step's own writes do not count
+    (the per-session stale mark covers those); only OTHER sessions' write stale
+    events are intersected with the declared dependencies. The result is used
+    to replay those steps' commands FIRST, so a capped batch still covers the
+    steps a declaration says were affected.
+    """
+    try:
+        keys = list(dict.fromkeys(str(key) for key in session_keys if str(key or "").strip()))
+        if not keys:
+            return []
+        root = _resolve_root(creator_session_key, keys)
+        grouped = EvidenceLedger.read_for_keys(keys)
+        touched: dict[str, set[str]] = {}
+        for key in keys:
+            touched[key] = {
+                _normalize_path(row.get("file_path"), root)
+                for row in (grouped.get(key) or [])
+                if row.get("event") == "stale"
+                and row.get("scope") != "cross_session"
+                and str(row.get("file_path") or "").strip()
+            }
+        priority: list[str] = []
+        for step in steps:
+            child = str(step.get("child_session_key") or "")
+            raw_deps = step.get("file_deps")
+            if not isinstance(raw_deps, list):
+                continue
+            declared = [
+                _normalize_path(dep, root)
+                for dep in raw_deps
+                if isinstance(dep, str) and dep.strip()
+            ]
+            if not child or not declared:
+                continue
+            others = set().union(*(paths for key, paths in touched.items() if key != child))
+            if any(_path_covers(dep, path) for dep in declared for path in others):
+                priority.append(child)
+        if priority:
+            logger.info(
+                "regression gate: file_deps prioritized {} step(s): {}",
+                len(priority),
+                priority,
+            )
+        return list(dict.fromkeys(priority))
+    except Exception as exc:  # noqa: BLE001 - a priority hint must never block a finish
+        logger.warning("regression gate file_deps derivation failed (fail-open): {}", exc)
+        return []
+
+
 async def _run(argv: list[str], cwd: Path, timeout_s: int) -> tuple[int | None, str]:
     """Run one argv without a shell; returns (exit_code|None, bounded output).
 
@@ -235,6 +317,7 @@ def _append_unmark(session_key: str, command: str) -> None:
 async def reverify_flow_evidence(
     session_keys: Sequence[str],
     creator_session_key: str = "",
+    priority_session_keys: Sequence[str] = (),
 ) -> list[ReverifyResult]:
     """Replay a flow's passed verification commands once; append broken/unmark.
 
@@ -243,6 +326,11 @@ async def reverify_flow_evidence(
     pass appends ``unmark`` only for sessions whose evidence that command had
     marked stale/broken; a failure appends ``broken`` for each affected
     session. Skipped commands (unsafe, missing, timed out) append nothing.
+
+    ``priority_session_keys`` (from declared ``file_deps``) moves those
+    sessions' commands to the front; a stable sort keeps ledger order inside
+    each group. This changes WHICH commands fit under the cap, never the total
+    coverage when the cap is not hit.
     """
     if not EVIDENCE_REGRESSION_GATE["enabled"]:
         return []
@@ -267,7 +355,28 @@ async def reverify_flow_evidence(
             return []
 
         limit = max(1, int(EVIDENCE_REGRESSION_GATE["max_reverify_commands"]))
-        commands = list(targets)[:limit]
+        commands = list(targets)
+        priority = set(priority_session_keys)
+        if priority:
+            if str(EVIDENCE_REGRESSION_GATE["file_deps_mode"]) == "filter":
+                filtered = [
+                    command
+                    for command in commands
+                    if any(session in priority for session, _index in targets[command])
+                ]
+                if filtered:
+                    logger.info(
+                        "regression gate: file_deps filter narrowed {} command(s) to {}",
+                        len(commands),
+                        len(filtered),
+                    )
+                    commands = filtered
+            commands.sort(
+                key=lambda command: (
+                    0 if any(session in priority for session, _index in targets[command]) else 1
+                )
+            )
+        commands = commands[:limit]
         if len(targets) > limit:
             logger.info(
                 "regression gate: skipped {} command(s) above the {} cap",
@@ -319,4 +428,4 @@ async def reverify_flow_evidence(
         return []
 
 
-__all__ = ["ReverifyResult", "reverify_flow_evidence"]
+__all__ = ["ReverifyResult", "prioritized_sessions", "reverify_flow_evidence"]

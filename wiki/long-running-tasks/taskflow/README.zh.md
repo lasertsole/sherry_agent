@@ -126,6 +126,7 @@ blocked → ready → dispatched → done
 | `input_bindings`      | `{"param": "step-A.structured_result.files"}`——把上游结构化结果以 `## Input parameters` 块追加到本步骤派发的任务文本。 |
 | `validation_criteria` | 旧版文本标准；存在时仍会判别（`judge_criteria` 缺省时使用）。                            |
 | `retry_policy`        | 既有的失败重试策略（`max_retries`、`retry_delay_seconds`、`retry_on`）。                 |
+| `file_deps`           | 本步骤验证所依赖的项目相对源文件；其他步骤写入其中之一时，finish 时的重验会优先执行本步骤。 |
 
 实际字段（由 `taskflow_resume` 写入结果条目）：
 

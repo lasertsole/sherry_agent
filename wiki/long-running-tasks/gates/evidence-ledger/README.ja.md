@@ -35,7 +35,7 @@ terminal / python_repl がコマンドを実行
 
 **クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から編集パスを command に含むものを探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
 
-**Finish 時の再検証。** `taskflow_finish` の Gate C は最初に `regression_gate.reverify_flow_evidence()` を呼びます: flow の各セッションの passed コマンドを重複排除して 1 回ずつ再実行し（allowlist の実行ファイル、シェルなし、`max_reverify_commands` とコマンド単位タイムアウトで制限）、作業ディレクトリは flow のプロジェクトルートです。成功したら stale/broken だったコマンドに `unmark` を追加し、失敗したら `broken` を追加します。これは変更されたソースファイルを stale 行が名指ししていなくても A のテストコマンドを再実行するため、クロスファイル import 破壊を検出できる唯一の経路です。
+**Finish 時の再検証。** `taskflow_finish` の Gate C は最初に `regression_gate.reverify_flow_evidence()` を呼びます: flow の各セッションの passed コマンドを重複排除して 1 回ずつ再実行し（allowlist の実行ファイル、シェルなし、`max_reverify_commands` とコマンド単位タイムアウトで制限）、作業ディレクトリは flow のプロジェクトルートです。成功したら stale/broken だったコマンドに `unmark` を追加し、失敗したら `broken` を追加します。これは変更されたソースファイルを stale 行が名指ししていなくても A のテストコマンドを再実行するため、クロスファイル import 破壊を検出できる唯一の経路です。ステップは `file_deps` を宣言でき、他のステップの書き込みがそのいずれかに触れた場合、`prioritized_sessions()` がそのステップのコマンドを `max_reverify_commands` 上限より前に移動します（`file_deps_mode="prioritize"`、既定）。オプトインの `file_deps_mode="filter"` は宣言が命中したセッションだけを再実行します——安価ですが、未宣言ステップの破壊を見逃す可能性があります。
 
 ---
 

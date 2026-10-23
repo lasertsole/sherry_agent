@@ -126,6 +126,7 @@ blocked → ready → dispatched → done
 | `input_bindings`      | `{"param": "step-A.structured_result.files"}` — 상위 구조화 결과를 `## Input parameters` 블록으로 이 단계의 태스크 본문에 덧붙입니다. |
 | `validation_criteria` | 기존 텍스트 기준. 있으면 판정됩니다 (`judge_criteria`가 없을 때 사용).                   |
 | `retry_policy`        | 기존 실패 재시도 정책 (`max_retries`, `retry_delay_seconds`, `retry_on`).                |
+| `file_deps`           | 이 단계의 검증이 의존하는 프로젝트 상대 소스 파일. 다른 단계가 그중 하나를 쓰면 finish 시 재검증에서 이 단계가 우선됩니다. |
 
 실제 필드 (`taskflow_resume`이 결과 항목에 기록):
 

@@ -126,6 +126,7 @@ blocked → ready → dispatched → done
 | `input_bindings`      | `{"param": "step-A.structured_result.files"}`——上流の構造化結果を `## Input parameters` ブロックとして、このステップのタスク本文に追記します。 |
 | `validation_criteria` | 旧来のテキスト基準。存在すれば判定されます（`judge_criteria` が無い場合に使用）。        |
 | `retry_policy`        | 既存の失敗再試行ポリシー（`max_retries`、`retry_delay_seconds`、`retry_on`）。            |
+| `file_deps`           | このステップの検証が依存するプロジェクト相対のソースファイル。他のステップがそのいずれかを書くと、finish 時の再検証でこのステップが優先されます。 |
 
 実績フィールド（`taskflow_resume` が結果エントリに書き込み）：
 

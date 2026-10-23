@@ -151,9 +151,17 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     keys = [str(step.get("child_session_key") or "") for step in steps]
     keys.append(creator_key)
     try:
-        from agent.tools.pub_base.regression_gate import reverify_flow_evidence
+        from agent.tools.pub_base.regression_gate import (
+            prioritized_sessions,
+            reverify_flow_evidence,
+        )
 
-        await reverify_flow_evidence(keys, creator_session_key=creator_key)
+        priority = prioritized_sessions(steps, keys, creator_session_key=creator_key)
+        await reverify_flow_evidence(
+            keys,
+            creator_session_key=creator_key,
+            priority_session_keys=priority,
+        )
     except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
         logger.warning("Regression gate skipped (fail-open): {}", exc)
     try:

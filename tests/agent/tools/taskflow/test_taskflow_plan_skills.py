@@ -38,6 +38,42 @@ class TestPlanSkillsBinding:
         assert "skills" in plan_mod._SYSTEM_PROMPT
         assert "prepends" in plan_mod._SYSTEM_PROMPT
 
+    def test_parse_plan_keeps_file_deps(self):
+        raw = json.dumps(
+            [
+                {
+                    "step_id": "step-1",
+                    "task": "verify alpha",
+                    "depends_on": [],
+                    "file_deps": ["alpha.py", "src/core.py"],
+                }
+            ]
+        )
+
+        plan = plan_mod._parse_plan(raw)
+
+        assert plan[0]["file_deps"] == ["alpha.py", "src/core.py"]
+
+    def test_the_prompt_documents_file_deps(self):
+        assert "file_deps" in plan_mod._SYSTEM_PROMPT
+        assert "regression gate" in plan_mod._SYSTEM_PROMPT
+
+    def test_a_malformed_file_deps_value_is_dropped(self):
+        raw = json.dumps(
+            [
+                {
+                    "step_id": "step-1",
+                    "task": "verify alpha",
+                    "depends_on": [],
+                    "file_deps": "alpha.py",
+                }
+            ]
+        )
+
+        plan = plan_mod._parse_plan(raw)
+
+        assert plan[0]["file_deps"] is None
+
     def test_planned_steps_carry_the_binding_into_the_dispatch_text(self, monkeypatch):
         # What taskflow_plan writes (new_step(..., skills=...)) is exactly what
         # the dispatch builder consumes.

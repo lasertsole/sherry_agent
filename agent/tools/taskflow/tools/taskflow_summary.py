@@ -51,9 +51,17 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
             deps_text = "[" + ", ".join(str(dep) for dep in depends_on) + "]"
             criteria = str(step.get("validation_criteria") or "").strip()
             criteria_text = f" validation_criteria={criteria}" if criteria else ""
+            raw_file_deps = step.get("file_deps")
+            file_deps = (
+                [str(dep) for dep in raw_file_deps if str(dep).strip()]
+                if isinstance(raw_file_deps, list)
+                else []
+            )
+            file_deps_text = f" file_deps={file_deps}" if file_deps else ""
             lines.append(
                 f"  - [{step.get('step_id')}] {step_status(step)} {step.get('task')} "
-                f"-> {step.get('child_session_key')} depends_on={deps_text}{criteria_text}"
+                f"-> {step.get('child_session_key')} depends_on={deps_text}"
+                f"{file_deps_text}{criteria_text}"
             )
             lines.extend(_expectation_lines(step))
     counts = steps_summary(steps)

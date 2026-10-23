@@ -49,6 +49,7 @@ async def taskflow_run_task(
     response_schema: dict | None = None,
     expected_params: dict | None = None,
     input_bindings: dict | None = None,
+    file_deps: list[str] | None = None,
     judge_criteria: str | None = None,
     judge_model: str | None = None,
     functional_role: str | None = None,
@@ -99,6 +100,9 @@ async def taskflow_run_task(
     * input_bindings — {"param": "step-A.structured_result.files"} mappings read
       from upstream steps' structured results and appended to this step's
       dispatched task text.
+    * file_deps — project-relative source files this step's verification
+      depends on. When another step writes one, taskflow_finish replays this
+      step's verification first (a priority hint, not a persisted status).
 
     Execution metadata: functional_role (sub-agent specialization), step_model
     (child model override), step_timeout_seconds (per-step child timeout),
@@ -114,6 +118,11 @@ async def taskflow_run_task(
     policy_error = validate_policy(retry_policy)
     if policy_error:
         return policy_error
+    if file_deps is not None and (
+        not isinstance(file_deps, list)
+        or any(not isinstance(dep, str) or not dep.strip() for dep in file_deps)
+    ):
+        return "Error: file_deps must be a list of non-empty strings"
 
     flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
@@ -143,6 +152,7 @@ async def taskflow_run_task(
         "response_schema": response_schema,
         "expected_params": expected_params,
         "input_bindings": input_bindings,
+        "file_deps": file_deps,
         "judge_criteria": (judge_criteria or "").strip() or None,
         "judge_model": (judge_model or "").strip() or None,
         "functional_role": (functional_role or "").strip() or None,

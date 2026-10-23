@@ -40,7 +40,7 @@ Return ONLY a JSON array of steps, in an order where dependencies come first:
 
 [{"step_id": "step-1", "task": "...", "depends_on": [], \
 "judge_criteria": "optional acceptance criteria", "response_schema": {optional JSON schema}, \
-"skills": ["optional", "skill-names"]}]
+"skills": ["optional", "skill-names"], "file_deps": ["optional/project-relative-files"]}]
 
 Rules:
 * ``step_id`` values are unique and stable ("step-1", "step-2", ...).
@@ -54,6 +54,10 @@ what to produce. Include the concrete artefact or command when it is known.
 worker as its instructions (name the skill EXACTLY as the skills index spells \
 it). The system prepends those SKILL.md files to the step's task when it is \
 dispatched, so the task text itself should stay focused on the deliverable.
+* Add ``file_deps`` when this step verifies code that other steps may change: \
+list the project-relative source files its verification depends on. The \
+finish-time regression gate replays this step's verification first when one \
+of those files was written by another step.
 * Prefer 3-8 steps. No prose, no markdown fence: the JSON array only.
 """
 
@@ -94,6 +98,12 @@ def _parse_plan(raw: str) -> list[dict]:
         if unknown:
             deps = [dep for dep in deps if dep in seen]
         seen.add(step_id)
+        raw_file_deps = entry.get("file_deps")
+        file_deps = (
+            [dep.strip() for dep in raw_file_deps if isinstance(dep, str) and dep.strip()]
+            if isinstance(raw_file_deps, list)
+            else None
+        )
         plan.append(
             {
                 "step_id": step_id,
@@ -104,6 +114,8 @@ def _parse_plan(raw: str) -> list[dict]:
                 # Skill names whose SKILL.md the dispatch path prepends.
                 # ``None``/absent = no binding (the historical behaviour).
                 "skills": entry.get("skills"),
+                # Project-relative files this step's verification depends on.
+                "file_deps": file_deps or None,
             }
         )
     if not plan:
@@ -187,6 +199,7 @@ async def taskflow_plan(
             response_schema=entry.get("response_schema"),
             judge_criteria=entry.get("judge_criteria"),
             skills=entry.get("skills"),
+            file_deps=entry.get("file_deps"),
         )
         for entry in plan
     ]

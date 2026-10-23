@@ -126,6 +126,7 @@ Expectation fields (all optional, set by `taskflow_run_task`, stored on the step
 | `input_bindings`       | `{"param": "step-A.structured_result.files"}` — upstream structured values appended to this step's dispatched task as an `## Input parameters` block. |
 | `validation_criteria`  | Legacy text criteria; still judged when present (used when `judge_criteria` is absent).   |
 | `retry_policy`         | Existing failure retry policy (`max_retries`, `retry_delay_seconds`, `retry_on`).         |
+| `file_deps`            | Project-relative source files this step's verification depends on; when another step writes one, the finish-time replay prioritizes this step. |
 
 Actual fields (`taskflow_resume` records them on the result entry):
 

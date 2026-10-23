@@ -1,7 +1,7 @@
 # 计划：跨 Subagent 文件冲突检测——Staleness 传播 + 后写回归门
 
 - 建档日期：2026-10-23
-- 状态：**§2 + §3 已实施并验证（2026-10-24）；§4 待评审**。§3 采用 `on_finish` 一次性批量重验（不是原方案的 `on_announce`），以便覆盖跨文件破坏并避免每次 announce 的重跑成本。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
+- 状态：**§2 + §3 + §4 已实施并验证（2026-10-24）**。§3 采用 `on_finish` 一次性批量重验（不是原方案的 `on_announce`），以便覆盖跨文件破坏并避免每次 announce 的重跑成本；§4 以 `file_deps` 优先重验实现（默认 prioritize，可选 filter）。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
 - **文档范围**：两个增量改造——(1) 跨 session staleness 传播：B 写文件 F 时自动标记所有 session 对 F 的 evidence 为 stale；(2) 后写回归门：对有 stale evidence 的 session 自动重跑验证命令，检测语义级破坏。两者复用现有基础设施，不引入新依赖。
 - **硬约束**：evidence ledger 事件语义不变（staleness 仍派生；存储已是 SQLite）；fail-open（重验失败/命令不存在不崩）；不影响现有文件锁/TaskFlow/完成判断逻辑；跨 session 查询性能可接受。
 - 关联代码：
@@ -208,12 +208,12 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 ### 4.2 改动清单
 
-- [ ] **4.2.1** `_shared.py:127-142` 的 `_OPTIONAL_STEP_FIELDS` 增 `file_deps: list[str]`（文件路径列表，相对 project root）
-- [ ] **4.2.2** `taskflow_resume` / `taskflow_finish` 增文件依赖检查：
-  - 当 step B 修改了文件 F → 扫描所有 step 的 `file_deps` → 匹配 F 的 step A 标记 `needs_reverification`
-  - `needs_reverification` 是 step 的运行时状态（不入持久化 schema——从 evidence 的 stale/broken 派生）
-- [ ] **4.2.3** LLM prompt 引导：taskflow_plan 的 prompt 增"声明 file_deps"指引——让 LLM 在规划时声明文件依赖
-- [ ] **4.2.4** 与 §2/§3 的关系：
+- [x] **4.2.1** `_shared.py:127-142` 的 `_OPTIONAL_STEP_FIELDS` 增 `file_deps: list[str]`（文件路径列表，相对 project root）；`validate_steps_list` 校验 list[str]。
+- [x] **4.2.2** `taskflow_finish` 增文件依赖检查：
+  - 当 step B 修改了文件 F → 扫描所有 step 的 `file_deps` → 匹配 F 的 step A 进入 `prioritized_sessions`（即运行时的 `needs_reverification`）
+  - `needs_reverification` 只在 finish 时派生，不写入持久化 step schema；B 的“修改文件”来自其 session 的写 stale 事件（`scope != cross_session`），A 自己的写入不算
+- [x] **4.2.3** LLM prompt 引导：taskflow_plan 的 prompt 增"声明 file_deps"指引——让 LLM 在规划时声明文件依赖；`taskflow_summary` 也会显示 `file_deps`。
+- [x] **4.2.4** 与 §2/§3 的关系：
   - §2 的 cross-session staleness 是**自动的**（不需声明，B 写 F → 所有涉及 F 的 evidence 标 stale）
   - §4 的 file_deps 是**显式的**（step 声明"我依赖 F" → 更精确的触发）
   - 两者互补：§2 覆盖所有 evidence（广但可能误报），§4 覆盖声明了依赖的 step（精但依赖 LLM 声明质量）
@@ -510,4 +510,32 @@ claudecode 的 GreenContract / branch_lock / lane_events / recovery_recipes 是�
 - 命令必须通过 allowlist 且不含 shell 操作符；`bash -c`、`cmd1 && cmd2`、`python -c` 等会被跳过（保留原 stale，不误报 broken）。
 - 在 flow 的项目根执行（creator 绑定 → step 绑定 → 默认根）；隔离 worktree 的命令在合并后的主根重跑，这是 finish 时的正确视图。
 - 没有新增手动 unmark 工具：误报会由下一次通过的重验自动清除；如果命令因环境原因持续假失败，可以关闭 `EVIDENCE_REGRESSION_GATE["enabled"]`。
-- 仍未做 §4（`file_deps` 声明）；§3 已覆盖跨文件破坏，§4 只是减少重验范围/成本的精度增强。
+
+---
+
+## 13. §4 实施与 A/B 结果（2026-10-24）
+
+### 13.1 已落地
+
+- Step schema 新增可选 `file_deps: list[str]`（project-relative）；`validate_steps_list` 校验形状，`taskflow_plan` 解析 + prompt 引导，`taskflow_summary` 显示。
+- `regression_gate.prioritized_sessions()`：在 finish 时从各 session 的**写 stale 事件**推导“谁改了什么”，与其它 step 的 `file_deps` 求交；命中的 step 进入 `needs_reverification` 运行时集合（不落 step schema）。
+- `reverify_flow_evidence(priority_session_keys=...)`：受影响 step 的命令稳定排序到最前，再受 `max_reverify_commands` 截断——保证 cap 内优先覆盖声明过的依赖。
+- `EVIDENCE_REGRESSION_GATE["file_deps_mode"]`：`prioritize`（默认，保留 §3 全量覆盖）或 `filter`（只重放声明命中的命令，成本更低但依赖声明完整）。
+
+### 13.2 A/B（真实 e2e，cap 可调）
+
+| 场景 | 重放命令数 | 结果 |
+|---|---:|---|
+| 无 `file_deps`，cap=1，A 的破坏命令排第 4 | 1 / 4 | 只跑无关命令（pass）→ **漏报，finish 通过** |
+| 有 `file_deps=["alpha.py"]`，cap=1 | 1 / 4 | A 被排到第 1 → pytest fail → `[broken]` → **拒绝** |
+| `prioritize`，cap=10，A 声明 alpha，C 未声明且 delta 被破坏 | 5 / 5 | A pass、C fail → `[broken]` → **拒绝**（覆盖未声明 step） |
+| `filter`，cap=10，同场景 | 1 / 5 | 只跑 A（pass）→ C 的破坏**漏报**，finish 通过 |
+
+### 13.3 结论
+
+**§4 没有比 §3 更大的覆盖面，它优化的是“cap 内先跑谁”和成本。**
+
+- 默认 `prioritize` 不减少覆盖（cap 宽松时仍重放全部），只是保证声明过的受影响 step 一定在 cap 内——这对 `max_reverify_commands` 限制下的检测有真实价值。
+- `filter` 把 5 条降到 1 条，但会漏掉未声明 step 的跨文件破坏；只有在所有 step 的 `file_deps` 都可信时才应启用。
+- 因此不建议把 `filter` 设为默认；`prioritize` 是安全默认，`filter` 是显式的成本换覆盖选项。
+- 若目标是“减少 §3 的测试开销”而非“提高检出率”，filter 有价值；若目标是“不漏报”，prioritize + §3 全量重放仍是当前最强组合。

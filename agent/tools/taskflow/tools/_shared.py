@@ -139,6 +139,7 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "input_bindings",  # upstream structured fields bound as inputs
     "retry_policy",  # existing: failure retry policy
     "skills",  # skill names whose SKILL.md is prepended at dispatch (see _skill_prepend)
+    "file_deps",  # project-relative files this step's verification depends on
 )
 
 
@@ -584,6 +585,13 @@ def validate_steps_list(steps: list) -> str | None:
                 return f"Error: step '{step_id}' has an invalid depends_on entry"
             if dep.strip() == step_id:
                 return f"Error: step '{step_id}' cannot depend on itself"
+        if "file_deps" in step:
+            file_deps = step["file_deps"]
+            if not isinstance(file_deps, list):
+                return f"Error: step '{step_id}' file_deps must be a list"
+            for dep in file_deps:
+                if not isinstance(dep, str) or not dep.strip():
+                    return f"Error: step '{step_id}' has an invalid file_deps entry"
     for step in steps:
         step_id = str(step["step_id"]).strip()
         for dep in step.get("depends_on") or []:

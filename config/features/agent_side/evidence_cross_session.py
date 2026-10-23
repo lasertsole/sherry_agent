@@ -35,6 +35,9 @@ class EvidenceRegressionGateConfig(TypedDict):
     reverify_timeout_s: int
     max_reverify_commands: int
     max_output_chars: int
+    # "prioritize": replay affected commands first, then the rest.
+    # "filter": replay ONLY commands whose step declared a touched file_deps.
+    file_deps_mode: str
 
 
 EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
@@ -43,4 +46,6 @@ EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
     "reverify_timeout_s": 60,
     "max_reverify_commands": 10,
     "max_output_chars": 500,
+    # Declarations reorder the batch; "filter" is the opt-in low-cost mode.
+    "file_deps_mode": "prioritize",
 }

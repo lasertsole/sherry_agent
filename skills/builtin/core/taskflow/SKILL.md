@@ -45,9 +45,10 @@ getTaskSummary).
   judge model), `expected_params` (structured inputs, recorded for the report),
   and `input_bindings` (e.g. `{"target_files": "step-1.structured_result.files"}`
   — upstream structured values appended to this step's task as an
-  `## Input parameters` block). Execution metadata: `functional_role`
-  (researcher / executor / reviewer / librarian / general), `step_model`,
-  `step_timeout_seconds`, `priority`. `depends_on` is a list of
+  `## Input parameters` block), `file_deps` (project-relative source files
+  whose changes should trigger a re-verification of this step), and execution
+  metadata: `functional_role` (researcher / executor / reviewer / librarian /
+  general), `step_model`, `step_timeout_seconds`, `priority`. `depends_on` is a list of
   prerequisite step ids (e.g. `["step-1"]`): while dependencies are unmet the
   step is recorded as `blocked` and is not dispatched; once every dependency is
   `done` it is dispatched immediately and recorded as `dispatched`. When the
@@ -188,8 +189,12 @@ and, optionally, its expectations:
   "Step statuses" below).
 - expectations (all optional, all defaulting to "no gate"): `response_schema`,
   `judge_criteria` / `judge_model`, `expected_params`, `input_bindings`,
-  `validation_criteria`, `retry_policy`, and the execution metadata
+  `validation_criteria`, `retry_policy`, `file_deps`, and the execution metadata
   `functional_role` / `step_model` / `step_timeout_seconds` / `priority`.
+  `file_deps` lists project-relative source files this step's verification
+  depends on; when another step's writes touch one, `taskflow_finish` replays
+  this step's verification first (the declaration is a priority hint, not a
+  persisted status).
 
 Status progression: `blocked -> ready -> dispatched -> done`, with `failed` /
 `skipped` / `cancelled` ending a step that did not succeed.
