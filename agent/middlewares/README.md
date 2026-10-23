@@ -238,7 +238,7 @@ Coalescing is by construction — only the comparison at send time matters: any 
 
 The notices are `HumanMessage`s — the injected-carrier role — carrying `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` (with `git_head` as the origin for the branch notice). The persistence layer keeps that origin on the human row, so the chat renders it as a neutral system card (labels **Working directory** / **Git branch**, folder and branch glyphs) instead of a user bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on USER rows as well as AI rows (the legacy shape, written while the notice was an `AIMessage`).
 
-Because a notice is a human message by role but was never written by the user, every scanner that walks human messages skips it through `pub.func.message.workspace_notice.is_workspace_notice`: `split_into_turns` (a notice is not a turn boundary, so compression's turn budget is unaffected), HITL's `_is_headless_turn` (a trailing notice must not make a turn operator-less) and the summarizer / memory-flush serializers (labelled `[System notice]` / `system`, never `[User]`).
+Because a notice is a human message by role but was never written by the user, every scanner that walks human messages skips it through `pub.func.message.workspace_notice.is_workspace_notice`: `split_into_turns` (a notice is not a turn boundary, so compression's turn budget is unaffected), HITL's `_is_headless_turn` (a trailing notice must not make a turn operator-less) and the summarizer's serializer (labelled `[System notice]` / `system`, never `[User]`).
 
 The real `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notices instead. Fail-open: any error is logged and the hook returns `None`.
 
@@ -405,7 +405,7 @@ Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `aft
 Registered immediately AFTER `TaskIntentMiddleware` (whose per-turn dedup needs the user message still last when it runs). On the turn's FIRST model call it injects the LIVE views as `<system-reminder source="…">` HumanMessages: plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index. The system prompt itself now carries only stable content (persona + memory + skills index) — a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it, and a prompt only rebuilt on a config change / compaction showed a STALE todo list in between.
 
 - **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the TaskFlow board / boulder: at most once per 5 turns) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
-- **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer / memory-flush labels.
+- **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer's labels.
 - **After a compaction** the catalogue is reset, so the next turn re-derives every source from live state — the layer never depends on the older reminders surviving the compression.
 - **Gated** like the other optional entries (`middleware_enabled`), and fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn.
 
@@ -1093,7 +1093,6 @@ agent/middlewares/
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── media_offload.py         # compression-time inline-media offload
-│   ├── memory_flush.py          # pre-compression memory flush
 │   ├── nudges.py                # compression-time nudge scheduling + prompts
 │   ├── plan_context.py          # active-plan detection for the plan-extraction nudge
 │   └── summary_doc.py           # SummaryDoc schema + deterministic Markdown renderer

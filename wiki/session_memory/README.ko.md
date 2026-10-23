@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)이 구현되었으며 장기 작업 편성도 포함됩니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
+SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)가 구현되어 있습니다 — 압축 전 메모리 플러시는 압축 시 memory review가 그 역할을 포함하므로 폐기되었습니다 — 여기에 장기 작업 편성이 더해집니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
 
 > 상태(2026-09-13): 플랜 폐기. 이 README가 참조 기준입니다.
 
@@ -10,7 +10,6 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 
 | 기능 | 위치 |
 |---|---|
-| 압축 전 메모리 플러시 | `agent/middlewares/summarization/memory_flush.py` |
 | 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization/core.py`의 `_COOLDOWN_PERSIST_KEYS` |
 | SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 마이그레이션 v10 |
 | 도구 출력 한 줄 요약 | `pub/func/message/tool_output_prune.py` |
@@ -26,12 +25,12 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 
 ## 메모리 파일
 
-세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 유일한 전역 파일(`workspace/memory/FACTS.md`)이며 MEMORY.md / USER.md와 함께 로드됩니다. **시스템 수준 / 프로젝트 횡단** 함정 — 어떤 프로젝트에서든 참인 사실 — 만 기록합니다. 프로젝트별 사실은 MEMORY.md 또는 해당 프로젝트의 AGENTS.md에 쓰며, nudge가 이 라우팅을 강제합니다(FACTS에 잘못 들어간 프로젝트 사실은 MEMORY로 이전). per-project FACTS는 없으며, 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. 압축 전 memory flush는 FACTS.md를 쓰지 않습니다. 스냅샷은 세션 동안 동결되지만, 세션의 모델 또는 사고 제어가 바뀌면 예외입니다: 이런 전환 뒤에는 provider의 prefix 캐시가 이미 차가우므로 다음 턴의 `before_model` 훅이 스냅샷을 다시 로드하고 캐시된 시스템 프롬프트를 무효화하여, 세션 중간의 메모리 쓰기가 그 턴의 첫 모델 호출에서 보이게 합니다.
+세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 유일한 전역 파일(`workspace/memory/FACTS.md`)이며 MEMORY.md / USER.md와 함께 로드됩니다. **시스템 수준 / 프로젝트 횡단** 함정 — 어떤 프로젝트에서든 참인 사실 — 만 기록합니다. 프로젝트별 사실은 MEMORY.md 또는 해당 프로젝트의 AGENTS.md에 쓰며, nudge가 이 라우팅을 강제합니다(FACTS에 잘못 들어간 프로젝트 사실은 MEMORY로 이전). per-project FACTS는 없으며, 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. FACTS.md는 memory review / plan extraction nudge가 유지합니다. 스냅샷은 세션 동안 동결되지만, 세션의 모델 또는 사고 제어가 바뀌면 예외입니다: 이런 전환 뒤에는 provider의 prefix 캐시가 이미 차가우므로 다음 턴의 `before_model` 훅이 스냅샷을 다시 로드하고 캐시된 시스템 프롬프트를 무효화하여, 세션 중간의 메모리 쓰기가 그 턴의 첫 모델 호출에서 보이게 합니다.
 
 | 파일 | 용도 | 상한 | 유지보수자 |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`) | `memory` 도구(`memory` 대상: memory review nudge, memory flush) |
-| `workspace/memory/USER.md` | 사용자 프로필: 선호, 소통 스타일, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`) | `memory` 도구(`user` 대상: memory review nudge, memory flush) |
+| `workspace/memory/MEMORY.md` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`) | `memory` 도구(`memory` 대상: memory review nudge) |
+| `workspace/memory/USER.md` | 사용자 프로필: 선호, 소통 스타일, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`) | `memory` 도구(`user` 대상: memory review nudge) |
 | `workspace/memory/FACTS.md` | 시스템 수준 / 프로젝트 횡단 함정과 관례; 매 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`), 상한 초과 시 가장 오래된 항목부터 롤오프 | `memory` 도구(`facts` 대상: memory review / plan extraction nudge) |
 
 ## MesMemory 마이그레이션(v10–v17)

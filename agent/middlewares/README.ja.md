@@ -238,7 +238,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 通知は注入キャリアの役割である `HumanMessage` で、`metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` を伴う（ブランチ通知の origin は `git_head`）。永続化層はその origin を人間行に保持するため、チャットはユーザーの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ** / **Git ブランチ**、フォルダーとブランチのアイコン）として描画する — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は非 `user` origin を USER 行でも AI 行でも（AI 行は通知がまだ `AIMessage` だった旧形態）キャリアとして扱う。
 
-通知は役割としては人間メッセージだがユーザーが書いたものではないため、人間メッセージを走査するすべてのスキャナーは `pub.func.message.workspace_notice.is_workspace_notice` でこれを飛ばす: `split_into_turns`（通知はターン境界ではないので圧縮のターン予算に影響しない）、HITL の `_is_headless_turn`（末尾の通知でターンが無人になってはいけない）、そして要約 / メモリ フラッシュのシリアライザ（`[System notice]` / `system` とラベル付けし、`[User]` にはしない）。
+通知は役割としては人間メッセージだがユーザーが書いたものではないため、人間メッセージを走査するすべてのスキャナーは `pub.func.message.workspace_notice.is_workspace_notice` でこれを飛ばす: `split_into_turns`（通知はターン境界ではないので圧縮のターン予算に影響しない）、HITL の `_is_headless_turn`（末尾の通知でターンが無人になってはいけない）、そして要約のシリアライザ（`[System notice]` / `system` とラベル付けし、`[User]` にはしない）。
 
 本来の `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
@@ -405,7 +405,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `TaskIntentMiddleware` の直後に登録されます（そのターン内重複排除は、実行時にユーザーメッセージが最後のままである必要があります）。ターンの**最初のモデル呼び出し**で、**ライブビュー**を `<system-reminder source="…">` HumanMessage として注入します: プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引。システムプロンプト自体は安定した内容（persona + memory + スキル索引）だけを載せます——最初のトークンが毎ターン変わるプロンプトは、以降すべての prefix キャッシュを無効化します; 設定変更 / 圧縮でしか再構築されないプロンプトは、その間**古い** todo リストを見せ続けます。
 
 - **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
-- **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約 / memory_flush のラベル。
+- **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約のラベル。
 - **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
 - 他のオプション項目と同様に**スイッチで門控**され（`middleware_enabled`）、全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません。
 
@@ -1090,7 +1090,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避
-│   ├── memory_flush.py          # 圧縮前メモリフラッシュ
 │   ├── nudges.py                # 圧縮時 nudge のスケジューリング + プロンプト
 │   ├── plan_context.py          # プラン抽出 nudge のアクティブプラン検出
 │   └── summary_doc.py           # SummaryDoc スキーマ + 決定論的 Markdown レンダラー

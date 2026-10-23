@@ -2,9 +2,9 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
-一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
+一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -20,7 +20,6 @@
   - [セッションボードと分離](engine/README.ja.md#-セッションボードと分離)
 - [メモリと継続性](memory/README.ja.md)
   - [階層メモリ](memory/README.ja.md#-階層メモリ)
-  - [圧縮前メモリフラッシュ](memory/README.ja.md#-圧縮前メモリフラッシュ)
   - [要約 ↔ TaskFlow 連携](memory/README.ja.md#-要約--taskflow-連携)
   - [サブエージェントメモリ還流](memory/README.ja.md#-サブエージェントメモリ還流)
   - [ツール出力の要約](memory/README.ja.md#-ツール出力の要約)
@@ -39,7 +38,7 @@
 
 ## 🎯 概要
 
-長時間タスクスタックは、メインエージェントがマルチターンの作業を**永続的な flow** へ分解し、そのステップ同士が依存し合えるようにし、各準備完了ステップを子エージェントへディスパッチし、プロセス再起動を生き延びられるようにします。7 つのサブシステムが協調します：
+長時間タスクスタックは、メインエージェントがマルチターンの作業を**永続的な flow** へ分解し、そのステップ同士が依存し合えるようにし、各準備完了ステップを子エージェントへディスパッチし、プロセス再起動を生き延びられるようにします。6 つのサブシステムが協調します：
 
 | # | サブシステム | 入口 | 永続化先 |
 | :- | :--- | :--- | :--- |
@@ -47,9 +46,8 @@
 | 2 | **トークン / コスト予算** | `taskflow_budget`、`taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **締め切り** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
-| 5 | **圧縮前フラッシュ** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 6 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
-| 7 | **三色孤児 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / アクティブ `todos` |
+| 5 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
+| 6 | **三色孤児 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / アクティブ `todos` |
 
 全体を貫く設計契約は**エラーをテキストとして返す**ことです：ツールは業務エラーをモデルへ投げず、`Error:` で始まる人間可読な文字列を返します。すべてのバックグラウンドフックは**フェイルオープン**です——レジストリが使えなくても sweeper がクラッシュしても、「長時間タスクのコンテキストなし」へ退化するだけで、ターンを壊すことはありません。
 
@@ -85,13 +83,13 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **53** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
+| `config/features/agent_side/` | **52** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
 | `config/features/infra_side/` | **28** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格、ローカルモデルダウンロード） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **81 個の feature オブジェクト**を保持します——エージェント側 53 + インフラ側 28——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **80 個の feature オブジェクト**を保持します——エージェント側 52 + インフラ側 28——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -108,12 +106,6 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | | `max_flows_per_session` | 20 |
 | `MODEL_PRICING`（`infra_side/model_pricing.py`） | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `MEMORY_FLUSH`（`agent_side/memory_flush.py`） | `enabled` | `MEMORY_FLUSH_ENABLED`（既定 1） |
-| | `model` | `MEMORY_FLUSH_MODEL`（既定 ""） |
-| | `soft_threshold_tokens` | 8000 |
-| | `force_flush_chars` | 50000 |
-| | `output_max_tokens` | 2048 |
-| | `timeout_seconds` | 30 |
 | `SUMMARIZATION`（`agent_side/summarization.py`） | `prune_protect_tokens` | 40000 |
 | | `prune_min_reduction_tokens` | 5000 |
 | | `protected_tools` | `{"memory", "skill_view", "skill_list"}` |
@@ -164,8 +156,8 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
          ▼                                                                         │
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
-│ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+TaskFlow)       │   │
+│ _expire_overdue_taskflows    │                   │ prune → summary           │   │
+│ _scan_stale_waiting_taskflows│                   │ (+TaskFlow)               │   │
 └──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
@@ -221,7 +213,6 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 自動再開プロンプトブロック |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | ツール出力の一行要約 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 継続性保存フック |
-| `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 圧縮前フラッシュ |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションボード読み取り（SQL `session_id` フィルタ） |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失敗分類 |
@@ -270,13 +261,13 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_index_audit.py` | SQLite インデックス更新パスとクエリプラン監査 |
 | `test_update_steps.py` | ステップリスト全置換：追加/削除/書き換え/並べ替えと dispatched/done 安全規則 |
 
-横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留フローのプロンプト注入）、`tests/server/test_session_project.py`（プロジェクトディレクトリ束縛：保留/昇格、起動時のウォームアップ）、`tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（ファイルブラウザの `resolve_within` ゲートをツール境界で再実行）。
+横断スイート：`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留フローのプロンプト注入）、`tests/server/test_session_project.py`（プロジェクトディレクトリ束縛：保留/昇格、起動時のウォームアップ）、`tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（ファイルブラウザの `resolve_within` ゲートをツール境界で再実行）。
 
 標準の uv/pytest ツールでこの領域だけを実行：
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
-uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
+uv run pytest tests/context_engine/test_session_continuity.py -q
 uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
@@ -287,10 +278,9 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **`done` だけでは成功を意味しません。** ステップの `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。期待が何も設定されていない場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は「結果が注入された」に退化するため、エラーを報告した子でも `done` になり後続をアンロックし得ます。期待を宣言するか `step_outcome="failure"` を宣言すれば、閉ループがそれを捕まえます——`failed` / `skipped` / `cancelled` は実際のステップ状態となり、失敗は依存側をアンロックせず、`taskflow_finish` も未解決ステップを残したまま完了しません。
 - **`taskflow_wait_all` は設計上 flow スコープ。** 指定 flow のディスパッチ済みステップに記録された子だけを待ち、未知/クリーンアップ済みの run は確定とみなします。「すべてのアクティブ flow を待つ」グローバルプリミティブはありません。
 - **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
-- **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 81。** 設定レジストリは 81 個の feature オブジェクト（エージェント側 53 + インフラ側 28）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
+- **レジストリ規模は 80。** 設定レジストリは 80 個の feature オブジェクト（エージェント側 52 + インフラ側 28）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。

@@ -1545,7 +1545,7 @@ onBeforeUnmount(onHide);
           "main": "Main chat model — drives conversation, tool calls, task planning, and the final answer. Best for your strongest general model with reliable tool use and a long context.",
           "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
           "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
-          "compression": "Compression model — summarizes long conversations and runs memory flushes. Best for a long-context, low-cost model.",
+          "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
           "reasoner": "Reasoner model — deep analysis, math/logic reasoning, and complex problem solving. Best for hard tasks; everyday chat can stay on the main model.",
           "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
           "vttt": "Video-to-text model — extracts and describes video content. Use for video summaries and scene understanding.",

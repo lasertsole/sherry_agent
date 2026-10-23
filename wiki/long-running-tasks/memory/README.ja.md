@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> [Long-Running Tasks](../README.ja.md) の一部：二層メモリシステム、圧縮前メモリフラッシュ、要約 ↔ TaskFlow 連携、サブエージェントメモリ還流、ツール出力の一行要約、セッション継続性、TaskFlow 自動再開。
+> [Long-Running Tasks](../README.ja.md) の一部：二層メモリシステム、要約 ↔ TaskFlow 連携、サブエージェントメモリ還流、ツール出力の一行要約、セッション継続性、TaskFlow 自動再開。
 
 ---
 
@@ -22,23 +22,6 @@
 `memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 
 **グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:227`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
-
-## 🔥 圧縮前メモリフラッシュ
-
-要約ミドルウェアが古いメッセージを破棄する前に、`agent/middlewares/summarization/memory_flush.py` は安価なモデルへ、永続的な事実を `MEMORY.md` に保存する最後の機会を与えます。トリガーは `should_flush(discarded_messages, estimated_tokens)`（`memory_flush.py:43`）：
-
-```python
-if not MEMORY_FLUSH["enabled"]:
-    return False
-total_chars = sum(len(_msg_to_text(m)) for m in discarded_messages)
-if total_chars >= MEMORY_FLUSH["force_flush_chars"]:   # 50_000
-    return True
-return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
-```
-
-発火すると、`run_memory_flush`（非同期）/ `run_memory_flush_sync` が注入されたファクトリでモデルを構築し、単一のプレーンテキスト抽出プロンプト（`_FLUSH_PROMPT`、`memory_flush.py:19`）を使います。出力は `§` で区切られた `Environment / Project / Decision / User / Tool` の事実リストです。空の結果やリテラル `(none)` はスキップされます。抽出テキストは `MemoryStore.append_entries(new_entries)`（`memory.py:281`）へ渡され、`§` で分割し、各候補を注入スキャンし、既存集合と重複排除し、追記し、2200 文字を超える間は最古のエントリを追い出し、最後に一度のアトミック書き込みを行います。`append_entries` は常に `MEMORY.md` を対象にします。すべての失敗経路は `False` を返して握りつぶされます——フラッシュが圧縮をブロックすることは決してありません。
-
-⚠️ **配線状況。** `Summarization.__init__` は `memory_store` / `llm_factory` を受け取り（どちらも既定 `None`、`summarization/core.py:259-260`）、両方が設定されている場合にのみ、`_apply_compression`（`summarization/compression.py:138`）と `_aapply_compression`（`summarization/compression.py:221`）の中でフラッシュを呼びます。現在の本番インスタンス——メインエージェント `agent/core.py:204` とサブエージェント `agent/tools/subagent/spawn/core.py:909`——はこれらを渡して**いません**。したがってフラッシュは実装・テスト済みですが、呼び出し箇所がストアと `factory(model=…, max_tokens=…, timeout=…)` の形のファクトリを提供するまで潜在状態にあります。
 
 ## 🔗 要約 ↔ TaskFlow 連携
 

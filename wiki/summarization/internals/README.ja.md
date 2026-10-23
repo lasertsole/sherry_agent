@@ -64,7 +64,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 - ブロックはテキストポインタ `[evicted to: <path>]` に置き換わります。`pub/func/message/eviction.py` が出すのと同じマーカーなので、`_collect_evicted_refs` が拾い、`_finalize_summary_doc` がパスを `SummaryDoc.evicted_refs` に運びます（*Evicted References* として描画）;
 - デコードまたは書き込みに失敗したブロックは `<media error="failed_to_offload" />` になります —— メディアの失敗が圧縮を壊すことはありません。
 
-保持ウィンドウ（`current_messages[cutoff:]`）は決して触りません: メディアはそのターンが実際に要約されるまで残ります。両方の圧縮経路が nudge スケジュールとメモリフラッシュの前にプレフィックススライスに対してオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプト（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）は、ポインタが存在すること、`evicted_refs` に逐語で持ち越すこと、視覚/音声/動画の詳細を捏造しないこと、ペイロードはパスから取得できることをモデルに伝えます。
+保持ウィンドウ（`current_messages[cutoff:]`）は決して触りません: メディアはそのターンが実際に要約されるまで残ります。両方の圧縮経路が nudge スケジュールの前にプレフィックススライスに対してオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプト（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）は、ポインタが存在すること、`evicted_refs` に逐語で持ち越すこと、視覚/音声/動画の詳細を捏造しないこと、ペイロードはパスから取得できることをモデルに伝えます。
 
 メディアファイルはセッションツリー内にあるため、`clear_session()` が `evicted/` と `plans/` とともに削除します。
 

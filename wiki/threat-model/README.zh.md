@@ -91,7 +91,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | 面 | 模块 | 做什么 |
 |---|---|---|
-| 记忆写入（`memory` 工具的 `add`/`replace` 与 flush 路径） | `agent/tools/memory.py` | 用一套面向散文的模式表扫描后拒绝写入；被拦下的条目从不落盘。它不复用上面的扫描器分档，因为记忆条目是*介绍系统*的散文——一条提到 `.bashrc` 或 `KEY=` 变量的笔记是笔记，不是攻击 |
+| 记忆写入（`memory` 工具的 `add`/`replace` 与 `MemoryStore.append_entries`） | `agent/tools/memory.py` | 用一套面向散文的模式表扫描后拒绝写入；被拦下的条目从不落盘。它不复用上面的扫描器分档，因为记忆条目是*介绍系统*的散文——一条提到 `.bashrc` 或 `KEY=` 变量的笔记是笔记，不是攻击 |
 | 捕获到的终端输出 | `agent/security/terminal_output.py` | 去掉 CSI/OSC 与其余转义序列、C0 控制字节，并施加回车覆写语义（`10%\r100%` → `100%`；`\r\n` 行尾保留其文本）。`terminal` 的两个 spawn 落点（同步与异步）都施加 |
 | 携带内联推理的回答文本 | `agent/security/think_scrub.py` | 把 `<think>`/`<thinking>`/`<reasoning>` 的内容从回答通道搬到客户端渲染思考块的推理通道。每回合一个 scrubber，且与切分无关：分块边界由 provider 决定，所以标签在任意位置被切开都必须与整段一致 |
 | 渠道用户 / 聊天标识 | `agent/security/pii.py` | 日志写 `«pii:<12 位十六进制>»` 而不是平台标识。跨进程稳定，因此"收到"与"已发送"在之后的日志文件里仍可关联；原值保留在它发挥作用的地方（路由表、回复目标、平台 SDK 调用） |

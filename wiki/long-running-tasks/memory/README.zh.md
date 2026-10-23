@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> [Long-Running Tasks](../README.zh.md) 的一部分：双层记忆系统、压缩前记忆落盘、摘要 ↔ TaskFlow 协调、子 Agent 记忆回流、工具输出单行摘要、会话连续性与 TaskFlow 自动恢复。
+> [Long-Running Tasks](../README.zh.md) 的一部分：双层记忆系统、摘要 ↔ TaskFlow 协调、子 Agent 记忆回流、工具输出单行摘要、会话连续性与 TaskFlow 自动恢复。
 
 ---
 
@@ -22,23 +22,6 @@
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
 **图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:227`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
-
-## 🔥 压缩前的记忆落盘
-
-在摘要中间件丢弃旧消息之前，`agent/middlewares/summarization/memory_flush.py` 给廉价模型最后一次机会，把持久事实写入 `MEMORY.md`。触发条件为 `should_flush(discarded_messages, estimated_tokens)`（`memory_flush.py:43`）：
-
-```python
-if not MEMORY_FLUSH["enabled"]:
-    return False
-total_chars = sum(len(_msg_to_text(m)) for m in discarded_messages)
-if total_chars >= MEMORY_FLUSH["force_flush_chars"]:   # 50_000
-    return True
-return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
-```
-
-触发时，`run_memory_flush`（异步）/ `run_memory_flush_sync` 通过注入的工厂构建模型，并使用单个纯文本抽取提示词（`_FLUSH_PROMPT`，`memory_flush.py:19`），其输出是一个以 `§` 分隔的 `Environment / Project / Decision / User / Tool` 事实列表。空结果或字面量 `(none)` 会被跳过。抽取出的文本交给 `MemoryStore.append_entries(new_entries)`（`memory.py:281`），后者按 `§` 切分，对每个候选做注入扫描，与现有集合去重，追加，并在超过 2200 字符时淘汰最旧条目，最后做一次原子写入。`append_entries` 始终写入 `MEMORY.md`。每条失败路径都返回 `False` 并被吞掉——落盘永远不会阻塞压缩。
-
-⚠️ **接线状态。** `Summarization.__init__` 接受 `memory_store` / `llm_factory`（二者默认均为 `None`，`summarization/core.py:259-260`），且仅在二者都设置时调用落盘，位置在 `_apply_compression`（`summarization/compression.py:138`）与 `_aapply_compression`（`summarization/compression.py:221`）内。当前生产实例——主 Agent `agent/core.py:204` 与子 Agent `agent/tools/subagent/spawn/core.py:909`——并**未**传入它们，因此落盘功能已实现并有测试覆盖，但在某个调用点提供 store 与形如 `factory(model=…, max_tokens=…, timeout=…)` 的工厂之前一直处于潜伏状态。
 
 ## 🔗 摘要 ↔ TaskFlow 协调
 

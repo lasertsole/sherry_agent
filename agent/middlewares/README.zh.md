@@ -400,7 +400,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 紧跟在 `TaskIntentMiddleware` 之后注册（后者的轮内去重需要它运行时用户消息仍在最后）。在每轮**首次模型调用**时把**实时视图**以 `<system-reminder source="…">` HumanMessage 注入：计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引。系统提示词本身现在只承载稳定内容（persona + memory + 技能索引）——首 token 每轮变化的提示词会让提供方的前缀缓存从那里起全部失效；而只在配置变更/压缩时重建的提示词，其间展示的是**过期**的 todo 列表。
 
 - **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（TaskFlow 看板 / boulder：每 5 轮最多一次）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
-- **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要 / memory_flush 标签。
+- **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要标签。
 - **压缩之后**目录被重置，因此下一轮会从 live state 重新推导每个来源——这一层从不依赖旧提醒是否幸存。
 - 与其他可选项一样**受开关门控**（`middleware_enabled`），且全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合。
 
@@ -1065,7 +1065,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── media_offload.py         # 压缩时内联媒体归档
-│   ├── memory_flush.py          # 压缩前记忆落盘
 │   ├── nudges.py                # 压缩时 nudge 调度 + 提示词
 │   ├── plan_context.py          # 计划提取 nudge 的活跃计划检测
 │   └── summary_doc.py           # SummaryDoc 模式 + 确定性 Markdown 渲染

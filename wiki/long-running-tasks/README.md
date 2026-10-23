@@ -2,9 +2,9 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 14 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, judges criteria-bearing step results with the TaskFlow decision LLM (`TASKFLOW_LLM_*`, auxiliary fallback unless configured) (`pass` / `retry` / `block`), aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
+> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 14 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, judges criteria-bearing step results with the TaskFlow decision LLM (`TASKFLOW_LLM_*`, auxiliary fallback unless configured) (`pass` / `retry` / `block`), aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
-Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (TaskFlow-context block), `agent/middlewares/subagent_completion_drain/core.py` (memory backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
+Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/core.py` (TaskFlow-context block), `agent/middlewares/subagent_completion_drain/core.py` (memory backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
 ## Table of Contents
 
@@ -20,7 +20,6 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
   - [Session-Scoped Board & Isolation](engine/README.md#-session-scoped-board--isolation)
 - [Memory & Continuity](memory/README.md)
   - [Layered Memory](memory/README.md#-layered-memory)
-  - [Pre-Compression Memory Flush](memory/README.md#-pre-compression-memory-flush)
   - [Summary ↔ TaskFlow Coordination](memory/README.md#-summary--taskflow-coordination)
   - [Subagent Memory Backflow](memory/README.md#-subagent-memory-backflow)
   - [Tool Output Summarization](memory/README.md#-tool-output-summarization)
@@ -39,7 +38,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 
 ## 🎯 Overview
 
-The long-running-task stack lets the main agent decompose a multi-turn job into a **durable flow** whose steps may depend on each other, dispatch each ready step to a child subagent, and survive process restarts. Seven subsystems cooperate:
+The long-running-task stack lets the main agent decompose a multi-turn job into a **durable flow** whose steps may depend on each other, dispatch each ready step to a child subagent, and survive process restarts. Six subsystems cooperate:
 
 | # | Subsystem | Entry point | Durable where |
 | :- | :--- | :--- | :--- |
@@ -47,9 +46,8 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | 2 | **Token / cost budget** | `taskflow_budget`, `taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **Deadline** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
-| 5 | **Pre-compression flush** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 6 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
-| 7 | **Tri-color orphan GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
+| 5 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
+| 6 | **Tri-color orphan GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
 
 The design contract throughout is **error-as-text**: tools never raise business errors at the model; they return human-readable strings beginning with `Error:`. Every background hook is **fail-open** — an unavailable registry or crashed sweeper degrades to "no long-running-task context", never to a broken turn.
 
@@ -85,13 +83,13 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 | Part | Contents |
 | :--- | :--- |
-| `config/features/agent_side/` | **53** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow, tool parallel safety) |
+| `config/features/agent_side/` | **52** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow, tool parallel safety) |
 | `config/features/infra_side/` | **28** infra-side config modules (server, login, queues, skills, context engine, runtime, web search, model pricing, local model downloads) |
 | `config/features/_env.py` | The single shared env helper |
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **81 feature objects** — 53 agent-side + 28 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **80 feature objects** — 52 agent-side + 28 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -108,12 +106,6 @@ The constants most relevant to this document:
 | | `max_flows_per_session` | 20 |
 | `MODEL_PRICING` (`infra_side/model_pricing.py`) | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `MEMORY_FLUSH` (`agent_side/memory_flush.py`) | `enabled` | `MEMORY_FLUSH_ENABLED` (default 1) |
-| | `model` | `MEMORY_FLUSH_MODEL` (default "") |
-| | `soft_threshold_tokens` | 8000 |
-| | `force_flush_chars` | 50000 |
-| | `output_max_tokens` | 2048 |
-| | `timeout_seconds` | 30 |
 | `SUMMARIZATION` (`agent_side/summarization.py`) | `prune_protect_tokens` | 40000 |
 | | `prune_min_reduction_tokens` | 5000 |
 | | `protected_tools` | `{"memory", "skill_view", "skill_list"}` |
@@ -164,8 +156,8 @@ The constants most relevant to this document:
          ▼                                                                         │
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
-│ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+TaskFlow)       │   │
+│ _expire_overdue_taskflows    │                   │ prune → summary           │   │
+│ _scan_stale_waiting_taskflows│                   │ (+TaskFlow)               │   │
 └──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
@@ -221,7 +213,6 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | Auto-resume prompt block |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | One-line tool summaries |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | Continuity save hook |
-| `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | Pre-compression flush |
 | `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | Session board read (SQL `session_id` filter) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | failure classification |
@@ -277,13 +268,13 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 | `test_index_audit.py` | SQLite index upgrade path and query-plan audit |
 | `test_update_steps.py` | full steps replacement: add/remove/rewrite/reorder and the dispatched/done safety rules |
 
-Cross-cutting suites: `tests/agent/middlewares/test_memory_flush.py` (flush thresholds and `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py` (memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification gate), `tests/agent/middlewares/test_completion_drain_gate.py` (unconditional programmatic gate), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py` (completion judge and the bounded goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py` (evidence recording, stale events, ledger views), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection), `tests/server/test_session_project.py` (project-directory binding: park/promote, boot priming) and `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py` (the file browser's `resolve_within` gate re-run on the tools' boundary).
+Cross-cutting suites: `tests/agent/middlewares/test_lt5_memory_backflow.py` (memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification gate), `tests/agent/middlewares/test_completion_drain_gate.py` (unconditional programmatic gate), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py` (completion judge and the bounded goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py` (evidence recording, stale events, ledger views), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection), `tests/server/test_session_project.py` (project-directory binding: park/promote, boot priming) and `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py` (the file browser's `resolve_within` gate re-run on the tools' boundary).
 
 Run just this area with the standard uv/pytest tooling:
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
-uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
+uv run pytest tests/context_engine/test_session_continuity.py -q
 uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
@@ -295,10 +286,9 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **`done` is not success by itself.** A step's `done` means "a result was injected and the step's configured gates passed"; with no expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to "a result was injected", so a child that reported an error can still land `done` and unlock successors. Declare an expectation — or report `step_outcome="failure"` — and the closure catches it: `failed` / `skipped` / `cancelled` are real step statuses now, a failure never unlocks its dependents, and `taskflow_finish` refuses to complete over an unresolved step.
 - **`taskflow_wait_all` is flow-scoped by design.** It waits only on children recorded on the given flow's dispatched steps, and unknown/already-cleaned runs count as settled. There is no global "wait for every active flow" primitive.
 - **Idle detection is advisory.** The sweeper stamps `stale_detected_at` / `stale_child_session_key` into `wait_json` but never auto-fails a stale `waiting` flow; a human or the model must act on the marker.
-- **The pre-compression memory flush is latent.** Production instantiations of `Summarization` (main agent and subagent) do not pass `memory_store` / `llm_factory`, so the flush does not run until a call site wires them; the code is implemented and tested but currently inert.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 81.** The config registry holds 81 feature objects (53 agent-side + 28 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG` and `MODEL_DOWNLOADS` (its env-sourced defaults are covered by a dedicated builder test).
+- **Registry size is 80.** The config registry holds 80 feature objects (52 agent-side + 28 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG` and `MODEL_DOWNLOADS` (its env-sourced defaults are covered by a dedicated builder test).
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.

@@ -237,7 +237,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 알림은 주입 캐리어의 역할인 `HumanMessage`이며 `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}`를 가진다(브랜치 알림의 origin은 `git_head`). 영속화 계층이 그 origin을 인간 행에 유지하므로 채팅은 사용자 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리** / **Git 브랜치**, 폴더·브랜치 글리프)로 렌더링한다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 비 `user` origin을 USER 행과 AI 행(알림이 아직 `AIMessage`였던 시절의 옛 형태) 모두 캐리어로 취급한다.
 
-알림은 역할상 인간 메시지지만 사용자가 쓴 것이 아니므로, 인간 메시지를 순회하는 모든 스캐너가 `pub.func.message.workspace_notice.is_workspace_notice`로 이를 건너뛴다: `split_into_turns`(알림은 턴 경계가 아니므로 압축의 턴 예산에 영향이 없다), HITL의 `_is_headless_turn`(끝의 알림이 턴을 무인으로 만들면 안 된다), 그리고 요약 / 메모리 플러시 직렬화기(`[System notice]` / `system`으로 표시하고 `[User]`로는 절대 표시하지 않는다).
+알림은 역할상 인간 메시지지만 사용자가 쓴 것이 아니므로, 인간 메시지를 순회하는 모든 스캐너가 `pub.func.message.workspace_notice.is_workspace_notice`로 이를 건너뛴다: `split_into_turns`(알림은 턴 경계가 아니므로 압축의 턴 예산에 영향이 없다), HITL의 `_is_headless_turn`(끝의 알림이 턴을 무인으로 만들면 안 된다), 그리고 요약 직렬화기(`[System notice]` / `system`으로 표시하고 `[User]`로는 절대 표시하지 않는다).
 
 실제 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
@@ -404,7 +404,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `TaskIntentMiddleware` 바로 뒤에 등록됩니다(그 턴 내 중복 제거는 실행 시 사용자 메시지가 마지막이어야 합니다). 턴의 **첫 모델 호출**에 **라이브 뷰**를 `<system-reminder source="…">` HumanMessage로 주입합니다: 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스. 시스템 프롬프트 자체는 이제 안정적 내용(persona + memory + 스킬 인덱스)만 담습니다 — 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것의 prefix 캐시를 무효화합니다; 설정 변경/압축 때만 재구성되는 프롬프트는 그 사이 **오래된** todo 목록을 보여줍니다.
 
 - **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
-- **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 / memory_flush 라벨.
+- **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 라벨.
 - **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
 - 다른 선택 항목과 같이 **스위치로 게이트**되며(`middleware_enabled`), 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다.
 
@@ -1084,7 +1084,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드
-│   ├── memory_flush.py          # 압축 전 메모리 플러시
 │   ├── nudges.py                # 압축 시점 nudge 스케줄링 + 프롬프트
 │   ├── plan_context.py          # 플랜 추출 nudge의 활성 플랜 감지
 │   └── summary_doc.py           # SummaryDoc 스키마 + 결정적 Markdown 렌더러

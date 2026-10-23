@@ -25,9 +25,9 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **上下文治理**：超大工具结果与人类消息被驱逐出提示词并保留可恢复的磁盘副本，`read_file` 结果被切片，任何压缩之前先运行不调 LLM 的尾部裁剪，链式摘要被挡在对话载荷之外
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：三条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
-- ▶️ _详见 [Experience README](wiki/experience/README.zh.md) 了解四条抽取路径与技能策展_
+- ▶️ _详见 [Experience README](wiki/experience/README.zh.md) 了解三条抽取路径与技能策展_
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
@@ -313,8 +313,8 @@ sherry_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
-| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
+| **经验体系** | 将对话历史沉淀为可复用经验的三条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **会话内存** | SESSION 计划能力：memory review、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
 | **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索——并带 imports/继承/mixin 边与双向 `path` 工具 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
@@ -371,7 +371,7 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 自托管 SearXNG，作为联网搜索的后端（或 Tavily 的替代）；未配 `TAVILY_API_KEY` 时它是唯一后端。在「模型联网」面板中配置；Tavily 失效时自动降级到它 |
 | `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
 | `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
-| `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要 + memory_flush）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
+| `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |

@@ -64,7 +64,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 - 블록은 텍스트 포인터 `[evicted to: <path>]`로 대체됩니다. `pub/func/message/eviction.py`가 내는 것과 같은 마커라서 `_collect_evicted_refs`가 줍고 `_finalize_summary_doc`이 경로를 `SummaryDoc.evicted_refs`로 실어 나릅니다(*Evicted References*로 렌더링);
 - 디코드나 쓰기에 실패한 블록은 `<media error="failed_to_offload" />`가 됩니다 —— 미디어 실패가 압축을 망치는 일은 없습니다.
 
-보존 윈도우(`current_messages[cutoff:]`)는 절대 건드리지 않습니다: 미디어는 해당 턴이 실제로 요약될 때까지 남습니다. 두 압축 경로 모두 nudge 스케줄링과 메모리 플러시 전에 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트(`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`)는 포인터가 존재한다는 것, `evicted_refs`로 그대로 옮겨야 한다는 것, 시각/오디오/비디오 세부를 지어내지 말 것, 페이로드는 경로에서 가져올 수 있다는 것을 모델에 알립니다.
+보존 윈도우(`current_messages[cutoff:]`)는 절대 건드리지 않습니다: 미디어는 해당 턴이 실제로 요약될 때까지 남습니다. 두 압축 경로 모두 nudge 스케줄링 전에 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트(`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`)는 포인터가 존재한다는 것, `evicted_refs`로 그대로 옮겨야 한다는 것, 시각/오디오/비디오 세부를 지어내지 말 것, 페이로드는 경로에서 가져올 수 있다는 것을 모델에 알립니다.
 
 미디어 파일은 세션 트리 안에 있으므로 `clear_session()`이 `evicted/` 및 `plans/`와 함께 삭제합니다.
 

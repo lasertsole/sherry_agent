@@ -64,7 +64,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 - 该块被替换为文本指针 `[evicted to: <path>]`，与 `pub/func/message/eviction.py` 发出的标记一致，因此 `_collect_evicted_refs` 能收集到它，`_finalize_summary_doc` 会把路径带进 `SummaryDoc.evicted_refs`（渲染为 *Evicted References*）；
 - 无法解码或写入的块变成 `<media error="failed_to_offload" />` —— 媒体失败绝不会弄坏压缩。
 
-保留窗口（`current_messages[cutoff:]`）绝不触碰：媒体只在它的回合真正被摘要时才离开。两条压缩路径都会在 nudge 调度与记忆落库之前对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）告诉模型这些指针存在、必须原样带进 `evicted_refs`、不得臆测视觉/音频/视频细节，并可按路径取回载荷。
+保留窗口（`current_messages[cutoff:]`）绝不触碰：媒体只在它的回合真正被摘要时才离开。两条压缩路径都会在 nudge 调度之前对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）告诉模型这些指针存在、必须原样带进 `evicted_refs`、不得臆测视觉/音频/视频细节，并可按路径取回载荷。
 
 媒体文件位于会话目录树内，因此 `clear_session()` 会把它们随 `evicted/` 与 `plans/` 一并删除。
 

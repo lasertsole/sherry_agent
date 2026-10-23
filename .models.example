@@ -66,7 +66,7 @@
   "TASKFLOW_LLM_PRESENCE_PENALTY": "",
 
   // ── 压缩模型 Compression model ──────────────────────────────────────────
-  // Used by: SummarizationMiddleware (LLM summary + memory_flush).
+  // Used by: SummarizationMiddleware (LLM summary).
   // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).

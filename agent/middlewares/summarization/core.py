@@ -275,8 +275,6 @@ class Summarization(
         trigger: list | None = None,
         main_llm_context_window: int | None = None,
         need_update_system_prompt: bool = False,
-        memory_store: Any = None,
-        llm_factory: Any = None,
         **kwargs,
     ):
         self._model = model
@@ -285,8 +283,6 @@ class Summarization(
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False
         self._compaction_just_happened: bool = False
-        self._memory_store = memory_store
-        self._llm_factory = llm_factory
         # Process-local completion clock for microcompact's idle trigger.
         self._last_assistant_completed_ms: dict[str, float] = {}
 

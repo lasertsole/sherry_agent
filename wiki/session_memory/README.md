@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) are implemented, plus the long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
+Twelve of the SESSION memory plan's 13 capabilities (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) remain implemented — the pre-compression memory flush was retired because the compression-time memory review subsumes it — plus the long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
 
 > Status (2026-09-13): plan retired. This README is the reference.
 
@@ -10,7 +10,6 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 | Capability | Where |
 |---|---|
-| Pre-compression memory flush | `agent/middlewares/summarization/memory_flush.py` |
 | Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization/core.py` |
 | SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, migration v10 |
 | One-line tool-output summaries | `pub/func/message/tool_output_prune.py` |
@@ -26,12 +25,12 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Memory Files
 
-The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is one global file (`workspace/memory/FACTS.md`), loaded with MEMORY.md and USER.md; it records only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY project. Project-specific facts go to MEMORY.md or the project's AGENTS.md, and the nudges enforce that routing (including migrating a misplaced project fact out of FACTS into MEMORY). There is no per-project FACTS file; a legacy `<project>/.sherry/memory/FACTS.md` is ignored. The pre-compression memory flush does not write FACTS.md. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
+The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is one global file (`workspace/memory/FACTS.md`), loaded with MEMORY.md and USER.md; it records only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY project. Project-specific facts go to MEMORY.md or the project's AGENTS.md, and the nudges enforce that routing (including migrating a misplaced project fact out of FACTS into MEMORY). There is no per-project FACTS file; a legacy `<project>/.sherry/memory/FACTS.md` is ignored. FACTS.md is maintained by the memory-review and plan-extraction nudges. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
 
 | File | Purpose | Limit | Maintainer |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`) | `memory` tool (`memory` target: memory review nudge, memory flush) |
-| `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge, memory flush) |
+| `workspace/memory/MEMORY.md` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`) | `memory` tool (`memory` target: memory review nudge) |
+| `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge) |
 | `workspace/memory/FACTS.md` | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
 
 ## MesMemory Migrations (v10–v17)

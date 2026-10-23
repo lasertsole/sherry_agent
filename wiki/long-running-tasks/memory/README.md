@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Part of [Long-Running Tasks](../README.md): the two-layer memory system, pre-compression memory flush, summary ↔ TaskFlow coordination, subagent memory backflow, one-line tool-output summaries, session continuity, and TaskFlow auto-resume.
+> Part of [Long-Running Tasks](../README.md): the two-layer memory system, summary ↔ TaskFlow coordination, subagent memory backflow, one-line tool-output summaries, session continuity, and TaskFlow auto-resume.
 
 ---
 
@@ -22,23 +22,6 @@ Layer 1 is managed by `MemoryStore` (`memory.py:104`): per-file character limits
 The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
 **Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above: every `built_agent()` call prunes it to the latest checkpoint per thread (`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), and because `auto_vacuum=0` that DELETE only frees pages instead of shrinking the file, the same call reads `PRAGMA freelist_count × page_size` right after pruning and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
-
-## 🔥 Pre-Compression Memory Flush
-
-Before the summarization middleware discards old messages, `agent/middlewares/summarization/memory_flush.py` gives a cheap model one last chance to persist durable facts into `MEMORY.md`. The trigger is `should_flush(discarded_messages, estimated_tokens)` (`memory_flush.py:43`):
-
-```python
-if not MEMORY_FLUSH["enabled"]:
-    return False
-total_chars = sum(len(_msg_to_text(m)) for m in discarded_messages)
-if total_chars >= MEMORY_FLUSH["force_flush_chars"]:   # 50_000
-    return True
-return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
-```
-
-When it fires, `run_memory_flush` (async) / `run_memory_flush_sync` builds the model with an injected factory and one plain-text extraction prompt (`_FLUSH_PROMPT`, `memory_flush.py:19`) whose output is a `§`-separated list of `Environment / Project / Decision / User / Tool` facts. An empty result or the literal `(none)` is skipped. The extracted text is handed to `MemoryStore.append_entries(new_entries)` (`memory.py:281`), which splits on `§`, scans every candidate for injection, dedups against the existing set, appends, evicts oldest entries while over 2200 chars, and performs one atomic write. `append_entries` always targets `MEMORY.md`. Every failure path returns `False` and is swallowed — the flush can never block compression.
-
-⚠️ **Wiring status.** `Summarization.__init__` accepts `memory_store` / `llm_factory` (both default `None`, `summarization/core.py:259-260`) and calls the flush only when both are set, inside `_apply_compression` (`summarization/compression.py:138`) and `_aapply_compression` (`summarization/compression.py:221`). The current production instantiations — main agent `agent/core.py:204` and subagent `agent/tools/subagent/spawn/core.py:909` — do **not** pass them, so the flush is implemented and tested but latent until a call site supplies the store and a factory shaped `factory(model=…, max_tokens=…, timeout=…)`.
 
 ## 🔗 Summary ↔ TaskFlow Coordination
 

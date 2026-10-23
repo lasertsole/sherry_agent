@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> [Long-Running Tasks](../README.ko.md)의 일부: 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약 ↔ TaskFlow 조정, 서브에이전트 메모리 역류, 도구 출력 한 줄 요약, 세션 연속성, TaskFlow 자동 재개.
+> [Long-Running Tasks](../README.ko.md)의 일부: 2계층 메모리 시스템, 요약 ↔ TaskFlow 조정, 서브에이전트 메모리 역류, 도구 출력 한 줄 요약, 세션 연속성, TaskFlow 자동 재개.
 
 ---
 
@@ -22,23 +22,6 @@
 `memory` 도구는 `scope="main_only"`로 태그되어 서브에이전트는 절대 볼 수 없습니다.
 
 **그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
-
-## 🔥 압축 전 메모리 플러시
-
-요약 미들웨어가 오래된 메시지를 버리기 전에, `agent/middlewares/summarization/memory_flush.py`는 값싼 모델에게 지속적 사실을 `MEMORY.md`에 저장할 마지막 기회를 줍니다. 트리거는 `should_flush(discarded_messages, estimated_tokens)`(`memory_flush.py:43`)입니다:
-
-```python
-if not MEMORY_FLUSH["enabled"]:
-    return False
-total_chars = sum(len(_msg_to_text(m)) for m in discarded_messages)
-if total_chars >= MEMORY_FLUSH["force_flush_chars"]:   # 50_000
-    return True
-return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
-```
-
-발화하면 `run_memory_flush`(비동기) / `run_memory_flush_sync`가 주입된 팩토리로 모델을 구성하고 단일 일반 텍스트 추출 프롬프트(`_FLUSH_PROMPT`, `memory_flush.py:19`)를 사용합니다. 출력은 `§`로 구분된 `Environment / Project / Decision / User / Tool` 사실 목록입니다. 빈 결과나 리터럴 `(none)`은 건너뜁니다. 추출 텍스트는 `MemoryStore.append_entries(new_entries)`(`memory.py:281`)로 넘어가며, 이는 `§`로 나누고, 각 후보를 주입 스캔하고, 기존 집합과 중복 제거하고, 덧붙이고, 2200자를 넘는 동안 가장 오래된 항목을 축출하고, 마지막으로 한 번의 원자적 쓰기를 수행합니다. `append_entries`는 항상 `MEMORY.md`를 대상으로 합니다. 모든 실패 경로는 `False`를 반환하고 삼켜집니다 — 플러시가 압축을 막을 수 없습니다.
-
-⚠️ **배선 상태.** `Summarization.__init__`은 `memory_store` / `llm_factory`를 받으며(둘 다 기본 `None`, `summarization/core.py:259-260`), 둘 다 설정된 경우에만 `_apply_compression`(`summarization/compression.py:138`)과 `_aapply_compression`(`summarization/compression.py:221`) 안에서 플러시를 호출합니다. 현재 프로덕션 인스턴스 — 메인 에이전트 `agent/core.py:204`과 서브에이전트 `agent/tools/subagent/spawn/core.py:909` — 는 이들을 전달하지 **않습니다**. 따라서 플러시는 구현·테스트되었지만 호출 지점이 저장소와 `factory(model=…, max_tokens=…, timeout=…)` 형태의 팩토리를 제공할 때까지 잠재 상태에 머뭅니다.
 
 ## 🔗 요약 ↔ TaskFlow 조정
 

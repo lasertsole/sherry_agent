@@ -64,7 +64,7 @@ Compression must never hand a base64 payload to the auxiliary summarizer. Before
 - the block is replaced by a text pointer `[evicted to: <path>]`, the same marker `pub/func/message/eviction.py` emits, so `_collect_evicted_refs` picks it up and `_finalize_summary_doc` carries it into `SummaryDoc.evicted_refs` (rendered as *Evicted References*);
 - a block that cannot be decoded or written becomes `<media error="failed_to_offload" />` — a media failure never crashes compression.
 
-The preserved tail window (`current_messages[cutoff:]`) is never touched: media stays resident until its turn is actually summarized. Both compression paths call the offload — `_apply_compression_under_lock` (sync) and `_aapply_compression_under_lock` (async) — on the prefix slice, before the nudge scheduling and the memory flush. The summary prompt (`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`) tells the model the pointers exist, that they must be carried into `evicted_refs` verbatim, that it must not invent visual / audio / video details, and that the payload can be retrieved from the path.
+The preserved tail window (`current_messages[cutoff:]`) is never touched: media stays resident until its turn is actually summarized. Both compression paths call the offload — `_apply_compression_under_lock` (sync) and `_aapply_compression_under_lock` (async) — on the prefix slice, before the nudge scheduling. The summary prompt (`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`) tells the model the pointers exist, that they must be carried into `evicted_refs` verbatim, that it must not invent visual / audio / video details, and that the payload can be retrieved from the path.
 
 Media files live in the session tree, so `clear_session()` removes them together with `evicted/` and `plans/`.
 

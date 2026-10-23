@@ -2,9 +2,9 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 14개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
+> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 14개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 수용 기준을 가진 단계 결과를 TaskFlow 결정 모델(`TASKFLOW_LLM_*`, 미설정 시 보조 LLM)이 심사하고(`pass` / `retry` / `block`), 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
-사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -20,7 +20,6 @@
   - [세션 보드와 격리](engine/README.ko.md#-세션-보드와-격리)
 - [메모리와 연속성](memory/README.ko.md)
   - [계층형 메모리](memory/README.ko.md#-계층형-메모리)
-  - [압축 전 메모리 플러시](memory/README.ko.md#-압축-전-메모리-플러시)
   - [요약 ↔ TaskFlow 조정](memory/README.ko.md#-요약--taskflow-조정)
   - [서브에이전트 메모리 역류](memory/README.ko.md#-서브에이전트-메모리-역류)
   - [도구 출력 요약](memory/README.ko.md#-도구-출력-요약)
@@ -39,7 +38,7 @@
 
 ## 🎯 개요
 
-장시간 실행 작업 스택은 메인 에이전트가 멀티턴 작업을 **영속 flow**로 분해하고, 단계들이 서로 의존할 수 있게 하며, 준비된 각 단계를 자식 서브에이전트로 디스패치하고, 프로세스 재시작을 견디게 합니다. 일곱 개의 하위 시스템이 협력합니다:
+장시간 실행 작업 스택은 메인 에이전트가 멀티턴 작업을 **영속 flow**로 분해하고, 단계들이 서로 의존할 수 있게 하며, 준비된 각 단계를 자식 서브에이전트로 디스패치하고, 프로세스 재시작을 견디게 합니다. 여섯 개의 하위 시스템이 협력합니다:
 
 | # | 하위 시스템 | 진입점 | 영속 위치 |
 | :- | :--- | :--- | :--- |
@@ -47,9 +46,8 @@
 | 2 | **토큰 / 비용 예산** | `taskflow_budget`, `taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **데드라인** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **유휴 감지** | sweeper `_scan_stale_waiting_taskflows` | `wait_json`의 오래된 마커 |
-| 5 | **압축 전 플러시** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 6 | **연속성 / 자동 재개** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 프롬프트 블록 |
-| 7 | **삼색 고아 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 활성 `todos` |
+| 5 | **연속성 / 자동 재개** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 프롬프트 블록 |
+| 6 | **삼색 고아 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 활성 `todos` |
 
 전체를 관통하는 설계 계약은 **오류를 텍스트로 반환**하는 것입니다: 도구는 비즈니스 오류를 모델에 던지지 않고 `Error:`로 시작하는 사람이 읽을 수 있는 문자열을 반환합니다. 모든 백그라운드 훅은 **페일오픈(fail-open)**입니다 — 레지스트리를 쓸 수 없거나 sweeper가 죽어도 "장시간 작업 컨텍스트 없음"으로 퇴화할 뿐, 턴을 깨뜨리지 않습니다.
 
@@ -85,13 +83,13 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 
 
 | 부분 | 내용 |
 | :--- | :--- |
-| `config/features/agent_side/` | **53**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
+| `config/features/agent_side/` | **52**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
 | `config/features/infra_side/` | **28**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드) |
 | `config/features/_env.py` | 유일한 공유 환경 헬퍼 |
 
 각 모듈은 `class XxxConfig(TypedDict)`와 모듈 수준 상수 `XXX: XxxConfig = {…}`를 정의합니다. 환경 인식 모듈은 빌더 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`를 정의하고 `env or os.environ`을 읽어 임포트 시 상수를 구체화합니다. 환경 헬퍼는 `_env_int(name, default, env)`(`config/features/_env.py:9`)이며, `1/true/yes/on`과 `0/false/no/off/""`를 받아들이고 예외를 던지지 않습니다.
 
-레지스트리는 현재 **81개 feature 객체**를 보유합니다 — 에이전트 측 53 + 인프라 측 28 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
+레지스트리는 현재 **80개 feature 객체**를 보유합니다 — 에이전트 측 52 + 인프라 측 28 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
 
 이 문서와 가장 관련 있는 상수:
 
@@ -108,12 +106,6 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 
 | | `max_flows_per_session` | 20 |
 | `MODEL_PRICING`(`infra_side/model_pricing.py`) | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `MEMORY_FLUSH`(`agent_side/memory_flush.py`) | `enabled` | `MEMORY_FLUSH_ENABLED`(기본 1) |
-| | `model` | `MEMORY_FLUSH_MODEL`(기본 "") |
-| | `soft_threshold_tokens` | 8000 |
-| | `force_flush_chars` | 50000 |
-| | `output_max_tokens` | 2048 |
-| | `timeout_seconds` | 30 |
 | `SUMMARIZATION`(`agent_side/summarization.py`) | `prune_protect_tokens` | 40000 |
 | | `prune_min_reduction_tokens` | 5000 |
 | | `protected_tools` | `{"memory", "skill_view", "skill_list"}` |
@@ -164,8 +156,8 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 
          ▼                                                                         │
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
-│ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+TaskFlow)       │   │
+│ _expire_overdue_taskflows    │                   │ prune → summary           │   │
+│ _scan_stale_waiting_taskflows│                   │ (+TaskFlow)               │   │
 └──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
@@ -221,7 +213,6 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_create`와 
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 자동 재개 프롬프트 블록 |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | 도구 출력 한 줄 요약 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 연속성 저장 훅 |
-| `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 압축 전 플러시 |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md 일괄 추가 |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | 세션 보드 읽기(SQL `session_id` 필터) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 실패 분류 |
@@ -270,13 +261,13 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(24개 `unit`
 | `test_index_audit.py` | SQLite 인덱스 업그레이드 경로와 쿼리 플랜 감사 |
 | `test_update_steps.py` | 단계 목록 전면 교체: 추가/삭제/재작성/재정렬과 dispatched/done 안전 규칙 |
 
-교차 스위트: `tests/agent/middlewares/test_memory_flush.py`(플러시 임계값과 `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 게이트), `tests/agent/middlewares/test_completion_drain_gate.py`(무조건적 프로그램 게이트), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`(완료 판정기와 유계 goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`(evidence 기록, stale 이벤트, 원장 뷰), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 흐름 프롬프트 주입), `tests/server/test_session_project.py`(프로젝트 디렉터리 바인딩: 보류/승격, 부팅 워밍), `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`(파일 브라우저의 `resolve_within` 게이트를 도구 경계에서 재실행).
+교차 스위트: `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 게이트), `tests/agent/middlewares/test_completion_drain_gate.py`(무조건적 프로그램 게이트), `tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`(완료 판정기와 유계 goal loop), `tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/pub_base/test_evidence_ledger.py`(evidence 기록, stale 이벤트, 원장 뷰), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 흐름 프롬프트 주입), `tests/server/test_session_project.py`(프로젝트 디렉터리 바인딩: 보류/승격, 부팅 워밍), `tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`(파일 브라우저의 `resolve_within` 게이트를 도구 경계에서 재실행).
 
 표준 uv/pytest 도구로 이 영역만 실행:
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
-uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
+uv run pytest tests/context_engine/test_session_continuity.py -q
 uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
@@ -287,10 +278,9 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **`done` 자체가 성공은 아닙니다.** 단계의 `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. 기대가 아무것도 설정되지 않은 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 "결과가 주입됨"으로 퇴화하므로, 오류를 보고한 자식도 `done`이 되어 후속을 언락할 수 있습니다. 기대를 선언하거나 `step_outcome="failure"`를 선언하면 폐루프가 이를 잡습니다 — `failed` / `skipped` / `cancelled`는 이제 실제 단계 상태이고, 실패는 의존 단계를 언락하지 않으며, `taskflow_finish`도 미해결 단계를 남긴 채 완료하지 않습니다.
 - **`taskflow_wait_all`은 설계상 flow 범위입니다.** 주어진 flow의 디스패치된 단계에 기록된 자식만 기다리며, 알 수 없거나 이미 정리된 run은 정착으로 간주합니다. "모든 활성 flow 대기" 전역 프리미티브는 없습니다.
 - **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다.
-- **압축 전 메모리 플러시는 잠재 상태입니다.** `Summarization`의 프로덕션 인스턴스(메인/서브)는 `memory_store` / `llm_factory`를 전달하지 않아, 호출 지점이 배선할 때까지 플러시가 실행되지 않습니다. 코드는 구현·테스트되었지만 현재 비활성입니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
-- **레지스트리 규모는 81입니다.** 설정 레지스트리는 81개 feature 객체(에이전트 측 53 + 인프라 측 28)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`를 빠뜨립니다(환경에서 오는 기본값은 전용 빌더 테스트가 커버합니다).
+- **레지스트리 규모는 80입니다.** 설정 레지스트리는 80개 feature 객체(에이전트 측 52 + 인프라 측 28)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`를 빠뜨립니다(환경에서 오는 기본값은 전용 빌더 테스트가 커버합니다).
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_dispatch`와 `taskflow_wait_all`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
 - **TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_resume`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.

@@ -12,7 +12,6 @@ external boundaries:
   ``_is_unended_run``) — the real subagent runtime is never started,
 * the TaskFlow child dispatch seam (``_dispatch.dispatch_child``) — the real
   spawn pipeline is never called,
-* the memory-flush extraction LLM (a canned response; zero network),
 * the continuation fire-and-forget auto-turn sink (a spy).
 
 All persistence is redirected to ``tmp_path`` (todos.db, taskflow_registry.db,
@@ -96,33 +95,6 @@ class _RecordingMiddleware(AgentMiddleware):
     async def abefore_model(self, state: Any, runtime: Any = None) -> None:
         self.calls.append(state)
         return None
-
-
-class _StubFlushResponse:
-    """Minimal memory-flush LLM response carrying ``.content`` and ``.text``."""
-
-    def __init__(self, content: str) -> None:
-        self.content = content
-        self.text = content
-
-
-class _StubFlushLLM:
-    """Canned memory-flush extraction model (no network)."""
-
-    def __init__(self, content: str) -> None:
-        self._content = content
-
-    async def ainvoke(self, prompt: Any, config: Any = None) -> _StubFlushResponse:
-        return _StubFlushResponse(self._content)
-
-
-def _flush_factory(content: str):
-    """Build an ``llm_factory`` matching ``run_memory_flush``'s signature."""
-
-    def factory(**kwargs: Any) -> _StubFlushLLM:
-        return _StubFlushLLM(content)
-
-    return factory
 
 
 # ---------------------------------------------------------------------------
@@ -563,10 +535,14 @@ class TestTodolistFullPipeline:
     ) -> None:
         """Given a plan mixing plain, TaskFlow-linked and invalid-category todos,
         When completed one by one (barriers enforced each time), Then the prompt
-        shows 100% done, continuation stops firing and the memory flush persists a fact."""
-        import agent.middlewares.summarization.memory_flush as memory_flush
-        import agent.tools.memory as memory_module
+        shows 100% done and continuation stops firing."""
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
+
+        # Plan completion may fork the real extraction pass; this test only
+        # covers the todo/taskflow lifecycle and has no auxiliary model.
+        monkeypatch.setattr(
+            "agent.middlewares.summarization.nudges._PLAN_EXTRACTION_ENABLED", False
+        )
 
         tools = _tools()
         flow_tools = _flow_tools()
@@ -655,30 +631,11 @@ class TestTodolistFullPipeline:
         await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 
-        # Memory flush: fake extraction LLM, real MEMORY.md write.
-        mem = memory_module.memory_store
-        flushed = await memory_flush.run_memory_flush(
-            [HumanMessage(content="discarded turn")],
-            9_000,
-            mem,
-            _flush_factory(
-                "§ Project: lifecycle uses uv\n§ Decision: extract facts before compaction"
-            ),
-        )
-        assert flushed is True
-        mem.load_from_disk()
-        from workspace.prompt_builder import build_system_prompt
-
-        prompt_after_flush = build_system_prompt(session_id=sid)
-        assert "lifecycle uses uv" in prompt_after_flush
-
         print("\n[EVIDENCE test_e2e_full_lifecycle] final DB rows:")
         print(json.dumps(todos, ensure_ascii=False, indent=2))
         print("[EVIDENCE] todo completion = 100% (3/3)")
         print("[EVIDENCE] prompt todo block (all done):")
         print(todo_block)
-        print("[EVIDENCE] memory block after memory flush:")
-        print(_block_text(prompt_after_flush, "MEMORY (your personal notes)"))
 
 
 # ===========================================================================

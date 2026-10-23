@@ -51,12 +51,3 @@ def test_agent_core_builds_both_auxiliary_and_compression_models():
 
     assert "build_auxiliary_llm" in source  # C3: still built
     assert "build_compression_llm" in source
-
-
-def test_the_compression_field_name_is_unchanged():
-    assert "self._llm_factory" in _text("agent/middlewares/summarization/core.py")
-    for path in (
-        "agent/middlewares/summarization/compression.py",
-        "agent/middlewares/summarization/memory_flush.py",
-    ):
-        assert "self._llm_factory" in _text(path) or "llm_factory" in _text(path)

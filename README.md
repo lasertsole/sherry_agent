@@ -25,7 +25,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Context Governance**: oversized tool results and human messages are evicted off the prompt with a recoverable on-disk copy, `read_file` results are sliced, a no-LLM tail clip runs before any compression, and chained summaries are filtered out of the conversation payload
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
-- **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
+- **Experience Extraction**: three lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 - ▶️ _See the [Experience README](wiki/experience/README.md) for the extraction paths and the skill Curator_
 
@@ -314,8 +314,8 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **Experience** | Four extraction lifecycle paths plus the background Curator that maintains `skills/auto/` | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
-| **Session Memory** | SESSION-plan capabilities: memory flush, compression cooldown, compaction lock, event log, semantic search | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
+| **Experience** | Three extraction lifecycle paths plus the background Curator that maintains `skills/auto/` | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **Session Memory** | SESSION-plan capabilities: memory review, compression cooldown, compaction lock, event log, semantic search | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **Subagent Design** | Design invariants: two-axis role model, spawn-privilege guards, four-layer completion gates | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
 | **Code Intel** | Code retrieval: ripgrep keyword search for every agent, plus four role-gated layers — tree-sitter symbol index, ast-grep structural search, LSP precision, semantic search — with imports/inheritance/mixin edges and a bidirectional `path` tool | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
@@ -372,7 +372,7 @@ Fill in at least the main chat model in `.models` and, for web search, a Tavily 
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | Self-hosted SearXNG as the (or an alternative) web-search backend; without `TAVILY_API_KEY` it is the only one. Configure it in the 模型联网 panel; Tavily failures fall back to it automatically |
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 131072 (128K) |
 | `TASKFLOW_LLM_*` | — | TaskFlow decision model (plan / replan / step judge / goal gate). An empty provider + API base follows `AUXILIARY_LLM_*`; local mode reuses the auxiliary GGUF. `TASKFLOW_LLM_MAX_TOKEN` must be >= 131072 (128K) |
-| `COMPRESSION_LLM_*` | — | Compression model (LLM summary + memory flush). Memory review uses `MAIN_LLM` and plan extraction uses `AUXILIARY_LLM_*`; an empty provider + API base follows `AUXILIARY_LLM_*` |
+| `COMPRESSION_LLM_*` | — | Compression model (LLM summary). Memory review uses `MAIN_LLM` and plan extraction uses `AUXILIARY_LLM_*`; an empty provider + API base follows `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |

@@ -1,4 +1,4 @@
-"""Tests for the category-routing batch append of ``MemoryStore`` (Memory Flush).
+"""Tests for the category-routing batch append of ``MemoryStore``.
 
 ``append_entries`` must route ``User:``-prefixed entries to USER.md and every
 other entry to MEMORY.md, each file obeying its own char limit, dedup and

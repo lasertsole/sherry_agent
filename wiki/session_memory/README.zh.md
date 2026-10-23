@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）均已实现，并包含长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
+SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）——压缩前 memory flush 已退役，由压缩时 memory review 覆盖——另含长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
 
 > 状态（2026-09-13）：计划已退役，本 README 即权威参考。
 
@@ -10,7 +10,6 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 | 能力 | 位置 |
 |---|---|
-| 预压缩 Memory Flush | `agent/middlewares/summarization/memory_flush.py` |
 | 压缩冷却跨重启持久化 | `agent/middlewares/summarization/core.py` 的 `_COOLDOWN_PERSIST_KEYS` |
 | SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，迁移 v10 |
 | 工具输出一行摘要 | `pub/func/message/tool_output_prune.py` |
@@ -26,12 +25,12 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 记忆文件
 
-三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 是唯一的全局文件（`workspace/memory/FACTS.md`），与 MEMORY.md、USER.md 一起加载；它只记录**系统级 / 跨项目**的坑——在任何项目中都成立的事实。项目级事实写入 MEMORY.md 或项目的 AGENTS.md，nudge 会执行该路由（并把错放在 FACTS 里的项目事实迁移到 MEMORY）。不存在 per-project FACTS；遗留的 `<project>/.sherry/memory/FACTS.md` 被忽略。压缩前 memory flush 不写 FACTS.md。快照在会话内保持冻结，例外是会话的模型或思考控制发生变化：这类切换后提供方前缀缓存本已变冷，下一轮的 `before_model` 钩子会重载快照并失效缓存的系统提示词，使会话中途的记忆写入在当轮首个模型调用即可见。
+三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 是唯一的全局文件（`workspace/memory/FACTS.md`），与 MEMORY.md、USER.md 一起加载；它只记录**系统级 / 跨项目**的坑——在任何项目中都成立的事实。项目级事实写入 MEMORY.md 或项目的 AGENTS.md，nudge 会执行该路由（并把错放在 FACTS 里的项目事实迁移到 MEMORY）。不存在 per-project FACTS；遗留的 `<project>/.sherry/memory/FACTS.md` 被忽略。FACTS.md 由 memory review / plan extraction nudge 维护。快照在会话内保持冻结，例外是会话的模型或思考控制发生变化：这类切换后提供方前缀缓存本已变冷，下一轮的 `before_model` 钩子会重载快照并失效缓存的系统提示词，使会话中途的记忆写入在当轮首个模型调用即可见。
 
 | 文件 | 用途 | 上限 | 维护者 |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） | `memory` 工具（`memory` 目标：memory review nudge、memory flush） |
-| `workspace/memory/USER.md` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） | `memory` 工具（`user` 目标：memory review nudge、memory flush） |
+| `workspace/memory/MEMORY.md` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） | `memory` 工具（`memory` 目标：memory review nudge） |
+| `workspace/memory/USER.md` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） | `memory` 工具（`user` 目标：memory review nudge） |
 | `workspace/memory/FACTS.md` | 系统级 / 跨项目普适的坑与约定；每次系统提示都会注入 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`），超限滚动淘汰最旧条目 | `memory` 工具（`facts` 目标：memory review / plan extraction nudge） |
 
 ## MesMemory 迁移（v10–v17）

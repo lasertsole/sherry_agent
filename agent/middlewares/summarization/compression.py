@@ -1,16 +1,13 @@
 """Compression application: cutoff, non-LLM strategies, under-lock pipeline.
 
-The two under-lock variants stay duplicated on purpose: the sync path runs the
-pre-compression memory flush via ``run_memory_flush_sync`` while the async path
-awaits ``run_memory_flush``, so collapsing them would change cancel/await
-semantics.
+The two under-lock variants stay duplicated on purpose: the sync and async
+paths have different cancel/await semantics, so collapsing them would change
+behaviour. The multi-strategy pipeline belongs beside them.
 """
 
-# allow: SIZE_OK — the bulk is the two under-lock application variants that
-# must stay duplicated (sync ``run_memory_flush_sync`` vs awaited
-# ``run_memory_flush``) plus the multi-strategy pipeline that belongs beside
-# them; splitting the pipeline from the application would scatter the
-# compression contract.
+# allow: SIZE_OK — the bulk is the two under-lock application variants plus the
+# multi-strategy pipeline that belongs beside them; splitting the pipeline from
+# the application would scatter the compression contract.
 
 import asyncio
 import re
@@ -252,18 +249,6 @@ class CompressionMixin:
 
                 self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
 
-                # Persist cross-session facts before these messages are discarded.
-                if self._memory_store and self._llm_factory:
-                    from .memory_flush import run_memory_flush_sync
-
-                    est_tokens = self._estimate_tokens(messages_to_summarize)
-                    run_memory_flush_sync(
-                        messages_to_summarize,
-                        est_tokens,
-                        self._memory_store,
-                        self._llm_factory,
-                    )
-
                 if skip_llm:
                     filtered = _filter_summary_messages(messages_to_summarize)
                     summary_text = _build_static_fallback_summary(filtered)
@@ -344,18 +329,6 @@ class CompressionMixin:
                 )
 
                 self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
-
-                # Persist cross-session facts before these messages are discarded.
-                if self._memory_store and self._llm_factory:
-                    from .memory_flush import run_memory_flush
-
-                    est_tokens = self._estimate_tokens(messages_to_summarize)
-                    await run_memory_flush(
-                        messages_to_summarize,
-                        est_tokens,
-                        self._memory_store,
-                        self._llm_factory,
-                    )
 
                 if skip_llm:
                     filtered = _filter_summary_messages(messages_to_summarize)

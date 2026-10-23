@@ -483,7 +483,7 @@
         "main": "主对话模型：负责日常对话、工具调用、任务规划和最终回答。适合作为能力最强、工具调用可靠、上下文较长的默认模型。",
         "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
         "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
-        "compression": "压缩模型：为长会话生成摘要并整理记忆。适合长上下文、低成本模型。",
+        "compression": "压缩模型：为长会话生成摘要。适合长上下文、低成本模型。",
         "reasoner": "推理模型：用于复杂分析、数学/逻辑推理和难题求解。日常对话可继续使用主模型。",
         "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
         "vttt": "视频生文模型：提取并描述视频内容。用于视频摘要和画面理解。",
@@ -501,7 +501,7 @@
       "groupTaskflow": "TaskFlow 决策模型",
       "groupCompression": "压缩模型",
       "followsAuxiliary": "Provider 与 API Base 均为空 —— 该组跟随辅助模型（AUXILIARY_LLM_*）。",
-      "compressionScope": "用于 LLM 摘要与 memory_flush；记忆回顾走主模型，计划提炼走辅助模型。"
+      "compressionScope": "用于 LLM 摘要；记忆回顾走主模型，计划提炼走辅助模型。"
     },
     "memory": {
       "addEntry": "添加条目",

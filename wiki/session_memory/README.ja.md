@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）に加え、長時間タスク編成も実装済み。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
+SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）が実装済みです——圧縮前メモリフラッシュは、圧縮時 memory review がその役割を包含するため退役しました——これに長時間タスク編成が加わります。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
 
 > 状態（2026-09-13）：プラン退役。本 README が参照先。
 
@@ -10,7 +10,6 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 | 機能 | 場所 |
 |---|---|
-| 圧縮前メモリフラッシュ | `agent/middlewares/summarization/memory_flush.py` |
 | 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization/core.py` の `_COOLDOWN_PERSIST_KEYS` |
 | SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、移行 v10 |
 | ツール出力の一行要約 | `pub/func/message/tool_output_prune.py` |
@@ -26,12 +25,12 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 ## メモリファイル
 
-3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は唯一のグローバルファイル（`workspace/memory/FACTS.md`）で、MEMORY.md / USER.md と一緒に読み込まれます。記録するのは **システムレベル / プロジェクト横断** の落とし穴 — どのプロジェクトでも当てはまる事実だけです。プロジェクト固有の事実は MEMORY.md またはそのプロジェクトの AGENTS.md に書き、nudge がそのルーティングを徹底します（FACTS に誤って入ったプロジェクト事実は MEMORY へ移行）。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。圧縮前 memory flush は FACTS.md を書かない。スナップショットはセッション中凍結されるが、セッションのモデルまたは思考制御が変わったときは例外である: その切替後は provider の prefix キャッシュが既に冷えているため、次ターンの `before_model` フックがスナップショットを再読み込みしてキャッシュ済みシステムプロンプトを無効化し、セッション途中のメモリ書き込みがそのターンの最初のモデル呼び出しで見えるようになる。
+3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は唯一のグローバルファイル（`workspace/memory/FACTS.md`）で、MEMORY.md / USER.md と一緒に読み込まれます。記録するのは **システムレベル / プロジェクト横断** の落とし穴 — どのプロジェクトでも当てはまる事実だけです。プロジェクト固有の事実は MEMORY.md またはそのプロジェクトの AGENTS.md に書き、nudge がそのルーティングを徹底します（FACTS に誤って入ったプロジェクト事実は MEMORY へ移行）。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。FACTS.md は memory review / plan extraction nudge が維持します。スナップショットはセッション中凍結されるが、セッションのモデルまたは思考制御が変わったときは例外である: その切替後は provider の prefix キャッシュが既に冷えているため、次ターンの `before_model` フックがスナップショットを再読み込みしてキャッシュ済みシステムプロンプトを無効化し、セッション途中のメモリ書き込みがそのターンの最初のモデル呼び出しで見えるようになる。
 
 | ファイル | 用途 | 上限 | メンテナ |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） | `memory` ツール（`memory` ターゲット：memory review nudge、memory flush） |
-| `workspace/memory/USER.md` | ユーザープロファイル：好み、コミュニケーションスタイル、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） | `memory` ツール（`user` ターゲット：memory review nudge、memory flush） |
+| `workspace/memory/MEMORY.md` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） | `memory` ツール（`memory` ターゲット：memory review nudge） |
+| `workspace/memory/USER.md` | ユーザープロファイル：好み、コミュニケーションスタイル、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） | `memory` ツール（`user` ターゲット：memory review nudge） |
 | `workspace/memory/FACTS.md` | システムレベル / プロジェクト横断の落とし穴と規約；毎回のシステムプロンプトへ注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）、上限超過時は最古の項目からロールオフ | `memory` ツール（`facts` ターゲット：memory review / plan extraction nudge） |
 
 ## MesMemory マイグレーション（v10–v17）
