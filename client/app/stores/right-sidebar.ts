@@ -30,7 +30,9 @@ export type RightSidebarPanelKind =
   /** The toolbox's browser: a URL bar over an embedded page. */
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
-  | 'terminal';
+  | 'terminal'
+  /** A helper session opened from a quoted chat selection (an ordinary session). */
+  | 'sideChat';
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
@@ -75,7 +77,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // The browser and the terminal work on the session's own project (the
   // terminal's cwd IS that directory), so both live in its group.
   browser: 'session',
-  terminal: 'session'
+  terminal: 'session',
+  // The side session was created from this session's transcript.
+  sideChat: 'session'
 };
 
 /**
@@ -145,7 +149,18 @@ export interface RightSidebarTab {
    * instance key, while the settings entries keep deduping on their empty
    * payload. The panel reads it back to key its own state.
    */
-  payload?: { path?: string; hash?: string; instance?: string; url?: string };
+  payload?: {
+    path?: string;
+    hash?: string;
+    instance?: string;
+    url?: string;
+    /** The side session this tab talks to (one tab per session). */
+    sessionId?: string;
+    /** The quoted text the side session's composer starts with. */
+    quote?: string;
+    /** The quote's localized source label (the chip's tooltip). */
+    source?: string;
+  };
 }
 
 let tabSeq = 0;
@@ -234,16 +249,29 @@ export const useRightSidebarStore = defineStore(
      * @param payload.hash
      * @param payload.instance
      * @param payload.url
+     * @param payload.sessionId The side session a `sideChat` tab talks to (one
+     *   tab per session; `quote`/`source` are initial content, not identity).
+     * @param payload.quote
+     * @param payload.source
      * @returns The tab id (the existing tab's id when it was reused).
      */
     function openTab(
       kind: RightSidebarPanelKind,
-      payload?: { path?: string; hash?: string; instance?: string; url?: string }
+      payload?: {
+        path?: string;
+        hash?: string;
+        instance?: string;
+        url?: string;
+        sessionId?: string;
+        quote?: string;
+        source?: string;
+      }
     ): string {
       const path = payload?.path ?? null;
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
       const url = payload?.url ?? null;
+      const sessionId = payload?.sessionId ?? null;
       const scope = SCOPE_BY_KIND[kind];
       const existing = tabs.value.find(
         tab =>
@@ -251,7 +279,8 @@ export const useRightSidebarStore = defineStore(
           (tab.payload?.path ?? null) === path &&
           (tab.payload?.hash ?? null) === hash &&
           (tab.payload?.instance ?? null) === instance &&
-          (tab.payload?.url ?? null) === url
+          (tab.payload?.url ?? null) === url &&
+          (tab.payload?.sessionId ?? null) === sessionId
       );
       if (existing) {
         activeTabId.value = existing.id;

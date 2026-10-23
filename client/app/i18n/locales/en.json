@@ -72,6 +72,18 @@
     "originProjectDir": "Working directory",
     "originGitHead": "Git branch switch",
     "originSystem": "System message",
+    "selection": {
+      "addToChat": "Add to Current Session",
+      "askInSideChat": "Ask in Side Session",
+      "limitWarning": "A single quote may not exceed 8,000 characters",
+      "quoteTooltip": "Quoted selection (sent as a blockquote)",
+      "sourceUser": "User message",
+      "sourceAi": "Assistant reply",
+      "sourceTool": "Tool output",
+      "sideChatTitle": "Side session",
+      "sideChatMissing": "Side session unavailable",
+      "sideChatFailed": "Failed to create the side session"
+    },
     "tokenGuard": {
       "title": "Model Config Below Minimum",
       "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Model Config."
@@ -532,6 +544,7 @@
     "contextViewer": "Agent context",
     "browser": "Browser",
     "terminal": "Terminal",
+    "sideChat": "Side session",
     "scopes": {
       "session": "This session",
       "global": "Global"

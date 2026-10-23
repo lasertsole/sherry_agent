@@ -72,6 +72,18 @@
     "originProjectDir": "작업 디렉터리",
     "originGitHead": "Git 브랜치 전환",
     "originSystem": "시스템 메시지",
+    "selection": {
+      "addToChat": "현재 세션에 추가",
+      "askInSideChat": "보조 세션에서 질문",
+      "limitWarning": "단일 인용은 최대 8,000자까지",
+      "quoteTooltip": "선택 텍스트 인용 (인용 블록으로 전송)",
+      "sourceUser": "사용자 메시지",
+      "sourceAi": "어시스턴트 응답",
+      "sourceTool": "도구 출력",
+      "sideChatTitle": "보조 세션",
+      "sideChatMissing": "보조 세션을 사용할 수 없습니다",
+      "sideChatFailed": "보조 세션 생성에 실패했습니다"
+    },
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",
       "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 모델 설정에서 수정하세요."
@@ -532,6 +544,7 @@
     "contextViewer": "에이전트 컨텍스트",
     "browser": "브라우저",
     "terminal": "터미널",
+    "sideChat": "보조 세션",
     "scopes": {
       "session": "현재 세션",
       "global": "전역"

@@ -123,6 +123,18 @@ function addFileMention(payload: FileMentionPayload): void {
 }
 
 /**
+ * Insert a quoted-selection chip programmatically (the chat transcript's
+ * right-click menu). The full text stays in the chip's attribute; the visible
+ * label is only a preview.
+ * @param text The selected text.
+ * @param source A localized "from X" label for the chip's tooltip.
+ */
+function addQuoteChip(text: string, source?: string): void {
+  if (props.disabled) return;
+  insertQuoteChip(inputDom.value, text, source || t('chat.selection.quoteTooltip'));
+}
+
+/**
  * Controlled draft content (two-way bound from the parent via `v-model:draft`).
  *
  * The parent (per-session ChatPage) writes the session's draft back when switching sessions,
@@ -350,7 +362,7 @@ function clearHistory(): void {
   browsingSnapshot = '';
 }
 
-defineExpose({ clearHistory, addFileMention });
+defineExpose({ clearHistory, addFileMention, addQuoteChip });
 </script>
 
 <style lang="scss" scoped>
@@ -410,6 +422,28 @@ defineExpose({ clearHistory, addFileMention });
     color: var(--color-theme-main);
     font-size: 0.75rem;
     line-height: 1.4;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+  }
+
+  // A quoted selection: the same atomic shape as a file mention, tinted as a
+  // quote; its `data-quote-text` turns into a blockquote on send.
+  :deep(.text-quote-chip) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 0.375rem;
+    margin: 0 0.125rem;
+    border-radius: 0.375rem;
+    background-color: color-mix(in srgb, var(--color-theme-main) 7%, transparent);
+    border-left: 2px solid var(--color-theme-main);
+    color: var(--color-theme-main);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    max-width: 20rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     user-select: none;
     cursor: default;

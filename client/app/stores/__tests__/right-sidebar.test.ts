@@ -91,6 +91,13 @@ describe('stores/right-sidebar', () => {
     expect(store.tabs.find(tab => tab.id === viewer)?.scope).toBe('session');
     expect(store.openTab('contextViewer')).toBe(viewer);
 
+    // A side chat is one tab per side session: the initial quote is content,
+    // not identity, while a second session gets its own tab.
+    const side = store.openTab('sideChat', { sessionId: 'side-1', quote: 'first' });
+    expect(store.tabs.find(tab => tab.id === side)?.scope).toBe('session');
+    expect(store.openTab('sideChat', { sessionId: 'side-1', quote: 'second' })).toBe(side);
+    expect(store.openTab('sideChat', { sessionId: 'side-2' })).not.toBe(side);
+
     store.setActiveScope('global');
     store.activateTab(preset);
     expect(store.activeScope).toBe('session');

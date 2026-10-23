@@ -12,7 +12,8 @@
     <div
       ref="scrollContainerRef"
       class="flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
-      @scroll="onScroll">
+      @scroll="onScroll"
+      @contextmenu="onMessageContextMenu">
       <!-- Virtualized window: positioned rows inside a spacer of the measured
            total height. `measureElement` re-measures on resize, so expandable
            tool cards / thinking blocks keep the scroll geometry correct. -->
@@ -84,6 +85,8 @@
             <div
               v-for="message in groupMessages(rowGroup(vRow.index))"
               :key="message.id"
+              :data-message-id="String(message.id)"
+              :data-message-role="message.role"
               :class="[
                 'flex justify-start gap-3 min-w-0',
                 { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
@@ -263,6 +266,13 @@
         <i class="pi pi-arrow-down text-sm"></i>
       </button>
     </Transition>
+    <!-- One menu for the whole list: a right-click on a valid text selection
+         opens it anchored at the pointer. A right-click with no selection (or
+         on a control) is left alone so the native copy menu still works. -->
+    <ContextMenu
+      ref="selectionMenuRef"
+      :model="selectionMenuItems"
+      data-test="chat-selection-menu" />
   </div>
 </template>
 
@@ -273,7 +283,11 @@ import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString, formatToolDuration } from '@/common/utils';
 // Value is auto-imported by Nuxt; only the type needs an explicit import.
 import type { TurnFoldView } from '@/composables/use-chat-turn-fold';
+import type { SelectionPayload } from '@/composables/use-chat-selection';
 import { useI18n } from 'vue-i18n';
+// PrimeVue's ContextMenu is registered globally by the app plugin; an explicit
+// import keeps the transcript mountable in bare Vitest mounts too.
+import ContextMenu from 'primevue/contextmenu';
 // Render subcomponents (explicit imports: bare Vitest mounts have no Nuxt
 // component auto-registration, and the page-level convention is explicit
 // component imports)
@@ -301,6 +315,10 @@ interface Props {
   userName?: string;
   /** AI display name (returned by the server) */
   aiName?: string;
+  /** Whether a text selection opens the quote menu (false while an approval card owns the input). */
+  selectionEnabled?: boolean;
+  /** Whether the menu offers "ask in side session" (the side panel itself only re-quotes). */
+  allowSideChat?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -308,7 +326,9 @@ const props = withDefaults(defineProps<Props>(), {
   aiAvatar: '',
   userName: '',
   aiName: '',
-  loadingOlder: false
+  loadingOlder: false,
+  selectionEnabled: true,
+  allowSideChat: true
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -335,7 +355,41 @@ const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(m
 const emit = defineEmits<{
   (e: 'reach-top'): void;
   (e: 'release-head', messageIds: number[]): void;
+  (e: 'selection-add', payload: SelectionPayload): void;
+  (e: 'selection-side-chat', payload: SelectionPayload): void;
 }>();
+
+/** The one selection menu instance (a per-row popup would mount one per message). */
+const selectionMenuRef = useTemplateRef<{ show: (event: Event) => void }>('selectionMenuRef');
+const selectionMenuItems = ref<Array<{ label: string; icon: string; command: () => void }>>([]);
+
+/**
+ * Right-click on the transcript: quote the selected text when the selection is
+ * valid, otherwise leave the native menu alone (copy/paste still work).
+ * @param event
+ */
+function onMessageContextMenu(event: MouseEvent): void {
+  if (!props.selectionEnabled) return;
+  const payload = inspectSelection(scrollContainerRef.value);
+  if (!payload) return;
+
+  event.preventDefault();
+  selectionMenuItems.value = [
+    {
+      label: t('chat.selection.addToChat'),
+      icon: 'pi pi-comment',
+      command: () => emit('selection-add', payload)
+    }
+  ];
+  if (props.allowSideChat) {
+    selectionMenuItems.value.push({
+      label: t('chat.selection.askInSideChat'),
+      icon: 'pi pi-comments',
+      command: () => emit('selection-side-chat', payload)
+    });
+  }
+  selectionMenuRef.value?.show(event);
+}
 
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(

@@ -72,6 +72,18 @@
     "originProjectDir": "项目目录切换",
     "originGitHead": "Git 分支切换",
     "originSystem": "系统消息",
+    "selection": {
+      "addToChat": "添加到当前会话",
+      "askInSideChat": "在辅助会话中提问",
+      "limitWarning": "单条引用最多 8,000 个字符",
+      "quoteTooltip": "选中文本引用（发送时作为引用块）",
+      "sourceUser": "用户消息",
+      "sourceAi": "助手回复",
+      "sourceTool": "工具输出",
+      "sideChatTitle": "辅助会话",
+      "sideChatMissing": "辅助会话不可用",
+      "sideChatFailed": "创建辅助会话失败"
+    },
     "tokenGuard": {
       "title": "模型配置不达标",
       "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
@@ -532,6 +544,7 @@
     "contextViewer": "Agent 上下文",
     "browser": "浏览器",
     "terminal": "终端",
+    "sideChat": "辅助会话",
     "scopes": {
       "session": "当前会话",
       "global": "全局"

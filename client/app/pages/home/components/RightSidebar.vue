@@ -192,7 +192,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
   contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
-  terminal: defineAsyncComponent(() => import('./TerminalPanel.vue'))
+  terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
+  sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
 };
 
 /**
@@ -222,9 +223,18 @@ const activeKind = computed<RightSidebarPanelKind | null>(() =>
 const activePanel = computed<Component | null>(() => (activeKind.value ? PANELS[activeKind.value] : null));
 /** The active tab's own data (the file viewer's path, a toolbox panel's
  *  instance key…); undefined for the kinds that carry none. */
-const activeTabPayload = computed<{ path?: string; hash?: string; instance?: string; url?: string } | undefined>(
-  () => store.tabs.find(tab => tab.id === store.activeTabId)?.payload
-);
+const activeTabPayload = computed<
+  | {
+      path?: string;
+      hash?: string;
+      instance?: string;
+      url?: string;
+      sessionId?: string;
+      quote?: string;
+      source?: string;
+    }
+  | undefined
+>(() => store.tabs.find(tab => tab.id === store.activeTabId)?.payload);
 
 /**
  * Whether a tab can be dragged into the composer as a file mention. Only the

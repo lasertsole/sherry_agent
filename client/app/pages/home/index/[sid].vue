@@ -14,8 +14,11 @@
           :user-name="characterInfo.userName"
           :ai-name="characterInfo.aiName"
           :loading-older="loadingOlder"
+          :selection-enabled="!hitlRequest"
           @reach-top="loadOlderHistory"
-          @release-head="onReleaseHead" />
+          @release-head="onReleaseHead"
+          @selection-add="onSelectionAdd"
+          @selection-side-chat="onSelectionSideChat" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -426,6 +429,8 @@ import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import type { SelectionPayload } from '~/composables/use-chat-selection';
+import { logUtil } from '~/utils/log';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -1010,6 +1015,55 @@ function onFileMentionRequest(request: unknown): void {
   const payload = request as { sessionId?: string; payload?: FileMentionPayload } | undefined;
   if (!payload?.payload?.path || payload.sessionId !== mySid) return;
   chatInputBoxRef.value?.addFileMention?.(payload.payload);
+}
+
+/** True while a side session is being created (guards a double-click). */
+const creatingSideChat = ref(false);
+
+/**
+ * The localized "from X" tooltip for a quote chip.
+ * @param role The quoted message's role.
+ */
+function selectionRoleLabel(role?: string): string {
+  if (role === CHAT_ROLE.USER) return t('chat.selection.sourceUser');
+  if (role === CHAT_ROLE.AI) return t('chat.selection.sourceAi');
+  return t('chat.selection.sourceTool');
+}
+
+/**
+ * "添加到当前会话": insert the selected text as a quote chip at the caret.
+ * @param payload The quoted selection.
+ */
+function onSelectionAdd(payload: SelectionPayload): void {
+  if (!payload?.text) return;
+  chatInputBoxRef.value?.addQuoteChip?.(payload.text, selectionRoleLabel(payload.sourceRole));
+}
+
+/**
+ * "在辅助会话中提问": create a normal session derived from this one (same
+ * preset binding and character snapshot, no subagent semantics), open it in a
+ * right-sidebar side-chat tab and hand it the quoted text.
+ *
+ * The child is an ordinary session: it owns its own history, checkpoint and
+ * approvals, and closing the tab does not delete it (the session list keeps it).
+ * @param payload The quoted selection.
+ */
+async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
+  if (!payload?.text || creatingSideChat.value || !mySid) return;
+  creatingSideChat.value = true;
+  try {
+    const { sessionId: childSid } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
+    rightSidebarStore.openTab('sideChat', {
+      sessionId: childSid,
+      quote: payload.text,
+      source: selectionRoleLabel(payload.sourceRole)
+    });
+  } catch (e) {
+    logUtil.e('[SideChat] Failed to create the side session:', e);
+    toastError(t('chat.selection.sideChatFailed'), e instanceof Error ? e.message : String(e));
+  } finally {
+    creatingSideChat.value = false;
+  }
 }
 
 // After mount, ensure character info is loaded (immediate already fired on KeepAlive restore; this is a fallback)

@@ -680,3 +680,98 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
     expect(sidebar.openTab).toHaveReturnedWith('contextViewer-1');
   });
 });
+
+describe('ChatBox selection menu (integration)', () => {
+  it('quotes the selected message text and emits selection-add', async () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 11, role: CHAT_ROLE.AI, content: 'quoted answer' })]
+      },
+      attachTo: document.body
+    });
+    await flushPromises();
+    const row = wrapper.get('[data-message-id="11"]');
+    const range = document.createRange();
+    range.selectNodeContents(row.element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24
+    });
+    wrapper.element.querySelector('.overflow-auto')!.dispatchEvent(event);
+    await flushPromises();
+
+    expect(event.defaultPrevented).toBe(true);
+    const menus = document.querySelectorAll('[data-test="chat-selection-menu"]');
+    const menu = menus[menus.length - 1];
+    const items = Array.from(menu.querySelectorAll('.p-contextmenu-item-label'));
+    const add = items.find(item => item.textContent?.includes('添加到当前会话')) as HTMLElement;
+    expect(add).toBeTruthy();
+    add.click();
+    await flushPromises();
+
+    const payload = wrapper.emitted('selection-add')?.[0]?.[0] as {
+      text: string;
+      sourceMessageId: string;
+      sourceRole: string;
+    };
+    expect(payload.text).toContain('quoted answer');
+    expect(payload.sourceMessageId).toBe('11');
+    expect(payload.sourceRole).toBe('ai');
+    expect(wrapper.emitted('selection-side-chat')).toBeUndefined();
+
+    selection.removeAllRanges();
+    wrapper.unmount();
+  });
+
+  it('leaves the native menu alone when nothing is selected', async () => {
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 12, role: CHAT_ROLE.AI, content: 'plain' })] },
+      attachTo: document.body
+    });
+    await flushPromises();
+    window.getSelection()?.removeAllRanges();
+
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    wrapper.element.querySelector('.overflow-auto')!.dispatchEvent(event);
+    await flushPromises();
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(wrapper.emitted('selection-add')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('offers the side-session entry only when allowed', async () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 13, role: CHAT_ROLE.AI, content: 'side question' })],
+        allowSideChat: false
+      },
+      attachTo: document.body
+    });
+    await flushPromises();
+    const row = wrapper.get('[data-message-id="13"]').element;
+    const range = document.createRange();
+    range.selectNodeContents(row);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    wrapper.element
+      .querySelector('.overflow-auto')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await flushPromises();
+
+    const menus = document.querySelectorAll('[data-test="chat-selection-menu"]');
+    const menu = menus[menus.length - 1];
+    expect(menu.textContent).toContain('添加到当前会话');
+    expect(menu.textContent).not.toContain('在辅助会话中提问');
+    selection.removeAllRanges();
+    wrapper.unmount();
+  });
+});

@@ -268,6 +268,44 @@ minimum **before** cancelling the running turn — the cancel-triggered drain th
 claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
 single ordering rule; there is no priority column).
 
+## Chat Selection Quote & Side Session (`ChatBox.vue` / `SideChatPanel.vue`)
+
+Right-clicking a **valid text selection inside one message row** opens a PrimeVue
+`ContextMenu` anchored at the pointer. A right-click with no selection (or on a
+control) does NOT call `preventDefault`, so the browser's native copy menu still
+works.
+
+- **Guard** — `client/app/composables/use-chat-selection.ts::inspectSelection(root)`
+  returns `null` for a collapsed/empty selection, more than
+  `MAX_SELECTION_CHARS` (8 000) characters, a selection outside the chat list,
+  one starting in `button/input/textarea/select/[contenteditable=true]/
+  [role=dialog]/[role=menu]/[data-hitl-card]/.p-contextmenu`, or one whose
+  common ancestor has no `[data-message-id]` (a selection spanning two rows).
+  `ChatBox` adds `data-message-id` / `data-message-role` to each message row;
+  `selection-enabled` is false while a HITL card owns the input (the page passes
+  `!hitlRequest`), and `allow-side-chat` is false inside the side panel.
+- **添加到当前会话** — `ChatBox` emits `selection-add`; the page calls
+  `inputBox.addQuoteChip(text, sourceLabel)` →
+  `use-text-selection.ts::insertQuoteChip` inserts an atomic
+  `<span contenteditable="false" class="text-quote-chip" data-quote-text="…">`
+  (the label is a 40-char preview). `extractTextForSend` now turns that chip into
+  a markdown blockquote (`> line` per line) and never leaks the preview; the
+  file-mention branch is unchanged and still extracts `@path`.
+- **在辅助会话中提问** — `createSideChatSession` (`use-side-chat.ts`) mints an
+  ordinary child session (NOT a subagent), copies the parent's preset binding,
+  locked character snapshot, agent config and PROJECT DIRECTORY, caches its
+  placeholder meta and announces it via `session:created`, then opens a
+  session-scoped `sideChat` right-sidebar tab whose payload carries
+  `{sessionId, quote, source}`. The panel reads that payload on mount (no
+  mitt race) and prefills the quote chip. `SideChatPanel.vue` reuses the page's
+  lifecycle / draft-persistence / chunk / HITL / chat-stream slices over the
+  child's own persistent socket, history and approvals; it has a compact
+  question/plan/generic approval card. Closing the tab does not delete the
+  session — it stays in the normal session list, so its history is recoverable
+  (the plan's "hidden side session" was traded for that recoverability).
+- **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
+  side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
+
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
 Every session has a **project directory**: the root its tools resolve relative
