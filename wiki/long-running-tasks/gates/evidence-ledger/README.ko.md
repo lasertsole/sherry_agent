@@ -6,7 +6,7 @@
 
 에비던스 원장은 모든 완료 경계에서 하나의 질문에 답합니다: **"에이전트가 자신의 작업을 검증했는가, 그 검증이 여전히 유효한가?"** 이를 위해 유효하지 않음 플래그를 저장하지 않습니다 — 이벤트 행은 불변이며, 신선도는 읽기 시점에 검증 행과 파일 편집 이벤트의 순서로부터 계산됩니다(보존 기간은 오래된 행을 삭제할 뿐 역사를 다시 쓰지 않습니다).
 
-**소스 코드:** `agent/tools/pub_base/evidence_ledger.py`(스토리지), `agent/tools/pub_base/evidence_recorder.py`(프로듀서), `agent/tools/taskflow/evidence_collector.py`(리더/컨슈머), `config/features/agent_side/evidence_ledger.py`(분류).
+**소스 코드:** `agent/tools/pub_base/evidence_ledger.py`(스토리지), `agent/tools/pub_base/evidence_recorder.py`(프로듀서), `agent/tools/taskflow/evidence_collector.py`(리더/컨슈머), `config/features/agent_side/evidence_ledger.py`(분류), `config/features/agent_side/evidence_cross_session.py`(크로스 세션 스위치).
 
 ---
 
@@ -32,6 +32,8 @@ terminal / python_repl 이 명령을 실행
                       ├─ 방향이 중요: evidence 이전의 stale = 신선(재검증됨)
                       └─ 반환: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
+
+**크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 command에 편집 경로가 포함된 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
 
 ---
 
@@ -84,7 +86,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 ### 2. 파일 편집 — stale 이벤트
 
-`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을追加합니다.
+`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을 추가합니다. 크로스 세션 스위치가 켜져 있으면 같은 호출이 command에 해당 경로를 포함하는 다른 각 세션에도 stale 행을 추가합니다.
 
 ### 3. 서브에이전트 워크스페이스 머지 — stale 이벤트
 
@@ -120,6 +122,8 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 }
 ```
 
+크로스 세션 행은 두 개의 선택 필드를 추가로 가집니다: `"scope": "cross_session"`과 `"source_session": "<writer session id>"`. 이 필드가 없는 행은 기존 per-session 마크입니다.
+
 ---
 
 ## 유효하지 않음(staleness) 도출
@@ -142,7 +146,7 @@ def _is_stale(index, row, stale_events):
 
 - **방향이 중요:** **더 나중의** stale 이벤트만이 **더 이전의** evidence 행을 무효화합니다. evidence 이전의 stale 이벤트는 파일이 편집된 후 재검증되었음을 의미합니다 — 검증은 신선합니다.
 - **부분문자열 매치:** `file_path in command`. 의도적으로 느슨함 — `src/foo.py`의 stale 이벤트는 `pytest src/foo.py tests/`를 무효화합니다.
-- **세션 범위:** `SessionEvidenceLedger.list_records()`가 먼저 `session_id`로 필터링하므로, 다른 세션의 stale 이벤트가 교차 오염되지 않습니다.
+- **세션 그룹:** `SessionEvidenceLedger.list_records()`는 `session_id`로 필터링하고, `_is_stale`은 한 세션의 행 순서 안에서만 비교합니다. 따라서 크로스 세션 무효화는 영향을 받는 세션 자신의 그룹에 **기록되며**(세션당 한 행), writer의 그룹에 남지 않습니다.
 
 ---
 
@@ -201,4 +205,4 @@ TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에�
 1. **어디서나 fail-open.** 모든 레코더는 자신의 에러를 삼킵니다. 모든 게이트는 collector 에러 시 "통과/위반 아님"을 반환합니다. 망가진 원장은 완료를 차단하거나 서브에이전트를 가두지 않습니다.
 2. **불변 이벤트 행 + 읽기 시점 도출.** 기록된 행은 UPDATE되지 않습니다. 유효하지 않음은 읽기 시점에 행의 순서로부터 계산됩니다. 보존 기간은 오래된 행을 DELETE할 수 있지만(age/세션/전체 상한) 역사를 다시 쓰지 않습니다. reader는 남은 행 순서에서 신선도를 계산합니다.
 3. **경로 참조, 콘텐츠가 아님.** 원장은 명령 문자열과 출력 스니펫(500자)을 기록하고, 파일 콘텐츠는 기록하지 않습니다. *무엇을 검증했는지*와 *통과했는지*를 기록하며, *파일에 무엇이 있었는지*는 기록하지 않습니다.
-4. **항상 켜짐, 토글 없음.** 자동 기록 경로에는 on/off 스위치가 없습니다. 분류에 매치되는 모든 terminal/python_repl 호출이 행을 씁니다. 모든 파일 편집이 stale 이벤트를 씁니다. 모델은 우회할 수 없습니다.
+4. **자동 기록은 항상 켜져 있고, 전파만 스위치 가능합니다.** 분류에 매치되는 모든 terminal/python_repl 호출이 행을 쓰고 모든 파일 편집이 writer 자신의 세션을 마크합니다(on/off 스위치 없음). 크로스 세션 브로드캐스트만 게이트된 계층입니다(`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`, 기본 켜짐). 끄면 원장 스키마를 바꾸지 않고 이전 per-session 동작으로 돌아갑니다.

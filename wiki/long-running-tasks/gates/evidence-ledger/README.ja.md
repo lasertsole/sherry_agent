@@ -6,7 +6,7 @@
 
 エビデンス台帳はすべての完了境界で一つの問いに答えます：**「エージェントは自分の作業を検証したか、その検証はまだ有効か？」** 古さのフラグを保存せずにこれを実現します — イベント行は不変で、鮮度は読み取り時に検証行とファイル編集イベントの順序から計算されます（保持期間は古い行を削除するだけで履歴を書き換えません）。
 
-**ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）。
+**ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）、`config/features/agent_side/evidence_cross_session.py`（クロスセッションスイッチ）。
 
 ---
 
@@ -32,6 +32,8 @@ terminal / python_repl がコマンドを実行
                       ├─ 方向が重要: evidence より前の stale = 新鮮（再検証済み）
                       └─ 返す: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
+
+**クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から編集パスを command に含むものを探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
 
 ---
 
@@ -84,7 +86,7 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 
 ### 2. ファイル編集 — stale イベント
 
-`write_file` と `patch_file` は `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` でデコレートされています。デコレータは `finally` ブロックで実行されるため、**すべての**結果（成功・エラー文字列・例外送出）が `{"event": "stale", "file_path": "..."}` 行を追記します。
+`write_file` と `patch_file` は `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` でデコレートされています。デコレータは `finally` ブロックで実行されるため、**すべての**結果（成功・エラー文字列・例外送出）が `{"event": "stale", "file_path": "..."}` 行を追記します。クロスセッションスイッチがオンの場合、同じ呼び出しが、command にそのパスを含む他の各セッションにも stale 行を追加します。
 
 ### 3. サブエージェントワークスペースマージ — stale イベント
 
@@ -120,6 +122,8 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 }
 ```
 
+クロスセッション行は 2 つの任意フィールドを追加で持ちます: `"scope": "cross_session"` と `"source_session": "<書き込み側 session id>"`。これらを持たない行は従来の per-session マークです。
+
 ---
 
 ## 古さの導出
@@ -142,7 +146,7 @@ def _is_stale(index, row, stale_events):
 
 - **方向が重要:** **より後の** stale イベントだけが**より前の** evidence 行を無効化します。evidence より前の stale イベントは、ファイルが編集された後に再検証されたことを意味し、検証は新鮮です。
 - **部分文字列マッチ:** `file_path in command`。意図的に緩い — `src/foo.py` の stale イベントは `pytest src/foo.py tests/` を無効化します。
-- **セッションスコープ:** `SessionEvidenceLedger.list_records()` が先に `session_id` でフィルタリングするため、他のセッションの stale イベントは交差汚染しません。
+- **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、`_is_stale` は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
 
 ---
 
@@ -201,4 +205,4 @@ TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エ
 1. **いたるところで fail-open。** すべてのレコーダーは自身のエラーを飲み込む。すべてのゲートは collector エラー時に「通過/非違反」を返す。壊れた台帳は完了をブロックしたりサブエージェントを閉じ込めることはない。
 2. **不変イベント行 + 読み取り時導出。** 記録済みの行は UPDATE されない。古さは読み取り時に行情報から計算される。保持期間は古い行を DELETE することがある（age/セッション/全体上限）が、履歴を書き換えない。reader は残存する行順序から鮮度を計算する。
 3. **パス参照、コンテンツではない。** 台帳はコマンド文字列と出力スニペット（500文字）を記録し、ファイル内容は記録しない。*何を検証したか*と*通過したか*を記録し、*ファイルに何が含まれていたか*は記録しない。
-4. **常時オン、トグルなし。** 自動記録パスにはオン/オフスイッチがない。分類にマッチするすべての terminal/python_repl 呼び出しが行を書く。すべてのファイル編集が stale イベントを書く。モデルはバイパスできない。
+4. **自動記録は常時オン、伝播はスイッチ可能。** 分類にマッチするすべての terminal/python_repl 呼び出しが行を書き、すべてのファイル編集が書き込み側セッションをマークします（オン/オフスイッチなし）。クロスセッションのブロードキャストだけがゲートされた層です（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`、既定オン）。オフにすると台帳スキーマを変えずに従来の per-session 動作へ戻ります。

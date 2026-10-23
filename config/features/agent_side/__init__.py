@@ -141,6 +141,10 @@ from .evidence_ledger import (
     EvidenceLedgerConfig as EvidenceLedgerConfig,
     EVIDENCE_LEDGER as EVIDENCE_LEDGER,
 )
+from .evidence_cross_session import (
+    EvidenceCrossSessionConfig as EvidenceCrossSessionConfig,
+    EVIDENCE_CROSS_SESSION_STALENESS as EVIDENCE_CROSS_SESSION_STALENESS,
+)
 from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,
     STEP_JUDGE as STEP_JUDGE,

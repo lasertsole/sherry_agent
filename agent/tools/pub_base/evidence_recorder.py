@@ -13,7 +13,7 @@ from collections.abc import Iterable
 
 from loguru import logger
 
-from config.features import EVIDENCE_LEDGER
+from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_LEDGER
 from .evidence_ledger import EvidenceLedger
 
 _EXIT_CODE_RE = re.compile(r"^(?:Exit code|Error: subprocess exited with code) (-?\d+)")
@@ -82,9 +82,17 @@ def record_verification_evidence(
 
 
 def mark_evidence_stale(file_path: str, session_id: str) -> None:
-    """Append a stale event for ``file_path`` after an edit (fail-open)."""
+    """Append a stale event for ``file_path`` after an edit (fail-open).
+
+    The writer's own session is marked first. When cross-session propagation is
+    enabled, every OTHER session whose evidence command names the path gets its
+    own stale row, so their collectors and the TaskFlow finish gate see that the
+    verification may no longer hold.
+    """
     try:
         EvidenceLedger.for_session(session_id).mark_stale_for_path(file_path)
+        if EVIDENCE_CROSS_SESSION_STALENESS["enabled"]:
+            EvidenceLedger.mark_stale_for_path_all_sessions(file_path, session_id)
     except Exception as exc:
         logger.warning("evidence stale mark failed: {}", exc)
 

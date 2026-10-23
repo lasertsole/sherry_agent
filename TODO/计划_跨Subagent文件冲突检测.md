@@ -1,7 +1,7 @@
 # 计划：跨 Subagent 文件冲突检测——Staleness 传播 + 后写回归门
 
 - 建档日期：2026-10-23
-- 状态：**待评审**。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
+- 状态：**§2 已实施并验证（2026-10-23）；§3 / §4 待评审 / 暂缓**。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
 - **文档范围**：两个增量改造——(1) 跨 session staleness 传播：B 写文件 F 时自动标记所有 session 对 F 的 evidence 为 stale；(2) 后写回归门：对有 stale evidence 的 session 自动重跑验证命令，检测语义级破坏。两者复用现有基础设施，不引入新依赖。
 - **硬约束**：evidence ledger 事件语义不变（staleness 仍派生；存储已是 SQLite）；fail-open（重验失败/命令不存在不崩）；不影响现有文件锁/TaskFlow/完成判断逻辑；跨 session 查询性能可接受。
 - 关联代码：
@@ -85,28 +85,29 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 ### 2.2 改动清单
 
-- [ ] **2.2.1** `agent/tools/pub_base/evidence_ledger.py`：新增 `mark_stale_for_path_all_sessions(path: str, writer_session_id: str)`：
+- [x] **2.2.1** `agent/tools/pub_base/evidence_ledger.py`：新增 `mark_stale_for_path_all_sessions(path: str, writer_session_id: str)`：
   - 扫描 ledger，找出所有 `session_id != writer_session_id` 且 `command` 包含 `path` 的 evidence 行
   - 为每个匹配的 session 追加一行 `{"event":"stale","file_path":path,"source_session":writer_session_id,"scope":"cross_session"}`
   - 用 `file_write_lock` 保护追加（已有模式，`:50`）
   - **fail-open**：扫描异常只 log，不阻断写入
 
-- [ ] **2.2.2** `agent/tools/taskflow/evidence_collector.py:15-21` 的 `_is_stale` 派生逻辑扩展（**注意：staleness 派生在 `evidence_collector.py` 不在 `evidence_ledger.py`**——`evidence_ledger.py:120-139` 是 `mark_stale_for_path` 追加侧，`_is_stale` 比较侧在 collector）：
+- [x] **2.2.2** `agent/tools/taskflow/evidence_collector.py:15-21` 的 `_is_stale` 派生逻辑扩展（**注意：staleness 派生在 `evidence_collector.py` 不在 `evidence_ledger.py`**——`evidence_ledger.py:120-139` 是 `mark_stale_for_path` 追加侧，`_is_stale` 比较侧在 collector）：
   - 当前：evidence 行 stale iff 同一 session group 内有后续 `{"event":"stale","file_path":...}` 且 `file_path` 在 evidence 的 `command` 中
   - 扩展：也检查 `scope == "cross_session"` 的 stale 行（`source_session` 标识写入方）——collector 的 `collect_evidence_summary`（`:24-61`）当前按 session group 分割 stale_events（`:53`），需让 cross-session stale 行也参与每组比较
   - **向后兼容**：无 `scope` 字段的 stale 行（旧数据）仍按 per-session 处理（`scope` 缺省 = `session`）
+  - **实施结果：collector 无需改动**——cross-session stale 行写进受影响 session 的 scope（`session_id=A`），现有 `_is_stale` 的同组派生直接可见；`test_evidence_cross_session.py` 覆盖。
 
-- [ ] **2.2.3** `evidence_recorder.py:98-151` 的 `mark_evidence_stale` 改造：
+- [x] **2.2.3** `evidence_recorder.py:98-151` 的 `mark_evidence_stale` 改造：
   - 当前只调 `mark_stale_for_path(path, session_id)`（per-session）
   - 扩展：当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 True 时，额外调 `mark_stale_for_path_all_sessions(path, writer_session_id)`
   - per-session 标记保留不变（向后兼容）
 
-- [ ] **2.2.4** `evidence_collector.py:15-40` 的 flow 聚合逻辑：
+- [x] **2.2.4** `evidence_collector.py:15-40` 的 flow 聚合逻辑：
   - 当前聚合每个 step session 的 evidence，staleness 在每个 session 内部派生
   - 扩展：`collect_flow_evidence` 时，cross-session stale 行也参与派生——A 的 evidence 因 B 的写入被标 stale，在 flow 聚合视图里 A 的 evidence 显示 `[stale]`
   - `taskflow_finish` 的 Gate B（evidence 无 FAIL/[stale]）因此能检测到 A 的 stale evidence
 
-- [ ] **2.2.5** 新增配置 `config/features/agent_side/evidence_cross_session.py`：
+- [x] **2.2.5** 新增配置 `config/features/agent_side/evidence_cross_session.py`：
   ```python
   EVIDENCE_CROSS_SESSION_STALENESS: TypedDict = {
       "enabled": True,              # 总开关
@@ -443,3 +444,34 @@ claudecode 的 GreenContract / branch_lock / lane_events / recovery_recipes 是�
 | §4 文件级依赖声明 | **暂缓，可选锦上添花** | 1-2 天 |
 | **合计（推荐）** | | **2-3 天** |
 | 合计（全量） | | 6-9 天 |
+
+---
+
+## 11. §2 实施结果（2026-10-23）
+
+### 11.1 已落地
+
+- `EvidenceLedger.mark_stale_for_path_all_sessions(path, writer_session_id)`：SQL 扫描其他 session 中 `command` 包含 `path` 的 evidence，按 session 去重，向每个受影响 session 追加一行 `{"event":"stale","file_path":...,"scope":"cross_session","source_session":writer}`。
+- `mark_evidence_stale()`：先写 writer 自己的 per-session stale 行，再按 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 广播。
+- 新配置 `config/features/agent_side/evidence_cross_session.py`：`enabled`（默认 true）、`max_sessions_scan`（200）、`exclude_self`（true）。
+- collector / finish gate 无需改代码：cross-session stale 行写入受影响 session 的 scope，现有同组 `_is_stale` 直接看到，Gate C 保持原有硬阻断。
+
+### 11.2 验证结果
+
+- 新增 `tests/agent/tools/pub_base/test_evidence_cross_session.py`：6 个用例覆盖传播、无关路径、开关关闭、扫描上限、命令匹配边界、fail-open。
+- `test_finish_gate.py` 新增集成用例：A 的 `pytest tests/test_feature.py` 通过后，兄弟 B 写同一路径 → A 的 evidence 在 Gate C 显示 `[stale]` → `taskflow_finish` 被拒绝。
+- 聚焦套件（cross-session + ledger + stale + finish gate）43 passed。
+- 性能（本机、磁盘临时目录、SQLite）：
+  - 100 session / 1000 evidence 行，单 session 命中：21.33 ms（含 1 次插入）。
+  - 100 session / 1000 evidence 行，100 session 全命中：12.27 ms（含 100 次插入）。
+  - 均低于 F5 的 50 ms。
+
+### 11.3 真实改善与边界
+
+**改善是真实的，但范围窄于“跨文件回归检测”：**
+
+- ✅ 同文件顺序写：B 写 F，A 的验证命令**点名了 F**（如 `pytest tests/test_feature.py` / `ruff check feature.py`）→ A 的 evidence 立即变 `[stale]` → Gate C 阻断 finish。
+- ❌ 跨文件 import 依赖：A 的验证命令是 `pytest tests/test_beta.py`，B 改的是它 import 的 `src/alpha.py`，命令字符串不含 `src/alpha.py` → **不标 stale**。`test_command_matching_does_not_infer_source_dependencies` 把这个边界钉成了测试。
+- ⚠️ 路径匹配是子串匹配：B 写 `feature.py` 会命中命令里的 `tests/test_feature.py`；偏保守的误报，只会多一次重验提示，不会漏报。
+
+**结论**：§2 能解决“同一个被验证文件被后写”的问题，适合作为低成本兜底；计划里列为最高风险的“跨文件依赖破坏”仍需 §3 的重验（重跑 A 的测试命令）才能检出。§3 是否值得做，建议用 §2 上线后的实际 stale 命中率评估；若命中主要来自同文件覆盖，§2 足够；若跨文件破坏真实发生，则上 `trigger="on_finish"` 的批量重验版本，而不是 `on_announce` 的每次重跑。

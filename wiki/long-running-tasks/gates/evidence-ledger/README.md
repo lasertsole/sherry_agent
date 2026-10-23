@@ -6,7 +6,7 @@
 
 The evidence ledger answers one question at every completion boundary: **"Did the agent verify its work, and is that verification still valid?"** It does this without storing a staleness flag — events are immutable rows, and freshness is computed on the read side from the ordering of verification rows and file-edit events.
 
-**Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy).
+**Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy), `config/features/agent_side/evidence_cross_session.py` (cross-session switch).
 
 ---
 
@@ -32,6 +32,8 @@ terminal / python_repl runs a command
                       ├─ direction matters: stale BEFORE evidence = fresh (re-verified)
                       └─ returns: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
+
+**Cross-session propagation.** A file write marks the writer's own session first. When `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` is true, `EvidenceLedger.mark_stale_for_path_all_sessions()` scans the OTHER sessions' evidence rows for a command containing the edited path and appends one `scope="cross_session"` stale row under EACH affected session. `source_session` records the writer; `max_sessions_scan` caps the scan and `exclude_self` skips the already-marked writer. The read-side derivation below needs no change because the broadcast row lives in the affected session's own sequence.
 
 ---
 
@@ -84,7 +86,7 @@ Every `terminal` and `python_repl` call passes through `record_verification_evid
 
 ### 2. File edits — stale events
 
-`write_file` and `patch_file` are decorated with `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`. The decorator runs in a `finally` block, so **every** outcome (success, error string, raised exception) appends a `{"event": "stale", "file_path": "..."}` row to the ledger.
+`write_file` and `patch_file` are decorated with `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`. The decorator runs in a `finally` block, so **every** outcome (success, error string, raised exception) appends a `{"event": "stale", "file_path": "..."}` row to the ledger. When the cross-session switch is on, the same call also appends a stale row to every OTHER session whose evidence command names the path.
 
 ### 3. Subagent workspace merge — stale events
 
@@ -120,6 +122,8 @@ When a child's isolated workspace merges back into the parent session, `workspac
 }
 ```
 
+A cross-session row carries two extra optional fields: `"scope": "cross_session"` and `"source_session": "<writer session id>"`. A row without them is the original per-session mark.
+
 ---
 
 ## Staleness Derivation
@@ -142,7 +146,7 @@ Key subtleties:
 
 - **Direction matters:** only a *later* stale event invalidates an earlier evidence row. A stale event before the evidence means the file was edited, then re-verified — the verification is fresh.
 - **Substring match:** `file_path in command`. Intentionally loose — a stale event for `src/foo.py` invalidates `pytest src/foo.py tests/`.
-- **Session-scoped:** `SessionEvidenceLedger.list_records()` filters by `session_id` first, so stale events from other sessions don't cross-contaminate.
+- **Session-grouped:** `SessionEvidenceLedger.list_records()` filters by `session_id`, and `_is_stale` compares only within one session's sequence. A cross-session invalidation is therefore written INTO the affected session's group (one row per session), never left in the writer's group.
 
 ---
 
@@ -201,4 +205,4 @@ Gate order: A (DAG completeness) → B (no unresolved steps) → C (evidence) �
 1. **Fail-open everywhere.** Every recorder swallows its own errors. Every gate returns "pass / not-violated" on collector failure. A broken ledger can never block a finish or trap a subagent.
 2. **Immutable event rows + read-time derivation.** A recorded row is never UPDATEd. Staleness is computed at read time from the ordering of rows. Retention may DELETE old rows (age/session/global caps), but it never rewrites history; readers always compute freshness from the surviving sequence.
 3. **Path references, not content.** The ledger records command strings and output snippets (500 chars), not file contents. It records *what was verified* and *whether it passed*, not *what the file contained*.
-4. **Always on, no toggle.** The auto-recording path has no on/off switch. Every terminal/python_repl call that matches the taxonomy gets a row. Every file edit gets a stale event. The system cannot be bypassed by the model.
+4. **Auto-recording is always on; propagation is switchable.** Every terminal/python_repl call that matches the taxonomy gets a row and every file edit marks the writer's own session, with no on/off switch. The cross-session broadcast is the one gated layer (`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`, default on); disabling it restores the previous per-session behaviour without changing the ledger schema.

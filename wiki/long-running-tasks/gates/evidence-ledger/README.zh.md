@@ -6,7 +6,7 @@
 
 证据账本在每个完成边界回答一个问题：**"agent 验证了它的成果吗，验证还有效吗？"** 它不存储过期标志——事件行不可变，新鲜度在读取时从验证行和文件编辑事件的顺序计算（保留期只删除旧行，不改写历史）。
 
-**代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）。
+**代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）、`config/features/agent_side/evidence_cross_session.py`（跨 session 开关）。
 
 ---
 
@@ -32,6 +32,8 @@ terminal / python_repl 跑了一条命令
                       ├─ 方向重要：stale 在 evidence 之前 = 新鲜（已重新验证）
                       └─ 返回："  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
+
+**跨 session 传播。** 文件写入先标记 writer 自己的 session。当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 true 时，`EvidenceLedger.mark_stale_for_path_all_sessions()` 扫描其他 session 中 command 包含被编辑路径的 evidence 行，并在每个受影响 session 下追加一行 `scope="cross_session"` 的 stale 事件。`source_session` 记录写入方；`max_sessions_scan` 限制扫描数量，`exclude_self` 跳过已单独标记的 writer。下方的读取侧推导无需改动——广播行就落在受影响 session 自己的序列里。
 
 ---
 
@@ -84,7 +86,7 @@ terminal / python_repl 跑了一条命令
 
 ### 2. 文件编辑 — stale 事件
 
-`write_file` 和 `patch_file` 用 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` 装饰。装饰器在 `finally` 块里运行，所以**每种**结果（成功、错误字符串、抛异常）都会追加一行 `{"event": "stale", "file_path": "..."}`。
+`write_file` 和 `patch_file` 用 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")` 装饰。装饰器在 `finally` 块里运行，所以**每种**结果（成功、错误字符串、抛异常）都会追加一行 `{"event": "stale", "file_path": "..."}`。跨 session 开关开启时，同一次调用还会向每个 command 包含该路径的其他 session 各追加一行 stale 事件。
 
 ### 3. 子代理工作区合并 — stale 事件
 
@@ -120,6 +122,8 @@ terminal / python_repl 跑了一条命令
 }
 ```
 
+跨 session 行额外携带两个可选字段：`"scope": "cross_session"` 与 `"source_session": "<写入方 session id>"`。没有这两个字段的行就是原来的 per-session 标记。
+
 ---
 
 ## 过期推导
@@ -142,7 +146,7 @@ def _is_stale(index, row, stale_events):
 
 - **方向重要：** 只有**后来的** stale 事件能使**先前的** evidence 行过期。stale 事件在 evidence 行之前意味着文件被编辑后又重新验证了——验证是新鲜的。
 - **子串匹配：** `file_path in command`。故意宽松——`src/foo.py` 的 stale 事件会使 `pytest src/foo.py tests/` 过期。
-- **Session 隔离：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，其他 session 的 stale 事件不会串扰。
+- **按 session 分组：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，`_is_stale` 只在一个 session 的序列内比较。因此跨 session 失效会**写进受影响 session 自己的组**（每个 session 一行），而不是留在写入方的组里。
 
 ---
 
@@ -201,4 +205,4 @@ TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它
 1. **处处 fail-open。** 每个记录器吞掉自己的异常。每个门控在 collector 出错时返回"通过/未违反"。坏掉的账本永远不会阻塞完成或困住子代理。
 2. **不可变事件行 + 读取时推导。** 已记录的行从不 UPDATE。过期在读取时从行的顺序计算。保留期可能删除旧行（age/会话/全局上限），但从不改写历史；reader 始终从幸存的行序列计算新鲜度。
 3. **路径引用，不是内容。** 账本记录命令字符串和输出摘要（500 字符），不记录文件内容。它记录*验证了什么*和*是否通过*，不是*文件里有什么*。
-4. **Always on，无开关。** 自动记录路径没有 on/off 开关。每条匹配分类法的 terminal/python_repl 调用都写一行。每次文件编辑都写一个 stale 事件。模型无法绕过。
+4. **自动记录始终开启，传播可开关。** 每条匹配分类法的 terminal/python_repl 调用都写一行，每次文件编辑都标记写入方自己的 session，没有 on/off 开关。跨 session 广播是唯一受门控的层（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`，默认开启）；关闭它即恢复原来的 per-session 行为，且不改变账本 schema。

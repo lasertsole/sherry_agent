@@ -32,7 +32,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from config.features import EVIDENCE_LEDGER
+from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_LEDGER
 from config.path import resolve_evidence_ledger_path
 
 _SCHEMA = """
@@ -317,6 +317,82 @@ class EvidenceLedger:
                 except Exception:
                     logger.warning("evidence ledger pruning failed (fail-open)", exc_info=True)
         return int(count)
+
+    @classmethod
+    def mark_stale_for_path_all_sessions(cls, file_path: str, writer_session_id: str) -> int:
+        """Broadcast a write to every OTHER session whose evidence names ``file_path``.
+
+        The writer's own stale event is appended by
+        :meth:`SessionEvidenceLedger.mark_stale_for_path`; this method covers the
+        sessions that a later write can invalidate without touching their ledger
+        scope. One ``{"event": "stale"}`` row is appended per affected session,
+        carrying ``scope="cross_session"`` and ``source_session=<writer>``, so
+        the existing per-session staleness derivation sees it without a schema
+        change. Returns how many session rows were appended.
+
+        Fail-open: a scan/insert failure only logs and reports 0.
+        """
+        if not file_path:
+            return 0
+        try:
+            limit = max(1, int(EVIDENCE_CROSS_SESSION_STALENESS["max_sessions_scan"]))
+            exclude_self = bool(EVIDENCE_CROSS_SESSION_STALENESS["exclude_self"])
+            with cls._connection() as conn:
+                conditions = [
+                    "event IS NULL",
+                    "session_id != ''",
+                    "instr(COALESCE(command, ''), ?) > 0",
+                ]
+                params: list[object] = [file_path]
+                if exclude_self and writer_session_id:
+                    conditions.append("session_id != ?")
+                    params.append(writer_session_id)
+                params.append(limit)
+                try:
+                    sessions = [
+                        str(row[0])
+                        for row in conn.execute(
+                            "SELECT DISTINCT session_id FROM evidence_events "
+                            f"WHERE {' AND '.join(conditions)} "
+                            "ORDER BY session_id LIMIT ?",
+                            tuple(params),
+                        ).fetchall()
+                        if str(row[0])
+                    ]
+                except sqlite3.Error:
+                    logger.warning(
+                        "evidence cross-session stale scan failed (fail-open)",
+                        exc_info=True,
+                    )
+                    return 0
+                if not sessions:
+                    return 0
+                timestamp = datetime.now(UTC).isoformat()
+                inserted = 0
+                for session_key in sessions:
+                    record = {
+                        "event": "stale",
+                        "file_path": file_path,
+                        "session_id": session_key,
+                        "source_session": writer_session_id,
+                        "scope": "cross_session",
+                        "timestamp": timestamp,
+                    }
+                    if cls._insert(conn, record):
+                        inserted += 1
+                if not inserted:
+                    return 0
+                conn.commit()
+                try:
+                    cls._prune_old_events(conn)
+                except Exception:
+                    logger.warning("evidence ledger pruning failed (fail-open)", exc_info=True)
+                return inserted
+        except Exception:
+            logger.warning(
+                "evidence cross-session stale propagation failed (fail-open)", exc_info=True
+            )
+            return 0
 
     # ── Deletion (session purge / boot sweep) ─────────────────────────────
 

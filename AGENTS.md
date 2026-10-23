@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (80 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (81 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -232,8 +232,11 @@ User message → Robyn WS → agent.core.built_agent() graph
       session's ledger shows a passing, non-stale row — the ledger already
       carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
-      stale events in SQLite (WAL; lazy retention + session/boot purge); read
-      side derives staleness (evidence_collector.py)
+      stale events in SQLite (WAL; lazy retention + session/boot purge); a write
+      also broadcasts a `scope="cross_session"` stale row to every OTHER session
+      whose evidence command names the path (gated by
+      EVIDENCE_CROSS_SESSION_STALENESS; the writer's own session is marked
+      separately); read side derives staleness (evidence_collector.py)
     · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's AGGREGATED evidence (every dispatched step's child session +
@@ -1413,9 +1416,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 52 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 53 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 80 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 81 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
