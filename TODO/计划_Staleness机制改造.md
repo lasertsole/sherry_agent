@@ -28,7 +28,7 @@
 ```python
 def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
     command = str(records[index].get("command") or "")
-    stale = False
+    broken = stale = False
     for later in records[index + 1:]:
         if later.get("event") == "stale" and str(later.get("file_path") or "") in command:
             stale = True
@@ -237,6 +237,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
       row = records[index]
       modified = row.get("modified_files") or []
       command = str(row.get("command") or "")
+      broken = stale = False
       for later in records[index + 1:]:
           event = later.get("event")
           path = str(later.get("file_path") or "")
