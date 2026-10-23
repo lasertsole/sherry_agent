@@ -3,10 +3,10 @@
 - 建档日期：2026-10-23
 - 状态：**待评审（v2，重写）**。v1 方案 B 用 in-memory 累积器 + evidence 行 `modified_files` 字段；核实 hermes 后发现其有 `verification_state` 表（`changed_paths_json` + `last_edit_at`）但**只用时间戳做 staleness，没用 changed_paths**。v2 改为学 hermes 的 state 表结构，但 staleness 判定用 `changed_paths` 做精确匹配——这是 hermes 记了但没用上的数据。
 - **文档范围**：(1) 评估 hermes 纯时间戳 + 三种 sherry 适配方案；(2) 推荐方案 B'（state 表 + changed_paths 精确匹配）；(3) 性价比分析。
-- **硬约束**：不破坏现有 `_is_stale` 调用方；Gate B/C 硬阻断行为不变；fail-open；向后兼容旧 evidence 行。
+- **硬约束**：不破坏现有 `derive_evidence_state` 调用方（`evidence_collector` / `regression_gate`）；Gate B/C 硬阻断行为不变；fail-open；向后兼容旧 evidence 行。
 - 关联代码：
   - 改造对象：
-    - `agent/tools/taskflow/evidence_collector.py:15-21`（`_is_stale`）
+    - `agent/tools/pub_base/evidence_ledger.py::derive_evidence_state`（读取侧派生；`evidence_collector` 调用）
     - `agent/tools/pub_base/evidence_ledger.py:30-162`（EvidenceLedger——增 state 表）
     - `agent/tools/pub_base/evidence_recorder.py:48-95,98-151`（`record_verification_evidence` + `invalidates_evidence`）
   - hermes 参考（已核实）：
@@ -14,7 +14,7 @@
     - `agent/verification_evidence.py:495-546`（`mark_workspace_edited`——累积 changed_paths + 设 last_edit_at）
     - `agent/verification_evidence.py:549-618`（`verification_status`——只用时间戳，**不用 changed_paths**）
   - 关联 TODO：
-    - `计划_跨Subagent文件冲突检测.md` §2——cross-session staleness 依赖 `_is_stale`
+    - 跨 subagent staleness（已落地：`EvidenceLedger.mark_stale_for_path_all_sessions`）——读取侧改造需与其交叉 session 行保持兼容
     - SQLite evidence ledger（已落地 2026-10-23，`src/data/evidence-ledger.db`）——state 表与 evidence 表同库
 
 ---
@@ -23,19 +23,19 @@
 
 ### 0.1 sherry 当前 staleness 机制
 
-`evidence_collector.py:15-21`：
+`agent/tools/pub_base/evidence_ledger.py::derive_evidence_state`（由 `evidence_collector` 调用）：
 
 ```python
-def _is_stale(index, row, stale_events):
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index
-        and str(event.get("file_path") or "") in command  # substring 匹配
-        for stale_index, event in stale_events
-    )
+def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
+    command = str(records[index].get("command") or "")
+    stale = False
+    for later in records[index + 1:]:
+        if later.get("event") == "stale" and str(later.get("file_path") or "") in command:
+            stale = True
+    return broken, stale  # broken/unmark 分支省略
 ```
 
-**匹配规则**：stale 事件的 `file_path` 必须是 evidence 行 `command` 字段的子串。
+**匹配规则**：stale 事件的 `file_path` 必须是 evidence 行 `command` 字段的子串；`broken` / `unmark` 是后续加入的同组事件（见 evidence-ledger wiki）。
 
 ### 0.2 盲区
 
@@ -93,7 +93,7 @@ if state["last_edit_at"] and state["last_edit_at"] > evidence["created_at"]:
 - 新增 `verification_state` 表（per session_id）：`changed_paths_json`（编辑过的文件列表）+ `last_edit_at`
 - 文件写入时：累积 `changed_paths_json` + 设 `last_edit_at`（学 hermes `mark_workspace_edited`）
 - 验证命令记录时：把当前 `changed_paths_json` **快照到 evidence 行**的 `modified_files` 字段，然后**重置** state 的 changed_paths（学 hermes `record_terminal_result` 重置 `last_edit_at = NULL, changed_paths = []`）
-- `_is_stale`：stale 事件的 `file_path` 在 evidence 行的 `modified_files` 集合中 → stale（**不用 substring，不用时间戳，用文件集合精确匹配**）
+- `derive_evidence_state`：stale 事件的 `file_path` 在 evidence 行的 `modified_files` 集合中 → stale（**不用 substring，不用时间戳，用文件集合精确匹配**）
 
 **盲区消除**：
 ```
@@ -101,7 +101,7 @@ A 写 src/auth/login.py → state.changed_paths = ["src/auth/login.py"]
 A 跑 pytest tests/test_login.py → evidence 行 modified_files = ["src/auth/login.py"]（快照）
                                   → state.changed_paths 重置为 []
 B 写 src/auth/login.py → stale 事件 file_path = "src/auth/login.py"
-_is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹配）
+derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹配）
 ```
 
 **对 §2 cross-session**：
@@ -122,7 +122,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 
 ### 方案 C：改进 substring（最小改动）
 
-`_is_stale` 从 `file_path in command` 改为 `Path(file_path).stem in command`。
+`derive_evidence_state` 从 `file_path in command` 改为 `Path(file_path).stem in command`。
 **结论**：脆弱（假阳性），不根治，作为 interim 可选。
 
 ---
@@ -230,23 +230,25 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
     EvidenceLedger.for_session(session_id).append(**fields)
     ```
 
-- [ ] **3.3.5** `evidence_collector.py:15-21` 的 `_is_stale` 改造：
+- [ ] **3.3.5** `agent/tools/pub_base/evidence_ledger.py::derive_evidence_state` 的改造：
   ```python
-  def _is_stale(index, row, stale_events):
-      """True when a later stale event's file_path is in this row's modified_files."""
+  def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
+      """Stale when a later stale event's file_path is in this row's modified_files."""
+      row = records[index]
       modified = row.get("modified_files") or []
-      if not modified:
-          # 向后兼容：旧行无 modified_files → 降级到 substring 匹配
-          command = str(row.get("command") or "")
-          return any(
-              stale_index > index and str(event.get("file_path") or "") in command
-              for stale_index, event in stale_events
-          )
-      return any(
-          stale_index > index
-          and str(event.get("file_path") or "") in modified
-          for stale_index, event in stale_events
-      )
+      command = str(row.get("command") or "")
+      for later in records[index + 1:]:
+          event = later.get("event")
+          path = str(later.get("file_path") or "")
+          if event == "stale":
+              # 向后兼容：旧行无 modified_files → 降级到 substring 匹配
+              if (path in modified) if modified else (path in command):
+                  stale = True
+          elif event == "broken" and later.get("command") == command:
+              broken = True
+          elif event == "unmark" and later.get("command") == command:
+              broken = stale = False
+      return broken, stale
   ```
   - **向后兼容**：旧 evidence 行无 `modified_files` → 降级到原 substring 匹配（旧行为不变）
   - 新 evidence 行有 `modified_files` → 精确文件集合匹配
@@ -283,7 +285,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 前置：SQLite evidence ledger 已落地（2026-10-23）—— state 表是同库新表
 
 方案 C（interim，0.5 天）——可选，先改善一部分盲区
-  └─ _is_stale 改 stem 匹配
+  └─ derive_evidence_state 改 stem 匹配
       │
       ↓ （验证方向后）
 §3 state 表 + changed_paths 追踪（3-4 天）——方案 B' 核心
@@ -291,7 +293,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
   ├─ record_file_edit + snapshot_and_reset_changed_paths
   ├─ append 增 modified_files 字段
   ├─ evidence_recorder 改造（装饰器 + record）
-  ├─ _is_stale 改文件集合匹配（向后兼容降级 substring）
+  ├─ derive_evidence_state 改文件集合匹配（向后兼容降级 substring）
   └─ purge_session 增 state 表清理
       │
       ↓ （可选）
@@ -302,7 +304,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 
 **与关联计划的关系**：
 - SQLite 迁移先做 → state 表是 `CREATE TABLE IF NOT EXISTS`，同库新表
-- `计划_跨Subagent文件冲突检测.md` §2 先做或后做都行——§2 的 cross-session 扩展改的是 stale 事件的传播范围（per-session → cross-session），本计划改的是 `_is_stale` 的匹配方式（substring → 文件集合），两者正交
+- 跨 subagent staleness 已落地（cross-session 传播 + `file_deps` 优先重验）；本计划只改读取侧的匹配方式（substring → 文件集合），两者正交。
 
 ---
 
@@ -313,7 +315,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 - [ ] subagent 跑 `pytest tests/test_login.py` → evidence 行的 `modified_files` = `["src/auth/login.py"]`（快照）→ state 重置为 `[]`。
 - [ ] B 写 `src/auth/login.py` → A 的 evidence 行被标记 stale（`"src/auth/login.py" in ["src/auth/login.py"]` → True）。
 - [ ] B 写 `README.md` → A 的 evidence 行**不**被标记 stale（`"README.md" in ["src/auth/login.py"]` → False）。
-- [ ] 旧 evidence 行（无 `modified_files`）→ `_is_stale` 降级到 substring 匹配（旧行为不变）。
+- [ ] 旧 evidence 行（无 `modified_files`）→ `derive_evidence_state` 降级到 substring 匹配（旧行为不变）。
 - [ ] `changed_paths` 上限 200（超过时保留最新 200）。
 - [ ] Gate B/C 硬阻断行为不变。
 - [ ] `collect_evidence_summary` 输出格式不变。
@@ -336,7 +338,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 ## 8. 关键参考
 
 ### sherry 内部（改造对象）
-- `agent/tools/taskflow/evidence_collector.py:15-21`（`_is_stale`——staleness 派生核心）
+- `agent/tools/pub_base/evidence_ledger.py::derive_evidence_state`（staleness 派生核心；`evidence_collector` 调用）
 - `agent/tools/pub_base/evidence_ledger.py:30-162`（EvidenceLedger——增 state 表 + state 方法）
 - `agent/tools/pub_base/evidence_recorder.py:48-95,98-151`（`record_verification_evidence` + `invalidates_evidence` 装饰器——增 `record_file_edit` 调用 + `snapshot_and_reset`）
 - `agent/tools/taskflow/tools/taskflow_finish.py:132-161,45-125`（Gate C + Gate E——不改造，只确认兼容）
@@ -349,4 +351,4 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 
 ### 关联 TODO
 - SQLite evidence ledger（已落地）——state 表是同库新表，`purge_session` 增 state 清理
-- `计划_跨Subagent文件冲突检测.md` §2——cross-session staleness 改的是传播范围（per-session→cross-session），本计划改的是匹配方式（substring→文件集合），两者正交
+- 跨 subagent staleness 已落地（cross-session 传播）；本计划改的是读取侧匹配方式（substring→文件集合），两者正交。

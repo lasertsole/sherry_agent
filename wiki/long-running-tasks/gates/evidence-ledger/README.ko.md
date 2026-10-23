@@ -137,13 +137,18 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 > evidence 행이 stale인 것은, **더 나중의** stale 이벤트(추가 순서에서 인덱스가 더 큼)의 `file_path`가 해당 행의 `command` 문자열의**부분문자열**로 나타나는 경우.
 
 ```python
-def _is_stale(index, row, stale_events):
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index
-        and str(event.get("file_path") or "") in command
-        for stale_index, event in stale_events
-    )
+def derive_evidence_state(records, index):
+    command = str(records[index].get("command") or "")
+    broken = stale = False
+    for later in records[index + 1:]:
+        event = later.get("event")
+        if event == "unmark" and later.get("command") == command:
+            broken = stale = False
+        elif event == "broken" and later.get("command") == command:
+            broken = True
+        elif event == "stale" and str(later.get("file_path") or "") in command:
+            stale = True
+    return broken, stale
 ```
 
 핵심 세부사항:

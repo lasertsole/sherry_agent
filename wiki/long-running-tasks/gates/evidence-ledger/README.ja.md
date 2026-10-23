@@ -137,13 +137,18 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 > evidence 行が stale になるのは、**より後の** stale イベント（追記順序でインデックスが大きい）の `file_path` がその行の `command` 文字列の**部分文字列**として現れる場合。
 
 ```python
-def _is_stale(index, row, stale_events):
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index
-        and str(event.get("file_path") or "") in command
-        for stale_index, event in stale_events
-    )
+def derive_evidence_state(records, index):
+    command = str(records[index].get("command") or "")
+    broken = stale = False
+    for later in records[index + 1:]:
+        event = later.get("event")
+        if event == "unmark" and later.get("command") == command:
+            broken = stale = False
+        elif event == "broken" and later.get("command") == command:
+            broken = True
+        elif event == "stale" and str(later.get("file_path") or "") in command:
+            stale = True
+    return broken, stale
 ```
 
 重要なポイント:

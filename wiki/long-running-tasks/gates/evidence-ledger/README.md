@@ -137,13 +137,18 @@ Staleness is **derived on the read side**, never stored as a flag. The rule:
 > An evidence row is stale iff a **later** stale event (higher index in the append order) has a `file_path` that appears as a **substring** in the row's `command` string.
 
 ```python
-def _is_stale(index, row, stale_events):
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index
-        and str(event.get("file_path") or "") in command
-        for stale_index, event in stale_events
-    )
+def derive_evidence_state(records, index):
+    command = str(records[index].get("command") or "")
+    broken = stale = False
+    for later in records[index + 1:]:
+        event = later.get("event")
+        if event == "unmark" and later.get("command") == command:
+            broken = stale = False
+        elif event == "broken" and later.get("command") == command:
+            broken = True
+        elif event == "stale" and str(later.get("file_path") or "") in command:
+            stale = True
+    return broken, stale
 ```
 
 Key subtleties:

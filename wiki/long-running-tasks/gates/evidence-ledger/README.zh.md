@@ -137,13 +137,18 @@ terminal / python_repl 跑了一条命令
 > 一条 evidence 行是 stale 的，当且仅当一个**后来的** stale 事件（在追加顺序中索引更大）的 `file_path` 是该行的 `command` 字符串的**子串**。
 
 ```python
-def _is_stale(index, row, stale_events):
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index
-        and str(event.get("file_path") or "") in command
-        for stale_index, event in stale_events
-    )
+def derive_evidence_state(records, index):
+    command = str(records[index].get("command") or "")
+    broken = stale = False
+    for later in records[index + 1:]:
+        event = later.get("event")
+        if event == "unmark" and later.get("command") == command:
+            broken = stale = False
+        elif event == "broken" and later.get("command") == command:
+            broken = True
+        elif event == "stale" and str(later.get("file_path") or "") in command:
+            stale = True
+    return broken, stale
 ```
 
 关键细节：
