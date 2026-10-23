@@ -200,7 +200,7 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 ---
 
-## 4. 任务三：（可选）文件级依赖声明
+## 4. 任务三：（已实施）文件级依赖声明
 
 ### 4.1 目标
 
@@ -223,7 +223,7 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 - **LLM 声明质量**：LLM 可能漏声明 file_deps——但 §2 的自动 staleness 是兜底
 - **向后兼容**：`file_deps` 是 optional field，不声明 = 当前行为（靠 §2 自动 staleness）
 
-**验收**：可选任务，不阻断 §2/§3 的独立交付。
+**验收**：已由 A/B e2e 覆盖（`test_file_deps_ab_e2e.py`）。默认 `prioritize` 不减少覆盖；`filter` 是显式的成本换覆盖选项，默认不启用。
 
 ---
 
@@ -262,28 +262,28 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 ### 6.1 硬约束验收
 
-- [ ] **F1**：evidence ledger schema 不变（stale 行增 `scope`/`source_session` 字段，旧行向后兼容）。
-- [ ] **F2**：cross-session 查询/重验失败时不崩。
-- [ ] **F3**：文件锁逻辑不变。
-- [ ] **F4**：completion judge / step judge 逻辑不变。
-- [ ] **F5**：100 session / 1000 evidence 行 < 50ms（staleness 扫描）。
-- [ ] **F6**：feature flag 关闭时退化为当前行为。
+- [x] **F1**：evidence ledger schema 不变（stale/broken/unmark 都是既有 `event` 行的 payload 字段，旧行向后兼容）。
+- [x] **F2**：cross-session 查询/重验失败时不崩（fail-open 单测 + 全量门禁）。
+- [x] **F3**：文件锁逻辑不变（未改动文件锁；全量门禁通过）。
+- [x] **F4**：completion judge / step judge 判定逻辑不变；first-turn shortcut 额外拒绝 `[broken]`，属于更保守的跳过条件，不改变 judge 的 verdict。
+- [x] **F5**：100 session / 1100 行实测：§2 扫描 12-21ms，§4 priority 扫描 39-41ms，均 < 50ms。
+- [x] **F6**：feature flag 关闭时退化为当前行为（cross-session / regression gate 各有开关测试）。
 
 ### 6.2 功能验收
 
-- [ ] subagent B 写文件 F → A 的 evidence（command 含 F）被标记 cross-session stale。
-- [ ] `taskflow_finish` 聚合时 A 的 evidence 显示 `[stale]`。
-- [ ] subagent B announce 时自动重跑 A 的验证命令。
-- [ ] 重验 pass → 清除 stale（unmark 事件）。
-- [ ] 重验 fail → 标记 `[broken]` + 通知父 agent。
-- [ ] 父 agent 在 announce 报告中看到 broken evidence。
-- [ ] （可选）step 声明 `file_deps: [F]` → B 写 F → A 标记 `needs_reverification`。
+- [x] subagent B 写文件 F → A 的 evidence（command 含 F）被标记 cross-session stale。
+- [x] `taskflow_finish` 聚合时 A 的 evidence 显示 `[stale]`。
+- [x] 重验在 `taskflow_finish` 批量执行（`on_finish`；原方案的 announce 触发未采用）。
+- [x] 重验 pass → 清除 stale（unmark 事件）。
+- [x] 重验 fail → 标记 `[broken]`，`taskflow_finish` 拒绝并把 `[broken]` 返回给父 agent。
+- [x] 父 agent 在 finish 的拒绝文本中看到 broken；announce 报告不展示 evidence（本方案的挂载点是 finish，不是 announce）。
+- [x] step 声明 `file_deps: [F]` → 其他 step 写 F → 该 step 进入 finish 的优先重验集合（`needs_reverification` 运行时派生）。
 
 ### 6.3 回归验收
 
-- [ ] 现有 `tests/agent/tools/pub_base/test_evidence_*.py` 全套通过。
-- [ ] 现有 `tests/agent/tools/taskflow/` 全套通过。
-- [ ] feature flag 关闭时 evidence 行为 byte-identical 当前。
+- [x] 现有 `tests/agent/tools/pub_base/test_evidence_*.py` 全套通过。
+- [x] 现有 `tests/agent/tools/taskflow/` 全套通过。
+- [x] feature flag 关闭时 evidence 行为与当前一致（开关测试覆盖）。
 
 ---
 
@@ -425,6 +425,8 @@ claudecode 的 GreenContract / branch_lock / lane_events / recovery_recipes 是�
 
 ### 10.4 推荐：只做 §2，§3/§4 暂缓
 
+> **历史决策记录（已被执行决定取代，不是待办）**：用户后续明确要求落地 §3 并做 §4 A/B。实际实现采用 `on_finish` 批量重验 + `file_deps` 默认 `prioritize`，结果见 §12/§13。本节保留为当时的风险评估。
+
 理由：
 
 1. **§2 是性价比拐点**：2-3 天，复用已有 evidence ledger + Gate B 硬阻断（现有行为），让系统从"完全无感知"变成"知道可能有问题并阻断"。父 agent 看到 stale evidence 后自己决定处理方式——比自动重跑命令更安全（父 agent 有完整上下文，可以判断是否真的需要重验）。
@@ -441,11 +443,10 @@ claudecode 的 GreenContract / branch_lock / lane_events / recovery_recipes 是�
 
 | 层 | 状态 | 工程量 |
 |---|---|---|
-| §2 跨 session staleness 传播 | **推荐立即做** | 2-3 天 |
-| §3 后写回归门 | **暂缓，待 §2 运行数据** | 3-4 天（如后续做，改 `on_finish` 触发） |
-| §4 文件级依赖声明 | **暂缓，可选锦上添花** | 1-2 天 |
-| **合计（推荐）** | | **2-3 天** |
-| 合计（全量） | | 6-9 天 |
+| §2 跨 session staleness 传播 | **已实施（§11）** | 2-3 天 |
+| §3 后写回归门 | **已实施（on_finish 变体，§12）** | 3-4 天 |
+| §4 文件级依赖声明 | **已实施（prioritize 默认，§13）** | 1-2 天 |
+| **合计（实际）** | **全部落地** | 6-9 天 |
 
 ---
 
