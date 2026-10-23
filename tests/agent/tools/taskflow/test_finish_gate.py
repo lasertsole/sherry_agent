@@ -22,7 +22,7 @@ from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
-from config.features import EVIDENCE_CROSS_SESSION_STALENESS
+from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_REGRESSION_GATE
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,6 +39,12 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
     """Redirect the shared evidence ledger into a per-test file."""
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.jsonl"))
     return EvidenceLedger
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_regression_gate_out_of_gate_c_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin Gate C's stale/failing branches; the replay is its own suite."""
+    monkeypatch.setitem(EVIDENCE_REGRESSION_GATE, "enabled", False)
 
 
 async def _seed_flow(steps: list[dict]) -> None:

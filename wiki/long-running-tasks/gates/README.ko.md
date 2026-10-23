@@ -67,7 +67,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 | :--- | :--- | :--- |
 | **A — DAG 완전성** | 모든 스텝이 `done` 또는 `blocked` | `step(s) not done/blocked` |
 | **B — 미해결 스텝 없음** | `failed`·`skipped`·`cancelled`·`blocked` 스텝이 없음 | 해당 스텝을 id로 지목하고 기록된 이유를 함께 제시 |
-| **C — 증거** | 플로우 증거에 `FAIL`도 `[stale]` 행도 없음([증거 원장](../gates/evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `stale evidence` |
+| **C — 증거** | 플로우 증거에 `FAIL`, `[broken]`, `[stale]` 행이 없음([증거 원장](../gates/evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 목표 판정** | 수집된 결과가 플로우의 `description`을 충족하는지 보조 모델이 판정 | `taskflow_replan`을 지목하는 거부 |
 
 모든 게이트는 **페일오픈**입니다: 읽을 수 없는 collector, 모델 오류, 파싱 불가능한 판정은 완료를 막지 않고 통과시킵니다. Gate E는 `description`이 있고 스텝 수가 `GOAL_GATE["min_steps"]`(3) 이상인 플로우에서만 돕니다 — 한두 스텝짜리 플로우는 자식 층위 [완료 판정기](../../subagent/README.ko.md)가 이미 덮고 있고, 같은 작업에 두 번째 판정을 얹는 것이 바로 그 중복이기 때문입니다. `GOAL_GATE["enabled"]`가 마스터 스위치이고 `GOAL_GATE["max_result_chars"]`(4000)가 넘겨지는 각 결과의 창입니다.

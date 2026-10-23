@@ -126,6 +126,19 @@ def _fix_stub_run_async() -> None:
     setattr(stub, "run_async", real.run_async)
 
 
+@pytest.fixture(autouse=True)
+def _keep_finish_time_replay_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A taskflow test must opt in before finish re-runs real shell commands.
+
+    Most tests seed synthetic evidence such as ``pytest foo.py``; replaying it
+    in the repository would both be wrong and execute the repo's suite. The
+    regression-gate tests re-enable the switch in their own fixture.
+    """
+    from config.features import EVIDENCE_REGRESSION_GATE
+
+    monkeypatch.setitem(EVIDENCE_REGRESSION_GATE, "enabled", False)
+
+
 @pytest.fixture()
 def isolated_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Point the taskflow store module at a tmp_path db and reset init state."""

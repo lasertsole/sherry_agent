@@ -1002,15 +1002,20 @@ def _first_turn_self_evident(result_text: str | None, evidence_summary: str | No
     """True when the opening turn needs no judge: result + passing evidence.
 
     The summary format is the evidence collector's (``[pass]`` / ``[FAIL]`` /
-    ``?`` per row, `` [stale]`` suffixed): a pass exists, nothing failed, and
-    nothing went stale. Any read failure returns False — the shortcut must
-    never suppress a judge on incomplete information (fail towards judging).
+    ``?`` per row, `` [stale]`` / `` [broken]`` suffixed): a pass exists, nothing
+    failed, nothing went stale, and no command was re-verified as broken. Any
+    read failure returns False — the shortcut must never suppress a judge on
+    incomplete information (fail towards judging).
     """
     if not (result_text or "").strip():
         return False
     if not evidence_summary or "[pass]" not in evidence_summary:
         return False
-    return "FAIL" not in evidence_summary and "[stale]" not in evidence_summary
+    return (
+        "FAIL" not in evidence_summary
+        and "[stale]" not in evidence_summary
+        and "[broken]" not in evidence_summary
+    )
 
 
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:

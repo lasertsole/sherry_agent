@@ -143,7 +143,9 @@ from .evidence_ledger import (
 )
 from .evidence_cross_session import (
     EvidenceCrossSessionConfig as EvidenceCrossSessionConfig,
+    EvidenceRegressionGateConfig as EvidenceRegressionGateConfig,
     EVIDENCE_CROSS_SESSION_STALENESS as EVIDENCE_CROSS_SESSION_STALENESS,
+    EVIDENCE_REGRESSION_GATE as EVIDENCE_REGRESSION_GATE,
 )
 from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,

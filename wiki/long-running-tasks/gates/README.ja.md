@@ -67,7 +67,7 @@ Tier 1 スキーマ検証が**先に走り**（下記参照）、`schema_validat
 | :--- | :--- | :--- |
 | **A — DAG 完全性** | すべてのステップが `done` または `blocked` | `step(s) not done/blocked` |
 | **B — 未解決ステップなし** | `failed`・`skipped`・`cancelled`・`blocked` のステップが無い | 該当ステップを id で示し、記録された理由を添える |
-| **C — エビデンス** | フローのエビデンスに `FAIL` も `[stale]` 行も無い（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `stale evidence` |
+| **C — エビデンス** | フローのエビデンスに `FAIL`、`[broken]`、`[stale]` 行が無い（[エビデンス台帳](../gates/evidence-ledger/README.ja.md)参照） | `failing verification evidence` / `confirmed regression` / `stale evidence` |
 | **E — 目標判定** | 収集された結果がフローの `description` を満たすかを補助モデルが判定 | `taskflow_replan` を名指しする拒否 |
 
 すべてのゲートは**フェイルオープン**です：読めない collector、モデルエラー、パース不能な判定は完了を妨げず通過させます。Gate E は `description` を持ち、ステップ数が `GOAL_GATE["min_steps"]`（3）以上の場合にのみ走ります — 1〜2 ステップのフローは子レベルの[完了判定器](../../subagent/README.ja.md)がすでに覆っており、同じ仕事への二つ目の判定はまさにその重複だからです。`GOAL_GATE["enabled"]` はそのマスタースイッチ、`GOAL_GATE["max_result_chars"]`（4000）は渡される各結果の窓です。

@@ -506,6 +506,42 @@ class EvidenceLedger:
         return int(removed)
 
 
+def _event_matches(event: dict, command: str) -> bool:
+    """True when a stale/broken/unmark event applies to ``command``.
+
+    Newer events carry the exact command. Older stale rows carry only
+    ``file_path``, so they keep the original substring rule.
+    """
+    event_command = event.get("command")
+    if event_command:
+        return str(event_command) == command
+    file_path = str(event.get("file_path") or "")
+    return bool(file_path) and file_path in command
+
+
+def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
+    """Return ``(broken, stale)`` for ``records[index]``.
+
+    Only LATER events count (an edit before a verification means the
+    verification is fresh), and an ``unmark`` event clears both flags for its
+    command. ``broken`` (a re-verified command now fails) is the stronger
+    signal; callers render it in preference to ``stale``.
+    """
+    command = str(records[index].get("command") or "")
+    broken = False
+    stale = False
+    for later in records[index + 1 :]:
+        event = later.get("event")
+        if event == "unmark" and _event_matches(later, command):
+            broken = False
+            stale = False
+        elif event == "broken" and _event_matches(later, command):
+            broken = True
+        elif event == "stale" and _event_matches(later, command):
+            stale = True
+    return broken, stale
+
+
 class SessionEvidenceLedger:
     """Session-scoped view over :class:`EvidenceLedger` (one shared ledger)."""
 
@@ -526,4 +562,4 @@ class SessionEvidenceLedger:
         return EvidenceLedger.mark_stale_for_path(file_path, self.session_key)
 
 
-__all__ = ["EvidenceLedger", "SessionEvidenceLedger"]
+__all__ = ["EvidenceLedger", "SessionEvidenceLedger", "derive_evidence_state"]

@@ -6,7 +6,7 @@
 
 エビデンス台帳はすべての完了境界で一つの問いに答えます：**「エージェントは自分の作業を検証したか、その検証はまだ有効か？」** 古さのフラグを保存せずにこれを実現します — イベント行は不変で、鮮度は読み取り時に検証行とファイル編集イベントの順序から計算されます（保持期間は古い行を削除するだけで履歴を書き換えません）。
 
-**ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）、`config/features/agent_side/evidence_cross_session.py`（クロスセッションスイッチ）。
+**ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ + 導出）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/pub_base/regression_gate.py`（finish 時再検証）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）、`config/features/agent_side/evidence_cross_session.py`（クロスセッション + 回帰ゲートスイッチ）。
 
 ---
 
@@ -34,6 +34,8 @@ terminal / python_repl がコマンドを実行
 ```
 
 **クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から編集パスを command に含むものを探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
+
+**Finish 時の再検証。** `taskflow_finish` の Gate C は最初に `regression_gate.reverify_flow_evidence()` を呼びます: flow の各セッションの passed コマンドを重複排除して 1 回ずつ再実行し（allowlist の実行ファイル、シェルなし、`max_reverify_commands` とコマンド単位タイムアウトで制限）、作業ディレクトリは flow のプロジェクトルートです。成功したら stale/broken だったコマンドに `unmark` を追加し、失敗したら `broken` を追加します。これは変更されたソースファイルを stale 行が名指ししていなくても A のテストコマンドを再実行するため、クロスファイル import 破壊を検出できる唯一の経路です。
 
 ---
 
@@ -124,6 +126,8 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 
 クロスセッション行は 2 つの任意フィールドを追加で持ちます: `"scope": "cross_session"` と `"source_session": "<書き込み側 session id>"`。これらを持たない行は従来の per-session マークです。
 
+`broken` と `unmark` も同じ追記型です: `broken` は `command`、`exit_code`、`output_snippet`、`scope="regression_gate"` を持ち、`unmark` は `command` と `scope` を持ちます。どちらも過去の行を書き換えません。
+
 ---
 
 ## 古さの導出
@@ -146,7 +150,8 @@ def _is_stale(index, row, stale_events):
 
 - **方向が重要:** **より後の** stale イベントだけが**より前の** evidence 行を無効化します。evidence より前の stale イベントは、ファイルが編集された後に再検証されたことを意味し、検証は新鮮です。
 - **部分文字列マッチ:** `file_path in command`。意図的に緩い — `src/foo.py` の stale イベントは `pytest src/foo.py tests/` を無効化します。
-- **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、`_is_stale` は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
+- **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、導出は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
+- **Broken と unmark:** 同じ `command` のより後の `broken` イベントは `[broken]`（再検証で失敗）として描画され、同じ `command` のより後の `unmark` は `[stale]` と `[broken]` の両方を消します。`evidence_ledger.py` の `derive_evidence_state()` が唯一の実装で、`[broken]` は `[stale]` より優先されます。
 
 ---
 
@@ -168,9 +173,9 @@ def _is_stale(index, row, stale_events):
 | Icon | status が passed のとき `"pass"`、failed のとき `"FAIL"`、不明のとき `"?"` |
 | Kind | 検証カテゴリ: test / lint / build / typecheck / format |
 | Command | 実行コマンド文字列、バッククォートで囲む |
-| Stale tag | `_is_stale` が True のとき `" [stale]"` を追加 |
+| ステータスタグ | `derive_evidence_state()` が broken なら `" [broken]"`、そうでなく stale なら `" [stale]"` |
 
-この文字列をゲートとジャッジが解析します — リテラル部分文字列 `"FAIL"`、`"[stale]"`、`"[pass]"` を検索します。
+この文字列をゲートとジャッジが解析します — リテラル部分文字列 `"FAIL"`、`"[broken]"`、`"[stale]"`、`"[pass]"` を検索します。
 
 ---
 
@@ -182,7 +187,7 @@ def _is_stale(index, row, stale_events):
 
 ### レベル 2: サブエージェントごと（completion judge + drain gate）
 
-- **Completion judge スキップ:** goal-loop の最初のターンで、`_first_turn_self_evident(result_text, evidence_summary)` がチェック: result が非空 + 少なくとも1つの `[pass]` + `FAIL` なし + `[stale]` なし → **judge 呼び出しをスキップ**、auxiliary LLM 呼び出しを1回節約。
+- **Completion judge スキップ:** goal-loop の最初のターンで、`_first_turn_self_evident(result_text, evidence_summary)` がチェック: result が非空 + 少なくとも1つの `[pass]` + `FAIL` なし + `[stale]` なし + `[broken]` なし → **judge 呼び出しをスキップ**、auxiliary LLM 呼び出しを1回節約。
 - **Completion judge プロンプト:** スキップされない場合、`judge_completion()` がプロンプト内でエビデンスサマリーを受け取ります。
 - **Drain gate:** `SubagentCompletionDrainMiddleware`（親側 `before_model`）がサブエージェント完了メッセージのドレイン時にエビデンスをチェック。エビデンスなしまたは `FAIL` → `[GATE] Completion blocked: verification evidence missing or failing` ブロッキングメッセージを注入。
 
@@ -193,6 +198,7 @@ TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エ
 | 条件 | 結果 |
 |------|------|
 | サマリーに `"FAIL"` が含まれる | 拒否: "failing verification evidence" |
+| サマリーに `"[broken]"` が含まれる | 拒否: "confirmed regression (a re-verified command now fails)" |
 | サマリーに `"[stale]"` が含まれる | 拒否: "stale evidence (code changed since last verification), re-run verification commands before finishing" |
 | それ以外（またはエビデンスなし / collector エラー） | 通過 |
 
@@ -205,4 +211,4 @@ TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エ
 1. **いたるところで fail-open。** すべてのレコーダーは自身のエラーを飲み込む。すべてのゲートは collector エラー時に「通過/非違反」を返す。壊れた台帳は完了をブロックしたりサブエージェントを閉じ込めることはない。
 2. **不変イベント行 + 読み取り時導出。** 記録済みの行は UPDATE されない。古さは読み取り時に行情報から計算される。保持期間は古い行を DELETE することがある（age/セッション/全体上限）が、履歴を書き換えない。reader は残存する行順序から鮮度を計算する。
 3. **パス参照、コンテンツではない。** 台帳はコマンド文字列と出力スニペット（500文字）を記録し、ファイル内容は記録しない。*何を検証したか*と*通過したか*を記録し、*ファイルに何が含まれていたか*は記録しない。
-4. **自動記録は常時オン、伝播はスイッチ可能。** 分類にマッチするすべての terminal/python_repl 呼び出しが行を書き、すべてのファイル編集が書き込み側セッションをマークします（オン/オフスイッチなし）。クロスセッションのブロードキャストだけがゲートされた層です（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`、既定オン）。オフにすると台帳スキーマを変えずに従来の per-session 動作へ戻ります。
+4. **自動記録は常時オン、2 つの派生層はスイッチ可能。** 分類にマッチするすべての terminal/python_repl 呼び出しが行を書き、すべてのファイル編集が書き込み側セッションをマークします（オン/オフスイッチなし）。クロスセッションのブロードキャスト（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`）と finish 時の再検証（`EVIDENCE_REGRESSION_GATE["enabled"]`）がゲートされた層で、既定は両方オンです。オフにすると台帳スキーマを変えずに従来の動作へ戻ります。

@@ -26,3 +26,21 @@ EVIDENCE_CROSS_SESSION_STALENESS: EvidenceCrossSessionConfig = {
     # The writer's own session is already covered by the per-session mark.
     "exclude_self": True,
 }
+
+
+class EvidenceRegressionGateConfig(TypedDict):
+    """Finish-time batch re-verification of a flow's recorded commands."""
+
+    enabled: bool
+    reverify_timeout_s: int
+    max_reverify_commands: int
+    max_output_chars: int
+
+
+EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
+    "enabled": True,
+    # One command timeout; the whole pass is bounded by max_reverify_commands.
+    "reverify_timeout_s": 60,
+    "max_reverify_commands": 10,
+    "max_output_chars": 500,
+}

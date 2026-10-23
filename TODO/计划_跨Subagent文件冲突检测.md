@@ -1,7 +1,7 @@
 # 计划：跨 Subagent 文件冲突检测——Staleness 传播 + 后写回归门
 
 - 建档日期：2026-10-23
-- 状态：**§2 已实施并验证（2026-10-23）；§3 / §4 待评审 / 暂缓**。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
+- 状态：**§2 + §3 已实施并验证（2026-10-24）；§4 待评审**。§3 采用 `on_finish` 一次性批量重验（不是原方案的 `on_announce`），以便覆盖跨文件破坏并避免每次 announce 的重跑成本。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
 - **文档范围**：两个增量改造——(1) 跨 session staleness 传播：B 写文件 F 时自动标记所有 session 对 F 的 evidence 为 stale；(2) 后写回归门：对有 stale evidence 的 session 自动重跑验证命令，检测语义级破坏。两者复用现有基础设施，不引入新依赖。
 - **硬约束**：evidence ledger 事件语义不变（staleness 仍派生；存储已是 SQLite）；fail-open（重验失败/命令不存在不崩）；不影响现有文件锁/TaskFlow/完成判断逻辑；跨 session 查询性能可接受。
 - 关联代码：
@@ -109,7 +109,7 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 - [x] **2.2.5** 新增配置 `config/features/agent_side/evidence_cross_session.py`：
   ```python
-  EVIDENCE_CROSS_SESSION_STALENESS: TypedDict = {
+  EVIDENCE_CROSS_SESSION_STALENESS: EvidenceCrossSessionConfig = {
       "enabled": True,              # 总开关
       "max_sessions_scan": 200,     # 扫描 session 数上限（防爆炸）
       "exclude_self": True,         # 不标记写入者自己的 session（已由 per-session 处理）
@@ -135,7 +135,7 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 ### 3.2 改动清单
 
-- [ ] **3.2.1** 新建 `agent/tools/pub_base/regression_gate.py`：
+- [x] **3.2.1** 新建 `agent/tools/pub_base/regression_gate.py`：
   ```python
   async def reverify_stale_evidence(file_path: str, writer_session_id: str) -> list[ReverifyResult]:
       """B 写完文件 F 后，找出所有因 F 被 cross-session stale 的 evidence，
@@ -151,34 +151,36 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
   # 5. 返回结果列表
   ```
 
-- [ ] **3.2.2** `evidence_ledger.py` 增 `broken` 事件类型：
+  **实施结果：** 重验范围改为 **flow 的全部 passed evidence 命令**（不只 stale），在 `taskflow_finish` 的 Gate C 前执行一次；这样跨文件依赖破坏（A 的命令不含 B 写的源文件）也能通过重跑 A 的测试发现。命令去重、`max_reverify_commands` 截断。
+
+- [x] **3.2.2** `evidence_ledger.py` 增 `broken` 事件类型：
   - 追加 `{"event":"broken","file_path":path,"source_session":writer_session_id,"original_session":A_session,"command":...,"reverify_status":"fail"}`
   - `is_stale` 派生：`broken` 行的 evidence 显示 `[broken]`（比 `[stale]` 更严重）
   - `is_broken` 新派生函数：evidence 行有对应 `broken` 行 → 返回 True
 
-- [ ] **3.2.3** `evidence_collector.py:30-40` 聚合逻辑 + `taskflow_finish.py:132-161` Gate B/C 扩展：
+- [x] **3.2.3** `evidence_collector.py:30-40` 聚合逻辑 + `taskflow_finish.py:132-161` Gate B/C 扩展：
   - 当前 Gate B/C（`taskflow_finish.py:156-160`）对 `[stale]`（**可能**过期）是**硬阻断** finish——"stale evidence (code changed since last verification)… Re-run verification commands before finishing."
   - 扩展：也检查 `[broken]`——**`[broken]`（确认破坏）必须 ≥ `[stale]`（可能过期）的阻断级别**，不能更软
   - **两档策略**（修正严重性倒挂）：
     - `[stale]` → 硬阻断 finish（现有行为不变）——可能过期，要求重验
     - `[broken]` → 硬阻断 finish + 在错误信息中标注"confirmed breakage by session {source_session}"——确认破坏，要求修复
     - `[broken]` 阻断的 finish 走现有 `_reject`（`taskflow_finish.py:365`）→ `consecutive_failures` 递增 → 达到 `finish_failure_limit` 自动 fail
-  - **反误报兜底**：如果 broken 误报（重验命令环境差异导致假 fail），父 agent 可通过 `taskflow_replan` 或手动工具清除 broken 标记（追加 `unmark` 事件）
+  - **反误报兜底**：如果 broken 误报（重验命令环境差异导致假 fail），下一次重验通过会自动追加 `unmark` 清除；本版没有新增手动 unmark 工具（保持工具面不变）。
 
-- [ ] **3.2.4** 触发时机：
-  - **方案 A（推荐）**：在 subagent B 的 announce pipeline（`announce/core.py:132-151`）中，deliver announcement 前调 `reverify_stale_evidence`——B 完成时自动检查是否破坏了其他 session
-  - **方案 B**：在 `taskflow_finish` 的 Gate B 检查时，对所有 stale evidence 批量重验——flow 完成前统一检查
+- [x] **3.2.4** 触发时机：
+  - **方案 A（原推荐，未采用）**：在 subagent B 的 announce pipeline（`announce/core.py:132-151`）中，deliver announcement 前调 `reverify_stale_evidence`——B 完成时自动检查是否破坏了其他 session
+  - **方案 B（本版实现）**：在 `taskflow_finish` 的 Gate C 前，对 flow 的全部 passed evidence 批量重验——不只 stale，因此能覆盖跨文件破坏；flow 完成前统一检查
   - **方案 C**：手动触发——父 agent 通过工具主动调 `reverify`（最保守）
-  - **首选方案 A**：subagent 完成时自动检查，及时反馈
+  - **实施选择：方案 B（`on_finish`）**。§10.4 已论证 per-announce 的 N 倍成本与误报；finish 前一次性批量重验能看到合并后的工作区，也能覆盖跨文件破坏。`on_announce` 不接线。
 
-- [ ] **3.2.5** 重验命令执行：
-  - 复用 `agent/tools/file_tools/terminal` 的执行能力（或直接 `subprocess`）
-  - 超时：`EVIDENCE_REGRESSION_GATE["reverify_timeout_s"]`（默认 60s）
-  - fail-open：命令执行失败/超时 → 不标 broken，保留 stale（保守不冤枉）
+- [x] **3.2.5** 重验命令执行：
+  - **安全策略：** 不复用 shell；`shlex.split` + `shell=False`，且只允许 verifier allowlist（pytest/ruff/npm/cargo/...；`python -m <module>` 与 `uv run` 有额外校验）。含 `; && | > < $ \`` 等 shell 操作符的命令直接跳过。
+  - 超时：`EVIDENCE_REGRESSION_GATE["reverify_timeout_s"]`（默认 60s），POSIX 用 `SIGKILL` 杀进程组
+  - fail-open：命令执行失败/超时/不安全 → 不标 broken，保留 stale（保守不冤枉）
 
-- [ ] **3.2.6** 配置 `config/features/agent_side/evidence_cross_session.py` 扩展：
+- [x] **3.2.6** 配置 `config/features/agent_side/evidence_cross_session.py` 扩展：
   ```python
-  EVIDENCE_REGRESSION_GATE: TypedDict = {
+  EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
       "enabled": True,                # 回归门总开关
       "reverify_timeout_s": 60,       # 单命令超时
       "max_reverify_commands": 10,    # 单次重验命令数上限
@@ -475,3 +477,37 @@ claudecode 的 GreenContract / branch_lock / lane_events / recovery_recipes 是�
 - ⚠️ 路径匹配是子串匹配：B 写 `feature.py` 会命中命令里的 `tests/test_feature.py`；偏保守的误报，只会多一次重验提示，不会漏报。
 
 **结论**：§2 能解决“同一个被验证文件被后写”的问题，适合作为低成本兜底；计划里列为最高风险的“跨文件依赖破坏”仍需 §3 的重验（重跑 A 的测试命令）才能检出。§3 是否值得做，建议用 §2 上线后的实际 stale 命中率评估；若命中主要来自同文件覆盖，§2 足够；若跨文件破坏真实发生，则上 `trigger="on_finish"` 的批量重验版本，而不是 `on_announce` 的每次重跑。
+
+---
+
+## 12. §3 实施结果（2026-10-24）
+
+### 12.1 已落地
+
+- 新增 `agent/tools/pub_base/regression_gate.py::reverify_flow_evidence()`：`taskflow_finish` 在 Gate C 前一次性重跑 flow 全部 passed evidence 命令（去重、`max_reverify_commands=10`、单命令 60s）。
+- 新事件：`broken`（重验失败）与 `unmark`（重验通过，清除该命令的 stale/broken）。
+- `derive_evidence_state()` 统一读取侧派生：later event 才生效，`unmark` 抵消同命令的 stale/broken，`[broken]` 优先于 `[stale]`。
+- Gate C 顺序：`FAIL` → `[broken]`（confirmed regression，硬阻断）→ `[stale]`。CompletionJudge 的 first-turn shortcut 也拒绝 `[broken]`。
+- 安全执行：`shell=False` + verifier allowlist；含 shell 操作符、不可解析、非 allowlist 命令一律跳过，不冤枉。
+- 配置 `EVIDENCE_REGRESSION_GATE`：`enabled`（默认 true）、`reverify_timeout_s=60`、`max_reverify_commands=10`、`max_output_chars=500`。
+
+### 12.2 对照结果（真实 e2e）
+
+`tests/agent/tools/taskflow/test_regression_gate_e2e.py` 用真实临时项目和真实 `python -m pytest`：
+
+| 场景 | §2 only | §2 + §3 |
+|---|---|---|
+| A 验证 `test_beta.py`；B 改它 import 的 `alpha.py`，测试被破坏 | **finish 通过（漏报）** | **拒绝：`[broken]`（检出）** |
+| B 写 `test_beta.py` 但测试仍通过（stale 误报） | finish 被 `[stale]` 阻断 | **重验通过 → `unmark` → finish 通过（消除误报）** |
+| B 写 `test_beta.py` 且测试真的失败 | finish 被 `[stale]` 阻断 | **`[broken]`，拒绝并明确是确认回归** |
+
+结论：**§3 的改善比 §2 大一个维度**——§2 只能发现“命令点名了被写文件”的 stale；§3 通过重跑命令，能发现跨文件 import 破坏，并能消除 §2 的误报。
+
+### 12.3 成本与边界
+
+- 成本：每次 `taskflow_finish` 最多 10 条命令 × 60s，且只在 finish 时执行一次（不是每次 announce）。本次 e2e 三条命令的总测试时间 < 2s。
+- 只重放 passed evidence；失败的 evidence 仍由 Gate C 的 `FAIL` 处理。
+- 命令必须通过 allowlist 且不含 shell 操作符；`bash -c`、`cmd1 && cmd2`、`python -c` 等会被跳过（保留原 stale，不误报 broken）。
+- 在 flow 的项目根执行（creator 绑定 → step 绑定 → 默认根）；隔离 worktree 的命令在合并后的主根重跑，这是 finish 时的正确视图。
+- 没有新增手动 unmark 工具：误报会由下一次通过的重验自动清除；如果命令因环境原因持续假失败，可以关闭 `EVIDENCE_REGRESSION_GATE["enabled"]`。
+- 仍未做 §4（`file_deps` 声明）；§3 已覆盖跨文件破坏，§4 只是减少重验范围/成本的精度增强。

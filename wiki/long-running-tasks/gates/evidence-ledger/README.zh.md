@@ -6,7 +6,7 @@
 
 证据账本在每个完成边界回答一个问题：**"agent 验证了它的成果吗，验证还有效吗？"** 它不存储过期标志——事件行不可变，新鲜度在读取时从验证行和文件编辑事件的顺序计算（保留期只删除旧行，不改写历史）。
 
-**代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）、`config/features/agent_side/evidence_cross_session.py`（跨 session 开关）。
+**代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层 + 派生）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/pub_base/regression_gate.py`（finish 时重验）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）、`config/features/agent_side/evidence_cross_session.py`（跨 session + 回归门开关）。
 
 ---
 
@@ -34,6 +34,8 @@ terminal / python_repl 跑了一条命令
 ```
 
 **跨 session 传播。** 文件写入先标记 writer 自己的 session。当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 true 时，`EvidenceLedger.mark_stale_for_path_all_sessions()` 扫描其他 session 中 command 包含被编辑路径的 evidence 行，并在每个受影响 session 下追加一行 `scope="cross_session"` 的 stale 事件。`source_session` 记录写入方；`max_sessions_scan` 限制扫描数量，`exclude_self` 跳过已单独标记的 writer。下方的读取侧推导无需改动——广播行就落在受影响 session 自己的序列里。
+
+**Finish 时重验。** `taskflow_finish` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。
 
 ---
 
@@ -124,6 +126,8 @@ terminal / python_repl 跑了一条命令
 
 跨 session 行额外携带两个可选字段：`"scope": "cross_session"` 与 `"source_session": "<写入方 session id>"`。没有这两个字段的行就是原来的 per-session 标记。
 
+`broken` 与 `unmark` 沿用同一套追加式结构：`broken` 携带 `command`、`exit_code`、`output_snippet` 与 `scope="regression_gate"`；`unmark` 携带 `command` 与 `scope`。两者都不会改写历史行。
+
 ---
 
 ## 过期推导
@@ -146,7 +150,8 @@ def _is_stale(index, row, stale_events):
 
 - **方向重要：** 只有**后来的** stale 事件能使**先前的** evidence 行过期。stale 事件在 evidence 行之前意味着文件被编辑后又重新验证了——验证是新鲜的。
 - **子串匹配：** `file_path in command`。故意宽松——`src/foo.py` 的 stale 事件会使 `pytest src/foo.py tests/` 过期。
-- **按 session 分组：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，`_is_stale` 只在一个 session 的序列内比较。因此跨 session 失效会**写进受影响 session 自己的组**（每个 session 一行），而不是留在写入方的组里。
+- **按 session 分组：** `SessionEvidenceLedger.list_records()` 先按 `session_id` 过滤，派生只在一个 session 的序列内比较。因此跨 session 失效会**写进受影响 session 自己的组**（每个 session 一行），而不是留在写入方的组里。
+- **Broken 与 unmark：** 同 `command` 的更晚 `broken` 事件渲染为 `[broken]`（重验后命令失败）；同 `command` 的更晚 `unmark` 同时清除 `[stale]` 与 `[broken]`。`evidence_ledger.py` 的 `derive_evidence_state()` 是唯一实现，`[broken]` 优先于 `[stale]`。
 
 ---
 
@@ -168,9 +173,9 @@ def _is_stale(index, row, stale_events):
 | Icon | status 为 passed 时 `"pass"`，failed 时 `"FAIL"`，未知时 `"?"` |
 | Kind | 验证类别：test / lint / build / typecheck / format |
 | Command | 原始命令字符串，用反引号包裹 |
-| Stale tag | `_is_stale` 返回 True 时追加 `" [stale]"` |
+| 状态标记 | `derive_evidence_state()` 返回 broken 时追加 `" [broken]"`；否则 stale 时追加 `" [stale]"` |
 
-这个字符串就是门控和判断器解析的对象——它们搜索字面子串 `"FAIL"`、`"[stale]"` 和 `"[pass]"`。
+这个字符串就是门控和判断器解析的对象——它们搜索字面子串 `"FAIL"`、`"[broken]"`、`"[stale]"` 和 `"[pass]"`。
 
 ---
 
@@ -182,7 +187,7 @@ def _is_stale(index, row, stale_events):
 
 ### 层级 2：per-subagent（completion judge + drain gate）
 
-- **Completion judge 跳过：** goal-loop 第一 turn 时，`_first_turn_self_evident(result_text, evidence_summary)` 检查：result 非空 + 至少一个 `[pass]` + 无 `FAIL` + 无 `[stale]` → **跳过 judge 调用**，省一次辅助 LLM 调用。
+- **Completion judge 跳过：** goal-loop 第一 turn 时，`_first_turn_self_evident(result_text, evidence_summary)` 检查：result 非空 + 至少一个 `[pass]` + 无 `FAIL` + 无 `[stale]` + 无 `[broken]` → **跳过 judge 调用**，省一次辅助 LLM 调用。
 - **Completion judge prompt：** 未跳过时，`judge_completion()` 在 prompt 里收到 evidence 摘要。
 - **Drain gate：** `SubagentCompletionDrainMiddleware`（父 agent 侧 `before_model`）在排空子代理完成消息时检查 evidence。无 evidence 或有 `FAIL` → 注入 `[GATE] Completion blocked: verification evidence missing or failing` 阻塞消息。
 
@@ -193,6 +198,7 @@ TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它
 | 条件 | 结果 |
 |------|------|
 | 摘要包含 `"FAIL"` | 拒绝："failing verification evidence" |
+| 摘要包含 `"[broken]"` | 拒绝："confirmed regression (a re-verified command now fails)" |
 | 摘要包含 `"[stale]"` | 拒绝："stale evidence (code changed since last verification), re-run verification commands before finishing" |
 | 否则（或无 evidence / collector 出错） | 通过 |
 
@@ -205,4 +211,4 @@ TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它
 1. **处处 fail-open。** 每个记录器吞掉自己的异常。每个门控在 collector 出错时返回"通过/未违反"。坏掉的账本永远不会阻塞完成或困住子代理。
 2. **不可变事件行 + 读取时推导。** 已记录的行从不 UPDATE。过期在读取时从行的顺序计算。保留期可能删除旧行（age/会话/全局上限），但从不改写历史；reader 始终从幸存的行序列计算新鲜度。
 3. **路径引用，不是内容。** 账本记录命令字符串和输出摘要（500 字符），不记录文件内容。它记录*验证了什么*和*是否通过*，不是*文件里有什么*。
-4. **自动记录始终开启，传播可开关。** 每条匹配分类法的 terminal/python_repl 调用都写一行，每次文件编辑都标记写入方自己的 session，没有 on/off 开关。跨 session 广播是唯一受门控的层（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`，默认开启）；关闭它即恢复原来的 per-session 行为，且不改变账本 schema。
+4. **自动记录始终开启，两个派生层可开关。** 每条匹配分类法的 terminal/python_repl 调用都写一行，每次文件编辑都标记写入方自己的 session，没有 on/off 开关。跨 session 广播（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`）与 finish 时重验（`EVIDENCE_REGRESSION_GATE["enabled"]`）是受门控的层，默认都开启；关闭它们即恢复原行为，且不改变账本 schema。

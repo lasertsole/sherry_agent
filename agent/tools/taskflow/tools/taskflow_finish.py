@@ -130,7 +130,7 @@ _GOAL_GATE_SYSTEM_PROMPT = (
 
 
 async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
-    """Return an ``Error:`` text when the flow's evidence is failing/stale.
+    """Return an ``Error:`` text when the flow's evidence is failing/stale/broken.
 
     The flow's evidence is the AGGREGATE over the sessions that did its work:
     every dispatched step's ``child_session_key`` plus the flow's creator
@@ -138,14 +138,27 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     ``pub_base/evidence_ledger.py``). A flow that never dispatched a step has
     no keys and therefore no evidence, which passes.
 
+    Before reading the summary, the regression gate replays the flow's passed
+    verification commands once (finish-time batch, not per announce): a pass
+    clears a false-positive stale row, a failure records ``broken``. The replay
+    is fail-open and skips unsafe/unparseable commands, so it can never turn an
+    infrastructure error into a rejection.
+
     Fail-open: a missing collector, unreadable ledger, or any collector error
     passes (``None``) — an optional probe must never block a finish.
     """
+    creator_key = str((flow.get("state") or {}).get("creator_session_key") or "")
+    keys = [str(step.get("child_session_key") or "") for step in steps]
+    keys.append(creator_key)
+    try:
+        from agent.tools.pub_base.regression_gate import reverify_flow_evidence
+
+        await reverify_flow_evidence(keys, creator_session_key=creator_key)
+    except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
+        logger.warning("Regression gate skipped (fail-open): {}", exc)
     try:
         from ..evidence_collector import collect_evidence_summary
 
-        keys = [str(step.get("child_session_key") or "") for step in steps]
-        keys.append(str((flow.get("state") or {}).get("creator_session_key") or ""))
         evidence = collect_evidence_summary(session_keys=keys)
     except Exception:  # noqa: BLE001 - optional probe; never block a finish
         return None
@@ -153,6 +166,12 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
         return None
     if "FAIL" in evidence:
         return f"Error: Finish gate rejected: failing verification evidence:\n{evidence}"
+    if "[broken]" in evidence:
+        return (
+            "Error: Finish gate rejected: confirmed regression (a re-verified "
+            f"command now fails):\n{evidence}\nFix the regression or revert the change "
+            "that broke it, then re-run verification."
+        )
     if "[stale]" in evidence:
         return (
             "Error: Finish gate rejected: stale evidence (code changed since last "

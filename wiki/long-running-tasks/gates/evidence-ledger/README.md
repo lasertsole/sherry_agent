@@ -6,7 +6,7 @@
 
 The evidence ledger answers one question at every completion boundary: **"Did the agent verify its work, and is that verification still valid?"** It does this without storing a staleness flag — events are immutable rows, and freshness is computed on the read side from the ordering of verification rows and file-edit events.
 
-**Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy), `config/features/agent_side/evidence_cross_session.py` (cross-session switch).
+**Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage + derivation), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/pub_base/regression_gate.py` (finish-time replay), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy), `config/features/agent_side/evidence_cross_session.py` (cross-session + regression-gate switches).
 
 ---
 
@@ -34,6 +34,8 @@ terminal / python_repl runs a command
 ```
 
 **Cross-session propagation.** A file write marks the writer's own session first. When `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` is true, `EvidenceLedger.mark_stale_for_path_all_sessions()` scans the OTHER sessions' evidence rows for a command containing the edited path and appends one `scope="cross_session"` stale row under EACH affected session. `source_session` records the writer; `max_sessions_scan` caps the scan and `exclude_self` skips the already-marked writer. The read-side derivation below needs no change because the broadcast row lives in the affected session's own sequence.
+
+**Finish-time replay.** At `taskflow_finish`, Gate C first calls `regression_gate.reverify_flow_evidence()`: every unique passed command in the flow's sessions is replayed once (allowlisted executables, no shell, `max_reverify_commands` cap, per-command timeout) in the flow's project root. A pass appends an `unmark` event for a command whose evidence was stale/broken; a failure appends a `broken` event. This is the only path that catches a cross-file import break, because it re-runs A's test command even when no stale row names the changed source file.
 
 ---
 
@@ -124,6 +126,8 @@ When a child's isolated workspace merges back into the parent session, `workspac
 
 A cross-session row carries two extra optional fields: `"scope": "cross_session"` and `"source_session": "<writer session id>"`. A row without them is the original per-session mark.
 
+`broken` and `unmark` use the same append-only shape: `broken` carries `command`, `exit_code`, `output_snippet` and `scope="regression_gate"`; `unmark` carries `command` and `scope`. Neither row rewrites earlier history.
+
 ---
 
 ## Staleness Derivation
@@ -146,7 +150,8 @@ Key subtleties:
 
 - **Direction matters:** only a *later* stale event invalidates an earlier evidence row. A stale event before the evidence means the file was edited, then re-verified — the verification is fresh.
 - **Substring match:** `file_path in command`. Intentionally loose — a stale event for `src/foo.py` invalidates `pytest src/foo.py tests/`.
-- **Session-grouped:** `SessionEvidenceLedger.list_records()` filters by `session_id`, and `_is_stale` compares only within one session's sequence. A cross-session invalidation is therefore written INTO the affected session's group (one row per session), never left in the writer's group.
+- **Session-grouped:** `SessionEvidenceLedger.list_records()` filters by `session_id`, and the derivation compares only within one session's sequence. A cross-session invalidation is therefore written INTO the affected session's group (one row per session), never left in the writer's group.
+- **Broken and unmark:** a later `broken` event with the same `command` renders `[broken]` (a re-verified command now fails); a later `unmark` for that command clears both `[stale]` and `[broken]`. `derive_evidence_state()` in `evidence_ledger.py` is the single implementation; `[broken]` outranks `[stale]`.
 
 ---
 
@@ -168,9 +173,9 @@ Per-line format: `  [{icon}] {kind}: \`{command}\`{stale_tag}`
 | Icon | `"pass"` if status == passed, `"FAIL"` if failed, `"?"` if unknown |
 | Kind | Verification category: test / lint / build / typecheck / format |
 | Command | The exact command string, wrapped in backticks |
-| Stale tag | `" [stale]"` appended when `_is_stale` returns True |
+| Status tag | `" [broken]"` when broken, else `" [stale]"` when stale |
 
-This string is what the gates and judges parse — they search for the literal substrings `"FAIL"`, `"[stale]"`, and `"[pass]"`.
+This string is what the gates and judges parse — they search for the literal substrings `"FAIL"`, `"[broken]"`, `"[stale]"`, and `"[pass]"`.
 
 ---
 
@@ -182,7 +187,7 @@ When `taskflow_resume` dispatches a step with acceptance criteria, it calls `jud
 
 ### Level 2: Per-subagent (completion judge + drain gate)
 
-- **Completion judge skip:** On the first goal-loop turn, `_first_turn_self_evident(result_text, evidence_summary)` checks: non-empty result + at least one `[pass]` + no `FAIL` + no `[stale]` → the judge call is **skipped entirely**, saving an auxiliary LLM call.
+- **Completion judge skip:** On the first goal-loop turn, `_first_turn_self_evident(result_text, evidence_summary)` checks: non-empty result + at least one `[pass]` + no `FAIL` + no `[stale]` + no `[broken]` → the judge call is **skipped entirely**, saving an auxiliary LLM call.
 - **Completion judge prompt:** If not skipped, `judge_completion()` receives the evidence summary in its prompt.
 - **Drain gate:** `SubagentCompletionDrainMiddleware` (parent-side `before_model`) checks evidence when draining subagent-completion messages. No evidence or `FAIL` → injects a `[GATE] Completion blocked: verification evidence missing or failing` blocking message.
 
@@ -193,6 +198,7 @@ Before a taskflow can transition to DONE, Gate C checks the flow's AGGREGATED ev
 | Condition | Result |
 |-----------|--------|
 | Summary contains `"FAIL"` | Rejected: "failing verification evidence" |
+| Summary contains `"[broken]"` | Rejected: "confirmed regression (a re-verified command now fails)" |
 | Summary contains `"[stale]"` | Rejected: "stale evidence (code changed since last verification), re-run verification commands before finishing" |
 | Otherwise (or no evidence / collector error) | Passed |
 
@@ -205,4 +211,4 @@ Gate order: A (DAG completeness) → B (no unresolved steps) → C (evidence) �
 1. **Fail-open everywhere.** Every recorder swallows its own errors. Every gate returns "pass / not-violated" on collector failure. A broken ledger can never block a finish or trap a subagent.
 2. **Immutable event rows + read-time derivation.** A recorded row is never UPDATEd. Staleness is computed at read time from the ordering of rows. Retention may DELETE old rows (age/session/global caps), but it never rewrites history; readers always compute freshness from the surviving sequence.
 3. **Path references, not content.** The ledger records command strings and output snippets (500 chars), not file contents. It records *what was verified* and *whether it passed*, not *what the file contained*.
-4. **Auto-recording is always on; propagation is switchable.** Every terminal/python_repl call that matches the taxonomy gets a row and every file edit marks the writer's own session, with no on/off switch. The cross-session broadcast is the one gated layer (`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`, default on); disabling it restores the previous per-session behaviour without changing the ledger schema.
+4. **Auto-recording is always on; the two derived layers are switchable.** Every terminal/python_repl call that matches the taxonomy gets a row and every file edit marks the writer's own session, with no on/off switch. Cross-session broadcast (`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`) and finish-time replay (`EVIDENCE_REGRESSION_GATE["enabled"]`) are the gated layers, both default on; disabling them restores the previous behaviour without changing the ledger schema.
