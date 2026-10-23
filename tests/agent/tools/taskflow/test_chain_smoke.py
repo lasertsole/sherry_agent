@@ -97,12 +97,14 @@ def _key_dispatch(keys: list[str], calls: list[str]):
 @pytest.fixture()
 def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
     """Redirect the shared evidence ledger into a per-test file."""
-    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.jsonl"))
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
     return EvidenceLedger
 
 
 def _reset_ledger() -> None:
-    Path(EvidenceLedger.LEDGER_PATH).unlink(missing_ok=True)
+    base = str(EvidenceLedger.LEDGER_PATH)
+    for suffix in ("", "-wal", "-shm"):
+        Path(base + suffix).unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio

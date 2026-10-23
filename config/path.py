@@ -352,13 +352,14 @@ def resolve_boulder_path() -> Path:
 
 
 def resolve_evidence_ledger_path() -> Path:
-    """Return the absolute evidence-ledger path (``SRC_DIR/data/evidence-ledger.jsonl``).
+    """Return the absolute evidence-ledger SQLite path (``SRC_DIR/data/evidence-ledger.db``).
 
     The ledger deliberately stays repo-scoped (not session-scoped): it is the
-    append-only audit trail shared across sessions that verify the same plan.
-    The ``data`` directory is created on the ledger's first append.
+    audit trail shared across sessions that verify the same plan. The legacy
+    ``evidence-ledger.jsonl`` beside it is imported once on first open and then
+    renamed to ``.migrated``. The ``data`` directory is created on first access.
     """
-    return SRC_DIR / "data" / "evidence-ledger.jsonl"
+    return SRC_DIR / "data" / "evidence-ledger.db"
 
 
 #: Warn-once guard for an invalid configured project directory (see

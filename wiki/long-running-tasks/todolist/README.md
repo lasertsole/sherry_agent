@@ -56,7 +56,7 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 | Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_resume` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
 | Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
-| Execution evidence                          | `src/data/evidence-ledger.jsonl` | `EvidenceLedger` appends (shared, in `pub_base/`)       |
+| Execution evidence                          | `src/data/evidence-ledger.db` | SQLite `EvidenceLedger` (shared, WAL, retention/purge)   |
 | Active work state                           | `src/data/boulder.json` | Plan activation/recovery                                            |
 
 ### Association (Single Source of Truth)
@@ -137,7 +137,7 @@ Layer 5  │ DAG Execution     │ Provided by TaskFlow: depends_on + blocked/re
 Layer 4  │ Orchestration     │ ulw-execute: plan→checkbox→sub-task→worker→verify, calls TaskFlow
 Layer 3  │ Tools             │ todowrite + todoread (DAG executed by taskflow_* tool family)
 Layer 2  │ Service           │ TodoService (EvidenceLedger moved to `pub_base/`, shared; DAG queries delegated to TaskFlow)
-Layer 1  │ Data Storage      │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
+Layer 1  │ Data Storage      │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
 ─────────│──────────────────│
 E1       │ System Prompt     │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ Tool Description  │ todowrite docstring format rules
@@ -182,7 +182,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` is the append-only JSONL store (`src/data/evidence-ledger.jsonl`) behind the verification audit trail: `append` + `read_all` are the whole storage contract, and session-scoped views read the same shared file. It moved out of `todolist/` into `pub_base/` and is shared by todolist, TaskFlow, terminal and the file tools — it is not a todolist-owned layer. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
+`agent/tools/pub_base/evidence_ledger.py` is the SQLite store (`src/data/evidence-ledger.db`, WAL) behind the verification audit trail: `append` + `read_all` are the whole storage contract, every caller-facing row is immutable, and retention deletes old rows. Session-scoped views read the same shared DB. It moved out of `todolist/` into `pub_base/` and is shared by todolist, TaskFlow, terminal and the file tools — it is not a todolist-owned layer. The class API, the producers, the row schemas, the derived-staleness rule and the gates that consume the summary are documented in [Evidence Ledger](../gates/evidence-ledger/README.md).
 
 ### WS Push
 
@@ -279,7 +279,7 @@ Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Blocked steps not dispatched; ready steps via taskflow_dispatch
   → taskflow_wait_all → taskflow_resume (inject result, unlock successors)
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.jsonl
+Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.db
 Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without asking
 ```
 

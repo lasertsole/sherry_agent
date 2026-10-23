@@ -56,7 +56,7 @@
 | step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_resume`만 step을 `done`으로 표시하고 후속 언록 |
 | 자식 세션 실행 중 여부            | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`   |
 | 계획 파일 진행 (체크박스)         | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
-| 실행 증거                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 추가(공유, `pub_base/`)                  |
+| 실행 증거                         | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`(공유, WAL, 보존/정리)             |
 | 활성 작업 상태                    | `src/data/boulder.json`   | 계획 활성화/복원                                         |
 
 ### 연결 (단일 진실 소스)
@@ -127,7 +127,7 @@ Layer 5  │ DAG 실행 ★      │ TaskFlow 제공: depends_on + blocked/ready
 Layer 4  │ 오케스트레이션 ★ │ ulw-execute: plan→checkbox→sub-task→worker→verify, TaskFlow 호출
 Layer 3  │ 도구            │ todowrite + todoread (DAG는 taskflow_* 도구 패밀리가 실행)
 Layer 2  │ 서비스           │ TodoService(EvidenceLedger는 `pub_base/`로 이동해 공유, DAG 상태 쿼리는 TaskFlow에 위임)
-Layer 1  │ 데이터 저장      │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
+Layer 1  │ 데이터 저장      │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
 ─────────│────────────────│
 E1       │ 시스템 프롬프트  │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ 도구 설명        │ todowrite docstring 형식 규칙
@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 append-only JSONL 스토어(`src/data/evidence-ledger.jsonl`)입니다: `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다. `todolist/`에서 `pub_base/`로 이동했고 todolist, TaskFlow, terminal, 파일 도구가 공유하므로 더 이상 todolist 전용 계층이 아닙니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
+`agent/tools/pub_base/evidence_ledger.py`는 검증 감사 트레일을 지탱하는 SQLite 스토어(`src/data/evidence-ledger.db`, WAL)입니다: `append` + `read_all`이 저장 계약의 전부이며, 호출자 관점에서 행은 불변이고 보존 기간이 오래된 행을 삭제합니다. 세션 범위 뷰는 같은 공유 DB를 읽습니다. `todolist/`에서 `pub_base/`로 이동했고 todolist, TaskFlow, terminal, 파일 도구가 공유하므로 더 이상 todolist 전용 계층이 아닙니다. 클래스 API·프로듀서·행 스키마·파생 스테일 규칙·요약을 소비하는 게이트는 [증거 원장](../gates/evidence-ledger/README.ko.md)에 정리되어 있습니다.
 
 ### WS 푸시
 
@@ -269,7 +269,7 @@ Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → blocked는 디스패치 안 함; ready는 taskflow_dispatch로 일괄 디스패치
   → taskflow_wait_all → taskflow_resume (결과 주입, 후속 언록)
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: 검증 및 증거 기록 → 5 gates → src/data/evidence-ledger.jsonl
+Phase 4: 검증 및 증거 기록 → 5 gates → src/data/evidence-ledger.db
 Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않음
 ```
 

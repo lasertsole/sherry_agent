@@ -14,6 +14,14 @@ from server.service import session_cleanup_service as cleanup
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_evidence_ledger(tmp_path, monkeypatch):
+    """Never let a purge test open/migrate the real repo evidence ledger."""
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
+
+
 def _run(run_id: str, child: str, requester: str) -> SubagentRunRecord:
     return SubagentRunRecord(
         run_id=run_id,
@@ -171,3 +179,36 @@ async def test_boot_sweep_aborts_when_the_session_store_is_unreadable(monkeypatc
         orphan_runs=0, checkpoint_threads=0, registry_rows=0, session_dirs=0
     )
     assert removed == []
+
+
+@pytest.mark.asyncio
+async def test_boot_sweep_purges_orphan_evidence_rows(monkeypatch):
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+    from server.service import orphan_session_sweep as sweep
+
+    run = _run("orphan", "agent:main:subagent:orphan", "agent:main:session:deleted")
+    monkeypatch.setattr(sweep, "_known_main_sessions", lambda: {"alive"})
+    monkeypatch.setattr("agent.tools.subagent.registry.all_runs", lambda: [run])
+
+    async def _remove(_run_id: str) -> None:
+        return None
+
+    async def _purge(_session_id: str) -> None:
+        return None
+
+    calls: list[set[str]] = []
+
+    def _purge_orphans(known) -> int:
+        calls.append(set(known))
+        return 3
+
+    monkeypatch.setattr("agent.tools.subagent.registry.remove_run", _remove)
+    monkeypatch.setattr(cleanup, "purge_session_data", _purge)
+    monkeypatch.setattr(EvidenceLedger, "purge_orphans", _purge_orphans)
+
+    result = await sweep.sweep_orphaned_subagent_sessions()
+
+    assert result == dict(orphan_runs=1, checkpoint_threads=1, registry_rows=1, session_dirs=1)
+    assert len(calls) == 1
+    assert "alive" in calls[0]
+    assert "agent:main:subagent:orphan" in calls[0]

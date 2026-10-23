@@ -221,7 +221,7 @@
 
 ### 파이프라인 수준: 증거 원장과 완료 게이트
 
-원장 자체 — 공유되는 추가 전용 검증 추적(`src/data/evidence-ledger.jsonl`)이며 스테일은 읽기 시점에 파생됩니다 — 에는 전용 페이지가 있습니다: [증거 원장](../long-running-tasks/gates/evidence-ledger/README.ko.md). 여기서 루프를 닫는 것은 이를 읽는 게이트입니다:
+원장 자체 — 공유 SQLite 검증 추적(`src/data/evidence-ledger.db`, WAL, 행 불변 + 지연 보존 기간)이며 스테일은 읽기 시점에 파생됩니다 — 에는 전용 페이지가 있습니다: [증거 원장](../long-running-tasks/gates/evidence-ledger/README.ko.md). 여기서 루프를 닫는 것은 이를 읽는 게이트입니다:
 
 `taskflow_finish.py`는 DONE 전환을 세 검사로 순서대로 게이트합니다:
 

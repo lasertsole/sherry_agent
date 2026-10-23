@@ -146,6 +146,19 @@ async def purge_session_data(session_id: str) -> None:
     # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
 
+    # (7) Evidence ledger rows — one indexed DELETE per session (best-effort).
+    try:
+        from config.features import EVIDENCE_LEDGER
+
+        if EVIDENCE_LEDGER["purge_on_session_delete"]:
+            from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+
+            removed = await asyncio.to_thread(EvidenceLedger.purge_session, session_id)
+            if removed:
+                logger.debug(f"Deleted {removed} evidence row(s) for session_id={session_id}")
+    except Exception as e:
+        logger.warning(f"Failed to purge evidence for session_id={session_id}: {e}")
+
 
 async def purge_subagent_subtree_for_session(
     main_session_id: str, *, reason: str = "session_purge"

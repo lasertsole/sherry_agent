@@ -3,10 +3,10 @@
 - 建档日期：2026-10-23
 - 状态：**待评审**。基于 sherry 现有 evidence ledger + shadow-git + TaskFlow DAG 基础设施，补齐"subagent A 改文件 F（功能 X），subagent B 后面改文件 F 把功能 X 改坏，A/系统怎么知道"的检测能力。业界无框架真正解决此问题（详见调研）；sherry 的文件锁只串行化并发写入，不检测顺序写入的回归。
 - **文档范围**：两个增量改造——(1) 跨 session staleness 传播：B 写文件 F 时自动标记所有 session 对 F 的 evidence 为 stale；(2) 后写回归门：对有 stale evidence 的 session 自动重跑验证命令，检测语义级破坏。两者复用现有基础设施，不引入新依赖。
-- **硬约束**：evidence ledger schema 不变（staleness 仍是 append-only event）；fail-open（重验失败/命令不存在不崩）；不影响现有文件锁/TaskFlow/完成判断逻辑；跨 session 查询性能可接受。
+- **硬约束**：evidence ledger 事件语义不变（staleness 仍派生；存储已是 SQLite）；fail-open（重验失败/命令不存在不崩）；不影响现有文件锁/TaskFlow/完成判断逻辑；跨 session 查询性能可接受。
 - 关联代码：
   - sherry 现有（复用/改造）：
-    - `agent/tools/pub_base/evidence_ledger.py:10-13,50,104-139`（append-only JSONL + per-session keying + staleness 派生）
+    - `agent/tools/pub_base/evidence_ledger.py`（SQLite evidence ledger + per-session keying + staleness 派生）
     - `agent/tools/taskflow/evidence_collector.py:15-40`（staleness 派生 + flow 聚合）
     - `agent/tools/pub_base/evidence_recorder.py:84-95,98-151`（`invalidates_evidence` 装饰器 + `mark_evidence_stale`）
     - `agent/tools/pub_base/shadow_git.py:229-252,255-373`（per-turn 快照 + read APIs）
@@ -119,7 +119,7 @@ subagent B 写文件 F 时，不只标记 B 自己 session 的 evidence stale，
 
 - **F1 schema**：stale 行增 `scope` 和 `source_session` 字段，但旧行无这些字段——派生逻辑对无 `scope` 的行按 per-session 处理（向后兼容）
 - **F2 fail-open**：`mark_stale_for_path_all_sessions` 全程 try-catch，异常只 log
-- **F5 性能**：扫描 ledger 是 O(S × E_avg)（S = session 数，E_avg = 每 session evidence 行数），`max_sessions_scan` 上限保护。ledger 是 JSONL 文件，读时全量加载——可考虑加索引（后续优化）
+- **F5 性能**：扫描 ledger 是 O(S × E_avg)（S = session 数，E_avg = 每 session evidence 行数），`max_sessions_scan` 上限保护。ledger 已是 SQLite（`read_for_keys` 走 `session_id` 索引）；跨 session 扫描可再按需加索引
 - **误报风险**：B 写文件 F 不一定破坏 A 的功能——staleness 是"可能过期"信号，不是"已破坏"判定。这由 §3 回归门做语义确认
 
 **验收**：F1 + F2 + F5 + F6。新建 `tests/agent/tools/pub_base/test_evidence_cross_session.py`。

@@ -71,13 +71,9 @@ Persistent work state:
 }
 ```
 
-### Evidence Ledger (src/data/evidence-ledger.jsonl)
+### Evidence Ledger (src/data/evidence-ledger.db)
 
-One JSON object per line: the shared, append-only verification audit trail. It is written by
-`agent/tools/pub_base/evidence_recorder.py` and read by
-`agent/tools/taskflow/evidence_collector.py`; the producers, row schemas, the derived-staleness
-rule, the summary format and the gates that consume it are documented in
-[Evidence Ledger](../../gates/evidence-ledger/README.md).
+SQLite table `evidence_events` (WAL): the shared verification audit trail. Rows are INSERTed and never UPDATEd; retention deletes old rows. It is written by `agent/tools/pub_base/evidence_recorder.py` and read by `agent/tools/taskflow/evidence_collector.py`; the producers, row schemas, the derived-staleness rule, the summary format, retention and the gates that consume it are documented in [Evidence Ledger](../../gates/evidence-ledger/README.md).
 
 ### todos.db — Session-Level TODO Storage
 

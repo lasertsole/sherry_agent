@@ -164,7 +164,7 @@ class TestResolveSherryDataPaths:
         root, _sessions = roots
         ledger = config_path.resolve_evidence_ledger_path()
 
-        assert ledger == root / "src" / "data" / "evidence-ledger.jsonl"
+        assert ledger == root / "src" / "data" / "evidence-ledger.db"
         assert _FORBIDDEN_DIR not in ledger.parts
 
     def test_start_work_ledger_resolver_is_removed(self) -> None:

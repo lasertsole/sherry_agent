@@ -2,9 +2,9 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> An append-only JSONL audit trail that records every verification command the agent runs (tests, linters, builds) and derives whether each result is still fresh at read time — so completion gates can reject a subagent or taskflow that claims "done" without passing, non-stale verification.
+> A SQLite audit trail that records every verification command the agent runs (tests, linters, builds) and derives whether each result is still fresh at read time — so completion gates can reject a subagent or taskflow that claims "done" without passing, non-stale verification.
 
-The evidence ledger answers one question at every completion boundary: **"Did the agent verify its work, and is that verification still valid?"** It does this without storing a staleness flag — the trail is append-only, and freshness is computed on the read side from the ordering of verification rows and file-edit events.
+The evidence ledger answers one question at every completion boundary: **"Did the agent verify its work, and is that verification still valid?"** It does this without storing a staleness flag — events are immutable rows, and freshness is computed on the read side from the ordering of verification rows and file-edit events.
 
 **Source of truth:** `agent/tools/pub_base/evidence_ledger.py` (storage), `agent/tools/pub_base/evidence_recorder.py` (producers), `agent/tools/taskflow/evidence_collector.py` (read/consumer), `config/features/agent_side/evidence_ledger.py` (taxonomy).
 
@@ -20,11 +20,11 @@ terminal / python_repl runs a command
   │            unmatched commands are silently ignored
   │
   ├─ record_verification_evidence()
-  │    └─ append one JSONL row: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ insert one SQLite row: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
   │
   └─ later: write_file / patch_file edits a source file
        └─ mark_evidence_stale(file_path, session_id)
-            └─ append one JSONL row: {event:"stale", file_path, session_id, timestamp}
+            └─ insert one SQLite row: {event:"stale", file_path, session_id, timestamp}
                  │
                  └─ at read time: collect_evidence_summary()
                       ├─ an evidence row is [stale] if a LATER stale event's file_path
@@ -37,20 +37,24 @@ terminal / python_repl runs a command
 
 ## Storage
 
-**File:** `src/data/evidence-ledger.jsonl` (resolved by `config.path.resolve_evidence_ledger_path`)
+**File:** `src/data/evidence-ledger.db` (resolved by `config.path.resolve_evidence_ledger_path`)
 
 | Property | Value |
 |----------|-------|
-| Format | JSON Lines (one JSON object per line) |
+| Format | SQLite table `evidence_events`; WAL mode + `busy_timeout=5000` |
 | Scope | Repo-wide (shared across all sessions) |
-| Mutability | Append-only — existing lines are never rewritten or deleted |
-| Session isolation | Achieved by filtering on the `session_id` field at read time; rows carry a SESSION key (the main session's id, or a child's `agent:{agent}:subagent:{uuid}`) — never a plan / todo / flow id |
-| Multi-key reads | `read_for_keys(keys)` groups one pass over the file by key, preserving each key's own order (staleness is derived within one session's sequence) |
-| Broken lines | A line that does not parse is skipped with one warning — a single torn line must never make the whole ledger unreadable |
-| Write lock | Appends take the shared per-path write lock (`file_write_lock`: in-process lock + `flock`) |
-| Missing file | `read_all()` returns `[]` — the `data/` directory is created on first append |
+| Mutability | Rows are INSERTed and never UPDATEd; retention deletes old rows (age TTL / per-session cap / global cap) |
+| Session isolation | `WHERE session_id = ?` on the indexed column; rows carry a SESSION key (the main session's id, or a child's `agent:{agent}:subagent:{uuid}`) — never a plan / todo / flow id |
+| Multi-key reads | `read_for_keys(keys)` runs one indexed `IN` query and preserves each key's insertion order (staleness is derived within one session's sequence) |
+| Concurrency | WAL lets readers and writers overlap; a writer retries through `busy_timeout` |
+| Legacy JSONL | Imported once on first open (per-line hash dedupe) and renamed to `.migrated` |
+| Missing file | `read_all()` returns `[]`; the directory is created on first access |
 
-The file deliberately stays repo-scoped, not session-scoped: it is the append-only audit trail shared across sessions that verify the same plan.
+The DB deliberately stays repo-scoped, not session-scoped: it is the shared audit trail across sessions that verify the same plan.
+
+### Retention & purge
+
+`EVIDENCE_LEDGER` carries the policy: `pruning_enabled` (default true), `max_age_days` (30), `max_events_per_session` (100) and `max_total_events` (10 000). Pruning is lazy — every `append` runs three DELETE layers after the insert, and a pruning failure never loses the row that was just recorded. Deleting a session calls `purge_session` (one `DELETE WHERE session_id = ?`); the boot orphan sweep calls `purge_orphans(known_sessions)` so evidence for sessions that no longer exist is removed even when they were deleted outside the normal cleanup path. `purge_on_session_delete` and `purge_on_boot_sweep` gate those explicit deletes; `pruning_enabled=false` disables only the lazy retention.
 
 ---
 
@@ -195,6 +199,6 @@ Gate order: A (DAG completeness) → B (no unresolved steps) → C (evidence) �
 ## Design Principles
 
 1. **Fail-open everywhere.** Every recorder swallows its own errors. Every gate returns "pass / not-violated" on collector failure. A broken ledger can never block a finish or trap a subagent.
-2. **Append-only + read-time derivation.** No historical line is ever rewritten. Staleness is computed at read time from the ordering of rows. The audit trail is never corrupted by edits — it just grows, and readers compute freshness.
+2. **Immutable event rows + read-time derivation.** A recorded row is never UPDATEd. Staleness is computed at read time from the ordering of rows. Retention may DELETE old rows (age/session/global caps), but it never rewrites history; readers always compute freshness from the surviving sequence.
 3. **Path references, not content.** The ledger records command strings and output snippets (500 chars), not file contents. It records *what was verified* and *whether it passed*, not *what the file contained*.
 4. **Always on, no toggle.** The auto-recording path has no on/off switch. Every terminal/python_repl call that matches the taxonomy gets a row. Every file edit gets a stale event. The system cannot be bypassed by the model.

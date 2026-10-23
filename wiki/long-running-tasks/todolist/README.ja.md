@@ -56,7 +56,7 @@
 | step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_resume` のみが step を `done` にして後続をアンロック |
 | 子セッションが実行中か                 | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`         |
 | 計画ファイルの進捗（チェックボックス） | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
-| 実行エビデンス                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` が追記（共有、`pub_base/`）                   |
+| 実行エビデンス                         | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`（共有、WAL、保持期間/パージ）          |
 | アクティブワーク状態                   | `src/data/boulder.json`   | 計画のアクティベーション/復元                                  |
 
 ### 関連付け（唯一の真実のソース）
@@ -127,7 +127,7 @@ Layer 5  │ DAG 実行 ★        │ TaskFlow が提供: depends_on + blocked/
 Layer 4  │ オーケストレーション ★ │ ulw-execute: plan→checkbox→sub-task→worker→verify、TaskFlow を呼び出し
 Layer 3  │ ツール            │ todowrite + todoread（DAG は taskflow_* ツールファミリーが実行）
 Layer 2  │ サービス           │ TodoService（EvidenceLedger は `pub_base/` に移動して共有、DAG 状態クエリは TaskFlow に委譲）
-Layer 1  │ データストレージ   │ todos.db (WAL) + boulder.json + ledger.jsonl + plans/*.md + taskflow_registry.db
+Layer 1  │ データストレージ   │ todos.db (WAL) + boulder.json + ledger.db + plans/*.md + taskflow_registry.db
 ─────────│──────────────────│
 E1       │ システムプロンプト  │ AGENTS.md: MANDATORY orchestrator doctrine
 E2       │ ツール説明          │ todowrite docstring フォーマットルール
@@ -172,7 +172,7 @@ class TodoService:
 
 ### EvidenceLedger
 
-`agent/tools/pub_base/evidence_ledger.py` は検証監査トレイルを支える append-only の JSONL ストア（`src/data/evidence-ledger.jsonl`）です：`append` + `read_all` がストレージ契約のすべてで、セッションスコープのビューは同じ共有ファイルを読みます。`todolist/` から `pub_base/` に移され、todolist・TaskFlow・terminal・ファイルツールで共有されるため、todolist 専用の層ではありません。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
+`agent/tools/pub_base/evidence_ledger.py` は検証監査トレイルを支える SQLite ストア（`src/data/evidence-ledger.db`、WAL）です：`append` + `read_all` がストレージ契約のすべてで、呼び出し側から見た行は不変のまま、保持期間が古い行を削除します。セッションスコープのビューは同じ共有 DB を読みます。`todolist/` から `pub_base/` に移され、todolist・TaskFlow・terminal・ファイルツールで共有されるため、todolist 専用の層ではありません。クラス API・書き込み側・行スキーマ・導出される古さのルール・要約を消費するゲートは[エビデンス台帳](../gates/evidence-ledger/README.ja.md)にまとめています。
 
 ### WS プッシュ
 
@@ -269,7 +269,7 @@ Phase 3: 次のチェックボックスを実行（スケジューリングは�
   → blocked はディスパッチしない；ready は taskflow_dispatch で一括ディスパッチ
   → taskflow_wait_all → taskflow_resume（結果注入、後続アンロック）
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: 検証とエビデンス記録 → 5 gates → src/data/evidence-ledger.jsonl
+Phase 4: 検証とエビデンス記録 → 5 gates → src/data/evidence-ledger.db
 Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねない
 ```
 

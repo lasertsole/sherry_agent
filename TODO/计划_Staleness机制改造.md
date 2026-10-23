@@ -15,7 +15,7 @@
     - `agent/verification_evidence.py:549-618`（`verification_status`——只用时间戳，**不用 changed_paths**）
   - 关联 TODO：
     - `计划_跨Subagent文件冲突检测.md` §2——cross-session staleness 依赖 `_is_stale`
-    - `计划_EvidenceLedger_SQLite迁移与清理.md`——SQLite 迁移先做，state 表是同库新表
+    - SQLite evidence ledger（已落地 2026-10-23，`src/data/evidence-ledger.db`）——state 表与 evidence 表同库
 
 ---
 
@@ -118,7 +118,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 | `last_edit_at` | 无 | ✅ 有（可作 timestamp fallback 或 UI 展示） |
 | `changed_paths` 可见性 | 不可见（stamp 后丢弃） | ✅ state 表可查（UI 可展示"改了哪些文件"） |
 | 与 hermes 对齐 | 不对齐 | ✅ schema 对齐（future 可直接移植 hermes 模式） |
-| 与 SQLite 迁移计划兼容 | 兼容（evidence 行增列） | 更兼容（state 表是同库新表） |
+| 与现有 SQLite ledger 兼容 | 兼容（evidence 行增列） | 更兼容（state 表是同库新表） |
 
 ### 方案 C：改进 substring（最小改动）
 
@@ -162,8 +162,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 
 ### 3.2 前置依赖
 
-- `计划_EvidenceLedger_SQLite迁移与清理.md` SQLite 迁移先做——state 表是同库新表，`CREATE TABLE IF NOT EXISTS verification_state`
-- 如果 SQLite 迁移未做，state 表也可放 JSONL 旁的独立 JSON 文件（但 SQLite 更对齐 hermes）
+- SQLite 迁移已落地——state 表与 `evidence_events` 同库，`CREATE TABLE IF NOT EXISTS verification_state`
 
 ### 3.3 改动清单
 
@@ -221,7 +220,6 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 - [ ] **3.3.3** `evidence_ledger.py` 的 `append` 方法增 `modified_files` 字段：
   - 调用方（`evidence_recorder.record_verification_evidence`）在 append 前调 `snapshot_and_reset_changed_paths`，把结果作为 `modified_files` 字段传入
   - SQLite schema：evidence_events 表增 `modified_files_json TEXT DEFAULT '[]'` 列（`ALTER TABLE ADD COLUMN`，向后兼容）
-  - JSONL 模式（如未迁移）：evidence 行 dict 增 `modified_files` key
 
 - [ ] **3.3.4** `evidence_recorder.py` 改造：
   - `invalidates_evidence` 装饰器（`:98-151`）：在调 `mark_evidence_stale` 后，**额外调** `EvidenceLedger.record_file_edit(file_path, session_id)`——累积到 state 表
@@ -258,7 +256,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 - **向后兼容**：旧 evidence 行无 `modified_files` → 降级 substring（旧行为不变）；新行有 `modified_files` → 精确匹配
 - **路径规范化**：`record_file_edit` 的 `file_path` 与 stale 事件的 `file_path` 格式需一致——都来自 `invalidates_evidence` 装饰器的同一 `file_path` 参数，**格式一致**
 - **并发**：state 表的 `record_file_edit` 和 `snapshot_and_reset_changed_paths` 都在 SQLite WAL 模式下，`busy_timeout=5000` 自动重试
-- **state 表清理**：session 删除时清理其 state 行——在 `计划_EvidenceLedger_SQLite迁移与清理.md` 的 `purge_session` 中加 `DELETE FROM verification_state WHERE session_id = ?`
+- **state 表清理**：session 删除时清理其 state 行——在 `EvidenceLedger.purge_session` 中加 `DELETE FROM verification_state WHERE session_id = ?`
 
 **验收**：向后兼容 + 盲区消除。新建 `tests/agent/tools/pub_base/test_evidence_state.py`。
 
@@ -282,7 +280,7 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 ## 5. 执行顺序
 
 ```
-前置：计划_EvidenceLedger_SQLite迁移与清理.md（SQLite 迁移）—— state 表是同库新表
+前置：SQLite evidence ledger 已落地（2026-10-23）—— state 表是同库新表
 
 方案 C（interim，0.5 天）——可选，先改善一部分盲区
   └─ _is_stale 改 stem 匹配
@@ -350,5 +348,5 @@ _is_stale: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True（精确匹
 - `agent/verification_evidence.py:549-618`（`verification_status`——只用时间戳不用 changed_paths 的反面教材）
 
 ### 关联 TODO
-- `计划_EvidenceLedger_SQLite迁移与清理.md`——SQLite 迁移先做，state 表是同库新表，`purge_session` 增 state 清理
+- SQLite evidence ledger（已落地）——state 表是同库新表，`purge_session` 增 state 清理
 - `计划_跨Subagent文件冲突检测.md` §2——cross-session staleness 改的是传播范围（per-session→cross-session），本计划改的是匹配方式（substring→文件集合），两者正交

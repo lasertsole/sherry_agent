@@ -35,7 +35,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/taskflow/`              | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector)                                                       | `agent/tools/taskflow/config.py`                     |
 | `agent/tools/todolist/`              | Session-scoped todo planning layer                                                                                                            | `agent/tools/todolist/service.py`                    |
 | `agent/tools/subagent/`              | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles)                                                                                    | `agent/tools/subagent/spawn/core.py`                 |
-| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the append-only evidence ledger/recorder)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
+| `agent/tools/pub_base/`              | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage, the SQLite evidence ledger/recorder)                                                                             | `agent/tools/pub_base/sqlite_store.py`               |
 | `agent/wrapper/`                     | Graph-level wrappers (repetition guard, context limit) + pluggable registry                                                                                                          | `agent/wrapper/registry.py`                          |
 | `agent/state_port.py`                | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API)                                     | `agent/state_port.py`                                |
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
@@ -232,7 +232,8 @@ User message → Robyn WS → agent.core.built_agent() graph
       session's ledger shows a passing, non-stale row — the ledger already
       carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
-      stale events; read side derives staleness (evidence_collector.py)
+      stale events in SQLite (WAL; lazy retention + session/boot purge); read
+      side derives staleness (evidence_collector.py)
     · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's AGGREGATED evidence (every dispatched step's child session +

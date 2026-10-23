@@ -2,9 +2,9 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> Append-only の JSONL 監査トレイル。エージェントが実行したすべての検証コマンド（テスト・リント・ビルド）を記録し、読み取り時に各結果がまだ有効かを導出します — これにより、検証なしで「完了」を主張するサブエージェントや TaskFlow を完了ゲートが拒否できます。
+> SQLite の監査トレイル。エージェントが実行したすべての検証コマンド（テスト・リント・ビルド）を記録し、読み取り時に各結果がまだ有効かを導出します — これにより、検証なしで「完了」を主張するサブエージェントや TaskFlow を完了ゲートが拒否できます。
 
-エビデンス台帳はすべての完了境界で一つの問いに答えます：**「エージェントは自分の作業を検証したか、その検証はまだ有効か？」** 古さのフラグを保存せずにこれを実現します — トレイルは append-only で、鮮度は読み取り時に検証行とファイル編集イベントの順序から計算されます。
+エビデンス台帳はすべての完了境界で一つの問いに答えます：**「エージェントは自分の作業を検証したか、その検証はまだ有効か？」** 古さのフラグを保存せずにこれを実現します — イベント行は不変で、鮮度は読み取り時に検証行とファイル編集イベントの順序から計算されます（保持期間は古い行を削除するだけで履歴を書き換えません）。
 
 **ソースコード:** `agent/tools/pub_base/evidence_ledger.py`（ストレージ）、`agent/tools/pub_base/evidence_recorder.py`（プロデューサー）、`agent/tools/taskflow/evidence_collector.py`（リーダー/コンシューマー）、`config/features/agent_side/evidence_ledger.py`（分類）。
 
@@ -20,11 +20,11 @@ terminal / python_repl がコマンドを実行
   │        マッチしないコマンドは黙って無視
   │
   ├─ record_verification_evidence()
-  │    └─ 1行の JSONL を追記: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ SQLite の行を 1 つ挿入: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
   │
   └─ その後: write_file / patch_file がソースファイルを編集
        └─ mark_evidence_stale(file_path, session_id)
-            └─ 1行の JSONL を追記: {event:"stale", file_path, session_id, timestamp}
+            └─ SQLite の行を 1 つ挿入: {event:"stale", file_path, session_id, timestamp}
                  │
                  └─ 読み取り時: collect_evidence_summary()
                       ├─ evidence 行が [stale] になるのは、より後の stale イベントの file_path が
@@ -37,20 +37,24 @@ terminal / python_repl がコマンドを実行
 
 ## ストレージ
 
-**ファイル:** `src/data/evidence-ledger.jsonl`（`config.path.resolve_evidence_ledger_path` で解決）
+**ファイル:** `src/data/evidence-ledger.db`（`config.path.resolve_evidence_ledger_path` で解決）
 
-| プロパティ | 値 |
-|-----------|-----|
-| 形式 | JSON Lines（1行に1つの JSON オブジェクト） |
-| スコープ | リポジトリ全体（全セッションで共有） |
-| 変更性 | Append-only — 既存の行は書き換えも削除もされない |
-| セッション分離 | 読み取り時に `session_id` フィールドでフィルタリング。行が持つのは**セッション**キー（メインセッションの id、または子の `agent:{agent}:subagent:{uuid}`）で、plan / todo / flow id は決して持ちません |
-| 複数キー読み取り | `read_for_keys(keys)` は 1 回の走査でファイルをキーごとにグループ化し、各キー自身の順序を保ちます（古さは 1 セッションの行列の中で導出されます） |
-| 壊れた行 | パースできない行はスキップして警告を 1 件出します——1 行の破損で台帳全体が読めなくなってはいけません |
-| 書き込みロック | 追記は共有の per-path 書き込みロック（`file_write_lock`: プロセス内ロック + `flock`）を取ります |
-| ファイル不在 | `read_all()` は `[]` を返す — `data/` ディレクトリは初回追記時に作成 |
+| 項目 | 値 |
+|------|----|
+| 形式 | SQLite テーブル `evidence_events`；WAL モード + `busy_timeout=5000` |
+| 範囲 | リポジトリ全体（全セッションで共有） |
+| 可変性 | 行は INSERT のみで UPDATE されない。保持期間が古い行を削除する（age TTL / セッション上限 / 全体上限） |
+| セッション分離 | インデックス付き `session_id` に対する `WHERE session_id = ?`。行は SESSION key（メインセッション id、または子の `agent:{agent}:subagent:{uuid}`）を持ち、plan / todo / flow id は持たない |
+| 複数キー読み取り | `read_for_keys(keys)` は 1 回のインデックス付き `IN` クエリで取得し、各キーの挿入順を保つ（古さは 1 セッションの行順序内で導出） |
+| 並行性 | WAL により読み書きが重なり、書き込みは `busy_timeout` で再試行 |
+| 旧 JSONL | 初回オープン時に 1 回だけインポート（行ハッシュで重複排除）し、`.migrated` にリネーム |
+| ファイル不在 | `read_all()` は `[]` を返す。ディレクトリは初回アクセス時に作成 |
 
-ファイルは意図的にセッションスコープではなくリポジトリスコープです: 同じ計画を検証するセッション間で共有される append-only 監査トレイルです。
+DB は意図的にリポジトリ全体に置かれ、セッション単位ではない。同じ計画を検証する複数セッションで共有される監査トレイルである。
+
+### 保持期間とパージ
+
+`EVIDENCE_LEDGER` がポリシーを持つ：`pruning_enabled`（既定 true）、`max_age_days`（30）、`max_events_per_session`（100）、`max_total_events`（10 000）。プルーニングは遅延実行で、各 `append` の INSERT 後に 3 層の DELETE を走らせる。失敗しても直前に記録した行は失われない。セッション削除は `purge_session`（`DELETE WHERE session_id = ?` 1 回）を呼び、boot の孤児 sweep は `purge_orphans(known_sessions)` を呼ぶため、通常のクリーンアップ経路を迂回して削除されたセッションの evidence も消える。`purge_on_session_delete` / `purge_on_boot_sweep` が明示削除を制御し、`pruning_enabled=false` は遅延保持期間だけを無効化する。
 
 ---
 
@@ -195,6 +199,6 @@ TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エ
 ## 設計原則
 
 1. **いたるところで fail-open。** すべてのレコーダーは自身のエラーを飲み込む。すべてのゲートは collector エラー時に「通過/非違反」を返す。壊れた台帳は完了をブロックしたりサブエージェントを閉じ込めることはない。
-2. **Append-only + 読み取り時導出。** 既存の行は書き換えられない。古さは読み取り時に行情報から計算される。監査トレイルは編集で破損しない — 成長するだけで、reader が読み取り時に鮮度を計算する。
+2. **不変イベント行 + 読み取り時導出。** 記録済みの行は UPDATE されない。古さは読み取り時に行情報から計算される。保持期間は古い行を DELETE することがある（age/セッション/全体上限）が、履歴を書き換えない。reader は残存する行順序から鮮度を計算する。
 3. **パス参照、コンテンツではない。** 台帳はコマンド文字列と出力スニペット（500文字）を記録し、ファイル内容は記録しない。*何を検証したか*と*通過したか*を記録し、*ファイルに何が含まれていたか*は記録しない。
 4. **常時オン、トグルなし。** 自動記録パスにはオン/オフスイッチがない。分類にマッチするすべての terminal/python_repl 呼び出しが行を書く。すべてのファイル編集が stale イベントを書く。モデルはバイパスできない。

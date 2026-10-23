@@ -2,9 +2,9 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> Append-only JSONL 감사 트레일로, 에이전트가 실행한 모든 검증 명령(테스트, 린트, 빌드)을 기록하고 읽기 시점에 각 결과가 여전히 유효한지를 도출합니다 — 이를 통해 검증 없이 "완료"를 주장하는 서브에이전트나 TaskFlow를 완료 게이트가 거부할 수 있습니다.
+> SQLite 감사 트레일로, 에이전트가 실행한 모든 검증 명령(테스트, 린트, 빌드)을 기록하고 읽기 시점에 각 결과가 여전히 유효한지를 도출합니다 — 이를 통해 검증 없이 "완료"를 주장하는 서브에이전트나 TaskFlow를 완료 게이트가 거부할 수 있습니다.
 
-에비던스 원장은 모든 완료 경계에서 하나의 질문에 답합니다: **"에이전트가 자신의 작업을 검증했는가, 그 검증이 여전히 유효한가?"** 이를 위해 유효하지 않음 플래그를 저장하지 않습니다 — 트레일은 append-only이며, 신선도는 읽기 시점에 검증 행과 파일 편집 이벤트의 순서로부터 계산됩니다.
+에비던스 원장은 모든 완료 경계에서 하나의 질문에 답합니다: **"에이전트가 자신의 작업을 검증했는가, 그 검증이 여전히 유효한가?"** 이를 위해 유효하지 않음 플래그를 저장하지 않습니다 — 이벤트 행은 불변이며, 신선도는 읽기 시점에 검증 행과 파일 편집 이벤트의 순서로부터 계산됩니다(보존 기간은 오래된 행을 삭제할 뿐 역사를 다시 쓰지 않습니다).
 
 **소스 코드:** `agent/tools/pub_base/evidence_ledger.py`(스토리지), `agent/tools/pub_base/evidence_recorder.py`(프로듀서), `agent/tools/taskflow/evidence_collector.py`(리더/컨슈머), `config/features/agent_side/evidence_ledger.py`(분류).
 
@@ -20,11 +20,11 @@ terminal / python_repl 이 명령을 실행
   │        매치되지 않는 명령은 조용히 무시
   │
   ├─ record_verification_evidence()
-  │    └─ JSONL 한 줄追加: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ SQLite 행 하나 삽입: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
   │
   └─ 이후: write_file / patch_file 가 소스 파일을 편집
        └─ mark_evidence_stale(file_path, session_id)
-            └─ JSONL 한 줄追加: {event:"stale", file_path, session_id, timestamp}
+            └─ SQLite 행 하나 삽입: {event:"stale", file_path, session_id, timestamp}
                  │
                  └─ 읽기 시점: collect_evidence_summary()
                       ├─ evidence 행이 [stale]이 되는 것은, 더 나중의 stale 이벤트의 file_path 가
@@ -37,20 +37,24 @@ terminal / python_repl 이 명령을 실행
 
 ## 스토리지
 
-**파일:** `src/data/evidence-ledger.jsonl`(`config.path.resolve_evidence_ledger_path`로 해결)
+**파일:** `src/data/evidence-ledger.db`(`config.path.resolve_evidence_ledger_path`로 해결)
 
 | 속성 | 값 |
-|------|-----|
-| 형식 | JSON Lines(한 줄에 하나의 JSON 객체) |
-| 범위 | 리포지토리 전체(모든 세션에서 공유) |
-| 변경성 | Append-only — 기존 행은 수정되거나 삭제되지 않음 |
-| 세션 격리 | 읽기 시점에 `session_id` 필드로 필터링. 행이 담는 것은 **세션** 키(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)이며, plan / todo / flow id는 결코 담지 않습니다 |
-| 다중 키 읽기 | `read_for_keys(keys)`는 파일을 한 번만 순회하며 키별로 그룹화하고 각 키의 순서를 보존합니다(스테일은 한 세션의 행 순서 안에서만 도출됩니다) |
-| 손상된 행 | 파싱할 수 없는 행은 건너뛰고 경고 한 줄을 남깁니다——한 줄 손상으로 원장 전체를 못 읽게 되어서는 안 됩니다 |
-| 쓰기 잠금 | 추가는 공유 per-path 쓰기 잠금(`file_write_lock`: 프로세스 내 잠금 + `flock`)을 취합니다 |
-| 파일 부재 | `read_all()`이 `[]` 반환 — `data/` 디렉토리는 첫追加 시 생성 |
+|------|----|
+| 형식 | SQLite 테이블 `evidence_events`; WAL 모드 + `busy_timeout=5000` |
+| 범위 | 저장소 전체(모든 세션 공유) |
+| 변경성 | 행은 INSERT만 되고 UPDATE되지 않음. 보존 기간이 오래된 행을 삭제함(age TTL / 세션별 상한 / 전체 상한) |
+| 세션 격리 | 인덱스된 `session_id`에 `WHERE session_id = ?`; 행은 SESSION key(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)를 가지며 plan / todo / flow id는 없음 |
+| 다중 키 읽기 | `read_for_keys(keys)`는 인덱스된 `IN` 쿼리 한 번으로 가져오고 각 키의 삽입 순서를 유지함(스테일은 한 세션의 행 순서 안에서 파생) |
+| 동시성 | WAL이 읽기/쓰기를 겹치게 하고 쓰기는 `busy_timeout`으로 재시도 |
+| 레거시 JSONL | 첫 오픈 시 한 번 가져오고(줄 해시로 중복 제거) `.migrated`로 이름 변경 |
+| 파일 없음 | `read_all()`은 `[]` 반환; 디렉터리는 첫 접근 시 생성 |
 
-파일은 의도적으로 세션 범위가 아닌 리포지토리 범위로 유지됩니다: 같은 계획을 검증하는 세션들 간에 공유되는 append-only 감사 트레일입니다.
+DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 같은 계획을 검증하는 여러 세션이 공유하는 감사 추적이다.
+
+### 보존 기간과 정리
+
+`EVIDENCE_LEDGER`가 정책을 가진다: `pruning_enabled`(기본 true), `max_age_days`(30), `max_events_per_session`(100), `max_total_events`(10 000). 정리는 지연 실행으로, 각 `append`의 INSERT 뒤에 세 단계 DELETE를 수행하며 실패해도 방금 기록한 행은 잃지 않는다. 세션 삭제는 `purge_session`(`DELETE WHERE session_id = ?` 한 번)을 호출하고, boot 고아 sweep은 `purge_orphans(known_sessions)`를 호출하므로 정상 정리 경로를 우회한 세션의 evidence도 제거된다. `purge_on_session_delete` / `purge_on_boot_sweep`가 명시 삭제를 제어하며, `pruning_enabled=false`는 지연 보존 기간만 끈다.
 
 ---
 
@@ -195,6 +199,6 @@ TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에�
 ## 설계 원칙
 
 1. **어디서나 fail-open.** 모든 레코더는 자신의 에러를 삼킵니다. 모든 게이트는 collector 에러 시 "통과/위반 아님"을 반환합니다. 망가진 원장은 완료를 차단하거나 서브에이전트를 가두지 않습니다.
-2. **Append-only + 읽기 시점 도출.** 기존 행은 수정되지 않습니다. 유효하지 않음은 읽기 시점에 행의 순서로부터 계산됩니다. 감사 트레일은 편집으로 손상되지 않습니다 — 성장할 뿐, reader가 읽기 시점에 신선도를 계산합니다.
+2. **불변 이벤트 행 + 읽기 시점 도출.** 기록된 행은 UPDATE되지 않습니다. 유효하지 않음은 읽기 시점에 행의 순서로부터 계산됩니다. 보존 기간은 오래된 행을 DELETE할 수 있지만(age/세션/전체 상한) 역사를 다시 쓰지 않습니다. reader는 남은 행 순서에서 신선도를 계산합니다.
 3. **경로 참조, 콘텐츠가 아님.** 원장은 명령 문자열과 출력 스니펫(500자)을 기록하고, 파일 콘텐츠는 기록하지 않습니다. *무엇을 검증했는지*와 *통과했는지*를 기록하며, *파일에 무엇이 있었는지*는 기록하지 않습니다.
 4. **항상 켜짐, 토글 없음.** 자동 기록 경로에는 on/off 스위치가 없습니다. 분류에 매치되는 모든 terminal/python_repl 호출이 행을 씁니다. 모든 파일 편집이 stale 이벤트를 씁니다. 모델은 우회할 수 없습니다.

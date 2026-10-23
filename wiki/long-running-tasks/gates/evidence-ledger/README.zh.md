@@ -2,9 +2,9 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> 一个 append-only 的 JSONL 审计轨迹，记录 agent 跑过的每一条验证命令（测试、lint、构建），并在读取时推导每条结果是否仍然新鲜——这样完成门控就能拒绝一个"声称完成但没有通过验证、或验证已过期"的子代理或 TaskFlow。
+> 一个 SQLite 审计轨迹，记录 agent 跑过的每一条验证命令（测试、lint、构建），并在读取时推导每条结果是否仍然新鲜——这样完成门控就能拒绝一个"声称完成但没有通过验证、或验证已过期"的子代理或 TaskFlow。
 
-证据账本在每个完成边界回答一个问题：**"agent 验证了它的成果吗，验证还有效吗？"** 它不存储过期标志——轨迹是 append-only 的，新鲜度在读取时从验证行和文件编辑事件的顺序计算。
+证据账本在每个完成边界回答一个问题：**"agent 验证了它的成果吗，验证还有效吗？"** 它不存储过期标志——事件行不可变，新鲜度在读取时从验证行和文件编辑事件的顺序计算（保留期只删除旧行，不改写历史）。
 
 **代码来源：** `agent/tools/pub_base/evidence_ledger.py`（存储层）、`agent/tools/pub_base/evidence_recorder.py`（生产者）、`agent/tools/taskflow/evidence_collector.py`（读取/消费层）、`config/features/agent_side/evidence_ledger.py`（分类法）。
 
@@ -20,11 +20,11 @@ terminal / python_repl 跑了一条命令
   │        不匹配的命令静默忽略
   │
   ├─ record_verification_evidence()
-  │    └─ 追加一行 JSONL：{kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ 插入一行 SQLite：{kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
   │
   └─ 之后：write_file / patch_file 编辑了一个源文件
        └─ mark_evidence_stale(file_path, session_id)
-            └─ 追加一行 JSONL：{event:"stale", file_path, session_id, timestamp}
+            └─ 插入一行 SQLite：{event:"stale", file_path, session_id, timestamp}
                  │
                  └─ 读取时：collect_evidence_summary()
                       ├─ 一条 evidence 行是 [stale] 的，当且仅当后面的 stale 事件的 file_path
@@ -37,20 +37,24 @@ terminal / python_repl 跑了一条命令
 
 ## 存储
 
-**文件：** `src/data/evidence-ledger.jsonl`（由 `config.path.resolve_evidence_ledger_path` 解析）
+**文件：** `src/data/evidence-ledger.db`（由 `config.path.resolve_evidence_ledger_path` 解析）
 
 | 属性 | 值 |
-|------|-----|
-| 格式 | JSON Lines（每行一个 JSON 对象） |
-| 作用域 | Repo 级（跨所有 session 共享） |
-| 可变性 | Append-only — 已有行从不改写或删除 |
-| Session 隔离 | 读取时按 `session_id` 字段过滤实现；行携带的是**会话**键（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`），绝不是 plan / todo / flow id |
-| 多键读取 | `read_for_keys(keys)` 一次遍历文件、按键分组，并保持每个键自己的行序（陈旧性只在同一会话的行序列内推导） |
-| 坏行 | 无法解析的行被跳过并记一条警告——一行坏数据绝不能让整个账本读不出来 |
-| 写锁 | 追加持共享的 per-path 写锁（`file_write_lock`：进程内锁 + `flock`） |
-| 文件缺失 | `read_all()` 返回 `[]` — `data/` 目录在首次追加时创建 |
+|------|----|
+| 格式 | SQLite 表 `evidence_events`；WAL 模式 + `busy_timeout=5000` |
+| 范围 | 仓库级（所有会话共享） |
+| 可变性 | 行只 INSERT、不 UPDATE；保留期会删除旧行（age TTL / 每会话上限 / 全局上限） |
+| 会话隔离 | 在带索引的 `session_id` 上 `WHERE session_id = ?`；行携带 SESSION key（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`）——绝不是 plan / todo / flow id |
+| 多 key 读取 | `read_for_keys(keys)` 走一次带索引的 `IN` 查询，并保留每个 key 的插入顺序（陈旧性只在单个会话的行序列内推导） |
+| 并发 | WAL 允许读写重叠；写入通过 `busy_timeout` 重试 |
+| 旧 JSONL | 首次打开时导入一次（按行哈希去重），随后重命名为 `.migrated` |
+| 文件不存在 | `read_all()` 返回 `[]`；目录在首次访问时创建 |
 
-文件故意保持 repo 级而非 session 级：它是跨 session 共享的 append-only 审计轨迹，那些 session 验证的是同一个计划。
+数据库保持仓库级、不是会话级：它是跨会话共享的验证审计轨迹。
+
+### 保留期与清理
+
+`EVIDENCE_LEDGER` 持有策略：`pruning_enabled`（默认 true）、`max_age_days`（30）、`max_events_per_session`（100）、`max_total_events`（10 000）。清理是惰性的——每次 `append` 在 INSERT 后执行三层 DELETE，清理失败绝不丢失刚写入的行。删除会话时调用 `purge_session`（一条 `DELETE WHERE session_id = ?`）；boot 孤儿 sweep 调用 `purge_orphans(known_sessions)`，因此即使会话绕过了正常清理路径，其 evidence 也会被删除。`purge_on_session_delete` / `purge_on_boot_sweep` 控制这两处显式删除；`pruning_enabled=false` 只关闭惰性保留期清理。
 
 ---
 
@@ -195,6 +199,6 @@ TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它
 ## 设计原则
 
 1. **处处 fail-open。** 每个记录器吞掉自己的异常。每个门控在 collector 出错时返回"通过/未违反"。坏掉的账本永远不会阻塞完成或困住子代理。
-2. **Append-only + 读取时推导。** 已有行从不改写。过期在读取时从行的顺序计算。审计轨迹不会被编辑损坏——它只会增长，reader 在读时算新鲜度。
+2. **不可变事件行 + 读取时推导。** 已记录的行从不 UPDATE。过期在读取时从行的顺序计算。保留期可能删除旧行（age/会话/全局上限），但从不改写历史；reader 始终从幸存的行序列计算新鲜度。
 3. **路径引用，不是内容。** 账本记录命令字符串和输出摘要（500 字符），不记录文件内容。它记录*验证了什么*和*是否通过*，不是*文件里有什么*。
 4. **Always on，无开关。** 自动记录路径没有 on/off 开关。每条匹配分类法的 terminal/python_repl 调用都写一行。每次文件编辑都写一个 stale 事件。模型无法绕过。

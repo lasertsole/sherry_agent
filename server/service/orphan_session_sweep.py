@@ -13,6 +13,7 @@ kill/wait dance is needed. Failures never block startup.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 
 from loguru import logger
@@ -96,9 +97,6 @@ async def sweep_orphaned_subagent_sessions() -> dict[str, int]:
         from server.service.session_cleanup_service import purge_session_data
 
         runs = list(all_runs())
-        if not runs:
-            return dict(orphan_runs=0, checkpoint_threads=0, registry_rows=0, session_dirs=0)
-
         by_child = {run.child_session_key: run for run in runs}
         known = _known_main_sessions()
         if known is None:
@@ -144,6 +142,29 @@ async def sweep_orphaned_subagent_sessions() -> dict[str, int]:
                 await purge_session_data(root)
             except Exception:
                 logger.warning("orphan-session sweep: failed to purge root {}", root, exc_info=True)
+
+        # Evidence rows are keyed by MAIN and CHILD session keys. The per-run
+        # purges above cover the orphan subtree; this pass catches rows whose
+        # session was deleted through another path. Known = main sessions plus
+        # every run still in the registry (including history).
+        try:
+            from config.features import EVIDENCE_LEDGER
+
+            if EVIDENCE_LEDGER["purge_on_boot_sweep"]:
+                from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+                from agent.tools.subagent.registry.session_keys import (
+                    normalize_session_key,
+                )
+
+                known_evidence = set(known)
+                for run in runs:
+                    known_evidence.add(run.child_session_key)
+                    known_evidence.add(normalize_session_key(run.child_session_key))
+                removed = await asyncio.to_thread(EvidenceLedger.purge_orphans, known_evidence)
+                if removed:
+                    logger.info("Boot: purged {} orphan evidence row(s)", removed)
+        except Exception:
+            logger.warning("orphan-session sweep: evidence purge failed", exc_info=True)
 
         result = dict(
             orphan_runs=len(unique_runs),

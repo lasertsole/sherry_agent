@@ -69,9 +69,9 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 }
 ```
 
-### 证据账本 (src/data/evidence-ledger.jsonl)
+### 证据账本 (src/data/evidence-ledger.db)
 
-每行一个 JSON 对象：共享的、只追加的验证审计轨迹。写入方是 `agent/tools/pub_base/evidence_recorder.py`，读取方是 `agent/tools/taskflow/evidence_collector.py`；写入方、行 schema、陈旧性推导规则、摘要格式与消费它的门控，统一记录在[证据账本](../../gates/evidence-ledger/README.zh.md)。
+SQLite 表 `evidence_events`（WAL）：共享的验证审计轨迹。行只 INSERT、不 UPDATE；保留期会删除旧行。写入方是 `agent/tools/pub_base/evidence_recorder.py`，读取方是 `agent/tools/taskflow/evidence_collector.py`；写入方、行 schema、陈旧性推导规则、摘要格式、保留期与消费它的门控，统一记录在[证据账本](../../gates/evidence-ledger/README.zh.md)。
 
 ### todos.db — 会话级 TODO 存储
 

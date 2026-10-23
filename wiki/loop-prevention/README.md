@@ -246,8 +246,7 @@ thread.
 
 ### Pipeline level: evidence ledger & the finish gate
 
-The ledger itself — the shared, append-only verification trail
-(`src/data/evidence-ledger.jsonl`) whose staleness is derived on read — has its own
+The ledger itself — the shared SQLite verification trail (`src/data/evidence-ledger.db`, WAL; immutable rows with lazy retention) whose staleness is derived on read — has its own
 page: [Evidence Ledger](../long-running-tasks/gates/evidence-ledger/README.md). What closes
 the loop here is the gate that reads it:
 
