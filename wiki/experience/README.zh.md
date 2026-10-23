@@ -28,7 +28,7 @@
 
 `schedule_memory_review`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每次压缩都以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。交给它的是**被丢弃**的那段——要丢的事实正在那里，而且只占整段对话的一小部分——默认 `cache_warm` 模式下这段**原文**直接发给模型（`NUDGE["memory_review_mode"] = "digest"` 才先用 `digest_history` 折叠）。任一 nudge 锁被持有时，压缩完全跳过派发（不排队）。
 
-`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_memory_review_agent` 构建复盘 agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到被丢弃段后调用。**构造上就是缓存命中：** 压缩切点是前缀切点，被丢弃段恰是请求中紧跟系统提示词的那部分——用同一模型配置（`_build_session_model`：会话的 provider/model/思考/temperature；因图在每轮重建后会关闭客户端，故按配置**新建实例**）、同一系统提示词与同一工具面把它发回去，就复现了主模型自己的前缀，提供商随后从前缀缓存作答；新增输入只有那条复盘指令，而复盘读到的仍是**真实原文**。两道防爆不变：只传被丢弃段而非整段对话（绝不传保留段），且绝不阻塞本轮（fire-and-forget，跑在 NUDGE 车道上）——这次复盘恰好在上下文最满时运行。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把不绑定模块的广泛坑写入 `facts` 目标。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_memory_review_agent` 构建复盘 agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到被丢弃段后调用。**构造上就是缓存命中：** 压缩切点是前缀切点，被丢弃段恰是请求中紧跟系统提示词的那部分——用同一模型配置（`_build_session_model`：会话的 provider/model/思考/temperature；因图在每轮重建后会关闭客户端，故按配置**新建实例**）、同一系统提示词与同一工具面把它发回去，就复现了主模型自己的前缀，提供商随后从前缀缓存作答；新增输入只有那条复盘指令，而复盘读到的仍是**真实原文**。两道防爆不变：只传被丢弃段而非整段对话（绝不传保留段），且绝不阻塞本轮（fire-and-forget，跑在 NUDGE 车道上）——这次复盘恰好在上下文最满时运行。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把系统级 / 跨项目普适的坑写入 `facts` 目标（项目级事实写入 MEMORY.md 或 AGENTS.md）。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
 
 - 复盘 agent 是**辅助 LLM** 上独立的 `create_agent`，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，无 checkpointer。
 - `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory` 与 `knowledge` 带该标记（另有交互式 `question` 与两个计划模式工具），因此记忆复盘能写 memory，但无法调用任意主工具。技能三件套（`skill_list` / `skill_view` / `skill_manage`）**刻意不带**——技能抽取归计划完成通道，它不靠该标记，而是显式绑定自己的工具面。
@@ -54,7 +54,7 @@
 
 - **Part 1：结构化知识。** `knowledge(action="write", ...)` 把 JSON 文档写入 `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`，按计划身份为键——见 `agent/tools/todolist/knowledge/identity.py`）：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。每个 task 带 `failure_set`、`success_path`、`method`；wave 带失败 / 成功模式；plan 带整体方法、关键失败 / 成功与可复用模式。
 - **Part 2：技能库更新。** `skill_manage` 修补已加载或既有的类级技能、新增支持文件、或在 `skills/auto/` 下创建新的类级 umbrella。提示明确要求主动（"most completed plans produce at least one skill update"），并把用户纠正、流程纠正、非平凡技巧、过时技能列为一级信号。它同时承接模块级教训：绑定具体文件/模块/测试、且该模块可预见会再次改动的教训，沉淀为 `<module>-notes` 技能（`skill_manage(action="create", name="<module>-notes", ...)`）；已存在同名技能时用 `action="patch"` 追加，绝不重复创建。内容为按模块归类的简短"现象 → 原因 → 规避动作"清单。
-- **Part 3：广泛坑 → FACTS.md。** 不绑定任何模块、却在计划间反复出现的坑——环境/工具链约束、跨模块陷阱、工作约定——经 `memory` 工具以 `target="facts"` 写入。提示会带上当前 FACTS.md 内容与字符上限，并要求合并/替换而非追加（"宁缺毋滥"）。
+- **Part 3：系统级坑 → FACTS.md。** 在任何项目中都成立的坑——工具链行为、环境约束、通用命令陷阱——经 `memory` 工具以 `target="facts"` 写入；项目级事实写入 MEMORY。提示会带上当前 FACTS.md 内容与字符上限，并要求合并/替换而非追加（"宁缺毋滥"）。
 
 后续读取由同一工具提供（`knowledge(action="read")`），精简后的 plan 摘要则由 `build_knowledge_block`（`knowledge/prompt_block.py`）自动注入系统提示。
 
@@ -127,7 +127,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | 会话绑定项目时为 `<project>/.sherry/memory/FACTS.md`（全局回退 `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
+| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`（唯一全局文件；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
 | plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——按身份为键） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件 |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |

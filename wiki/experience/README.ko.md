@@ -28,7 +28,7 @@
 
 `schedule_memory_review`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `_nudge_memory(session_id, system_prompt, messages_to_summarize)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 넘겨받는 것은 **버려질** 슬라이스——잃게 될 사실이 거기에 있고, 대화 전체의 일부일 뿐입니다——이며 기본 `cache_warm` 모드에서는 **원문 그대로** 모델로 전송됩니다(`NUDGE["memory_review_mode"] = "digest"`일 때만 `digest_history`로 접음). 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음).
 
-`_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_memory_review_agent`로 리뷰 agent를 만들고, 렌더링된 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 버려질 슬라이스에 덧붙여 호출합니다. **구조적으로 캐시 온존:** 압축 절단은 프리픽스 절단이고, 버려질 슬라이스는 시스템 프롬프트 바로 뒤에 위치하는 부분 그 자체입니다——같은 모델 구성(`_build_session_model`: 세션의 provider/model/thinking/temperature. 그래프는 턴마다 재구축되고 클라이언트가 닫히므로 구성에서 **새 인스턴스**를 구축), 같은 시스템 프롬프트, 같은 도구 면으로 되돌려 보내면 메인 모델 자신의 프리픽스를 재현하고 제공자는 프리픽스 캐시에서 응답합니다; 새 입력은 리뷰 지시뿐이고 리뷰가 읽는 것은 **실제 원문 그대로**입니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `user` 대상에, 모듈에 얽매이지 않는 광범위한 함정을 `facts` 대상에 `memory` 도구로 저장하라고 요구합니다. 렌더링 시 현재 FACTS.md 내용과 문자 상한(`_render_prompt_facts`)을 함께 전달하고, 편집자처럼 유지할 것——같은 함정을 병합하고, 오래된 항목을 교체하며, 파일을 부풀리느니 아무것도 저장하지 않기를 우선할 것——을 지시합니다. 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
+`_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_memory_review_agent`로 리뷰 agent를 만들고, 렌더링된 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 버려질 슬라이스에 덧붙여 호출합니다. **구조적으로 캐시 온존:** 압축 절단은 프리픽스 절단이고, 버려질 슬라이스는 시스템 프롬프트 바로 뒤에 위치하는 부분 그 자체입니다——같은 모델 구성(`_build_session_model`: 세션의 provider/model/thinking/temperature. 그래프는 턴마다 재구축되고 클라이언트가 닫히므로 구성에서 **새 인스턴스**를 구축), 같은 시스템 프롬프트, 같은 도구 면으로 되돌려 보내면 메인 모델 자신의 프리픽스를 재현하고 제공자는 프리픽스 캐시에서 응답합니다; 새 입력은 리뷰 지시뿐이고 리뷰가 읽는 것은 **실제 원문 그대로**입니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `user` 대상에, 시스템 수준 / 프로젝트 횡단 함정을 `facts` 대상에(프로젝트별 사실은 MEMORY.md 또는 AGENTS.md에) `memory` 도구로 저장하라고 요구합니다. 렌더링 시 현재 FACTS.md 내용과 문자 상한(`_render_prompt_facts`)을 함께 전달하고, 편집자처럼 유지할 것——같은 함정을 병합하고, 오래된 항목을 교체하며, 파일을 부풀리느니 아무것도 저장하지 않기를 우선할 것——을 지시합니다. 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
 
 - 리뷰 agent는 **보조 LLM** 위의 별도 `create_agent`이며, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`, checkpointer 없음.
 - `_NudgeLimitTool`(`allowed_metadata_key` 미지정)은 metadata에 `nudge: True`가 있는 도구만 통과시킵니다. `memory`와 `knowledge`가 이 마커를 가지므로(대화형 `question`과 플랜 모드 두 도구 포함) memory review는 memory를 쓸 수 있지만 임의의 메인 도구는 호출할 수 없습니다. 스킬 3종(`skill_list` / `skill_view` / `skill_manage`)은 **의도적으로 미마커**——스킬 추출은 플랜 완료 패스의 담당이며, 그쪽은 마커 대신 명시적인 도구 면을 바인딩합니다.
@@ -54,7 +54,7 @@
 
 - **Part 1: 구조화 지식.** `knowledge(action="write", ...)`가 JSON 문서를 `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/`, 계획 아이덴티티 키 — `agent/tools/todolist/knowledge/identity.py` 참조)에 씁니다: `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. 각 task는 `failure_set`, `success_path`, `method`를, wave는 실패 / 성공 패턴을, plan은 전체 방법, 핵심 실패 / 성공, 재사용 패턴을 담습니다.
 - **Part 2: 스킬 라이브러리 갱신.** `skill_manage`가 로드되었거나 기존인 클래스 레벨 스킬을 패치하고, 지원 파일을 추가하거나, `skills/auto/` 아래 새 클래스 레벨 umbrella를 만듭니다. 프롬프트는 명시적으로 능동적이며("most completed plans produce at least one skill update") 사용자 교정, 워크플로 교정, 비자명한 기법, 오래된 스킬을 일급 신호로 나열합니다. 또한 모듈 결박 교훈을 이어받습니다: 특정 파일 / 모듈 / 테스트에 결박되어 있고 그 모듈이 앞으로 다시 바뀔 것이 예상되는 교훈은 `<module>-notes` 스킬로 기록합니다(`skill_manage(action="create", name="<module>-notes", ...)`). 같은 이름의 스킬이 이미 있으면 `action="patch"`로 덧붙이고, 중복 생성하지 않습니다. 내용은 모듈별 간결한 "증상 → 원인 → 회피 동작" 목록입니다.
-- **Part 3: 광범위한 함정 → FACTS.md.** 어떤 모듈에도 결박되지 않지만 계획을 넘어 반복되는 함정——환경 / 툴체인 제약, 모듈 횡단 함정, 작업 관례——은 `memory` 도구의 `target="facts"`로 기록합니다. 프롬프트는 현재 FACTS.md 내용과 문자 상한을 전달하고, 덧붙이기가 아니라 병합 / 교체를 지시합니다("소음보다 무를 우선").
+- **Part 3: 시스템 수준 함정 → FACTS.md.** 어떤 프로젝트에서든 참인 함정——툴체인 동작, 환경 제약, 일반 명령 함정——은 `memory` 도구의 `target="facts"`로 기록합니다. 프로젝트별 사실은 MEMORY로. 프롬프트는 현재 FACTS.md 내용과 문자 상한을 전달하고, 덧붙이기가 아니라 병합 / 교체를 지시합니다("소음보다 무를 우선").
 
 이후 읽기는 같은 도구(`knowledge(action="read")`)가 제공하고, 압축된 plan 요약은 `build_knowledge_block`(`knowledge/prompt_block.py`)이 시스템 프롬프트에 자동 주입합니다.
 
@@ -127,7 +127,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`(`workspace/memory/MEMORY.md`) | 2200자(`MEMORY_TOOL["memory_char_limit"]`) |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`(`workspace/memory/USER.md`) | 1375자(`MEMORY_TOOL["user_char_limit"]`) |
-| FACTS.md | 세션이 프로젝트에 바인딩되어 있으면 `<project>/.sherry/memory/FACTS.md`(전역 폴백 `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`; 4개 언어 템플릿은 `workspace/template/<lang>/FACTS.md`) | 1375자(`MEMORY_TOOL["facts_char_limit"]`); `add`가 상한을 넘으면 가장 오래된 항목부터 제거 |
+| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`(유일한 전역 파일; 4개 언어 템플릿은 `workspace/template/<lang>/FACTS.md`) | 1375자(`MEMORY_TOOL["facts_char_limit"]`); `add`가 상한을 넘으면 가장 오래된 항목부터 제거 |
 | plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/` — 아이덴티티 키) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
 | todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |

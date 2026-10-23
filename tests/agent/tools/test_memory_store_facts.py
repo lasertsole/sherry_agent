@@ -1,6 +1,6 @@
 """Tests for the ``facts`` target of ``MemoryStore`` (the third memory file).
 
-FACTS.md holds broad, module-independent pitfalls and conventions. It uses the
+FACTS.md holds SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; it is always the one global file. It uses the
 same machinery as MEMORY.md / USER.md (single file, ``§``-delimited entries,
 per-file char cap, atomic rename writes, frozen prompt snapshot) with one
 FACTS-specific rule: an over-limit ``add`` rolls the oldest entries off instead
@@ -184,99 +184,6 @@ def test_format_live_content_reads_disk(tmp_memory_dir):
     store.facts_entries = []
 
     assert store.format_live_content("facts") == "live pitfall"
-
-
-# ===========================================================================
-# Per-project FACTS.md
-# ===========================================================================
-
-
-@pytest.fixture
-def bound_project(tmp_path, tmp_memory_dir):
-    """A session-bound project root + that session as the turn contextvar."""
-    from runtime.session import state_register_mem
-    from runtime.session.context import reset_current_session_id, set_current_session_id
-    from runtime.session.state_keys import StateKey
-
-    root = tmp_path / "project"
-    root.mkdir()
-    session_id = "sess-facts-project"
-    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(root))
-    token = set_current_session_id(session_id)
-    try:
-        yield root, session_id
-    finally:
-        reset_current_session_id(token)
-        state_register_mem.clear_session(session_id)
-
-
-def test_bound_session_resolves_facts_into_dot_sherry(bound_project, tmp_memory_dir):
-    root, _ = bound_project
-    store = MemoryStore()
-
-    assert store._path_for("facts") == root / ".sherry" / "memory" / "FACTS.md"
-    # MEMORY / USER stay global even on a bound session.
-    assert store._path_for("memory") == tmp_memory_dir / "MEMORY.md"
-    assert store._path_for("user") == tmp_memory_dir / "USER.md"
-
-
-def test_facts_write_lands_in_the_project_not_the_global_store(bound_project, tmp_memory_dir):
-    root, _ = bound_project
-    store = MemoryStore()
-
-    assert store.add("facts", "Project-specific pitfall")["success"] is True
-
-    project_path = root / ".sherry" / "memory" / "FACTS.md"
-    assert project_path.read_text(encoding="utf-8") == "Project-specific pitfall"
-    assert _read(tmp_memory_dir, "FACTS.md") == ""
-
-
-def test_project_facts_fall_back_to_global_until_the_project_file_exists(
-    bound_project, tmp_memory_dir
-):
-    root, _ = bound_project
-    tmp_memory_dir.mkdir(parents=True, exist_ok=True)
-    (tmp_memory_dir / "FACTS.md").write_text("legacy global pitfall", encoding="utf-8")
-    store = MemoryStore()
-
-    assert store.format_live_content("facts") == "legacy global pitfall"
-    assert not (root / ".sherry").exists()
-
-    # The first write seeds the project copy from live state (C7 fallback read).
-    store.add("facts", "new project pitfall")
-    assert "legacy global pitfall" in (root / ".sherry" / "memory" / "FACTS.md").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_the_prompt_block_prefers_the_project_facts(bound_project, tmp_memory_dir):
-    root, _ = bound_project
-    store = MemoryStore()
-    store.load_from_disk()  # global snapshot
-    (root / ".sherry" / "memory").mkdir(parents=True, exist_ok=True)
-    (root / ".sherry" / "memory" / "FACTS.md").write_text("project pitfall", encoding="utf-8")
-    (tmp_memory_dir / "FACTS.md").write_text("global pitfall", encoding="utf-8")
-
-    block = store.format_for_system_prompt("facts")
-
-    assert block is not None
-    assert "project pitfall" in block
-    assert "global pitfall" not in block
-
-
-def test_an_unbound_session_keeps_the_global_facts(tmp_memory_dir):
-    from runtime.session import state_register_mem
-    from runtime.session.context import reset_current_session_id, set_current_session_id
-
-    token = set_current_session_id("sess-unbound")
-    try:
-        store = MemoryStore()
-        assert store._path_for("facts") == tmp_memory_dir / "FACTS.md"
-        store.add("facts", "global only")
-        assert _read(tmp_memory_dir, "FACTS.md") == "global only"
-    finally:
-        reset_current_session_id(token)
-        state_register_mem.clear_session("sess-unbound")
 
 
 # ===========================================================================

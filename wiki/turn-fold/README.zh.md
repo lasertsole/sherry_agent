@@ -29,8 +29,9 @@
 
 ## ⚙️ 交互
 
-- 已完成的组默认**折叠**；摘要显示可测量的工具工作（N 个工具，已知耗时求和）
-  或“思考过程”。
+- 已完成的组默认**折叠**；摘要显示工具卡数量与已测工具执行耗时之和。
+  这是**工具耗时**，不是整个 turn 的 wall-clock（不含模型思考与网络往返）。
+  没有工具时显示“思考过程”或“执行过程”。
 - 摘要行原地切换历史；展开后内部工具卡片仍保留各自的展开/收起状态。
 - 折叠时最终行不显示思考块，但保留头像，避免被误认为连续消息。
 - 展开状态属于当前挂载的聊天页（不持久化）；重新加载会重新计算并回到折叠态。
@@ -47,13 +48,33 @@
 决定实际渲染的行，并在折叠时隐藏最终行的思考块；`use-chat-card-expansion.ts`
 持有每组展开状态。
 
-分类**刻意放在客户端**：message 行只有 `turn_num`，没有稳定的 turn id；trajectory
-账本只存工具事件、不存 assistant 文本。服务端 render-unit API 或 WebSocket frame
-只会重复客户端已持有的行。直接从已加载的 message 协议推导，使历史重载与重连结果
-一致，不改 schema、不加 frame。
+分类**刻意放在客户端**：message 行现在同时带 `turn_num` 和 `turn_id`（服务端为每轮
+盖章），但 trajectory 账本只存工具事件、不存 assistant 文本；服务端 render-unit API
+或 WebSocket frame 只会重复客户端已持有的行。直接从已加载的 message 协议推导，使
+历史重载与重连结果一致，不改 schema、不加 frame。
 
-源计划中可选的 structured-response 摘要没有启用：折叠不需要 LLM 配合，最终回答
-直接取自 assistant 行原文。
+最终回答就是普通的 `AIMessage.content`，没有 `final_answer` / `execution_summary` /
+`structured_response` 特殊字段；“已结束”由该行 `tool_calls` 为空来认定。源计划中可选的
+structured-response 摘要没有启用：折叠不需要 LLM 配合。
+
+## ⚠️ Spike 实测与已知限制（2026-10-23）
+
+真实会话中执行 2 次 `read_file` + 1 次 `search_files`，thinking 开启：
+
+- turn 运行中：0 个折叠触发器，工具卡可见（不折叠）；
+- turn 结束、刷新后：摘要「已执行工具 3 个 · 54ms」，工具卡/思考块隐藏，最终回答可见；
+- 展开：3 个工具卡 + 2 个思考块恢复，最终回答仍在；
+- 54ms = 9 + 8 + 37ms，确认是工具耗时之和。
+
+**已知 live-session race（尚未修复）**：turn 刚结束、刷新前，draft 行可能被 hydrate 回来并
+排在新增 user 行之前，表现为重复最终回答、折叠摘要工具数/时长偏大（实测刷新前
+「4 个 · 62ms」，刷新后「3 个 · 54ms」）。根因是 `untrackDraftTurn` 的 IndexedDB 清理未
+await 就触发 `loadSessionHistory`，而服务器在 `done` 时可能尚未写入最终 AI 行，stale-draft
+守卫无法识别。刷新页面即恢复。修复方向：清库完成后再加载 history，或对“已有 human
+行但尚无最终 AI 行”的 turn 不 hydrate draft。
+
+结论：折叠分类本身可用，不需要服务端 render-unit 协议或 structured-response 特殊字段；
+上述 race 属于既有 chat/draft 层，需单独修复。
 
 ## 🧪 测试
 

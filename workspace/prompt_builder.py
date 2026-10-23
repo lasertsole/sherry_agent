@@ -447,9 +447,9 @@ def build_system_prompt(
             file_paths.extend(
                 content
                 for content in (
-                    provider.format_memory_for_system_prompt("memory", session_id),
-                    provider.format_memory_for_system_prompt("user", session_id),
-                    provider.format_memory_for_system_prompt("facts", session_id),
+                    provider.format_memory_for_system_prompt("memory"),
+                    provider.format_memory_for_system_prompt("user"),
+                    provider.format_memory_for_system_prompt("facts"),
                 )
                 if content
             )

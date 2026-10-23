@@ -16,7 +16,7 @@
     - `ZCode-main/.../packages/ui/src/ModelTrajectoryPane.tsx` + `ModelTrajectoryTimeline.tsx`（轨迹调试视图）
     - `ZCode-main/.../packages/ui/src/command-center/CommandCenterDialog.tsx`（命令面板）
     - `ZCode-main/.../packages/ui/src/v4/conversationTimelineLiveTail.ts` + `ConversationRowView.tsx`（消息编辑/重新生成/分支）
-  - 关联 TODO：与 `计划_借鉴ZCode_turn折叠展示.md`（已实现）正交，本 TODO 不再涉及折叠
+  - 关联能力：轮次折叠已实现（见 `wiki/turn-fold/`），与本 TODO 正交，本 TODO 不再涉及折叠
 
 ---
 
@@ -400,7 +400,7 @@
 | 多会话分屏 | KeepAlive + 侧边会话已部分覆盖，屏幕空间成本高，暂不做 |
 | 插件市场 / Gen-UI | 全链路长期方向，另起 TODO |
 | Web 远程控制 | 与 sherry 桌面优先定位不契合 |
-| 本 TODO 已覆盖的 turn 折叠 | 已在 `计划_借鉴ZCode_turn折叠展示.md` 实现完成 |
+| 本 TODO 已覆盖的 turn 折叠 | 已实现（见 `wiki/turn-fold/`） |
 
 ---
 
@@ -434,5 +434,5 @@
 
 ### 关联 TODO
 
-- `计划_借鉴ZCode_turn折叠展示.md`（已实现，正交）
+- 轮次折叠（已实现，见 `wiki/turn-fold/`；正交）
 - `计划_工具合并推荐方案.md`（工具面瘦身，正交）

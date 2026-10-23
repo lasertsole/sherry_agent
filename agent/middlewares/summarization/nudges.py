@@ -35,23 +35,29 @@ _MEMORY_REVIEW_PROMPT = (
     "preferences, or personal details worth remembering? (target: 'user')\n"
     "2. Has the user expressed expectations about how you should behave, their work "
     "style, or ways they want you to operate? (target: 'user')\n"
-    "3. Did the work surface a broad pitfall or convention that is NOT bound to a "
-    "specific file/module — something any future task in this environment could hit? "
-    "(target: 'facts')\n\n"
-    "Routing: user preferences and traits go to 'user'; general agent-side notes about "
-    "this environment/project go to 'memory'; broad cross-plan pitfalls and conventions "
-    "go to 'facts'.\n\n"
+    "3. Did the work surface a SYSTEM-LEVEL or CROSS-PROJECT pitfall — something "
+    "that ANY project on this machine could hit (not specific to the current "
+    "project)? Examples: toolchain behavior ('uv run pytest needs --no-sync'), "
+    "environment constraints ('python_repl hits 30s timeout'), generic command "
+    "gotchas. (target: 'facts')\n\n"
+    "IMPORTANT: FACTS.md is for SYSTEM-LEVEL facts only — things true in ANY "
+    "project. Project-specific facts (e.g. 'this project uses pnpm') do NOT "
+    "belong in FACTS.md — they go to MEMORY.md or AGENTS.md.\n\n"
+    "Routing: user preferences and traits go to 'user'; project-specific notes "
+    "and conventions go to 'memory'; SYSTEM-LEVEL/CROSS-PROJECT pitfalls go to "
+    "'facts' (only if true in ANY project, not just the current one).\n\n"
     "Current FACTS.md content (target 'facts', limit {facts_limit} chars):\n"
     "<facts>\n{facts_block}\n</facts>\n\n"
     "Maintain FACTS.md like an editor, not an appender: merge entries describing the "
     "same pitfall, replace outdated ones, and prefer saving nothing over bloating the "
-    "file (prefer nothing over noise).\n\n"
+    "file (prefer nothing over noise). If a fact is project-specific, remove it from "
+    "FACTS.md and add it to MEMORY.md instead.\n\n"
     "If something stands out, save it using the memory tool. "
     "If nothing is worth saving, just say 'Nothing to save.' and stop."
 )
 
 
-def _render_facts_context(session_id: str) -> tuple[str, str]:
+def _render_facts_context() -> tuple[str, str]:
     """Return ``(current FACTS.md content, formatted char limit)`` for nudge prompts.
 
     Reads the live content (not the frozen system-prompt snapshot) so a
@@ -59,13 +65,13 @@ def _render_facts_context(session_id: str) -> tuple[str, str]:
     """
     from agent.tools.memory import memory_store
 
-    content = memory_store.format_live_content("facts", session_id)
+    content = memory_store.format_live_content("facts")
     return content or "(FACTS.md is empty)", f"{memory_store.facts_char_limit:,}"
 
 
-def _render_prompt_facts(template: str, session_id: str) -> str:
+def _render_prompt_facts(template: str) -> str:
     """Substitute the FACTS placeholders (injected content may contain braces)."""
-    facts_block, facts_limit = _render_facts_context(session_id)
+    facts_block, facts_limit = _render_facts_context()
     return template.replace("{facts_limit}", facts_limit).replace("{facts_block}", facts_block)
 
 
@@ -73,7 +79,7 @@ def _render_prompt_facts(template: str, session_id: str) -> str:
 # knowledge(action="write"); Part 2 carries the complete skill-library-update
 # guidance (the former standalone skill-review prompt, merged here and removed
 # as a separate constant) including the module-bound `<module>-notes`
-# carry-forward; Part 3 routes broad, module-independent pitfalls to the
+# carry-forward; Part 3 routes system-level / cross-project pitfalls to the
 # FACTS.md memory target.
 _PLAN_EXTRACTION_PROMPT = """You are a knowledge extraction and skill maintenance specialist.
 A plan has just been completed. Do THREE things:
@@ -271,11 +277,11 @@ Use the skill_manage tool to update or create skills as described above.
 Act on Part 2 only if there is real signal from the plan execution. If
 genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
 
-## Part 3: Broad Pitfalls → FACTS.md
+## Part 3: System-Level Pitfalls → FACTS.md
 
 Not every durable lesson is bound to a module or belongs to a skill class.
-Broad pitfalls and conventions — environment/toolchain constraints, recurring
-cross-module gotchas, ways of working that any future task could hit — are
+SYSTEM-LEVEL pitfalls — toolchain behavior, environment constraints,
+generic command gotchas that ANY project on this machine could hit — are
 kept in FACTS.md, the third memory file, which is injected into every system
 prompt.
 
@@ -283,11 +289,13 @@ Judge each candidate against the routing rules:
 - Bound to a specific file / module / test → Part 2 `<module>-notes` skill.
 - About the user (preferences, traits, expectations) → USER.
 - A reusable class of work or technique → Part 2 skill.
-- Broad, cross-plan pitfall or convention (not bound to one module) → FACTS.md.
-- General agent-side environment/project note → MEMORY.
+- SYSTEM-LEVEL/CROSS-PROJECT pitfall (true in ANY project) → FACTS.md.
+- Project-specific pitfall or convention → MEMORY (not FACTS.md).
 
 To write: call the memory tool with target="facts" (actions: add / replace /
-remove). Keep each entry to one short line — symptom plus avoidance.
+remove). Keep each entry to one short line — symptom plus avoidance. ONLY
+write system-level/cross-project facts here. If a fact is specific to the
+current project, write it to MEMORY.md (target="memory") instead.
 A transient setup failure the user can fix is not durable (see the Do-NOT
 list); a recurring constraint of this environment is.
 
@@ -298,7 +306,8 @@ Current FACTS.md content (target 'facts', limit {facts_limit} chars):
 
 Maintain it like an editor: merge entries describing the same pitfall, replace
 outdated ones, and prefer saving nothing over bloating the file (prefer
-nothing over noise).
+nothing over noise). If a fact is project-specific, remove it from FACTS.md
+and add it to MEMORY.md instead.
 
 ## Important
 
@@ -882,9 +891,7 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
                     "session_id": session_id,
                     "messages": [
                         *sanitized,
-                        HumanMessage(
-                            content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT, session_id)
-                        ),
+                        HumanMessage(content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT)),
                     ],
                 }
             )
@@ -935,7 +942,7 @@ async def _create_plan_extraction_agent(system_prompt: str):
 
 #: The tools the extraction prompt drives, by name — knowledge write, the
 #: skills-index read / skill read / skill write trio, and ``memory`` (its Part 3
-#: routes broad pitfalls to the FACTS.md target through that tool).
+#: routes system-level pitfalls to the FACTS.md target through that tool).
 _EXTRACTION_TOOL_NAMES = ("knowledge", "skill_list", "skill_view", "skill_manage", "memory")
 
 
@@ -954,7 +961,7 @@ async def _run_plan_extraction(session_id: str) -> None:
     Plan-aware knowledge extraction + skill library update, driven by the
     rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
     knowledge(action="write"); Part 2: skill library update via skill_manage,
-    including ``<module>-notes`` carry-forward; Part 3: broad pitfalls to the
+    including ``<module>-notes`` carry-forward; Part 3: system-level pitfalls to the
     ``facts`` memory target).
 
     The snapshot fingerprint is stored only AFTER a successful pass (and for the
@@ -976,7 +983,7 @@ async def _run_plan_extraction(session_id: str) -> None:
         system_prompt = _get_and_reload_system_prompt(session_id)
         context_str = json.dumps(context, ensure_ascii=False, indent=2)
         prompt = _render_prompt_facts(
-            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str), session_id
+            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
         )
 
         async with lane_slot(LaneType.NUDGE):

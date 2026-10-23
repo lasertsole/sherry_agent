@@ -26,13 +26,13 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Memory Files
 
-The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is per-project: a session bound to a project directory reads and writes `<project>/.sherry/memory/FACTS.md`, created lazily (seeded from `workspace/template/<lang>/FACTS.md`) on the first message in that project. Until the project file exists, reads fall back to the global `workspace/memory/FACTS.md`; MEMORY.md and USER.md stay global. The pre-compression memory flush does not write FACTS.md. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
+The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is one global file (`workspace/memory/FACTS.md`), loaded with MEMORY.md and USER.md; it records only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY project. Project-specific facts go to MEMORY.md or the project's AGENTS.md, and the nudges enforce that routing (including migrating a misplaced project fact out of FACTS into MEMORY). There is no per-project FACTS file; a legacy `<project>/.sherry/memory/FACTS.md` is ignored. The pre-compression memory flush does not write FACTS.md. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
 
 | File | Purpose | Limit | Maintainer |
 |---|---|---|---|
 | `workspace/memory/MEMORY.md` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`) | `memory` tool (`memory` target: memory review nudge, memory flush) |
 | `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge, memory flush) |
-| `<project>/.sherry/memory/FACTS.md` (global fallback: `workspace/memory/FACTS.md`) | Broad, module-independent pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
+| `workspace/memory/FACTS.md` | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
 
 ## MesMemory Migrations (v10–v17)
 

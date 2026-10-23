@@ -369,21 +369,21 @@ hidden entry sherry creates inside a project:
 ```
 <project>/.sherry/
 ├── codeintel/index.db    # per-project code index (was .codeintel/)
-├── shadow-git/           # per-project write snapshots
-└── memory/FACTS.md       # per-project pitfalls/conventions
+└── shadow-git/           # per-project write snapshots
 ```
 
 It is created LAZILY by `runtime/session/project_dir.py::maybe_create_sherry_dir`,
 called from `WorkspaceNoticeMiddleware` before it records the announced baseline:
 only when `project_dir_source(session_id) == "session"` (a process default never
 counts), the root is the first announced one or differs from it, and `.sherry/`
-does not exist. Binding alone creates nothing; the first MESSAGE does. An
-existing shell is never recreated, and a missing `memory/FACTS.md` is seeded from
-`workspace/template/<lang>/FACTS.md` (a user-authored file is never overwritten).
-The code index and shadow git also create their own subtrees on first use, so a
-missing `.sherry/` is never an error. `CODE_INTEL_DIR` (the ast-grep binary cache
-under SHERRY_HOME) and `.sherry-tmp-*.swp` (same-filesystem atomic replace) are
-deliberately NOT part of this directory.
+does not exist. Binding alone creates nothing; the first MESSAGE does. It creates
+the shell only — FACTS.md stays global, see below. An existing shell is never
+recreated, and a legacy `.sherry/memory/FACTS.md` from the short-lived
+per-project experiment is left untouched but is not read. The code index and
+shadow git create their own subtrees on first use, so a missing `.sherry/` is
+never an error. `CODE_INTEL_DIR` (the ast-grep binary cache under SHERRY_HOME)
+and `.sherry-tmp-*.swp` (same-filesystem atomic replace) are deliberately NOT
+part of this directory.
 
 **Project instructions**: the builder in `workspace/prompt_builder.py` reads
 `<root>/AGENTS.md` and falls back to `CLAUDE.md`. It is
@@ -395,23 +395,20 @@ prefix cache and a directory switch automatically re-reads the new project's
 file. No nested traversal (git root → cwd) yet, no file creation, no
 `.gitignore` edits.
 
-**FACTS.md is per-project; MEMORY.md / USER.md stay global.** `MemoryStore`
-resolves `facts` through `_project_facts_path` → `session_workspace_root(sid) /
-".sherry" / "memory" / "FACTS.md"` when the session is bound, else the global
-`MEMORY_DIR/FACTS.md`. Writes create the project directory; reads fall back to
-the global file until the project copy exists, and the first write seeds the
-project file from that fallback. The memory tool has no session parameter, so
-`runtime/session/context.py` carries the turn's session in a ContextVar set by
-`server/service/trajectory_store.py::turn_scope` (async tool calls inherit it;
-task-local, so concurrent sessions never share it). `load_from_disk()` still
-loads the GLOBAL stores at boot; the project FACTS block is resolved when the
-prompt is built, and `format_for_system_prompt("facts", session_id)` prefers the
-project file. A directory switch deletes `StateKey.SYSTEM_PROMPT` from both
-registers (the `ThinkingControl` exception's mechanism, applied at the workspace
-notice), so the switched turn rebuilds its FACTS block from the new project.
-The nudges read/write the same per-session path (`_render_prompt_facts` now
-takes the session id), and `GET/PUT /memory` accepts an optional `session_id`
-that resolves FACTS the same way while MEMORY/USER stay global.
+**FACTS.md is ONE global, system-level file.** All three memory files live in
+`workspace/memory/` (`MEMORY.md`, `USER.md`, `FACTS.md`) and are loaded by the
+boot-time `MemoryStore.load_from_disk()`; there is no per-project FACTS path and
+`runtime/session/context.py` no longer exists. FACTS holds only SYSTEM-LEVEL /
+CROSS-PROJECT pitfalls — things true in ANY project on this machine (toolchain
+behavior, environment limits, generic command gotchas), not project conventions
+(those go to MEMORY.md or the project's AGENTS.md). The memory review and plan
+extraction prompts state this routing and instruct the model to migrate a
+project-specific entry out of FACTS into MEMORY when it spots one; the 1 375-char
+oldest-first rollover still bounds the single file. Because nothing is
+per-project, a directory switch no longer invalidates the cached system prompt
+for FACTS, and `GET/PUT /memory` reads/writes all three files globally without a
+`session_id`. A legacy `<project>/.sherry/memory/FACTS.md` is ignored (left on
+disk, never rewritten) — it is not migrated automatically.
 
 The external-path HITL gate agrees with that root: `resolve_external_path`'s
 first check is "inside `ROOT_DIR` **or inside the session's project directory**"

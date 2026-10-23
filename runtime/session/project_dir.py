@@ -279,8 +279,8 @@ def maybe_create_sherry_dir(session_id: str) -> bool:
     Only a SESSION binding counts (the process default is not an explicit
     choice), and the caller owns the "first message / directory changed" timing
     (``WorkspaceNoticeMiddleware`` before_agent). An existing directory is left
-    alone; a missing project-side ``memory/FACTS.md`` is seeded from the
-    language template. Fail-open: any I/O error returns False.
+    alone; FACTS.md stays in the global memory directory, so this creates only
+    the shell. Fail-open: any I/O error returns False.
     """
     if not session_id or project_dir_source(session_id) != _SESSION:
         return False
@@ -288,30 +288,11 @@ def maybe_create_sherry_dir(session_id: str) -> bool:
     if not root.is_dir():
         return False
     sherry = root / ".sherry"
-    memory = sherry / "memory"
     try:
         if sherry.exists():
-            # Never recreate the directory, but seed a missing project FACTS
-            # template when the shell exists without memory content.
-            if not (memory / "FACTS.md").exists():
-                memory.mkdir(parents=True, exist_ok=True)
-                _seed_project_facts(memory / "FACTS.md")
             return False
-        memory.mkdir(parents=True, exist_ok=False)
-        _seed_project_facts(memory / "FACTS.md")
+        sherry.mkdir(parents=True, exist_ok=False)
         return True
     except OSError:
         logger.debug("project_dir: could not create .sherry for {}", session_id, exc_info=True)
         return False
-
-
-def _seed_project_facts(path: Path) -> None:
-    """Copy the language FACTS template into a new project; missing template is fine."""
-    try:
-        from config.path import resolve_workspace_template_dir
-
-        template = resolve_workspace_template_dir() / "FACTS.md"
-        if template.is_file():
-            path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
-    except OSError:
-        logger.debug("project_dir: FACTS template seed failed", exc_info=True)

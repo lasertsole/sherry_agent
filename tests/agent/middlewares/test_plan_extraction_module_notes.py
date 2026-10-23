@@ -101,7 +101,7 @@ class TestFactsRendering:
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
 
         rendered = nudge_mod._render_prompt_facts(
-            "limit={facts_limit}\n<facts>\n{facts_block}\n</facts>", "sess-nudge"
+            "limit={facts_limit}\n<facts>\n{facts_block}\n</facts>"
         )
 
         assert "1,375" in rendered
@@ -112,7 +112,7 @@ class TestFactsRendering:
     def test_render_prompt_facts_marks_empty_store(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore(content=""))
 
-        rendered = nudge_mod._render_prompt_facts("{facts_block}", "sess-nudge")
+        rendered = nudge_mod._render_prompt_facts("{facts_block}")
 
         assert "(FACTS.md is empty)" in rendered
 
@@ -310,3 +310,23 @@ class TestModuleNotesBehavior:
         text = existing_md.read_text(encoding="utf-8")
         assert "- existing row" in text
         assert "- appended row" in text
+
+
+class TestFactsSystemLevelRouting:
+    """FACTS is global and system-level only; project facts route to MEMORY."""
+
+    def test_the_memory_review_prompt_requires_system_level_facts(self):
+        prompt = nudge_mod._MEMORY_REVIEW_PROMPT
+
+        assert "SYSTEM-LEVEL or CROSS-PROJECT" in prompt
+        assert "FACTS.md is for SYSTEM-LEVEL facts only" in prompt
+        assert "Project-specific facts" in prompt
+        assert "remove it from FACTS.md and add it to MEMORY.md" in prompt
+
+    def test_the_plan_extraction_prompt_requires_system_level_facts(self):
+        prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+
+        assert "SYSTEM-LEVEL/CROSS-PROJECT pitfall" in prompt
+        assert "Project-specific pitfall or convention → MEMORY" in prompt
+        assert "ONLY\nwrite system-level/cross-project facts here" in prompt
+        assert "remove it from FACTS.md" in prompt

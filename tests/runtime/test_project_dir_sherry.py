@@ -2,8 +2,8 @@
 
 The unified ``.sherry/`` shell is created on the first message of a session
 whose project root the USER bound — never for a process default, never at
-binding time, and never twice. A missing project ``FACTS.md`` is seeded from
-the language template; an existing file is never overwritten.
+binding time, and never twice. FACTS.md is global, so this creates only the
+shell and never touches a project-side memory directory.
 """
 
 from __future__ import annotations
@@ -20,44 +20,36 @@ SESSION = "sess-sherry-dir"
 
 
 @pytest.fixture
-def project(tmp_path, monkeypatch):
-    """A bound project root + a deterministic FACTS template."""
+def project(tmp_path):
+    """A bound project root."""
     root = tmp_path / "project"
     root.mkdir()
-    template_dir = tmp_path / "template"
-    template_dir.mkdir()
-    (template_dir / "FACTS.md").write_text("TEMPLATE FACTS", encoding="utf-8")
-    monkeypatch.setattr(
-        "config.path.resolve_workspace_template_dir", lambda lang=None: template_dir
-    )
     state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR, str(root))
     yield root
     state_register_mem.clear_session(SESSION)
 
 
-def test_a_bound_project_gets_the_shell_and_a_seeded_facts_file(project):
+def test_a_bound_project_gets_the_shell(project):
     assert maybe_create_sherry_dir(SESSION) is True
 
-    assert (project / ".sherry" / "memory" / "FACTS.md").read_text(encoding="utf-8") == (
-        "TEMPLATE FACTS"
-    )
+    assert (project / ".sherry").is_dir()
+    assert not (project / ".sherry" / "memory").exists()
 
 
-def test_a_second_call_is_idempotent_and_never_overwrites(project):
+def test_a_second_call_is_idempotent(project):
     assert maybe_create_sherry_dir(SESSION) is True
-    facts = project / ".sherry" / "memory" / "FACTS.md"
-    facts.write_text("user-authored", encoding="utf-8")
 
     assert maybe_create_sherry_dir(SESSION) is False
-    assert facts.read_text(encoding="utf-8") == "user-authored"
 
 
-def test_an_existing_shell_without_facts_gets_the_template(project):
-    memory = project / ".sherry" / "memory"
-    memory.mkdir(parents=True)
+def test_an_existing_project_facts_file_is_left_untouched(project):
+    """FACTS is global now; a legacy project file is neither read nor rewritten."""
+    legacy = project / ".sherry" / "memory" / "FACTS.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("legacy project fact", encoding="utf-8")
 
     assert maybe_create_sherry_dir(SESSION) is False
-    assert (memory / "FACTS.md").read_text(encoding="utf-8") == "TEMPLATE FACTS"
+    assert legacy.read_text(encoding="utf-8") == "legacy project fact"
 
 
 def test_an_unbound_session_creates_nothing(tmp_path, monkeypatch):

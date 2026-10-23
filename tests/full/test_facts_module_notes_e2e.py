@@ -307,7 +307,7 @@ async def test_broad_pitfall_lands_in_facts_and_next_prompt(sandbox: _Sandbox) -
             assert _facts_has_broad_pitfall(prompt), (
                 f"the FACTS entry did not reach the system prompt: {content[:200]!r}"
             )
-            assert "FACTS (broad pitfalls and conventions)" in prompt
+            assert "FACTS (system-level pitfalls and conventions)" in prompt
             logger.info("facts injection: {!r}", content[:200])
             return
         finally:

@@ -7,8 +7,8 @@ Provides bounded, file-backed memory that persists across sessions. Three stores
     conventions, tool quirks, things learned)
   - USER.md: what the agent knows about the user (preferences, communication style,
     expectations, workflow habits)
-  - FACTS.md: broad, module-independent pitfalls and conventions that recur across
-    plans (always injected into the system prompt; oldest entries roll off at the cap)
+  - FACTS.md: SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions (true in ANY
+    project; always injected into the system prompt; oldest entries roll off at the cap)
 
 All three are injected into the system prompt as a frozen snapshot at session start.
 Mid-session writes update files on disk immediately (durable) but do NOT change
@@ -42,7 +42,6 @@ from typing import Any, Literal, override
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
 from agent.tools.pub_base.file_lock import flock_path
-from runtime.session.context import get_current_session_id
 
 ENTRY_DELIMITER = "\n§\n"
 # Subset of invisible chars for injection detection
@@ -159,10 +158,7 @@ class MemoryStore:
         mem_dir.mkdir(parents=True, exist_ok=True)
 
         for target in ("user", "memory", "facts"):
-            # Boot loads the GLOBAL store: MEMORY/USER live there, and the global
-            # FACTS.md is the fallback a project without its own copy reads. A
-            # project's FACTS.md is resolved per session on demand.
-            path: Path = self._global_path_for(target)
+            path: Path = self._path_for(target)
             with self._file_lock(path):
                 self._reload_target(target)
 
@@ -196,65 +192,28 @@ class MemoryStore:
         with flock_path(path.with_suffix(path.suffix + ".lock"), timeout_s=None):
             yield
 
-    def _resolution_session(self, session_id: str | None = None) -> str:
-        """Explicit session, else the turn's contextvar, else "" (global)."""
-        return str(session_id or get_current_session_id() or "")
-
-    def _project_facts_path(self, session_id: str | None = None) -> Path | None:
-        """The project-level FACTS.md path when this session is explicitly bound.
-
-        Only a session binding counts: an unbound session keeps the global
-        store, so the process default directory never grows a ``.sherry/`` from
-        an ordinary FACTS write.
-        """
-        sid = self._resolution_session(session_id)
-        if not sid:
-            return None
-        try:
-            from agent.tools.pub_base.path_utils import session_workspace_root
-
-            root = session_workspace_root(sid)
-        except Exception:
-            return None
-        return Path(root) / ".sherry" / "memory" / "FACTS.md" if root is not None else None
-
-    def _path_for(
-        self, target: str, session_id: str | None = None, *, for_read: bool = False
-    ) -> Path:
-        if target == "facts":
-            project = self._project_facts_path(session_id)
-            if project is not None and (not for_read or project.exists()):
-                return project
-            return MEMORY_DIR / "FACTS.md"
-        return self._global_path_for(target)
-
     @staticmethod
-    def _global_path_for(target: str) -> Path:
+    def _path_for(target: str) -> Path:
+        """The global file for one memory target (MEMORY / USER / FACTS)."""
         if target == "user":
             return MEMORY_DIR / "USER.md"
         if target == "facts":
             return MEMORY_DIR / "FACTS.md"
         return MEMORY_DIR / "MEMORY.md"
 
-    def _reload_target(self, target: str, session_id: str | None = None):
+    def _reload_target(self, target: str):
         """Re-read entries from disk into in-memory state.
 
-        Called under file lock to get the latest state before mutating. Facts
-        read the project file when it exists; an absent project file falls back
-        to the global legacy file (C7), while a write seeds the project copy.
+        Called under file lock to get the latest state before mutating.
         """
-        fresh = self._read_file(self._path_for(target, session_id, for_read=True))
+        fresh = self._read_file(self._path_for(target))
         fresh = list(dict.fromkeys(fresh))  # deduplicate
         self._set_entries(target, fresh)
 
-    def save_to_disk(self, target: str, session_id: str | None = None):
-        """Persist entries to the appropriate file. Called after every mutation."""
-        path = self._path_for(target, session_id)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
-        self._write_file(path, self._entries_for(target))
+    def save_to_disk(self, target: str):
+        """Persist entries to the global file. Called after every mutation."""
+        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        self._write_file(self._path_for(target), self._entries_for(target))
 
     def _entries_for(self, target: str) -> list[str]:
         if target == "user":
@@ -552,33 +511,23 @@ class MemoryStore:
 
         return self._success_response(target, "Entry removed.")
 
-    def format_for_system_prompt(self, target: str, session_id: str | None = None) -> str | None:
+    def format_for_system_prompt(self, target: str) -> str | None:
         """Return the frozen memory block for prompt injection.
 
-        MEMORY.md / USER.md use the process-wide snapshot. FACTS.md is
-        per-project: when the session is bound and its project file exists, the
-        project file is rendered (the system prompt is cached, so this is frozen
-        between rebuilds); an absent project file falls back to the global
-        snapshot. Returns None for an empty block.
+        This is the state captured at ``load_from_disk()`` time, NOT live state;
+        mid-session writes stay on disk and do not disturb the prompt cache.
+        Returns None for an empty block.
         """
-        if target == "facts":
-            project = self._project_facts_path(session_id)
-            if project is not None and project.exists():
-                entries = self._read_file(project)
-                block = self._render_block("facts", entries) if entries else ""
-                return block or None
         block = self._system_prompt_snapshot.get(target, "")
         return block if block else None
 
-    def format_live_content(self, target: str, session_id: str | None = None) -> str:
+    def format_live_content(self, target: str) -> str:
         """Return the store's current on-disk content, delimiter-joined.
 
         Unlike ``format_for_system_prompt`` this reads the file, so nudge
         prompts can hand the model the latest state; returns "" when empty.
         """
-        return ENTRY_DELIMITER.join(
-            self._read_file(self._path_for(target, session_id, for_read=True))
-        )
+        return ENTRY_DELIMITER.join(self._read_file(self._path_for(target)))
 
     # -- Internal helpers --
 
@@ -616,9 +565,7 @@ class MemoryStore:
         if target == "user":
             header = f"USER PROFILE (who the user is) [{pct}% — {current:,}/{limit:,} chars]"
         elif target == "facts":
-            header = (
-                f"FACTS (broad pitfalls and conventions) [{pct}% — {current:,}/{limit:,} chars]"
-            )
+            header = f"FACTS (system-level pitfalls and conventions) [{pct}% — {current:,}/{limit:,} chars]"
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 
@@ -798,12 +745,12 @@ class MemoryTool(BaseTool):
         "THREE TARGETS:\n"
         "- 'user': who the user is -- name, role, preferences, communication style, pet peeves\n"
         "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n"
-        "- 'facts': broad, module-independent pitfalls and conventions that recur across tasks "
-        "(always injected into the system prompt; oldest entries roll off at the cap)\n\n"
+        "- 'facts': SYSTEM-LEVEL / CROSS-PROJECT pitfalls that are true in ANY project "
+        "(not project-specific; always injected into the system prompt; oldest entries roll off)\n\n"
         "ROUTING: a lesson bound to a specific file/module/test belongs in a "
         "'<module>-notes' skill (skill_manage), not in memory; user preferences belong "
-        "in 'user'; broad cross-plan pitfalls belong in 'facts'; general agent-side "
-        "notes belong in 'memory'.\n\n"
+        "in 'user'; SYSTEM-LEVEL / CROSS-PROJECT pitfalls belong in 'facts' (only if true "
+        "in ANY project); project-specific notes and conventions belong in 'memory'.\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.\n\n"

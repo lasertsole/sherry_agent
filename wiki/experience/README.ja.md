@@ -28,7 +28,7 @@
 
 `schedule_memory_review`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮のたびに `_nudge_memory(session_id, system_prompt, messages_to_summarize)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。渡されるのは**破棄される**スライス——失われようとしている事実はそこにあり、会話全体の一部にすぎない——で、既定の `cache_warm` モードでは**原文のまま**モデルへ送られる（`NUDGE["memory_review_mode"] = "digest"` のときだけ `digest_history` で折り畳む）。いずれかの nudge ロックが保持されている間、圧縮は派遣を完全にスキップする（キューイングなし）。
 
-`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_memory_review_agent` でレビュー agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として破棄スライスに追加して呼び出す。**構造としてキャッシュ温存：** 圧縮の切れ目はプレフィックス切断であり、破棄スライスはシステムプロンプトの直後に位置する部分そのもの——同じモデル構成（`_build_session_model`：セッションの provider/model/thinking/temperature。グラフはターンごとに再構築されクライアントが閉じられるため、構成から**新規インスタンス**を構築）、同じシステムプロンプト、同じツール面で送り返せば、メインモデル自身のプレフィックスを再現し、プロバイダはプレフィックスキャッシュから応答します；新規入力はレビュー指示だけで、レビューが読むのは**実テキストのまま**です。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、モジュールに依存しない広範な落とし穴を `facts` ターゲットへ `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_memory_review_agent` でレビュー agent を構築し、レンダリング済み `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として破棄スライスに追加して呼び出す。**構造としてキャッシュ温存：** 圧縮の切れ目はプレフィックス切断であり、破棄スライスはシステムプロンプトの直後に位置する部分そのもの——同じモデル構成（`_build_session_model`：セッションの provider/model/thinking/temperature。グラフはターンごとに再構築されクライアントが閉じられるため、構成から**新規インスタンス**を構築）、同じシステムプロンプト、同じツール面で送り返せば、メインモデル自身のプレフィックスを再現し、プロバイダはプレフィックスキャッシュから応答します；新規入力はレビュー指示だけで、レビューが読むのは**実テキストのまま**です。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `user` ターゲットへ、システムレベル / プロジェクト横断の落とし穴を `facts` ターゲットへ（プロジェクト固有の事実は MEMORY.md または AGENTS.md へ） `memory` ツールで保存するよう求める。レンダリング時には現在の FACTS.md 内容と文字上限（`_render_prompt_facts`）が渡され、エディタのように維持すること——同一の落とし穴を統合し、陳腐化した項目を置換し、ファイルを膨らませるより何も保存しないことを優先する——を指示する。保存対象がなければ "Nothing to save." と答えて停止させる。
 
 - レビュー agent は**補助 LLM** 上の独立した `create_agent` で、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
 - `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory` と `knowledge` がこのマークを持ち（ほかに対話用 `question` とプランモードの 2 つ）、memory review は memory を書けるが任意のメインツールは呼べない。スキル三点セット（`skill_list` / `skill_view` / `skill_manage`）は**意図的に未マーク**——スキル抽出はプラン完了パスの担当で、そちらはタグではなく明示的なツール面をバインドする。
@@ -54,7 +54,7 @@
 
 - **Part 1：構造化知識。** `knowledge(action="write", ...)` が JSON 文書を `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`、計画アイデンティティをキーとする——`agent/tools/todolist/knowledge/identity.py`）へ書く：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。各 task は `failure_set`、`success_path`、`method` を持ち、wave は失敗 / 成功パターン、plan は全体手法、主要な失敗 / 成功、再利用パターンを持つ。
 - **Part 2：スキルライブラリ更新。** `skill_manage` がロード済みまたは既存のクラスレベルスキルを修正し、サポートファイルを追加し、または `skills/auto/` に新しいクラスレベル umbrella を作成する。プロンプトは明確に能動的で（"most completed plans produce at least one skill update"）、ユーザーの訂正、ワークフローの訂正、非自明な技法、陳腐化したスキルを一次信号として挙げる。さらにモジュール束縛の教訓を引き継ぐ：特定のファイル / モジュール / テストに束縛され、そのモジュールが将来再び変更される見込みの教訓は `<module>-notes` スキルとして書き出す（`skill_manage(action="create", name="<module>-notes", ...)`）。同名スキルが既にあれば `action="patch"` で追記し、重複作成はしない。内容はモジュール別の簡潔な「症状 → 原因 → 回避動作」リストとする。
-- **Part 3：広範な落とし穴 → FACTS.md。** どのモジュールにも束縛されないが計画をまたいで再発する落とし穴——環境 / ツールチェーン制約、モジュール横断の罠、作業規約——は `memory` ツールの `target="facts"` で書き込む。プロンプトは現在の FACTS.md 内容と文字上限を渡し、追記ではなく統合 / 置換を指示する（「ノイズより無を優先」）。
+- **Part 3：システムレベルの落とし穴 → FACTS.md。** どのプロジェクトでも当てはまる落とし穴——ツールチェーンの挙動、環境制約、一般的なコマンドの罠——は `memory` ツールの `target="facts"` で書き込む。プロジェクト固有の事実は MEMORY へ。プロンプトは現在の FACTS.md 内容と文字上限を渡し、追記ではなく統合 / 置換を指示する（「ノイズより無を優先」）。
 
 後続の読み取りは同じツール（`knowledge(action="read")`）が提供し、圧縮された plan 要約は `build_knowledge_block`（`knowledge/prompt_block.py`）がシステムプロンプトへ自動注入する。
 
@@ -127,7 +127,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | セッションがプロジェクトにバインドされている場合は `<project>/.sherry/memory/FACTS.md`（グローバルフォールバック `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`、4 言語テンプレートは `workspace/template/<lang>/FACTS.md`） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）；`add` が上限超過時は最古の項目から破棄 |
+| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`（唯一のグローバルファイル、4 言語テンプレートは `workspace/template/<lang>/FACTS.md`） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）；`add` が上限超過時は最古の項目から破棄 |
 | plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——アイデンティティ・キー） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |
