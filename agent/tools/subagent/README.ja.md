@@ -533,10 +533,10 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 |-------|------|----------------|--------------------|
 | 子実行 | 完了判定器 + goal loop（`agent/tools/subagent/spawn/completion_judge.py`） | タスクと子の最新応答；予算 `COMPLETION_JUDGE["goal_max_turns"]`（既定 5） | 判定器エラー → `done` |
 | ステップ | ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `validation_criteria`（基準なし → 判定呼び出しなし） | モデルエラー / 解析不能 → `pass` |
-| フロー | `taskflow_finish` ゲート A–D | DAG 状態とフローの証跡 | 台帳が読めない / 検証器エラー → 通過 |
+| フロー | `taskflow_flow(action="finish")` ゲート A–C | DAG 状態とフローの証跡 | 台帳が読めない / 検証器エラー → 通過 |
 | 親ターン | 完了 drain プログラムゲート（`SubagentCompletionDrainMiddleware`） | セッションの検証証跡 | 照会不可 → ゲートしない |
 
-完了判定器はすべての spawn で実行されます；`goal_max_turns` が唯一の予算ノブです（予算 1 なら子は単一ターンのまま）。ステップ判定器も基準を持つすべてのステップで実行されます——`validation_criteria` はスイッチではなく入力です——そして `taskflow_finish` はフローが DONE に到達する前に証跡ゲートの通過を要求します。
+完了判定器はすべての spawn で実行されます；`goal_max_turns` が唯一の予算ノブです（予算 1 なら子は単一ターンのまま）。ステップ判定器も基準を持つすべてのステップで実行されます——`validation_criteria` はスイッチではなく入力です——そして `taskflow_flow(action="finish")` はフローが DONE に到達する前に証跡ゲートの通過を要求します。
 
 ### 7. 添付ファイルシステム
 

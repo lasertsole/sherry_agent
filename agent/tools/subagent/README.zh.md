@@ -527,10 +527,10 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 |-------|------|----------------|--------------------|
 | 子运行 | 完成判别器 + goal loop（`agent/tools/subagent/spawn/completion_judge.py`） | 任务与子代理最新回复；预算 `COMPLETION_JUDGE["goal_max_turns"]`（默认 5） | 判别器报错 → `done` |
 | 步骤 | 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `validation_criteria`（无标准则不调用判别器） | 模型报错 / 无法解析 → `pass` |
-| 流程 | `taskflow_finish` 门 A–D | DAG 状态与流程证据 | 账本不可读 / 验证器报错 → 放行 |
+| 流程 | `taskflow_flow(action="finish")` 门 A–C | DAG 状态与流程证据 | 账本不可读 / 验证器报错 → 放行 |
 | 父回合 | 完成 drain 程序化门控（`SubagentCompletionDrainMiddleware`） | 会话的验证证据 | 查询不可用 → 不门控 |
 
-完成判别器在每次 spawn 时运行；`goal_max_turns` 是它唯一的预算旋钮（预算为 1 时子代理保持单轮）。步骤判别器同样对每个携带标准的步骤运行——`validation_criteria` 是它的输入，而不是开关——且 `taskflow_finish` 要求证据门全部通过后流程才能到达 DONE。
+完成判别器在每次 spawn 时运行；`goal_max_turns` 是它唯一的预算旋钮（预算为 1 时子代理保持单轮）。步骤判别器同样对每个携带标准的步骤运行——`validation_criteria` 是它的输入，而不是开关——且 `taskflow_flow(action="finish")` 要求证据门全部通过后流程才能到达 DONE。
 
 ### 7. 附件系统
 

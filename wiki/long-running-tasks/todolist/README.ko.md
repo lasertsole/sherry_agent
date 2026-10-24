@@ -266,7 +266,7 @@ Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → 첫 번째 미체크 체크박스 찾기
   → 원자 서브태스크로 분해
   → taskflow_step(action="run_task", flow_id, task, depends_on=[...])로 등록
-  → blocked는 디스패치 안 함; ready는 taskflow_dispatch로 일괄 디스패치
+  → blocked는 디스패치 안 함; ready는 taskflow_step(action="dispatch")로 일괄 디스패치
   → taskflow_step(action="wait_all") → taskflow_step(action="resume") (결과 주입, 후속 언록)
   → DELEGATE EVERYTHING via delegation router (E6)
 Phase 4: 검증 및 증거 기록 → 5 gates → src/data/evidence-ledger.db
@@ -286,9 +286,9 @@ Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않
 
 ```
 blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음)
-  → ready (의존성 충족, 디스패치 대기; taskflow_resume이 언록)
+  → ready (의존성 충족, 디스패치 대기; taskflow_step(action="resume")이 언록)
   → dispatched (detached 자식 세션 spawn, child_session_key 영속화)
-  → done (taskflow_resume으로 결과 주입 완료)
+  → done (taskflow_step(action="resume")으로 결과 주입 완료)
 ```
 
 ### HTN → TaskFlow 기능 매핑

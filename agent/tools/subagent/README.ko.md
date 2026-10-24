@@ -529,10 +529,10 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 |-------|------|----------------|--------------------|
 | 자식 실행 | 완료 판정기 + goal loop(`agent/tools/subagent/spawn/completion_judge.py`) | 태스크와 자식의 최신 응답; 예산 `COMPLETION_JUDGE["goal_max_turns"]`(기본 5) | 판정기 오류 → `done` |
 | 단계 | 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `validation_criteria`(기준 없음 → 판정 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
-| 플로우 | `taskflow_finish` 게이트 A–D | DAG 상태와 플로우 evidence | 원장을 읽을 수 없음 / 검증기 오류 → 통과 |
+| 플로우 | `taskflow_flow(action="finish")` 게이트 A–C | DAG 상태와 플로우 evidence | 원장을 읽을 수 없음 / 검증기 오류 → 통과 |
 | 부모 턴 | 완료 drain 프로그램 게이트(`SubagentCompletionDrainMiddleware`) | 세션의 검증 evidence | 조회 불가 → 게이트 없음 |
 
-완료 판정기는 모든 spawn에서 실행됩니다; `goal_max_turns`가 유일한 예산 노브입니다(예산이 1이면 자식은 단일 턴). 단계 판정기 역시 기준을 가진 모든 단계에서 실행됩니다 — `validation_criteria`는 스위치가 아니라 입력입니다 — 그리고 `taskflow_finish`는 플로우가 DONE에 도달하기 전에 evidence 게이트 통과를 요구합니다.
+완료 판정기는 모든 spawn에서 실행됩니다; `goal_max_turns`가 유일한 예산 노브입니다(예산이 1이면 자식은 단일 턴). 단계 판정기 역시 기준을 가진 모든 단계에서 실행됩니다 — `validation_criteria`는 스위치가 아니라 입력입니다 — 그리고 `taskflow_flow(action="finish")`는 플로우가 DONE에 도달하기 전에 evidence 게이트 통과를 요구합니다.
 
 ### 7. 첨부 파일 시스템
 
