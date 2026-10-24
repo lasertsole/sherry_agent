@@ -19,6 +19,11 @@ vi.mock('mermaid', () => ({
   }
 }));
 
+const formulaPreview = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock('~/composables/use-formula-preview', () => ({
+  useFormulaPreview: () => ({ openFormulaPreview: formulaPreview.open })
+}));
+
 const vnode = createVNode('div') as VNode<any, HTMLElement>;
 const binding = (
   value: string,
@@ -153,7 +158,15 @@ describe('safeHtml enhancement pass（代码块/mermaid/流式门）', () => {
       },
       { timeout: 8000, interval: 100 }
     );
-    expect(el.querySelector('.katex')).not.toBeNull();
+    const formula = el.querySelector<HTMLElement>('.katex');
+    expect(formula).not.toBeNull();
+    expect(formula!.dataset.act).toBe('zoom');
+    expect(formula!.getAttribute('tabindex')).toBe('0');
+
+    formulaPreview.open.mockClear();
+    formula!.click();
+    await vi.waitFor(() => expect(formulaPreview.open).toHaveBeenCalledTimes(1));
+    expect(String(formulaPreview.open.mock.calls[0]![0])).toContain('katex');
   });
 
   it('resolveShikiLang 的别名与未知语言', () => {

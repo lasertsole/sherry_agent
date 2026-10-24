@@ -185,6 +185,27 @@ function codeTextOf(pre: Element): string {
 }
 
 /**
+ * Make rendered formulas keyboard/click zoomable.
+ *
+ * The mark is added AFTER sanitization (data-* attributes in raw HTML are
+ * stripped), and only for the markdown path — the formula preview itself uses
+ * `.fragment` and must not open another preview.
+ * @param el The rendered markdown element.
+ */
+function markFormulaZoom(el: HTMLElement): void {
+  const label = safeT('chatBox.codeZoom');
+  for (const formula of el.querySelectorAll<HTMLElement>('.katex')) {
+    // A formula inside a link/button keeps that element's native action.
+    if (formula.closest('a, button')) continue;
+    formula.dataset.act = 'zoom';
+    formula.setAttribute('role', 'button');
+    formula.setAttribute('tabindex', '0');
+    formula.setAttribute('aria-label', label);
+    formula.classList.add('katex-zoom');
+  }
+}
+
+/**
  * Upgrade one directive element's eligible blocks (async, fire-and-forget).
  * Skipped entirely while the element is marked `data-streaming="true"`.
  * @param el The element whose innerHTML was just rendered.
@@ -239,6 +260,25 @@ function delegatedAct(event: Event): void {
   } else if (act === 'wrap') {
     target.closest('pre')?.classList.toggle('code-wrap');
   } else if (act === 'zoom') {
+    const formula = target.closest('.katex');
+    if (formula) {
+      // Clone the display wrapper when there is one (block formulas keep their
+      // centering), then drop the chat-only zoom affordances before the overlay
+      // sanitizes the fragment again.
+      const source = formula.closest('.katex-display') ?? formula;
+      const clone = source.cloneNode(true) as HTMLElement;
+      for (const node of [clone, ...clone.querySelectorAll('*')]) {
+        node.removeAttribute('data-act');
+        node.removeAttribute('role');
+        node.removeAttribute('tabindex');
+        node.removeAttribute('aria-label');
+        node.classList.remove('katex-zoom');
+      }
+      void import('~/composables/use-formula-preview').then(({ useFormulaPreview }) => {
+        useFormulaPreview().openFormulaPreview(clone.outerHTML);
+      });
+      return;
+    }
     const svg = target.closest('figure')?.querySelector('svg');
     if (!svg) return;
     const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(new XMLSerializer().serializeToString(svg))))}`;
@@ -250,6 +290,20 @@ function delegatedAct(event: Event): void {
 
 /** Per-element click handlers, so `unmounted` can remove exactly what it added. */
 const delegatedHandlers = new WeakMap<HTMLElement, (event: Event) => void>();
+/** Per-element keyboard handlers for the focusable formula zoom controls. */
+const delegatedKeyHandlers = new WeakMap<HTMLElement, (event: KeyboardEvent) => void>();
+
+/**
+ * Enter/Space on a focused formula mirrors its click-to-zoom.
+ * @param event
+ */
+function delegatedKey(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const target = (event.target as HTMLElement | null)?.closest('.katex[data-act="zoom"]') as HTMLElement | null;
+  if (!target) return;
+  event.preventDefault();
+  target.click();
+}
 
 /** Last rendered input per element: lets `updated` skip a no-op rewrite. */
 interface SafeHtmlRenderState {
@@ -273,6 +327,7 @@ const renderStates = new WeakMap<HTMLElement, SafeHtmlRenderState>();
  */
 const render = (el: HTMLElement, value: string | null | undefined, fragment: boolean): void => {
   el.innerHTML = fragment ? safeHtmlOnly(value) : safeMarkdownHtml(value);
+  if (!fragment) markFormulaZoom(el);
   renderStates.set(el, {
     value,
     fragment,
@@ -308,6 +363,9 @@ export const vSafeHtml: ObjectDirective<HTMLElement, string | null | undefined> 
     const handler = delegatedAct.bind(null);
     delegatedHandlers.set(el, handler);
     el.addEventListener('click', handler);
+    const keyHandler = delegatedKey.bind(null);
+    delegatedKeyHandlers.set(el, keyHandler);
+    el.addEventListener('keydown', keyHandler);
     if (!fragment) rerenderWhenKatexReady(el);
   },
   updated(el, binding) {
@@ -331,6 +389,9 @@ export const vSafeHtml: ObjectDirective<HTMLElement, string | null | undefined> 
     const handler = delegatedHandlers.get(el);
     if (handler) el.removeEventListener('click', handler);
     delegatedHandlers.delete(el);
+    const keyHandler = delegatedKeyHandlers.get(el);
+    if (keyHandler) el.removeEventListener('keydown', keyHandler);
+    delegatedKeyHandlers.delete(el);
     renderStates.delete(el);
   }
 };
