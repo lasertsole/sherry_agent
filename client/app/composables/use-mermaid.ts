@@ -32,7 +32,10 @@ async function getMermaid(): Promise<MermaidInstance> {
     initializedTheme = theme;
     mermaidPromise = import('mermaid').then(m => {
       const mm = m.default;
-      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme });
+      // SVG text labels, not HTML labels: the latter are emitted inside
+      // <foreignObject>, which the DOMPurify SVG profile strips together with
+      // the text — leaving only the black node rectangles.
+      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme, htmlLabels: false });
       return mm;
     });
   }

@@ -11,10 +11,10 @@ import { _resetShikiForTest, resolveShikiLang } from '../../composables/use-shik
  * element (data-streaming="true") pays nothing. Shiki/KaTeX run for real
  * (pure-JS engines); mermaid is mocked at its module seam.
  */
-const mermaid = vi.hoisted(() => ({ render: vi.fn() }));
+const mermaid = vi.hoisted(() => ({ render: vi.fn(), initialize: vi.fn() }));
 vi.mock('mermaid', () => ({
   default: {
-    initialize: vi.fn(),
+    initialize: mermaid.initialize,
     render: mermaid.render
   }
 }));
@@ -54,6 +54,7 @@ describe('safeHtml enhancement pass（代码块/mermaid/流式门）', () => {
     _resetShikiForTest();
     document.body.innerHTML = '';
     mermaid.render.mockReset();
+    mermaid.initialize.mockReset();
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn(async () => undefined) } });
   });
 
@@ -133,6 +134,9 @@ describe('safeHtml enhancement pass（代码块/mermaid/流式门）', () => {
       if (!el.querySelector('.mermaid-figure svg')) throw new Error('pending');
     });
     expect(el.querySelector('.mermaid-figure [data-act="zoom"]')).not.toBeNull();
+    // HTML labels land in <foreignObject>, which the SVG sanitizer strips;
+    // text labels keep the node captions visible.
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({ htmlLabels: false }));
 
     mermaid.render.mockRejectedValueOnce(new Error('bad syntax'));
     const el2 = document.createElement('div');
