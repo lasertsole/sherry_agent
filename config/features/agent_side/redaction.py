@@ -10,8 +10,9 @@ leak and not the subject of the work:
 * ``terminal`` / ``python_repl`` — they print env vars, ``curl -v`` traces and
   config dumps for a living;
 * the untrusted set (``web_search`` — one tool, plus the ``tavily_search`` name
-  it carried before the rename — ``message_search``/``mcp_*``/``browser_*``),
-  because remote content is not something the local session must read verbatim.
+  it carried before the rename — ``message_search``/``mcp_*``/``browser`` and
+  the legacy ``browser_*`` names), because remote content is not something the
+  local session must read verbatim.
 
 File tools (``read_file``/``patch_file``/``write_file``) are NOT in the set: the
 agent edits its own configuration, and masking a value there would make the
@@ -33,14 +34,21 @@ class RedactionConfig(TypedDict):
     # Tools whose result is redacted before entering model context.
     tool_output_tools: frozenset[str]
     # Prefix rule mirroring the untrusted-output policy, so a tool added later
-    # (an MCP server, the browser family) is covered without editing this list.
+    # (an MCP server, a legacy browser verb) is covered without editing this list.
     tool_output_prefixes: tuple[str, ...]
 
 
 REDACTION: RedactionConfig = {
     "tool_output_enabled": True,
     "tool_output_tools": frozenset(
-        {"terminal", "python_repl", "web_search", "tavily_search", "message_search"}
+        {
+            "terminal",
+            "python_repl",
+            "web_search",
+            "tavily_search",
+            "message_search",
+            "browser",
+        }
     ),
     "tool_output_prefixes": ("mcp_", "browser_"),
 }

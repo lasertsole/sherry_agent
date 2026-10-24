@@ -111,6 +111,15 @@ def test_legacy_taskflow_names_in_a_stored_config_map_to_the_merged_tools():
     }
 
 
+def test_legacy_browser_names_in_a_stored_config_map_to_the_merged_tool():
+    """A session config written before the browser 8→2 merge keeps the family on."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["browser_navigate", "browser_click", "browser_evaluate"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"browser", "browser_evaluate"}
+
+
 def test_a_broken_register_read_is_fail_open(monkeypatch):
     import runtime
 

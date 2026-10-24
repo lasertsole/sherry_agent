@@ -68,16 +68,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "interaction": ("question",),
     "plan_mode": ("enter_plan_mode", "exit_plan_mode"),
     "web": ("web_search", "web_fetch"),
-    "browser": (
-        "browser_navigate",
-        "browser_snapshot",
-        "browser_click",
-        "browser_type",
-        "browser_press",
-        "browser_scroll",
-        "browser_screenshot",
-        "browser_evaluate",
-    ),
+    "browser": ("browser", "browser_evaluate"),
 }
 
 #: Group for tools that appear at runtime (MCP servers, future builders) —
@@ -135,9 +126,9 @@ REQUIRED_TOOLS: frozenset[str] = frozenset(
 BULK_ONLY_GROUPS: frozenset[str] = frozenset({"tasks", "subagents"})
 
 #: Old model-facing names → the grouped tool that replaced them. Saved presets
-#: and session configs written before the TaskFlow merge still carry these, so
-#: both the config sanitizer and the hot-path selection read through the map;
-#: the catalogue itself never lists an alias.
+#: and session configs written before a tool merge still carry these, so both
+#: the config sanitizer and the hot-path selection read through the map; the
+#: catalogue itself never lists an alias.
 LEGACY_TOOL_ALIASES: dict[str, str] = {
     "taskflow_create": "taskflow_flow",
     "taskflow_plan": "taskflow_flow",
@@ -155,6 +146,13 @@ LEGACY_TOOL_ALIASES: dict[str, str] = {
     "taskflow_summary": "taskflow_inspect",
     "taskflow_progress": "taskflow_inspect",
     "taskflow_list": "taskflow_inspect",
+    "browser_navigate": "browser",
+    "browser_snapshot": "browser",
+    "browser_click": "browser",
+    "browser_type": "browser",
+    "browser_press": "browser",
+    "browser_scroll": "browser",
+    "browser_screenshot": "browser",
 }
 
 

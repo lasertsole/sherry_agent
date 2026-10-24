@@ -34,7 +34,14 @@ _OPEN = f"<{WRAPPER_TAG}"
 
 @pytest.mark.parametrize(
     "name",
-    ["web_search", "message_search", "mcp_filesystem_read", "browser_snapshot", "browser_evaluate"],
+    [
+        "web_search",
+        "message_search",
+        "mcp_filesystem_read",
+        "browser",
+        "browser_snapshot",
+        "browser_evaluate",
+    ],
 )
 def test_attacker_facing_tools_are_untrusted(name):
     assert is_untrusted_tool(name) is True
@@ -68,11 +75,11 @@ def test_the_policy_covers_the_tools_that_actually_ship():
 
 
 def test_the_browser_tool_family_is_fenced():
-    """Every ``browser_*`` verb returns page-authored text — all of it is fenced.
+    """Every browser verb returns page-authored text — all of it is fenced.
 
-    The names are read off the package's own declarations (the tools only
-    register when the feature is enabled, so building them here would prove
-    nothing on a default install), one module per verb.
+    The old per-verb names are read off the package's declarations (they remain
+    the handlers); the merged ``browser`` name is exact-listed. Building the
+    tools here would prove nothing on a default install (the feature is off).
     """
     import pathlib
     import re
@@ -83,7 +90,8 @@ def test_the_browser_tool_family_is_fenced():
         names.update(re.findall(r'name: str = "(browser_[a-z_]+)"', module.read_text("utf-8")))
 
     assert names, "the browser tool family stopped declaring its names"
-    for name in sorted(names):
+    assert "browser" in UNTRUSTED_TOOL_NAMES
+    for name in sorted(names | {"browser"}):
         assert is_untrusted_tool(name) is True, name
 
 

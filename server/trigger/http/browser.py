@@ -78,7 +78,7 @@ async def browser_page_handler(request):
 
 @app.post("/browser/navigate")
 async def browser_navigate_handler(request):
-    """Navigate one page (the address bar / the agent's browser_navigate)."""
+    """Navigate one page (the address bar / the agent's browser action)."""
     manager = _manager_or_none()
     if manager is None:
         return not_found("the browser feature is disabled")

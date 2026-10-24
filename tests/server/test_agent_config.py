@@ -327,6 +327,32 @@ def test_sanitize_maps_legacy_taskflow_tool_names(real_tool_names, monkeypatch):
     )
 
 
+def test_sanitize_maps_legacy_browser_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the browser 8→2 merge still applies instead of 400ing."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection(
+        "browser_navigate",
+        "browser_click",
+        "browser_evaluate",
+    )
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-2:] == ["browser", "browser_evaluate"]
+    assert not any(
+        name
+        in {
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_press",
+            "browser_scroll",
+            "browser_screenshot",
+        }
+        for name in cleaned["tools"]
+    )
+
+
 def test_sanitize_rejects_unknown_names(real_tool_names, monkeypatch):
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
     with pytest.raises(service.AgentConfigError) as exc:
