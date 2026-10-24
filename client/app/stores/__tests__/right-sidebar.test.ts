@@ -7,6 +7,7 @@ import {
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
+  type RightSidebarTab,
   useRightSidebarStore
 } from '../right-sidebar';
 
@@ -265,5 +266,76 @@ describe('stores/right-sidebar', () => {
     expect(store.collapsed).toBe(false);
     store.expand();
     expect(store.collapsed).toBe(false);
+  });
+
+  it('remembers a closed side chat per parent session and reopens it without prefill', () => {
+    const store = useRightSidebarStore();
+    const tab: RightSidebarTab = {
+      id: 'sideChat-1',
+      kind: 'sideChat',
+      scope: 'session',
+      payload: {
+        sessionId: 'child',
+        parentSessionId: 'parent',
+        quote: 'quoted text',
+        source: 'AI'
+      }
+    };
+
+    store.rememberClosed(tab, 'parent');
+
+    expect(store.recentClosedFor('session', 'parent')).toHaveLength(1);
+    expect(store.recentClosedFor('session', 'other')).toEqual([]);
+    expect(store.recentClosedFor('global', 'parent')).toEqual([]);
+
+    const entry = store.recentClosedFor('session', 'parent')[0];
+    const reopenedId = store.reopenClosed(entry);
+    const reopened = store.tabs.find(candidate => candidate.id === reopenedId);
+
+    expect(reopened?.kind).toBe('sideChat');
+    expect(reopened?.payload).toMatchObject({
+      sessionId: 'child',
+      parentSessionId: 'parent',
+      prefillQuote: false
+    });
+    // Reopened tabs leave the recent list.
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('dedupes a re-closed tab, orders newest first and forgets deleted sessions', () => {
+    const store = useRightSidebarStore();
+    const sideChat: RightSidebarTab = {
+      id: 'sideChat-1',
+      kind: 'sideChat',
+      scope: 'session',
+      payload: { sessionId: 'child', parentSessionId: 'parent' }
+    };
+    const file: RightSidebarTab = {
+      id: 'fileViewer-1',
+      kind: 'fileViewer',
+      scope: 'session',
+      payload: { path: 'src/a.ts' }
+    };
+
+    store.rememberClosed(sideChat, 'parent');
+    store.rememberClosed(sideChat, 'parent');
+    store.rememberClosed(file, 'parent');
+
+    expect(store.recentClosedFor('session', 'parent').map(entry => entry.kind)).toEqual(['fileViewer', 'sideChat']);
+
+    // Deleting the parent removes both its own entries and its side chats.
+    store.forgetSession('parent');
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('lists global recent tabs for every session', () => {
+    const store = useRightSidebarStore();
+    const tab: RightSidebarTab = { id: 'logs-1', kind: 'logs', scope: 'global' };
+
+    store.rememberClosed(tab, 'parent');
+
+    expect(store.recentClosedFor('global', 'parent')).toHaveLength(1);
+    expect(store.recentClosedFor('global', 'someone-else')).toHaveLength(1);
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
   });
 });

@@ -567,12 +567,14 @@ const handleDeleteSession = async (id: string) => {
         logUtil.w('[handleDeleteSession] side-chat cache cleanup failed:', error);
       }
       emit(SESSION_ABORT_STREAM_EVENT, childSid);
+      rightSidebar.forgetSession(childSid);
       for (const tab of rightSidebar.tabs) {
         if (tab.kind === 'sideChat' && tab.payload?.sessionId === childSid) {
           rightSidebar.closeTab(tab.id);
         }
       }
     }
+    rightSidebar.forgetSession(id);
     historyList.value = historyList.value.filter(s => s.id !== id && !sideChatChildren.has(s.id));
     selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id && !sideChatChildren.has(sid));
     // Synchronously clear this session's character snapshot cache

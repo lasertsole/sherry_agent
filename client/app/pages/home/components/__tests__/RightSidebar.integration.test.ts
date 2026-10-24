@@ -25,6 +25,18 @@ let sidebarApi: {
   setActiveScope: (scope: 'session' | 'global') => void;
   activateTab: ReturnType<typeof vi.fn>;
   closeTab: ReturnType<typeof vi.fn>;
+  recentClosedFor: (
+    scope: 'session' | 'global',
+    sessionId: string
+  ) => Array<{
+    key: string;
+    kind: string;
+    scope: string;
+    payload?: Record<string, unknown>;
+    sessionId: string;
+    closedAt: number;
+  }>;
+  reopenClosed: ReturnType<typeof vi.fn>;
 };
 
 const VIEWPORT_WIDTH = 1280;
@@ -52,7 +64,9 @@ beforeEach(() => {
       sidebarApi.activeScope = scope;
     }),
     activateTab: vi.fn(),
-    closeTab: vi.fn()
+    closeTab: vi.fn(),
+    recentClosedFor: () => [],
+    reopenClosed: vi.fn()
   }) as typeof sidebarApi;
   vi.stubGlobal('useRightSidebarStore', () => sidebarApi);
 });
@@ -422,5 +436,50 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     window.dispatchEvent(new Event('resize'));
 
     expect(sidebarApi.fitToViewport).toHaveBeenCalledWith(VIEWPORT_WIDTH);
+  });
+
+  it('opens the recent-tabs menu with both groups and restores a closed side chat', async () => {
+    sidebarApi.collapsed = false;
+    const entry = {
+      key: 'sideChat|session|child',
+      kind: 'sideChat',
+      scope: 'session',
+      payload: {
+        sessionId: 'child',
+        parentSessionId: 'parent',
+        quote: 'quoted line'
+      },
+      sessionId: 'parent',
+      closedAt: 1
+    };
+    const recentClosedFor = vi.fn((scope: 'session' | 'global') => (scope === 'session' ? [entry] : []));
+    sidebarApi.recentClosedFor = recentClosedFor;
+
+    const wrapper = mount(RightSidebar, {
+      props: { sessionId: 'parent' },
+      global: { stubs }
+    });
+    await nextTick();
+
+    const toggle = wrapper.get('[data-test="recent-closed-toggle"]');
+    // The arrow sits LEFT of the tab list (the strip's scroll container).
+    expect(
+      toggle.element.compareDocumentPosition(wrapper.get('.overflow-x-auto').element) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+
+    await toggle.trigger('click');
+    await nextTick();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="recent-closed-menu"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="recent-closed-scope-session"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="recent-closed-scope-global"]').exists()).toBe(true);
+    expect(recentClosedFor).toHaveBeenCalledWith('session', 'parent');
+
+    const restored = wrapper.get('[data-test="recent-closed-entry"]');
+    expect(restored.text()).toContain('quoted line');
+    await restored.trigger('click');
+
+    expect(sidebarApi.reopenClosed).toHaveBeenCalledWith(entry);
   });
 });

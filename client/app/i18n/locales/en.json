@@ -560,7 +560,9 @@
       "session": "This session",
       "global": "Global"
     },
-    "scopeEmpty": "No tabs in this group"
+    "scopeEmpty": "No tabs in this group",
+    "recentClosed": "Recently closed tabs",
+    "recentClosedEmpty": "No recently closed tabs"
   },
   "progressFloat": {
     "status": {

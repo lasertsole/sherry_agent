@@ -339,7 +339,14 @@ works.
   caches of side chats whose panels were already closed. `DELETE
   /sessions/side_chat` remains as an explicit purge route (not called by the
   tab's X), and a boot sweep removes links whose parent is gone. A side chat can
-  never parent another side chat.
+  never parent another side chat. The strip's down-arrow button
+  (`RecentClosedTabsMenu.vue`, at the LEFT of the tab list) opens a two-tab menu
+  (当前会话 / 全局) of recently closed tabs: closing a tab records it in
+  `rightSidebar.recentClosed` (per parent session for side chats, per active
+  session for other session tabs, all global tabs for every session; persisted
+  and capped at 30). Restoring a side chat reopens the panel on the SAME child
+  session with its history, using `prefillQuote: false` so the original quote
+  chip is not inserted again; deleting a session forgets its entries.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 

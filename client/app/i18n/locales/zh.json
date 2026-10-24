@@ -560,7 +560,9 @@
       "session": "当前会话",
       "global": "全局"
     },
-    "scopeEmpty": "该分组暂无标签页"
+    "scopeEmpty": "该分组暂无标签页",
+    "recentClosed": "最近关闭的标签页",
+    "recentClosedEmpty": "最近没有关闭的标签页"
   },
   "progressFloat": {
     "status": {

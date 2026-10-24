@@ -80,6 +80,10 @@
             {{ t(`rightSidebar.scopes.${scope}`) }}
           </button>
         </div>
+        <!-- Recently closed tabs: the arrow sits just LEFT of the tab list, and
+             its menu offers the same two groups (当前会话 / 全局). A closed side
+             chat restores in place with its retained history. -->
+        <RecentClosedTabsMenu :session-id="sessionId" />
         <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <button
             v-for="tab in store.tabsInScope(store.activeScope)"
@@ -148,6 +152,10 @@ import {
   type RightSidebarTab
 } from '~/stores/right-sidebar';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
+
+/** The session the main area shows (the recent-tabs menu filters by it). */
+defineProps<{ sessionId?: string }>();
 
 const { t } = useI18n({ useScope: 'local' });
 

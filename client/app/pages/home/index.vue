@@ -234,6 +234,7 @@
          toolbar above the session area instead of sliding in under it — and, living
          outside the KeepAlive'd session page, its tabs survive session switches. -->
     <RightSidebar
+      :session-id="openSessionId"
       @saved="loadCharacter"
       @close-tab="handleCloseRightTab" />
 
@@ -444,6 +445,8 @@ const handleCloseRightTab = (tab: RightSidebarTab): void => {
   if (tab.kind === 'sideChat' && tab.payload?.sessionId) {
     detachSideChatSession(tab.payload.sessionId);
   }
+  // Keep it in the strip's recent-tabs menu (per-session or global).
+  rightSidebarStore.rememberClosed(tab, openSessionId.value);
   rightSidebarStore.closeTab(tab.id);
 };
 /** Mandatory new-session preset dialog state (shared with every 新建对话 entry point). */

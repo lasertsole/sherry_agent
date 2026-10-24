@@ -481,6 +481,10 @@ vi.stubGlobal('useRightSidebarStore', () =>
     tabsInScope: () => [],
     setActiveScope: () => {},
     activateTab: () => {},
-    closeTab: () => {}
+    closeTab: () => {},
+    rememberClosed: () => {},
+    recentClosedFor: () => [],
+    reopenClosed: () => 'test-tab',
+    forgetSession: () => {}
   })
 );

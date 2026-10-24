@@ -560,7 +560,9 @@
       "session": "현재 세션",
       "global": "전역"
     },
-    "scopeEmpty": "이 그룹에 탭이 없습니다"
+    "scopeEmpty": "이 그룹에 탭이 없습니다",
+    "recentClosed": "최근 닫은 탭",
+    "recentClosedEmpty": "최근에 닫은 탭이 없습니다"
   },
   "progressFloat": {
     "status": {

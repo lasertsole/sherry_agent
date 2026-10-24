@@ -172,6 +172,8 @@ interface PanelPayload {
   inherited?: boolean;
   quote?: string;
   source?: string;
+  /** False when a reopened side chat must not re-insert its original quote. */
+  prefillQuote?: boolean;
 }
 
 const props = defineProps<{ payload?: PanelPayload }>();
@@ -339,7 +341,7 @@ onMounted(async () => {
   });
   void ensureSessionCharacter(sid);
   await nextTick();
-  if (props.payload?.quote) {
+  if (props.payload?.quote && props.payload.prefillQuote !== false) {
     chatInputBoxRef.value?.addQuoteChip?.(props.payload.quote, props.payload.source);
   }
   void stream.syncHistory(sid);

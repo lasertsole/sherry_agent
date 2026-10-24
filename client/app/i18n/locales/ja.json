@@ -560,7 +560,9 @@
       "session": "現在のセッション",
       "global": "グローバル"
     },
-    "scopeEmpty": "このグループにタブはありません"
+    "scopeEmpty": "このグループにタブはありません",
+    "recentClosed": "最近閉じたタブ",
+    "recentClosedEmpty": "最近閉じたタブはありません"
   },
   "progressFloat": {
     "status": {

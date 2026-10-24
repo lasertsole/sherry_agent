@@ -128,6 +128,30 @@ export function clampSidebarWidth(
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
 
+/** Per-instance data carried by a right-sidebar tab. */
+export interface RightSidebarTabPayload {
+  path?: string;
+  hash?: string;
+  instance?: string;
+  url?: string;
+  /** The side session this tab talks to (one tab per session). */
+  sessionId?: string;
+  /** The main session this ephemeral side chat belongs to. */
+  parentSessionId?: string;
+  /** Whether the server inherited a parent-transcript snapshot. */
+  inherited?: boolean;
+  /** The quoted text the side session's composer starts with. */
+  quote?: string;
+  /** The quote's localized source label (the chip's tooltip). */
+  source?: string;
+  /**
+   * Whether a `sideChat` panel prefills the quote chip on mount. Initial opens
+   * default to true; reopening a closed side chat from the recent list sets
+   * false, so its retained history is shown without re-inserting the quote.
+   */
+  prefillQuote?: boolean;
+}
+
 /** One open tab of the right sidebar. */
 export interface RightSidebarTab {
   /**
@@ -149,22 +173,22 @@ export interface RightSidebarTab {
    * instance key, while the settings entries keep deduping on their empty
    * payload. The panel reads it back to key its own state.
    */
-  payload?: {
-    path?: string;
-    hash?: string;
-    instance?: string;
-    url?: string;
-    /** The side session this tab talks to (one tab per session). */
-    sessionId?: string;
-    /** The main session this ephemeral side chat belongs to. */
-    parentSessionId?: string;
-    /** Whether the server inherited a parent-transcript snapshot. */
-    inherited?: boolean;
-    /** The quoted text the side session's composer starts with. */
-    quote?: string;
-    /** The quote's localized source label (the chip's tooltip). */
-    source?: string;
-  };
+  payload?: RightSidebarTabPayload;
+}
+
+/**
+ * A tab the user closed, kept so the strip's recent-tabs menu can restore it.
+ * ``sessionId`` is the session it belongs to (the side chat's PARENT id for a
+ * side chat); global entries use an empty id and are listed for every session.
+ */
+export interface RecentClosedTab {
+  /** Stable identity (kind + scope + payload, minus the prefill flag). */
+  key: string;
+  kind: RightSidebarPanelKind;
+  scope: RightSidebarScope;
+  payload?: RightSidebarTabPayload;
+  sessionId: string;
+  closedAt: number;
 }
 
 let tabSeq = 0;
@@ -184,6 +208,10 @@ export const useRightSidebarStore = defineStore(
     const collapsed = ref(true);
     /** Open tabs in strip order. */
     const tabs = ref<RightSidebarTab[]>([]);
+    /** Recently closed tabs (newest first), capped; persisted across reloads. */
+    const recentClosed = ref<RecentClosedTab[]>([]);
+    /** Maximum entries kept in the recent-tabs menu (both scopes together). */
+    const RECENT_CLOSED_LIMIT = 30;
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
     /**
@@ -260,22 +288,10 @@ export const useRightSidebarStore = defineStore(
      * @param payload.inherited Whether the server captured the parent transcript.
      * @param payload.quote
      * @param payload.source
+     * @param payload.prefillQuote
      * @returns The tab id (the existing tab's id when it was reused).
      */
-    function openTab(
-      kind: RightSidebarPanelKind,
-      payload?: {
-        path?: string;
-        hash?: string;
-        instance?: string;
-        url?: string;
-        sessionId?: string;
-        parentSessionId?: string;
-        inherited?: boolean;
-        quote?: string;
-        source?: string;
-      }
-    ): string {
+    function openTab(kind: RightSidebarPanelKind, payload?: RightSidebarTabPayload): string {
       const path = payload?.path ?? null;
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
@@ -359,9 +375,87 @@ export const useRightSidebarStore = defineStore(
       }
     }
 
+    /**
+     * Remember a tab the user just closed, for the strip's recent-tabs menu.
+     *
+     * The entry keeps the tab's kind/scope/payload (so reopening restores the
+     * same panel) and the session it belongs to: a side chat uses its PARENT
+     * session id, other session-scoped tabs use the session that was active at
+     * close. Re-closing the same tab moves it to the front instead of stacking a
+     * duplicate; the list is capped and persisted.
+     * @param tab The tab being closed.
+     * @param activeSessionId The session shown when it was closed.
+     */
+    function rememberClosed(tab: RightSidebarTab, activeSessionId?: string): void {
+      const payload = tab.payload ? { ...tab.payload } : undefined;
+      const identity = payload
+        ? Object.fromEntries(
+            Object.entries(payload)
+              .filter(([key]) => key !== 'prefillQuote')
+              .sort(([left], [right]) => left.localeCompare(right))
+          )
+        : null;
+      const key = `${tab.kind}|${tab.scope}|${JSON.stringify(identity)}`;
+      const parentSessionId = tab.kind === 'sideChat' ? payload?.parentSessionId : undefined;
+      const sessionId = tab.scope === 'session' ? String(parentSessionId || activeSessionId || '') : '';
+      const entry: RecentClosedTab = {
+        key,
+        kind: tab.kind,
+        scope: tab.scope,
+        payload,
+        sessionId,
+        closedAt: Date.now()
+      };
+      recentClosed.value = [entry, ...recentClosed.value.filter(candidate => candidate.key !== key)].slice(
+        0,
+        RECENT_CLOSED_LIMIT
+      );
+    }
+
+    /**
+     * Closed tabs belonging to one group, newest first. The session group only
+     * returns entries of the CURRENT session; the global group returns all.
+     * @param scope Group to list.
+     * @param sessionId Current session id.
+     */
+    function recentClosedFor(scope: RightSidebarScope, sessionId: string): RecentClosedTab[] {
+      if (scope === 'global') {
+        return recentClosed.value.filter(entry => entry.scope === 'global');
+      }
+      return recentClosed.value.filter(entry => entry.scope === 'session' && entry.sessionId === sessionId);
+    }
+
+    /**
+     * Reopen a recently closed tab and remove it from the recent list. A side
+     * chat is restored with ``prefillQuote: false``: its retained history is
+     * the point, so the original quote chip is not inserted again.
+     * @param entry The recent entry to restore.
+     * @returns The new tab id.
+     */
+    function reopenClosed(entry: RecentClosedTab): string {
+      const payload =
+        entry.kind === 'sideChat' && entry.payload ? { ...entry.payload, prefillQuote: false } : entry.payload;
+      const id = openTab(entry.kind, payload);
+      recentClosed.value = recentClosed.value.filter(candidate => candidate.key !== entry.key);
+      return id;
+    }
+
+    /**
+     * Drop recent entries that belong to a deleted session (its own entries and
+     * its side chats, keyed by the parent id).
+     * @param sessionId Deleted session id.
+     */
+    function forgetSession(sessionId: string): void {
+      if (!sessionId) return;
+      recentClosed.value = recentClosed.value.filter(
+        entry => entry.sessionId !== sessionId && entry.payload?.sessionId !== sessionId
+      );
+    }
+
     return {
       collapsed,
       tabs,
+      recentClosed,
       activeTabId,
       activeScope,
       width,
@@ -375,12 +469,16 @@ export const useRightSidebarStore = defineStore(
       tabsInScope,
       setActiveScope,
       activateTab,
-      closeTab
+      closeTab,
+      rememberClosed,
+      recentClosedFor,
+      reopenClosed,
+      forgetSession
     };
   },
   {
     persist: {
-      pick: ['collapsed', 'width', 'maximized']
+      pick: ['collapsed', 'width', 'maximized', 'recentClosed']
     }
   }
 );
