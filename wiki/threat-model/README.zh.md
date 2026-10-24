@@ -58,7 +58,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | 性质 | 做法 |
 |---|---|
-| 适用范围 | `web_search`（无论后端是谁都是同一个工具；`tavily_search` 是它改名前的名字，为旧记录保留在名单里）、`message_search`、任何 `mcp_` 工具，以及每个 `browser_` 工具（页面自产的文本——`browser_snapshot` 最典型） |
+| 适用范围 | `web_search`（无论后端是谁都是同一个工具；`tavily_search` 是它改名前的名字，为旧记录保留在名单里）、`message_search`、任何 `mcp_` 工具、`browser` 工具，以及每个旧的 `browser_*` 工具（旧的 `browser_` 前缀仍受围栏保护；页面自产的文本——`browser_snapshot` 最典型） |
 | 分隔符防伪 | 载荷里的闭合标签在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块 |
 | 顺序 | 先 evict 再包装，因此围栏包住的正是模型实际看到的那份预览 |
 | 原文 | 只有模型视图被围栏；内层持久化持有的消息对象从不被修改 |
@@ -73,7 +73,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 面 | 由谁施加 | 开关 |
 |---|---|---|
 | 每一条日志记录（控制台 + 三个轮转文件） | `agent/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
-| 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`、`browser_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
+| 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`、`browser`、`browser_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
 | 文件工具（`read_file`、`patch_file`、`write_file`） | — | 刻意不脱敏：agent 要编辑自己的配置，掩码会让"读回再写回"变成有损操作 |
 
 覆盖家族：vendor 密钥前缀（`sk-`、`ghp_`、`AKIA`、`xox*`、`AIza`、`hf_` 等）、各种配置形状里的密钥名赋值（`.env`、INI、YAML、TOML、JSON——含 `"CURATOR_API_KEY"` 这类带前缀键与引号内含空格的值）、`Authorization` / `X-API-Key` 头、JWT、PEM 私钥块、URL 凭证与查询参数。

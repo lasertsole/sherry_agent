@@ -65,7 +65,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 **브라우저 페이지도 같은 규칙을 따릅니다.** 에이전트 제어 브라우저
 (`config/features/infra_side/browser_agent.py`)가 이 파이프라인에 기여하는 것은 단 하나,
-`browser_*` 도구가 돌려주는 텍스트(그리고 스크린샷 경로)뿐입니다. 페이지 자체——DOM, 픽셀,
+`browser` 도구가 돌려주는 텍스트(레거시 `browser_*` 결과도 동일)(그리고 스크린샷 경로)뿐입니다. 페이지 자체——DOM, 픽셀,
 screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 프레임은 `/browser/ws`로 패널에
 직행하고, 스냅샷은 도구 결과가 되기 전에 관리자가 상한(요소 / 텍스트)으로 잘라내며,
 스크린샷은 시각 지원 모델에게 이미지 자체로 전달됩니다(`image_to_text` 스킬은 네이티브 시각이 없는 모델의 폴백이며, 턴마다의 기록 정리가 오래된 스크린샷을 이후 컨텍스트에서 제거합니다). 페이지가 표시하는

@@ -59,7 +59,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 | 성질 | 구현 |
 |---|---|
-| 범위 | `web_search`(백엔드가 무엇이든 같은 하나의 도구. `tavily_search`는 이름 변경 전의 이름으로, 오래된 기록을 위해 목록에 남겨 둡니다), `message_search`, 모든 `mcp_` 도구, 그리고 모든 `browser_` 도구(페이지가 쓴 텍스트——특히 `browser_snapshot`) |
+| 범위 | `web_search`(백엔드가 무엇이든 같은 하나의 도구. `tavily_search`는 이름 변경 전의 이름으로, 오래된 기록을 위해 목록에 남겨 둡니다), `message_search`, 모든 `mcp_` 도구, 병합된 `browser` 도구, 그리고 모든 레거시 `browser_*` 도구(레거시 `browser_` 접두사도 계속 펜스됨; 페이지가 쓴 텍스트——특히 `browser_snapshot`) |
 | 구분자 위조 | 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다 |
 | 순서 | 먼저 evict 후 감싸므로 펜스는 모델이 실제로 읽는 미리보기를 감쌉니다 |
 | 원문 | 펜스되는 것은 모델이 보는 모습뿐이며, 내부 영속화가 가진 메시지는 결코 변형되지 않습니다 |
@@ -75,7 +75,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 면 | 적용 주체 | 스위치 |
 |---|---|---|
 | 모든 로그 레코드(콘솔 + 세 개의 로테이션 파일) | `agent/security/redact_formatter.py`(`logs/logger.py` 가 설치하는 loguru patcher) | 항상 켜짐——로그 파일은 세션보다 오래 살고, 읽는 사람은 그 비밀을 본 적이 없습니다 |
-| 유출되기 쉬운 도구 출력(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`, `browser_*`) | 펜스와 같은 미들웨어 | `config/features/agent_side/redaction.py` 의 `REDACTION["tool_output_enabled"]` |
+| 유출되기 쉬운 도구 출력(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`, `browser`, `browser_*`) | 펜스와 같은 미들웨어 | `config/features/agent_side/redaction.py` 의 `REDACTION["tool_output_enabled"]` |
 | 파일 도구(`read_file`, `patch_file`, `write_file`) | — | 의도적으로 마스킹하지 않습니다: 에이전트가 자기 설정을 편집하는데, 마스킹하면 "읽고 되쓰기"가 손실이 됩니다 |
 
 대상: 벤더 키 접두(`sk-`, `ghp_`, `AKIA`, `xox*`, `AIza`, `hf_` 등), 여러 설정 형식의 비밀 이름 대입(`.env`, INI, YAML, TOML, JSON——`"CURATOR_API_KEY"` 같은 접두 키와 공백 포함 인용 값 포함), `Authorization` / `X-API-Key` 헤더, JWT, PEM 개인키 블록, URL 자격 증명과 쿼리 파라미터.

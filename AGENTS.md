@@ -1329,7 +1329,7 @@ the join key between `messages` and `trajectory_events.turn_id`.
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
 「模型配置」 panel grows a `SHERRY_BROWSER` group for its switches (they live in
-`.network`)). With the feature off no `browser_*` tool is registered, every
+`.network`)). With the feature off no browser tool is registered, every
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 
 **Server side** — `server/service/browser_cdp.py` is a thin CDP transport (one
@@ -1352,20 +1352,23 @@ ticket): screencast frames out, `nav`/`reload`/`back`/`forward`/`viewport`/
 bar through `Page.frameNavigated` (a `chrome-error://` page keeps the URL the
 user asked for); the screencast stops when nobody watches a page.
 
-**Agent side** — the eight `browser_*` tools (navigate / snapshot / click /
-type / press / scroll / screenshot / evaluate) live in the `browser` catalogue
-group, are MAIN-AGENT-ONLY (`metadata["scope"] = "main_only"` — the subagent
-tool policy drops them unconditionally), and are taught by the `browser`
-playbook skill (`skills/builtin/core/browser/SKILL.md`, scriptless, hidden from
-the index while the feature is off). `browser_screenshot` writes a PNG and
+**Agent side** — the merged `browser` tool (action =
+navigate / snapshot / click / type / press / scroll / screenshot) lives in the
+`browser` catalogue group, is MAIN-AGENT-ONLY (`metadata["scope"] =
+"main_only"` — the subagent tool policy drops it unconditionally), and is taught
+by the `browser` playbook skill (`skills/builtin/core/browser/SKILL.md`,
+scriptless, hidden from the index while the feature is off). The seven verbs are
+thin handlers over the same manager; the original `browser_*` classes remain
+internal handlers and are exposed only by `build_legacy_browser_tools()` for
+tests. `browser(action="screenshot")` writes a PNG and
 returns **the image itself** when the serving model reads images natively
 (`media_pipeline/tool_media.py::native_image_content` — the `image_to_text`
 skill is the fallback for a model without vision, never the route a
 vision-capable one takes; the per-request capability scrub and the retry
 fallback strip the block again for a model that turns out blind, and the
 per-turn history strip removes it from later turns so a screenshot does not
-ride every context); `browser_evaluate` registers only with
-`SHERRY_BROWSER_ALLOW_EVALUATE=1`.
+ride every context); `browser_evaluate` stays a separate tool and registers only
+with `SHERRY_BROWSER_ALLOW_EVALUATE=1`.
 
 **Panel** — `BrowserPanel.vue` picks CDP mode from `/browser/status` and falls
 back to its iframe mode otherwise (`composables/browser-channel.ts` owns the

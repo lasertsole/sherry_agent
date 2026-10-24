@@ -64,8 +64,8 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 
 **浏览器页面遵循同一条规则。** agent 可控浏览器
-（`config/features/infra_side/browser_agent.py`）向本管线贡献的东西只有一件：`browser_*`
-工具返回的文本（以及截图路径）。页面本身——它的 DOM、像素、screencast 帧——从不进入消息
+（`config/features/infra_side/browser_agent.py`）向本管线贡献的东西只有一件：`browser`
+工具返回的文本（旧的 `browser_*` 结果同样处理）（以及截图路径）。页面本身——它的 DOM、像素、screencast 帧——从不进入消息
 存储：帧走 `/browser/ws` 直接给面板，快照在成为工具结果之前就被管理器按上限截断（元素 /
 文本），截图会以图像本身送到有视觉能力的模型（`image_to_text` 技能只是无原生视觉模型的兜底，且每轮的历史清理会让旧截图不再进入后续上下文）。页面显示的任何内容都只能
 经由"模型自己要求的工具结果"影响 agent——而这些结果和其他远程内容一样，会经过不可信输出

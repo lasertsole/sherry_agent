@@ -63,7 +63,7 @@ the content is data, not instructions.
 
 | Property | How |
 |---|---|
-| Scope | `web_search` (one tool whichever backend serves it; `tavily_search` is the name it carried before the rename and stays listed for older transcripts), `message_search`, any `mcp_` tool, and every `browser_` tool (page-authored text — `browser_snapshot` most of all) |
+| Scope | `web_search` (one tool whichever backend serves it; `tavily_search` is the name it carried before the rename and stays listed for older transcripts), `message_search`, any `mcp_` tool, the merged `browser` tool, and every legacy `browser_*` tool (the legacy `browser_` prefix stays fenced; page-authored text — `browser_snapshot` most of all) |
 | Delimiter forgery | A closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early |
 | Ordering | Eviction runs first, so the block surrounds the preview the model is actually shown |
 | Raw text | Only the model view is fenced; the message the inner persistence layer holds is never mutated |
@@ -81,7 +81,7 @@ places, with different switches on purpose:
 | Surface | Applied by | Switch |
 |---|---|---|
 | Every log record (console + the three rotating files) | `agent/security/redact_formatter.py` (a loguru patcher installed by `logs/logger.py`) | always on — a log file outlives the session and is read by people who never saw the secret |
-| Tool output that leaks credentials for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`, `browser_*`) | the same middleware that fences untrusted output | `REDACTION["tool_output_enabled"]` in `config/features/agent_side/redaction.py` |
+| Tool output that leaks credentials for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`, `browser`, `browser_*`) | the same middleware that fences untrusted output | `REDACTION["tool_output_enabled"]` in `config/features/agent_side/redaction.py` |
 | File tools (`read_file`, `patch_file`, `write_file`) | — | deliberately not redacted: the agent edits its own configuration, and masking a value would make a read-then-write lossy |
 
 Families: vendor key prefixes (`sk-`, `ghp_`, `AKIA`, `xox*`, `AIza`, `hf_`, …),

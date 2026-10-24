@@ -64,7 +64,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 **Browser pages follow the same rule.** The agent-controllable browser
 (`config/features/infra_side/browser_agent.py`) contributes exactly ONE thing to
-this pipeline: the text (and screenshot path) a `browser_*` tool returns. The
+this pipeline: the text (and screenshot path) the `browser` tool returns (legacy `browser_*` results replay the same way). The
 page itself — its DOM, its pixels, its screencast frames — never enters the
 message store: frames go to the panel over `/browser/ws`, snapshots are bounded
 by the manager (element / text caps) before they become tool results, and a
