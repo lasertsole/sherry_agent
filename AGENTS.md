@@ -110,8 +110,11 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     which cooldown and under a 30 000-char total budget (lowest priority
   │     dropped first). Priority is the BUDGET order; delivery reverses the kept
   │     set so the highest-priority view (plan mode, then the todo list) lands at
-  │     the TAIL of the injected block, where recency bias gives it the strongest
-  │     attention. They used to be REBUILT INTO THE CACHED SYSTEM PROMPT,
+  │     the END of the reminder block, immediately BEFORE the turn's user
+  │     message — live state first, then the request, with the user's own input
+  │     staying LAST (the reducer only appends, so the block is positioned with a
+  │     `RemoveMessage(REMOVE_ALL_MESSAGES)` whole-list rewrite). They used to be
+  │     REBUILT INTO THE CACHED SYSTEM PROMPT,
   │     which froze them until the next rebuild and made the prompt a bad cache
   │     citizen; the prompt now holds only stable content (persona + memory +
   │     skills index), each reminder is re-derived from live state every turn,

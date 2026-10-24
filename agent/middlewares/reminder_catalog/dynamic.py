@@ -6,8 +6,11 @@ middlewares that do not care about trailing injected messages.
 
 The hook injects on the turn's FIRST model call only — the same "the last
 message is a genuine user message" test ``TaskIntentMiddleware`` uses — so a
-tool-loop continuation inside one turn cannot re-inject. Failure is fail-open:
-a broken builder or an unreadable register costs a reminder, never a turn.
+tool-loop continuation inside one turn cannot re-inject. The reminders are
+positioned IMMEDIATELY BEFORE the user's message (not after it), so the input
+reads as "live state first, then the request" while the human message stays
+last for the middlewares downstream. Failure is fail-open: a broken builder or
+an unreadable register costs a reminder, never a turn.
 """
 
 from __future__ import annotations
@@ -15,7 +18,8 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from loguru import logger
 
 from pub.func.message.system_reminder import system_reminder_metadata, wrap_reminder
@@ -83,8 +87,9 @@ class DynamicReminderMiddleware(AgentMiddleware):
                 # resolve_injections returns high→low (its descending sort is
                 # for budget allocation). Reverse for delivery so the highest
                 # priority view — plan mode, then the todo list — lands at the
-                # TAIL, closest to the generation point where recency bias
-                # gives it the strongest attention.
+                # END of the reminder block, immediately BEFORE the user message
+                # (the closest position to the generation point that still keeps
+                # the user's own input last).
                 for source_id, content in reversed(list(injections.items()))
             ]
             logger.debug(
@@ -94,7 +99,19 @@ class DynamicReminderMiddleware(AgentMiddleware):
                 turn,
                 ", ".join(injections),
             )
-            return {"messages": reminders}
+            # The reminders belong BEFORE the user's message: the input reads
+            # as "live state first, then the request". The reducer only appends,
+            # so this positions them with a whole-list rewrite (same technique
+            # WorkspaceNoticeMiddleware uses for its notices). The human message
+            # therefore stays LAST, which the middlewares downstream rely on.
+            return {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *messages[:-1],
+                    *reminders,
+                    messages[-1],
+                ]
+            }
         except Exception:
             logger.exception("DynamicReminderMiddleware: failed; continuing without reminders")
             return None
