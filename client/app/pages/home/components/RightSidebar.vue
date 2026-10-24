@@ -46,6 +46,10 @@
            settings menu. -->
       <div
         class="shrink-0 flex items-center gap-2 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
+        <!-- Recently closed tabs: the down arrow is the LEFTMOST control in the
+             strip; its menu offers the same two groups (当前会话 / 全局). A closed
+             side chat restores in place with its retained history. -->
+        <RecentClosedTabsMenu :session-id="sessionId" />
         <!-- Maximize / restore, LEFT of the group pills: the panel fills the whole
              viewport so a wide editor (模型配置, 预设, 技能) does not have to be read
              through its narrow column; the same button restores the previous
@@ -80,10 +84,6 @@
             {{ t(`rightSidebar.scopes.${scope}`) }}
           </button>
         </div>
-        <!-- Recently closed tabs: the arrow sits just LEFT of the tab list, and
-             its menu offers the same two groups (当前会话 / 全局). A closed side
-             chat restores in place with its retained history. -->
-        <RecentClosedTabsMenu :session-id="sessionId" />
         <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <button
             v-for="tab in store.tabsInScope(store.activeScope)"

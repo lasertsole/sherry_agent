@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { watch } from 'vue';
 
 /**
  * Panel kinds the right sidebar can host as tabs: the three viewers plus every
@@ -191,6 +192,34 @@ export interface RecentClosedTab {
   closedAt: number;
 }
 
+/** Newest entries kept per recent group (per session for the session group). */
+export const RECENT_CLOSED_LIMIT = 10;
+
+/**
+ * Keep the newest entries of each group and drop everything older. The session
+ * group is capped PER SESSION (one session's history can never crowd out or be
+ * seen by another); the global group is capped once for every session.
+ * @param entries Newest-first recent entries.
+ * @returns The trimmed list, newest-first.
+ */
+function trimRecentClosed(entries: RecentClosedTab[]): RecentClosedTab[] {
+  const sessionCounts = new Map<string, number>();
+  let globalCount = 0;
+  const kept: RecentClosedTab[] = [];
+  for (const entry of entries) {
+    if (entry.scope === 'global') {
+      if (globalCount >= RECENT_CLOSED_LIMIT) continue;
+      globalCount += 1;
+    } else {
+      const count = sessionCounts.get(entry.sessionId) ?? 0;
+      if (count >= RECENT_CLOSED_LIMIT) continue;
+      sessionCounts.set(entry.sessionId, count + 1);
+    }
+    kept.push(entry);
+  }
+  return kept;
+}
+
 let tabSeq = 0;
 
 /**
@@ -210,8 +239,15 @@ export const useRightSidebarStore = defineStore(
     const tabs = ref<RightSidebarTab[]>([]);
     /** Recently closed tabs (newest first), capped; persisted across reloads. */
     const recentClosed = ref<RecentClosedTab[]>([]);
-    /** Maximum entries kept in the recent-tabs menu (both scopes together). */
-    const RECENT_CLOSED_LIMIT = 30;
+    // Also trims a persisted list written by an older build with a larger cap.
+    watch(
+      () => recentClosed.value,
+      entries => {
+        const trimmed = trimRecentClosed(entries);
+        if (trimmed.length !== entries.length) recentClosed.value = trimmed;
+      },
+      { immediate: true }
+    );
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
     /**
@@ -382,7 +418,8 @@ export const useRightSidebarStore = defineStore(
      * same panel) and the session it belongs to: a side chat uses its PARENT
      * session id, other session-scoped tabs use the session that was active at
      * close. Re-closing the same tab moves it to the front instead of stacking a
-     * duplicate; the list is capped and persisted.
+     * duplicate; each group keeps only its newest {@link RECENT_CLOSED_LIMIT}
+     * pages (older entries are dropped). The list is persisted.
      * @param tab The tab being closed.
      * @param activeSessionId The session shown when it was closed.
      */
@@ -406,10 +443,7 @@ export const useRightSidebarStore = defineStore(
         sessionId,
         closedAt: Date.now()
       };
-      recentClosed.value = [entry, ...recentClosed.value.filter(candidate => candidate.key !== key)].slice(
-        0,
-        RECENT_CLOSED_LIMIT
-      );
+      recentClosed.value = trimRecentClosed([entry, ...recentClosed.value.filter(candidate => candidate.key !== key)]);
     }
 
     /**
@@ -419,10 +453,11 @@ export const useRightSidebarStore = defineStore(
      * @param sessionId Current session id.
      */
     function recentClosedFor(scope: RightSidebarScope, sessionId: string): RecentClosedTab[] {
-      if (scope === 'global') {
-        return recentClosed.value.filter(entry => entry.scope === 'global');
-      }
-      return recentClosed.value.filter(entry => entry.scope === 'session' && entry.sessionId === sessionId);
+      const entries =
+        scope === 'global'
+          ? recentClosed.value.filter(entry => entry.scope === 'global')
+          : recentClosed.value.filter(entry => entry.scope === 'session' && entry.sessionId === sessionId);
+      return entries.slice(0, RECENT_CLOSED_LIMIT);
     }
 
     /**

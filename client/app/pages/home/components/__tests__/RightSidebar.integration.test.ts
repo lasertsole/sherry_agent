@@ -462,10 +462,13 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     await nextTick();
 
     const toggle = wrapper.get('[data-test="recent-closed-toggle"]');
-    // The arrow sits LEFT of the tab list (the strip's scroll container).
-    expect(
-      toggle.element.compareDocumentPosition(wrapper.get('.overflow-x-auto').element) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    // The arrow is the LEFTMOST control: it precedes the maximize button, the
+    // group pills and the tab list.
+    const following = (other: Element) =>
+      Boolean(toggle.element.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(following(wrapper.get('[data-test="sidebar-maximize"]').element)).toBe(true);
+    expect(following(wrapper.get('[data-test="scope-tabs"]').element)).toBe(true);
+    expect(following(wrapper.get('.overflow-x-auto').element)).toBe(true);
 
     await toggle.trigger('click');
     await nextTick();

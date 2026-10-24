@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import {
+  RECENT_CLOSED_LIMIT,
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH,
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
+  type RightSidebarPanelKind,
   type RightSidebarTab,
   useRightSidebarStore
 } from '../right-sidebar';
@@ -337,5 +339,51 @@ describe('stores/right-sidebar', () => {
     expect(store.recentClosedFor('global', 'parent')).toHaveLength(1);
     expect(store.recentClosedFor('global', 'someone-else')).toHaveLength(1);
     expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('keeps only the newest 10 pages per session and 10 global pages', () => {
+    const store = useRightSidebarStore();
+
+    for (let index = 0; index < RECENT_CLOSED_LIMIT + 2; index += 1) {
+      store.rememberClosed(
+        {
+          id: `fileViewer-${index}`,
+          kind: 'fileViewer',
+          scope: 'session',
+          payload: { path: `src/file-${index}.ts` }
+        },
+        'parent'
+      );
+    }
+
+    const sessionEntries = store.recentClosedFor('session', 'parent');
+    expect(sessionEntries).toHaveLength(RECENT_CLOSED_LIMIT);
+    expect(sessionEntries[0].payload?.path).toBe(`src/file-${RECENT_CLOSED_LIMIT + 1}.ts`);
+    expect(sessionEntries.at(-1)?.payload?.path).toBe('src/file-2.ts');
+    // Other sessions never see this session's history.
+    expect(store.recentClosedFor('session', 'other')).toEqual([]);
+
+    const globalKinds: RightSidebarPanelKind[] = [
+      'logs',
+      'stats',
+      'knowledgeGraph',
+      'skills',
+      'systemConfig',
+      'persona',
+      'memory',
+      'heartbeat',
+      'cron',
+      'extend',
+      'webSearch',
+      'account'
+    ];
+    globalKinds.forEach((kind, index) => {
+      store.rememberClosed({ id: `global-${index}`, kind, scope: 'global' }, 'parent');
+    });
+
+    const globalEntries = store.recentClosedFor('global', 'other-session');
+    expect(globalEntries).toHaveLength(RECENT_CLOSED_LIMIT);
+    expect(globalEntries[0].kind).toBe(globalKinds.at(-1));
+    expect(globalEntries.map(entry => entry.kind)).not.toContain('logs');
   });
 });

@@ -659,6 +659,9 @@ const doBatchDeleteSessions = async () => {
 
     const deleted = ids.filter(id => !remain.includes(id));
     if (deleted.length > 0) {
+      // A destroyed session's recent-tabs history dies with it.
+      const rightSidebar = useRightSidebarStore();
+      for (const id of deleted) rightSidebar.forgetSession(id);
       historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
       // Synchronously clear deleted sessions' character snapshot cache
       for (const id of deleted) clearCachedCharacter(id);
