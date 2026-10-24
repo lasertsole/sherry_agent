@@ -14,6 +14,16 @@ describe('anchorPanelLeft', () => {
     expect(anchorPanelLeft({ ...base, triggerLeft: 1180, triggerRight: 1202 })).toBe(902);
   });
 
+  it('align: "start" grows right even from the right half, then clamps', () => {
+    // The recent-tabs arrow sits at the left of the right sidebar but on the
+    // window's right half; its menu must still drop down-right.
+    expect(anchorPanelLeft({ ...base, triggerLeft: 700, triggerRight: 722, align: 'start' })).toBe(700);
+    // Near the viewport edge the panel is clamped, not mirrored.
+    expect(anchorPanelLeft({ ...base, triggerLeft: 1180, triggerRight: 1202, align: 'start' })).toBe(
+      base.viewportWidth - TOOLBAR_POPOVER_EDGE_GAP - base.panelWidth
+    );
+  });
+
   it('clamps into the viewport when the anchor would leave it', () => {
     // Right-half trigger, panel wider than the space behind it: it still fits,
     // because the anchor (the trigger's right edge) is inside the viewport.

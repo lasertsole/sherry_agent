@@ -2,6 +2,7 @@
   <ToolbarPopover
     ref="popover"
     placement="down"
+    align="start"
     class="shrink-0">
     <template #trigger="{ toggle }">
       <button
@@ -16,7 +17,7 @@
     </template>
 
     <div
-      class="w-64"
+      class="w-60"
       data-test="recent-closed-menu">
       <!-- Two groups, mirroring the strip's 当前会话 / 全局 pills. -->
       <div

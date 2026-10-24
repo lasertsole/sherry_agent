@@ -33,9 +33,14 @@ import { anchorPanelLeft } from '~/utils/toolbar-popover';
 /**
  * Where the panel grows: "up" (the default — the session toolbar sits at the
  * bottom, a downward panel would cover the input box) or "down" (the top bar).
+ * `align="start"` forces a right-growing panel even near the right edge.
  */
-const props = withDefaults(defineProps<{ placement?: 'up' | 'down' }>(), { placement: 'up' });
+const props = withDefaults(defineProps<{ placement?: 'up' | 'down'; align?: 'auto' | 'start' }>(), {
+  placement: 'up',
+  align: 'auto'
+});
 const placement = props.placement;
+const align = props.align;
 
 const open = ref(false);
 const panelRef = ref<HTMLElement>();
@@ -44,8 +49,8 @@ const rootRef = ref<HTMLElement>();
 const panelStyle = ref<Record<string, string>>({});
 
 /**
- * Place the panel above the trigger, growing away from the nearer window edge
- * (see `anchorPanelLeft`) and clamped inside the viewport.
+ * Place the panel relative to the trigger (see `anchorPanelLeft`) and clamp it
+ * inside the viewport.
  */
 const place = () => {
   const wrapper = rootRef.value?.getBoundingClientRect();
@@ -55,7 +60,8 @@ const place = () => {
     triggerLeft: wrapper.left,
     triggerRight: wrapper.right,
     panelWidth: panel.offsetWidth,
-    viewportWidth: window.innerWidth
+    viewportWidth: window.innerWidth,
+    align
   });
   panelStyle.value = { left: `${left - Math.round(wrapper.left)}px` };
 };
