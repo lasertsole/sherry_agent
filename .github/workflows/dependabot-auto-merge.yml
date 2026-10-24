@@ -17,8 +17,27 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
 
+      - name: Detect Nuxt/Vue ecosystem updates
+        id: nuxt
+        env:
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+
+          try:
+              deps = json.loads(os.environ.get("UPDATED_DEPENDENCIES") or "[]")
+          except json.JSONDecodeError:
+              deps = []
+          pattern = re.compile(r"^(nuxt|nitropack|vue|vue-router|pinia|@nuxt/|@nuxtjs/|@pinia/)")
+          matched = any(pattern.match(str(dep.get("dependency-name", ""))) for dep in deps)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"matched={'true' if matched else 'false'}\n")
+          PY
+
       - name: Auto-merge development deps (patch only)
         if: |
+          steps.nuxt.outputs.matched != 'true' &&
           contains(fromJson(steps.metadata.outputs.updated-dependencies-json), 'dependency-type') &&
           steps.metadata.outputs.dependency-type == 'development' &&
           steps.metadata.outputs.update-type == 'version-update:semver-patch'
@@ -29,6 +48,7 @@ jobs:
 
       - name: Auto-merge production deps (patch only)
         if: |
+          steps.nuxt.outputs.matched != 'true' &&
           steps.metadata.outputs.dependency-type != 'development' &&
           steps.metadata.outputs.update-type == 'version-update:semver-patch'
         run: gh pr merge --auto --merge "$PR_URL"
