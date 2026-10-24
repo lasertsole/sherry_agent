@@ -108,10 +108,8 @@ const voice = useVoiceInput();
 const voiceRecording = computed(() => voice.state.value === 'recording');
 const voiceTranscribing = computed(() => voice.state.value === 'transcribing');
 
-/** The mic is blocked for unconfigured STT and while a transcription runs; a recording in flight stays stoppable. */
-const voiceStartBlocked = computed(
-  () => props.disabled || voiceTranscribing.value || voice.isSttAvailable.value === false
-);
+/** The mic is blocked while a transcription runs or the box itself is disabled; unconfigured STT stays CLICKABLE — the click toasts the reason instead of silently refusing. */
+const voiceStartBlocked = computed(() => props.disabled || voiceTranscribing.value);
 
 const voiceIcon = computed(() =>
   voiceTranscribing.value ? 'pi pi-spin pi-spinner' : voiceRecording.value ? 'pi pi-stop-circle' : 'pi pi-microphone'

@@ -263,6 +263,7 @@ describe('useVoiceInput', () => {
     const voice = mountMachine();
     voice.isSttAvailable.value = false;
     expect(await voice.startRecording()).toBe(false);
+    expect(voice.lastError.value).toBe('unavailable'); // the click must say why
 
     voice.isSttAvailable.value = true;
     expect(await voice.startRecording()).toBe(true);

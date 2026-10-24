@@ -154,7 +154,9 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
     expect(locked.findAll('.sendActions button').length).toBe(1); // send only
   });
 
-  it('marks the mic unconfigured (title tooltip) when the weights are missing', async () => {
+  it('keeps the unconfigured mic clickable and explains on hover AND on click', async () => {
+    // A disabled button cannot speak: the click itself toasts the reason, the
+    // title stays as the hover hint, and no recording may start.
     vi.mocked(fetchVoiceStatus).mockResolvedValue({ model_dir_present: false, daemon_ready: false });
     const wrapper = mountInput();
     await Promise.resolve();
@@ -162,7 +164,14 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
 
     const mic = wrapper.find('.sendActions button');
     expect(mic.attributes('title')).toContain('未配置');
-    expect(mic.attributes('disabled')).toBeDefined();
+    expect(mic.attributes('disabled')).toBeUndefined();
+
+    await mic.trigger('click');
+    await Promise.resolve();
+    await Promise.resolve();
+    // No recording started and the badge never appears — the click only
+    // produced the (test-unregistered) toast.
+    expect(wrapper.find('.voice-recording').exists()).toBe(false);
   });
 
   it('runs a full round: click → recording UI → stop → transcript lands in the box', async () => {

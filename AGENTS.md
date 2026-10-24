@@ -338,14 +338,16 @@ the daemon through the skill client's public aliases (`daemon_alive` /
 `spawn_daemon` — one spawn implementation, one `.stt_daemon.pid`), and unlinks
 the file; `GET /audio/transcribe/status` reports
 `{model_dir_present, daemon_ready}`. **Availability is the weights**:
-`MODELS_DIR/STT_model/model_weight` on disk gates the button (there is no
+`MODELS_DIR/STT_model/model_weight` on disk gates RECORDING (there is no
 auto-download and the `.env` `STT_*` keys have no consumers), while
 `daemon_ready: false` is just "cold" — the daemon spawns on first use, so the
 route answers a cold start with `503 {warming: true}` (the client retries for
 ~60 s) and a missing deployment with `503 {unavailable: true}`. `null`
 availability (backend unreachable) keeps the button clickable so the first
-attempt surfaces the real error. Insertion failures never touch the box's
-content; `chatInput.voice*` keys cover the four languages.
+attempt surfaces the real error. An UNCONFIGURED mic stays clickable too — a
+disabled button cannot speak — so the click toasts `chatInput.voiceUnavailable`
+and no recording starts; the tooltip carries the same text. Insertion failures
+never touch the box's content; `chatInput.voice*` keys cover the four languages.
 
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 

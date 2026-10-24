@@ -175,7 +175,14 @@ export function useVoiceInput() {
   async function startRecording(): Promise<boolean> {
     if (state.value !== 'idle') return false;
     lastError.value = null;
-    if (isSttAvailable.value === false) return false;
+    if (isSttAvailable.value === false) {
+      // Known-unconfigured: refuse BEFORE touching the mic, but say why — the
+      // card toasts `voiceUnavailable` off this error kind. The button stays
+      // clickable so the click itself delivers the hint (a disabled button
+      // cannot speak).
+      lastError.value = 'unavailable';
+      return false;
+    }
     if (
       typeof navigator === 'undefined' ||
       !navigator.mediaDevices?.getUserMedia ||
