@@ -233,8 +233,8 @@ User message → Robyn WS → agent.core.built_agent() graph
       carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events in SQLite (WAL; lazy retention + session/boot purge); each
-      session accumulates edited paths in `verification_state` (capped 200, not
-      reset per verification) and every verification snapshots them into
+      session accumulates edited paths in `verification_state` (project-relative
+      normalization; capped 200, not reset per verification) and every verification snapshots them into
       `modified_files`; a write also broadcasts a `scope="cross_session"` stale
       row to every OTHER session whose evidence command names the path OR whose
       `modified_files` contains it (gated by EVIDENCE_CROSS_SESSION_STALENESS;

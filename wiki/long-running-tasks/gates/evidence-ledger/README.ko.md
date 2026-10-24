@@ -33,7 +33,7 @@ terminal / python_repl 이 명령을 실행
                       └─ 반환: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
-**Changed-path 스냅샷(B').** `write_file` / `patch_file`은 `EvidenceLedger.record_file_edit()`도 호출해 해당 세션에서 편집한 경로를 누적합니다(중복 제거, 상한 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200. **검증마다 리셋하지 않으므로** 같은 편집 뒤의 lint와 test가 같은 스냅샷을 공유합니다). 검증 명령을 기록할 때 현재 목록이 evidence 행의 `modified_files`로 복사됩니다. 이후 그중 어떤 파일에 쓰더라도 명령이 그 파일을 지목하지 않았어도 evidence가 무효화됩니다.
+**Changed-path 스냅샷(B').** `write_file` / `patch_file`은 `EvidenceLedger.record_file_edit()`도 호출해 해당 세션에서 편집한 경로를 누적합니다(중복 제거, 상한 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200. **검증마다 리셋하지 않으므로** 같은 편집 뒤의 lint와 test가 같은 스냅샷을 공유합니다). 기록 시 세션의 project root 기준으로 정규화합니다: `./a.py`, `a/../a.py`, root 내부 절대 경로는 모두 `a.py`가 되고, root 외부 절대 경로는 절대 경로로 남습니다. 검증 명령을 기록할 때 현재 목록이 evidence 행의 `modified_files`로 복사됩니다. 이후 그중 어떤 파일에 쓰더라도 명령이 그 파일을 지목하지 않았어도 evidence가 무효화됩니다.
 
 **크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 `modified_files`에 편집 경로가 포함된 것, command가 실제 경로 토큰으로 지목한 것, 또는 레거시 행의 command가 포함한 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
 
@@ -166,6 +166,7 @@ def derive_evidence_state(records, index):
 - **방향이 중요:** **더 나중의** stale 이벤트만이 **더 이전의** evidence 행을 무효화합니다. evidence 이전의 stale 이벤트는 파일이 편집된 후 재검증되었음을 의미합니다 — 검증은 신선합니다.
 - **새 행은 정확한 집합:** `file_path in modified_files`, 또는 command의 실제 경로 토큰. 명령이 지목하지 않은 소스 파일(`pytest tests/test_beta.py` + `alpha.py` 쓰기)과 A가 쓰지 않은 테스트 파일을 잡고, 기존 부분문자열 오탐(`feature.py` vs `test_feature.py`)을 피합니다.
 - **레거시 행 폴백:** `file_path in command`. B' 이전 행은 원래 동작을 유지합니다.
+- **경로 정규화:** 누적 경로와 stale 이벤트 모두 writer 세션의 project root 기준으로 정규화합니다(`./`, `..`, root 내부 절대 → project-relative, root 외부 절대는 절대 유지). 문자열 정규화이며 심볼릭 링크를 해석하지 않고, 서로 다른 session root는 통합하지 않습니다.
 - **세션 그룹:** `SessionEvidenceLedger.list_records()`는 `session_id`로 필터링하고, 도출은 한 세션의 행 순서 안에서만 비교합니다. 따라서 크로스 세션 무효화는 영향을 받는 세션 자신의 그룹에 **기록되며**(세션당 한 행), writer의 그룹에 남지 않습니다.
 - **Broken과 unmark:** 같은 `command`의 더 나중 `broken` 이벤트는 `[broken]`(재검증 실패)으로 표시되고, 같은 `command`의 더 나중 `unmark`는 `[stale]`과 `[broken]`을 모두 지웁니다. `evidence_ledger.py`의 `derive_evidence_state()`가 유일한 구현이며, `[broken]`이 `[stale]`보다 우선합니다.
 

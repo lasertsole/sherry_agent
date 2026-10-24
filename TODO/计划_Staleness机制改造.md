@@ -1,7 +1,7 @@
 # 计划：Staleness 机制改造——从 substring 匹配到 state 表 + 文件追踪
 
 - 建档日期：2026-10-23
-- 状态：**方案 B' 已实施并验证（2026-10-24）**。v1 方案 B 用 in-memory 累积器 + evidence 行 `modified_files` 字段；核实 hermes 后发现其有 `verification_state` 表（`changed_paths_json` + `last_edit_at`）但**只用时间戳做 staleness，没用 changed_paths**。v2 改为学 hermes 的 state 表结构，但 staleness 判定用 `changed_paths` 做精确匹配——这是 hermes 记了但没用上的数据。
+- 状态：**方案 B' + §4 路径规范化已实施并验证（2026-10-24）**。v1 方案 B 用 in-memory 累积器 + evidence 行 `modified_files` 字段；核实 hermes 后发现其有 `verification_state` 表（`changed_paths_json` + `last_edit_at`）但**只用时间戳做 staleness，没用 changed_paths**。v2 改为学 hermes 的 state 表结构，但 staleness 判定用 `changed_paths` 做精确匹配——这是 hermes 记了但没用上的数据。
 - **实施偏差（已修正）**：不采用“每次验证后重置 changed_paths”——改为**累积（上限 200）并在每条验证上快照**。否则 A 写文件后先跑 lint 再跑 pytest，pytest 的 evidence 会拿到空集合，跨文件 stale 仍然漏报。多命令共享同一快照，语义更保守但正确。
 - **文档范围**：(1) 评估 hermes 纯时间戳 + 三种 sherry 适配方案；(2) 推荐方案 B'（state 表 + changed_paths 精确匹配）；(3) 性价比分析。
 - **硬约束**：不破坏现有 `derive_evidence_state` 调用方（`evidence_collector` / `regression_gate`）；Gate B/C 硬阻断行为不变；fail-open；向后兼容旧 evidence 行。
@@ -266,7 +266,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 
 ---
 
-## 4. 任务二：（可选）路径规范化
+## 4. 任务二：（已实施）路径规范化
 
 ### 4.1 目标
 
@@ -274,8 +274,8 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 
 ### 4.2 改动清单
 
-- [ ] **4.2.1** `evidence_recorder.py` 的 `record_file_edit`：把 `file_path` 规范化为相对 project root（复用 `session_workspace_root` + `resolve_workspace_path`）
-- [ ] **4.2.2** `mark_stale_for_path` 的 `file_path` 同样规范化
+- [x] **4.2.1** `evidence_ledger.py::normalize_evidence_path()`：把 `file_path` 规范化为相对 session project root（`record_file_edit` / `mark_stale_for_path` / cross-session 三处共用）；`./`、`..`、root 内绝对路径统一为相对形式，root 外绝对路径保留绝对。
+- [x] **4.2.2** `mark_stale_for_path` 的 `file_path` 同样规范化（`mark_stale_for_path_all_sessions` 同步）。
 
 **验收**：不同 subagent 用不同 cwd 写同一文件时，`changed_paths` 里的路径一致。
 
@@ -366,6 +366,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 - `record_verification_evidence()`：把 `changed_paths` 快照进 evidence 的 `modified_files`。
 - `derive_evidence_state()`：有 `modified_files` 的新行按精确集合 + command 中的真实路径 token 匹配；旧行降级 substring。
 - `mark_stale_for_path()` / `mark_stale_for_path_all_sessions()`：匹配条件扩展为 `command` 子串 **OR** `modified_files` JSON 包含路径，使用 SQLite JSON1；跨 session 传播因此能命中“B 写 A 改过的源文件”。
+- `normalize_evidence_path()`：`record_file_edit`、`mark_stale_for_path`、跨 session 传播共用。`./`、`..`、root 内绝对路径统一为 project-relative；root 外绝对路径保留绝对（不 resolve 符号链接，避免慢路径/越界）。
 - `purge_session` / `purge_orphans` 同步删除 `verification_state`。
 
 ### 9.2 A/B 有效性
@@ -376,10 +377,15 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 | 同上，走真实 `write_file` 生产者 + `taskflow_finish` Gate C | finish **通过**（漏报） | finish **拒绝** `[stale]` |
 | A 改 `other.py`，命令 `pytest test_feature.py`；B 写 `feature.py` | 子串命中 `test_feature.py` → **误报 stale** | 精确集合不含 feature.py → **不误报** |
 | A 写 alpha.py 后先 lint 再 test | 第一条验证消费快照，第二条丢失 | 两条 evidence 都带 `["alpha.py"]` |
+| A 写 `./src/alpha.py`，B 写 `src/alpha.py` | 字符串不等 → 漏报 | 规范化后同一路径 → **stale** |
+| A 写 `src/alpha.py`，B 写 root 内绝对路径 | 字符串不等 → 漏报 | 规范化后同一路径 → **stale** |
+| A 写 `src/../src/alpha.py`，B 写 `src/alpha.py` | 字符串不等 → 漏报 | 规范化后同一路径 → **stale** |
+| 不同 session root（A `/project`、B `/project/src`） | — | **仍不统一**（project-relative 的边界；需 absolute canonical） |
 
 ### 9.3 验证与性能
 
-- 新增 `tests/agent/tools/pub_base/test_evidence_state.py`（9 个单测：累积/上限、快照、多命令共享、跨文件 stale、精确匹配、旧行降级、purge、旧库迁移）。
+- 新增 `tests/agent/tools/pub_base/test_evidence_state.py`（10 个单测：累积/上限、快照、多命令共享、跨文件 stale、精确匹配、测试文件 token、旧行降级、purge、旧库迁移）。
+- 新增 `tests/agent/tools/pub_base/test_evidence_path_normalization.py`（5 个单测：`./`/`..`/绝对路径统一、root 外保留绝对、跨 session 绝对写命中、无 root 字符串规范化、幂等）。
 - 新增 `tests/agent/tools/taskflow/test_evidence_state_ab_e2e.py`（2 个 e2e：真实 `write_file` 生产者 + 真实 `taskflow_finish` Gate C，旧行漏报 vs B' 拒绝）。
 - 性能（100 session / 1000 evidence 行）：单 session 命中 7.07ms；100 session 全命中 16.36ms（含 100 次 stale 插入），均 <50ms。
 - 完整 split gate 与 docs gates 通过；CI 见提交记录。
@@ -387,7 +393,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 ### 9.4 边界
 
 - **不重置 changed_paths** 是本实施对原计划的修正：多命令共享同一批编辑；代价是集合会累积到 200 条，后续写其中任一文件都会让该 session 的 evidence stale（保守方向）。
-- **路径规范化未做**（原计划 §4 可选）：目前按写入参数原样匹配；不同 cwd 写同一文件时可能不匹配。
+- **路径规范化已做（同一 root）**：`./`、`..`、root 内绝对路径统一为 project-relative；**不同 session root** 仍不统一（project-relative 的固有边界），需要 absolute canonical 才能覆盖。
 - **只覆盖经过 `invalidates_evidence` 的写路径**：terminal 重定向、脚本内部写文件不进入 `record_file_edit`。
 - `modified_files` 是“改过的文件集合”，不是命令的真实依赖图；文件级精确匹配仍可能误报（例如改 README 后跑测试），但比纯时间戳/子串更可控。
 - 新行仍保留“command 以真实路径 token 点名”的匹配：A 没写过测试文件，但 B 改了 A 跑过的 `tests/test_beta.py`，仍会 stale；token 匹配避免了 `feature.py` 命中 `test_feature.py` 的子串误报。

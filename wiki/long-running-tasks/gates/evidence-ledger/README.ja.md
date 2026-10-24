@@ -33,7 +33,7 @@ terminal / python_repl がコマンドを実行
                       └─ 返す: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
-**Changed-path スナップショット（B'）。** `write_file` / `patch_file` は `EvidenceLedger.record_file_edit()` も呼び、そのセッションで編集したパスを蓄積します（重複排除、上限 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200。**検証ごとにリセットしない**ため、同じ編集の後の lint と test が同じスナップショットを共有します）。検証コマンドの記録時に現在のリストが evidence 行の `modified_files` にコピーされます。その後そのいずれかのファイルへの書き込みは、コマンドがそのファイルを名指ししていなくても evidence を無効化します。
+**Changed-path スナップショット（B'）。** `write_file` / `patch_file` は `EvidenceLedger.record_file_edit()` も呼び、そのセッションで編集したパスを蓄積します（重複排除、上限 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200。**検証ごとにリセットしない**ため、同じ編集の後の lint と test が同じスナップショットを共有します）。記録時にセッションの project root へ正規化します: `./a.py`、`a/../a.py`、root 内の絶対パスはすべて `a.py` になり、root 外の絶対パスは絶対のままです。検証コマンドの記録時に現在のリストが evidence 行の `modified_files` にコピーされます。その後そのいずれかのファイルへの書き込みは、コマンドがそのファイルを名指ししていなくても evidence を無効化します。
 
 **クロスセッション伝播。** ファイル書き込みはまず書き込み側セッションをマークします。`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` が true のとき、`EvidenceLedger.mark_stale_for_path_all_sessions()` が他のセッションの evidence 行から、`modified_files` に編集パスを含むもの、command が実パスのトークンとして名指すもの、または旧行の command が含むものを探し、影響を受ける各セッションの下に `scope="cross_session"` の stale 行を 1 行ずつ追加します。`source_session` は書き込み側を記録し、`max_sessions_scan` は走査数を制限し、`exclude_self` は既に個別マーク済みの書き込み側を飛ばします。読み取り側の導出は変更不要です——ブロードキャスト行は影響を受けるセッション自身の行順に入るためです。
 
@@ -166,6 +166,7 @@ def derive_evidence_state(records, index):
 - **方向が重要:** **より後の** stale イベントだけが**より前の** evidence 行を無効化します。evidence より前の stale イベントは、ファイルが編集された後に再検証されたことを意味し、検証は新鮮です。
 - **新行の正確な集合:** `file_path in modified_files`、または command の実パストークン。コマンドが名指ししないソースファイル（`pytest tests/test_beta.py` + `alpha.py` への書き込み）と、A が書いていないテストファイルを捕まえ、旧来の部分文字列誤報（`feature.py` vs `test_feature.py`）を避けます。
 - **旧行のフォールバック:** `file_path in command`。B' 以前の行は元の動作のままです。
+- **パス正規化:** 蓄積パスと stale イベントの両方を書き込み側セッションの project root に対して正規化します（`./`、`..`、root 内絶対 → project-relative、root 外絶対は絶対のまま）。文字列正規化であり、シンボリックリンクは解決しません。異なる session root は統一されません。
 - **セッショングループ:** `SessionEvidenceLedger.list_records()` は `session_id` でフィルタリングし、導出は 1 つのセッションの行順の中だけで比較します。したがってクロスセッションの無効化は、影響を受けるセッション自身のグループに**書き込まれ**（セッションごとに 1 行）、書き込み側のグループには残りません。
 - **Broken と unmark:** 同じ `command` のより後の `broken` イベントは `[broken]`（再検証で失敗）として描画され、同じ `command` のより後の `unmark` は `[stale]` と `[broken]` の両方を消します。`evidence_ledger.py` の `derive_evidence_state()` が唯一の実装で、`[broken]` は `[stale]` より優先されます。
 

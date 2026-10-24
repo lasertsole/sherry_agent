@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import posixpath
 import shlex
 import sqlite3
 import threading
@@ -39,6 +41,7 @@ from loguru import logger
 
 from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_LEDGER
 from config.path import resolve_evidence_ledger_path
+from .path_utils import session_workspace_root
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS evidence_events (
@@ -71,6 +74,33 @@ _EVIDENCE_PATH_MATCH = (
     "OR EXISTS (SELECT 1 FROM json_each(COALESCE(modified_files_json, '[]')) "
     "WHERE value = ?))"
 )
+
+
+def normalize_evidence_path(file_path: object, session_key: str | None) -> str:
+    """Canonicalize an evidence path relative to its session's project root.
+
+    ``./a.py``, ``a/../a.py`` and an absolute path inside the root all become
+    ``a.py``; an absolute path outside the root stays absolute. This is the
+    cheap string form (``normpath`` / ``relpath``), not ``Path.resolve()``:
+    evidence writes happen on every tool call and symlink resolution is both
+    slower and capable of moving a path outside its project.
+    """
+    text = str(file_path or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    if not os.path.isabs(text):
+        return posixpath.normpath(text)
+    normalized = posixpath.normpath(text)
+    try:
+        root = session_workspace_root(session_key) if session_key else None
+        if root is None:
+            return normalized
+        relative = os.path.relpath(normalized, str(root)).replace("\\", "/")
+        if relative == "." or not relative.startswith("../"):
+            return relative
+    except (OSError, ValueError):
+        pass
+    return normalized
 
 
 class EvidenceLedger:
@@ -332,7 +362,7 @@ class EvidenceLedger:
 
         Fail-open: a state write failure only logs.
         """
-        path = str(file_path or "").strip()
+        path = normalize_evidence_path(file_path, session_key)
         if not path or not session_key:
             return
         try:
@@ -394,6 +424,7 @@ class EvidenceLedger:
         ``modified_files`` set (or, for legacy rows, in its ``command``). The
         count is for logging only.
         """
+        file_path = normalize_evidence_path(file_path, session_key)
         with cls._connection() as conn:
             conditions = ["event IS NULL", _EVIDENCE_PATH_MATCH]
             params: list[object] = [file_path, file_path]
@@ -439,6 +470,7 @@ class EvidenceLedger:
 
         Fail-open: a scan/insert failure only logs and reports 0.
         """
+        file_path = normalize_evidence_path(file_path, writer_session_id)
         if not file_path:
             return 0
         try:
@@ -720,4 +752,9 @@ class SessionEvidenceLedger:
         return EvidenceLedger.mark_stale_for_path(file_path, self.session_key)
 
 
-__all__ = ["EvidenceLedger", "SessionEvidenceLedger", "derive_evidence_state"]
+__all__ = [
+    "EvidenceLedger",
+    "SessionEvidenceLedger",
+    "derive_evidence_state",
+    "normalize_evidence_path",
+]
