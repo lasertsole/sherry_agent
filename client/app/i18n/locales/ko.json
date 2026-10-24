@@ -27,7 +27,14 @@
     "sendNow": "즉시",
     "editQueued": "대기 중인 메시지 편집",
     "cancelQueued": "대기 중인 메시지 취소",
-    "waitingApproval": "승인 대기 중..."
+    "waitingApproval": "승인 대기 중...",
+    "voiceRecord": "음성 입력",
+    "voiceStop": "녹음 중지",
+    "voiceUnavailable": "음성 인식 모델이 설정되지 않았습니다. 모델 설정에서 STT 모델을 먼저 배치하세요",
+    "voicePermissionDenied": "마이크 권한이 거부되었습니다",
+    "voiceTooShort": "녹음이 너무 짧습니다. 다시 말해 주세요",
+    "voiceWarming": "음성 인식 모델을 처음 로드하는 중입니다. 잠시 후 다시 시도하세요",
+    "voiceFailed": "음성 인식에 실패했습니다. 다시 시도하세요"
   },
   "sessionModelPicker": {
     "pending": "다음 턴에 적용",

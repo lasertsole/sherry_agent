@@ -296,7 +296,7 @@
 
 ---
 
-### 3.7 语音输入到输入框
+### 3.7 语音输入到输入框 ✅ 已实施（2026-10-24）
 
 **差距**：sherry 后端 STT 已是可配模型族，但输入框未集成录音按钮。
 
@@ -304,12 +304,11 @@
 
 **借鉴方案**：前端 `MediaRecorder` 录音 → base64 → 调后端 STT → 文本插入输入框。
 
-**改动清单**：
-- [ ] **3.7.1** `inputBox.vue` 增麦克风按钮（按住录音 / 点击录音）
-- [ ] **3.7.2** 新建 `client/app/composables/use-voice-input.ts`：`MediaRecorder` + 调后端 STT API
-- [ ] **3.7.3** 转录文本插入输入框光标位置
-
-**工程量**：2-3 天
+**落地记录**：与原方案有两处偏差——(1) 转录不是 base64 调"后端 STT 模型族"（`.env` 的
+`STT_*` 键零消费者），而是网关代理路由 `POST /audio/transcribe` 转发到本地 SenseVoice
+守护进程（浏览器无法直连：CSP/鉴权/CORS）；(2) 上传的不是 MediaRecorder 原始编码，而是
+客户端 `decodeAudioData` 重编码的 16 kHz PCM16 WAV（守护进程解码链不认 webm/opus，打包
+后端无 ffmpeg）。完整机制见 AGENTS.md 的 "Voice Input" 一节。
 
 ---
 

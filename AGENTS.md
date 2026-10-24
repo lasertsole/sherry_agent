@@ -314,6 +314,36 @@ works.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 
+## Voice Input (`use-voice-input.ts` / `server/service/audio_transcribe_service.py`)
+
+The composer's mic button (`inputBox.vue`, in the `sendActions` cluster) records,
+transcribes and inserts the text at the caret — the whole flow lives inside
+`inputBox.vue` (`insertVoiceText`, exposed beside `addQuoteChip`), so `[sid].vue`
+and `SideChatPanel.vue` get it without wiring. **Capture** is `MediaRecorder`
+(mime picked from an `isTypeSupported` chain: webm/opus → ogg/opus → mp4) with a
+300 s auto-stop cap and a `<0.3 s` refuse; the blob is then decoded by the SAME
+browser that recorded it (`AudioContext.decodeAudioData`) and re-encoded to a
+16 kHz mono PCM16 WAV (`encodeWavPcm16` / `resampleLinear` / `mixdownToMono`).
+The WAV detour is deliberate: the STT daemon's decode chain (soundfile →
+audioread) cannot read webm/opus and the packaged backend ships no ffmpeg,
+while a browser always decodes its own container — the server keeps zero
+decode dependencies. **Transport** is one gateway proxy over the local FunASR
+SenseVoice daemon (`skills/builtin/core/speech_to_text/scripts/server.py`,
+`127.0.0.1:9011`, file-path contract, no CORS/auth — unreachable from a
+browser): `POST /audio/transcribe` parks the upload under `TEMP_DIR`, drives
+the daemon through the skill client's public aliases (`daemon_alive` /
+`spawn_daemon` — one spawn implementation, one `.stt_daemon.pid`), and unlinks
+the file; `GET /audio/transcribe/status` reports
+`{model_dir_present, daemon_ready}`. **Availability is the weights**:
+`MODELS_DIR/STT_model/model_weight` on disk gates the button (there is no
+auto-download and the `.env` `STT_*` keys have no consumers), while
+`daemon_ready: false` is just "cold" — the daemon spawns on first use, so the
+route answers a cold start with `503 {warming: true}` (the client retries for
+~60 s) and a missing deployment with `503 {unavailable: true}`. `null`
+availability (backend unreachable) keeps the button clickable so the first
+attempt surfaces the real error. Insertion failures never touch the box's
+content; `chatInput.voice*` keys cover the four languages.
+
 ## Project Directory Binding (`runtime/session/project_dir.py`)
 
 Every session has a **project directory**: the root its tools resolve relative

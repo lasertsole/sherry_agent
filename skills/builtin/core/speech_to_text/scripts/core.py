@@ -103,6 +103,17 @@ def _spawn_daemon() -> None:
         logger.exception(f"STT daemon spawn failed: {e}")
 
 
+# Public aliases for server-side reuse (server/service/audio_transcribe_service.py):
+# the browser voice-input proxy drives the SAME daemon lifecycle (probe / spawn /
+# wait) instead of a second spawn implementation, so the pid file and the
+# detached-process semantics stay defined in exactly one place.
+daemon_alive = _daemon_alive
+spawn_daemon = _spawn_daemon
+DAEMON_BASE = _DAEMON_BASE
+READY_WAIT = _READY_WAIT
+HTTP_TIMEOUT = _HTTP_TIMEOUT
+
+
 @validate_call
 def stt(audio_path: str) -> str:
     """Transcribe an audio file through the persistent STT daemon.

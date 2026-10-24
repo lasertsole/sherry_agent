@@ -27,7 +27,14 @@
     "sendNow": "Now",
     "editQueued": "Edit queued message",
     "cancelQueued": "Cancel queued message",
-    "waitingApproval": "Waiting for approval..."
+    "waitingApproval": "Waiting for approval...",
+    "voiceRecord": "Voice input",
+    "voiceStop": "Stop recording",
+    "voiceUnavailable": "Speech recognition is not configured — place the STT model in the model settings first",
+    "voicePermissionDenied": "Microphone permission was denied",
+    "voiceTooShort": "Recording too short — hold and speak",
+    "voiceWarming": "The speech model is loading for the first time — try again shortly",
+    "voiceFailed": "Speech recognition failed — please retry"
   },
   "sessionModelPicker": {
     "pending": "Applies next turn",

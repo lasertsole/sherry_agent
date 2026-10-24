@@ -27,7 +27,14 @@
     "sendNow": "今すぐ",
     "editQueued": "待機中のメッセージを編集",
     "cancelQueued": "待機中のメッセージを取り消す",
-    "waitingApproval": "承認待ち..."
+    "waitingApproval": "承認待ち...",
+    "voiceRecord": "音声入力",
+    "voiceStop": "録音を停止",
+    "voiceUnavailable": "音声認識モデルが未設定です。先にモデル設定で STT モデルを配置してください",
+    "voicePermissionDenied": "マイクの権限が拒否されました",
+    "voiceTooShort": "録音が短すぎます。もう一度お話しください",
+    "voiceWarming": "音声認識モデルを初回ロード中です。しばらくしてから再試行してください",
+    "voiceFailed": "音声認識に失敗しました。もう一度お試しください"
   },
   "sessionModelPicker": {
     "pending": "次のターンで反映",

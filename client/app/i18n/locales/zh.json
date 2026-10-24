@@ -27,7 +27,14 @@
     "sendNow": "立刻",
     "editQueued": "编辑排队消息",
     "cancelQueued": "取消排队消息",
-    "waitingApproval": "等待审批..."
+    "waitingApproval": "等待审批...",
+    "voiceRecord": "语音输入",
+    "voiceStop": "停止录音",
+    "voiceUnavailable": "语音识别模型未配置，请先在模型配置中放置 STT 模型",
+    "voicePermissionDenied": "麦克风权限被拒绝",
+    "voiceTooShort": "录音太短，请按住再说",
+    "voiceWarming": "语音识别模型首次加载中，请稍候重试",
+    "voiceFailed": "语音识别失败，请重试"
   },
   "sessionModelPicker": {
     "pending": "下一轮生效",
