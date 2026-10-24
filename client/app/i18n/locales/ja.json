@@ -92,7 +92,8 @@
       "sourceTool": "ツール出力",
       "sideChatTitle": "補助セッション",
       "sideChatMissing": "補助セッションを利用できません",
-      "sideChatFailed": "補助セッションの作成に失敗しました"
+      "sideChatFailed": "補助セッションの作成に失敗しました",
+      "sideChatInherited": "メインセッションのコンテキストを継承しました（作成時のスナップショット）"
     },
     "tokenGuard": {
       "title": "モデル設定が最小値未満",

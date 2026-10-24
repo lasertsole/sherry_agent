@@ -92,7 +92,8 @@
       "sourceTool": "도구 출력",
       "sideChatTitle": "보조 세션",
       "sideChatMissing": "보조 세션을 사용할 수 없습니다",
-      "sideChatFailed": "보조 세션 생성에 실패했습니다"
+      "sideChatFailed": "보조 세션 생성에 실패했습니다",
+      "sideChatInherited": "메인 세션 컨텍스트를 상속했습니다 (생성 시 스냅샷)"
     },
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",

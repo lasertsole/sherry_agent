@@ -19,14 +19,27 @@ import type { CachedSessionMeta } from './db';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { fetchProjectDirectory, setProjectDirectory } from './bridge/session';
+import { createSideChat, deleteSideChat, fetchProjectDirectory, setProjectDirectory } from './bridge/session';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import {
+  clearCachedCharacter,
+  clearCachedSessionMeta,
+  clearCachedSessionPreset,
+  clearSessionTitleOverride
+} from './db';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { releaseAgentSocket } from './bridge/agent-socket';
 import { logUtil } from '~/utils/log';
 
 /** What the caller needs to open the side-chat tab. */
 export interface SideChatSession {
-  /** The newly minted session id. */
+  /** The server-created child session id. */
   sessionId: string;
-  /** The placeholder meta row (already cached and announced to the sidebar). */
+  /** The main session this side chat belongs to. */
+  parentSessionId: string;
+  /** Whether the server captured a parent transcript for model-only context. */
+  inherited: boolean;
+  /** The placeholder meta row (cached locally; the session list hides side chats). */
   meta: CachedSessionMeta;
 }
 
@@ -53,7 +66,8 @@ function localCreateTime(date: Date): string {
  * @returns The new session id and its cached placeholder meta.
  */
 export async function createSideChatSession(parentSessionId: string, title: string): Promise<SideChatSession> {
-  const sessionId = crypto.randomUUID();
+  const created = await createSideChat(parentSessionId);
+  const sessionId = created.sessionId;
   const now = new Date();
   const meta: CachedSessionMeta = {
     id: sessionId,
@@ -111,9 +125,42 @@ export async function createSideChatSession(parentSessionId: string, title: stri
   await cacheSessionMeta(meta).catch(e => {
     logUtil.e('[SideChat] session meta cache failed:', e);
   });
-  // The left sidebar keeps its own list; announce the row so it appears now
-  // (the server list picks it up after the first persisted turn).
-  emit('session:created', meta);
+  // Side chats are hidden from the normal session list (ephemeral children);
+  // no session:created announcement.
 
-  return { sessionId, meta };
+  return {
+    sessionId,
+    parentSessionId: created.parentSessionId,
+    inherited: created.inherited,
+    meta
+  };
+}
+
+/**
+ * Close an ephemeral side chat: optionally purge it server-side, release its
+ * socket and drop every local cache row. Callers close the tab afterwards.
+ * @param sessionId Child session id.
+ * @param parentSessionId Parent session id (purge guard).
+ * @param options Close options.
+ * @param options.purge Whether to call the delete endpoint (false when the
+ *   server is already cascading the delete from the parent).
+ */
+export async function closeSideChatSession(
+  sessionId: string,
+  parentSessionId?: string,
+  options: { purge?: boolean } = {}
+): Promise<void> {
+  if (!sessionId) return;
+  if (options.purge !== false) {
+    await deleteSideChat(sessionId, parentSessionId);
+  }
+  releaseAgentSocket(sessionId);
+  // The server purge already succeeded; a Dexie cleanup failure must not leave
+  // a dead tab behind.
+  await Promise.allSettled([
+    clearCachedCharacter(sessionId),
+    clearCachedSessionPreset(sessionId),
+    clearCachedSessionMeta(sessionId),
+    clearSessionTitleOverride(sessionId)
+  ]);
 }

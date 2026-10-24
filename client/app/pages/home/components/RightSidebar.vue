@@ -99,7 +99,7 @@
             <i
               class="pi pi-times text-[10px] opacity-60 hover:opacity-100"
               :aria-label="t('rightSidebar.closeTab')"
-              @click.stop="store.closeTab(tab.id)"></i>
+              @click.stop="emit('close-tab', tab)"></i>
           </button>
           <span
             v-if="store.tabsInScope(store.activeScope).length === 0"
@@ -201,7 +201,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
  * heartbeat) report it so the shell can re-read the session's character
  * snapshot — the shell used to listen on the dialogs directly.
  */
-const emit = defineEmits<{ saved: [] }>();
+const emit = defineEmits<{ saved: []; 'close-tab': [tab: RightSidebarTab] }>();
 
 /** Laying-out floor of a mounted panel (the body scrolls below it). */
 const PANEL_MIN_WIDTH = RIGHT_SIDEBAR_PANEL_MIN_WIDTH;

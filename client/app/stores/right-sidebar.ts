@@ -156,6 +156,10 @@ export interface RightSidebarTab {
     url?: string;
     /** The side session this tab talks to (one tab per session). */
     sessionId?: string;
+    /** The main session this ephemeral side chat belongs to. */
+    parentSessionId?: string;
+    /** Whether the server inherited a parent-transcript snapshot. */
+    inherited?: boolean;
     /** The quoted text the side session's composer starts with. */
     quote?: string;
     /** The quote's localized source label (the chip's tooltip). */
@@ -251,6 +255,9 @@ export const useRightSidebarStore = defineStore(
      * @param payload.url
      * @param payload.sessionId The side session a `sideChat` tab talks to (one
      *   tab per session; `quote`/`source` are initial content, not identity).
+     * @param payload.parentSessionId The main session an ephemeral side chat
+     *   belongs to (its lifecycle parent).
+     * @param payload.inherited Whether the server captured the parent transcript.
      * @param payload.quote
      * @param payload.source
      * @returns The tab id (the existing tab's id when it was reused).
@@ -263,6 +270,8 @@ export const useRightSidebarStore = defineStore(
         instance?: string;
         url?: string;
         sessionId?: string;
+        parentSessionId?: string;
+        inherited?: boolean;
         quote?: string;
         source?: string;
       }

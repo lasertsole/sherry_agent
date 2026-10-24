@@ -238,6 +238,11 @@ class TestFilterSemantics:
                 id="fsh",
                 additional_kwargs={"lc_source": "summarization"},
             ),
+            HumanMessage(
+                content="inherited side-chat context",
+                id="fside",
+                additional_kwargs={"side_chat_context": True},
+            ),
             SystemMessage(content="system", id="fsys"),
             already_flushed,
         ]

@@ -47,6 +47,14 @@ async def purge_session(session_id: str) -> None:
         await purge_subagent_subtree_for_session(session_id)
     except Exception as e:  # a broken child tree must not keep the main session
         logger.warning(f"Failed to purge the subagent subtree for {session_id}: {e}")
+    # Side chats are ephemeral children: deleting their parent deletes them,
+    # including their checkpoint/history/runtime state. Fail-open per child.
+    try:
+        from server.service.side_chat_service import purge_side_chat_children
+
+        await purge_side_chat_children(session_id)
+    except Exception as e:  # noqa: BLE001 - a broken child link must not keep the parent
+        logger.warning(f"Failed to purge side-chat children for {session_id}: {e}")
     await purge_session_data(session_id)
 
 

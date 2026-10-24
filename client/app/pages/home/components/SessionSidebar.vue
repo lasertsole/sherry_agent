@@ -266,6 +266,9 @@ import type { SessionRecord } from '../type.ts';
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
+import { useRightSidebarStore } from '@/stores/right-sidebar';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { closeSideChatSession } from '~/composables/use-side-chat';
 
 const { t } = useI18n();
 
@@ -536,6 +539,21 @@ const handleDeleteSession = async (id: string) => {
     if (!ok) {
       logUtil.w('[handleDeleteSession] Failed to delete session, keeping list item:', id);
       return;
+    }
+    // The server cascaded the parent deletion into its ephemeral side chats;
+    // close their open tabs and drop local caches (purge=false: already gone).
+    const rightSidebar = useRightSidebarStore();
+    for (const tab of rightSidebar.tabs) {
+      if (tab.kind !== 'sideChat' || tab.payload?.parentSessionId !== id) continue;
+      const childSid = tab.payload?.sessionId;
+      if (childSid) {
+        try {
+          await closeSideChatSession(childSid, id, { purge: false });
+        } catch (error) {
+          logUtil.w('[handleDeleteSession] side-chat cache cleanup failed:', error);
+        }
+      }
+      rightSidebar.closeTab(tab.id);
     }
     historyList.value = historyList.value.filter(s => s.id !== id);
     selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id);

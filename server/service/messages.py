@@ -218,12 +218,31 @@ class _GenerateTurn(StreamTurn):
             # ONE graph turn fed with the whole FIFO batch: each queued input
             # becomes its own HumanMessage so the model sees them as distinct
             # user messages in order, and produces ONE combined reply.
+            input_messages = [
+                HumanMessage(content=_get_content_list(m), metadata=self.origin)
+                for m in self.messages
+            ]
+            # A newly created side chat inherits its parent's transcript as a
+            # MODEL-ONLY leading message. The marker is filtered out by
+            # MessagePersistence, so the side chat's visible history stays empty.
+            try:
+                from server.service.side_chat_service import get_context_for_turn
+
+                context_text = await asyncio.to_thread(get_context_for_turn, self.session_id)
+            except Exception:  # noqa: BLE001 - inheritance is fail-open
+                context_text = None
+            if context_text:
+                input_messages.insert(
+                    0,
+                    HumanMessage(
+                        content=context_text,
+                        additional_kwargs={"side_chat_context": True},
+                        metadata={"internal": True, "provenance": "side_chat_context"},
+                    ),
+                )
             input_dict = {
                 "session_id": self.session_id,
-                "messages": [
-                    HumanMessage(content=_get_content_list(m), metadata=self.origin)
-                    for m in self.messages
-                ],
+                "messages": input_messages,
             }
         if self.is_stream:
             return "stream", self._agent.astream(
@@ -601,10 +620,16 @@ def get_history_by_turn_page(
 def get_session_list() -> list[dict[str, Any]]:
     """Enumerate all distinct sessions, newest activity first.
 
-    Returns a list of
-    ``{"session_id": str, "last_time": str, "title": str}`` dicts.
+    Side-chat children are deliberately hidden: they are ephemeral and only
+    reachable through their parent's right-sidebar tab.
     """
-    return get_session_ids()
+    try:
+        from server.service.side_chat_service import side_chat_ids
+
+        hidden = side_chat_ids()
+    except Exception:  # noqa: BLE001 - a broken registry must not hide the list
+        hidden = set()
+    return [row for row in get_session_ids() if row.get("session_id") not in hidden]
 
 
 """End session list retrieval logic"""

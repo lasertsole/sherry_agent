@@ -265,7 +265,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(wrapper.find('[data-test="logs-panel"]').exists()).toBe(false);
   });
 
-  it('closes a tab from its × without activating it', async () => {
+  it('emits close-tab from its × without activating it', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
     sidebarApi.activeTabId = 'logs-1';
@@ -273,7 +273,9 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
     await wrapper.find('button.group i.pi-times').trigger('click');
 
-    expect(sidebarApi.closeTab).toHaveBeenCalledWith('logs-1');
+    const emitted = wrapper.emitted('close-tab') ?? [];
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.[0]).toMatchObject({ id: 'logs-1', kind: 'logs' });
     expect(sidebarApi.activateTab).not.toHaveBeenCalled();
   });
 

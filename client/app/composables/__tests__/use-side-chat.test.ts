@@ -9,26 +9,32 @@ const db = vi.hoisted(() => ({
   cacheSessionMeta: vi.fn(async () => undefined),
   cacheSessionPreset: vi.fn(async () => undefined),
   readCachedCharacter: vi.fn(),
-  readCachedSessionPreset: vi.fn()
+  readCachedSessionPreset: vi.fn(),
+  clearCachedCharacter: vi.fn(async () => undefined),
+  clearCachedSessionMeta: vi.fn(async () => undefined),
+  clearCachedSessionPreset: vi.fn(async () => undefined),
+  clearSessionTitleOverride: vi.fn(async () => undefined)
 }));
 const agentConfig = vi.hoisted(() => ({
   fetchAgentConfig: vi.fn(),
   setAgentConfig: vi.fn(async () => ({ config: {}, pending: false }))
 }));
 const projectSession = vi.hoisted(() => ({
+  createSideChat: vi.fn(),
+  deleteSideChat: vi.fn(async () => undefined),
   fetchProjectDirectory: vi.fn(),
   setProjectDirectory: vi.fn(async () => ({}))
 }));
-const bus = vi.hoisted(() => ({ emit: vi.fn() }));
+const agentSocket = vi.hoisted(() => ({ releaseAgentSocket: vi.fn() }));
 const log = vi.hoisted(() => ({ e: vi.fn(), w: vi.fn(), i: vi.fn(), d: vi.fn() }));
 
 vi.mock('../db', () => db);
 vi.mock('../bridge/agent-config', () => agentConfig);
 vi.mock('../bridge/session', () => projectSession);
-vi.mock('../mitt', () => bus);
+vi.mock('../bridge/agent-socket', () => agentSocket);
 vi.mock('~/utils/log', () => ({ logUtil: log }));
 
-import { createSideChatSession } from '../use-side-chat';
+import { closeSideChatSession, createSideChatSession } from '../use-side-chat';
 
 const parentCharacter = {
   session_id: 'parent',
@@ -40,6 +46,11 @@ const parentCharacter = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  projectSession.createSideChat.mockResolvedValue({
+    sessionId: 'child-1',
+    parentSessionId: 'parent',
+    inherited: true
+  });
   db.readCachedSessionPreset.mockResolvedValue({
     session_id: 'parent',
     preset_id: 'coding',
@@ -59,10 +70,13 @@ beforeEach(() => {
 });
 
 describe('createSideChatSession', () => {
-  it('copies the parent preset, character and agent config into the child', async () => {
-    const { sessionId, meta } = await createSideChatSession('parent', '辅助会话');
+  it('copies the parent preset, character and agent config into the server-created child', async () => {
+    const { sessionId, parentSessionId, inherited, meta } = await createSideChatSession('parent', '辅助会话');
 
-    expect(sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(projectSession.createSideChat).toHaveBeenCalledWith('parent');
+    expect(sessionId).toBe('child-1');
+    expect(parentSessionId).toBe('parent');
+    expect(inherited).toBe(true);
     expect(meta.id).toBe(sessionId);
     expect(meta.title).toBe('辅助会话');
     expect(db.cacheSessionPreset).toHaveBeenCalledWith(
@@ -75,7 +89,6 @@ describe('createSideChatSession', () => {
     });
     expect(projectSession.setProjectDirectory).toHaveBeenCalledWith(sessionId, '/work/project');
     expect(db.cacheSessionMeta).toHaveBeenCalledWith(meta);
-    expect(bus.emit).toHaveBeenCalledWith('session:created', meta);
   });
 
   it('still creates the session when the parent has no preset row', async () => {
@@ -85,10 +98,21 @@ describe('createSideChatSession', () => {
 
     const { sessionId } = await createSideChatSession('parent', '辅助会话');
 
-    expect(sessionId).toBeTruthy();
+    expect(sessionId).toBe('child-1');
     expect(db.cacheSessionPreset).not.toHaveBeenCalled();
     expect(db.cacheCharacter).not.toHaveBeenCalled();
     expect(db.cacheSessionMeta).toHaveBeenCalled();
     expect(log.w).toHaveBeenCalled();
+  });
+
+  it('purges the child and clears local caches on close', async () => {
+    await closeSideChatSession('child-1', 'parent');
+
+    expect(projectSession.deleteSideChat).toHaveBeenCalledWith('child-1', 'parent');
+    expect(agentSocket.releaseAgentSocket).toHaveBeenCalledWith('child-1');
+    expect(db.clearCachedCharacter).toHaveBeenCalledWith('child-1');
+    expect(db.clearCachedSessionPreset).toHaveBeenCalledWith('child-1');
+    expect(db.clearCachedSessionMeta).toHaveBeenCalledWith('child-1');
+    expect(db.clearSessionTitleOverride).toHaveBeenCalledWith('child-1');
   });
 });

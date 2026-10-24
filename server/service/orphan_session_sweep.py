@@ -20,7 +20,7 @@ from loguru import logger
 
 from agent.tools.subagent.types.registry import SubagentRunRecord
 
-__all__ = ["sweep_orphaned_subagent_sessions"]
+__all__ = ["sweep_orphaned_side_chats", "sweep_orphaned_subagent_sessions"]
 
 
 def _known_main_sessions() -> set[str] | None:
@@ -184,3 +184,40 @@ async def sweep_orphaned_subagent_sessions() -> dict[str, int]:
     except Exception:
         logger.warning("orphan-session sweep failed", exc_info=True)
         return dict(orphan_runs=0, checkpoint_threads=0, registry_rows=0, session_dirs=0)
+
+
+async def sweep_orphaned_side_chats() -> dict[str, int]:
+    """Purge side chats whose parent session no longer exists.
+
+    Side chats are hidden from the normal session list, so nothing else would
+    notice that their parent is gone. A child with no messages yet is still
+    kept while its parent exists (the user may not have asked anything yet).
+
+    Never raises: an unreadable registry is "nothing to sweep".
+    """
+    try:
+        from server.DAO import side_chat_store
+        from server.service.side_chat_service import delete_side_chat
+
+        known = _known_main_sessions()
+        if known is None:
+            return dict(orphan_side_chats=0)
+        purged = 0
+        for row in side_chat_store.all_side_chats():
+            child = str(row.get("child_session_id") or "")
+            parent = str(row.get("parent_session_id") or "")
+            if not child or not parent or parent in known:
+                continue
+            try:
+                if await delete_side_chat(child):
+                    purged += 1
+            except Exception:  # noqa: BLE001 - one orphan must not stop the sweep
+                logger.warning(
+                    "orphan-session sweep: failed to purge side chat {}", child, exc_info=True
+                )
+        if purged:
+            logger.info("Boot: purged {} orphan side-chat session(s)", purged)
+        return dict(orphan_side_chats=purged)
+    except Exception:
+        logger.warning("orphan-session sweep: side-chat sweep failed", exc_info=True)
+        return dict(orphan_side_chats=0)

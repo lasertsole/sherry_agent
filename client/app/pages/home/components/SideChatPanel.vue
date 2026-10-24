@@ -7,6 +7,12 @@
       <span>{{ t('chat.selection.sideChatMissing') }}</span>
     </div>
     <template v-else>
+      <div
+        v-if="props.payload?.inherited"
+        class="mx-2 mt-2 shrink-0 rounded-md border border-dashed border-gray-200 px-2.5 py-1.5 text-center text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400"
+        data-test="side-chat-inherited-hint">
+        {{ t('chat.selection.sideChatInherited') }}
+      </div>
       <ChatBox
         :messages="chatMessages"
         :user-avatar="characterInfo.userAvatar"
@@ -162,6 +168,8 @@ import { CHAT_ROLE } from '@/types/chat-role';
  */
 interface PanelPayload {
   sessionId?: string;
+  parentSessionId?: string;
+  inherited?: boolean;
   quote?: string;
   source?: string;
 }

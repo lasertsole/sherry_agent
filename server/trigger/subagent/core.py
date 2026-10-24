@@ -29,6 +29,12 @@ async def _init_registry_once() -> None:
             await sweep_orphaned_subagent_sessions()
         except Exception:
             logger.warning("Boot orphan subagent sweep skipped", exc_info=True)
+        try:
+            from server.service.orphan_session_sweep import sweep_orphaned_side_chats
+
+            await sweep_orphaned_side_chats()
+        except Exception:
+            logger.warning("Boot orphan side-chat sweep skipped", exc_info=True)
         logger.info("Subagent registry initialized via server startup hook")
     except Exception as e:  # pragma: no cover - startup robustness
         logger.exception("Failed to initialize subagent registry at startup: {}", e)

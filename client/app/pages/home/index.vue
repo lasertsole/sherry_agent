@@ -233,7 +233,9 @@
          the shell row, exactly like the left session sidebar, so opening it narrows the
          toolbar above the session area instead of sliding in under it — and, living
          outside the KeepAlive'd session page, its tabs survive session switches. -->
-    <RightSidebar @saved="loadCharacter" />
+    <RightSidebar
+      @saved="loadCharacter"
+      @close-tab="handleCloseRightTab" />
 
     <!-- Every toolbar / settings-menu entry is a right-sidebar tab (see dialogs.ts), so
          the panels mount and unmount with their tab; the notification badge keeps counting
@@ -257,6 +259,9 @@ useErrorCaptured();
 // components
 import SessionSidebar from './components/SessionSidebar.vue';
 import RightSidebar from './components/RightSidebar.vue';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { closeSideChatSession } from '~/composables/use-side-chat';
+import type { RightSidebarTab } from '~/stores/right-sidebar';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
@@ -428,6 +433,23 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
+
+/**
+ * Close one right-sidebar tab. A side chat is ephemeral: its X purges the
+ * child session and every local cache row before the tab disappears.
+ * @param tab The tab being closed.
+ */
+const handleCloseRightTab = async (tab: RightSidebarTab): Promise<void> => {
+  if (tab.kind === 'sideChat' && tab.payload?.sessionId) {
+    try {
+      await closeSideChatSession(tab.payload.sessionId, tab.payload.parentSessionId, { purge: true });
+    } catch (error) {
+      toastError(t('chat.selection.sideChatFailed'), error instanceof Error ? error.message : String(error));
+      return;
+    }
+  }
+  rightSidebarStore.closeTab(tab.id);
+};
 /** Mandatory new-session preset dialog state (shared with every 新建对话 entry point). */
 const newSession = useNewSessionStore();
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);

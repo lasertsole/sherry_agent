@@ -1044,17 +1044,20 @@ function onSelectionAdd(payload: SelectionPayload): void {
  * preset binding and character snapshot, no subagent semantics), open it in a
  * right-sidebar side-chat tab and hand it the quoted text.
  *
- * The child is an ordinary session: it owns its own history, checkpoint and
- * approvals, and closing the tab does not delete it (the session list keeps it).
+ * The child is an ephemeral session: it inherits a model-only snapshot of this
+ * session's history, is hidden from the normal session list, and is purged
+ * when this tab closes (or this parent session is deleted).
  * @param payload The quoted selection.
  */
 async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
   if (!payload?.text || creatingSideChat.value || !mySid) return;
   creatingSideChat.value = true;
   try {
-    const { sessionId: childSid } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
+    const { sessionId: childSid, inherited } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
     rightSidebarStore.openTab('sideChat', {
       sessionId: childSid,
+      parentSessionId: mySid,
+      inherited,
       quote: payload.text,
       source: selectionRoleLabel(payload.sourceRole)
     });
