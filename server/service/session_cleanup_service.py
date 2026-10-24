@@ -96,6 +96,19 @@ async def purge_session_data(session_id: str) -> None:
     deleted = await asyncio.to_thread(delete_messages_by_session, session_id=session_id)
     logger.debug(f"Cleared {deleted} mes_memory message row(s) for session_id={session_id}")
 
+    # (1.5) Queued user inputs — an ephemeral session's pending rows must not
+    # outlive it (they are runtime state, not history).
+    try:
+        from server.service.input_queue_service import get_default_queue
+
+        removed_queued = await get_default_queue().delete_session(session_id)
+        if removed_queued:
+            logger.debug(
+                f"Deleted {removed_queued} queued input row(s) for session_id={session_id}"
+            )
+    except Exception as e:  # noqa: BLE001 - a queue failure must not keep the session
+        logger.warning(f"Failed to clear input queue for session_id={session_id}: {e}")
+
     # (2) Session-scoped planning stores — todos + task flows.
     try:
         from agent.tools.taskflow.registry import store_sqlite as taskflow_store
@@ -153,6 +166,19 @@ async def purge_session_data(session_id: str) -> None:
 
     # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
+
+    # (6.5) Per-turn trajectory ledger — debug history for a session that no
+    # longer exists must not survive it.
+    try:
+        from server.service.trajectory_store import get_trajectory_store
+
+        removed_trajectory = await get_trajectory_store().delete_session(session_id)
+        if removed_trajectory:
+            logger.debug(
+                f"Deleted {removed_trajectory} trajectory event row(s) for session_id={session_id}"
+            )
+    except Exception as e:  # noqa: BLE001 - a metrics failure must not keep the session
+        logger.warning(f"Failed to purge trajectory events for session_id={session_id}: {e}")
 
     # (7) Evidence ledger rows — one indexed DELETE per session (best-effort).
     try:

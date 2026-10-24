@@ -530,6 +530,14 @@ class QueueRepository:
         return int(cursor.rowcount)
 
     @staticmethod
+    async def delete_session(db: aiosqlite.Connection, session_id: str) -> int:
+        """Delete every queue row of a session (ephemeral-session purge)."""
+        cursor = await db.execute(
+            "DELETE FROM user_input_queue WHERE session_id = ?", (session_id,)
+        )
+        return int(cursor.rowcount)
+
+    @staticmethod
     async def list_active(db: aiosqlite.Connection, session_id: str) -> list[UserInputQueueRow]:
         rows: list[UserInputQueueRow] = []
         async with db.execute(
@@ -725,6 +733,19 @@ class UserInputQueue:
         await self._ensure_db()
         async with self._conn.connect() as db:
             return await QueueRepository.list_active(db, session_id)
+
+    async def delete_session(self, session_id: str) -> int:
+        """Delete every queue row of a session (ephemeral-session purge)."""
+        await self._ensure_db()
+        async with self._conn.write_transaction() as db:
+            removed = await QueueRepository.delete_session(db, session_id)
+        if removed > 0:
+            logger.info(
+                "user_input_queue delete_session: removed {} row(s) for session {}",
+                removed,
+                session_id,
+            )
+        return removed
 
     async def recover(self, session_id: str) -> int:
         """Void expired QUEUED/CLAIMED rows (24h crash-recovery expiry); return the count.

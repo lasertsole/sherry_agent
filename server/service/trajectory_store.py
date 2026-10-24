@@ -243,6 +243,22 @@ class TrajectoryStore:
             logger.debug("trajectory pruning failed (fail-open)", exc_info=True)
             return 0
 
+    async def delete_session(self, session_id: str) -> int:
+        """Delete every trajectory event of a purged session."""
+        try:
+            await self._ensure()
+            import aiosqlite
+
+            async with self._lock, aiosqlite.connect(self._db_path) as db:
+                cursor = await db.execute(
+                    "DELETE FROM trajectory_events WHERE session_id = ?", (session_id,)
+                )
+                await db.commit()
+                return int(cursor.rowcount)
+        except Exception:
+            logger.debug("trajectory purge failed (fail-open)", exc_info=True)
+            return 0
+
     # -- reads ------------------------------------------------------------
 
     async def read(
