@@ -4,7 +4,11 @@ One row records the VERIFICATION trail: a recognized test / lint / build /
 typecheck / format command the agent ran (``terminal`` and ``python_repl``
 auto-record it), a file edit that invalidates earlier verification
 (``{"event": "stale", "file_path": …}``), or a workspace merge that invalidates
-the paths it landed.
+the paths it landed. A verification row also snapshots the session's
+``changed_paths`` into ``modified_files``, so a later write to a source file
+invalidates a test whose command never names that source. ``verification_state``
+holds the per-session accumulated file list (capped; it deliberately does not
+reset per verification, so several commands share one batch).
 
 SQLite replaces the old append-only JSONL so retention can DELETE rows instead
 of rewriting the whole file. WAL mode keeps concurrent readers and writers
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import sqlite3
 import threading
 from collections.abc import Iterable, Iterator
@@ -46,6 +51,7 @@ CREATE TABLE IF NOT EXISTS evidence_events (
     status TEXT,
     exit_code INTEGER,
     kind TEXT,
+    modified_files_json TEXT NOT NULL DEFAULT '[]',
     payload_json TEXT NOT NULL,
     legacy_key TEXT UNIQUE
 );
@@ -53,7 +59,18 @@ CREATE INDEX IF NOT EXISTS idx_evidence_session
     ON evidence_events(session_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_timestamp
     ON evidence_events(timestamp);
+CREATE TABLE IF NOT EXISTS verification_state (
+    session_id TEXT PRIMARY KEY,
+    changed_paths_json TEXT NOT NULL DEFAULT '[]',
+    last_edit_at TEXT
+);
 """
+
+_EVIDENCE_PATH_MATCH = (
+    "(instr(COALESCE(command, ''), ?) > 0 "
+    "OR EXISTS (SELECT 1 FROM json_each(COALESCE(modified_files_json, '[]')) "
+    "WHERE value = ?))"
+)
 
 
 class EvidenceLedger:
@@ -101,11 +118,23 @@ class EvidenceLedger:
                     if key not in cls._initialized_paths:
                         conn.execute("PRAGMA journal_mode=WAL")
                         conn.executescript(_SCHEMA)
+                        cls._ensure_evidence_columns(conn)
                         cls._migrate_legacy(conn)
                         cls._initialized_paths.add(key)
             yield conn
         finally:
             conn.close()
+
+    @classmethod
+    def _ensure_evidence_columns(cls, conn: sqlite3.Connection) -> None:
+        """Additive migration for a DB created before ``modified_files``."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(evidence_events)")}
+        if "modified_files_json" not in columns:
+            conn.execute(
+                "ALTER TABLE evidence_events "
+                "ADD COLUMN modified_files_json TEXT NOT NULL DEFAULT '[]'"
+            )
+            conn.commit()
 
     @classmethod
     def _migrate_legacy(cls, conn: sqlite3.Connection) -> None:
@@ -156,6 +185,10 @@ class EvidenceLedger:
         """Insert one record; ``False`` when a legacy hash was already imported."""
         payload = dict(record)
         payload_json = json.dumps(payload, ensure_ascii=False)
+        modified_files = payload.get("modified_files")
+        if not isinstance(modified_files, list):
+            modified_files = []
+        modified_files_json = json.dumps(modified_files, ensure_ascii=False)
         exit_code = payload.get("exit_code")
         if exit_code is not None and not isinstance(exit_code, int):
             exit_code = None
@@ -164,8 +197,8 @@ class EvidenceLedger:
                 """
                 INSERT OR IGNORE INTO evidence_events
                     (timestamp, session_id, event, file_path, command, status,
-                     exit_code, kind, payload_json, legacy_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     exit_code, kind, modified_files_json, payload_json, legacy_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(payload.get("timestamp") or ""),
@@ -176,6 +209,7 @@ class EvidenceLedger:
                     payload.get("status"),
                     exit_code,
                     payload.get("kind"),
+                    modified_files_json,
                     payload_json,
                     legacy_key,
                 ),
@@ -206,6 +240,10 @@ class EvidenceLedger:
             value = row[key]
             if value is not None:
                 payload[key] = value
+        try:
+            payload["modified_files"] = json.loads(row["modified_files_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            payload["modified_files"] = []
         return payload
 
     # ── Public API (signatures unchanged from the JSONL implementation) ───
@@ -283,16 +321,82 @@ class EvidenceLedger:
             return []
 
     @classmethod
+    def record_file_edit(cls, file_path: str, session_key: str) -> None:
+        """Accumulate a session's edited files for later evidence snapshots.
+
+        The set deliberately does NOT reset after a verification: a batch of
+        edits can be covered by several commands (lint, then test), and each
+        evidence row must carry the same changed-file set or the later command
+        would lose the cross-file staleness link. The list is capped at
+        ``EVIDENCE_LEDGER["changed_paths_limit"]``, oldest first.
+
+        Fail-open: a state write failure only logs.
+        """
+        path = str(file_path or "").strip()
+        if not path or not session_key:
+            return
+        try:
+            limit = max(1, int(EVIDENCE_LEDGER["changed_paths_limit"]))
+            with cls._connection() as conn:
+                row = conn.execute(
+                    "SELECT changed_paths_json FROM verification_state WHERE session_id = ?",
+                    (session_key,),
+                ).fetchone()
+                try:
+                    paths = json.loads(row[0]) if row else []
+                except (TypeError, json.JSONDecodeError):
+                    paths = []
+                if not isinstance(paths, list):
+                    paths = []
+                paths = [str(item) for item in paths if str(item) != path] + [path]
+                conn.execute(
+                    """
+                    INSERT INTO verification_state
+                        (session_id, changed_paths_json, last_edit_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        changed_paths_json = excluded.changed_paths_json,
+                        last_edit_at = excluded.last_edit_at
+                    """,
+                    (
+                        session_key,
+                        json.dumps(paths[-limit:], ensure_ascii=False),
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                conn.commit()
+        except Exception:
+            logger.warning("evidence changed-path record failed (fail-open)", exc_info=True)
+
+    @classmethod
+    def changed_paths(cls, session_key: str) -> list[str]:
+        """The session's accumulated edited-file list (empty on failure)."""
+        if not session_key:
+            return []
+        try:
+            with cls._connection() as conn:
+                row = conn.execute(
+                    "SELECT changed_paths_json FROM verification_state WHERE session_id = ?",
+                    (session_key,),
+                ).fetchone()
+            parsed = json.loads(row[0]) if row else []
+            return [str(item) for item in parsed] if isinstance(parsed, list) else []
+        except Exception:
+            logger.warning("evidence changed-path read failed (fail-open)", exc_info=True)
+            return []
+
+    @classmethod
     def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int:
         """Record a stale event; return how many earlier rows it affects.
 
         Staleness stays derived on read: an evidence row is stale iff a LATER
-        ``{"event": "stale"}`` row names a ``file_path`` contained in its
-        ``command``. The count is for logging only.
+        ``{"event": "stale"}`` row names a ``file_path`` present in its
+        ``modified_files`` set (or, for legacy rows, in its ``command``). The
+        count is for logging only.
         """
         with cls._connection() as conn:
-            conditions = ["event IS NULL", "instr(COALESCE(command, ''), ?) > 0"]
-            params: list[object] = [file_path]
+            conditions = ["event IS NULL", _EVIDENCE_PATH_MATCH]
+            params: list[object] = [file_path, file_path]
             if session_key:
                 conditions.append("session_id = ?")
                 params.append(session_key)
@@ -320,15 +424,18 @@ class EvidenceLedger:
 
     @classmethod
     def mark_stale_for_path_all_sessions(cls, file_path: str, writer_session_id: str) -> int:
-        """Broadcast a write to every OTHER session whose evidence names ``file_path``.
+        """Broadcast a write to every OTHER session whose evidence covers ``file_path``.
 
-        The writer's own stale event is appended by
-        :meth:`SessionEvidenceLedger.mark_stale_for_path`; this method covers the
-        sessions that a later write can invalidate without touching their ledger
-        scope. One ``{"event": "stale"}`` row is appended per affected session,
-        carrying ``scope="cross_session"`` and ``source_session=<writer>``, so
-        the existing per-session staleness derivation sees it without a schema
-        change. Returns how many session rows were appended.
+        "Covers" means the path is in the evidence row's ``modified_files``
+        snapshot (a cross-file dependency), or — for legacy rows — in its
+        command string. The writer's own stale event is appended by
+        :meth:`SessionEvidenceLedger.mark_stale_for_path`; this method covers
+        the sessions that a later write can invalidate without touching their
+        ledger scope. One ``{"event": "stale"}`` row is appended per affected
+        session, carrying ``scope="cross_session"`` and
+        ``source_session=<writer>``, so the existing per-session derivation
+        sees it without a schema change. Returns how many session rows were
+        appended.
 
         Fail-open: a scan/insert failure only logs and reports 0.
         """
@@ -341,9 +448,9 @@ class EvidenceLedger:
                 conditions = [
                     "event IS NULL",
                     "session_id != ''",
-                    "instr(COALESCE(command, ''), ?) > 0",
+                    _EVIDENCE_PATH_MATCH,
                 ]
-                params: list[object] = [file_path]
+                params: list[object] = [file_path, file_path]
                 if exclude_self and writer_session_id:
                     conditions.append("session_id != ?")
                     params.append(writer_session_id)
@@ -404,6 +511,7 @@ class EvidenceLedger:
                 cursor = conn.execute(
                     "DELETE FROM evidence_events WHERE session_id = ?", (session_id,)
                 )
+                conn.execute("DELETE FROM verification_state WHERE session_id = ?", (session_id,))
                 conn.commit()
                 return int(cursor.rowcount)
         except Exception:
@@ -436,6 +544,13 @@ class EvidenceLedger:
                         "DELETE FROM evidence_events WHERE session_id = ?", (sid,)
                     )
                     removed += int(cursor.rowcount)
+                state_ids = [
+                    str(row[0])
+                    for row in conn.execute("SELECT session_id FROM verification_state").fetchall()
+                ]
+                for sid in state_ids:
+                    if sid not in known:
+                        conn.execute("DELETE FROM verification_state WHERE session_id = ?", (sid,))
                 conn.commit()
             if removed:
                 logger.info("evidence ledger: purged {} orphan row(s)", removed)
@@ -506,6 +621,37 @@ class EvidenceLedger:
         return int(removed)
 
 
+def _command_references_path(command: str, path: str) -> bool:
+    """True when ``command`` names ``path`` as a token (not a substring).
+
+    This keeps a test-file write visible even when the test file itself was
+    never edited by the verifying session, while avoiding ``feature.py``
+    matching ``tests/test_feature.py``.
+    """
+    target = str(path or "").strip().replace("\\", "/")
+    while target.startswith("./"):
+        target = target[2:]
+    if not target:
+        return False
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        tokens = command.split()
+    for token in tokens:
+        candidate = token.strip("\"'").replace("\\", "/")
+        while candidate.startswith("./"):
+            candidate = candidate[2:]
+        if not candidate or candidate.startswith("-"):
+            continue
+        if (
+            candidate == target
+            or candidate.endswith("/" + target)
+            or target.endswith("/" + candidate)
+        ):
+            return True
+    return False
+
+
 def _event_matches(event: dict, command: str) -> bool:
     """True when a stale/broken/unmark event applies to ``command``.
 
@@ -527,7 +673,11 @@ def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
     command. ``broken`` (a re-verified command now fails) is the stronger
     signal; callers render it in preference to ``stale``.
     """
-    command = str(records[index].get("command") or "")
+    row = records[index]
+    command = str(row.get("command") or "")
+    modified = row.get("modified_files") or []
+    if not isinstance(modified, list):
+        modified = []
     broken = False
     stale = False
     for later in records[index + 1 :]:
@@ -537,8 +687,16 @@ def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
             stale = False
         elif event == "broken" and _event_matches(later, command):
             broken = True
-        elif event == "stale" and _event_matches(later, command):
-            stale = True
+        elif event == "stale":
+            path = str(later.get("file_path") or "")
+            if modified:
+                # New row: exact changed-file set, plus a true path token the
+                # command names (a test file A did not author still matters).
+                if path and (path in modified or _command_references_path(command, path)):
+                    stale = True
+            elif _event_matches(later, command):
+                # Legacy row: keep the original command-substring rule.
+                stale = True
     return broken, stale
 
 

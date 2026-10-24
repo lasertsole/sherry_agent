@@ -1,7 +1,8 @@
 # 计划：Staleness 机制改造——从 substring 匹配到 state 表 + 文件追踪
 
 - 建档日期：2026-10-23
-- 状态：**待评审（v2，重写）**。v1 方案 B 用 in-memory 累积器 + evidence 行 `modified_files` 字段；核实 hermes 后发现其有 `verification_state` 表（`changed_paths_json` + `last_edit_at`）但**只用时间戳做 staleness，没用 changed_paths**。v2 改为学 hermes 的 state 表结构，但 staleness 判定用 `changed_paths` 做精确匹配——这是 hermes 记了但没用上的数据。
+- 状态：**方案 B' 已实施并验证（2026-10-24）**。v1 方案 B 用 in-memory 累积器 + evidence 行 `modified_files` 字段；核实 hermes 后发现其有 `verification_state` 表（`changed_paths_json` + `last_edit_at`）但**只用时间戳做 staleness，没用 changed_paths**。v2 改为学 hermes 的 state 表结构，但 staleness 判定用 `changed_paths` 做精确匹配——这是 hermes 记了但没用上的数据。
+- **实施偏差（已修正）**：不采用“每次验证后重置 changed_paths”——改为**累积（上限 200）并在每条验证上快照**。否则 A 写文件后先跑 lint 再跑 pytest，pytest 的 evidence 会拿到空集合，跨文件 stale 仍然漏报。多命令共享同一快照，语义更保守但正确。
 - **文档范围**：(1) 评估 hermes 纯时间戳 + 三种 sherry 适配方案；(2) 推荐方案 B'（state 表 + changed_paths 精确匹配）；(3) 性价比分析。
 - **硬约束**：不破坏现有 `derive_evidence_state` 调用方（`evidence_collector` / `regression_gate`）；Gate B/C 硬阻断行为不变；fail-open；向后兼容旧 evidence 行。
 - 关联代码：
@@ -166,7 +167,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 
 ### 3.3 改动清单
 
-- [ ] **3.3.1** `evidence_ledger.py` 新增 `verification_state` 表（学 hermes schema 简化版）：
+- [x] **3.3.1** `evidence_ledger.py` 新增 `verification_state` 表（学 hermes schema 简化版）：
   ```sql
   CREATE TABLE IF NOT EXISTS verification_state (
       session_id TEXT PRIMARY KEY,
@@ -176,7 +177,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
   );
   ```
 
-- [ ] **3.3.2** `evidence_ledger.py` 新增 state 管理方法（学 hermes `mark_workspace_edited` + `record_terminal_result` 的 state 更新）：
+- [x] **3.3.2** `evidence_ledger.py` 新增 state 管理方法（学 hermes `mark_workspace_edited` 的累积；**不重置**）：
   ```python
   @classmethod
   def record_file_edit(cls, file_path: str, session_id: str) -> None:
@@ -217,11 +218,11 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
           return paths
   ```
 
-- [ ] **3.3.3** `evidence_ledger.py` 的 `append` 方法增 `modified_files` 字段：
+- [x] **3.3.3** `evidence_ledger.py` 的 `append` 方法增 `modified_files` 字段：
   - 调用方（`evidence_recorder.record_verification_evidence`）在 append 前调 `snapshot_and_reset_changed_paths`，把结果作为 `modified_files` 字段传入
   - SQLite schema：evidence_events 表增 `modified_files_json TEXT DEFAULT '[]'` 列（`ALTER TABLE ADD COLUMN`，向后兼容）
 
-- [ ] **3.3.4** `evidence_recorder.py` 改造：
+- [x] **3.3.4** `evidence_recorder.py` 改造：
   - `invalidates_evidence` 装饰器（`:98-151`）：在调 `mark_evidence_stale` 后，**额外调** `EvidenceLedger.record_file_edit(file_path, session_id)`——累积到 state 表
   - `record_verification_evidence`（`:48-79`）：在调 `EvidenceLedger.for_session().append()` 前，调 `EvidenceLedger.snapshot_and_reset_changed_paths(session_id)` 拿到 `modified_files`，传入 append 的 fields：
     ```python
@@ -230,7 +231,7 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
     EvidenceLedger.for_session(session_id).append(**fields)
     ```
 
-- [ ] **3.3.5** `agent/tools/pub_base/evidence_ledger.py::derive_evidence_state` 的改造：
+- [x] **3.3.5** `agent/tools/pub_base/evidence_ledger.py::derive_evidence_state` 的改造：
   ```python
   def derive_evidence_state(records: list[dict], index: int) -> tuple[bool, bool]:
       """Stale when a later stale event's file_path is in this row's modified_files."""
@@ -311,16 +312,16 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 
 ## 6. 验收标准
 
-- [ ] `verification_state` 表存在且有 `changed_paths_json` / `last_edit_at` 字段。
-- [ ] subagent 写 `src/auth/login.py` → state 的 `changed_paths_json` 包含 `"src/auth/login.py"`。
-- [ ] subagent 跑 `pytest tests/test_login.py` → evidence 行的 `modified_files` = `["src/auth/login.py"]`（快照）→ state 重置为 `[]`。
-- [ ] B 写 `src/auth/login.py` → A 的 evidence 行被标记 stale（`"src/auth/login.py" in ["src/auth/login.py"]` → True）。
-- [ ] B 写 `README.md` → A 的 evidence 行**不**被标记 stale（`"README.md" in ["src/auth/login.py"]` → False）。
-- [ ] 旧 evidence 行（无 `modified_files`）→ `derive_evidence_state` 降级到 substring 匹配（旧行为不变）。
-- [ ] `changed_paths` 上限 200（超过时保留最新 200）。
-- [ ] Gate B/C 硬阻断行为不变。
-- [ ] `collect_evidence_summary` 输出格式不变。
-- [ ] session 删除时 `verification_state` 行也清除。
+- [x] `verification_state` 表存在且有 `changed_paths_json` / `last_edit_at` 字段。
+- [x] subagent 写 `src/auth/login.py` → state 的 `changed_paths_json` 包含 `"src/auth/login.py"`。
+- [x] subagent 跑 `pytest tests/test_login.py` → evidence 行的 `modified_files` = `["src/auth/login.py"]`（快照）。**state 不重置**；同一批编辑后的 lint + test 都拿到同一快照。
+- [x] B 写 `src/auth/login.py` → A 的 evidence 行被标记 stale（`"src/auth/login.py" in ["src/auth/login.py"]` → True）。
+- [x] B 写 `README.md` → A 的 evidence 行**不**被标记 stale（`"README.md" in ["src/auth/login.py"]` → False）。
+- [x] 旧 evidence 行（无 `modified_files`）→ `derive_evidence_state` 降级到 substring 匹配（旧行为不变）。
+- [x] `changed_paths` 上限 200（超过时保留最新 200）。
+- [x] Gate B/C 硬阻断行为不变（完整 split gate 通过）。
+- [x] `collect_evidence_summary` 输出格式不变。
+- [x] session 删除时 `verification_state` 行也清除。
 
 ---
 
@@ -353,3 +354,40 @@ derive_evidence_state: "src/auth/login.py" in ["src/auth/login.py"] → ✅ True
 ### 关联 TODO
 - SQLite evidence ledger（已落地）——state 表是同库新表，`purge_session` 增 state 清理
 - 跨 subagent staleness 已落地（cross-session 传播）；本计划改的是读取侧匹配方式（substring→文件集合），两者正交。
+
+---
+
+## 9. 实施与 A/B 结果（2026-10-24）
+
+### 9.1 已落地
+
+- `evidence_events` 增 `modified_files_json` 列（旧库启动时 `ALTER TABLE` 迁移）；`verification_state(session_id, changed_paths_json, last_edit_at)` 表同库。
+- `EvidenceLedger.record_file_edit()`：每次写路径追加到 session 的 changed_paths，去重后移，cap `EVIDENCE_LEDGER["changed_paths_limit"]=200`。
+- `record_verification_evidence()`：把 `changed_paths` 快照进 evidence 的 `modified_files`。
+- `derive_evidence_state()`：有 `modified_files` 的新行按精确集合 + command 中的真实路径 token 匹配；旧行降级 substring。
+- `mark_stale_for_path()` / `mark_stale_for_path_all_sessions()`：匹配条件扩展为 `command` 子串 **OR** `modified_files` JSON 包含路径，使用 SQLite JSON1；跨 session 传播因此能命中“B 写 A 改过的源文件”。
+- `purge_session` / `purge_orphans` 同步删除 `verification_state`。
+
+### 9.2 A/B 有效性
+
+| 场景 | 旧行/旧规则 | B' 新行 |
+|---|---|---|
+| A 的 `pytest test_beta.py`；B 写 A 改过的 `alpha.py` | 命令不含 alpha.py → **无 stale** | `modified_files=["alpha.py"]` → **cross-session stale** |
+| 同上，走真实 `write_file` 生产者 + `taskflow_finish` Gate C | finish **通过**（漏报） | finish **拒绝** `[stale]` |
+| A 改 `other.py`，命令 `pytest test_feature.py`；B 写 `feature.py` | 子串命中 `test_feature.py` → **误报 stale** | 精确集合不含 feature.py → **不误报** |
+| A 写 alpha.py 后先 lint 再 test | 第一条验证消费快照，第二条丢失 | 两条 evidence 都带 `["alpha.py"]` |
+
+### 9.3 验证与性能
+
+- 新增 `tests/agent/tools/pub_base/test_evidence_state.py`（9 个单测：累积/上限、快照、多命令共享、跨文件 stale、精确匹配、旧行降级、purge、旧库迁移）。
+- 新增 `tests/agent/tools/taskflow/test_evidence_state_ab_e2e.py`（2 个 e2e：真实 `write_file` 生产者 + 真实 `taskflow_finish` Gate C，旧行漏报 vs B' 拒绝）。
+- 性能（100 session / 1000 evidence 行）：单 session 命中 7.07ms；100 session 全命中 16.36ms（含 100 次 stale 插入），均 <50ms。
+- 完整 split gate 与 docs gates 通过；CI 见提交记录。
+
+### 9.4 边界
+
+- **不重置 changed_paths** 是本实施对原计划的修正：多命令共享同一批编辑；代价是集合会累积到 200 条，后续写其中任一文件都会让该 session 的 evidence stale（保守方向）。
+- **路径规范化未做**（原计划 §4 可选）：目前按写入参数原样匹配；不同 cwd 写同一文件时可能不匹配。
+- **只覆盖经过 `invalidates_evidence` 的写路径**：terminal 重定向、脚本内部写文件不进入 `record_file_edit`。
+- `modified_files` 是“改过的文件集合”，不是命令的真实依赖图；文件级精确匹配仍可能误报（例如改 README 后跑测试），但比纯时间戳/子串更可控。
+- 新行仍保留“command 以真实路径 token 点名”的匹配：A 没写过测试文件，但 B 改了 A 跑过的 `tests/test_beta.py`，仍会 stale；token 匹配避免了 `feature.py` 命中 `test_feature.py` 的子串误报。

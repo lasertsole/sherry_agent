@@ -73,6 +73,10 @@ def record_verification_evidence(
             "exit_code": exit_code,
             "status": "passed" if exit_code == 0 else "failed",
             "output_snippet": result[:_OUTPUT_SNIPPET_CHARS],
+            # Files edited in this session since it started (capped). This is
+            # what lets a later write to a source file invalidate a test whose
+            # command never names that source file.
+            "modified_files": EvidenceLedger.changed_paths(session_id),
         }
         if sandboxed is not None:
             fields["sandboxed"] = sandboxed
@@ -84,12 +88,16 @@ def record_verification_evidence(
 def mark_evidence_stale(file_path: str, session_id: str) -> None:
     """Append a stale event for ``file_path`` after an edit (fail-open).
 
-    The writer's own session is marked first. When cross-session propagation is
-    enabled, every OTHER session whose evidence command names the path gets its
-    own stale row, so their collectors and the TaskFlow finish gate see that the
+    The edit is first accumulated in the session's ``changed_paths`` (so the
+    next verification snapshots it into ``modified_files``), then the writer's
+    own session is marked. When cross-session propagation is enabled, every
+    OTHER session whose evidence covers the path — command substring for a
+    legacy row, exact ``modified_files`` membership for a B' row — gets its own
+    stale row, so their collectors and the TaskFlow finish gate see that the
     verification may no longer hold.
     """
     try:
+        EvidenceLedger.record_file_edit(file_path, session_id)
         EvidenceLedger.for_session(session_id).mark_stale_for_path(file_path)
         if EVIDENCE_CROSS_SESSION_STALENESS["enabled"]:
             EvidenceLedger.mark_stale_for_path_all_sessions(file_path, session_id)

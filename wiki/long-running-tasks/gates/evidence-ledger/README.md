@@ -20,10 +20,10 @@ terminal / python_repl runs a command
   │            unmatched commands are silently ignored
   │
   ├─ record_verification_evidence()
-  │    └─ insert one SQLite row: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ insert one SQLite row: {kind, command, exit_code, status, output_snippet, sandboxed, modified_files, session_id, timestamp}
   │
   └─ later: write_file / patch_file edits a source file
-       └─ mark_evidence_stale(file_path, session_id)
+       └─ mark_evidence_stale(file_path, session_id) + record_file_edit()
             └─ insert one SQLite row: {event:"stale", file_path, session_id, timestamp}
                  │
                  └─ at read time: collect_evidence_summary()
@@ -33,7 +33,9 @@ terminal / python_repl runs a command
                       └─ returns: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
-**Cross-session propagation.** A file write marks the writer's own session first. When `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` is true, `EvidenceLedger.mark_stale_for_path_all_sessions()` scans the OTHER sessions' evidence rows for a command containing the edited path and appends one `scope="cross_session"` stale row under EACH affected session. `source_session` records the writer; `max_sessions_scan` caps the scan and `exclude_self` skips the already-marked writer. The read-side derivation below needs no change because the broadcast row lives in the affected session's own sequence.
+**Changed-path snapshots (B').** `write_file` / `patch_file` also call `EvidenceLedger.record_file_edit()`, accumulating the session's edited paths (deduped, capped at `EVIDENCE_LEDGER["changed_paths_limit"]` = 200; the list is NOT reset per verification, so a lint run and a test run after the same edits share one snapshot). When a verification command is recorded, the current list is copied into the evidence row's `modified_files`. A later write to any of those files invalidates the evidence even if the command never names the file.
+
+**Cross-session propagation.** A file write marks the writer's own session first. When `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` is true, `EvidenceLedger.mark_stale_for_path_all_sessions()` scans the OTHER sessions' evidence rows for the edited path — in a new row's `modified_files`, as a true path token named by the command, or in a legacy row's command — and appends one `scope="cross_session"` stale row under EACH affected session. `source_session` records the writer; `max_sessions_scan` caps the scan and `exclude_self` skips the already-marked writer. The read-side derivation below needs no change because the broadcast row lives in the affected session's own sequence.
 
 **Finish-time replay.** At `taskflow_finish`, Gate C first calls `regression_gate.reverify_flow_evidence()`: every unique passed command in the flow's sessions is replayed once (allowlisted executables, no shell, `max_reverify_commands` cap, per-command timeout) in the flow's project root. A pass appends an `unmark` event for a command whose evidence was stale/broken; a failure appends a `broken` event. This is the only path that catches a cross-file import break, because it re-runs A's test command even when no stale row names the changed source file. A step may declare `file_deps`; when another step's write touches one, `prioritized_sessions()` moves that step's commands to the front before the `max_reverify_commands` cap (`file_deps_mode="prioritize"`, the default). The opt-in `file_deps_mode="filter"` replays ONLY declared sessions — cheaper, but it can miss an undeclared step's break.
 
@@ -49,6 +51,7 @@ terminal / python_repl runs a command
 | Scope | Repo-wide (shared across all sessions) |
 | Mutability | Rows are INSERTed and never UPDATEd; retention deletes old rows (age TTL / per-session cap / global cap) |
 | Session isolation | `WHERE session_id = ?` on the indexed column; rows carry a SESSION key (the main session's id, or a child's `agent:{agent}:subagent:{uuid}`) — never a plan / todo / flow id |
+| File-edit memory | `verification_state(session_id, changed_paths_json, last_edit_at)` in the same DB; capped per session, deleted with the session/orphan sweep |
 | Multi-key reads | `read_for_keys(keys)` runs one indexed `IN` query and preserves each key's insertion order (staleness is derived within one session's sequence) |
 | Concurrency | WAL lets readers and writers overlap; a writer retries through `busy_timeout` |
 | Legacy JSONL | Imported once on first open (per-line hash dedupe) and renamed to `.migrated` |
@@ -58,7 +61,7 @@ The DB deliberately stays repo-scoped, not session-scoped: it is the shared audi
 
 ### Retention & purge
 
-`EVIDENCE_LEDGER` carries the policy: `pruning_enabled` (default true), `max_age_days` (30), `max_events_per_session` (100) and `max_total_events` (10 000). Pruning is lazy — every `append` runs three DELETE layers after the insert, and a pruning failure never loses the row that was just recorded. Deleting a session calls `purge_session` (one `DELETE WHERE session_id = ?`); the boot orphan sweep calls `purge_orphans(known_sessions)` so evidence for sessions that no longer exist is removed even when they were deleted outside the normal cleanup path. `purge_on_session_delete` and `purge_on_boot_sweep` gate those explicit deletes; `pruning_enabled=false` disables only the lazy retention.
+`EVIDENCE_LEDGER` carries the policy: `pruning_enabled` (default true), `max_age_days` (30), `max_events_per_session` (100) and `max_total_events` (10 000). Pruning is lazy — every `append` runs three DELETE layers after the insert, and a pruning failure never loses the row that was just recorded. Deleting a session calls `purge_session` (one `DELETE WHERE session_id = ?` for evidence and one for `verification_state`); the boot orphan sweep calls `purge_orphans(known_sessions)` so evidence and changed-path state for sessions that no longer exist are removed even when they were deleted outside the normal cleanup path. `changed_paths_limit` (200) bounds the per-session file list. `purge_on_session_delete` and `purge_on_boot_sweep` gate those explicit deletes; `pruning_enabled=false` disables only the lazy retention.
 
 ---
 
@@ -88,7 +91,7 @@ Every `terminal` and `python_repl` call passes through `record_verification_evid
 
 ### 2. File edits — stale events
 
-`write_file` and `patch_file` are decorated with `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`. The decorator runs in a `finally` block, so **every** outcome (success, error string, raised exception) appends a `{"event": "stale", "file_path": "..."}` row to the ledger. When the cross-session switch is on, the same call also appends a stale row to every OTHER session whose evidence command names the path.
+`write_file` and `patch_file` are decorated with `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`. The decorator runs in a `finally` block, so **every** outcome (success, error string, raised exception) appends a `{"event": "stale", "file_path": "..."}` row to the ledger and calls `EvidenceLedger.record_file_edit()`. When the cross-session switch is on, the same call also appends a stale row to every OTHER session whose evidence covers the path (`modified_files` hit, or a legacy command substring).
 
 ### 3. Subagent workspace merge — stale events
 
@@ -108,6 +111,7 @@ When a child's isolated workspace merges back into the parent session, `workspac
   "status": "passed",
   "output_snippet": "===== 3 passed in 0.42s =====",
   "sandboxed": true,
+  "modified_files": ["src/alpha.py"],
   "session_id": "agent:main:session:abc-123",
   "timestamp": "2026-10-15T08:30:00.123456+00:00"
 }
@@ -134,11 +138,13 @@ A cross-session row carries two extra optional fields: `"scope": "cross_session"
 
 Staleness is **derived on the read side**, never stored as a flag. The rule:
 
-> An evidence row is stale iff a **later** stale event (higher index in the append order) has a `file_path` that appears as a **substring** in the row's `command` string.
+> An evidence row is stale iff a **later** stale event (higher index in the append order) names a `file_path` that is in the row's `modified_files` set, or that the command names as a path token. A legacy row without `modified_files` falls back to the original command-substring rule.
 
 ```python
 def derive_evidence_state(records, index):
-    command = str(records[index].get("command") or "")
+    row = records[index]
+    command = str(row.get("command") or "")
+    modified = row.get("modified_files") or []
     broken = stale = False
     for later in records[index + 1:]:
         event = later.get("event")
@@ -146,15 +152,20 @@ def derive_evidence_state(records, index):
             broken = stale = False
         elif event == "broken" and later.get("command") == command:
             broken = True
-        elif event == "stale" and str(later.get("file_path") or "") in command:
-            stale = True
+        elif event == "stale":
+            path = str(later.get("file_path") or "")
+            if modified:
+                stale = stale or (path in modified) or _command_references_path(command, path)
+            else:
+                stale = stale or (path in command)
     return broken, stale
 ```
 
 Key subtleties:
 
 - **Direction matters:** only a *later* stale event invalidates an earlier evidence row. A stale event before the evidence means the file was edited, then re-verified — the verification is fresh.
-- **Substring match:** `file_path in command`. Intentionally loose — a stale event for `src/foo.py` invalidates `pytest src/foo.py tests/`.
+- **Exact set for new rows:** `file_path in modified_files`, or a true path token in the command. This catches a source file the command never names (`pytest tests/test_beta.py` + a write to `alpha.py`) and a test file A did not author, without the old substring false positive (`feature.py` vs `test_feature.py`).
+- **Legacy fallback:** `file_path in command` for rows recorded before B'; intentionally loose and unchanged.
 - **Session-grouped:** `SessionEvidenceLedger.list_records()` filters by `session_id`, and the derivation compares only within one session's sequence. A cross-session invalidation is therefore written INTO the affected session's group (one row per session), never left in the writer's group.
 - **Broken and unmark:** a later `broken` event with the same `command` renders `[broken]` (a re-verified command now fails); a later `unmark` for that command clears both `[stale]` and `[broken]`. `derive_evidence_state()` in `evidence_ledger.py` is the single implementation; `[broken]` outranks `[stale]`.
 

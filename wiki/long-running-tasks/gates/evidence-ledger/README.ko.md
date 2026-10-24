@@ -20,10 +20,10 @@ terminal / python_repl 이 명령을 실행
   │        매치되지 않는 명령은 조용히 무시
   │
   ├─ record_verification_evidence()
-  │    └─ SQLite 행 하나 삽입: {kind, command, exit_code, status, output_snippet, sandboxed, session_id, timestamp}
+  │    └─ SQLite 행 하나 삽입: {kind, command, exit_code, status, output_snippet, sandboxed, modified_files, session_id, timestamp}
   │
   └─ 이후: write_file / patch_file 가 소스 파일을 편집
-       └─ mark_evidence_stale(file_path, session_id)
+       └─ mark_evidence_stale(file_path, session_id) + record_file_edit()
             └─ SQLite 행 하나 삽입: {event:"stale", file_path, session_id, timestamp}
                  │
                  └─ 읽기 시점: collect_evidence_summary()
@@ -33,7 +33,9 @@ terminal / python_repl 이 명령을 실행
                       └─ 반환: "  [pass] test: `pytest foo.py`\n  [FAIL] lint: `ruff .` [stale]"
 ```
 
-**크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 command에 편집 경로가 포함된 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
+**Changed-path 스냅샷(B').** `write_file` / `patch_file`은 `EvidenceLedger.record_file_edit()`도 호출해 해당 세션에서 편집한 경로를 누적합니다(중복 제거, 상한 `EVIDENCE_LEDGER["changed_paths_limit"]` = 200. **검증마다 리셋하지 않으므로** 같은 편집 뒤의 lint와 test가 같은 스냅샷을 공유합니다). 검증 명령을 기록할 때 현재 목록이 evidence 행의 `modified_files`로 복사됩니다. 이후 그중 어떤 파일에 쓰더라도 명령이 그 파일을 지목하지 않았어도 evidence가 무효화됩니다.
+
+**크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 `modified_files`에 편집 경로가 포함된 것, command가 실제 경로 토큰으로 지목한 것, 또는 레거시 행의 command가 포함한 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
 
 **Finish 시 재검증.** `taskflow_finish`의 Gate C는 먼저 `regression_gate.reverify_flow_evidence()`를 호출합니다: flow 각 세션의 passed 명령을 중복 제거해 한 번씩 재실행하며(allowlist 실행 파일, 셸 없음, `max_reverify_commands` 및 명령별 타임아웃), 작업 디렉터리는 flow의 프로젝트 루트입니다. 성공하면 stale/broken이었던 명령에 `unmark`를 추가하고, 실패하면 `broken`을 추가합니다. 이 경로는 변경된 소스 파일을 stale 행이 지목하지 않아도 A의 테스트 명령을 다시 실행하므로 크로스 파일 import 파괴를 잡을 수 있는 유일한 경로입니다. 단계는 `file_deps`를 선언할 수 있으며, 다른 단계의 쓰기가 그중 하나에 닿으면 `prioritized_sessions()`가 해당 단계의 명령을 `max_reverify_commands` 상한 앞으로 옮깁니다(`file_deps_mode="prioritize"`, 기본). 선택형 `file_deps_mode="filter"`는 선언이 적중한 세션만 재실행합니다 — 더 저렴하지만 선언되지 않은 단계의 파괴를 놓칠 수 있습니다.
 
@@ -49,6 +51,7 @@ terminal / python_repl 이 명령을 실행
 | 범위 | 저장소 전체(모든 세션 공유) |
 | 변경성 | 행은 INSERT만 되고 UPDATE되지 않음. 보존 기간이 오래된 행을 삭제함(age TTL / 세션별 상한 / 전체 상한) |
 | 세션 격리 | 인덱스된 `session_id`에 `WHERE session_id = ?`; 행은 SESSION key(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)를 가지며 plan / todo / flow id는 없음 |
+| 파일 편집 기억 | 같은 DB의 `verification_state(session_id, changed_paths_json, last_edit_at)`; 세션별 상한, session/고아 정리 시 삭제 |
 | 다중 키 읽기 | `read_for_keys(keys)`는 인덱스된 `IN` 쿼리 한 번으로 가져오고 각 키의 삽입 순서를 유지함(스테일은 한 세션의 행 순서 안에서 파생) |
 | 동시성 | WAL이 읽기/쓰기를 겹치게 하고 쓰기는 `busy_timeout`으로 재시도 |
 | 레거시 JSONL | 첫 오픈 시 한 번 가져오고(줄 해시로 중복 제거) `.migrated`로 이름 변경 |
@@ -58,7 +61,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 ### 보존 기간과 정리
 
-`EVIDENCE_LEDGER`가 정책을 가진다: `pruning_enabled`(기본 true), `max_age_days`(30), `max_events_per_session`(100), `max_total_events`(10 000). 정리는 지연 실행으로, 각 `append`의 INSERT 뒤에 세 단계 DELETE를 수행하며 실패해도 방금 기록한 행은 잃지 않는다. 세션 삭제는 `purge_session`(`DELETE WHERE session_id = ?` 한 번)을 호출하고, boot 고아 sweep은 `purge_orphans(known_sessions)`를 호출하므로 정상 정리 경로를 우회한 세션의 evidence도 제거된다. `purge_on_session_delete` / `purge_on_boot_sweep`가 명시 삭제를 제어하며, `pruning_enabled=false`는 지연 보존 기간만 끈다.
+`EVIDENCE_LEDGER`가 정책을 가진다: `pruning_enabled`(기본 true), `max_age_days`(30), `max_events_per_session`(100), `max_total_events`(10 000). 정리는 지연 실행으로, 각 `append`의 INSERT 뒤에 세 단계 DELETE를 수행하며 실패해도 방금 기록한 행은 잃지 않는다. 세션 삭제는 `purge_session`(evidence와 `verification_state`에 각각 `DELETE WHERE session_id = ?`)을 호출하고, boot 고아 sweep은 `purge_orphans(known_sessions)`를 호출하므로 정상 정리 경로를 우회한 세션의 evidence와 changed-path 상태도 제거된다. `changed_paths_limit`(200)이 세션별 파일 목록을 제한합니다. `purge_on_session_delete` / `purge_on_boot_sweep`가 명시 삭제를 제어하며, `pruning_enabled=false`는 지연 보존 기간만 끈다.
 
 ---
 
@@ -88,7 +91,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 ### 2. 파일 편집 — stale 이벤트
 
-`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을 추가합니다. 크로스 세션 스위치가 켜져 있으면 같은 호출이 command에 해당 경로를 포함하는 다른 각 세션에도 stale 행을 추가합니다.
+`write_file`과 `patch_file`은 `@invalidates_evidence(path_arg="file_path", session_arg="session_id")`로 데코레이트됩니다. 데코레이터는 `finally` 블록에서 실행되므로, **모든** 결과(성공, 에러 문자열, 예외 발생)가 `{"event": "stale", "file_path": "..."}` 행을 추가하고 `EvidenceLedger.record_file_edit()`를 호출합니다. 크로스 세션 스위치가 켜져 있으면 같은 호출이 evidence가 해당 경로를 포함하는(`modified_files` 적중 또는 레거시 command 부분문자열) 다른 각 세션에도 stale 행을 추가합니다.
 
 ### 3. 서브에이전트 워크스페이스 머지 — stale 이벤트
 
@@ -108,6 +111,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
   "status": "passed",
   "output_snippet": "===== 3 passed in 0.42s =====",
   "sandboxed": true,
+  "modified_files": ["src/alpha.py"],
   "session_id": "agent:main:session:abc-123",
   "timestamp": "2026-10-15T08:30:00.123456+00:00"
 }
@@ -134,11 +138,13 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 
 유효하지 않음은**읽기 측에서 도출**되며, 플래그로 저장되지 않습니다. 규칙:
 
-> evidence 행이 stale인 것은, **더 나중의** stale 이벤트(추가 순서에서 인덱스가 더 큼)의 `file_path`가 해당 행의 `command` 문자열의**부분문자열**로 나타나는 경우.
+> evidence 행이 stale인 것은, **더 나중의** stale 이벤트(추가 순서에서 인덱스가 더 큼)가 지목한 `file_path`가 해당 행의 `modified_files` 집합에 포함되거나, command가 실제 경로 토큰으로 지목하는 경우. `modified_files`가 없는 레거시 행은 원래 command 부분문자열 규칙으로 폴백합니다.
 
 ```python
 def derive_evidence_state(records, index):
-    command = str(records[index].get("command") or "")
+    row = records[index]
+    command = str(row.get("command") or "")
+    modified = row.get("modified_files") or []
     broken = stale = False
     for later in records[index + 1:]:
         event = later.get("event")
@@ -146,15 +152,20 @@ def derive_evidence_state(records, index):
             broken = stale = False
         elif event == "broken" and later.get("command") == command:
             broken = True
-        elif event == "stale" and str(later.get("file_path") or "") in command:
-            stale = True
+        elif event == "stale":
+            path = str(later.get("file_path") or "")
+            if modified:
+                stale = stale or (path in modified) or _command_references_path(command, path)
+            else:
+                stale = stale or (path in command)
     return broken, stale
 ```
 
 핵심 세부사항:
 
 - **방향이 중요:** **더 나중의** stale 이벤트만이 **더 이전의** evidence 행을 무효화합니다. evidence 이전의 stale 이벤트는 파일이 편집된 후 재검증되었음을 의미합니다 — 검증은 신선합니다.
-- **부분문자열 매치:** `file_path in command`. 의도적으로 느슨함 — `src/foo.py`의 stale 이벤트는 `pytest src/foo.py tests/`를 무효화합니다.
+- **새 행은 정확한 집합:** `file_path in modified_files`, 또는 command의 실제 경로 토큰. 명령이 지목하지 않은 소스 파일(`pytest tests/test_beta.py` + `alpha.py` 쓰기)과 A가 쓰지 않은 테스트 파일을 잡고, 기존 부분문자열 오탐(`feature.py` vs `test_feature.py`)을 피합니다.
+- **레거시 행 폴백:** `file_path in command`. B' 이전 행은 원래 동작을 유지합니다.
 - **세션 그룹:** `SessionEvidenceLedger.list_records()`는 `session_id`로 필터링하고, 도출은 한 세션의 행 순서 안에서만 비교합니다. 따라서 크로스 세션 무효화는 영향을 받는 세션 자신의 그룹에 **기록되며**(세션당 한 행), writer의 그룹에 남지 않습니다.
 - **Broken과 unmark:** 같은 `command`의 더 나중 `broken` 이벤트는 `[broken]`(재검증 실패)으로 표시되고, 같은 `command`의 더 나중 `unmark`는 `[stale]`과 `[broken]`을 모두 지웁니다. `evidence_ledger.py`의 `derive_evidence_state()`가 유일한 구현이며, `[broken]`이 `[stale]`보다 우선합니다.
 

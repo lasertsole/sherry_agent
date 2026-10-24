@@ -232,15 +232,18 @@ User message → Robyn WS → agent.core.built_agent() graph
       session's ledger shows a passing, non-stale row — the ledger already
       carries the verdict a simple spawn would otherwise pay a model call for
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
-      stale events in SQLite (WAL; lazy retention + session/boot purge); a write
-      also broadcasts a `scope="cross_session"` stale row to every OTHER session
-      whose evidence command names the path (gated by
-      EVIDENCE_CROSS_SESSION_STALENESS; the writer's own session is marked
-      separately); at taskflow_finish the regression gate replays the flow's
+      stale events in SQLite (WAL; lazy retention + session/boot purge); each
+      session accumulates edited paths in `verification_state` (capped 200, not
+      reset per verification) and every verification snapshots them into
+      `modified_files`; a write also broadcasts a `scope="cross_session"` stale
+      row to every OTHER session whose evidence command names the path OR whose
+      `modified_files` contains it (gated by EVIDENCE_CROSS_SESSION_STALENESS;
+      the writer's own session is marked separately); at taskflow_finish the regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
       while a false-positive stale is cleared; read side derives
-      broken/stale (evidence_collector.py)
+      broken/stale using the exact `modified_files` set, falling back to the
+      command substring for legacy rows (evidence_collector.py)
     · taskflow_finish gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's AGGREGATED evidence (every dispatched step's child session +

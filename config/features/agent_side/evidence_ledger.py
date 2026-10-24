@@ -20,6 +20,8 @@ class EvidenceLedgerConfig(TypedDict):
     max_age_days: int
     max_events_per_session: int
     max_total_events: int
+    # Per-session file-edit memory: how many paths a verification snapshots.
+    changed_paths_limit: int
     # Explicit deletion hooks.
     purge_on_session_delete: bool
     purge_on_boot_sweep: bool
@@ -37,6 +39,7 @@ EVIDENCE_LEDGER: EvidenceLedgerConfig = {
     "max_age_days": 30,
     "max_events_per_session": 100,
     "max_total_events": 10_000,
+    "changed_paths_limit": 200,
     "purge_on_session_delete": True,
     "purge_on_boot_sweep": True,
 }
