@@ -1,13 +1,13 @@
-"""Ephemeral side-chat sessions: create, inherit context, purge.
+"""Side-chat sessions: create, inherit context, purge.
 
-A side chat is a normal session with a parent link (``side_chat_store``), but
-its lifecycle is bound to that parent and to the right-sidebar tab. It is a
+A side chat is a normal session with a parent link (``side_chat_store``), and
+its lifecycle is bound to that parent — closing the right-sidebar panel keeps
+the child and every byte of its state; deleting the parent purges it. It is a
 COMPLETE fork of the parent agent: its first turn is seeded with the parent's
 checkpoint transcript and the parent's per-session settings, while the copied
 messages carry a model-only marker so the side chat's own visible history stays
 empty. This module also owns the bounded text fallback for links created before
-the checkpoint fork and the full purge used by both tab-close and parent
-deletion.
+the checkpoint fork and the full purge used by parent deletion.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ __all__ = [
     "get_checkpoint_fork_for_turn",
     "get_context_for_turn",
     "purge_side_chat_children",
-    "side_chat_ids",
 ]
 
 #: Model-only context budget; the parent transcript is trimmed from the OLDEST
@@ -356,8 +355,3 @@ async def purge_side_chat_children(parent_session_id: str) -> int:
                 exc_info=True,
             )
     return removed
-
-
-def side_chat_ids() -> set[str]:
-    """Hidden child ids (the normal session list filters these out)."""
-    return side_chat_store.side_chat_ids()

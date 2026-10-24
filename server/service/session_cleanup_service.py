@@ -193,6 +193,15 @@ async def purge_session_data(session_id: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to purge evidence for session_id={session_id}: {e}")
 
+    # (8) A side chat purged directly (not through its parent cascade) must not
+    # leave a parent link pointing at a dead session.
+    try:
+        from server.DAO import side_chat_store
+
+        side_chat_store.delete_side_chat(session_id)
+    except Exception as e:  # noqa: BLE001 - fail-open: the data is already gone
+        logger.warning(f"Failed to remove the side-chat link for {session_id}: {e}")
+
 
 async def purge_subagent_subtree_for_session(
     main_session_id: str, *, reason: str = "session_purge"

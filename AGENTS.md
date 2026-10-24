@@ -308,27 +308,38 @@ works.
   with the parent's checkpoint transcript — including tool/browser results that
   never reached the message store — and the parent's per-session settings
   (main model, thinking, custom mapping, search backend, budget cap, agent
-  config, project directory, access mode) are copied. The copied messages carry
+  config, project directory + its announced directory/git baselines, access
+  mode) are copied. The copied messages carry
   `additional_kwargs["side_chat_context"]`, which `MessagePersistence` filters,
   so the child's visible history holds only its own new turns. The fork is cut
   at the parent's last completed assistant answer, so a dangling tool call (a
   pending HITL approval or an interrupted run) is never replayed into the
   child. The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
-  snapshot links keep the bounded fallback) and the child is hidden from the
-  session list. `createSideChatSession` (`use-side-chat.ts`) also copies the
-  parent's preset binding and locked character snapshot into Dexie (and caches
-  NO session-list placeholder, so the child never appears in the list), then
-  opens a session-scoped `sideChat` right-sidebar tab whose payload carries
+  snapshot links keep the bounded fallback) and the child appears in the normal
+  session list as an ordinary session (its visible history still starts empty),
+  so a closed panel is recoverable by reopening it. `createSideChatSession`
+  (`use-side-chat.ts`) also copies the parent's preset binding and locked
+  character snapshot into Dexie, caches the child's placeholder meta and
+  announces it via `session:created` (so the list row appears immediately; a
+  later list refresh replaces it with the server-derived title), then opens a
+  session-scoped `sideChat` right-sidebar tab whose payload carries
   `{sessionId, quote, source, parentSessionId, inherited}`. The
   panel reads that payload on mount (no mitt race) and prefills the quote chip.
   `SideChatPanel.vue` reuses the page's lifecycle / draft-persistence / chunk /
   HITL / chat-stream slices over the child's own persistent socket, history and
   approvals; it has a compact question/plan/generic approval card. The child is
-  EPHEMERAL: closing the tab (`DELETE /sessions/side_chat`) cancels its turn,
-  closes its browser page, purges its subagent subtree and every store (messages,
-  checkpoint, queue rows, trajectory, writes, session dir), then drops the link
-  and the Dexie rows; deleting the parent cascades the same purge, and a boot
-  sweep removes orphans. A side chat can never parent another side chat.
+  PARENT-SCOPED, not tab-scoped: closing the right-sidebar tab only detaches its
+  socket (`detachSideChatSession`) and leaves the session, its checkpoint, its
+  model/thinking settings and its Dexie display caches untouched. Only deleting
+  the parent destroys it — the server cascade cancels its turn, closes its
+  browser page, purges its subagent subtree and every store (messages,
+  checkpoint, queue rows, trajectory, writes, session dir), then drops the link.
+  The client lists the parent's children first
+  (`GET /sessions/side_chat?parent_session_id=…`) so it also clears the Dexie
+  caches of side chats whose panels were already closed. `DELETE
+  /sessions/side_chat` remains as an explicit purge route (not called by the
+  tab's X), and a boot sweep removes links whose parent is gone. A side chat can
+  never parent another side chat.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 

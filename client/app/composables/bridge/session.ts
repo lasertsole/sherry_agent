@@ -72,7 +72,7 @@ export async function clearSession(sessionId: string): Promise<void> {
   }
 }
 
-/** Server-created ephemeral side chat (child of one main session). */
+/** Server-created side chat (child of one main session). */
 export interface CreatedSideChat {
   sessionId: string;
   parentSessionId: string;
@@ -81,9 +81,9 @@ export interface CreatedSideChat {
 }
 
 /**
- * Create an ephemeral side-chat session and its parent link.
+ * Create a side-chat session and its parent link.
  *
- * The server snapshots the parent's completed transcript for model-only
+ * The server forks the parent's checkpoint transcript for model-only
  * inheritance; the UI history still starts empty.
  * @param parentSessionId The main session the selection came from.
  */
@@ -107,7 +107,23 @@ export async function createSideChat(parentSessionId: string): Promise<CreatedSi
 }
 
 /**
- * Purge one ephemeral side chat (called when its right-sidebar tab closes).
+ * List the side-chat children of one parent (used to clear their local caches
+ * when the parent is deleted).
+ * @param parentSessionId Parent session id.
+ * @returns Child session ids (empty on an unreachable server).
+ */
+export async function listSideChatChildren(parentSessionId: string): Promise<string[]> {
+  const res = await fetchApiPayload<{ children?: string[] }>({
+    url: `/sessions/side_chat?parent_session_id=${encodeURIComponent(parentSessionId)}`,
+    method: 'get'
+  });
+  return Array.isArray(res.children) ? res.children : [];
+}
+
+/**
+ * Explicitly purge one side chat on the server. Closing the right-sidebar tab
+ * does NOT call this; it exists for an explicit discard and is kept separate
+ * from the parent-deletion cascade (which the server runs itself).
  * @param sessionId Child session id.
  * @param parentSessionId Parent session id (guards against deleting a normal session).
  */

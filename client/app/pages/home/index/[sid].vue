@@ -1053,7 +1053,7 @@ async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
   if (!payload?.text || creatingSideChat.value || !mySid) return;
   creatingSideChat.value = true;
   try {
-    const { sessionId: childSid, inherited } = await createSideChatSession(mySid);
+    const { sessionId: childSid, inherited } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
     rightSidebarStore.openTab('sideChat', {
       sessionId: childSid,
       parentSessionId: mySid,

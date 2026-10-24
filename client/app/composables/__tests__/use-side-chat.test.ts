@@ -26,15 +26,17 @@ const projectSession = vi.hoisted(() => ({
   setProjectDirectory: vi.fn(async () => ({}))
 }));
 const agentSocket = vi.hoisted(() => ({ releaseAgentSocket: vi.fn() }));
+const mitt = vi.hoisted(() => ({ emit: vi.fn() }));
 const log = vi.hoisted(() => ({ e: vi.fn(), w: vi.fn(), i: vi.fn(), d: vi.fn() }));
 
 vi.mock('../db', () => db);
 vi.mock('../bridge/agent-config', () => agentConfig);
 vi.mock('../bridge/session', () => projectSession);
 vi.mock('../bridge/agent-socket', () => agentSocket);
+vi.mock('../mitt', () => mitt);
 vi.mock('~/utils/log', () => ({ logUtil: log }));
 
-import { closeSideChatSession, createSideChatSession } from '../use-side-chat';
+import { createSideChatSession, detachSideChatSession, discardSideChatSession } from '../use-side-chat';
 
 const parentCharacter = {
   session_id: 'parent',
@@ -71,12 +73,14 @@ beforeEach(() => {
 
 describe('createSideChatSession', () => {
   it('copies the parent preset, character and agent config into the server-created child', async () => {
-    const { sessionId, parentSessionId, inherited } = await createSideChatSession('parent');
+    const { sessionId, parentSessionId, inherited, meta } = await createSideChatSession('parent', '辅助会话');
 
     expect(projectSession.createSideChat).toHaveBeenCalledWith('parent');
     expect(sessionId).toBe('child-1');
     expect(parentSessionId).toBe('parent');
     expect(inherited).toBe(true);
+    expect(meta.id).toBe(sessionId);
+    expect(meta.title).toBe('辅助会话');
     expect(db.cacheSessionPreset).toHaveBeenCalledWith(
       expect.objectContaining({ session_id: sessionId, preset_id: 'coding' })
     );
@@ -86,8 +90,9 @@ describe('createSideChatSession', () => {
       skills: []
     });
     expect(projectSession.setProjectDirectory).toHaveBeenCalledWith(sessionId, '/work/project');
-    // Hidden from the normal session list: never a cached placeholder row.
-    expect(db.cacheSessionMeta).not.toHaveBeenCalled();
+    // The child is an ordinary list row: cache it and announce it immediately.
+    expect(db.cacheSessionMeta).toHaveBeenCalledWith(meta);
+    expect(mitt.emit).toHaveBeenCalledWith('session:created', meta);
   });
 
   it('still creates the session when the parent has no preset row', async () => {
@@ -95,17 +100,29 @@ describe('createSideChatSession', () => {
     db.readCachedCharacter.mockResolvedValue(undefined);
     agentConfig.fetchAgentConfig.mockRejectedValue(new Error('offline'));
 
-    const { sessionId } = await createSideChatSession('parent');
+    const { sessionId } = await createSideChatSession('parent', '辅助会话');
 
     expect(sessionId).toBe('child-1');
     expect(db.cacheSessionPreset).not.toHaveBeenCalled();
     expect(db.cacheCharacter).not.toHaveBeenCalled();
-    expect(db.cacheSessionMeta).not.toHaveBeenCalled();
+    expect(db.cacheSessionMeta).toHaveBeenCalled();
+    expect(mitt.emit).toHaveBeenCalled();
     expect(log.w).toHaveBeenCalled();
   });
 
-  it('purges the child and clears local caches on close', async () => {
-    await closeSideChatSession('child-1', 'parent');
+  it('detaches the panel without deleting the child or its caches', () => {
+    detachSideChatSession('child-1');
+
+    expect(projectSession.deleteSideChat).not.toHaveBeenCalled();
+    expect(agentSocket.releaseAgentSocket).toHaveBeenCalledWith('child-1');
+    expect(db.clearCachedCharacter).not.toHaveBeenCalled();
+    expect(db.clearCachedSessionPreset).not.toHaveBeenCalled();
+    expect(db.clearCachedSessionMeta).not.toHaveBeenCalled();
+    expect(db.clearSessionTitleOverride).not.toHaveBeenCalled();
+  });
+
+  it('discards local caches only after an explicit server purge', async () => {
+    await discardSideChatSession('child-1', 'parent');
 
     expect(projectSession.deleteSideChat).toHaveBeenCalledWith('child-1', 'parent');
     expect(agentSocket.releaseAgentSocket).toHaveBeenCalledWith('child-1');
@@ -113,5 +130,12 @@ describe('createSideChatSession', () => {
     expect(db.clearCachedSessionPreset).toHaveBeenCalledWith('child-1');
     expect(db.clearCachedSessionMeta).toHaveBeenCalledWith('child-1');
     expect(db.clearSessionTitleOverride).toHaveBeenCalledWith('child-1');
+  });
+
+  it('skips the delete request when the parent cascade already purged the child', async () => {
+    await discardSideChatSession('child-1', 'parent', { serverAlreadyPurged: true });
+
+    expect(projectSession.deleteSideChat).not.toHaveBeenCalled();
+    expect(db.clearCachedCharacter).toHaveBeenCalledWith('child-1');
   });
 });

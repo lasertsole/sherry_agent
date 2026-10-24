@@ -260,7 +260,7 @@ useErrorCaptured();
 import SessionSidebar from './components/SessionSidebar.vue';
 import RightSidebar from './components/RightSidebar.vue';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { closeSideChatSession } from '~/composables/use-side-chat';
+import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
@@ -435,18 +435,14 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 const rightSidebarStore = useRightSidebarStore();
 
 /**
- * Close one right-sidebar tab. A side chat is ephemeral: its X purges the
- * child session and every local cache row before the tab disappears.
+ * Close one right-sidebar tab. Closing a side-chat panel only detaches its
+ * socket: the child session, checkpoint and caches survive until the parent
+ * session is deleted.
  * @param tab The tab being closed.
  */
-const handleCloseRightTab = async (tab: RightSidebarTab): Promise<void> => {
+const handleCloseRightTab = (tab: RightSidebarTab): void => {
   if (tab.kind === 'sideChat' && tab.payload?.sessionId) {
-    try {
-      await closeSideChatSession(tab.payload.sessionId, tab.payload.parentSessionId, { purge: true });
-    } catch (error) {
-      toastError(t('chat.selection.sideChatFailed'), error instanceof Error ? error.message : String(error));
-      return;
-    }
+    detachSideChatSession(tab.payload.sessionId);
   }
   rightSidebarStore.closeTab(tab.id);
 };

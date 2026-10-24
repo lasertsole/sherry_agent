@@ -189,9 +189,10 @@ async def sweep_orphaned_subagent_sessions() -> dict[str, int]:
 async def sweep_orphaned_side_chats() -> dict[str, int]:
     """Purge side chats whose parent session no longer exists.
 
-    Side chats are hidden from the normal session list, so nothing else would
-    notice that their parent is gone. A child with no messages yet is still
-    kept while its parent exists (the user may not have asked anything yet).
+    A side chat survives its right-sidebar panel but never its parent; the link
+    is the only record of that boundary, so a child whose parent is gone is
+    purged here (a normal parent deletion cascades immediately). A child with no
+    messages yet is still kept while its parent exists.
 
     Never raises: an unreadable registry is "nothing to sweep".
     """

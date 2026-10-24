@@ -5,17 +5,20 @@
  * copies the parent's per-session settings.
  *
  * It is NOT a subagent: the user talks to it directly and it owns its own
- * checkpoint / history / approvals. It is EPHEMERAL and hidden from the normal
- * session list: closing its right-sidebar tab (or deleting the parent) purges
- * it and every trace. What the client additionally copies is the parent's
- * display identity: the persona preset binding and the locked character
- * snapshot. The quoted selection is the first thing its composer carries.
+ * checkpoint / history / approvals. It is PARENT-SCOPED, not tab-scoped:
+ * closing its right-sidebar tab only detaches the socket, and the child stays
+ * in the session list so it can be reopened. Only deleting the parent purges it
+ * and every trace. What the client additionally copies is the parent's display
+ * identity: the persona preset binding and the locked character snapshot. The
+ * quoted selection is the first thing its composer carries.
  *
  * @module composables/use-side-chat
  */
 
 // Bridge SUBmodule imports are explicit (not auto-imported from the facade) so
 // this composable is test-mockable, same as use-chat-stream.
+
+import type { CachedSessionMeta } from './db';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -29,6 +32,8 @@ import {
 } from './db';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { releaseAgentSocket } from './bridge/agent-socket';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { emit } from './mitt';
 import { logUtil } from '~/utils/log';
 
 /** What the caller needs to open the side-chat tab. */
@@ -39,6 +44,20 @@ export interface SideChatSession {
   parentSessionId: string;
   /** Whether the server captured a parent transcript for model-only context. */
   inherited: boolean;
+  /** The session-list placeholder (announced so the child is immediately visible). */
+  meta: CachedSessionMeta;
+}
+
+/**
+ * `YYYY-MM-DD HH:mm` — the format the session list compares lexicographically.
+ * @param date
+ * @returns The formatted local timestamp.
+ */
+function localCreateTime(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
 }
 
 /**
@@ -48,15 +67,23 @@ export interface SideChatSession {
  * unreachable config endpoint degrades to the defaults, it never blocks the
  * side chat.
  *
- * No session-list placeholder is cached: a side chat is hidden from the normal
- * list for its whole life.
+ * The child is an ordinary session in the list (the panel can be closed and it
+ * reopened later), so a placeholder meta is cached and announced at once. It
+ * is replaced by the server-derived row on the next list refresh.
  *
  * @param parentSessionId The session the selection came from.
- * @returns The new session id and its parent link.
+ * @param title The placeholder title shown in the session list.
+ * @returns The new session id, its parent link and its placeholder meta.
  */
-export async function createSideChatSession(parentSessionId: string): Promise<SideChatSession> {
+export async function createSideChatSession(parentSessionId: string, title: string): Promise<SideChatSession> {
   const created = await createSideChat(parentSessionId);
   const sessionId = created.sessionId;
+  const meta: CachedSessionMeta = {
+    id: sessionId,
+    title,
+    createTime: localCreateTime(new Date()),
+    updatedAt: Date.now()
+  };
 
   // Preset binding: display metadata only (the persona itself is already in the
   // workspace files this session's prompt will read).
@@ -104,34 +131,53 @@ export async function createSideChatSession(parentSessionId: string): Promise<Si
     logUtil.w('[SideChat] project directory copy failed:', e);
   }
 
+  await cacheSessionMeta(meta).catch(e => {
+    logUtil.e('[SideChat] session meta cache failed:', e);
+  });
+  // The child is an ordinary session: announce its placeholder row so the list
+  // shows it at once (loadSessionList replaces it with the server row later).
+  emit('session:created', meta);
+
   return {
     sessionId,
     parentSessionId: created.parentSessionId,
-    inherited: created.inherited
+    inherited: created.inherited,
+    meta
   };
 }
 
 /**
- * Close an ephemeral side chat: optionally purge it server-side, release its
- * socket and drop every local cache row. Callers close the tab afterwards.
+ * Detach a side chat when its right-sidebar tab closes: release the socket and
+ * leave the session, its checkpoint and every local cache untouched. The child
+ * is destroyed only with its parent session.
  * @param sessionId Child session id.
- * @param parentSessionId Parent session id (purge guard).
- * @param options Close options.
- * @param options.purge Whether to call the delete endpoint (false when the
- *   server is already cascading the delete from the parent).
  */
-export async function closeSideChatSession(
+export function detachSideChatSession(sessionId: string): void {
+  if (!sessionId) return;
+  releaseAgentSocket(sessionId);
+}
+
+/**
+ * Drop a side chat and every local cache row after its server-side data is
+ * gone. Used by the parent-deletion cascade (the server has already purged the
+ * child) and by an explicit discard.
+ * @param sessionId Child session id.
+ * @param parentSessionId Parent session id (delete-endpoint guard).
+ * @param options Discard options.
+ * @param options.serverAlreadyPurged Whether the parent cascade already removed
+ *   the child and its link, so no delete request is needed.
+ */
+export async function discardSideChatSession(
   sessionId: string,
   parentSessionId?: string,
-  options: { purge?: boolean } = {}
+  options: { serverAlreadyPurged?: boolean } = {}
 ): Promise<void> {
   if (!sessionId) return;
-  if (options.purge !== false) {
+  if (!options.serverAlreadyPurged) {
     await deleteSideChat(sessionId, parentSessionId);
   }
   releaseAgentSocket(sessionId);
-  // The server purge already succeeded; a Dexie cleanup failure must not leave
-  // a dead tab behind.
+  // A Dexie cleanup failure must not leave a dead tab behind.
   await Promise.allSettled([
     clearCachedCharacter(sessionId),
     clearCachedSessionPreset(sessionId),

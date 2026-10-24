@@ -20,8 +20,11 @@ pytestmark = [pytest.mark.unit]
 def _isolated_evidence_ledger(tmp_path, monkeypatch):
     """Never let a purge test open/migrate the real repo evidence ledger."""
     from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+    from server.DAO import side_chat_store
 
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
+    # purge_session_data also drops a purged session's own side-chat link.
+    monkeypatch.setattr(side_chat_store, "_DB_PATH", tmp_path / "side_chats.db")
 
 
 def _isolate_store(monkeypatch: pytest.MonkeyPatch, module, db_name: str, tmp_path: Path) -> None:

@@ -115,7 +115,7 @@ def all_side_chats() -> list[dict[str, Any]]:
 
 
 def side_chat_ids() -> set[str]:
-    """All child ids, for hiding side chats from the normal session list."""
+    """All child ids."""
     with _connect() as conn:
         rows = conn.execute("SELECT child_session_id FROM side_chats").fetchall()
     return {str(row["child_session_id"]) for row in rows}

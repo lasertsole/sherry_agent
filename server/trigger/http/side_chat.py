@@ -1,15 +1,18 @@
-"""Ephemeral side-chat creation and deletion routes.
+"""Side-chat creation, listing and explicit deletion routes.
 
-``POST /sessions/side_chat`` creates a server-side child id, captures the
-parent transcript for model-only inheritance, and stores the parent link.
-``DELETE /sessions/side_chat`` purges the child and its link (the UI calls it
-when the right-sidebar tab closes).
+``POST /sessions/side_chat`` creates a server-side child id, seeds its first
+turn from the parent checkpoint and stores the parent link. ``GET`` lists the
+children of one parent (the client uses it to clear local caches when the parent
+is deleted). ``DELETE`` explicitly purges one child; closing the right-sidebar
+tab does NOT call it — a side chat survives its panel and is destroyed only
+when the parent session is deleted.
 """
 
 from __future__ import annotations
 
 from loguru import logger
 
+from pub.func.validator import is_safe_session_id
 from server.DAO import side_chat_store
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, not_found, ok, read_body
@@ -18,7 +21,7 @@ from server.service.side_chat_service import create_side_chat, delete_side_chat
 
 @app.post("/sessions/side_chat")
 async def create_side_chat_handler(request):
-    """Create the child session + parent link + inherited context snapshot."""
+    """Create the child session + parent link + checkpoint-fork inheritance."""
     body = read_body(request)
     if body is None:
         return bad_request("JSON body required")
@@ -33,9 +36,25 @@ async def create_side_chat_handler(request):
     return ok({"success": True, **result})
 
 
+@app.get("/sessions/side_chat")
+async def list_side_chats_handler(request):
+    """List the side-chat children of one parent session."""
+    query = request.query_params or {}
+    parent_session_id = str(query.get("parent_session_id", "") or "").strip()
+    if not parent_session_id or not is_safe_session_id(parent_session_id):
+        return bad_request("invalid parent_session_id")
+    return ok(
+        {
+            "success": True,
+            "parent_session_id": parent_session_id,
+            "children": side_chat_store.list_children(parent_session_id),
+        }
+    )
+
+
 @app.delete("/sessions/side_chat")
 async def delete_side_chat_handler(request):
-    """Purge one side chat and remove its parent link."""
+    """Explicitly purge one side chat and remove its parent link."""
     body = read_body(request)
     if body is None:
         return bad_request("JSON body required")

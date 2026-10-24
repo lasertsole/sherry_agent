@@ -288,19 +288,15 @@ async def test_purge_session_cascades_side_chat_children(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-def test_session_list_hides_side_chats(monkeypatch) -> None:
+def test_session_list_includes_side_chats(monkeypatch) -> None:
     side_chat_store.create_side_chat("child-1", "parent-1")
     import server.service.messages as messages
 
-    monkeypatch.setattr(
-        messages,
-        "get_session_ids",
-        lambda: [
-            {"session_id": "parent-1", "last_time": "1", "title": "Parent"},
-            {"session_id": "child-1", "last_time": "2", "title": "Side"},
-        ],
-    )
-
-    assert messages.get_session_list() == [
-        {"session_id": "parent-1", "last_time": "1", "title": "Parent"}
+    rows = [
+        {"session_id": "parent-1", "last_time": "1", "title": "Parent"},
+        {"session_id": "child-1", "last_time": "2", "title": "Side"},
     ]
+    monkeypatch.setattr(messages, "get_session_ids", lambda: rows)
+
+    # A retained side chat is reachable after its panel closes.
+    assert messages.get_session_list() == rows

@@ -634,16 +634,11 @@ def get_history_by_turn_page(
 def get_session_list() -> list[dict[str, Any]]:
     """Enumerate all distinct sessions, newest activity first.
 
-    Side-chat children are deliberately hidden: they are ephemeral and only
-    reachable through their parent's right-sidebar tab.
+    Side chats are ordinary sessions here: closing their right-sidebar panel
+    keeps them, so the list is how the user finds and reopens one. Deleting the
+    parent still cascades the child purge.
     """
-    try:
-        from server.service.side_chat_service import side_chat_ids
-
-        hidden = side_chat_ids()
-    except Exception:  # noqa: BLE001 - a broken registry must not hide the list
-        hidden = set()
-    return [row for row in get_session_ids() if row.get("session_id") not in hidden]
+    return get_session_ids()
 
 
 """End session list retrieval logic"""
