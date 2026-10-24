@@ -93,7 +93,7 @@
       "sideChatTitle": "Side session",
       "sideChatMissing": "Side session unavailable",
       "sideChatFailed": "Failed to create the side session",
-      "sideChatInherited": "Main-session context inherited (snapshot at creation)"
+      "sideChatInherited": "Main-session context inherited (complete fork, model-only)"
     },
     "tokenGuard": {
       "title": "Model Config Below Minimum",

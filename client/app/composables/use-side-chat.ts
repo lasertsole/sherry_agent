@@ -1,19 +1,19 @@
 /**
  * A side session: an ordinary session created from a quoted selection, derived
- * from its parent rather than started through the preset dialog.
+ * from its parent rather than started through the preset dialog. The server
+ * seeds its first turn with the parent's checkpoint transcript (model-only) and
+ * copies the parent's per-session settings.
  *
- * It is NOT a subagent: the user talks to it directly, it owns its own
- * checkpoint / history / approvals, and it appears in the session list like any
- * other session. What it inherits is only the parent's display and behaviour
- * identity: the persona preset binding, the locked character snapshot, the
- * agent config (tools / middlewares / skills / per-role models) and the main
- * model override. The conversation itself starts empty; the quoted selection is
- * the first thing its composer carries.
+ * It is NOT a subagent: the user talks to it directly and it owns its own
+ * checkpoint / history / approvals. It is EPHEMERAL and hidden from the normal
+ * session list: closing its right-sidebar tab (or deleting the parent) purges
+ * it and every trace. What the client additionally copies is the parent's
+ * display identity: the persona preset binding and the locked character
+ * snapshot. The quoted selection is the first thing its composer carries.
  *
  * @module composables/use-side-chat
  */
 
-import type { CachedSessionMeta } from './db';
 // Bridge SUBmodule imports are explicit (not auto-imported from the facade) so
 // this composable is test-mockable, same as use-chat-stream.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -39,42 +39,24 @@ export interface SideChatSession {
   parentSessionId: string;
   /** Whether the server captured a parent transcript for model-only context. */
   inherited: boolean;
-  /** The placeholder meta row (cached locally; the session list hides side chats). */
-  meta: CachedSessionMeta;
 }
 
 /**
- * `YYYY-MM-DD HH:mm` — the format the session list compares lexicographically.
- * @param date
- * @returns The formatted local timestamp.
- */
-function localCreateTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
-}
-
-/**
- * Create the child session's local identity: id, preset binding, character
- * snapshot and agent config. Every step is fail-open — a missing preset row or
- * an unreachable config endpoint degrades to the defaults, it never blocks the
+ * Create the child session's local display identity (preset binding and
+ * character snapshot) and mirror the parent's agent config / project directory
+ * onto the server. Every step is fail-open — a missing preset row or an
+ * unreachable config endpoint degrades to the defaults, it never blocks the
  * side chat.
  *
+ * No session-list placeholder is cached: a side chat is hidden from the normal
+ * list for its whole life.
+ *
  * @param parentSessionId The session the selection came from.
- * @param title The placeholder title shown in the session list.
- * @returns The new session id and its cached placeholder meta.
+ * @returns The new session id and its parent link.
  */
-export async function createSideChatSession(parentSessionId: string, title: string): Promise<SideChatSession> {
+export async function createSideChatSession(parentSessionId: string): Promise<SideChatSession> {
   const created = await createSideChat(parentSessionId);
   const sessionId = created.sessionId;
-  const now = new Date();
-  const meta: CachedSessionMeta = {
-    id: sessionId,
-    title,
-    createTime: localCreateTime(now),
-    updatedAt: Date.now()
-  };
 
   // Preset binding: display metadata only (the persona itself is already in the
   // workspace files this session's prompt will read).
@@ -122,17 +104,10 @@ export async function createSideChatSession(parentSessionId: string, title: stri
     logUtil.w('[SideChat] project directory copy failed:', e);
   }
 
-  await cacheSessionMeta(meta).catch(e => {
-    logUtil.e('[SideChat] session meta cache failed:', e);
-  });
-  // Side chats are hidden from the normal session list (ephemeral children);
-  // no session:created announcement.
-
   return {
     sessionId,
     parentSessionId: created.parentSessionId,
-    inherited: created.inherited,
-    meta
+    inherited: created.inherited
   };
 }
 

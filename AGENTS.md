@@ -316,9 +316,10 @@ works.
   child. The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
   snapshot links keep the bounded fallback) and the child is hidden from the
   session list. `createSideChatSession` (`use-side-chat.ts`) also copies the
-  parent's preset binding and locked character snapshot into Dexie, caches the
-  placeholder meta and opens a session-scoped `sideChat` right-sidebar tab whose
-  payload carries `{sessionId, quote, source, parentSessionId, inherited}`. The
+  parent's preset binding and locked character snapshot into Dexie (and caches
+  NO session-list placeholder, so the child never appears in the list), then
+  opens a session-scoped `sideChat` right-sidebar tab whose payload carries
+  `{sessionId, quote, source, parentSessionId, inherited}`. The
   panel reads that payload on mount (no mitt race) and prefills the quote chip.
   `SideChatPanel.vue` reuses the page's lifecycle / draft-persistence / chunk /
   HITL / chat-stream slices over the child's own persistent socket, history and

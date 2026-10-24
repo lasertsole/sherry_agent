@@ -93,7 +93,7 @@
       "sideChatTitle": "辅助会话",
       "sideChatMissing": "辅助会话不可用",
       "sideChatFailed": "创建辅助会话失败",
-      "sideChatInherited": "已继承主会话上下文（创建时快照）"
+      "sideChatInherited": "已继承主会话上下文（完整 fork，仅模型可见）"
     },
     "tokenGuard": {
       "title": "模型配置不达标",

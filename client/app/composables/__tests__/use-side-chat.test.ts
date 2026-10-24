@@ -71,14 +71,12 @@ beforeEach(() => {
 
 describe('createSideChatSession', () => {
   it('copies the parent preset, character and agent config into the server-created child', async () => {
-    const { sessionId, parentSessionId, inherited, meta } = await createSideChatSession('parent', '辅助会话');
+    const { sessionId, parentSessionId, inherited } = await createSideChatSession('parent');
 
     expect(projectSession.createSideChat).toHaveBeenCalledWith('parent');
     expect(sessionId).toBe('child-1');
     expect(parentSessionId).toBe('parent');
     expect(inherited).toBe(true);
-    expect(meta.id).toBe(sessionId);
-    expect(meta.title).toBe('辅助会话');
     expect(db.cacheSessionPreset).toHaveBeenCalledWith(
       expect.objectContaining({ session_id: sessionId, preset_id: 'coding' })
     );
@@ -88,7 +86,8 @@ describe('createSideChatSession', () => {
       skills: []
     });
     expect(projectSession.setProjectDirectory).toHaveBeenCalledWith(sessionId, '/work/project');
-    expect(db.cacheSessionMeta).toHaveBeenCalledWith(meta);
+    // Hidden from the normal session list: never a cached placeholder row.
+    expect(db.cacheSessionMeta).not.toHaveBeenCalled();
   });
 
   it('still creates the session when the parent has no preset row', async () => {
@@ -96,12 +95,12 @@ describe('createSideChatSession', () => {
     db.readCachedCharacter.mockResolvedValue(undefined);
     agentConfig.fetchAgentConfig.mockRejectedValue(new Error('offline'));
 
-    const { sessionId } = await createSideChatSession('parent', '辅助会话');
+    const { sessionId } = await createSideChatSession('parent');
 
     expect(sessionId).toBe('child-1');
     expect(db.cacheSessionPreset).not.toHaveBeenCalled();
     expect(db.cacheCharacter).not.toHaveBeenCalled();
-    expect(db.cacheSessionMeta).toHaveBeenCalled();
+    expect(db.cacheSessionMeta).not.toHaveBeenCalled();
     expect(log.w).toHaveBeenCalled();
   });
 
