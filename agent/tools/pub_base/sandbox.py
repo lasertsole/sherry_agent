@@ -195,8 +195,18 @@ def normalize_writable_roots(writable_roots: Sequence[Path]) -> list[Path]:
         if candidate not in resolved:
             resolved.append(candidate)
     temp = Path(TEMP_DIR).resolve() if str(TEMP_DIR).strip() else None
-    if temp is not None and temp not in resolved:
-        resolved.append(temp)
+    if temp is not None:
+        # bwrap needs a bind-mount SOURCE that exists; a fresh checkout / CI
+        # runner has no gitignored ``temp/`` yet, which made every sandboxed
+        # command fail with "bwrap: Can't find source path .../temp". The
+        # contract already promises TEMP_DIR is always writable, so create it
+        # here (fail-open: a read-only home keeps the old error path).
+        try:
+            temp.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        if temp not in resolved:
+            resolved.append(temp)
     return resolved
 
 
