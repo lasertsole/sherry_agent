@@ -45,7 +45,7 @@
     "vue-router": "^5.3.1",
     "shiki": "^4.5.0",
     "mermaid": "^12.2.0",
-    "katex": "^0.18.11",
+    "katex": "^0.19.0",
     "@vscode/markdown-it-katex": "^1.1.2"
   },
   "devDependencies": {
