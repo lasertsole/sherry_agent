@@ -199,8 +199,7 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
     # may switch them off).
     assert tool_required("terminal") is True
     assert tool_required("python_repl") is True
-    assert tool_required("terminal_bg_list") is False
-    assert tool_required("terminal_bg_output") is False
+    assert tool_required("terminal_bg") is False
 
     # 记忆与检索: `message_search` is locked, `memory` stays switchable.
     assert tool_required("message_search") is True
@@ -351,6 +350,17 @@ def test_sanitize_maps_legacy_browser_tool_names(real_tool_names, monkeypatch):
         }
         for name in cleaned["tools"]
     )
+
+
+def test_sanitize_maps_legacy_terminal_bg_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the terminal_bg 2→1 merge still applies."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection("terminal_bg_list", "terminal_bg_output")
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-1:] == ["terminal_bg"]
+    assert "terminal_bg_list" not in cleaned["tools"]
+    assert "terminal_bg_output" not in cleaned["tools"]
 
 
 def test_sanitize_rejects_unknown_names(real_tool_names, monkeypatch):

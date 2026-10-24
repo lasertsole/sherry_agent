@@ -42,9 +42,9 @@ __all__ = [
 #: (``config.agent.toolGroup.<id>``), so a new group needs a label there.
 TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     "files": ("read_file", "write_file", "patch_file", "search_files", "checkpoint"),
-    # The two background-task queries ride the terminal group; both are
-    # main-agent only (a child managing the parent's processes is nonsense).
-    "terminal": ("terminal", "python_repl", "terminal_bg_list", "terminal_bg_output"),
+    # The background-task query rides the terminal group; it is main-agent only
+    # (a child managing the parent's processes is nonsense).
+    "terminal": ("terminal", "python_repl", "terminal_bg"),
     "tasks": (
         "taskflow_flow",
         "taskflow_step",
@@ -153,6 +153,8 @@ LEGACY_TOOL_ALIASES: dict[str, str] = {
     "browser_press": "browser",
     "browser_scroll": "browser",
     "browser_screenshot": "browser",
+    "terminal_bg_list": "terminal_bg",
+    "terminal_bg_output": "terminal_bg",
 }
 
 

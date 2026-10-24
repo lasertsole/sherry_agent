@@ -55,13 +55,14 @@ CACHE_ROOT = Path(os.environ.get("SHERRY_EVAL_CACHE", str(Path.home() / ".cache"
 DISABLED_TOOLS = frozenset(
     {
         "python_repl",
-        "terminal_bg_list",
-        "terminal_bg_output",
+        "terminal_bg",
         "web_search",
         "web_fetch",
     }
 )
-_DISABLED_PREFIXES = ("browser_",)
+#: The merged browser tool plus its legacy per-verb names; the benchmark keeps
+#: every browser surface off the container-backed arms.
+_DISABLED_PREFIXES = ("browser",)
 
 #: Cap for one tool result (head + tail); the terminal tool's own eviction guard
 #: is bypassed by the bridge, so the bridge owns the bound.

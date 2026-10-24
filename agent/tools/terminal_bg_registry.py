@@ -202,7 +202,7 @@ class BackgroundTaskRegistry:
                     content=(
                         f"[Background task {status}] {task.task_id} "
                         f"(command: {task.command}) exited with code {task.exit_code}. "
-                        f'Read its output with terminal_bg_output(task_id="{task.task_id}").'
+                        f"Read its output with terminal_bg(action='output', task_id='{task.task_id}')."
                     ),
                     metadata={"origin": "background_task", "internal": True},
                 ),
@@ -216,7 +216,7 @@ background_registry = BackgroundTaskRegistry()
 
 
 def output_read_limit() -> int:
-    """Tail bytes ``terminal_bg_output`` returns (from the registry config)."""
+    """Tail bytes ``terminal_bg(action='output')`` returns (from the registry config)."""
     return int(TERMINAL_BG["output_max_read_bytes"])
 
 

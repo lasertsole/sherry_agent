@@ -120,6 +120,15 @@ def test_legacy_browser_names_in_a_stored_config_map_to_the_merged_tool():
     assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"browser", "browser_evaluate"}
 
 
+def test_legacy_terminal_bg_names_in_a_stored_config_map_to_the_merged_tool():
+    """A session config written before the terminal_bg 2→1 merge keeps it on."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["terminal_bg_list", "terminal_bg_output"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"terminal_bg"}
+
+
 def test_a_broken_register_read_is_fail_open(monkeypatch):
     import runtime
 

@@ -204,8 +204,9 @@ class SafeShellInput(BaseModel):
         description=(
             "Run the command in the background and return immediately with a task id "
             "(the process keeps running; its output is captured to a file). Use "
-            "terminal_bg_list to see this session's tasks and terminal_bg_output to "
-            "read one's output. You are notified when it exits. Good for servers, "
+            "terminal_bg(action='list') to see this session's tasks and "
+            "terminal_bg(action='output', task_id=...) to read one's output. "
+            "You are notified when it exits. Good for servers, "
             "watchers, and anything longer than the timeout."
         ),
     )
@@ -602,7 +603,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             return (
                 f"Error: this session already has {len(running)} background task(s) running "
                 f"(limit {TERMINAL_BG['max_tasks_per_session']}): {', '.join(running)}. "
-                "Wait for one to finish (terminal_bg_list) or use the foreground path."
+                "Wait for one to finish (terminal_bg(action='list')) or use the foreground path."
             )
 
         task_id = f"bg-{_uuid.uuid4().hex[:12]}"
@@ -685,8 +686,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             f"Task ID: {task_id}\n"
             f"PID: {proc.pid}\n"
             f"Output file: {output_path}\n"
-            f"You will be notified when it exits. Use terminal_bg_list to check status "
-            f'and terminal_bg_output(task_id="{task_id}") to read the output.'
+            f"You will be notified when it exits. Use terminal_bg(action='list') to check "
+            f"status and terminal_bg(action='output', task_id='{task_id}') to read the output."
         )
 
     @override
