@@ -161,6 +161,8 @@ async def test_create_side_chat_copies_parent_session_settings(monkeypatch) -> N
     parent_values = {
         "llm_main_model": {"provider": "deepseek", "model": "deepseek-flash"},
         "project_dir": "/home/honor/WorkBuddy",
+        "project_dir_announced": "/home/honor/WorkBuddy",
+        "git_head_announced": "checkpoint@d2b67de",
         "agent_config": {"tools": ["read_file"]},
     }
     written: dict[str, object] = {}

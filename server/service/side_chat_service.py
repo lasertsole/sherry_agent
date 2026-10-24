@@ -71,7 +71,10 @@ _CHECKPOINT_BOUNDARY = (
 )
 
 #: Per-session settings a side chat inherits so it behaves like the main agent
-#: (same model, thinking, agent face, directory, access mode and budget).
+#: (same model, thinking, agent face, directory, access mode and budget). The
+#: two announced baselines ride along with the directory: the child starts in
+#: the root the parent already told its agent about, so its first turn must not
+#: replay a directory/git change notice the parent never saw.
 _SIDE_CHAT_INHERITED_KEYS = (
     StateKey.LLM_MAIN_MODEL,
     StateKey.LLM_THINKING_ENABLED,
@@ -80,6 +83,8 @@ _SIDE_CHAT_INHERITED_KEYS = (
     StateKey.TOKEN_BUDGET_CAP,
     StateKey.AGENT_CONFIG,
     StateKey.PROJECT_DIR,
+    StateKey.PROJECT_DIR_ANNOUNCED,
+    StateKey.GIT_HEAD_ANNOUNCED,
     StateKey.HITL_SESSION_YOLO,
     StateKey.HITL_SESSION_CONFIRM_ALL,
 )
