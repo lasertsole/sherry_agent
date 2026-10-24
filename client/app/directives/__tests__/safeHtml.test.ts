@@ -159,6 +159,14 @@ describe('vSafeHtml 指令', () => {
     expect(el.innerHTML).not.toContain('first');
   });
 
+  it('updated 相同值不重写 DOM（虚拟列表滚动不再闪动）', () => {
+    const el = document.createElement('div');
+    vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);
+    const strong = el.querySelector('strong');
+    vSafeHtml.updated!(el, makeBinding('**bold**'), vnode, vnode);
+    expect(el.querySelector('strong')).toBe(strong);
+  });
+
   it('updated 传入空值时清空内容', () => {
     const el = document.createElement('div');
     vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);

@@ -12,21 +12,23 @@
  */
 import { logUtil } from '~/utils/log';
 
-let started = false;
+let registration: Promise<void> | null = null;
 let ready = false;
 
 /**
- * Register the KaTeX markdown-it plugin exactly once (fire-and-forget).
+ * Register the KaTeX markdown-it plugin exactly once.
  *
  * @param register The registration callback — the caller owns the markdown-it
  *   singleton, this module only resolves the plugin (the CJS double-default
  *   interop lives here).
- * The directive calls this on every mount; it no-ops after the first.
+ * The directive calls this on every mount; it no-ops after the first. The
+ * returned promise settles when the lazy import has finished (success or
+ * failure), so callers can re-render the formulas they rendered before it
+ * landed.
  */
-export function registerKatex(register: (plugin: unknown) => void): void {
-  if (started) return;
-  started = true;
-  import('@vscode/markdown-it-katex')
+export function registerKatex(register: (plugin: unknown) => void): Promise<void> {
+  if (registration) return registration;
+  registration = import('@vscode/markdown-it-katex')
     .then(module => {
       const moduleWithDefault = module as { default?: { default?: unknown } | unknown };
       const plugin =
@@ -41,6 +43,7 @@ export function registerKatex(register: (plugin: unknown) => void): void {
     .catch(error => {
       logUtil.w('[use-katex] registration failed; formulas stay plain text:', error);
     });
+  return registration;
 }
 
 /** Whether the plugin has been registered (formulas render from here on). */

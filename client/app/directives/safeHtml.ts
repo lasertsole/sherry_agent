@@ -1,4 +1,4 @@
-import type { DirectiveBinding, ObjectDirective } from 'vue';
+import type { ObjectDirective } from 'vue';
 import DOMPurify from 'dompurify';
 import MarkdownIt from 'markdown-it';
 import { chatPurifyConfig, styleValueFilter } from '@/constants/security';
@@ -251,6 +251,15 @@ function delegatedAct(event: Event): void {
 /** Per-element click handlers, so `unmounted` can remove exactly what it added. */
 const delegatedHandlers = new WeakMap<HTMLElement, (event: Event) => void>();
 
+/** Last rendered input per element: lets `updated` skip a no-op rewrite. */
+interface SafeHtmlRenderState {
+  value: string | null | undefined;
+  fragment: boolean;
+  streaming: boolean;
+}
+
+const renderStates = new WeakMap<HTMLElement, SafeHtmlRenderState>();
+
 /**
  * Directive implementation: mounted and updated share the same render path, keeping content up to date during streamed appends.
  *
@@ -259,28 +268,69 @@ const delegatedHandlers = new WeakMap<HTMLElement, (event: Event) => void>();
  * schedule the enhancement pass afterwards (which itself no-ops while the
  * element is marked streaming).
  * @param el
- * @param binding
+ * @param value Rendered markdown/HTML source.
+ * @param fragment Whether the input is already HTML (the `.fragment` path).
  */
-const render = (el: HTMLElement, binding: DirectiveBinding<string | null | undefined>): void => {
-  el.innerHTML =
-    binding.modifiers && 'fragment' in binding.modifiers
-      ? safeHtmlOnly(binding.value)
-      : safeMarkdownHtml(binding.value);
+const render = (el: HTMLElement, value: string | null | undefined, fragment: boolean): void => {
+  el.innerHTML = fragment ? safeHtmlOnly(value) : safeMarkdownHtml(value);
+  renderStates.set(el, {
+    value,
+    fragment,
+    streaming: el.dataset.streaming === 'true'
+  });
   void enhance(el);
 };
 
+/**
+ * Re-render once KaTeX's lazy registration lands.
+ *
+ * Registration is fire-and-forget, so the first render of a settled message
+ * happens before `$…$` can be parsed. Without this pass formulas stayed raw
+ * until some unrelated update (a scroll-driven row update used to be that
+ * update) re-rendered the bubble.
+ * @param el
+ */
+function rerenderWhenKatexReady(el: HTMLElement): void {
+  void import('~/composables/use-katex').then(async m => {
+    if (m.isKatexReady()) return;
+    await m.registerKatex(plugin => md.use(plugin as never));
+    if (!m.isKatexReady() || !el.isConnected) return;
+    const state = renderStates.get(el);
+    if (!state || state.fragment) return;
+    render(el, state.value, false);
+  });
+}
+
 export const vSafeHtml: ObjectDirective<HTMLElement, string | null | undefined> = {
   mounted(el, binding) {
-    render(el, binding);
+    const fragment = Boolean(binding.modifiers && 'fragment' in binding.modifiers);
+    render(el, binding.value, fragment);
     const handler = delegatedAct.bind(null);
     delegatedHandlers.set(el, handler);
     el.addEventListener('click', handler);
-    void import('~/composables/use-katex').then(m => m.registerKatex(plugin => md.use(plugin as never)));
+    if (!fragment) rerenderWhenKatexReady(el);
   },
-  updated: render,
+  updated(el, binding) {
+    const fragment = Boolean(binding.modifiers && 'fragment' in binding.modifiers);
+    const state = renderStates.get(el);
+    const streaming = el.dataset.streaming === 'true';
+    // A virtual list re-renders its window on every scroll. Rewriting
+    // innerHTML there destroyed the enhanced (Shiki/Mermaid) nodes and made
+    // the bubble visibly flash; the same value only needs the streaming-gate
+    // bookkeeping below.
+    if (!state || state.value !== binding.value || state.fragment !== fragment) {
+      render(el, binding.value, fragment);
+      return;
+    }
+    if (state.streaming !== streaming) {
+      state.streaming = streaming;
+      if (!streaming) void enhance(el);
+    }
+  },
   unmounted(el) {
     const handler = delegatedHandlers.get(el);
     if (handler) el.removeEventListener('click', handler);
     delegatedHandlers.delete(el);
+    renderStates.delete(el);
   }
 };
