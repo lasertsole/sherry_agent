@@ -1,9 +1,13 @@
 """Ephemeral side-chat sessions: create, inherit context, purge.
 
 A side chat is a normal session with a parent link (``side_chat_store``), but
-its lifecycle is bound to that parent and to the right-sidebar tab. This module
-owns the parent transcript snapshot injected as model-only context and the
-full purge used by both tab-close and parent deletion.
+its lifecycle is bound to that parent and to the right-sidebar tab. It is a
+COMPLETE fork of the parent agent: its first turn is seeded with the parent's
+checkpoint transcript and the parent's per-session settings, while the copied
+messages carry a model-only marker so the side chat's own visible history stays
+empty. This module also owns the bounded text fallback for links created before
+the checkpoint fork and the full purge used by both tab-close and parent
+deletion.
 """
 
 from __future__ import annotations
@@ -13,15 +17,18 @@ import uuid
 from typing import Any
 
 from loguru import logger
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from pub.func.validator import is_safe_session_id
 from pub.func.estimate_tokens import estimate_text_tokens
+from runtime import StateKey
 from server.DAO import side_chat_store
 
 __all__ = [
     "build_parent_context",
     "create_side_chat",
     "delete_side_chat",
+    "get_checkpoint_fork_for_turn",
     "get_context_for_turn",
     "purge_side_chat_children",
     "side_chat_ids",
@@ -51,6 +58,30 @@ _CONTEXT_BOUNDARY = (
     "Do not automatically continue the parent's active work; answer only new "
     "questions asked in this side chat. Modify the workspace only when the user "
     "explicitly asks you to do so here.\n\n"
+)
+
+_CHECKPOINT_BOUNDARY = (
+    "<side_chat_context>\n"
+    "The preceding conversation is the parent session's completed history, "
+    "inherited as a complete fork for reference only. Do not automatically "
+    "continue the parent's active work; answer only new questions asked in this "
+    "side chat. Modify the workspace only when the user explicitly asks you to "
+    "do so here.\n"
+    "</side_chat_context>"
+)
+
+#: Per-session settings a side chat inherits so it behaves like the main agent
+#: (same model, thinking, agent face, directory, access mode and budget).
+_SIDE_CHAT_INHERITED_KEYS = (
+    StateKey.LLM_MAIN_MODEL,
+    StateKey.LLM_THINKING_ENABLED,
+    StateKey.CUSTOM_THINKING_MAPPING,
+    StateKey.SEARCH_BACKEND,
+    StateKey.TOKEN_BUDGET_CAP,
+    StateKey.AGENT_CONFIG,
+    StateKey.PROJECT_DIR,
+    StateKey.HITL_SESSION_YOLO,
+    StateKey.HITL_SESSION_CONFIRM_ALL,
 )
 
 
@@ -125,8 +156,102 @@ async def build_parent_context(parent_session_id: str) -> str:
         return ""
 
 
+def _copy_parent_session_settings(parent_session_id: str, child_session_id: str) -> int:
+    """Copy the parent's per-session settings onto the child (fail-open)."""
+    from server.service.session_settings_service import _read_value, _write_value
+
+    copied = 0
+    for key in _SIDE_CHAT_INHERITED_KEYS:
+        try:
+            value = _read_value(parent_session_id, key)
+            if value is None:
+                continue
+            _write_value(child_session_id, key, value)
+            copied += 1
+        except Exception:
+            logger.warning("side chat: failed to inherit {} from {}", key, parent_session_id)
+    return copied
+
+
+def _mark_inherited(message: BaseMessage) -> BaseMessage:
+    """Mark one copied parent message as model-only side-chat context."""
+    kwargs = dict(getattr(message, "additional_kwargs", None) or {})
+    kwargs["side_chat_context"] = True
+    return message.model_copy(update={"additional_kwargs": kwargs})
+
+
+def _completed_history(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Cut a parent transcript at its last completed assistant answer.
+
+    A parent caught mid-tool (a pending HITL approval or an interrupted run)
+    leaves a trailing AIMessage whose tool calls have no results; copying that
+    into the child would make its first turn execute the parent's unfinished
+    call. The last call-less assistant message is the stable fork boundary.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
+            return list(messages[: index + 1])
+    return []
+
+
+async def get_checkpoint_fork_for_turn(session_id: str) -> list[BaseMessage] | None:
+    """The parent's checkpoint messages for a forked side chat's FIRST turn.
+
+    This is the real fork: the child model sees every message the parent model
+    saw (including browser/tool results that never reached the message store).
+    The messages are marked ``side_chat_context`` so MessagePersistence keeps
+    them out of the child's visible history.
+
+    Falls back to the bounded text snapshot when the parent checkpoint cannot
+    be read, and returns None after the child has its own messages.
+    """
+    row = side_chat_store.get_side_chat(session_id)
+    if row is None or not int(row.get("fork_mode") or 0):
+        return None
+    try:
+        from context_engine.store.core import session_has_messages
+
+        if session_has_messages(session_id):
+            return None
+    except Exception:  # noqa: BLE001 - a probe failure must not inject twice
+        return None
+
+    parent_session_id = str(row.get("parent_session_id") or "")
+    parent_messages: list[BaseMessage] = []
+    if parent_session_id:
+        try:
+            from agent.state_port import read_messages
+
+            parent_messages = _completed_history(list(await read_messages(parent_session_id)))
+        except Exception as exc:  # noqa: BLE001 - fall back to the text snapshot
+            logger.warning(
+                "side chat: parent checkpoint read failed for {}: {}", parent_session_id, exc
+            )
+    if parent_messages:
+        return [
+            *(_mark_inherited(message) for message in parent_messages),
+            HumanMessage(
+                content=_CHECKPOINT_BOUNDARY,
+                additional_kwargs={"side_chat_context": True},
+                metadata={"internal": True, "provenance": "side_chat_context"},
+            ),
+        ]
+
+    fallback = str(row.get("context_text") or "")
+    if fallback:
+        return [
+            HumanMessage(
+                content=fallback,
+                additional_kwargs={"side_chat_context": True},
+                metadata={"internal": True, "provenance": "side_chat_context"},
+            )
+        ]
+    return None
+
+
 async def create_side_chat(parent_session_id: str) -> dict[str, Any]:
-    """Create a child id + parent link + bounded inherited context."""
+    """Create a child id + parent link + checkpoint-fork inheritance."""
     if not is_safe_session_id(parent_session_id):
         raise ValueError("invalid parent_session_id")
     if side_chat_store.get_side_chat(parent_session_id) is not None:
@@ -134,17 +259,21 @@ async def create_side_chat(parent_session_id: str) -> dict[str, Any]:
 
     child_session_id = uuid.uuid4().hex
     context_text = await build_parent_context(parent_session_id)
-    side_chat_store.create_side_chat(child_session_id, parent_session_id, context_text)
+    side_chat_store.create_side_chat(
+        child_session_id, parent_session_id, context_text, fork_mode=True
+    )
+    copied = _copy_parent_session_settings(parent_session_id, child_session_id)
     logger.info(
-        "side chat created: child={} parent={} context_chars={}",
+        "side chat created: child={} parent={} context_chars={} settings={}",
         child_session_id,
         parent_session_id,
         len(context_text),
+        copied,
     )
     return {
         "session_id": child_session_id,
         "parent_session_id": parent_session_id,
-        "inherited": bool(context_text),
+        "inherited": True,
     }
 
 
@@ -152,6 +281,10 @@ def get_context_for_turn(session_id: str) -> str | None:
     """The inherited transcript for a child's FIRST turn, or None afterwards."""
     row = side_chat_store.get_side_chat(session_id)
     if row is None:
+        return None
+    if int(row.get("fork_mode") or 0):
+        # New side chats use the checkpoint fork; this text path is only for
+        # links created by the first implementation.
         return None
     context_text = str(row.get("context_text") or "")
     if not context_text:

@@ -5,8 +5,8 @@ session. The link must survive a restart so a deleted parent can still cascade
 into its children (and a boot sweep can remove orphans), so it lives in its own
 small SQLite table instead of an in-memory register.
 
-Only ids + the bounded inherited-context text are stored here; the conversation
-itself stays in the normal message/checkpoint stores.
+Only ids, the fork flag and the bounded fallback text are stored here; the
+conversation itself stays in the normal message/checkpoint stores.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS side_chats (
     child_session_id  TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL,
     context_text      TEXT NOT NULL DEFAULT '',
+    fork_mode         INTEGER NOT NULL DEFAULT 0,
     created_at        INTEGER NOT NULL
 )
 """
@@ -48,18 +49,35 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute(_DDL)
+    # Additive migration for databases created before the checkpoint-fork mode.
+    try:
+        conn.execute("ALTER TABLE side_chats ADD COLUMN fork_mode INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # duplicate column = already migrated / fresh schema
     conn.execute(_INDEX_DDL)
     return conn
 
 
-def create_side_chat(child_session_id: str, parent_session_id: str, context_text: str = "") -> None:
+def create_side_chat(
+    child_session_id: str,
+    parent_session_id: str,
+    context_text: str = "",
+    *,
+    fork_mode: bool = False,
+) -> None:
     """Insert (or replace) one side-chat link."""
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO side_chats "
-            "(child_session_id, parent_session_id, context_text, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (child_session_id, parent_session_id, context_text, int(time.time())),
+            "(child_session_id, parent_session_id, context_text, fork_mode, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                child_session_id,
+                parent_session_id,
+                context_text,
+                1 if fork_mode else 0,
+                int(time.time()),
+            ),
         )
         conn.commit()
 
@@ -68,7 +86,7 @@ def get_side_chat(child_session_id: str) -> dict[str, Any] | None:
     """Return one link row, or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT child_session_id, parent_session_id, context_text, created_at "
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, created_at "
             "FROM side_chats WHERE child_session_id = ?",
             (child_session_id,),
         ).fetchone()
@@ -90,7 +108,8 @@ def all_side_chats() -> list[dict[str, Any]]:
     """Every link row (used by the boot orphan sweep)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT child_session_id, parent_session_id, context_text, created_at FROM side_chats"
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, "
+            "created_at FROM side_chats"
         ).fetchall()
     return [dict(row) for row in rows]
 

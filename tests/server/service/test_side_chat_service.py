@@ -23,8 +23,14 @@ def test_store_create_get_list_and_delete() -> None:
     assert row is not None
     assert row["parent_session_id"] == "parent-1"
     assert row["context_text"] == "context"
+    assert row["fork_mode"] == 0
     assert side_chat_store.list_children("parent-1") == ["child-1", "child-2"]
     assert side_chat_store.side_chat_ids() == {"child-1", "child-2", "child-3"}
+    assert [entry["fork_mode"] for entry in side_chat_store.all_side_chats()] == [0, 0, 0]
+
+    side_chat_store.create_side_chat("child-4", "parent-2", fork_mode=True)
+    forked = side_chat_store.get_side_chat("child-4")
+    assert forked is not None and forked["fork_mode"] == 1
 
     assert side_chat_store.delete_side_chat("child-2") is True
     assert side_chat_store.get_side_chat("child-2") is None
@@ -47,6 +53,142 @@ async def test_create_side_chat_stores_parent_link_and_context(monkeypatch) -> N
     row = side_chat_store.get_side_chat(result["session_id"])
     assert row is not None
     assert row["context_text"] == "<side_chat_context>history</side_chat_context>"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checkpoint_fork_copies_parent_model_messages(monkeypatch) -> None:
+    side_chat_store.create_side_chat("child-1", "parent-1", "fallback text", fork_mode=True)
+    import context_engine.store.core as store_core
+    import agent.state_port as state_port
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    monkeypatch.setattr(store_core, "session_has_messages", lambda _sid: False)
+
+    async def fake_read_messages(_parent: str):
+        return [
+            HumanMessage(content="parent question"),
+            AIMessage(content="parent answer"),
+        ]
+
+    monkeypatch.setattr(state_port, "read_messages", fake_read_messages)
+
+    inherited = await side_chat_service.get_checkpoint_fork_for_turn("child-1")
+
+    assert inherited is not None
+    assert len(inherited) == 3
+    assert [getattr(message, "content", "") for message in inherited[:2]] == [
+        "parent question",
+        "parent answer",
+    ]
+    assert all(message.additional_kwargs.get("side_chat_context") is True for message in inherited)
+    assert "complete fork" in str(inherited[-1].content)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checkpoint_fork_stops_at_the_last_completed_answer(monkeypatch) -> None:
+    side_chat_store.create_side_chat("child-1", "parent-1", fork_mode=True)
+    import context_engine.store.core as store_core
+    import agent.state_port as state_port
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    monkeypatch.setattr(store_core, "session_has_messages", lambda _sid: False)
+
+    async def fake_read_messages(_parent: str):
+        return [
+            HumanMessage(content="parent question"),
+            AIMessage(content="parent answer"),
+            HumanMessage(content="unfinished question"),
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "terminal", "args": {}, "id": "call-1"}],
+            ),
+            ToolMessage(content="unfinished result", tool_call_id="call-1"),
+        ]
+
+    monkeypatch.setattr(state_port, "read_messages", fake_read_messages)
+
+    inherited = await side_chat_service.get_checkpoint_fork_for_turn("child-1")
+
+    assert inherited is not None
+    # The dangling tool call (a pending HITL approval / interrupted run) and the
+    # user turn it belonged to are not replayed into the child.
+    assert [message.content for message in inherited[:-1]] == [
+        "parent question",
+        "parent answer",
+    ]
+    assert all(message.additional_kwargs.get("side_chat_context") is True for message in inherited)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_checkpoint_fork_falls_back_when_no_answer_completed(monkeypatch) -> None:
+    side_chat_store.create_side_chat(
+        "child-1", "parent-1", "<side_chat_context>fallback</side_chat_context>", fork_mode=True
+    )
+    import context_engine.store.core as store_core
+    import agent.state_port as state_port
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    monkeypatch.setattr(store_core, "session_has_messages", lambda _sid: False)
+
+    async def fake_read_messages(_parent: str):
+        return [
+            HumanMessage(content="waiting for the first answer"),
+            AIMessage(content="", tool_calls=[{"name": "terminal", "args": {}, "id": "c"}]),
+        ]
+
+    monkeypatch.setattr(state_port, "read_messages", fake_read_messages)
+
+    inherited = await side_chat_service.get_checkpoint_fork_for_turn("child-1")
+
+    assert inherited is not None
+    assert len(inherited) == 1
+    assert "fallback" in str(inherited[0].content)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_create_side_chat_copies_parent_session_settings(monkeypatch) -> None:
+    async def fake_context(_parent: str) -> str:
+        return ""
+
+    monkeypatch.setattr(side_chat_service, "build_parent_context", fake_context)
+
+    import server.service.session_settings_service as settings
+
+    parent_values = {
+        "llm_main_model": {"provider": "deepseek", "model": "deepseek-flash"},
+        "project_dir": "/home/honor/WorkBuddy",
+        "agent_config": {"tools": ["read_file"]},
+    }
+    written: dict[str, object] = {}
+
+    def fake_read(session_id: str, key: str):
+        assert session_id == "parent-1"
+        return parent_values.get(key)
+
+    def fake_write(session_id: str, key: str, value: object) -> None:
+        written[key] = value
+
+    monkeypatch.setattr(settings, "_read_value", fake_read)
+    monkeypatch.setattr(settings, "_write_value", fake_write)
+
+    result = await side_chat_service.create_side_chat("parent-1")
+
+    assert written == parent_values
+    row = side_chat_store.get_side_chat(result["session_id"])
+    assert row is not None and row["fork_mode"] == 1
+
+
+@pytest.mark.unit
+def test_fork_context_is_not_used_after_the_child_has_messages(monkeypatch) -> None:
+    side_chat_store.create_side_chat("child-1", "parent-1", fork_mode=True)
+    import context_engine.store.core as store_core
+
+    monkeypatch.setattr(store_core, "session_has_messages", lambda _sid: True)
+    assert side_chat_service.get_context_for_turn("child-1") is None
 
 
 @pytest.mark.unit

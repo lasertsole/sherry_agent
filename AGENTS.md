@@ -302,18 +302,32 @@ works.
   (the label is a 40-char preview). `extractTextForSend` now turns that chip into
   a markdown blockquote (`> line` per line) and never leaks the preview; the
   file-mention branch is unchanged and still extracts `@path`.
-- **在辅助会话中提问** — `createSideChatSession` (`use-side-chat.ts`) mints an
-  ordinary child session (NOT a subagent), copies the parent's preset binding,
-  locked character snapshot, agent config and PROJECT DIRECTORY, caches its
-  placeholder meta and announces it via `session:created`, then opens a
-  session-scoped `sideChat` right-sidebar tab whose payload carries
-  `{sessionId, quote, source}`. The panel reads that payload on mount (no
-  mitt race) and prefills the quote chip. `SideChatPanel.vue` reuses the page's
-  lifecycle / draft-persistence / chunk / HITL / chat-stream slices over the
-  child's own persistent socket, history and approvals; it has a compact
-  question/plan/generic approval card. Closing the tab does not delete the
-  session — it stays in the normal session list, so its history is recoverable
-  (the plan's "hidden side session" was traded for that recoverability).
+- **在辅助会话中提问** — the SERVER creates the child
+  (`POST /sessions/side_chat`, `server/service/side_chat_service.py`) as a
+  COMPLETE FORK of the parent agent (NOT a subagent): its first turn is seeded
+  with the parent's checkpoint transcript — including tool/browser results that
+  never reached the message store — and the parent's per-session settings
+  (main model, thinking, custom mapping, search backend, budget cap, agent
+  config, project directory, access mode) are copied. The copied messages carry
+  `additional_kwargs["side_chat_context"]`, which `MessagePersistence` filters,
+  so the child's visible history holds only its own new turns. The fork is cut
+  at the parent's last completed assistant answer, so a dangling tool call (a
+  pending HITL approval or an interrupted run) is never replayed into the
+  child. The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
+  snapshot links keep the bounded fallback) and the child is hidden from the
+  session list. `createSideChatSession` (`use-side-chat.ts`) also copies the
+  parent's preset binding and locked character snapshot into Dexie, caches the
+  placeholder meta and opens a session-scoped `sideChat` right-sidebar tab whose
+  payload carries `{sessionId, quote, source, parentSessionId, inherited}`. The
+  panel reads that payload on mount (no mitt race) and prefills the quote chip.
+  `SideChatPanel.vue` reuses the page's lifecycle / draft-persistence / chunk /
+  HITL / chat-stream slices over the child's own persistent socket, history and
+  approvals; it has a compact question/plan/generic approval card. The child is
+  EPHEMERAL: closing the tab (`DELETE /sessions/side_chat`) cancels its turn,
+  closes its browser page, purges its subagent subtree and every store (messages,
+  checkpoint, queue rows, trajectory, writes, session dir), then drops the link
+  and the Dexie rows; deleting the parent cascades the same purge, and a boot
+  sweep removes orphans. A side chat can never parent another side chat.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 
@@ -530,15 +544,13 @@ own reason (a checkout blocked by a dirty tree names the files), and a failed
 read rejects rather than resolving the shared client's null payload — a null
 assigned to the panel's page threw on every later render, which left the panel
 visibly dead (no row expansion, no branch switch) until a reload. The header's
-branch label is also the **branch switcher** (VS Code's graph has the same
-dropdown): clicking it lists the page's `branches` — local refs, most recently
-committed first, clipped by `GIT_GRAPH["max_branches"]` — with the current one
-ticked and inert; picking another checks it out (`POST /git/checkout`, no
-confirmation, matching the ref-chip menu, and git itself refuses a checkout that
-would clobber local changes). A switch made here (or in a terminal, or a
-commit/reset outside the session) reaches the AGENT as the git notice described
-under Project Directory Binding: the next turn's transcript gets one
-`git_head` card before the human message.
+branch label still renders the switcher dropdown the panel ships with, but
+since user-git writes were replaced by per-project shadow checkpoints
+(commit 99773730) the graph payload pins `branches: []`, so the dropdown stays
+disabled — the panel's own empty-branches state. A checkout made through the
+ref-chip menu (or in a terminal, or a commit/reset outside the session) still
+reaches the AGENT as the git notice described under Project Directory Binding:
+the next turn's transcript gets one `git_head` card before the human message.
 
 The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
 same dialog shape the settings menu uses, and both entries open a right-sidebar tab

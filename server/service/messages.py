@@ -222,24 +222,38 @@ class _GenerateTurn(StreamTurn):
                 HumanMessage(content=_get_content_list(m), metadata=self.origin)
                 for m in self.messages
             ]
-            # A newly created side chat inherits its parent's transcript as a
-            # MODEL-ONLY leading message. The marker is filtered out by
-            # MessagePersistence, so the side chat's visible history stays empty.
+            # A newly created side chat forks the parent's model history: the
+            # child sees the SAME checkpoint messages (including browser/tool
+            # results), all marked model-only. MessagePersistence filters the
+            # marker, so the side chat's visible history stays empty. Older
+            # side chats fall back to the bounded text snapshot.
+            inherited: list[Any] = []
             try:
-                from server.service.side_chat_service import get_context_for_turn
-
-                context_text = await asyncio.to_thread(get_context_for_turn, self.session_id)
-            except Exception:  # noqa: BLE001 - inheritance is fail-open
-                context_text = None
-            if context_text:
-                input_messages.insert(
-                    0,
-                    HumanMessage(
-                        content=context_text,
-                        additional_kwargs={"side_chat_context": True},
-                        metadata={"internal": True, "provenance": "side_chat_context"},
-                    ),
+                from server.service.side_chat_service import (
+                    get_checkpoint_fork_for_turn,
+                    get_context_for_turn,
                 )
+
+                forked = await get_checkpoint_fork_for_turn(self.session_id)
+                if forked:
+                    inherited = forked
+                else:
+                    context_text = await asyncio.to_thread(get_context_for_turn, self.session_id)
+                    if context_text:
+                        inherited = [
+                            HumanMessage(
+                                content=context_text,
+                                additional_kwargs={"side_chat_context": True},
+                                metadata={
+                                    "internal": True,
+                                    "provenance": "side_chat_context",
+                                },
+                            )
+                        ]
+            except Exception:  # noqa: BLE001 - inheritance is fail-open
+                inherited = []
+            if inherited:
+                input_messages = [*inherited, *input_messages]
             input_dict = {
                 "session_id": self.session_id,
                 "messages": input_messages,
