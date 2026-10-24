@@ -43,11 +43,18 @@ class _FakeBackend:
 
     def __init__(self) -> None:
         self.wrap_calls: list[tuple[list[str], dict]] = []
+        self.allow_network: list[bool] = []
 
     def wrap(
-        self, cmd: list[str], env: dict, writable_roots: list | None = None
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: list | None = None,
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict]:
         self.wrap_calls.append((list(cmd), dict(env)))
+        self.allow_network.append(allow_network)
         return ["/fake/bwrap", "--", *cmd], env
 
 
@@ -65,7 +72,25 @@ def test_auto_with_backend_wraps_the_interpreter_argv(monkeypatch: pytest.Monkey
     )
     assert argv == ["/fake/bwrap", "--", "/usr/bin/python", "/tmp/script.py"]
     assert backend.wrap_calls[0][0] == ["/usr/bin/python", "/tmp/script.py"]
+    assert backend.allow_network == [False]
     assert env == {"PATH": "/bin"}
+
+
+def test_ptc_can_keep_the_network_namespace_for_its_rpc_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _FakeBackend()
+    _policy(monkeypatch, SandboxPolicy.AUTO)
+    monkeypatch.setattr(runner, "get_backend", lambda _policy: backend)
+
+    _resolve_sandboxed_argv(
+        ["/usr/bin/python", "/tmp/script.py"],
+        {"PATH": "/bin"},
+        ROOTS,
+        allow_network=True,
+    )
+
+    assert backend.allow_network == [True]
 
 
 def test_off_never_consults_the_backend(monkeypatch: pytest.MonkeyPatch) -> None:

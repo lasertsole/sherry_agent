@@ -125,13 +125,19 @@ class SeatbeltBackend(SandboxBackend):
         return "\n".join(lines)
 
     def wrap(
-        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: Sequence[Path],
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict]:
         """Wrap cmd into a sandbox-exec invocation over the caller's roots.
 
         Only the caller's roots (plus TEMP_DIR) are re-opened for writing; the
         whole profile is "allow everything except file writes", so the write
-        surface IS the sandbox.
+        surface IS the sandbox. ``allow_network`` is accepted for the shared
+        backend contract; this profile never restricted the network.
         """
         profile = self._build_profile(writable_roots)
         return ["sandbox-exec", "-p", profile, "--", *cmd], env

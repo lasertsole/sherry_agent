@@ -37,7 +37,14 @@ class _RecordingBackend:
     def probe(self) -> bool:
         return True
 
-    def wrap(self, cmd: list[str], env: dict, writable_roots: list[Path]):
+    def wrap(
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: list[Path],
+        *,
+        allow_network: bool = False,
+    ):
         self.roots.append(list(writable_roots))
         return ["sandboxed", *cmd], env
 
@@ -61,6 +68,17 @@ class TestNormalizeWritableRoots:
         roots = normalize_writable_roots([Path("/tmp/some-project")])
 
         assert Path(sandbox_mod.TEMP_DIR).resolve() in roots
+
+    def test_a_missing_temp_dir_is_created_for_the_bind_mount(self, tmp_path, monkeypatch):
+        """bwrap cannot bind a source that does not exist (fresh checkout / CI)."""
+        missing = tmp_path / "runtime-temp"
+        monkeypatch.setattr(sandbox_mod, "TEMP_DIR", missing)
+        assert not missing.exists()
+
+        roots = normalize_writable_roots([tmp_path / "project"])
+
+        assert missing.is_dir()
+        assert missing.resolve() in roots
 
     def test_duplicates_collapse(self, tmp_path):
         roots = normalize_writable_roots([tmp_path, tmp_path / "."])

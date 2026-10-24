@@ -153,7 +153,12 @@ class SandboxBackend(ABC):
 
     @abstractmethod
     def wrap(
-        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+        self,
+        cmd: list[str],
+        env: dict,
+        writable_roots: Sequence[Path],
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict]:
         """Wrap a command argv + environment for sandboxed execution.
 

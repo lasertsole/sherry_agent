@@ -111,7 +111,12 @@ def test_available_backend_wraps_the_child_argv(monkeypatch: pytest.MonkeyPatch)
 
     class _Backend:
         def wrap(
-            self, cmd: list[str], env: dict, writable_roots: list | None = None
+            self,
+            cmd: list[str],
+            env: dict,
+            writable_roots: list | None = None,
+            *,
+            allow_network: bool = False,
         ) -> tuple[list[str], dict]:
             wrap_calls.append(list(cmd))
             return ["/fake/bwrap", "--", *cmd], env
@@ -147,7 +152,9 @@ class TestGrandchildDoesNotHang:
         from agent.tools.ptc import runner as ptc_runner
 
         monkeypatch.setattr(
-            ptc_runner, "_resolve_sandboxed_argv", lambda argv, env, roots: (argv, env)
+            ptc_runner,
+            "_resolve_sandboxed_argv",
+            lambda argv, env, roots, **kwargs: (argv, env),
         )
 
         from config.features import PTC
