@@ -50,7 +50,7 @@ from loguru import logger
 
 import agent.core as agent_core
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
 from config import SESSIONS_DIR
 from context_engine import delete_messages_by_session
@@ -271,8 +271,9 @@ async def _drive_llm_tool(
 def _run_task_prompt(sid: str, fid: str, task: str) -> str:
     """An explicit, low-ambiguity instruction to call run_task with a schema."""
     return (
-        "You must call the tool `taskflow_run_task` exactly once with these exact "
-        "arguments and nothing else:\n"
+        "You must call the tool `taskflow_step` with action='run_task' exactly once "
+        "with these exact arguments and nothing else:\n"
+        "  action = 'run_task'\n"
         f"  session_id = {sid!r}\n"
         f"  flow_id = {fid!r}\n"
         f"  task = {task!r}\n"
@@ -300,7 +301,7 @@ async def test_live_model_creates_expectation_step_then_real_child(
             tag="schema-step",
             sid=sid,
             prompt=_run_task_prompt(sid, fid, task),
-            tool="taskflow_run_task",
+            tool="taskflow_step",
             expect="TaskFlow step dispatched",
         )
 
@@ -339,8 +340,9 @@ async def test_live_model_creates_expectation_step_then_real_child(
 
 def _resume_prompt(sid: str, fid: str, child_key: str) -> str:
     return (
-        "You must call the tool `taskflow_resume` exactly once with these exact "
-        "arguments and nothing else:\n"
+        "You must call the tool `taskflow_step` with action='resume' exactly once "
+        "with these exact arguments and nothing else:\n"
+        "  action = 'resume'\n"
         f"  session_id = {sid!r}\n"
         f"  flow_id = {fid!r}\n"
         f"  child_session_key = {child_key!r}\n"
@@ -371,7 +373,7 @@ async def test_live_model_declares_step_failure(flow_env: Path) -> None:
             tag="declared-failure",
             sid=sid,
             prompt=_resume_prompt(sid, fid, "child-1"),
-            tool="taskflow_resume",
+            tool="taskflow_step",
             expect="outcome: failed (declared by the caller)",
         )
 
@@ -385,7 +387,7 @@ async def test_live_model_declares_step_failure(flow_env: Path) -> None:
         assert record["step_outcome"] == "failure", record
         logger.info(
             "[clo e2e] declared outcome tool result: {!r}",
-            str(_tool_messages(out, "taskflow_resume")[-1].content)[:200],
+            str(_tool_messages(out, "taskflow_step")[-1].content)[:200],
         )
     finally:
         await _purge_session(sid)
@@ -401,7 +403,7 @@ async def test_schema_gate_then_binding_reaches_real_child(
     flow_env: Path, clean_subagent_registry
 ) -> None:
     await _real_graph()  # real spawn needs the same assembly as case 1
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     resume = tools["taskflow_resume"]
     run_task = tools["taskflow_run_task"]
     marker = f"mk-{uuid.uuid4().hex[:8]}"

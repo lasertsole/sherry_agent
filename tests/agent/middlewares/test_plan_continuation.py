@@ -404,8 +404,8 @@ async def test_open_flow_without_todos_still_gates_the_turn(
     assert "step step-1 (done): task-step-1" in content
     assert "step step-2 (dispatched): task-step-2" in content
     # The board's next actions are spelled out, not left to guesswork.
-    assert "taskflow_wait_all" in content
-    assert "taskflow_finish" in content
+    assert "taskflow_step(action='wait_all')" in content
+    assert "taskflow_flow(action='finish')" in content
 
 
 @pytest.mark.asyncio
@@ -421,7 +421,7 @@ async def test_a_settled_but_open_flow_asks_for_closure(
     assert len(spy_auto_turn) == 1
     content = spy_auto_turn[0][1].content
     assert "still open" in content
-    assert "taskflow_finish" in content
+    assert "taskflow_flow(action='finish')" in content
 
 
 @pytest.mark.asyncio

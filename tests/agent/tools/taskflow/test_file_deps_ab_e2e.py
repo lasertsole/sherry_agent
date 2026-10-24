@@ -21,7 +21,7 @@ import pytest
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
 from agent.tools.pub_base.regression_gate import prioritized_sessions
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 from config.features import EVIDENCE_REGRESSION_GATE
 from runtime.session.state_keys import StateKey
@@ -83,7 +83,7 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
 
 
 def _finish_tool():
-    return {tool.name: tool for tool in build_taskflow_tools()}["taskflow_finish"]
+    return {tool.name: tool for tool in build_legacy_taskflow_tools()}["taskflow_finish"]
 
 
 async def _seed_flow(

@@ -96,7 +96,7 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
                 waiting_h = waiting_secs / 3600
                 lines.append(
                     f"wait_status: STALE (waiting {waiting_h:.1f}h, timeout={timeout_hours}h) "
-                    f"— child session may have crashed; consider taskflow_resume with a "
+                    f"— child session may have crashed; consider taskflow_step(action='resume') with a "
                     f"failure result or re-dispatch"
                 )
             else:

@@ -124,7 +124,7 @@ async def taskflow_resume(
     if not flow_id:
         return "Error: flow_id is required"
     if not child_session_key and not result:
-        return "Error: taskflow_resume requires child_session_key or result"
+        return "Error: taskflow_step(action='resume') requires child_session_key or result"
 
     flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:

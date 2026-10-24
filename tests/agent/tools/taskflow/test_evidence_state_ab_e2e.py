@@ -16,7 +16,7 @@ from agent.tools.file_tools.read_file import build_read_file_tool
 from agent.tools.file_tools.write_file import build_write_file_tool
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.pub_base.evidence_recorder import record_verification_evidence
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 from agent.tools.taskflow.registry import store_sqlite
 from runtime.session.state_keys import StateKey
@@ -55,7 +55,7 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
 
 
 def _finish_tool():
-    return {tool.name: tool for tool in build_taskflow_tools()}["taskflow_finish"]
+    return {tool.name: tool for tool in build_legacy_taskflow_tools()}["taskflow_finish"]
 
 
 async def _seed_flow() -> None:

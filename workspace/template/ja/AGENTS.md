@@ -39,13 +39,13 @@
 - delegation="self"：些細なタスク（10 行未満・単一ファイル）は自分で行う
 - delegation="subagent"：複雑なタスク（複数ファイル・100 行超・複雑なロジック）は task ツールでサブエージェントに委譲し、その後 subagent_id フィールドを設定する
 - コード編集・テスト作成・修正は委譲に適した作業
-- taskflow_run_task(depends_on=[...]) で依存関係を宣言し、taskflow_dispatch で準備が整ったステップをまとめてディスパッチして、完了を待つ
+- taskflow_step(action="run_task", depends_on=[...]) で依存関係を宣言し、taskflow_step(action="dispatch") で準備が整ったステップをまとめてディスパッチして、完了を待つ
 
 ### 遷移バリア（CRITICAL）
 
 - サブエージェントがまだ実行中の間は、todo を completed にマークしない
 - TaskFlow 連携の todo に対応する TaskFlow step が `done` でない間は、completed にマークしない（step 状態が `blocked`/`ready`/`dispatched` のいずれも「未完了」を意味する）
-- サブエージェントが戻り、taskflow_resume で結果が注入されるのを待ってから todo 状態を更新すること。resume で結果が注入されて初めて step は `done` になる
+- サブエージェントが戻り、taskflow_step(action="resume") で結果が注入されるのを待ってから todo 状態を更新すること。resume で結果が注入されて初めて step は `done` になる
 - サブエージェントが失敗した場合は、todo を cancelled にマークして再計画する
 
 ### 完了契約（Sisyphus）

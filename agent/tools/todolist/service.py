@@ -159,14 +159,14 @@ async def _assert_transition_allowed(todo: dict, session_id: str) -> None:
         status, problem = await _read_taskflow_step_status(str(flow_id), str(step_id), session_id)
         if problem is not None:
             raise TodoStoreError(
-                f"Cannot mark todo completed: {problem}. Call taskflow_wait_all then "
-                "taskflow_resume to inject the result before marking completed."
+                f"Cannot mark todo completed: {problem}. Call taskflow_step(action='wait_all') then "
+                "taskflow_step(action='resume') to inject the result before marking completed."
             )
         if status != _TASKFLOW_STEP_DONE:
             raise TodoStoreError(
                 f"Cannot mark todo completed: TaskFlow step {step_id} "
-                f"(flow {flow_id}) is '{status}'. Call taskflow_wait_all then "
-                "taskflow_resume to inject the result before marking completed."
+                f"(flow {flow_id}) is '{status}'. Call taskflow_step(action='wait_all') then "
+                "taskflow_step(action='resume') to inject the result before marking completed."
             )
     elif flow_id:
         # Flow-level root: the whole flow must be terminal first. This is what

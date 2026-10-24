@@ -78,7 +78,7 @@ async def taskflow_create(
     if step_count > TASKFLOW_INFRA["max_steps_per_flow"]:
         return (
             f"Error: flow has {step_count} steps, max is "
-            f"{TASKFLOW_INFRA['max_steps_per_flow']}. Use taskflow_plan to decompose "
+            f"{TASKFLOW_INFRA['max_steps_per_flow']}. Use taskflow_flow(action='plan') to decompose "
             "the goal into fewer steps."
         )
     active_flows = store_sqlite.get_active_flows_sync(session_id)
@@ -114,8 +114,8 @@ async def taskflow_create(
         return (
             f"TaskFlow already exists (idempotent): flow_id={flow_id}, "
             f"revision={existing['expected_revision']}, status={existing['status']}; "
-            "nothing new was created. Re-read it with taskflow_summary, or continue "
-            "it with taskflow_resume."
+            "nothing new was created. Re-read it with taskflow_inspect(action='summary'), or continue "
+            "it with taskflow_step(action='resume')."
         )
 
     # Entry defense: the flow's GC root. The flow and todo live in separate

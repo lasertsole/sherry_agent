@@ -204,7 +204,7 @@ class FlowConflictError(TaskFlowStoreError):
         self.latest_revision = latest_revision
         super().__init__(
             f"TaskFlow '{flow_id}' revision conflict: expected_revision={expected_revision} "
-            f"but latest revision={latest_revision}; re-read with taskflow_summary and "
+            f"but latest revision={latest_revision}; re-read with taskflow_inspect(action='summary') and "
             f"retry with expected_revision={latest_revision}"
         )
 

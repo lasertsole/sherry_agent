@@ -321,7 +321,9 @@ def _build_taskflow_block(session_id: str) -> str:
                 f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{next_hint}'
             )
 
-        lines.append("Use taskflow_summary to inspect a flow and continue execution.")
+        lines.append(
+            "Use taskflow_inspect(action='summary') to inspect a flow and continue execution."
+        )
         return "\n".join(lines)
     except Exception as error:  # a broken block must not break the prompt
         logger.debug("prompt builder: taskflow block failed ({}); omitting it", error)

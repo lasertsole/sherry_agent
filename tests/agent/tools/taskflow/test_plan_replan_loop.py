@@ -233,7 +233,7 @@ async def test_replan_refuses_past_the_budget(isolated_db, planner):
     out = await replan_mod.taskflow_replan.coroutine(flow_id="flow-max", session_id=_SESSION)
 
     assert out.startswith("Error:")
-    assert "taskflow_fail" in out
+    assert "taskflow_flow(action='fail')" in out
 
 
 @pytest.mark.asyncio
@@ -289,7 +289,7 @@ async def test_goal_gate_rejects_and_points_at_replan(planner):
 
     assert result is not None
     assert "appendix" in result
-    assert "taskflow_replan" in result
+    assert "taskflow_flow(action='replan')" in result
 
 
 @pytest.mark.asyncio

@@ -44,8 +44,8 @@ If not, it's too big — split it.
 ## DAG / TaskFlow Fields (optional)
 - plan_ref: plan file path — session-scoped workspace/sessions/<session_id>/plans/*.md
 - flow_id: linked TaskFlow flow id (DAG lives in TaskFlow, not in todos.db)
-- step_id: linked TaskFlow step id (e.g. step-2); read its status via taskflow_summary
-- To declare dependencies, call taskflow_run_task(..., depends_on=[...]); do NOT
+- step_id: linked TaskFlow step id (e.g. step-2); read its status via taskflow_inspect(action="summary")
+- To declare dependencies, call taskflow_step(action="run_task", ..., depends_on=[...]); do NOT
   re-implement DAG/frontier scheduling in the todolist layer
 """
 

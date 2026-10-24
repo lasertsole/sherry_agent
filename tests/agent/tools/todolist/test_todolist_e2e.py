@@ -35,7 +35,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.middlewares.todo_continuation.core import PlanContinuationEnforcer, _build_status_block
 from agent.tools.memory import MemoryStore
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
 from agent.tools.todolist import service as todo_service
 from agent.tools.todolist.registry import store_sqlite as todo_store
@@ -107,7 +107,7 @@ def _tools() -> dict[str, Any]:
 
 
 def _flow_tools() -> dict[str, Any]:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 def _parse_todowrite(output: str) -> list[dict]:

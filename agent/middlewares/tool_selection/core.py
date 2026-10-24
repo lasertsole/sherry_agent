@@ -107,7 +107,7 @@ def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
     if not session_id:
         return None
     try:
-        from agent.tools.catalog import REQUIRED_TOOLS
+        from agent.tools.catalog import REQUIRED_TOOLS, canonical_tool_name
         from runtime import StateKey, state_register_mem
 
         raw = state_register_mem.get_state(session_id, StateKey.AGENT_CONFIG, None)
@@ -116,7 +116,9 @@ def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
         names = raw.get("tools")
         if not isinstance(names, list):
             return None
-        stored = frozenset(str(name) for name in names if isinstance(name, str) and name)
+        stored = frozenset(
+            canonical_tool_name(name) for name in names if isinstance(name, str) and name
+        )
         return stored | REQUIRED_TOOLS
     except Exception:  # noqa: BLE001 - never break a turn over the config read
         logger.exception("ToolSelectionMiddleware: config read failed; offering every tool")

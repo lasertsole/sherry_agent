@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
@@ -31,7 +31,7 @@ FLOW = "flow-finish-gate"
 
 
 def _finish_tool():
-    return {t.name: t for t in build_taskflow_tools()}["taskflow_finish"]
+    return {t.name: t for t in build_legacy_taskflow_tools()}["taskflow_finish"]
 
 
 @pytest.fixture()

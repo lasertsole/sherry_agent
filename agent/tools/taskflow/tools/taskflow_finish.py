@@ -115,7 +115,7 @@ async def _goal_gate(flow: dict) -> str | None:
         logger.info("TaskFlow goal gate rejected the finish: {}", reason[:200])
         return (
             f"Error: Cannot finish: the goal is not met ({reason}). "
-            "Re-plan the remaining work with taskflow_replan, or finish the missing "
+            "Re-plan the remaining work with taskflow_flow(action='replan'), or finish the missing "
             "steps and try again."
         )
     return None
@@ -249,8 +249,8 @@ async def _auto_fail_finish(
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow auto-failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
-        f"reason={terminal_reason}. Use taskflow_create(resumed_from='{flow_id}') to fork a "
-        "fresh plan, or taskflow_summary to inspect. Children still running are recorded "
+        f"reason={terminal_reason}. Use taskflow_flow(action='create', resumed_from='{flow_id}') to fork a "
+        "fresh plan, or taskflow_inspect(action='summary') to inspect. Children still running are recorded "
         "as detached, not killed."
     )
 
@@ -352,8 +352,8 @@ async def taskflow_finish(
                 return error
             return (
                 f"Error: Cannot finish: {len(pending)} step(s) not done/blocked: "
-                f"{[step.get('step_id') for step in pending]}. Use taskflow_wait_all, then "
-                f"taskflow_resume for settled children (nudge {nudge}/{nudge_max})."
+                f"{[step.get('step_id') for step in pending]}. Use taskflow_step(action='wait_all'), then "
+                f"taskflow_step(action='resume') for settled children (nudge {nudge}/{nudge_max})."
             )
         return await _reject(
             f"Error: Cannot finish: {len(pending)} step(s) not done/blocked: "

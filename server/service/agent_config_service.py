@@ -171,7 +171,9 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             if not isinstance(tools, list) or any(not isinstance(t, str) for t in tools):
                 raise AgentConfigError("'tools' must be a list of names or null")
             known = _tool_names()
-            wanted = [t.strip() for t in tools if t.strip()]
+            from agent.tools.catalog import canonical_tool_name
+
+            wanted = [canonical_tool_name(t.strip()) for t in tools if t.strip()]
             missing = sorted(set(wanted) - known)
             if missing:
                 raise AgentConfigError(f"unknown tool(s): {', '.join(missing)}")
@@ -283,7 +285,20 @@ def get_agent_config_state(session_id: str) -> dict[str, Any]:
         return {"config": {}, "pending": False}
     parked, parked_value = _pending_value(session_id, StateKey.AGENT_CONFIG_PENDING)
     value = parked_value if parked else _read_value(session_id, StateKey.AGENT_CONFIG)
-    return {"config": value if isinstance(value, dict) else {}, "pending": parked}
+    config = dict(value) if isinstance(value, dict) else {}
+    tools = config.get("tools")
+    if isinstance(tools, list):
+        from agent.tools.catalog import canonical_tool_name
+
+        # A config stored before a tool merge still names the old tools; the
+        # UI catalogue only knows the current names, so read through the same
+        # alias map the hot path uses.
+        config["tools"] = list(
+            dict.fromkeys(
+                canonical_tool_name(name) for name in tools if isinstance(name, str) and name
+            )
+        )
+    return {"config": config, "pending": parked}
 
 
 async def apply_agent_config_choice(session_id: str, payload: object) -> tuple[dict, bool]:

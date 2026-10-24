@@ -8,7 +8,7 @@ status instead of raising.
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 
 _SESSION = "sess-summary"
@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.unit]
 
 
 def _summary_coroutine():
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     return tools["taskflow_summary"].coroutine
 
 

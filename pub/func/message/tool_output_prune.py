@@ -55,10 +55,10 @@ _TOOL_SUMMARY_TEMPLATES: dict[str, Callable[[str], str]] = {
     # Code execution
     "bash": lambda r: f"[bash] exit_code={_extract_exit_code(r)}, output {len(r)} chars",
     "shell": lambda r: f"[shell] exit_code={_extract_exit_code(r)}, output {len(r)} chars",
-    # Task flow
-    "taskflow_summary": lambda r: f"[taskflow_summary] {len(r)} chars",
-    "taskflow_run_task": lambda r: f"[taskflow_run_task] dispatched, {len(r)} chars",
-    "taskflow_resume": lambda r: f"[taskflow_resume] injected result, {len(r)} chars",
+    # Task flow (the three merged surfaces)
+    "taskflow_flow": lambda r: f"[taskflow_flow] {len(r)} chars",
+    "taskflow_step": lambda r: f"[taskflow_step] {len(r)} chars",
+    "taskflow_inspect": lambda r: f"[taskflow_inspect] {len(r)} chars",
     # Memory
     "memory": lambda r: f"[memory] {r[:80]}...",
 }

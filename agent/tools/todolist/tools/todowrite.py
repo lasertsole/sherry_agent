@@ -24,8 +24,8 @@ _FANOUT_REMINDER = """
 [SYSTEM REMINDER] Consider whether any of these tasks should be delegated to subagents.
 - Set delegation="subagent" for tasks that are independent with disjoint write scopes
 - Set delegation="self" for interdependent or trivial tasks
-- Declare dependencies with taskflow_run_task(..., depends_on=[...]); TaskFlow blocks
-  and unlocks steps, then taskflow_dispatch batches the ready ones in parallel
+- Declare dependencies with taskflow_step(action='run_task', ..., depends_on=[...]); TaskFlow blocks
+  and unlocks steps, then taskflow_step(action='dispatch') batches the ready ones in parallel
 - Route by category: quick|deep|ultrabrain|visual|git|writing
 """
 
@@ -52,7 +52,7 @@ async def todowrite(
     Step_id (optional): TaskFlow step id (e.g. step-2) for DAG status.
 
     DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_run_task(flow_id, task, depends_on=[...]); the blocked/ready/
+    taskflow_step(action='run_task', flow_id=..., task=..., depends_on=[...]); the blocked/ready/
     dispatched/done status and unlock-on-resume are owned by TaskFlow.
     """
     # A model that drafts an empty item must get a TEXT refusal it can fix, not

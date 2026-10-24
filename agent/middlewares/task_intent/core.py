@@ -230,10 +230,10 @@ This message appears to be a work request. Before responding, assess the scope:
 
 4. Workflow:
    a. todowrite: register all tasks with atomic granularity
-   b. For dependent steps: taskflow_run_task(..., depends_on=[...]); then
-      taskflow_dispatch the ready ones and taskflow_wait_all
+   b. For dependent steps: taskflow_step(action='run_task', flow_id=..., task=..., depends_on=[...]); then
+      taskflow_step(action='dispatch') the ready ones and taskflow_step(action='wait_all')
    c. For delegation="subagent" tasks: spawn subagent via task tool
-   d. Wait for subagent return → taskflow_resume → verify → mark completed
+   d. Wait for subagent return → taskflow_step(action='resume') → verify → mark completed
    e. For delegation="self" tasks: execute directly
 
 ## If this is a simple single-step task:

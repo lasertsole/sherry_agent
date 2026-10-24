@@ -34,7 +34,7 @@ from agent.tools.subagent.spawn.core import (
     spawn_subagent_direct,
 )
 from agent.tools.subagent.types import FunctionalRole, SubagentSessionRole
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.config import StepStatus
 from config.features.agent_side import CODE_INTEL_SEMANTIC
 from agent.tools.taskflow.registry import store_sqlite
@@ -106,7 +106,7 @@ def _wiring(monkeypatch):
 
 
 def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 async def _seed_done_dependency(flow_id: str) -> None:

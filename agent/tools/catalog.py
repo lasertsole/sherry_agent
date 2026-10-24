@@ -25,6 +25,7 @@ from typing import Any
 
 __all__ = [
     "BULK_ONLY_GROUPS",
+    "LEGACY_TOOL_ALIASES",
     "REQUIRED_TOOLS",
     # The catalogue lists the MAIN agent's tools. The subagent-only families
     # (code_intel explore/semantic, ast_grep, lsp, ptc) are deliberately absent:
@@ -45,22 +46,9 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     # main-agent only (a child managing the parent's processes is nonsense).
     "terminal": ("terminal", "python_repl", "terminal_bg_list", "terminal_bg_output"),
     "tasks": (
-        "taskflow_create",
-        "taskflow_run_task",
-        "taskflow_set_waiting",
-        "taskflow_resume",
-        "taskflow_finish",
-        "taskflow_fail",
-        "taskflow_cancel",
-        "taskflow_summary",
-        "taskflow_progress",
-        "taskflow_budget",
-        "taskflow_dispatch",
-        "taskflow_update_steps",
-        "taskflow_wait_all",
-        "taskflow_list",
-        "taskflow_replan",
-        "taskflow_plan",
+        "taskflow_flow",
+        "taskflow_step",
+        "taskflow_inspect",
         "todowrite",
         "todoread",
         "knowledge",
@@ -145,6 +133,34 @@ REQUIRED_TOOLS: frozenset[str] = frozenset(
 
 #: Groups the UI offers as select-all / clear-all only (no per-tool switches).
 BULK_ONLY_GROUPS: frozenset[str] = frozenset({"tasks", "subagents"})
+
+#: Old model-facing names → the grouped tool that replaced them. Saved presets
+#: and session configs written before the TaskFlow merge still carry these, so
+#: both the config sanitizer and the hot-path selection read through the map;
+#: the catalogue itself never lists an alias.
+LEGACY_TOOL_ALIASES: dict[str, str] = {
+    "taskflow_create": "taskflow_flow",
+    "taskflow_plan": "taskflow_flow",
+    "taskflow_finish": "taskflow_flow",
+    "taskflow_fail": "taskflow_flow",
+    "taskflow_cancel": "taskflow_flow",
+    "taskflow_replan": "taskflow_flow",
+    "taskflow_set_waiting": "taskflow_flow",
+    "taskflow_budget": "taskflow_flow",
+    "taskflow_run_task": "taskflow_step",
+    "taskflow_update_steps": "taskflow_step",
+    "taskflow_dispatch": "taskflow_step",
+    "taskflow_resume": "taskflow_step",
+    "taskflow_wait_all": "taskflow_step",
+    "taskflow_summary": "taskflow_inspect",
+    "taskflow_progress": "taskflow_inspect",
+    "taskflow_list": "taskflow_inspect",
+}
+
+
+def canonical_tool_name(name: str) -> str:
+    """Map a stored/legacy tool name onto the current model-facing name."""
+    return LEGACY_TOOL_ALIASES.get(name, name)
 
 
 def tool_required(name: str) -> bool:

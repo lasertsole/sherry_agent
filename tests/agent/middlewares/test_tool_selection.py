@@ -98,6 +98,19 @@ def test_a_required_tool_missing_from_the_stored_subset_is_still_enabled():
     assert enabled == REQUIRED_TOOLS | {"web_search"}
 
 
+def test_legacy_taskflow_names_in_a_stored_config_map_to_the_merged_tools():
+    """A session config written before the merge keeps TaskFlow enabled."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["taskflow_create", "taskflow_summary", "web_search"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {
+        "taskflow_flow",
+        "taskflow_inspect",
+        "web_search",
+    }
+
+
 def test_a_broken_register_read_is_fail_open(monkeypatch):
     import runtime
 

@@ -1,16 +1,11 @@
-"""TaskFlow tool family: 16 tools mirroring the openclaw managedFlows API surface.
+"""TaskFlow tool family.
 
-Mapping: taskflow_create=createManaged, taskflow_run_task=runTask,
-taskflow_set_waiting=setWaiting, taskflow_resume=resume,
-taskflow_finish=finish, taskflow_fail=fail, taskflow_cancel=requestCancel/cancel,
-taskflow_summary=getTaskSummary, taskflow_progress=human-readable progress
-report, taskflow_dispatch=batch dispatch of ready steps,
-taskflow_update_steps=full replacement of the steps list (todowrite-like),
-taskflow_wait_all=flow-scoped wait for dispatched steps,
-taskflow_budget=token/cost budget query and set,
-taskflow_list=cross-session board of every flow,
-taskflow_replan=regenerate the remaining steps of a failed flow,
-taskflow_plan=decompose a goal into a dependency-ordered flow.
+Production exposes three grouped tools — ``taskflow_flow``,
+``taskflow_step`` and ``taskflow_inspect`` — over the same 16 module functions
+(create/plan/resume/...). The module tools remain available for internal Python
+callers (notably ``delivery.py``'s direct ``taskflow_resume`` import) and for
+tests via :func:`build_legacy_taskflow_tools`; only the model-facing surface is
+merged.
 """
 
 from langchain_core.tools import BaseTool
@@ -31,8 +26,11 @@ from .taskflow_set_waiting import taskflow_set_waiting
 from .taskflow_summary import taskflow_summary
 from .taskflow_update_steps import taskflow_update_steps
 from .taskflow_wait_all import taskflow_wait_all
+from .taskflow_merged import TASKFLOW_MERGED_TOOLS
 
-_TASKFLOW_TOOLS: list[BaseTool] = [
+# The original module-level tools, retained for direct Python callers and the
+# test adapter. They are NOT registered in the model face.
+_TASKFLOW_MODULE_TOOLS: list[BaseTool] = [
     taskflow_create,
     taskflow_run_task,
     taskflow_set_waiting,
@@ -52,32 +50,50 @@ _TASKFLOW_TOOLS: list[BaseTool] = [
 ]
 
 # Pure reporting tools: the guardrails may hash their results to detect a
-# no-progress loop. Every other tool mutates flow state and must declare
-# ``idempotent: False`` so its result is never treated as a repeatable value.
-_READ_ONLY_TASKFLOW: set[str] = {
+# no-progress loop. The merged inspect tool keeps that property; the lifecycle
+# and step tools mutate flow state and stay unsafe barriers.
+_READ_ONLY_TASKFLOW: set[str] = {"taskflow_inspect"}
+# The legacy adapter keeps the original read/write split for the tests and
+# internal callers that still drive the module tools directly.
+_READ_ONLY_LEGACY_TASKFLOW: set[str] = {
     "taskflow_summary",
     "taskflow_progress",
     "taskflow_list",
 }
 
 
-def build_taskflow_tools() -> list[BaseTool]:
-    """Build and return the 16 taskflow tools.
-
-    Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. Business errors are
-    returned as readable strings (handle_tool_error=True as backstop), and
-    the family is tagged ``scope=main_only``: shared flow state is managed by
-    the main agent, matching the taskflow skill's scope, so the subagent
-    tool-policy drops it unconditionally. Each tool also declares its
-    ``idempotent`` metadata (read-only reporting tools ``True``, mutating
-    tools ``False``) for the ToolGuardrails middleware.
-    """
-    for t in _TASKFLOW_TOOLS:
+def _tag_metadata(tools: list[BaseTool], read_only: set[str]) -> None:
+    for t in tools:
         t.handle_tool_error = True
         t.metadata = {
             **(t.metadata or {}),
             "scope": "main_only",
-            "idempotent": t.name in _READ_ONLY_TASKFLOW,
-            "side_effect_scope": "none" if t.name in _READ_ONLY_TASKFLOW else "session",
+            "idempotent": t.name in read_only,
+            "side_effect_scope": "none" if t.name in read_only else "session",
         }
-    return list(_TASKFLOW_TOOLS)
+
+
+def build_taskflow_tools() -> list[BaseTool]:
+    """Build and return the three merged TaskFlow tools.
+
+    Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. Business errors are
+    returned as readable strings (handle_tool_error=True as backstop), and
+    the family is tagged ``scope=main_only``: shared flow state is managed by
+    the main agent, so the subagent tool-policy drops it unconditionally.
+    ``taskflow_inspect`` stays idempotent/read-only; the mutating two are
+    unsafe barriers.
+    """
+    _tag_metadata(TASKFLOW_MERGED_TOOLS, _READ_ONLY_TASKFLOW)
+    return list(TASKFLOW_MERGED_TOOLS)
+
+
+def build_legacy_taskflow_tools() -> list[BaseTool]:
+    """Return the original 16 module tools for tests/direct compatibility.
+
+    Not registered in the model face; production code should use
+    :func:`build_taskflow_tools` or the module-level functions directly. The
+    metadata is tagged exactly like the merged family so old tests keep their
+    guardrail assertions.
+    """
+    _tag_metadata(_TASKFLOW_MODULE_TOOLS, _READ_ONLY_LEGACY_TASKFLOW)
+    return list(_TASKFLOW_MODULE_TOOLS)

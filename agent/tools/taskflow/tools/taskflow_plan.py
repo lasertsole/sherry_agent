@@ -161,8 +161,8 @@ async def taskflow_plan(
         return (
             f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
             f"revision={existing['expected_revision']}, status={existing['status']}; "
-            "nothing new was created. Inspect with taskflow_summary; dispatch with "
-            "taskflow_dispatch if it is still pending."
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
+            "taskflow_step(action='dispatch') if it is still pending."
         )
 
     # Refuse BEFORE spending a planner call: the flow could not be created anyway.
@@ -222,8 +222,8 @@ async def taskflow_plan(
         return (
             f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
             f"revision={existing['expected_revision']}, status={existing['status']}; "
-            "nothing new was created. Inspect with taskflow_summary; dispatch with "
-            "taskflow_dispatch if it is still pending."
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
+            "taskflow_step(action='dispatch') if it is still pending."
         )
 
     # Same entry defense as taskflow_create: a planned flow must own a GC root
@@ -254,8 +254,8 @@ async def taskflow_plan(
             f"  [{step['step_id']}] ({step['status']}) deps={deps}{gate_text} {step['task']}"
         )
     lines.append(
-        "Review the plan, then taskflow_dispatch(flow_id, [ids]) to start "
-        "(or taskflow_update_steps to change it first)."
+        "Review the plan, then taskflow_step(action='dispatch', flow_id=..., step_ids=[...]) to start "
+        "(or taskflow_step(action='update_steps') to change it first)."
     )
     return "\n".join(lines)
 

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow import step_judge
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
@@ -76,7 +76,7 @@ class _ScriptedLLMFactory:
 
 
 def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 def _key_dispatch(keys: list[str], calls: list[str]):

@@ -304,6 +304,29 @@ def test_sanitize_accepts_a_partial_payload_and_dedups_tools(real_tool_names, mo
     assert service.sanitize_agent_config({}) == {}
 
 
+def test_sanitize_maps_legacy_taskflow_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the 16→3 merge still applies instead of 400ing."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection(
+        "taskflow_create",
+        "taskflow_summary",
+        "taskflow_run_task",
+    )
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-3:] == ["taskflow_flow", "taskflow_inspect", "taskflow_step"]
+    assert not any(
+        name.startswith("taskflow_")
+        and name
+        not in {
+            "taskflow_flow",
+            "taskflow_step",
+            "taskflow_inspect",
+        }
+        for name in cleaned["tools"]
+    )
+
+
 def test_sanitize_rejects_unknown_names(real_tool_names, monkeypatch):
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
     with pytest.raises(service.AgentConfigError) as exc:
@@ -402,6 +425,20 @@ async def test_a_busy_session_parks_the_choice_until_promotion(registers, monkey
 
 def test_get_agent_config_state_is_empty_for_an_unset_session(registers):
     assert service.get_agent_config_state("sess-none") == {"config": {}, "pending": False}
+
+
+def test_get_agent_config_state_canonicalizes_legacy_tool_names(registers):
+    """The UI catalogue only knows current names; a stored payload must match it."""
+    mem, _db = registers
+    mem.set_state(
+        "sess-legacy-tools",
+        StateKey.AGENT_CONFIG,
+        {"tools": ["taskflow_create", "taskflow_summary", "taskflow_create", "web_search"]},
+    )
+
+    state = service.get_agent_config_state("sess-legacy-tools")
+
+    assert state["config"]["tools"] == ["taskflow_flow", "taskflow_inspect", "web_search"]
 
 
 def test_sanitize_accepts_a_skill_selection_and_an_empty_one(real_skill_names, monkeypatch):

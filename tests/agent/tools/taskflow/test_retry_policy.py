@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools import _dispatch
@@ -118,7 +118,7 @@ def _step(
 
 
 def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 async def _create(

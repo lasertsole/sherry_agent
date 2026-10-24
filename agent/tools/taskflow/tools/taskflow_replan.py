@@ -210,7 +210,7 @@ async def _taskflow_replan_async(
     if replan_count >= REPLAN_MAX:
         return (
             f"Error: flow_id '{flow_id}' already spent {replan_count} replan(s) "
-            f"(max {REPLAN_MAX}); use taskflow_fail or a new flow"
+            f"(max {REPLAN_MAX}); use taskflow_flow(action='fail') or a new flow"
         )
 
     steps = list(state.get("steps") or [])

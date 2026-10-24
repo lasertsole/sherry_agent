@@ -91,7 +91,7 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 - Do not stop until all tasks are done
 - If you believe all work is complete, the system is questioning your completion claim.
   Critically re-examine each todo item, verify the work was actually done, and update accordingly.
-- A TaskFlow flow counts as finished only after taskflow_finish accepted it (its
+- A TaskFlow flow counts as finished only after taskflow_flow(action='finish') accepted it (its
   gates verify DAG completeness and the evidence) — a run of green steps with the
   flow still open is NOT completion.
 
@@ -166,7 +166,7 @@ def _flow_rows(flows: list[dict]) -> list[dict]:
 
     A flow whose steps are all settled but whose status is still running/waiting
     contributes a ``<flow>:finish`` row — the plan is not closed until the flow is
-    (``taskflow_finish`` accepted it, or it was cancelled), and that state is
+    (``taskflow_flow(action='finish')`` accepted it, or it was cancelled), and that state is
     exactly the silent-open-flow case the gate exists for.
     """
     rows: list[dict] = []
@@ -217,12 +217,12 @@ def _build_flow_block(flows: list[dict]) -> str:
         if steps and all(_step_settled(step) for step in steps):
             lines.append(
                 "  every step is settled but the flow is still open: close it with "
-                "taskflow_finish (or taskflow_cancel if the work is abandoned)"
+                "taskflow_flow(action='finish') (or taskflow_flow(action='cancel') if the work is abandoned)"
             )
     lines.append(
-        "Board actions: dispatched steps need taskflow_wait_all then taskflow_resume "
-        "to inject their results; ready steps need taskflow_run_task (or "
-        "taskflow_dispatch for a parallel batch); blocked steps wait on a "
+        "Board actions: dispatched steps need taskflow_step(action='wait_all') then taskflow_step(action='resume') "
+        "to inject their results; ready steps need taskflow_step(action='run_task') (or "
+        "taskflow_step(action='dispatch') for a parallel batch); blocked steps wait on a "
         "dependency — resolve it or cancel that branch."
     )
     return "\n".join(lines)

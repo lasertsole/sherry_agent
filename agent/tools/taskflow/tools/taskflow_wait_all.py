@@ -105,11 +105,11 @@ def _format_report(
         lines.append(f"  - step_id={step_id}, child_session_key={key}, settled={settled}")
     if timed_out:
         lines.append(
-            "Partial report only: call taskflow_resume for the settled children, "
-            "then taskflow_wait_all again for the rest."
+            "Partial report only: call taskflow_step(action='resume') for the settled children, "
+            "then taskflow_step(action='wait_all') again for the rest."
         )
     else:
-        lines.append("Call taskflow_resume for each child to inject its result.")
+        lines.append("Call taskflow_step(action='resume') for each child to inject its result.")
     return "\n".join(lines)
 
 
@@ -196,7 +196,9 @@ async def _retry_settled_steps(
             # Spawned replacements are already alive and named by the error.
             return "\n" + "\n".join([*lines, error or ""])
     if redispatches:
-        lines.append("Call taskflow_wait_all again to wait for the re-dispatched step(s).")
+        lines.append(
+            "Call taskflow_step(action='wait_all') again to wait for the re-dispatched step(s)."
+        )
     if exhausted:
         lines.append(
             "Exhausted step(s) need an explicit decision: resume the failure note or fail the flow."

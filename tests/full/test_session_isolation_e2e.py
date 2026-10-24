@@ -58,7 +58,7 @@ import pytest
 from loguru import logger
 
 from agent.middlewares.summarization.core import _get_taskflow_context_sync
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.todolist.knowledge import build_knowledge_tools
 from agent.tools.todolist.knowledge import knowledge_store as knowledge_store_mod
 from agent.tools.todolist.knowledge import ownership as ownership_mod
@@ -82,7 +82,7 @@ def _new_sid(tag: str) -> str:
 
 
 def _flow_tool(name: str):
-    return {t.name: t for t in build_taskflow_tools()}[name]
+    return {t.name: t for t in build_legacy_taskflow_tools()}[name]
 
 
 def _knowledge_tool():
@@ -464,7 +464,13 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
         "todoread",
         "knowledge",
     }
-    assert {"taskflow_summary", "todowrite", "knowledge"} <= planners
+    assert {
+        "taskflow_flow",
+        "taskflow_step",
+        "taskflow_inspect",
+        "todowrite",
+        "knowledge",
+    } <= planners
 
     captured: list[list[str]] = []
     real_policy = spawn_core.apply_tool_policy
