@@ -62,10 +62,3 @@ export async function renderMermaid(code: string): Promise<string | null> {
     return null;
   }
 }
-
-/** Test seam: drop the singleton and cache. */
-export function _resetMermaidForTest(): void {
-  mermaidPromise = null;
-  initializedTheme = '';
-  cache.clear();
-}
