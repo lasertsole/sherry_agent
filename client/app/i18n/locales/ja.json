@@ -69,7 +69,8 @@
     "turnHistoryCollapse": "実行履歴を折りたたむ",
     "removeImage": "画像を削除",
     "removeAudio": "音声を削除",
-    "removeVideo": "動画を削除"
+    "removeVideo": "動画を削除",
+    "diffNewFile": "新規ファイル"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",

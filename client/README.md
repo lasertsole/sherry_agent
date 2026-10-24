@@ -92,6 +92,7 @@ client/
 │   ├── common/utils.ts            # Shared utilities (dayjs setup, formatCompactTimeString, ...)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # Chat input box component (i18n-aware)
+│   │   ├── chat/DiffPreview.vue   # Inline colored unified diff for patch_file / write_file results (tool card)
 │   │   └── ImagePreviewOverlay.vue# Full-screen image preview overlay (Teleport to body)
 │   ├── composables/               # Vue 3 composable logic (+ unit tests under __tests__/)
 │   │   ├── bridge.ts              # Unified Tauri/Browser bridge — chat streaming, sessions, prompts,
@@ -380,6 +381,10 @@ Every tool card shows how long the call took, on the same contract the backend m
 - unknown stays blank — a card from before this feature, or a call the human denied, shows NO duration rather than a fake `0ms`.
 
 The number comes from two sources that always agree: the live `tool_result` frame carries `duration_ms`, and history rows carry `messages.tool_duration_ms` (the middleware's authoritative measurement, which the frame prefers when present). Approval waits and queue time are outside the window by construction.
+
+### Inline edit diffs (`ChatToolCard.vue` / `DiffPreview.vue`)
+
+`patch_file` and `write_file` results render as a colored unified diff instead of a raw JSON blob: the client parses the backend's `difflib` output (`app/utils/tool-diff.ts`, pure prefix classification — added green / removed red / context plain / `@@` hunk headers blue, with old/new line-number gutters and a `+N −M` header). `write_file` answers JSON with `diff` / `isNew` since 2026-10-24 (a creation shows a 新建文件 badge and an all-added preview built from the write's own `text` argument); every unparseable shape falls back to the plain `<pre>` — fail-open by construction.
 
 ### State & Events
 

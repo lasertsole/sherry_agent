@@ -93,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共有ユーティリティ（dayjs セットアップ、formatCompactTimeString、...）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # チャット入力ボックスコンポーネント（i18n 対応）
+│   │   ├── chat/DiffPreview.vue   # ツールカード内の patch_file / write_file 結果のカラーインライン diff
 │   │   └── ImagePreviewOverlay.vue# フルスクリーン画像プレビューオーバーレイ（body へ Teleport）
 │   ├── composables/               # Vue 3 コンポーザブルロジック（ユニットテストは __tests__/ 配下）
 │   │   ├── bridge.ts              # 統合 Tauri/Browser ブリッジ — チャットストリーミング、セッション、システムプロンプト、
@@ -380,6 +381,10 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 - 不明なときは空欄のまま——この機能より前のカードや、人が拒否した呼び出しには、偽の `0ms` ではなく**何も表示しません**。
 
 数値は常に一致する二つの経路から来ます：ライブの `tool_result` フレームが `duration_ms` を運び、履歴行が `messages.tool_duration_ms` を運びます（ミドルウェアの権威ある計測で、フレームは刻印があるときそれを優先します）。承認待ちとキュー待ちは構造上ウィンドウの外です。
+
+### インライン編集 diff（`ChatToolCard.vue` / `DiffPreview.vue`）
+
+`patch_file` と `write_file` の結果は、生の JSON の代わりにカラー unified diff として描画されます。クライアントはバックエンドの `difflib` 出力を解析します（`app/utils/tool-diff.ts`、純粋な接頭辞分類 — 追加は緑、削除は赤、コンテキストはそのまま、`@@` ハンクヘッダは青、新旧の行番号ガターと `+N −M` ヘッダー付き）。`write_file` は 2026-10-24 から `diff` / `isNew` を含む JSON を返します（新規作成では「新規ファイル」バッジと、書き込んだ `text` からの全追加プレビュー）。解析できない形状はすべて素の `<pre>` にフォールバック — 構造上 fail-open です。
 
 ### 状態とイベント
 

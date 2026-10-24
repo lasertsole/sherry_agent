@@ -93,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 공유 유틸리티(dayjs 설정, formatCompactTimeString, ...)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 채팅 입력 박스 컴포넌트(i18n 지원)
+│   │   ├── chat/DiffPreview.vue   # 도구 카드 내 patch_file / write_file 결과의 컬러 인라인 diff
 │   │   └── ImagePreviewOverlay.vue# 전체 화면 이미지 미리보기 오버레이(body로 Teleport)
 │   ├── composables/               # Vue 3 컴포저블 로직(단위 테스트는 __tests__/ 아래)
 │   │   ├── bridge.ts              # 통합 Tauri/Browser 브리지 — 채팅 스트리밍, 세션, 시스템 프롬프트,
@@ -380,6 +381,10 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 - 알 수 없으면 비워 둡니다——이 기능 이전의 카드나 사람이 거부한 호출에는 가짜 `0ms` 대신 **아무것도 표시하지 않습니다**.
 
 숫자는 항상 일치하는 두 경로에서 옵니다: 라이브 `tool_result` 프레임이 `duration_ms`를 싣고, 기록 행이 `messages.tool_duration_ms`를 싣습니다(미들웨어의 권위 있는 측정이며, 프레임은 각인이 있으면 그것을 우선합니다). 승인 대기와 큐 대기는 구조상 창 밖입니다.
+
+### 인라인 편집 diff(`ChatToolCard.vue` / `DiffPreview.vue`)
+
+`patch_file`과 `write_file` 결과는裸 JSON 대신 컬러 unified diff로 렌더링됩니다. 클라이언트는 백엔드의 `difflib` 출력을 파싱합니다(`app/utils/tool-diff.ts`, 순수 접두사 분류 — 추가는 초록, 삭제는 빨강, 컨텍스트는 그대로, `@@` 헌크 헤더는 파랑, 이전/이후 줄 번호 거터와 `+N −M` 헤더 포함). `write_file`은 2026-10-24부터 `diff` / `isNew`를 포함한 JSON을 반환합니다(신규 생성은 새 파일 배지와 write의 `text`로 만든 전체 추가 미리보기). 파싱 불가한 형태는 모두 일반 `<pre>`로 폴백 — 구조적으로 fail-open입니다.
 
 ### 상태와 이벤트
 

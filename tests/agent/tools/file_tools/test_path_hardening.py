@@ -161,7 +161,7 @@ class TestRegularFilesUnaffected:
         patch_tool = build_patch_file_tool()
 
         out = write_tool._core("notes/plain.txt", "hello\nworld\n", session_id=SESSION)
-        assert "successfully" in out
+        assert json.loads(out)["success"] is True
         written = virtual_root / "notes" / "plain.txt"
         assert written.read_text(encoding="utf-8") == "hello\nworld\n"
 
@@ -186,7 +186,7 @@ class TestRegularFilesUnaffected:
 
         out = build_write_file_tool()._core("log.txt", "line2\n", append=True, session_id=SESSION)
 
-        assert "successfully" in out
+        assert json.loads(out)["success"] is True
         assert target.read_text(encoding="utf-8") == "line1\nline2\n"
 
     def test_write_failure_returns_the_shared_error_json(self, virtual_root):

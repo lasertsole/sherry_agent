@@ -69,7 +69,8 @@
     "turnHistoryCollapse": "Collapse execution history",
     "removeImage": "Remove image",
     "removeAudio": "Remove audio",
-    "removeVideo": "Remove video"
+    "removeVideo": "Remove video",
+    "diffNewFile": "New file"
   },
   "chat": {
     "backgroundMessage": "Background task",

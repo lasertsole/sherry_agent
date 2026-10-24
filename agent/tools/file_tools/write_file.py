@@ -52,6 +52,7 @@ from agent.tools.pub_base import (
     safe_error_detail,
     sniff_text_encoding,
 )
+from agent.tools.file_tools.patch_file import _unified_diff
 from agent.tools.pub_base.evidence_recorder import invalidates_evidence
 
 
@@ -168,6 +169,16 @@ class FormattedWriteFileTool(BaseTool):
         append: bool = False,
         session_id: str = "",
     ) -> str:
+        """Write (or append) text and answer a JSON result with a diff preview.
+
+        The success payload is ``{"success", "path", "append", "isNew", "diff"}``
+        where ``diff`` is a unified diff of old→new (``None`` for creations,
+        binary targets, or an undecodable old file — the preview is
+        best-effort and never blocks or invalidates the write). The previous
+        plain-text ``File written successfully …`` return became JSON
+        (2026-10-24): the model reads JSON fine (``patch_file`` precedent) and
+        the client renders the diff inline.
+        """
         root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
@@ -177,6 +188,11 @@ class FormattedWriteFileTool(BaseTool):
         ensure_checkpoint(
             session_id, reason=f"before_write:write_file:{display_path(resolved, root)}"
         )
+
+        # The diff preview's old half: the file as it stands BEFORE the write.
+        # Best-effort — an undecodable or unreadable file simply yields no diff.
+        existed = resolved.exists()
+        old_content = self._read_preview_text(resolved) if existed else None
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -208,7 +224,43 @@ class FormattedWriteFileTool(BaseTool):
 
         if error is not None:
             return error
-        return f"File written successfully to {display_path(resolved, root)}."
+
+        # The diff preview's new half: what the file holds AFTER the write
+        # (re-read rather than reconstructed, so the .py formatter and the
+        # UTF-16 re-encodes are reflected without duplicating their logic).
+        diff: str | None = None
+        if old_content is not None:
+            new_content = self._read_preview_text(resolved)
+            if new_content is not None:
+                diff = _unified_diff(old_content, new_content, display_path(resolved, root))
+        return json.dumps(
+            {
+                "success": True,
+                "path": display_path(resolved, root),
+                "append": append,
+                "isNew": not existed,
+                "diff": diff,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _read_preview_text(resolved: Path) -> str | None:
+        """Best-effort decode for the diff preview (never raises).
+
+        Uses the same encoding detection the write path itself accepts, so the
+        old/new halves of a diff are decoded consistently. ANY failure — a
+        directory, a symlink race, binary bytes — answers None and the caller
+        skips the diff; the preview never carries correctness, so it must
+        never be the thing that turns a successful write into an error.
+        """
+        try:
+            encoding = _existing_text_encoding(resolved)
+            if encoding is None:
+                return None
+            return decode_text(read_bytes_no_follow(resolved)[0], encoding)
+        except Exception:  # noqa: BLE001 - the preview is strictly optional
+            return None
 
     def _write_locked(
         self,

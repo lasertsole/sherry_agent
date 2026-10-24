@@ -69,7 +69,8 @@
     "turnHistoryCollapse": "收起执行过程",
     "removeImage": "移除图片",
     "removeAudio": "移除音频",
-    "removeVideo": "移除视频"
+    "removeVideo": "移除视频",
+    "diffNewFile": "新建文件"
   },
   "chat": {
     "backgroundMessage": "后台任务",

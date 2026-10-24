@@ -105,3 +105,72 @@ describe('render-point uniqueness guard', () => {
     expect(hits[0]).toContain('ChatBox.vue');
   });
 });
+
+/**
+ * The inline diff branches: patch_file / write_file results render as a
+ * colored diff; every other tool (and every unparseable shape) keeps the
+ * plain <pre> — fail-open, byte-identical for untouched tools.
+ */
+const DIFF_LINES = ['--- a/src/app.py', '+++ b/src/app.py', '@@ -1,3 +1,3 @@', ' import os', '-old()', '+new()'].join(
+  '\n'
+);
+const patchMessage = () =>
+  toolMessage({
+    toolName: 'patch_file',
+    toolResult: JSON.stringify({ success: true, path: 'src/app.py', diff: DIFF_LINES })
+  });
+
+const mountExpanded = (message: MessageItem) =>
+  mount(ChatToolCard, {
+    props: {
+      message,
+      expanded: true,
+      expandable: true,
+      argsLabel: 'args',
+      resultLabel: 'result',
+      runningLabel: 'running',
+      noOutputLabel: 'no output'
+    }
+  });
+
+describe('ChatToolCard inline diff', () => {
+  it('renders a patch_file result as a diff, not a <pre>', () => {
+    const wrapper = mountExpanded(patchMessage());
+
+    expect(wrapper.find('[data-test="tool-diff"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="file-viewer-pre"], pre').exists()).toBe(false);
+    expect(wrapper.text()).toContain('new()');
+  });
+
+  it('keeps the <pre> for other tools (F1)', () => {
+    const wrapper = mountExpanded(
+      toolMessage({ toolName: 'read_file', toolResult: JSON.stringify({ diff: DIFF_LINES }) })
+    );
+
+    expect(wrapper.find('[data-test="tool-diff"]').exists()).toBe(false);
+    expect(wrapper.find('pre').exists()).toBe(true);
+  });
+
+  it('falls back to the <pre> when the payload is malformed (F2)', () => {
+    const wrapper = mountExpanded(toolMessage({ toolName: 'patch_file', toolResult: '{"diff": oops' }));
+
+    expect(wrapper.find('[data-test="tool-diff"]').exists()).toBe(false);
+    expect(wrapper.find('pre').exists()).toBe(true);
+  });
+
+  it('shows the new-file badge and an all-green preview for a creation', () => {
+    const wrapper = mountExpanded(
+      toolMessage({
+        toolName: 'write_file',
+        toolArgs: { file_path: 'new.py', text: 'print(1)\nprint(2)' },
+        toolResult: JSON.stringify({ success: true, path: 'new.py', isNew: true, diff: null })
+      })
+    );
+
+    expect(wrapper.find('[data-test="tool-diff"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('新建文件');
+    expect(wrapper.text()).toContain('print(2)');
+    // The whole preview is green (no removed rows).
+    expect(wrapper.text()).toContain('−0');
+  });
+});

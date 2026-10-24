@@ -93,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共享工具函数（dayjs 配置、formatCompactTimeString、……）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 聊天输入框组件（支持 i18n）
+│   │   ├── chat/DiffPreview.vue   # 工具卡片内 patch_file / write_file 结果的彩色内联 diff
 │   │   └── ImagePreviewOverlay.vue# 全屏图片预览浮层（Teleport 到 body）
 │   ├── composables/               # Vue 3 组合式逻辑（单元测试位于 __tests__/）
 │   │   ├── bridge.ts              # 统一的 Tauri/Browser 桥接 —— 聊天流、会话、系统提示词、
@@ -380,6 +381,10 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 - 未知则留空——本功能之前的历史卡片、或被人工拒绝的调用，**不显示**耗时，而不是显示假的 `0ms`。
 
 数字来自两个永远一致的来源：流式 `tool_result` 帧携带 `duration_ms`，历史行携带 `messages.tool_duration_ms`（中间件的权威测量，帧在有戳记时优先采用）。审批等待与排队时间天然不在窗口内。
+
+### 内联编辑 diff（`ChatToolCard.vue` / `DiffPreview.vue`）
+
+`patch_file` 与 `write_file` 的结果渲染为彩色 unified diff 而非裸 JSON：客户端解析后端的 `difflib` 输出（`app/utils/tool-diff.ts`，纯前缀分类——增行绿、删行红、上下文原样、`@@` hunk 头蓝色，带新旧双列行号与 `+N −M` 头部统计）。`write_file` 自 2026-10-24 起返回带 `diff` / `isNew` 的 JSON（新建文件显示「新建文件」徽标并以写入的 `text` 构建全绿预览）；任何解析不了的形状退回原 `<pre>`——构造上即 fail-open。
 
 ### 状态与事件
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
@@ -47,7 +49,7 @@ def test_write_file_appends_stale_event(ledger_path, tmp_path, _pin_resolver):
 
     result = tool._run("foo.py", "print('x')\n", session_id="s1")
 
-    assert "successfully" in result
+    assert json.loads(result)["success"] is True
     stale = EvidenceLedger.read_all()[-1]
     assert stale["event"] == "stale"
     assert stale["file_path"] == "foo.py"
@@ -109,4 +111,4 @@ def test_write_file_survives_ledger_failure(ledger_path, tmp_path, _pin_resolver
 
     monkeypatch.setattr(EvidenceLedger, "append", _boom)
 
-    assert "successfully" in tool._run("foo.py", "print('x')\n", session_id="s1")
+    assert json.loads(tool._run("foo.py", "print('x')\n", session_id="s1"))["success"] is True

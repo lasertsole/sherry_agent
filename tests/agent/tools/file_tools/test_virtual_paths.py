@@ -79,10 +79,13 @@ class TestReadFileVirtualPaths:
 
 
 class TestWriteFileVirtualPaths:
-    def test_success_message_uses_virtual_path(self, virtual_root):
+    def test_success_payload_uses_virtual_path(self, virtual_root):
         out = build_write_file_tool()._core("notes/new.txt", "hi", session_id=SESSION)
 
-        assert out == "File written successfully to /notes/new.txt."
+        payload = json.loads(out)
+        assert payload["success"] is True
+        assert payload["path"] == "/notes/new.txt"
+        assert payload["isNew"] is True and payload["diff"] is None
         assert str(virtual_root) not in out
 
 
