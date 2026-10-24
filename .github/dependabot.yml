@@ -84,8 +84,28 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    ignore:
+      # Nuxt/Vue 生态的 minor/major 升级必须连同 typecheck、生成类型和测试
+      # 一起人工验证（Nuxt 4.5→4.6 曾改变生成类型并打断前端检查）。
+      # 只冻结 minor/major：patch（含安全补丁）仍会自动提 PR。
+      - dependency-name: "nuxt"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@nuxt/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@nuxtjs/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "nitropack"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "vue"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "vue-router"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@pinia/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "pinia*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
-      # Nuxt/Vue 生态合并一个 PR
+      # Nuxt/Vue 生态合并一个 PR（minor/major 已 ignore；patch/安全更新仍可能成组）
       nuxt-ecosystem:
         patterns:
           - "nuxt"
@@ -180,6 +200,25 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    ignore:
+      # 与 main 侧保持一致：Nuxt/Vue 生态的 minor/major 升级手动评估；
+      # patch（含安全补丁）仍会自动提 PR。
+      - dependency-name: "nuxt"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@nuxt/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@nuxtjs/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "nitropack"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "vue"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "vue-router"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@pinia/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "pinia*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       nuxt-ecosystem:
         patterns:
