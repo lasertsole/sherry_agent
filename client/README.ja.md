@@ -168,7 +168,9 @@ client/
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
-│   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
+│   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file：テキスト + markdown、画像/PDF/docx は GET /project/file/blob 経由）
+│   │           ├── PdfViewer.vue             # ファイルビューア内の PDF プレビュー（pdf.js、ページ送り + 幅合わせ、GET /project/file/blob）
+│   │           ├── DocxViewer.vue            # ファイルビューア内の docx プレビュー（mammoth → HTML → DOMPurify、GET /project/file/blob）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）

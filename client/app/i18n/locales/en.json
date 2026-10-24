@@ -599,7 +599,13 @@
     "copied": "Copied",
     "copyFailed": "Copy failed",
     "revealFailed": "Could not open the file manager",
-    "openInBrowserFailed": "Could not open the file in the browser"
+    "openInBrowserFailed": "Could not open the file in the browser",
+    "viewerPdfPage": "Page {n} / {total}",
+    "viewerPdfPrev": "Previous page",
+    "viewerPdfNext": "Next page",
+    "viewerPdfFit": "Fit width",
+    "viewerPdfTooMany": "The file exceeds {n} pages — only the first {n} are rendered",
+    "viewerDocxFailed": "Failed to parse the docx — the file may be corrupted"
   },
   "gitGraph": {
     "title": "Git Graph",

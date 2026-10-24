@@ -70,12 +70,39 @@ export function safeMarkdownHtml(content: string | null | undefined): string {
 }
 
 /**
- * Directive implementation: mounted and updated share the same render path, keeping content up to date during streamed appends
+ * Sanitize an already-HTML fragment (no markdown pass).
+ *
+ * The docx viewer's use case: mammoth hands back real HTML, and running it
+ * through markdown-it first would re-parse (and possibly re-arrange) block
+ * structures like tables. Same allowlist, same fail-safe.
+ *
+ * @param html An HTML fragment produced by a trusted local converter (its
+ *   origin is still untrusted content, so the allowlist gate is mandatory)
+ * @returns HTML safe to assign to innerHTML; empty on failure (fail-safe)
+ */
+export function safeHtmlOnly(html: string | null | undefined): string {
+  if (!html) return '';
+  try {
+    return DOMPurify.sanitize(html, chatPurifyConfig);
+  } catch (error) {
+    logUtil.e('[v-safe-html] sanitize failed, fallback to empty html:', error);
+    return '';
+  }
+}
+
+/**
+ * Directive implementation: mounted and updated share the same render path, keeping content up to date during streamed appends.
+ *
+ * The `.fragment` modifier skips the markdown pass (the input is already HTML
+ * — mammoth's docx output); the default path renders markdown.
  * @param el
  * @param binding
  */
 const render = (el: HTMLElement, binding: DirectiveBinding<string | null | undefined>): void => {
-  el.innerHTML = safeMarkdownHtml(binding.value);
+  el.innerHTML =
+    binding.modifiers && 'fragment' in binding.modifiers
+      ? safeHtmlOnly(binding.value)
+      : safeMarkdownHtml(binding.value);
 };
 
 export const vSafeHtml: ObjectDirective<HTMLElement, string | null | undefined> = {

@@ -463,7 +463,16 @@ File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the
 tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
-size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
+size (413), non-UTF-8 (415), depth and entries per level. Binary previews
+(PDF / docx / image) ride the sibling `GET /project/file/blob` — the same
+boundary and error protocol with the wider `max_blob_bytes` (20 MiB) cap and a
+`mimetypes` Content-Type instead of the 415 no-UTF-8 rule — and the viewer tab
+renders them client-side: pdf.js page-by-page onto one canvas (`PdfViewer`,
+200-page cap, worker from the bundled `?url` asset), mammoth → HTML → the
+`v-safe-html.fragment` DOMPurify path (`DocxViewer`), and images through an
+object URL with the global click-to-zoom overlay; the format classifier
+(`app/utils/file-format.ts`) is the one branch point and unknown suffixes
+(legacy `.doc` included) degrade to plain text. It deliberately does
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
 (`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs

@@ -389,3 +389,89 @@ def test_a_swapped_symlink_is_not_followed(project: Path, tmp_path: Path, monkey
         svc.read_file(SESSION_A, "victim.txt")
     assert secret.read_text(encoding="utf-8") == "top-secret"
     assert not (project / "victim.txt").is_symlink() or True  # the swap happened; nothing was read
+
+
+# ---------------------------------------------------------------------------
+# GET /project/file/blob — the binary rendering reader
+# ---------------------------------------------------------------------------
+
+
+def test_blob_serves_bytes_with_guessed_mime(project: Path):
+    (project / "doc.pdf").write_bytes(b"%PDF-1.7 fake-bytes")
+    (project / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    data, mime = svc.read_file_bytes(SESSION_A, "doc.pdf")
+    assert data == b"%PDF-1.7 fake-bytes"
+    assert mime == "application/pdf"
+
+    data, mime = svc.read_file_bytes(SESSION_A, "pic.png")
+    assert mime == "application/png" or mime == "image/png"
+
+    # An unregistered suffix falls back to octet-stream, and text files are legal here.
+    (project / "weird.qqqzz").write_bytes(b"\x00\x01")
+    data, mime = svc.read_file_bytes(SESSION_A, "weird.qqqzz")
+    assert (data, mime) == (b"\x00\x01", "application/octet-stream")
+    data, mime = svc.read_file_bytes(SESSION_A, "README.md")
+    assert mime == "text/markdown"
+
+
+def test_blob_serves_binary_the_text_endpoint_refuses(project: Path):
+    # data.bin is non-UTF-8: read_file answers 415, the blob reader serves it.
+    with pytest.raises(svc.FileBrowserError) as text_err:
+        svc.read_file(SESSION_A, "data.bin")
+    assert text_err.value.status == 415
+
+    data, _ = svc.read_file_bytes(SESSION_A, "data.bin")
+    assert data == b"\x00\x01\x02\xff\xfe"
+
+
+def test_blob_cap_is_the_wider_max_blob_bytes(project: Path, monkeypatch):
+    big = project / "big.pdf"
+    big.write_bytes(b"x" * 64)
+
+    # 64 bytes over a 16-byte blob cap is the blob reader's own 413…
+    monkeypatch.setitem(FILE_BROWSER, "max_blob_bytes", 16)
+    with pytest.raises(svc.FileBrowserError) as blob_err:
+        svc.read_file_bytes(SESSION_A, "big.pdf")
+    assert blob_err.value.status == 413 and "limit 16" in blob_err.value.reason
+
+    # …and the text reader refuses the same file with ITS OWN limit (the two
+    # caps move independently).
+    monkeypatch.setitem(FILE_BROWSER, "max_read_bytes", 32)
+    with pytest.raises(svc.FileBrowserError) as text_err:
+        svc.read_file(SESSION_A, "big.pdf")
+    assert "limit 32" in text_err.value.reason
+
+
+def test_blob_shares_the_boundary_refusals(project: Path):
+    with pytest.raises(svc.FileBrowserError) as esc:
+        svc.read_file_bytes(SESSION_A, "../outside.txt")
+    assert esc.value.status == 400
+    (project / "src").mkdir(exist_ok=True)
+    with pytest.raises(svc.FileBrowserError) as missing:
+        svc.read_file_bytes(SESSION_A, "src/nope.pdf")
+    assert missing.value.status == 404
+    with pytest.raises(svc.FileBrowserError) as dir_err:
+        svc.read_file_bytes(SESSION_A, "src")
+    assert dir_err.value.status == 400
+
+
+def test_blob_route_answers_bytes_and_refusals(project: Path):
+    (project / "doc.pdf").write_bytes(b"%PDF-1.7 route")
+
+    ok_resp = _call(
+        api.project_file_blob_handler,
+        _FakeRequest({"session_id": SESSION_A, "path": "doc.pdf"}),
+    )
+    assert ok_resp.status_code == 200
+    assert ok_resp.description == b"%PDF-1.7 route"
+    assert ok_resp.headers["Content-Type"] == "application/pdf"
+
+    refused = _call(
+        api.project_file_blob_handler,
+        _FakeRequest({"session_id": SESSION_A, "path": "nope.pdf"}),
+    )
+    assert refused.status_code == 404
+
+    no_sid = _call(api.project_file_blob_handler, _FakeRequest({"path": "doc.pdf"}))
+    assert no_sid.status_code == 400

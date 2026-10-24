@@ -16,11 +16,13 @@ import asyncio
 from urllib.parse import unquote
 
 from loguru import logger
+from robyn import Response
 
 from server.service.project_files_service import (
     FileBrowserError,
     list_level,
     read_file,
+    read_file_bytes,
 )
 from server.service.system_folders_service import list_subdirectories
 from server.trigger.core import app
@@ -132,4 +134,36 @@ async def project_file_handler(request):
             "size": content.size,
             "truncated": content.truncated,
         }
+    )
+
+
+@app.get("/project/file/blob")
+async def project_file_blob_handler(request):
+    """Read one file as raw bytes for binary rendering (PDF / docx / image).
+
+    Query: ``session_id`` (required), ``path`` (relative file path, required).
+    Answers the file's bytes with a ``mimetypes``-guessed ``Content-Type``;
+    413 above ``FILE_BROWSER["max_blob_bytes"]`` (wider than the text preview's
+    cap), 404 / 400 for the same boundary refusals as ``/project/file``. The
+    text endpoint's 415 no-UTF-8 rule deliberately does NOT apply here — a
+    non-UTF-8 payload is exactly what this route exists to serve.
+    """
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    rel_path = unquote(query.get("path", "") or "")
+    if not rel_path:
+        return bad_request("path is required")
+    try:
+        data, mime = await asyncio.to_thread(read_file_bytes, session_id, rel_path)
+    except FileBrowserError as exc:
+        logger.info(
+            "project blob refused: session={} path={} reason={}", session_id, rel_path, exc.reason
+        )
+        return _refusal(exc)
+    return Response(
+        status_code=200,
+        headers={"Content-Type": mime, "Content-Length": str(len(data))},
+        description=data,
     )

@@ -599,7 +599,13 @@
     "copied": "已复制",
     "copyFailed": "复制失败",
     "revealFailed": "无法打开文件管理器",
-    "openInBrowserFailed": "无法在浏览器中打开该文件"
+    "openInBrowserFailed": "无法在浏览器中打开该文件",
+    "viewerPdfPage": "第 {n} / {total} 页",
+    "viewerPdfPrev": "上一页",
+    "viewerPdfNext": "下一页",
+    "viewerPdfFit": "适应宽度",
+    "viewerPdfTooMany": "文件超过 {n} 页，仅渲染前 {n} 页",
+    "viewerDocxFailed": "docx 解析失败，文件可能已损坏"
   },
   "gitGraph": {
     "title": "Git Graph",

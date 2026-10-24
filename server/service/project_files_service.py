@@ -22,6 +22,7 @@ the route layer), so a slow network mount cannot stall the event loop.
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,7 @@ __all__ = [
     "TreeLevel",
     "list_level",
     "read_file",
+    "read_file_bytes",
 ]
 
 
@@ -156,11 +158,12 @@ def list_level(session_id: str, rel_path: str = "") -> TreeLevel:
     )
 
 
-def read_file(session_id: str, rel_path: str) -> FileContent:
-    """Read one file preview (blocking: use a thread).
+def _resolve_file_target(session_id: str, rel_path: str) -> Path:
+    """The shared prologue of both file readers: boundary + existence checks.
 
-    413 above ``max_read_bytes``, 415 for a file that is not UTF-8 text — never
-    decoded with ``errors="replace"`` (that would render binary as mojibake).
+    Raises :class:`FileBrowserError` with the reader-agnostic refusals (400
+    escape / 404 missing / 400 directory); size caps and decoding stay with the
+    callers, which answer different media.
     """
     root = _session_root(session_id)
     rel = (rel_path or "").strip().lstrip("/")
@@ -180,31 +183,69 @@ def read_file(session_id: str, rel_path: str) -> FileContent:
         raise FileBrowserError("path is a directory")
 
     try:
-        size = target.stat().st_size
+        # A liveness probe before the open: a file that vanished between
+        # exists() and open() surfaces as a safe refusal, not a raw OSError.
+        target.stat()
     except OSError as exc:
         raise FileBrowserError(safe_error_detail(exc)) from None
-    if size > FILE_BROWSER["max_read_bytes"]:
-        raise FileBrowserError(
-            f"file too large ({size} bytes, limit {FILE_BROWSER['max_read_bytes']})", status=413
-        )
+    return target
 
+
+def _read_raw(target: Path) -> bytes:
+    """Read the file's bytes through ``_open_no_follow`` (shared tail)."""
     try:
-        # O_NOFOLLOW: the path was validated a moment ago; opening without
-        # following a final-component symlink closes the swap window.
         fd = _open_no_follow(target, os.O_RDONLY)
         try:
             with os.fdopen(fd, "rb") as handle:
                 fd = -1
-                raw = handle.read()
+                return handle.read()
         finally:
             if fd >= 0:
                 os.close(fd)
     except OSError as exc:
         raise FileBrowserError(safe_error_detail(exc)) from None
 
+
+def read_file(session_id: str, rel_path: str) -> FileContent:
+    """Read one file preview (blocking: use a thread).
+
+    413 above ``max_read_bytes``, 415 for a file that is not UTF-8 text — never
+    decoded with ``errors="replace"`` (that would render binary as mojibake).
+    """
+    target = _resolve_file_target(session_id, rel_path)
+    raw = _read_raw(target)
+    if len(raw) > FILE_BROWSER["max_read_bytes"]:
+        raise FileBrowserError(
+            f"file too large ({len(raw)} bytes, limit {FILE_BROWSER['max_read_bytes']})", status=413
+        )
+
     try:
         text = raw.decode("utf-8-sig")  # strips a UTF-8 BOM, like read_file
     except UnicodeDecodeError:
         raise FileBrowserError("binary file (not UTF-8 text)", status=415) from None
 
-    return FileContent(path=rel, content=text, size=len(raw), truncated=False)
+    return FileContent(
+        path=rel_path.strip().lstrip("/"), content=text, size=len(raw), truncated=False
+    )
+
+
+def read_file_bytes(session_id: str, rel_path: str) -> tuple[bytes, str]:
+    """Read one file as raw bytes for binary rendering (blocking: use a thread).
+
+    The blob sibling of :func:`read_file` — same boundary (``resolve_within`` +
+    ``_open_no_follow``), same error protocol, but the size cap is the wider
+    ``max_blob_bytes`` (rendered documents are bigger than text previews) and
+    the decode step is replaced by a content-type guess: ``mimetypes`` on the
+    file name, ``application/octet-stream`` when unknown.
+
+    :returns: ``(data, mime)``.
+    """
+    target = _resolve_file_target(session_id, rel_path)
+    data = _read_raw(target)
+    if len(data) > FILE_BROWSER["max_blob_bytes"]:
+        raise FileBrowserError(
+            f"file too large ({len(data)} bytes, limit {FILE_BROWSER['max_blob_bytes']})",
+            status=413,
+        )
+    mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return data, mime

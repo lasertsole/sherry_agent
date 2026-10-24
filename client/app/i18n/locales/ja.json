@@ -599,7 +599,13 @@
     "copied": "コピーしました",
     "copyFailed": "コピーに失敗しました",
     "revealFailed": "ファイルマネージャーを開けませんでした",
-    "openInBrowserFailed": "ブラウザーでファイルを開けませんでした"
+    "openInBrowserFailed": "ブラウザーでファイルを開けませんでした",
+    "viewerPdfPage": "{n} / {total} ページ",
+    "viewerPdfPrev": "前のページ",
+    "viewerPdfNext": "次のページ",
+    "viewerPdfFit": "幅に合わせる",
+    "viewerPdfTooMany": "{n} ページを超えているため、先頭の {n} ページのみ表示します",
+    "viewerDocxFailed": "docx の解析に失敗しました。ファイルが壊れている可能性があります"
   },
   "gitGraph": {
     "title": "Git Graph",

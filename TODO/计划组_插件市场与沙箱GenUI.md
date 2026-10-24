@@ -378,5 +378,5 @@ Phase 3：Gen-UI（10-14 天）
 - Alias API：`packages/ui/src/plugin-ui/aliasApi.ts`（`window.zcode` 定义）
 
 ### 关联 TODO
-- `计划_前端_PDF与Office预览.md`（正交——文件查看器）
+- 文件查看器（已落地 2026-10-24：FileViewerPanel 渲染 markdown / 图片 / PDF（pdf.js）/ docx（mammoth），二进制走 `GET /project/file/blob`；原计划文档已删，机制见 AGENTS.md）
 - `计划_前端_代码高亮与图表.md`（正交——渲染管线，Gen-UI 沙箱不复用 v-safe-html）

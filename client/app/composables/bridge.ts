@@ -88,10 +88,11 @@ export type {
   ProjectTreeEntry,
   ProjectTreeLevel,
   ProjectFileContent,
+  ProjectFileBlob,
   SystemDirEntry,
   SystemDirLevel
 } from './bridge/project-files';
-export { fetchProjectTree, fetchProjectFile, fetchSystemDirs } from './bridge/project-files';
+export { fetchProjectTree, fetchProjectFile, fetchProjectFileBlob, fetchSystemDirs } from './bridge/project-files';
 
 // ── System prompt ───────────────────────────────────────
 export {
