@@ -108,7 +108,12 @@ class _RecordingBackend:
         return True
 
     def wrap(
-        self, cmd: list[str], env: dict[str, str], writable_roots: list | None = None
+        self,
+        cmd: list[str],
+        env: dict[str, str],
+        writable_roots: list | None = None,
+        *,
+        allow_network: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         self.calls.append((list(cmd), dict(env)))
         return [self._wrapper, *cmd], {**env, "FAKE_SANDBOX": "1"}

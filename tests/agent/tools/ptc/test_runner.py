@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 
 import pytest
@@ -135,10 +134,10 @@ def test_no_tool_import_needed_for_pure_compute() -> None:
 
 
 def test_orphan_free_temp_dirs_cleaned() -> None:
-    import glob
-    import tempfile
-
-    before = set(glob.glob(os.path.join(tempfile.gettempdir(), runner.PTC_TMP_PREFIX + "*")))
+    # Scripts are written under the sandbox-writable TEMP_DIR, not OS /tmp
+    # (bwrap masks /tmp with a tmpfs, which hid the script from the child).
+    root = runner._PTC_TMP_ROOT
+    before = set(root.glob(runner.PTC_TMP_PREFIX + "*"))
     _run("print('x')\n", _config())
-    after = set(glob.glob(os.path.join(tempfile.gettempdir(), runner.PTC_TMP_PREFIX + "*")))
+    after = set(root.glob(runner.PTC_TMP_PREFIX + "*"))
     assert after <= before

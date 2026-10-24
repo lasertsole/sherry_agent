@@ -19,6 +19,8 @@
 </template>
 
 <script setup lang="ts">
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { DEFAULT_PLACEHOLDER_AVATAR } from '~/composables/defaultCharacter';
 // DEFAULT_PLACEHOLDER_AVATAR is auto-imported from ~/composables/defaultCharacter.
 interface Props {
   /** Avatar URL; when empty the neutral placeholder silhouette is rendered */

@@ -90,7 +90,7 @@ def _bwrap_run(cmd: list[str], wrap_env: dict[str, str] | None = None, timeout: 
     """
     if wrap_env is None:
         wrap_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-    argv, _ = BwrapBackend().wrap(cmd, wrap_env)
+    argv, _ = BwrapBackend().wrap(cmd, wrap_env, [TEMP_DIR])
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
 
 
@@ -136,7 +136,7 @@ class TestBwrapRealIsolation:
     def test_pid_namespace_hides_parent_process(self):
         script = f"test -d /proc/{os.getpid()} && echo VISIBLE || echo HIDDEN"
         proc = _bwrap_run(["/bin/sh", "-c", script])
-        assert proc.stdout == "HIDDEN", "--unshare-all did not isolate the pid namespace"
+        assert proc.stdout.strip() == "HIDDEN", "--unshare-all did not isolate the pid namespace"
 
     def test_network_namespace_blocks_loopback_connect(self):
         with socket.socket() as server:

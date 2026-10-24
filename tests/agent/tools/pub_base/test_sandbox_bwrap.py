@@ -77,6 +77,15 @@ def test_wrap_contains_unshare_all_and_hardening_flags():
         assert flag in cmd, f"missing {flag}"
 
 
+def test_wrap_share_net_only_when_requested():
+    """PTC keeps the host network so its loopback RPC bridge stays reachable."""
+    default_cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
+    assert "--share-net" not in default_cmd
+
+    shared_cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS, allow_network=True)
+    assert shared_cmd.index("--share-net") == shared_cmd.index("--unshare-all") + 1
+
+
 def test_wrap_setenv_count_matches_env_entries():
     env = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "FOO": "bar"}
     cmd, returned_env = BwrapBackend().wrap(["echo", "hi"], env, ROOTS)

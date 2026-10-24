@@ -1,13 +1,24 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 
 const runtime = vi.hoisted(() => ({
   resolveRuntimeT: vi.fn((): ((key: string) => string) | undefined => undefined)
 }));
 
-vi.mock('~/composables/i18nRuntime', () => ({ resolveRuntimeT: runtime.resolveRuntimeT }));
+vi.mock('@/composables/i18nRuntime', () => ({ resolveRuntimeT: runtime.resolveRuntimeT }));
 
-import { safeT } from '../i18n';
-import { _setClientFlag } from '../client';
+// The shared Vitest setup imports `safeT` (through the v-safe-html directive)
+// before this file's mock is installed. A fresh module graph after the mock
+// makes the module under test observe the stub, without relying on import order.
+let safeT: (key: string) => string;
+let _setClientFlag: (client: boolean) => void;
+
+beforeAll(async () => {
+  vi.resetModules();
+  const i18n = await import('../i18n');
+  const client = await import('../client');
+  safeT = i18n.safeT;
+  _setClientFlag = client._setClientFlag;
+});
 
 describe('safeT', () => {
   afterEach(() => {
