@@ -247,25 +247,22 @@ html.dark .shiki code span {
 }
 .shiki {
   position: relative;
-  padding-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
 }
 
-/* Code-block toolbar: pinned top-right, visible on hover. */
+/* Code-block toolbar: a compact header row, always visible.
+   It used to be an absolutely positioned, opacity-0 strip over 2rem of
+   reserved padding — an empty transparent line above the code. */
 .shiki .code-toolbar {
-  position: absolute;
-  top: 0.25rem;
-  right: 0.5rem;
+  order: -1;
   display: flex;
+  justify-content: flex-end;
   gap: 0.5rem;
   align-items: center;
+  padding: 0 0.5rem 0.25rem;
   font-size: 0.7rem;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: auto;
-}
-.shiki:hover .code-toolbar,
-.shiki:focus-within .code-toolbar {
-  opacity: 1;
 }
 .shiki .code-lang {
   color: #9ca3af;
