@@ -9,7 +9,40 @@
  */
 
 /** The panel's render branches. */
-export type FilePreviewFormat = 'markdown' | 'pdf' | 'docx' | 'image' | 'text';
+export type FilePreviewFormat = 'markdown' | 'pdf' | 'docx' | 'image' | 'code' | 'text';
+
+/** Text-code suffixes the Shiki branch serves (grammar ids live in use-shiki's loader map). */
+const CODE_EXTENSIONS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'py',
+  'json',
+  'go',
+  'rs',
+  'java',
+  'c',
+  'h',
+  'cpp',
+  'hpp',
+  'cs',
+  'sh',
+  'bash',
+  'zsh',
+  'yaml',
+  'yml',
+  'toml',
+  'sql',
+  'css',
+  'xml',
+  'ini',
+  'kt',
+  'php',
+  'rb'
+]);
 
 /** Image suffixes the `<img>` branch serves (a superset of the chat's media filter). */
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif']);
@@ -27,5 +60,6 @@ export function classifyFileFormat(path: string): FilePreviewFormat {
   // Legacy binary .doc is NOT the OOXML mammoth parses — it degrades to text.
   if (ext === 'docx') return 'docx';
   if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+  if (CODE_EXTENSIONS.has(ext)) return 'code';
   return 'text';
 }

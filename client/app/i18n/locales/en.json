@@ -70,7 +70,9 @@
     "removeImage": "Remove image",
     "removeAudio": "Remove audio",
     "removeVideo": "Remove video",
-    "diffNewFile": "New file"
+    "diffNewFile": "New file",
+    "codeWrap": "Wrap",
+    "codeZoom": "Zoom"
   },
   "chat": {
     "backgroundMessage": "Background task",

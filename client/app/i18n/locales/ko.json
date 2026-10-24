@@ -70,7 +70,9 @@
     "removeImage": "이미지 제거",
     "removeAudio": "오디오 제거",
     "removeVideo": "비디오 제거",
-    "diffNewFile": "새 파일"
+    "diffNewFile": "새 파일",
+    "codeWrap": "줄바꿈",
+    "codeZoom": "확대"
   },
   "chat": {
     "backgroundMessage": "백그라운드 작업",

@@ -70,7 +70,9 @@
     "removeImage": "移除图片",
     "removeAudio": "移除音频",
     "removeVideo": "移除视频",
-    "diffNewFile": "新建文件"
+    "diffNewFile": "新建文件",
+    "codeWrap": "换行",
+    "codeZoom": "放大"
   },
   "chat": {
     "backgroundMessage": "后台任务",

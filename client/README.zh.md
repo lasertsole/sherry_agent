@@ -386,6 +386,8 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 `patch_file` 与 `write_file` 的结果渲染为彩色 unified diff 而非裸 JSON：客户端解析后端的 `difflib` 输出（`app/utils/tool-diff.ts`，纯前缀分类——增行绿、删行红、上下文原样、`@@` hunk 头蓝色，带新旧双列行号与 `+N −M` 头部统计）。`write_file` 自 2026-10-24 起返回带 `diff` / `isNew` 的 JSON（新建文件显示「新建文件」徽标并以写入的 `text` 构建全绿预览）；任何解析不了的形状退回原 `<pre>`——构造上即 fail-open。
 
+聊天与文件查看器的 markdown 经 v-safe-html 管线渲染，其中包含 2026-10-24 的渲染增强：Shiki v4 在流式结束后为代码围栏着色（明暗双主题、复制/换行工具栏、流式零开销）、` ```mermaid ` 围栏渲染为经消毒的 SVG 图（点击放大）、KaTeX 渲染 `$…$`/`$$…$$` 公式、文件查看器对 ≤256 KB 的代码文件高亮——全部经 DOMPurify 白名单与受信任根作用域的内联样式（`security.ts`），绝无裸 HTML 通道。
+
 ### 状态与事件
 
 - **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）、联网搜索后端（`web-search.ts`）

@@ -7,7 +7,7 @@
  * sanitization), so it cannot be used to verify real browser (WebView2/Chromium) security
  * behavior. The project's other test suites remain on happy-dom, unaffected.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { createVNode } from 'vue';
 import type { ComponentPublicInstance, DirectiveBinding, VNode } from 'vue';
 import { vSafeHtml, safeMarkdownHtml, safeHtmlOnly } from '../safeHtml';
@@ -226,5 +226,53 @@ describe('safeHtmlOnly / v-safe-html.fragment — the HTML-direct path (docx)', 
   it('fail-safe: an exception sanitizing yields an empty string', () => {
     expect(safeHtmlOnly(null)).toBe('');
     expect(safeHtmlOnly(undefined)).toBe('');
+  });
+});
+
+describe('styleValueAllowed — 作用域信任（Shiki/KaTeX/Mermaid 根内样式）', () => {
+  const shikiPre = document.createElement('pre');
+  shikiPre.className = 'shiki';
+  const spanInRoot = document.createElement('span');
+  shikiPre.appendChild(spanInRoot);
+  document.body.appendChild(shikiPre);
+  afterAll(() => shikiPre.remove());
+
+  it('信任根内的 color 存活（经完整 sanitize 链）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><span style="color:#c678dd">const</span></pre>');
+    expect(out).toContain('color:#c678dd');
+  });
+
+  it('信任根内 url() 无条件被剔，同串兄弟声明保留（逐声明过滤）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><span style="color:#fff;background:url(evil)">x</span></pre>');
+    expect(out).not.toContain('url(evil)');
+    expect(out).toContain('color:#fff');
+  });
+
+  it('根外的 color 仍被剔、text-align 现状回归', () => {
+    const out = safeHtmlOnly('<span style="color:#123456">x</span><span style="text-align:center">y</span>');
+    expect(out).not.toContain('color:#123456');
+    expect(out).toContain('text-align:center');
+  });
+
+  it('--shiki-dark 自定义属性在根内存活，--x:url 被剔', () => {
+    const out = safeHtmlOnly(
+      '<pre class="shiki"><span style="--shiki-dark:#abc">x</span><span style="--x:url(evil)">y</span></pre>'
+    );
+    expect(out).toContain('--shiki-dark:#abc');
+    expect(out).not.toContain('url(evil)');
+  });
+
+  it('根内 <script> 一如既往被剥（作用域不豁免标签门）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><script>alert(1)</script><span style="color:#111">x</span></pre>');
+    expect(out).not.toContain('<script');
+    expect(out).toContain('color:#111');
+  });
+
+  it('mermaid/katex 根同享信任', () => {
+    const out = safeHtmlOnly(
+      '<figure class="mermaid-figure"><span style="color:#123456">x</span></figure><span class="katex"><span style="height:0.8em">y</span></span>'
+    );
+    expect(out).toContain('color:#123456');
+    expect(out).toContain('height:0.8em');
   });
 });

@@ -4,6 +4,11 @@ allowBuilds:
   vue-demi: true
 
 overrides:
+  # Single vue across the graph: the ambient global declarations
+  # (.nuxt/types/imports.d.ts) type against the app's vue — a second vue
+  # (a devtools peer re-resolved higher) splits component-instance typing
+  # and breaks vue-tsc bare-symbol resolution.
+  vue: 3.5.43
   'qs@<6.16.0': '>=6.16.0'
   'svgo@>=4.0.0 <4.1.0': '>=4.1.0'
   # katex: transitive via @eslint/markdown > micromark-extension-math (still

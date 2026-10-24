@@ -386,6 +386,8 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 `patch_file` と `write_file` の結果は、生の JSON の代わりにカラー unified diff として描画されます。クライアントはバックエンドの `difflib` 出力を解析します（`app/utils/tool-diff.ts`、純粋な接頭辞分類 — 追加は緑、削除は赤、コンテキストはそのまま、`@@` ハンクヘッダは青、新旧の行番号ガターと `+N −M` ヘッダー付き）。`write_file` は 2026-10-24 から `diff` / `isNew` を含む JSON を返します（新規作成では「新規ファイル」バッジと、書き込んだ `text` からの全追加プレビュー）。解析できない形状はすべて素の `<pre>` にフォールバック — 構造上 fail-open です。
 
+チャットとファイルビューアの markdown は v-safe-html パイプラインを経由し、2026-10-24 の描画拡張を含みます：Shiki v4 がストリーム確定後にコードフェンスを着色（ライト/ダーク両テーマ、コピー/折り返しツールバー、ストリーミング中はゼロコスト）、` ```mermaid ` フェンスは消毒済み SVG 図として描画（クリックで拡大）、KaTeX が `$…$`/`$$…$$` 数式を描画、ファイルビューアは ≤256 KB のコードファイルをハイライト — すべて DOMPurify ホワイトリストと信頼ルートにスコープされたインラインスタイル（`security.ts`）経由で、生 HTML の経路はありません。
+
 ### 状態とイベント
 
 - **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）、Web 検索バックエンド（`web-search.ts`）

@@ -47,6 +47,11 @@
           class="max-h-full max-w-full cursor-zoom-in object-contain"
           @click="openPreview(imageUrl)" />
       </div>
+      <div
+        v-else-if="fileFormat === 'code' && codeHtml"
+        class="text-xs"
+        data-test="file-viewer-code"
+        v-safe-html.fragment="codeHtml"></div>
       <pre
         v-else
         class="m-0 whitespace-pre-wrap break-words font-mono text-xs"
@@ -62,6 +67,9 @@ import { useI18n } from 'vue-i18n';
 import { logUtil } from '~/utils/log';
 import { classifyFileFormat } from '~/utils/file-format';
 import type { FileViewerEntry } from '~/stores/file-viewer';
+
+/** Files above this size keep the plain <pre> (highlight cost + DOM weight). */
+const MAX_CODE_HIGHLIGHT_BYTES = 256 * 1024;
 import PdfViewer from './PdfViewer.vue';
 import DocxViewer from './DocxViewer.vue';
 
@@ -81,6 +89,8 @@ const content = ref('');
 const size = ref(0);
 const loading = ref(false);
 const error = ref<string | null>(null);
+/** The Shiki-highlighted HTML for a `code`-format file (empty → the plain <pre>). */
+const codeHtml = ref('');
 /** The binary entry behind the pdf / docx / image branches (null for text). */
 const blobEntry = ref<{ bytes: ArrayBuffer; mime: string } | null>(null);
 /** The image branch's object URL — created per entry, revoked on every change. */
@@ -105,10 +115,17 @@ function revokeImageUrl(): void {
 
 function applyEntry(entry: FileViewerEntry): void {
   revokeImageUrl();
+  codeHtml.value = '';
   if (entry.kind === 'text') {
     content.value = entry.content;
     size.value = entry.size;
     blobEntry.value = null;
+    if (fileFormat.value === 'code' && entry.size <= MAX_CODE_HIGHLIGHT_BYTES) {
+      const ext = pathLabel.value.split('.').pop()?.toLowerCase() ?? '';
+      void highlightCode(entry.content, ext).then(highlighted => {
+        if (highlighted) codeHtml.value = highlighted;
+      });
+    }
     return;
   }
   content.value = '';

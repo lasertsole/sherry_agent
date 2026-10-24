@@ -35,13 +35,17 @@ describe('classifyFileFormat', () => {
   });
 
   it.each([
-    ['main.py', 'text'],
+    ['main.py', 'code'],
+    ['app.tsx', 'code'],
+    ['schema.json', 'code'],
+    ['deploy.sh', 'code'],
+    ['config.yaml', 'code'],
     ['no-extension', 'text'],
     ['legacy.doc', 'text'],
     ['archive.xlsx', 'text'],
     ['slides.pptx', 'text'],
-    ['data.json', 'text']
-  ])('%s → text fallback (F4)', (path, expected) => {
+    ['notes.txt', 'text']
+  ])('%s → %s', (path, expected) => {
     expect(classifyFileFormat(path)).toBe(expected);
   });
 });

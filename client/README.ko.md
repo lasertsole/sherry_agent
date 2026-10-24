@@ -386,6 +386,8 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 `patch_file`과 `write_file` 결과는裸 JSON 대신 컬러 unified diff로 렌더링됩니다. 클라이언트는 백엔드의 `difflib` 출력을 파싱합니다(`app/utils/tool-diff.ts`, 순수 접두사 분류 — 추가는 초록, 삭제는 빨강, 컨텍스트는 그대로, `@@` 헌크 헤더는 파랑, 이전/이후 줄 번호 거터와 `+N −M` 헤더 포함). `write_file`은 2026-10-24부터 `diff` / `isNew`를 포함한 JSON을 반환합니다(신규 생성은 새 파일 배지와 write의 `text`로 만든 전체 추가 미리보기). 파싱 불가한 형태는 모두 일반 `<pre>`로 폴백 — 구조적으로 fail-open입니다.
 
+채팅과 파일 뷰어의 markdown은 v-safe-html 파이프라인을 통해 렌더링되며, 2026-10-24 렌더링 개선이 포함됩니다: Shiki v4가 스트림 확정 후 코드 펜스에 색상을 입히고(라이트/다크 듀얼 테마, 복사/줄바꿈 툴바, 스트리밍 중 비용 없음), ` ```mermaid ` 펜스는 sanitize된 SVG 다이어그램으로 렌더링(클릭 확대), KaTeX가 `$…$`/`$$…$$` 수식을 렌더링, 파일 뷰어는 ≤256 KB 코드 파일을 하이라이트 — 모두 DOMPurify 화이트리스트와 신뢰 루트로 스코프된 인라인 스타일(`security.ts`)을 경유하며, 벌거벗은 HTML 경로는 없습니다.
+
 ### 상태와 이벤트
 
 - **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)

@@ -70,7 +70,9 @@
     "removeImage": "画像を削除",
     "removeAudio": "音声を削除",
     "removeVideo": "動画を削除",
-    "diffNewFile": "新規ファイル"
+    "diffNewFile": "新規ファイル",
+    "codeWrap": "折り返し",
+    "codeZoom": "拡大"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",

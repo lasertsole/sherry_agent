@@ -173,8 +173,12 @@
                     {{ t('chatBox.streamingTail') }}
                   </div>
                   <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
-                   sanitization internally (app/directives/safeHtml.ts) -->
-                  <div v-safe-html="bubbleView(message).text"></div>
+                   sanitization internally (app/directives/safeHtml.ts); the data-streaming
+                   attribute tells its enhancement pass (Shiki/Mermaid/KaTeX) to wait until
+                   the stream settles — a streaming row pays zero enhancement cost. -->
+                  <div
+                    v-safe-html="bubbleView(message).text"
+                    :data-streaming="message.streaming ? 'true' : undefined"></div>
                   <!-- Settled long answer: the body above is a preview; this toggles
                        the full text (see bubbleView for the measured starvation). -->
                   <button
