@@ -30,7 +30,7 @@
 1. **谁可以 spawn，能控制什么？**——**深度角色**（`SubagentSessionRole`），由嵌套深度推导。只有它决定 spawn 权限与控制范围。
 2. **这是哪一类 worker？**——**功能角色**（`FunctionalRole`），一种显式特化。只有它决定子 LLM 档位、工具白名单与角色专属提示词段落。
 
-完成判定随后由四层恒开机制把关，从单个子运行向外一直排到父回合：子运行的完成判别器与 goal loop、TaskFlow 步骤判别器、`taskflow_finish` 的流程门禁，以及父回合的完成 drain 程序化门禁。两条角色轴与门禁栈是本页的主题；API 明细见[模块 README](../../agent/tools/subagent/README.zh.md)。
+完成判定随后由四层恒开机制把关，从单个子运行向外一直排到父回合：子运行的完成判别器与 goal loop、TaskFlow 步骤判别器、`taskflow_flow(action="finish")` 的流程门禁，以及父回合的完成 drain 程序化门禁。两条角色轴与门禁栈是本页的主题；API 明细见[模块 README](../../agent/tools/subagent/README.zh.md)。
 
 ### 🧱 不变量
 
@@ -125,12 +125,12 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 |---|----|------|----------|--------------|
 | 1 | 子运行 | 完成判别器 + goal loop（`spawn/completion_judge.py`） | 任务、最新回复、证据摘要；预算 `goal_max_turns`（默认 `5`） | 模型错误 / 无法解析 → `done` |
 | 2 | 步骤 | TaskFlow 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `validation_criteria`（缺失 → 不调用判官） | 模型错误 / 无法解析 → `pass` |
-| 3 | 流程 | `taskflow_finish` 门禁 A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状态与 flow 证据 | 账本不可读 → 放行 |
+| 3 | 流程 | `taskflow_flow(action="finish")` 门禁 A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状态与 flow 证据 | 账本不可读 → 放行 |
 | 4 | 父回合 | 完成 drain 程序化门禁（`agent/middlewares/subagent_completion_drain/`） | 会话的验证证据摘要 | 查询失败 → 跳过门禁 |
 
-**第 2 层——步骤判官。** `taskflow_resume` 注入子结果后，携带 `validation_criteria` 的步骤会被判定 `PASS` / `RETRY` / `BLOCK`。`RETRY` 会在步骤重试计数低于 `STEP_JUDGE["max_retries"]`（默认 `2`）时带着判官反馈重新派发该步骤；预算耗尽则阻塞该步骤。判据是判官的输入而非开关——没有判据的步骤永远不会送到判官面前。
+**第 2 层——步骤判官。** `taskflow_step(action="resume")` 注入子结果后，携带 `validation_criteria` 的步骤会被判定 `PASS` / `RETRY` / `BLOCK`。`RETRY` 会在步骤重试计数低于 `STEP_JUDGE["max_retries"]`（默认 `2`）时带着判官反馈重新派发该步骤；预算耗尽则阻塞该步骤。判据是判官的输入而非开关——没有判据的步骤永远不会送到判官面前。
 
-**第 3 层——流程门禁。** `taskflow_finish` 在以下条件全部满足前拒绝转入 `DONE`：门禁 A 看到每一步都是 `done` 或 `blocked`，门禁 B 看不到阻塞步骤，门禁 C 看不到 `FAIL` 或 `[stale]` 的 flow 证据（另有可选的 Gate E 目标判定，仅当带 `description` 的 flow 步骤数达到 `GOAL_GATE["min_steps"]` 时运行）。
+**第 3 层——流程门禁。** `taskflow_flow(action="finish")` 在以下条件全部满足前拒绝转入 `DONE`：门禁 A 看到每一步都是 `done` 或 `blocked`，门禁 B 看不到阻塞步骤，门禁 C 看不到 `FAIL` 或 `[stale]` 的 flow 证据（另有可选的 Gate E 目标判定，仅当带 `description` 的 flow 步骤数达到 `GOAL_GATE["min_steps"]` 时运行）。
 
 **第 4 层——父回合门禁。** drain 注入排队的完成载体时，也会检查父会话的证据。载体原样注入；若会话没有通过证据，则在其后追加一条强制验证消息。该检查无条件执行——没有任何配置能关闭它——只有当证据查询本身不可用时才失败开放。
 
@@ -148,7 +148,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 
 ### 🧵 合成聚合
 
-`taskflow_run_task(aggregate_deps=True)` 标记一个合成步骤，使其派发任务文本携带依赖步骤已记录的结果。该标志存储在步骤上，`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序追加 `## Upstream Results` 区块，每个依赖一个 `### {step_id}` 小节，将依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录相匹配；没有记录结果的依赖写入 `no result recorded` 占位符。由于聚合在每次派发或重试时都从稳定记录重新推导，已存储的步骤任务永不被改写；没有该标志时任务文本保持不变。完整行为见[长期任务 README](../long-running-tasks/README.zh.md)。
+`taskflow_step(action="run_task", aggregate_deps=True)` 标记一个合成步骤，使其派发任务文本携带依赖步骤已记录的结果。该标志存储在步骤上，`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序追加 `## Upstream Results` 区块，每个依赖一个 `### {step_id}` 小节，将依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录相匹配；没有记录结果的依赖写入 `no result recorded` 占位符。由于聚合在每次派发或重试时都从稳定记录重新推导，已存储的步骤任务永不被改写；没有该标志时任务文本保持不变。完整行为见[长期任务 README](../long-running-tasks/README.zh.md)。
 
 ## ⚙️ 配置
 

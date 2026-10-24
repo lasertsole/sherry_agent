@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `flow_id`  | 关联的 TaskFlow flow id（DAG 由 TaskFlow 持有）                    |
 | `step_id`  | 关联的 TaskFlow step id（如 `step-2`），用于回读 DAG 状态          |
 
-> **设计边界**：`todos.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_summary(flow_id)` 回读。
+> **设计边界**：`todos.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_inspect(action="summary", flow_id)` 回读。
 
 CRUD 接口：
 

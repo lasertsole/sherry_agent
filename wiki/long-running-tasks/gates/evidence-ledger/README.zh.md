@@ -37,7 +37,7 @@ terminal / python_repl 跑了一条命令
 
 **跨 session 传播。** 文件写入先标记 writer 自己的 session。当 `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` 为 true 时，`EvidenceLedger.mark_stale_for_path_all_sessions()` 扫描其他 session 中 `modified_files` 包含被编辑路径、command 以真实路径 token 点名该路径，或旧行 command 包含它的 evidence 行，并在每个受影响 session 下追加一行 `scope="cross_session"` 的 stale 事件。`source_session` 记录写入方；`max_sessions_scan` 限制扫描数量，`exclude_self` 跳过已单独标记的 writer。下方的读取侧推导无需改动——广播行就落在受影响 session 自己的序列里。
 
-**Finish 时重验。** `taskflow_finish` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。step 可以声明 `file_deps`；当其他 step 的写入命中其中之一时，`prioritized_sessions()` 会把该 step 的命令排到 `max_reverify_commands` 上限之前（`file_deps_mode="prioritize"`，默认）。可选的 `file_deps_mode="filter"` 只重放声明命中的 session——更便宜，但可能漏掉未声明 step 的破坏。
+**Finish 时重验。** `taskflow_flow(action="finish")` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。step 可以声明 `file_deps`；当其他 step 的写入命中其中之一时，`prioritized_sessions()` 会把该 step 的命令排到 `max_reverify_commands` 上限之前（`file_deps_mode="prioritize"`，默认）。可选的 `file_deps_mode="filter"` 只重放声明命中的 session——更便宜，但可能漏掉未声明 step 的破坏。
 
 ---
 
@@ -200,7 +200,7 @@ def derive_evidence_state(records, index):
 
 ### 层级 1：per-step（TaskFlow step judge）
 
-`taskflow_resume` 派发带验收标准的 step 时，调 `judge_step_result()` 并传入 `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`。step judge 的 prompt 包含 `## Verification Evidence` 段，里面有摘要（或 `"(none recorded)"`）。judge 用它决定 PASS / RETRY / BLOCK。
+`taskflow_step(action="resume")` 派发带验收标准的 step 时，调 `judge_step_result()` 并传入 `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`。step judge 的 prompt 包含 `## Verification Evidence` 段，里面有摘要（或 `"(none recorded)"`）。judge 用它决定 PASS / RETRY / BLOCK。
 
 ### 层级 2：per-subagent（completion judge + drain gate）
 
@@ -208,7 +208,7 @@ def derive_evidence_state(records, index):
 - **Completion judge prompt：** 未跳过时，`judge_completion()` 在 prompt 里收到 evidence 摘要。
 - **Drain gate：** `SubagentCompletionDrainMiddleware`（父 agent 侧 `before_model`）在排空子代理完成消息时检查 evidence。无 evidence 或有 `FAIL` → 注入 `[GATE] Completion blocked: verification evidence missing or failing` 阻塞消息。
 
-### 层级 3：per-flow（taskflow_finish Gate C）
+### 层级 3：per-flow（taskflow_flow(action="finish") Gate C）
 
 TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它每个已派发步的 `child_session_key` 加上 flow 的 `creator_session_key` 的并集（行按会话键存放，而一个 flow 横跨多个会话；从未派发过步的 flow 没有任何键，因此没有证据，放行）：
 

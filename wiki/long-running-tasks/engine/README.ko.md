@@ -58,35 +58,35 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 
 | 상태 | 의미 | 설정 주체 |
 | :--- | :--- | :--- |
-| `blocked` | 최소 하나의 `depends_on`이 `done`이 아님; 자식이 생성되지 않음 | `taskflow_run_task` |
+| `blocked` | 최소 하나의 `depends_on`이 `done`이 아님; 자식이 생성되지 않음 | `taskflow_step(action="run_task")` |
 | `ready` | 모든 의존이 충족되어 디스패치 대기 | 등록 시, 또는 재개 후 `unlock_dependents` |
-| `dispatched` | 분리된 자식 세션이 생성됨; `child_session_key`와 `dispatched_at` 기록 | `taskflow_run_task` / `taskflow_dispatch` |
-| `done` | `taskflow_resume`가 결과를 주입함 | `taskflow_resume` |
+| `dispatched` | 분리된 자식 세션이 생성됨; `child_session_key`와 `dispatched_at` 기록 | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
+| `done` | `taskflow_step(action="resume")`가 결과를 주입함 | `taskflow_step(action="resume")` |
 
 `done`은 **"결과가 주입됨"**을 뜻하며 "자식이 성공함"이 아닙니다([알려진 한계](../README.ko.md#-알려진-한계) 참조). `status` 필드가 없는 레거시 단계는 파생됩니다: `child_session_key`를 가진 단계는 `dispatched`, 그렇지 않으면 `ready`로 간주됩니다(`_shared.py:85`, `step_status`).
 
 ### `depends_on` 의미론
 
-`deps_satisfied(step, steps)`(`_shared.py:99`)는 모든 `depends_on` id가 현재 단계 목록에 존재**하고** `done`일 때만 참입니다. `depends_on`이 없거나 비면 자명하게 충족됩니다. 알 수 없는 의존 id는 결코 충족되지 않으며, **자기 의존도 결코 충족되지 않습니다** — 따라서 자기 참조 단계는 언락 루프에 빠지지 않고 안전하게 블록된 상태로 남습니다. `unlock_dependents(steps)`(`_shared.py:137`)는 목록을 **단 한 번만 순회**하므로 의존 사이클이 루프를 도는 것을 구조적으로 막습니다. `taskflow_run_task`는 디스패치나 상태 변경 **전에** 알 수 없는 의존 id를 거부합니다.
+`deps_satisfied(step, steps)`(`_shared.py:99`)는 모든 `depends_on` id가 현재 단계 목록에 존재**하고** `done`일 때만 참입니다. `depends_on`이 없거나 비면 자명하게 충족됩니다. 알 수 없는 의존 id는 결코 충족되지 않으며, **자기 의존도 결코 충족되지 않습니다** — 따라서 자기 참조 단계는 언락 루프에 빠지지 않고 안전하게 블록된 상태로 남습니다. `unlock_dependents(steps)`(`_shared.py:137`)는 목록을 **단 한 번만 순회**하므로 의존 사이클이 루프를 도는 것을 구조적으로 막습니다. `taskflow_step(action="run_task")`는 디스패치나 상태 변경 **전에** 알 수 없는 의존 id를 거부합니다.
 
-### 도구 패밀리(14개 도구)
+### 도구 패밀리(3개 그룹화 도구)
 
-모든 도구는 `async`이며 `@tool("taskflow_…")`로 데코레이트되고, `build_taskflow_tools()`(`tools/__init__.py:58-76`)가 `metadata={"scope": "main_only"}`와 `handle_tool_error=True`를 부여합니다. 공유 flow 상태를 관리할 수 있는 것은 메인 에이전트뿐이며, 서브에이전트 도구 정책은 패밀리 전체를 무조건 제거합니다.
+모델 면은 3개의 그룹화 디스패처(`taskflow_flow`, `taskflow_step`, `taskflow_inspect`)이며, 그 아래에 16개의 `async` 모듈 함수가 있습니다. 모듈 함수는 계속 `@tool("taskflow_…")`로 데코레이트되고 `build_taskflow_tools()`가 `metadata={"scope": "main_only"}`와 `handle_tool_error=True`를 부여합니다. 공유 flow 상태를 관리할 수 있는 것은 메인 에이전트뿐이며, 서브에이전트 도구 정책은 패밀리 전체를 무조건 제거합니다.
 
 | 도구 | 목적 |
 | :--- | :--- |
-| `taskflow_create` | 리비전 1로 flow 생성; 선택적으로 `deadline_hours` 설정 |
-| `taskflow_run_task` | 단계를 등록(선택적 `validation_criteria` / `retry_policy`)하고 디스패치(또는 `blocked`로 기록) |
-| `taskflow_dispatch` | 여러 준비된 단계를 전부 아니면 전무로 일괄 디스패치 |
-| `taskflow_update_steps` | 단계 목록 전체 교체(추가/삭제/재정렬/task·depends_on 재작성; dispatched/done 안전 규칙; 고아 child 경고) |
-| `taskflow_wait_all` | flow 범위 유계 폴링으로 디스패치된 단계의 정착을 대기(정책 단계 자동 재시도) |
-| `taskflow_resume` | 자식 결과를 멱등하게 주입하고 후속 단계를 언락하며 토큰을 집계(실패 인식 재시도 + 단계 판정기) |
-| `taskflow_set_waiting` | 이유와 함께 flow를 `waiting`으로 파킹 |
-| `taskflow_summary` | 읽기 전용 재조회(충돌 후 재조회에도 사용) |
-| `taskflow_progress` | 사람이 읽을 수 있는 진행/완료 보고서 |
-| `taskflow_budget` | 토큰/비용 예산 조회 또는 설정 |
-| `taskflow_list` | 이 세션의 보드(`active` / `all` / 상태 이름) |
-| `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | 종단 전환 |
+| `taskflow_flow(action="create")` | 리비전 1로 flow 생성; 선택적으로 `deadline_hours` 설정 |
+| `taskflow_step(action="run_task")` | 단계를 등록(선택적 `validation_criteria` / `retry_policy`)하고 디스패치(또는 `blocked`로 기록) |
+| `taskflow_step(action="dispatch")` | 여러 준비된 단계를 전부 아니면 전무로 일괄 디스패치 |
+| `taskflow_step(action="update_steps")` | 단계 목록 전체 교체(추가/삭제/재정렬/task·depends_on 재작성; dispatched/done 안전 규칙; 고아 child 경고) |
+| `taskflow_step(action="wait_all")` | flow 범위 유계 폴링으로 디스패치된 단계의 정착을 대기(정책 단계 자동 재시도) |
+| `taskflow_step(action="resume")` | 자식 결과를 멱등하게 주입하고 후속 단계를 언락하며 토큰을 집계(실패 인식 재시도 + 단계 판정기) |
+| `taskflow_flow(action="set_waiting")` | 이유와 함께 flow를 `waiting`으로 파킹 |
+| `taskflow_inspect(action="summary")` | 읽기 전용 재조회(충돌 후 재조회에도 사용) |
+| `taskflow_inspect(action="progress")` | 사람이 읽을 수 있는 진행/완료 보고서 |
+| `taskflow_flow(action="budget")` | 토큰/비용 예산 조회 또는 설정 |
+| `taskflow_inspect(action="list")` | 이 세션의 보드(`active` / `all` / 상태 이름) |
+| `taskflow_flow(action="finish")` / `taskflow_flow(action="fail")` / `taskflow_flow(action="cancel")` | 종단 전환 |
 
 ```python
 # agent/tools/taskflow/tools/taskflow_run_task.py:40
@@ -102,23 +102,23 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-### 디스패치 — `taskflow_dispatch` 일괄 의미론
+### 디스패치 — `taskflow_step(action="dispatch")` 일괄 의미론
 
-`taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`(`taskflow_dispatch.py:36`)는 무엇이든 생성되기 **전에** **모든** id를 검증합니다. 단계가 `ready`이거나, `blocked`이지만 의존이 이미 충족되었으면 디스패치 가능합니다. 알 수 없는 id, 중복 id, 이미 `dispatched`/`done`인 단계는 호출 전체를 거부하며 생성이 전혀 일어나지 않습니다. 성공하면 단계는 공유 `_dispatch.dispatch_child` 시임(`_dispatch.py:10`)을 통해 순차 생성되고 **한 번의** `update_flow` 호출로 영속화됩니다. 배치 중간에 생성이 실패하면 루프가 멈추고, 이미 생성된 자식이 영속화되어 자식이 조용히 유실되지 않습니다. 오류는 실패한 step id와 디스패치된 step id를 모두 나열합니다. flow 수준 `child_session_key`는 의도적으로 건드리지 않습니다 — 각 단계 자신의 child key가 권위입니다.
+`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`(`taskflow_dispatch.py:36`)는 무엇이든 생성되기 **전에** **모든** id를 검증합니다. 단계가 `ready`이거나, `blocked`이지만 의존이 이미 충족되었으면 디스패치 가능합니다. 알 수 없는 id, 중복 id, 이미 `dispatched`/`done`인 단계는 호출 전체를 거부하며 생성이 전혀 일어나지 않습니다. 성공하면 단계는 공유 `_dispatch.dispatch_child` 시임(`_dispatch.py:10`)을 통해 순차 생성되고 **한 번의** `update_flow` 호출로 영속화됩니다. 배치 중간에 생성이 실패하면 루프가 멈추고, 이미 생성된 자식이 영속화되어 자식이 조용히 유실되지 않습니다. 오류는 실패한 step id와 디스패치된 step id를 모두 나열합니다. flow 수준 `child_session_key`는 의도적으로 건드리지 않습니다 — 각 단계 자신의 child key가 권위입니다.
 
 ### 합성 — `aggregate_deps`
 
-단계는 `taskflow_run_task`에서 `aggregate_deps=true`를 지정(단계의 `aggregate_deps` 필드로 저장)해 의존성 결과 집계를 켤 수 있습니다. 디스패치 시 `_shared.build_task_with_dep_results(step, steps, results)`가 작업 텍스트 뒤에 `## Upstream Results` 블록을 덧붙입니다. `depends_on` 순서로 의존성마다 `### <dep_id>` 섹션을 만들고, 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조해 결과를 찾습니다. 기록된 결과가 없는 의존성은 예외 대신 `no result recorded` 자리표시자를 넣습니다.
+단계는 `taskflow_step(action="run_task")`에서 `aggregate_deps=true`를 지정(단계의 `aggregate_deps` 필드로 저장)해 의존성 결과 집계를 켤 수 있습니다. 디스패치 시 `_shared.build_task_with_dep_results(step, steps, results)`가 작업 텍스트 뒤에 `## Upstream Results` 블록을 덧붙입니다. `depends_on` 순서로 의존성마다 `### <dep_id>` 섹션을 만들고, 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조해 결과를 찾습니다. 기록된 결과가 없는 의존성은 예외 대신 `no result recorded` 자리표시자를 넣습니다.
 
-이 플래그는 **옵트인**입니다. 지정하지 않으면 디스패치되는 작업은 기존 일반 텍스트와 바이트 단위로 동일하며, 저장된 `step["task"]`는 절대 재작성되지 않습니다. 모든 재디스패치 경로가 안정적인 의존성 결과에서 집계를 다시 도출하므로, 배치 디스패치·StepJudge 재시도·재시도 정책 경로(`taskflow_resume` + `taskflow_wait_all`)가 모두 같은 집계 텍스트를 재현합니다.
+이 플래그는 **옵트인**입니다. 지정하지 않으면 디스패치되는 작업은 기존 일반 텍스트와 바이트 단위로 동일하며, 저장된 `step["task"]`는 절대 재작성되지 않습니다. 모든 재디스패치 경로가 안정적인 의존성 결과에서 집계를 다시 도출하므로, 배치 디스패치·StepJudge 재시도·재시도 정책 경로(`taskflow_step(action="resume")` + `taskflow_step(action="wait_all")`)가 모두 같은 집계 텍스트를 재현합니다.
 
-### 업데이트 — `taskflow_update_steps` 전체 교체
+### 업데이트 — `taskflow_step(action="update_steps")` 전체 교체
 
-`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`(`taskflow_update_steps.py:191`)는 flow의 단계 목록을 전체 교체합니다(TaskFlow의 `todowrite`에 해당): 저장되는 DAG는 전달한 목록 그대로이며, 단계 추가·삭제·재정렬·`task`/`depends_on` 재작성이 가능합니다. 안전 규칙: `step_id`는 고유해야 하고 모든 `depends_on`은 새 목록에 존재하는 id를 참조해야 합니다(자기 의존 금지). `dispatched` 단계는 `child_session_key`를 유지하며 `ready`/`blocked`로 강등할 수 없습니다. `done` 단계는 task/depends_on/status를 변경할 수 없습니다. 새 단계는 `ready`/`blocked`여야 합니다(디스패치는 `taskflow_dispatch` 경유). 종단 flow는 호출을 거부합니다. 실행 중인 `dispatched` 단계를 삭제하면 성공하지만 비차단 `Warning:`(child key 포함)을 반환합니다 — 먼저 child를 kill하거나 `taskflow_wait_all`/`taskflow_resume`으로 정착시키세요. 동시성은 동일한 낙관적 잠금을 사용하며, `expected_revision` 불일치는 최신 리비전과 함께 거부되어 재조회 후 재시도에 사용됩니다.
+`taskflow_step(action="update_steps", flow_id, steps, expected_revision=None, session_id="")`(`taskflow_update_steps.py:191`)는 flow의 단계 목록을 전체 교체합니다(TaskFlow의 `todowrite`에 해당): 저장되는 DAG는 전달한 목록 그대로이며, 단계 추가·삭제·재정렬·`task`/`depends_on` 재작성이 가능합니다. 안전 규칙: `step_id`는 고유해야 하고 모든 `depends_on`은 새 목록에 존재하는 id를 참조해야 합니다(자기 의존 금지). `dispatched` 단계는 `child_session_key`를 유지하며 `ready`/`blocked`로 강등할 수 없습니다. `done` 단계는 task/depends_on/status를 변경할 수 없습니다. 새 단계는 `ready`/`blocked`여야 합니다(디스패치는 `taskflow_step(action="dispatch")` 경유). 종단 flow는 호출을 거부합니다. 실행 중인 `dispatched` 단계를 삭제하면 성공하지만 비차단 `Warning:`(child key 포함)을 반환합니다 — 먼저 child를 kill하거나 `taskflow_step(action="wait_all")`/`taskflow_step(action="resume")`으로 정착시키세요. 동시성은 동일한 낙관적 잠금을 사용하며, `expected_revision` 불일치는 최신 리비전과 함께 거부되어 재조회 후 재시도에 사용됩니다.
 
-### 대기 — `taskflow_wait_all`의 flow 범위
+### 대기 — `taskflow_step(action="wait_all")`의 flow 범위
 
-`taskflow_wait_all(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id="")`(`taskflow_wait_all.py:110`)는 *이* flow의 `dispatched` 단계에 기록된 자식 세션**만** 폴링하므로, 무관한 백그라운드 자식이 반환을 막을 수 없습니다. 알 수 없거나 이미 정리된 run은 정착된 것으로 간주됩니다(절대 멈추지 않음). 폴링 간격은 `TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]`(0.05초)로 클램프됩니다. 타임아웃 시 부분 보고서와 함께, 정착된 자식에 대해 `taskflow_resume`을 호출하고 `wait_all`을 다시 호출하라는 안내를 반환합니다. 요청자 세션의 모든 자식이 정착될 때만 발화하는 `sessions_yield`는 의도적으로 재사용하지 않습니다.
+`taskflow_step(action="wait_all", flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id="")`(`taskflow_wait_all.py:110`)는 *이* flow의 `dispatched` 단계에 기록된 자식 세션**만** 폴링하므로, 무관한 백그라운드 자식이 반환을 막을 수 없습니다. 알 수 없거나 이미 정리된 run은 정착된 것으로 간주됩니다(절대 멈추지 않음). 폴링 간격은 `TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]`(0.05초)로 클램프됩니다. 타임아웃 시 부분 보고서와 함께, 정착된 자식에 대해 `taskflow_step(action="resume")`을 호출하고 `wait_all`을 다시 호출하라는 안내를 반환합니다. 요청자 세션의 모든 자식이 정착될 때만 발화하는 `sessions_yield`는 의도적으로 재사용하지 않습니다.
 
 ### 낙관적 잠금
 
@@ -127,7 +127,7 @@ async def taskflow_run_task(
 ```python
 # FlowConflictError 메시지(store_sqlite.py:177)
 "TaskFlow '<id>' revision conflict: expected_revision=2 but latest revision=3;
- re-read with taskflow_summary and retry with expected_revision=3"
+ re-read with taskflow_inspect(action="summary") and retry with expected_revision=3"
 ```
 
 자식이 **이미 생성된** 상태에서 쓰기가 경합에 지면, `update_flow_with_conflict_retry()`(`_shared.py:191`)가 최신 flow를 다시 읽고 `build_state` 콜백으로 상태를 재구성하며 `PERSIST_MAX_ATTEMPTS = 3`회까지 재시도합니다. flow가 사라졌거나 종단이 되었거나 재시도가 소진되면, 생성된 모든 `child_session_key`를 나열한 오류를 반환하고 호출자에게 **key로 회수하고 절대 재디스패치하지 말라**고 지시합니다.
@@ -137,7 +137,7 @@ async def taskflow_run_task(
 단계는 선언적 `retry_policy`를 가질 수 있어, 실패한 자식이 단계의 최종 결과로 수용되는 대신 자동으로 재디스패치됩니다. 정책, 카운터, 대체 자식 세션 key는 모두 `state_json` 안에 있으며(스키마 마이그레이션 없음), 재시도 헬퍼는 `agent/tools/taskflow/tools/_retry.py`에 있습니다.
 
 ```python
-# retry_policy on a step (stored by taskflow_run_task)
+# retry_policy on a step (stored by taskflow_step(action="run_task"))
 {"max_retries": 2, "retry_delay_seconds": 30.0, "retry_on": ["timeout", "rate_limit"]}
 ```
 
@@ -147,7 +147,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 음이 아닌 수 | `60.0`(`DEFAULT_RETRY_DELAY_SECONDS`) | 각 재디스패치 전에 대기하는 백오프 |
 | `retry_on` | `list[str]` | `[]` | 재시도를 유발하는 실패 유형; 비어 있으면 분류된 모든 실패 |
 
-`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_run_task` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 무재시도 동작으로 폴백합니다.
+`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_step(action="run_task")` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 무재시도 동작으로 폴백합니다.
 
 `retry_count`(단계에 저장, 기본 `0`)는 **재디스패치** 횟수를 세며 최초 디스패치는 세지 않습니다: 첫 자식이 도는 동안 `0`, 첫 대체 자식이 생성되면 `1`. `retry_count < max_retries`인 동안 재시도가 허용됩니다(`retries_remaining`, `_retry.py:95`). `apply_redispatch()`(`_retry.py:170`)는 단계를 제자리에서 변경합니다 — 새 `child_session_key`, `dispatched_at`, `status = dispatched`, 증가된 `retry_count`.
 
@@ -167,11 +167,11 @@ async def taskflow_run_task(
 
 | 진입점 | 트리거 | 동작 |
 | :--- | :--- | :--- |
-| `taskflow_wait_all` | 폴링된 자식이 결과 없이 **사망** 정착 | `plan_settled_retries()`가 예산이 남는 한 정착 단계마다 한 번 재디스패치하고, 소진되면 실패 노트 결과와 함께 `done`으로 표시 |
-| `taskflow_resume` | 주입된 결과 텍스트가 `retry_on`이 허용하는 **실패**로 분류됨 | 대체 자식을 생성하고 실패 결과를 기록하며, 단계를 새 자식 위에서 `dispatched`로 유지 |
+| `taskflow_step(action="wait_all")` | 폴링된 자식이 결과 없이 **사망** 정착 | `plan_settled_retries()`가 예산이 남는 한 정착 단계마다 한 번 재디스패치하고, 소진되면 실패 노트 결과와 함께 `done`으로 표시 |
+| `taskflow_step(action="resume")` | 주입된 결과 텍스트가 `retry_on`이 허용하는 **실패**로 분류됨 | 대체 자식을 생성하고 실패 결과를 기록하며, 단계를 새 자식 위에서 `dispatched`로 유지 |
 
-- **`taskflow_wait_all`** 은 모든 대상이 정착한 뒤 `_retry_settled_steps()`(`taskflow_wait_all.py:117`)를 호출합니다. 정책이 없는 단계는 아무 동작도 만들지 않으며(레거시 flow는 바이트 단위로 동일한 출력을 유지), 결과가 이미 주입된 자식은 그대로 둡니다. 호출당 정착 단계마다 **최대 하나**의 재시도 결정만 실행됩니다 — 대체 자식이 생성·기록되고 오케스트레이터가 다시 `wait_all`을 호출해 기다립니다. 도구 안에 백그라운드 재시도 루프는 없습니다. 대체 자식은 `persist_retry_actions()`(`_retry.py:254`)로 영속화되며, `update_flow_with_conflict_retry()`를 통해 계획을 새로 읽은 단계 목록에 다시 적용하므로 동시 작성자가 생성된 대체 자식을 떨어뜨릴 수 없습니다.
-- **`taskflow_resume`** 은 단계를 done으로 표시하기 전에 정책을 확인합니다(`taskflow_resume.py:122-144`). 재시도 가능한 실패에서는 `retry_delay_seconds`만큼 대기한 뒤 대체 자식을 생성하고, 단계는 새 자식 위에서 `dispatched`로 남습니다. 대체 자식 생성 자체가 예외를 던지면 단계는 실패 결과와 함께 `done`으로 남고 응답에는 그 예외를 지목하는 `retry:` 노트가 붙습니다.
+- **`taskflow_step(action="wait_all")`** 은 모든 대상이 정착한 뒤 `_retry_settled_steps()`(`taskflow_wait_all.py:117`)를 호출합니다. 정책이 없는 단계는 아무 동작도 만들지 않으며(레거시 flow는 바이트 단위로 동일한 출력을 유지), 결과가 이미 주입된 자식은 그대로 둡니다. 호출당 정착 단계마다 **최대 하나**의 재시도 결정만 실행됩니다 — 대체 자식이 생성·기록되고 오케스트레이터가 다시 `wait_all`을 호출해 기다립니다. 도구 안에 백그라운드 재시도 루프는 없습니다. 대체 자식은 `persist_retry_actions()`(`_retry.py:254`)로 영속화되며, `update_flow_with_conflict_retry()`를 통해 계획을 새로 읽은 단계 목록에 다시 적용하므로 동시 작성자가 생성된 대체 자식을 떨어뜨릴 수 없습니다.
+- **`taskflow_step(action="resume")`** 은 단계를 done으로 표시하기 전에 정책을 확인합니다(`taskflow_resume.py:122-144`). 재시도 가능한 실패에서는 `retry_delay_seconds`만큼 대기한 뒤 대체 자식을 생성하고, 단계는 새 자식 위에서 `dispatched`로 남습니다. 대체 자식 생성 자체가 예외를 던지면 단계는 실패 결과와 함께 `done`으로 남고 응답에는 그 예외를 지목하는 `retry:` 노트가 붙습니다.
 
 ### 소진과 실패 노트
 
@@ -179,14 +179,14 @@ async def taskflow_run_task(
 
 ```
 retry budget exhausted: step step-4 child agent:main:session:... settled without a
-result after 2 retry/retries (max_retries=2); marked done by taskflow_wait_all
+result after 2 retry/retries (max_retries=2); marked done by taskflow_step(action="wait_all")
 ```
 
 소진된 단계는 명시적 결정이 필요합니다 — 실패 노트를 재개하거나 flow를 실패시키십시오. `wait_all`과 `resume` 두 경로 모두 resume의 멱등 계약을 지킵니다: 실패 노트는 `result_hash`를 지니므로 재전달된 정착이 두 번 기록되지 않습니다.
 
 ## 🪙 토큰 / 비용 예산
 
-`taskflow_budget`(`taskflow_budget.py:10`)은 조회와 설정을 모두 담당합니다:
+`taskflow_flow(action="budget")`(`taskflow_budget.py:10`)은 조회와 설정을 모두 담당합니다:
 
 ```python
 @tool("taskflow_budget")
@@ -201,7 +201,7 @@ async def taskflow_budget(
 - **`query`**는 `total_tokens`, `total_cost`, 예산, 남은 토큰, 상태를 보고합니다: `total_tokens >= budget`이면 `EXCEEDED`; 사용량이 `MODEL_PRICING["budget_warn_threshold"]`(0.80) 이상이면 `WARNING`; 그 외에는 `ok`. 예산이 없으면 백분율은 미설정으로 보고됩니다.
 - **`set`**은 양의 정수 `token_budget`을 요구하고 종단 flow를 거부하며 낙관적 잠금을 통해 씁니다(`expected_revision`을 전달하면 빠르게 실패).
 
-호출자가 `token_usage`를 전달하면 지출이 `taskflow_resume`에서 집계됩니다(`taskflow_resume.py:108-122`):
+호출자가 `token_usage`를 전달하면 지출이 `taskflow_step(action="resume")`에서 집계됩니다(`taskflow_resume.py:108-122`):
 
 ```python
 token_usage={"input_tokens": 1200, "output_tokens": 800, "model_name": "deepseek-chat"}
@@ -229,7 +229,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 
 ## ⏰ 작업 데드라인
 
-`taskflow_create`는 선택적 `deadline_hours`를 받습니다(`taskflow_create.py:17`):
+`taskflow_flow(action="create")`는 선택적 `deadline_hours`를 받습니다(`taskflow_create.py:17`):
 
 ```python
 @tool("taskflow_create")
@@ -242,7 +242,7 @@ async def taskflow_create(
 ) -> str
 ```
 
-`deadline_hours`가 양수이면 도구는 `deadline_ts = time.time() + deadline_hours * 3600`을 `deadline_ts` 컬럼에 저장합니다. `taskflow_summary`는 데드라인을 렌더링하고 지나면 `EXCEEDED`로 표시합니다. 실제 집행자는 백그라운드 **sweeper**(`agent/tools/subagent/registry/sweeper.py`)이며, 매 스윕 주기마다 `_expire_overdue_taskflows()`를 실행합니다(`sweeper.py:123`):
+`deadline_hours`가 양수이면 도구는 `deadline_ts = time.time() + deadline_hours * 3600`을 `deadline_ts` 컬럼에 저장합니다. `taskflow_inspect(action="summary")`는 데드라인을 렌더링하고 지나면 `EXCEEDED`로 표시합니다. 실제 집행자는 백그라운드 **sweeper**(`agent/tools/subagent/registry/sweeper.py`)이며, 매 스윕 주기마다 `_expire_overdue_taskflows()`를 실행합니다(`sweeper.py:123`):
 
 ```python
 overdue = await taskflow_store.get_overdue_flows(time.time())
@@ -271,12 +271,12 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task`는 공백을 제거한 뒤 비어 있지 않은 `validation_criteria`를 단계에 저장합니다(`blocked`와 `dispatched` 두 쓰기 경로 모두). 재개 시점에 기준을 가진 단계는 보조 LLM 스텝 판정기(`agent/tools/taskflow/step_judge.py`, `pass` / `retry` / `block`, 페일오픈)가 심사합니다. 게이트 스택 전체——실패 분류기, Tier 1 스키마 게이트, 판정기의 예산과 증거 인식 프롬프트, `step_outcome` 우선순위, 그리고 `done`이 실제로 뜻하는 것——는 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
+`taskflow_step(action="run_task")`는 공백을 제거한 뒤 비어 있지 않은 `validation_criteria`를 단계에 저장합니다(`blocked`와 `dispatched` 두 쓰기 경로 모두). 재개 시점에 기준을 가진 단계는 보조 LLM 스텝 판정기(`agent/tools/taskflow/step_judge.py`, `pass` / `retry` / `block`, 페일오픈)가 심사합니다. 게이트 스택 전체——실패 분류기, Tier 1 스키마 게이트, 판정기의 예산과 증거 인식 프롬프트, `step_outcome` 우선순위, 그리고 `done`이 실제로 뜻하는 것——는 [판정 게이트](../gates/README.ko.md)에 정리되어 있습니다.
 
 
 ## 📊 진행 보고서
 
-`taskflow_progress`(`taskflow_progress.py:22`)는 완료율, 내역, 다음 단계, 예상 남은 시간을 담은 읽기 전용 보고서입니다:
+`taskflow_inspect(action="progress")`(`taskflow_progress.py:22`)는 완료율, 내역, 다음 단계, 예상 남은 시간을 담은 읽기 전용 보고서입니다:
 
 ```python
 @tool("taskflow_progress")
@@ -303,7 +303,7 @@ Progress Report: <flow_id>
 
 ## 💤 유휴 감지
 
-`taskflow_set_waiting`으로 파킹된 flow는 자식이 크래시하여 재개되지 못할 수 있습니다. sweeper는 `_scan_stale_waiting_taskflows()`로 이를 감지합니다(`sweeper.py:154`):
+`taskflow_flow(action="set_waiting")`으로 파킹된 flow는 자식이 크래시하여 재개되지 못할 수 있습니다. sweeper는 `_scan_stale_waiting_taskflows()`로 이를 감지합니다(`sweeper.py:154`):
 
 1. 모든 `waiting` flow를 읽습니다.
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600`(기본 24시간).
@@ -311,11 +311,11 @@ Progress Report: <flow_id>
 4. `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)`으로 자식 생존을 확인합니다. 자식이 아직 살아 있으면 건너뛰고, 생존 확인 임포트 자체가 실패하면 자식을 죽은 것으로 간주합니다.
 5. 그렇지 않으면 `wait_json`에 **비파괴 마커**를 찍습니다: `stale_detected_at`, `stale_child_session_key`.
 
-유휴 감지는 flow를 **절대 자동 실패시키지 않습니다** — 마커는 권고용이며 주기마다 갱신됩니다. 이와 별개로 `taskflow_summary`는 대기 상태를 렌더링하고, 대기가 `TASKFLOW_INFRA["waiting_timeout_hours"]`(24시간)를 넘으면 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`를 출력합니다(`taskflow_summary.py:67-90`).
+유휴 감지는 flow를 **절대 자동 실패시키지 않습니다** — 마커는 권고용이며 주기마다 갱신됩니다. 이와 별개로 `taskflow_inspect(action="summary")`는 대기 상태를 렌더링하고, 대기가 `TASKFLOW_INFRA["waiting_timeout_hours"]`(24시간)를 넘으면 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_step(action="resume") with a failure result or re-dispatch`를 출력합니다(`taskflow_summary.py:67-90`).
 
 ## 📋 세션 보드와 격리
 
-각 세션은 자신의 데이터만 봅니다. `taskflow_summary`, 자동 재개 판독기, 그리고 `taskflow_list`까지 모두 `session_id`로 범위가 정해지며 저장소가 SQL 계층에서 필터링합니다 — 다른 세션의 flow는 존재하지 않는 flow와 구분할 수 없습니다(변경 시 `FlowNotFoundError`, 읽기 시 `None`):
+각 세션은 자신의 데이터만 봅니다. `taskflow_inspect(action="summary")`, 자동 재개 판독기, 그리고 `taskflow_inspect(action="list")`까지 모두 `session_id`로 범위가 정해지며 저장소가 SQL 계층에서 필터링합니다 — 다른 세션의 flow는 존재하지 않는 flow와 구분할 수 없습니다(변경 시 `FlowNotFoundError`, 읽기 시 `None`):
 
 ```python
 # agent/tools/taskflow/tools/taskflow_list.py:85
@@ -353,6 +353,6 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 **서브에이전트 경계.** 세 패밀리 모두 빌더(`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`)가 `metadata["scope"] = "main_only"`를 부여합니다. `apply_tool_policy`(`agent/tools/subagent/spawn/inherited_tool_policy.py`)는 `main_only` 도구를 **가장 먼저 무조건** 제거합니다 — allow/deny 목록보다 앞서며 ORCHESTRATOR 해제로도 덮어쓸 수 없습니다 — 따라서 스폰된 자식 에이전트는 `taskflow_*`, `todowrite`/`todoread`, `knowledge` 도구를 절대 받지 않습니다. 같은 태그 패턴은 이미 `memory`, `skill_manage`, `sessions_kill`, `sessions_steer`를 포괄했습니다. 실제 도구 세트 단언은 `tests/agent/tools/taskflow/test_taskflow_tools.py`, `_build_child_agent` 경계는 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py`가 고정합니다.
 
-**세션 간 거부.** `taskflow_create`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/service/test_session_cleanup_service.py`가 포괄합니다.
+**세션 간 거부.** `taskflow_flow(action="create")`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/service/test_session_cleanup_service.py`가 포괄합니다.
 
 

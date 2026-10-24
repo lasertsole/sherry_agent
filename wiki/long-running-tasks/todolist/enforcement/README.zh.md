@@ -124,7 +124,7 @@ for todo in validated:
         if step_status is not None and step_status != "done":
             raise TodoStoreError(
                 f"Cannot mark todo completed: TaskFlow step {step_id} is '{step_status}'. "
-                "Call taskflow_wait_all then taskflow_resume to inject the result first."
+                "Call taskflow_step(action='wait_all') then taskflow_step(action='resume') to inject the result first."
             )
     # 来源 2：subagent 存活检测
     if todo.get("subagent_id") and _is_subagent_running(todo["subagent_id"]):
@@ -157,12 +157,12 @@ LLM creates todo (with category + delegation fields)
   → #a fan-out reminder (first time per session)
   → #b category tells LLM which subagent type to spawn
   → #c AGENTS.md guides how to delegate
-  → Dependent steps: taskflow_run_task(depends_on=[...]) → blocked or dispatched
-  → Ready steps: taskflow_dispatch(flow_id, step_ids) → get child_session_key
+  → Dependent steps: taskflow_step(action="run_task", depends_on=[...]) → blocked or dispatched
+  → Ready steps: taskflow_step(action="dispatch", flow_id, step_ids) → get child_session_key
   → LLM updates todo's subagent_id + flow_id/step_id
   → #d-prompt: "Do NOT mark done before step done / subagent returned"
   → #d-code: update_todos() checks step status + is_live_unended_run() → hard block
-  → taskflow_wait_all → taskflow_resume → E5 Sisyphus verify → LLM marks completed
+  → taskflow_step(action="wait_all") → taskflow_step(action="resume") → E5 Sisyphus verify → LLM marks completed
 ```
 
 **Category 路由表**：

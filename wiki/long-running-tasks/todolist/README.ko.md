@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 세션 범위의 경량 계획 및 규율 레이어로, 기존 TaskFlow 시스템 위에 구축됩니다. 이것은 **태스크 엔진이 아니며**, **DAG가 아니고**, **스케줄러를 구현하지 않습니다**. 세션 수준의 계획은 `todowrite` / `todoread`로 관리됩니다 (시스템 프롬프트 주입을 통해 압축에 면역). 크로스 세션, 영구적, 서브에이전트를 디스패치하는 실행은 **TaskFlow**가 담당합니다 (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_dispatch`, `taskflow_wait_all`). 두 레이어는 `flow_id` / `step_id`로 연결되며, 단일 상태에는 하나의 권위 소스만 있고 레이어 간 복제가 없습니다.
+> 세션 범위의 경량 계획 및 규율 레이어로, 기존 TaskFlow 시스템 위에 구축됩니다. 이것은 **태스크 엔진이 아니며**, **DAG가 아니고**, **스케줄러를 구현하지 않습니다**. 세션 수준의 계획은 `todowrite` / `todoread`로 관리됩니다 (시스템 프롬프트 주입을 통해 압축에 면역). 크로스 세션, 영구적, 서브에이전트를 디스패치하는 실행은 **TaskFlow**가 담당합니다 (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_step(action="dispatch")`, `taskflow_step(action="wait_all")`). 두 레이어는 `flow_id` / `step_id`로 연결되며, 단일 상태에는 하나의 권위 소스만 있고 레이어 간 복제가 없습니다.
 
 ---
 
@@ -42,9 +42,9 @@
 | 범위      | 단일 세션, 경량                                              | 크로스 세션, 영구적                                                                      |
 | 상태      | todo의 content/status/priority/category/delegation           | step의 depends_on/status/child_session_key/results                                       |
 | 영속화    | `todos.db` (세션 수준)                                       | `taskflow_registry.db` + flow `state_json`                                               |
-| 주입 방식 | 시스템 프롬프트 블록 (압축 후 매번 재구축, 자연적 압축 면역) | 도구 반환 텍스트 (`taskflow_summary` 재읽기)                                             |
+| 주입 방식 | 시스템 프롬프트 블록 (압축 후 매번 재구축, 자연적 압축 면역) | 도구 반환 텍스트 (`taskflow_inspect(action="summary")` 재읽기)                                             |
 | 주요 책임 | 계획, 가시성, 규율 강제 (E1–E7)                              | 의존성 충족, 블록/언록, 병렬 디스패치, 유계 대기, 결과 주입                              |
-| 스케줄링  | 아니오                                                       | 예 (`taskflow_run_task` / `taskflow_dispatch` / `taskflow_wait_all` / `taskflow_resume`) |
+| 스케줄링  | 아니오                                                       | 예 (`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`) |
 
 한 줄 요약: **계획 및 규율 레이어는 "명확히 생각하기, 추적하기, 완료 강제하기"를 담당하고, TaskFlow는 "실제로 실행, 크로스 세션, 의존성 관리"를 담당합니다.**
 
@@ -53,7 +53,7 @@
 | 관심사                            | 권위 소스             | 설명                                                     |
 | --------------------------------- | --------------------- | -------------------------------------------------------- |
 | todo 완료 여부                    | `todos.db`            | `todowrite`만 todo 상태 변경 가능                        |
-| step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_resume`만 step을 `done`으로 표시하고 후속 언록 |
+| step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_step(action="resume")`만 step을 `done`으로 표시하고 후속 언록 |
 | 자식 세션 실행 중 여부            | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`   |
 | 계획 파일 진행 (체크박스)         | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
 | 실행 증거                         | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`(공유, WAL, 보존/정리)             |
@@ -66,7 +66,7 @@ todo는 TaskFlow를 가리키는 두 개의 선택적 필드를 가질 수 있�
 - `flow_id`: 연결된 TaskFlow flow id.
 - `step_id`: 연결된 TaskFlow step id (예: `step-2`), 해당 step의 DAG 상태를 재읽기 위해.
 
-**비미러링 원칙**: todo 레이어는 `depends_on`을 복사하지 않고, 웨이브를 저장하지 않으며, step 상태를 캐시하지 않습니다. DAG 상태가 필요할 때 읽기 전용 `taskflow_summary(flow_id)`를 호출하여 `blocked/ready/dispatched/done`을 UI/프롬프트에 매핑합니다.
+**비미러링 원칙**: todo 레이어는 `depends_on`을 복사하지 않고, 웨이브를 저장하지 않으며, step 상태를 캐시하지 않습니다. DAG 상태가 필요할 때 읽기 전용 `taskflow_inspect(action="summary", flow_id)`를 호출하여 `blocked/ready/dispatched/done`을 UI/프롬프트에 매핑합니다.
 
 ---
 
@@ -166,8 +166,8 @@ class TodoService:
         DAG 스케줄링은 TaskFlow가 소유; 이 메서드는 읽기 전용 taskflow_summary만 호출."""
         from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
         linked = await store.get_todos_by_flow(session_id, flow_id)
-        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
-        return {"todos": linked, "taskflow_summary": summary_text}
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id, "session_id": session_id})
+        return {"todos": linked, "summary": summary_text}
 ```
 
 ### EvidenceLedger
@@ -201,7 +201,7 @@ async def todowrite(todos: list[dict], session_id: Annotated[str, InjectedState(
     """Update the todo list for the current session (full replacement).
     Pass the COMPLETE list every time.
     DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_run_task(flow_id, task, depends_on=[...])."""
+    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
     result = await service.update_todos(session_id, todos)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:
@@ -265,9 +265,9 @@ Phase 2: Boulder 상태 생성/업데이트 → boulder.json 작성, 단계/태�
 Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → 첫 번째 미체크 체크박스 찾기
   → 원자 서브태스크로 분해
-  → taskflow_run_task(flow_id, task, depends_on=[...])로 등록
+  → taskflow_step(action="run_task", flow_id, task, depends_on=[...])로 등록
   → blocked는 디스패치 안 함; ready는 taskflow_dispatch로 일괄 디스패치
-  → taskflow_wait_all → taskflow_resume (결과 주입, 후속 언록)
+  → taskflow_step(action="wait_all") → taskflow_step(action="resume") (결과 주입, 후속 언록)
   → DELEGATE EVERYTHING via delegation router (E6)
 Phase 4: 검증 및 증거 기록 → 5 gates → src/data/evidence-ledger.db
 Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않음
@@ -275,12 +275,12 @@ Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않
 
 ### 계획 → TaskFlow 매핑
 
-1. `taskflow_create(flow_id, description, initial_state)` — flow 생성.
-2. `taskflow_run_task(flow_id, task, depends_on=[...])` — step 등록: 의존성 없음 → `dispatched`; 의존성 미충족 → `blocked` (디스패치 안 함); 알 수 없는 의존성 id → 에러, 상태 변경 없음.
-3. `taskflow_resume(flow_id, child_session_key, result)` — 결과 주입: step이 `done`이 되고, `blocked` 의존성이 `ready`로 언록. **resume은 자동 디스패치하지 않음.**
-4. `taskflow_dispatch(flow_id, step_ids)` — ready step 일괄 병렬 디스패치.
-5. `taskflow_wait_all(flow_id, timeout, poll_interval)` — 디스패치한 자식 세션 완료 대기.
-6. `taskflow_finish(flow_id, summary)` — 마무리; `taskflow_summary`로 언제든 재읽기 가능.
+1. `taskflow_flow(action="create", flow_id, description, initial_state)` — flow 생성.
+2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — step 등록: 의존성 없음 → `dispatched`; 의존성 미충족 → `blocked` (디스패치 안 함); 알 수 없는 의존성 id → 에러, 상태 변경 없음.
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 결과 주입: step이 `done`이 되고, `blocked` 의존성이 `ready`로 언록. **resume은 자동 디스패치하지 않음.**
+4. `taskflow_step(action="dispatch", flow_id, step_ids)` — ready step 일괄 병렬 디스패치.
+5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — 디스패치한 자식 세션 완료 대기.
+6. `taskflow_flow(action="finish", flow_id, summary)` — 마무리; `taskflow_inspect(action="summary")`로 언제든 재읽기 가능.
 
 ### step 상태 기계 (TaskFlow 권위 정의)
 
@@ -298,18 +298,18 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | 체크박스 간 의존성        | step의 `depends_on` (step-id 리스트)                                      |
 | 웨이브                    | 명시적 웨이브 없음; `ready` 상태 = "현재 웨이브"                          |
 | 노드 상태                 | `status ∈ {blocked, ready, dispatched, done}` (`state_json` 내)           |
-| Frontier (실행 가능 항목) | `ready` 상태 + `taskflow_dispatch`가 `deps_satisfied` 검증                |
-| 의존성 미충족 시 블록     | `taskflow_run_task(..., depends_on=[...])`가 `blocked`로 등록, spawn 없음 |
-| 완료 시 후속 언록         | `taskflow_resume`이 step을 `done`으로 + `unlock_dependents`               |
-| 병렬 디스패치             | `taskflow_dispatch(flow_id, step_ids)`로 ready step 일괄 디스패치         |
-| 병렬 자식 세션 대기       | `taskflow_wait_all(...)` flow 범위 유계 폴링                              |
-| DAG 상태 재읽기           | `taskflow_summary(flow_id)`로 각 step의 status/depends_on + 카운트 표시   |
+| Frontier (실행 가능 항목) | `ready` 상태 + `taskflow_step(action="dispatch")`가 `deps_satisfied` 검증                |
+| 의존성 미충족 시 블록     | `taskflow_step(action="run_task", ..., depends_on=[...])`가 `blocked`로 등록, spawn 없음 |
+| 완료 시 후속 언록         | `taskflow_step(action="resume")`이 step을 `done`으로 + `unlock_dependents`               |
+| 병렬 디스패치             | `taskflow_step(action="dispatch", flow_id, step_ids)`로 ready step 일괄 디스패치         |
+| 병렬 자식 세션 대기       | `taskflow_step(action="wait_all", ...)` flow 범위 유계 폴링                              |
+| DAG 상태 재읽기           | `taskflow_inspect(action="summary", flow_id)`로 각 step의 status/depends_on + 카운트 표시   |
 
 ### 병렬 딜리버리 채널 결정
 
 | 토폴로지                     | 조건                           | 전략                                        |
 | ---------------------------- | ------------------------------ | ------------------------------------------- |
-| 독립 채널 → 병렬 workers     | 분리 파일, 공유 계약 없음      | 일괄 병렬 spawn burst (`taskflow_dispatch`) |
+| 독립 채널 → 병렬 workers     | 분리 파일, 공유 계약 없음      | 일괄 병렬 spawn burst (`taskflow_step(action="dispatch")`) |
 | 순서 의존 채널 → 웨이브 직렬 | C가 A와 B 완료 필요            | 선행 step `done` 후 `depends_on` + `resume` 언록으로 실행 |
 | 중복 채널 → team             | 동일 모듈/계약, 병렬이 더 빠름 | 직렬화 또는 수동 조정                       |
 
@@ -347,7 +347,7 @@ def _build_todo_block(session_id: str) -> str:
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
     lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
     return "\n".join(lines)
@@ -413,4 +413,4 @@ WS 이벤트: `todo_updated` (변경 시 푸시) + `todo_refresh` (재연결 시
 }
 ```
 
-`taskflow_status`는 `taskflow_summary(flow_id)`로 재읽기한 step 상태이며, 프론트엔드는 웨이브/의존성을 재계산하지 않습니다.
+`taskflow_status`는 `taskflow_inspect(action="summary", flow_id)`로 재읽기한 step 상태이며, 프론트엔드는 웨이브/의존성을 재계산하지 않습니다.

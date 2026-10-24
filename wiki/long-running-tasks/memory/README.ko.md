@@ -64,9 +64,9 @@ def _backflow_shared_memory() -> None:
 "grep"               -> "[grep] search done, {lines} matches"
 "glob"               -> "[glob] matched {n} files"
 "bash"/"shell"       -> "[bash] exit_code={code}, output {len} chars"
-"taskflow_summary"   -> "[taskflow_summary] {len} chars"
-"taskflow_run_task"  -> "[taskflow_run_task] dispatched, {len} chars"
-"taskflow_resume"    -> "[taskflow_resume] injected result, {len} chars"
+"taskflow_flow"      -> "[taskflow_flow] {len} chars"
+"taskflow_step"      -> "[taskflow_step] {len} chars"
+"taskflow_inspect"   -> "[taskflow_inspect] {len} chars"
 "memory"             -> "[memory] {first 80 chars}..."
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
@@ -112,7 +112,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 ```
 ## Pending TaskFlows
 - [running] flow-1: "<설명>" | 2/5 steps done | next: step-3 "<작업>"
-Use taskflow_summary to inspect a flow and continue execution.
+Use taskflow_inspect(action="summary") to inspect a flow and continue execution.
 ```
 
 최대 3개 flow로 제한되며, 파일 필터로 프롬프트를 구성할 때(`selected_file_names is not None`) 억제됩니다. 모든 읽기는 페일오픈입니다.

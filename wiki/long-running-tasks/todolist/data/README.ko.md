@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `flow_id`  | 연결된 TaskFlow flow id (DAG는 TaskFlow가 소유)                    |
 | `step_id`  | 연결된 TaskFlow step id (예: `step-2`), DAG 상태 재읽기용          |
 
-> **설계 경계**: `todos.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_summary(flow_id)`로 재읽기합니다.
+> **설계 경계**: `todos.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_inspect(action="summary", flow_id)`로 재읽기합니다.
 
 CRUD 인터페이스:
 

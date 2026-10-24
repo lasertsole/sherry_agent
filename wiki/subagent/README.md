@@ -30,7 +30,7 @@ A spawned worker is described by two orthogonal answers to two different questio
 1. **Who may spawn, and over what?** — the **depth role** (`SubagentSessionRole`), derived from nesting depth. It alone decides spawn permission and control scope.
 2. **What kind of worker is this?** — the **functional role** (`FunctionalRole`), an explicit specialization. It alone decides the child LLM tier, the tool allow-list, and role-specific prompt sections.
 
-Completion is then verified by four always-on layers, ordered from the single child run outward to the parent turn: the child-run completion judge and goal loop, the TaskFlow step judge, the `taskflow_finish` flow gates, and the parent-turn completion-drain programmatic gate. The two axes and the gate stack are the subject of this page; the API surface lives in the [module README](../../agent/tools/subagent/README.md).
+Completion is then verified by four always-on layers, ordered from the single child run outward to the parent turn: the child-run completion judge and goal loop, the TaskFlow step judge, the `taskflow_flow(action="finish")` flow gates, and the parent-turn completion-drain programmatic gate. The two axes and the gate stack are the subject of this page; the API surface lives in the [module README](../../agent/tools/subagent/README.md).
 
 ### 🧱 Invariants
 
@@ -125,12 +125,12 @@ Four gates stack from the child run outward. All four are always on; the only in
 |---|-------|------|----------------|--------------------|
 | 1 | Child run | completion judge + goal loop (`spawn/completion_judge.py`) | task, latest response, evidence summary; budget `goal_max_turns` (default `5`) | model error / unparseable → `done` |
 | 2 | Step | TaskFlow step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (absent → no judge call) | model error / unparseable → `pass` |
-| 3 | Flow | `taskflow_finish` gates A–C (`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG state and flow evidence | unreadable ledger → pass |
+| 3 | Flow | `taskflow_flow(action="finish")` gates A–C (`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG state and flow evidence | unreadable ledger → pass |
 | 4 | Parent turn | completion-drain programmatic gate (`agent/middlewares/subagent_completion_drain/`) | the session's verification-evidence summary | lookup failure → gate skipped |
 
-**Layer 2 — step judge.** After `taskflow_resume` injects a child result, a step that carries `validation_criteria` is judged `PASS` / `RETRY` / `BLOCK`. A `RETRY` re-dispatches the step with the judge's feedback while the step's retry count is below `STEP_JUDGE["max_retries"]` (default `2`); exhausting the budget blocks the step. Criteria are the judge's input, not a switch — a step without them is never sent to the judge.
+**Layer 2 — step judge.** After `taskflow_step(action="resume")` injects a child result, a step that carries `validation_criteria` is judged `PASS` / `RETRY` / `BLOCK`. A `RETRY` re-dispatches the step with the judge's feedback while the step's retry count is below `STEP_JUDGE["max_retries"]` (default `2`); exhausting the budget blocks the step. Criteria are the judge's input, not a switch — a step without them is never sent to the judge.
 
-**Layer 3 — flow gates.** `taskflow_finish` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, and Gate C sees no `FAIL` or `[stale]` flow evidence (plus the opt-in Gate E goal judge for a described flow of `GOAL_GATE["min_steps"]` steps or more).
+**Layer 3 — flow gates.** `taskflow_flow(action="finish")` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, and Gate C sees no `FAIL` or `[stale]` flow evidence (plus the opt-in Gate E goal judge for a described flow of `GOAL_GATE["min_steps"]` steps or more).
 
 **Layer 4 — parent-turn gate.** When the drain injects queued completion carriers, it also checks the parent session's evidence. The carriers are injected verbatim; if the session has no passing evidence, a mandatory-verification message is appended after them. The check is unconditional — no configuration disables it — and it is fail-open only when the evidence lookup itself is unavailable.
 
@@ -148,7 +148,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 
 ### 🧵 Synthesis Aggregation
 
-`taskflow_run_task(aggregate_deps=True)` marks a synthesis step so its dispatched task text carries its dependencies' recorded results. The flag is stored on the step, and `build_task_with_dep_results(step, steps, results)` appends a `## Upstream Results` block with one `### {step_id}` section per dependency in `depends_on` order, matching each dependency's `child_session_key` against the flow's `{child_session_key, result, result_hash}` record; a dependency with no recorded result contributes a `no result recorded` placeholder. Because the aggregation is re-derived on every dispatch or retry from stable records, the stored step task is never rewritten; without the flag the task text is unchanged. The full behavior is documented in the [Long-Running Tasks README](../long-running-tasks/README.md).
+`taskflow_step(action="run_task", aggregate_deps=True)` marks a synthesis step so its dispatched task text carries its dependencies' recorded results. The flag is stored on the step, and `build_task_with_dep_results(step, steps, results)` appends a `## Upstream Results` block with one `### {step_id}` section per dependency in `depends_on` order, matching each dependency's `child_session_key` against the flow's `{child_session_key, result, result_hash}` record; a dependency with no recorded result contributes a `no result recorded` placeholder. Because the aggregation is re-derived on every dispatch or retry from stable records, the stored step task is never rewritten; without the flag the task text is unchanged. The full behavior is documented in the [Long-Running Tasks README](../long-running-tasks/README.md).
 
 ## ⚙️ Configuration
 

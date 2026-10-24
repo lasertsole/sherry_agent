@@ -204,7 +204,7 @@
 
 ### ステップレベル: `StepJudge` + 有界リトライ
 
-`agent/tools/taskflow/step_judge.py` は温度 0 の補助 LLM 判定器で、ディスパッチ済みステップの結果を `validation_criteria` に照らして審査し、`pass` / `retry` / `block` を返します。ステップが基準を持つ場合（`taskflow_run_task` または `taskflow_resume` が設定）にのみ起動するため、通常のステップが判定呼び出しのコストを払うことはありません。
+`agent/tools/taskflow/step_judge.py` は温度 0 の補助 LLM 判定器で、ディスパッチ済みステップの結果を `validation_criteria` に照らして審査し、`pass` / `retry` / `block` を返します。ステップが基準を持つ場合（`taskflow_step(action="run_task")` または `taskflow_step(action="resume")` が設定）にのみ起動するため、通常のステップが判定呼び出しのコストを払うことはありません。
 
 - `retry` は共有の `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback`（`## Previous Attempt Feedback`）で代替タスクに注入します。予算を使い切るとステップは `blocked` になります。
 - `block` は判定器の理由とともにステップを `blocked` にします。

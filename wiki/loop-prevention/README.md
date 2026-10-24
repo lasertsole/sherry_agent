@@ -213,8 +213,8 @@ unreadable probe never blocks progress.
 auxiliary fallback unless configured) discriminator at
 temperature 0 that reviews a dispatched step's result against its
 `validation_criteria` and returns `pass` / `retry` / `block`. It engages only
-when the step carries criteria (set by `taskflow_run_task` or
-`taskflow_resume`), so a plain step never pays for a judge call.
+when the step carries criteria (set by `taskflow_step(action="run_task")` or
+`taskflow_step(action="resume")`), so a plain step never pays for a judge call.
 
 - `retry` re-dispatches the step through the shared `_retry` seam, reusing the
   step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and

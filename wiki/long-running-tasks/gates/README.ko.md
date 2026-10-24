@@ -2,14 +2,14 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> [장시간 작업](../README.ko.md)의 일부: "결과가 돌아왔다"에서 "이 스텝/플로우는 완료"까지의 모든 게이트 — 호출자가 선언한 결말, Tier 1 스키마 게이트, 실패 분류기, 보조 LLM인 StepJudge, `taskflow_finish`의 A–E — 그리고 그들 사이의 우선순위.
+> [장시간 작업](../README.ko.md)의 일부: "결과가 돌아왔다"에서 "이 스텝/플로우는 완료"까지의 모든 게이트 — 호출자가 선언한 결말, Tier 1 스키마 게이트, 실패 분류기, 보조 LLM인 StepJudge, `taskflow_flow(action="finish")`의 A–E — 그리고 그들 사이의 우선순위.
 
 주장은 사실이 아닙니다. 자식 서브에이전트가 "완료했습니다"라고 말해도, 그것이 의미가 있는지 판단하는 것은 엔진입니다. 경계마다 한 번씩, 두 층위로 판정합니다:
 
 | 층위 | 질문 | 게이트 |
 | :--- | :--- | :--- |
-| **스텝**(`taskflow_resume`) | 이 결과가 호출자의 요구를 충족했는가? | 선언된 `step_outcome` → Tier 1 스키마 → 실패 분류기 → Tier 2 StepJudge |
-| **플로우**(`taskflow_finish`) | 이 DAG가 실제로 끝났는가? | A DAG 완전성 → B 미해결 스텝 → C 증거 → E 목표 판정 |
+| **스텝**(`taskflow_step(action="resume")`) | 이 결과가 호출자의 요구를 충족했는가? | 선언된 `step_outcome` → Tier 1 스키마 → 실패 분류기 → Tier 2 StepJudge |
+| **플로우**(`taskflow_flow(action="finish")`) | 이 DAG가 실제로 끝났는가? | A DAG 완전성 → B 미해결 스텝 → C 증거 → E 목표 판정 |
 
 **소스 코드:** `agent/tools/taskflow/tools/taskflow_resume.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_retry.py`, `agent/tools/taskflow/step_judge.py`, `agent/tools/taskflow/evidence_collector.py`, `config/features/agent_side/step_judge.py`, `config/features/agent_side/goal_gate.py`. 아래의 모든 상수·판정·거부 문구는 이 코드와 대조해 검증했습니다.
 
@@ -17,7 +17,7 @@
 
 **호출자가 선언한 결말은 모든 게이트에 우선하며, 그 외에 다른 게이트를 단락시키는 것은 없습니다.** `step_outcome`은 호출자가 실행이 어떻게 끝났는지 말하는 수단입니다 — `failure`는 스텝을 `failed`로 만들고 판정기를 완전히 건너뛰며, `skipped`는 `skipped`로 만들고(의존 스텝은 `skipped`로 연쇄), `success` / `partial`은 결과에 기록한 뒤 게이트는 평소대로 돕니다. 알 수 없는 값은 어떤 상태 변경보다 먼저 거부됩니다. 아래 내용은 모두 호출자가 아무것도 선언하지 않았을 때의 이야기입니다.
 
-## 스텝 층위(`taskflow_resume`)
+## 스텝 층위(`taskflow_step(action="resume")`)
 
 ### 0. 실패 감지 — 애초에 실패인가?
 
@@ -26,7 +26,7 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 - **구조.** `schema_validated=false`(Tier 1의 출력)는 텍스트 분류가 볼 수 없는 실패이며 여기서 재디스패치됩니다 — **판정 호출 전**이므로 깨진 형태가 판정 토큰을 쓰지 않습니다.
 - **결과 텍스트.** `classify_failure`(`_retry.py`)는 패턴 표에 대한 소문자 부분 문자열 스캔이며, 부정된 표현을 미리 제거합니다(`cannot connect`를 연결 실패로 읽으면 안 됩니다). 패턴 표 밖의 표현으로 된 실패는 잡히지 않습니다 — 분류기는 휴리스틱이지 판정이 아닙니다.
 
-`retry_policy`를 가진 스텝은 분류된 실패를 확정하지 않고 대체 자식에게 재디스패치합니다(정책 예산이 남아 있는 동안). `taskflow_wait_all`은 텍스트를 반환하지 않은 죽은 자식을 분류할 수 없으므로 예산이 남아 있으면 항상 하나를 소비합니다. 정책이 없으면 실패를 기록하고 스텝은 확정됩니다(호출자가 달리 말하지 않았다면 `failed`).
+`retry_policy`를 가진 스텝은 분류된 실패를 확정하지 않고 대체 자식에게 재디스패치합니다(정책 예산이 남아 있는 동안). `taskflow_step(action="wait_all")`은 텍스트를 반환하지 않은 죽은 자식을 분류할 수 없으므로 예산이 남아 있으면 항상 하나를 소비합니다. 정책이 없으면 실패를 기록하고 스텝은 확정됩니다(호출자가 달리 말하지 않았다면 `failed`).
 
 ### Tier 1 — 구조(무료)
 
@@ -52,23 +52,23 @@ Tier 1 스키마 검증이**먼저 실행되며**(아래 참조), `schema_valida
 - **증거 요약이 동승합니다.** `STEP_JUDGE["evidence_aware"]`(기본 켜짐)이면 프롬프트가 그 플로우의 `collect_evidence_summary`를 싣습니다 — 자식이 기록한 검증 행과 거기서 파생된 스테일 여부입니다([증거 원장](../gates/evidence-ledger/README.ko.md) 참조).
 - **항상 페일오픈.** 모델 오류나 파싱 불가능한 응답은 `pass`로 강등됩니다: 도달할 수 없는 판정기가 진행을 막지 않습니다. 대가는 명시적입니다 — 판정은 최선의 노력이며, 기준 충족은 결코 하드 보장이 아닙니다.
 - **확정된 스텝만.** 판정기는 스텝이 실제로 확정되었을 때 돕니다(`redispatched_key is None`). 재시도 정책으로 재디스패치된 스텝은 기준을 보존한 채 최종 resume에서 판정됩니다.
-- **`taskflow_resume`에 `validation_criteria`를 넘기면** 그 호출의 저장값을 **덮어씁니다** — 자식이 실제로 한 일에 따라 기준을 조이거나 바로잡기 위해서입니다.
+- **`taskflow_step(action="resume")`에 `validation_criteria`를 넘기면** 그 호출의 저장값을 **덮어씁니다** — 자식이 실제로 한 일에 따라 기준을 조이거나 바로잡기 위해서입니다.
 - **결과 텍스트 예산.** `STEP_JUDGE["max_result_chars"]`(8000)가 판정 프롬프트가 보는 범위를 정합니다.
 
 ### 그리고: `done`은 "설정된 게이트를 통과했다"는 뜻
 
-스텝의 `done`은 그 자체로 "작업이 옳다"는 뜻이 아닙니다. **어떤** 기대도 설정되지 않았다면(`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) 옛 의미 — "결과가 주입되었다" — 로 강등되므로, 오류를 보고한 자식도 `done`이 되어 후속 스텝을 해제할 수 있습니다. 기대를 선언하거나(`response_schema`는 무료로, 판정 호출 전에 검증됩니다) `step_outcome="failure"`를 보고하면 폐루프가 그것을 잡습니다: `failed` / `skipped` / `cancelled`는 실제 스텝 상태가 되고, 실패는 의존 스텝을 절대 해제하지 않으며, `taskflow_finish`는 미해결 스텝을 안고 완료하는 것을 거부합니다.
+스텝의 `done`은 그 자체로 "작업이 옳다"는 뜻이 아닙니다. **어떤** 기대도 설정되지 않았다면(`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) 옛 의미 — "결과가 주입되었다" — 로 강등되므로, 오류를 보고한 자식도 `done`이 되어 후속 스텝을 해제할 수 있습니다. 기대를 선언하거나(`response_schema`는 무료로, 판정 호출 전에 검증됩니다) `step_outcome="failure"`를 보고하면 폐루프가 그것을 잡습니다: `failed` / `skipped` / `cancelled`는 실제 스텝 상태가 되고, 실패는 의존 스텝을 절대 해제하지 않으며, `taskflow_flow(action="finish")`는 미해결 스텝을 안고 완료하는 것을 거부합니다.
 
-## 플로우 층위(`taskflow_finish`)
+## 플로우 층위(`taskflow_flow(action="finish")`)
 
-`taskflow_finish`는 DONE 전환을 네 검사로 순서대로 게이트합니다:
+`taskflow_flow(action="finish")`는 DONE 전환을 네 검사로 순서대로 게이트합니다:
 
 | 게이트 | 검사 | 거부 사유 |
 | :--- | :--- | :--- |
 | **A — DAG 완전성** | 모든 스텝이 `done` 또는 `blocked` | `step(s) not done/blocked` |
 | **B — 미해결 스텝 없음** | `failed`·`skipped`·`cancelled`·`blocked` 스텝이 없음 | 해당 스텝을 id로 지목하고 기록된 이유를 함께 제시 |
 | **C — 증거** | 플로우 증거에 `FAIL`, `[broken]`, `[stale]` 행이 없음([증거 원장](../gates/evidence-ledger/README.ko.md) 참조) | `failing verification evidence` / `confirmed regression` / `stale evidence` |
-| **E — 목표 판정** | 수집된 결과가 플로우의 `description`을 충족하는지 보조 모델이 판정 | `taskflow_replan`을 지목하는 거부 |
+| **E — 목표 판정** | 수집된 결과가 플로우의 `description`을 충족하는지 보조 모델이 판정 | `taskflow_flow(action="replan")`을 지목하는 거부 |
 
 모든 게이트는 **페일오픈**입니다: 읽을 수 없는 collector, 모델 오류, 파싱 불가능한 판정은 완료를 막지 않고 통과시킵니다. Gate E는 `description`이 있고 스텝 수가 `GOAL_GATE["min_steps"]`(3) 이상인 플로우에서만 돕니다 — 한두 스텝짜리 플로우는 자식 층위 [완료 판정기](../../subagent/README.ko.md)가 이미 덮고 있고, 같은 작업에 두 번째 판정을 얹는 것이 바로 그 중복이기 때문입니다. `GOAL_GATE["enabled"]`가 마스터 스위치이고 `GOAL_GATE["max_result_chars"]`(4000)가 넘겨지는 각 결과의 창입니다.
 

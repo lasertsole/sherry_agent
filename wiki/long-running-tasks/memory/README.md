@@ -64,9 +64,9 @@ Older oversized `ToolMessage` content is normally cleared to a marker during non
 "grep"               -> "[grep] search done, {lines} matches"
 "glob"               -> "[glob] matched {n} files"
 "bash"/"shell"       -> "[bash] exit_code={code}, output {len} chars"
-"taskflow_summary"   -> "[taskflow_summary] {len} chars"
-"taskflow_run_task"  -> "[taskflow_run_task] dispatched, {len} chars"
-"taskflow_resume"    -> "[taskflow_resume] injected result, {len} chars"
+"taskflow_flow"      -> "[taskflow_flow] {len} chars"
+"taskflow_step"      -> "[taskflow_step] {len} chars"
+"taskflow_inspect"   -> "[taskflow_inspect] {len} chars"
 "memory"             -> "[memory] {first 80 chars}..."
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
@@ -112,7 +112,7 @@ The system-prompt block (`prompt_builder.py:140`) looks like:
 ```
 ## Pending TaskFlows
 - [running] flow-1: "<description>" | 2/5 steps done | next: step-3 "<task>"
-Use taskflow_summary to inspect a flow and continue execution.
+Use taskflow_inspect(action="summary") to inspect a flow and continue execution.
 ```
 
 It is capped at three flows and suppressed when the prompt is built with a file filter (`selected_file_names is not None`). Every read is fail-open.

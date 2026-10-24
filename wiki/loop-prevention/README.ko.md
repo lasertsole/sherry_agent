@@ -203,7 +203,7 @@
 
 ### 단계 수준: `StepJudge` + 유계 재시도
 
-`agent/tools/taskflow/step_judge.py`는 온도 0의 보조 LLM 판정기로, 디스패치된 단계의 결과를 `validation_criteria`에 비추어 심사하고 `pass` / `retry` / `block`을 반환합니다. 단계가 기준을 가질 때(`taskflow_run_task` 또는 `taskflow_resume`가 설정)만 작동하므로 평범한 단계가 판정 호출 비용을 치르지 않습니다.
+`agent/tools/taskflow/step_judge.py`는 온도 0의 보조 LLM 판정기로, 디스패치된 단계의 결과를 `validation_criteria`에 비추어 심사하고 `pass` / `retry` / `block`을 반환합니다. 단계가 기준을 가질 때(`taskflow_step(action="run_task")` 또는 `taskflow_step(action="resume")`가 설정)만 작동하므로 평범한 단계가 판정 호출 비용을 치르지 않습니다.
 
 - `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`(`## Previous Attempt Feedback`)으로 대체 작업에 주입합니다. 예산이 소진되면 단계는 `blocked`가 됩니다.
 - `block`은 판정기의 이유와 함께 단계를 `blocked`로 표시합니다.

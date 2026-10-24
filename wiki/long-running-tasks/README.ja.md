@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_flow` / `taskflow_step` / `taskflow_inspect`、16 action を覆う 3 つのグループ化ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を TaskFlow 決定モデル（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
@@ -43,8 +43,8 @@
 | # | サブシステム | 入口 | 永続化先 |
 | :- | :--- | :--- | :--- |
 | 1 | **TaskFlow DAG エンジン** | `agent/tools/taskflow/` | `data/taskflow_registry.db`（SQLite、WAL） |
-| 2 | **トークン / コスト予算** | `taskflow_budget`、`taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
-| 3 | **締め切り** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
+| 2 | **トークン / コスト予算** | `taskflow_flow(action="budget")`、`taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
+| 3 | **締め切り** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
 | 5 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
 | 6 | **三色孤児 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / アクティブ `todos` |
@@ -53,7 +53,7 @@
 
 ## ♻️ 三色孤児 GC
 
-TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_create` と `taskflow_plan` は作成時にフロー単位の `pending` todo を 1 行バインドし（`step_id` なし）、この todo はフローが終端になるまで完了できません。`todowrite` はこれを引き継ぐ必要があります。sweeper は起動時と毎 tick に 2 つの補完的なパスを実行します：
+TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_flow(action="create")` と `taskflow_flow(action="plan")` は作成時にフロー単位の `pending` todo を 1 行バインドし（`step_id` なし）、この todo はフローが終端になるまで完了できません。`todowrite` はこれを引き継ぐ必要があります。sweeper は起動時と毎 tick に 2 つの補完的なパスを実行します：
 
 | パス | 条件 | 動作 |
 | :--- | :--- | :--- |
@@ -64,15 +64,15 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | ゾンビ todo | アクティブな todo が failed/cancelled フローを参照 | todo を `cancelled` |
 | prune | 終端/superseded 行が `max_total_flows_per_session`（200）超過 | 最も古い行を削除 |
 
-ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_finish` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録します。`todowrite` の全置換は 1 トランザクションなので、mark クエリは DELETE と INSERT の間の空窓を見ません。
+ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録します。`todowrite` の全置換は 1 トランザクションなので、mark クエリは DELETE と INSERT の間の空窓を見ません。
 
 出典：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；テスト：`tests/agent/tools/taskflow/test_tri_color_gc.py`。
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_plan` の自動生成 id は**安定**になりました：`plan-<sha256(session_id + goal)[:10]>`。同じセッションで同じ goal を再計画すると、既存の**非終端**フローを冪等成功として返し、2 つ目を作りません。終端フローは引き続きエラーです（別 id か後継フローを使います）。`flow_id` はグローバル主キーで所有はセッション単位のため、seed に session id を含めます。
-- `taskflow_create` は重複した**非終端** `flow_id` を冪等成功（revision + status）として返します。終端フロー、または他セッション所有の id はエラーのままです。
-- 手動 `taskflow_dispatch` と `taskflow_resume` の auto-dispatch wave は `_dispatch.flow_dispatch_lock(flow_id)` を共有します：read → validate → spawn → persist の全体をフロー単位で直列化し、wave はロック取得後に各 step がまだ `ready` か再確認します。ロックは**プロセス内**です（単一バックエンド、TaskFlow は main-only）。マルチプロセス配置では DB lease が必要です。
+- `taskflow_flow(action="plan")` の自動生成 id は**安定**になりました：`plan-<sha256(session_id + goal)[:10]>`。同じセッションで同じ goal を再計画すると、既存の**非終端**フローを冪等成功として返し、2 つ目を作りません。終端フローは引き続きエラーです（別 id か後継フローを使います）。`flow_id` はグローバル主キーで所有はセッション単位のため、seed に session id を含めます。
+- `taskflow_flow(action="create")` は重複した**非終端** `flow_id` を冪等成功（revision + status）として返します。終端フロー、または他セッション所有の id はエラーのままです。
+- 手動 `taskflow_step(action="dispatch")` と `taskflow_step(action="resume")` の auto-dispatch wave は `_dispatch.flow_dispatch_lock(flow_id)` を共有します：read → validate → spawn → persist の全体をフロー単位で直列化し、wave はロック取得後に各 step がまだ `ready` か再確認します。ロックは**プロセス内**です（単一バックエンド、TaskFlow は main-only）。マルチプロセス配置では DB lease が必要です。
 - **mutating 重複計測（2026-10-22）：** 225 checkpoint スレッド、204 ツール呼び出し——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——連続する同名 + 同引数の成功 mutating 呼び出しは**0 件**でした。そのため `ToolCallSignature` ミドルウェアは追加せず、`ToolGuardrails` が引き続きループ検出を担当します。実際の繰り返しがテレメトリで確認された場合のみ mutating カウンタを再検討します。
 
 出典：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`；テスト：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`。
@@ -142,7 +142,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
 ┌───────────────────┐     announce/settle     ┌────────────────────────┐           │
-│ child subagent    │ ──────────────────────▶ │ taskflow_resume        │           │
+│ child subagent    │ ──────────────────────▶ │ taskflow_step(action="resume")        │           │
 │ sessions          │                         │ (+ token_usage budget) │           │
 └───────────────────┘                         └───────────┬────────────┘           │
          │                                                │                        │
@@ -175,21 +175,21 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 | ツール | シグネチャ | 戻り値 |
 | :--- | :--- | :--- |
-| `taskflow_create` | `(flow_id, description="", initial_state=None, session_id, deadline_hours=None)` | 作成した id/ステータス/リビジョン（+ 締め切り） |
-| `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | ディスパッチ済みステップ、または未充足依存付き `blocked` |
-| `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | ディスパッチ済み step id + リビジョン |
-| `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | ステップごとの確定レポート（完全または部分；ポリシー付きステップを自動再試行） |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、判定器の判定、再試行ノート |
-| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting ステータス + リビジョン |
-| `taskflow_summary` | `(flow_id, session_id)` | 待機/締め切り状態を含む完全な flow 状態 |
-| `taskflow_progress` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
-| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 予算レポート、または設定確認 |
-| `taskflow_list` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
-| `taskflow_replan` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 目標 + 完了済み結果 + 失敗理由から**未完了**ステップを再生成（完了/実行中は保持、変更ステップの下流は blocked に戻る、1 フロー ≤ 3 回） |
-| `taskflow_plan` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 目標を依存順の新フローに分解（登録のみ、ディスパッチしない） |
-| `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
-| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `cancelled` |
+| `taskflow_flow(action="create")` | `(flow_id, description="", initial_state=None, session_id, deadline_hours=None)` | 作成した id/ステータス/リビジョン（+ 締め切り） |
+| `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | ディスパッチ済みステップ、または未充足依存付き `blocked` |
+| `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | ディスパッチ済み step id + リビジョン |
+| `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | ステップごとの確定レポート（完全または部分；ポリシー付きステップを自動再試行） |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、判定器の判定、再試行ノート |
+| `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting ステータス + リビジョン |
+| `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | 待機/締め切り状態を含む完全な flow 状態 |
+| `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
+| `taskflow_flow(action="budget")` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 予算レポート、または設定確認 |
+| `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
+| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
+| `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 目標 + 完了済み結果 + 失敗理由から**未完了**ステップを再生成（完了/実行中は保持、変更ステップの下流は blocked に戻る、1 フロー ≤ 3 回） |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 目標を依存順の新フローに分解（登録のみ、ディスパッチしない） |
+| `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
+| `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `cancelled` |
 
 ### memory ツールのアクション
 
@@ -224,11 +224,11 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 ### step への skill 紐付け（`skills`）
 
-step は `skills: ["browser", "code-wiki"]` を宣言できます。dispatch 時に、システムは各スキルの SKILL.md を——cron と同じ `[IMPORTANT: The user has invoked the "X" skill…]` ヘッダで包んで——task テキストの前に前置します。これにより**子エージェント**がスキルの指示を直接受け取り、オーケストレーターは中継のためだけに自分のコンテキストで `skill_view` する必要がなくなります（LLM による言い換えも挟みません）。順序はスキル → step の task → `## Upstream Results` → 入力パラメータ → judge フィードバック。読み込めなくなったバインディング（スキルが削除・改名）はログしてスキップし、step はそのまま dispatch されます（fail-open）。前置処理は共有の task テキストビルダー内にあるため、すべての dispatch 経路（dispatch / run_task / resume / auto-dispatch / retry）が持ちます。`taskflow_plan` のプランナーがこのフィールドを出力でき、`taskflow_update_steps` で既存 step に追加・変更できます。読み込むと使用テレメトリが +1 され（curator はそのスキルを active と見なします）、組み立てたプロンプトは cron と同じ警告のみのインジェクション走査を受けます。
+step は `skills: ["browser", "code-wiki"]` を宣言できます。dispatch 時に、システムは各スキルの SKILL.md を——cron と同じ `[IMPORTANT: The user has invoked the "X" skill…]` ヘッダで包んで——task テキストの前に前置します。これにより**子エージェント**がスキルの指示を直接受け取り、オーケストレーターは中継のためだけに自分のコンテキストで `skill_view` する必要がなくなります（LLM による言い換えも挟みません）。順序はスキル → step の task → `## Upstream Results` → 入力パラメータ → judge フィードバック。読み込めなくなったバインディング（スキルが削除・改名）はログしてスキップし、step はそのまま dispatch されます（fail-open）。前置処理は共有の task テキストビルダー内にあるため、すべての dispatch 経路（dispatch / run_task / resume / auto-dispatch / retry）が持ちます。`taskflow_flow(action="plan")` のプランナーがこのフィールドを出力でき、`taskflow_step(action="update_steps")` で既存 step に追加・変更できます。読み込むと使用テレメトリが +1 され（curator はそのスキルを active と見なします）、組み立てたプロンプトは cron と同じ警告のみのインジェクション走査を受けます。
 
 ### 合成集約（`aggregate_deps`）
 
-`taskflow_run_task(aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。
+`taskflow_step(action="run_task", aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。
 
 ## 🧪 テスト
 
@@ -238,7 +238,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | :--- | :--- |
 | `test_store_sqlite.py` | CRUD、リビジョン増分、楽観的並行性競合、WAL、同期アクセサ、active/waiting/terminal フィルタ |
 | `test_step_graph.py` | `deps_satisfied`、`mark_step_done`、`unlock_dependents`、旧ステータス導出、自己依存ガード |
-| `test_summary_dag.py` | `taskflow_summary` の DAG 描画 |
+| `test_summary_dag.py` | `taskflow_inspect(action="summary")` の DAG 描画 |
 | `test_resume_dag.py` | 再開で done 化、後続アンロック、部分完了、冪等な空操作 |
 | `test_taskflow_tools.py` | 再起動を跨ぐ create→run→resume→finish、競合、終端遷移 |
 | `test_taskflow_dispatch.py` | 一括ディスパッチ、オール・オア・ナッシング検証、バッチ途中失敗の永続化 |
@@ -253,7 +253,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_retry_policy.py` | ポリシー検証、失敗分類、再ディスパッチ、枯渇 |
 | `test_validation.py` | 基準の保存、判定器の判定（`pass`/`retry`/`block`）、上書き、フェイルオープン |
 | `test_step_judge.py` | StepJudge 応答解析、判定の正規化、`pass` へのフェイルオープン、プロンプト組立 |
-| `test_resume_with_judge.py` | `taskflow_resume` + 判定器：pass/retry/block、再試行フィードバック注入、予算枯渇、フェイルオープン |
+| `test_resume_with_judge.py` | `taskflow_step(action="resume")` + 判定器：pass/retry/block、再試行フィードバック注入、予算枯渇、フェイルオープン |
 | `test_evidence_collector.py` | 判定プロンプト用 evidence 要約の描画；staleness は後続の `stale` 行から導出 |
 | `test_finish_gate.py` | 完了ゲート A–C：DAG 完全性、blocked ステップ、失敗/stale evidence |
 | `test_chain_smoke.py` | 判定器 → 再試行フィードバック → goal loop → 完了ゲートの統合スモーク（stub 補助 LLM） |
@@ -275,16 +275,16 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 ## ⚠️ 既知の制限
 
-- **`done` だけでは成功を意味しません。** ステップの `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。期待が何も設定されていない場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は「結果が注入された」に退化するため、エラーを報告した子でも `done` になり後続をアンロックし得ます。期待を宣言するか `step_outcome="failure"` を宣言すれば、閉ループがそれを捕まえます——`failed` / `skipped` / `cancelled` は実際のステップ状態となり、失敗は依存側をアンロックせず、`taskflow_finish` も未解決ステップを残したまま完了しません。
-- **`taskflow_wait_all` は設計上 flow スコープ。** 指定 flow のディスパッチ済みステップに記録された子だけを待ち、未知/クリーンアップ済みの run は確定とみなします。「すべてのアクティブ flow を待つ」グローバルプリミティブはありません。
+- **`done` だけでは成功を意味しません。** ステップの `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。期待が何も設定されていない場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は「結果が注入された」に退化するため、エラーを報告した子でも `done` になり後続をアンロックし得ます。期待を宣言するか `step_outcome="failure"` を宣言すれば、閉ループがそれを捕まえます——`failed` / `skipped` / `cancelled` は実際のステップ状態となり、失敗は依存側をアンロックせず、`taskflow_flow(action="finish")` も未解決ステップを残したまま完了しません。
+- **`taskflow_step(action="wait_all")` は設計上 flow スコープ。** 指定 flow のディスパッチ済みステップに記録された子だけを待ち、未知/クリーンアップ済みの run は確定とみなします。「すべてのアクティブ flow を待つ」グローバルプリミティブはありません。
 - **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
 - **レジストリ規模は 82。** 設定レジストリは 82 個の feature オブジェクト（エージェント側 54 + インフラ側 28）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
-- **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
+- **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_step(action="dispatch")` と `taskflow_step(action="wait_all")` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
-- **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
+- **トークン会計は呼び出し側提供。** コストは `taskflow_step(action="resume")` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
 - **基準がある場合の結果検証は判定器が行う。** 基準を持つステップは再開時に TaskFlow 決定モデルのステップ判定器（`TASKFLOW_LLM_*`、未設定時は補助 LLM）が審査します：`retry` はステップ自身の再試行予算内で再ディスパッチし、`block`（または予算枯渇）はステップを `blocked` にします。判定器はフェイルオープンなので、モデルエラーや解析不能な応答は `pass` に劣化します——結果が基準を満たしたという硬い保証はなく、ステップ受け入れ前のベストエフォート判定にすぎません。
-- **再試行分類はテキストベース。** `classify_failure` は結果テキストに対する部分文字列ヒューリスティックです：パターン表の外の言い回しの失敗（または否定フレーズに隠れた真の失敗）は再試行を引き起こさず、空の `retry_on` は分類されたすべての失敗を再試行します。`taskflow_wait_all` は結果テキストの無い死亡した子を分類できないため、予算が残る限り常に再試行予算を消費します。
-- **`taskflow_list` はセッションスコープ。** グローバルなセッション横断ボードは存在しません：すべての読み取りが所有 `session_id` で SQL フィルタされるため、あるセッションが別のセッションの flow を列挙することはできません。分離前の行（`session_id = ''`）はセッション読み取りからは見えませんが、sweeper のセッション横断締め切り/アイドルスキャンは解決します。
+- **再試行分類はテキストベース。** `classify_failure` は結果テキストに対する部分文字列ヒューリスティックです：パターン表の外の言い回しの失敗（または否定フレーズに隠れた真の失敗）は再試行を引き起こさず、空の `retry_on` は分類されたすべての失敗を再試行します。`taskflow_step(action="wait_all")` は結果テキストの無い死亡した子を分類できないため、予算が残る限り常に再試行予算を消費します。
+- **`taskflow_inspect(action="list")` はセッションスコープ。** グローバルなセッション横断ボードは存在しません：すべての読み取りが所有 `session_id` で SQL フィルタされるため、あるセッションが別のセッションの flow を列挙することはできません。分離前の行（`session_id = ''`）はセッション読み取りからは見えませんが、sweeper のセッション横断締め切り/アイドルスキャンは解決します。
 - **Knowledge の保存は計画名ではなく計画アイデンティティをキーとします。** アクセスは所有権チェック（`ownership.is_plan_associated()`：セッションの `plan_ref`、todo の `plan_ref`、または `session_ids` に当該セッションを含む boulder work）で制御され、保存ディレクトリは正規化された計画パスから導出されます——`workspace/knowledge/plans/<plan_key>/`、`plan_key = sha1(リポジトリルート相対パス)[:12]`、各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。**計画ファイルが異なる**同名計画は 2 セッション間で**物理的に隔離**され（各自の key ディレクトリへ書き込み）、boulder `session_ids` で**1 つの計画ファイル**を協業するセッションは同じパスに解決され 1 つのディレクトリを共有します。計画ファイルが解決できないセッションはフォールバックアイデンティティ `session-<sha1(session_id)[:8]>` に書き込みます（全 id ハッシュにより先頭 8 文字が同じセッション id も衝突しません）。レガシーの名前キー・ディレクトリは読み取り可能なまま；書き込みは常に key ディレクトリへ。`clear_session` はセッション私有のアイデンティティディレクトリを削除し、他セッションと共有された計画は保持します。サブエージェント境界は絶対的のままです——`knowledge` は `main_only` です。

@@ -2,14 +2,14 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Part of [Long-Running Tasks](../README.md): every gate between "a result came back" and "this step / flow is done" — the caller's declared outcome, the Tier 1 schema gate, the failure classifier, the auxiliary-LLM StepJudge, and `taskflow_finish`'s A–E — plus the precedence between them.
+> Part of [Long-Running Tasks](../README.md): every gate between "a result came back" and "this step / flow is done" — the caller's declared outcome, the Tier 1 schema gate, the failure classifier, the auxiliary-LLM StepJudge, and `taskflow_flow(action="finish")`'s A–E — plus the precedence between them.
 
 A claim is not a fact. A child subagent says "done"; the engine has to decide whether that means anything. Two levels of decision, one per boundary:
 
 | Level | Question | Gates |
 | :--- | :--- | :--- |
-| **Step** (`taskflow_resume`) | Did this result satisfy what the caller asked for? | declared `step_outcome` → Tier 1 schema → failure classifier → Tier 2 StepJudge |
-| **Flow** (`taskflow_finish`) | Is this DAG actually finished? | A DAG completeness → B unresolved steps → C evidence → E goal judge |
+| **Step** (`taskflow_step(action="resume")`) | Did this result satisfy what the caller asked for? | declared `step_outcome` → Tier 1 schema → failure classifier → Tier 2 StepJudge |
+| **Flow** (`taskflow_flow(action="finish")`) | Is this DAG actually finished? | A DAG completeness → B unresolved steps → C evidence → E goal judge |
 
 **Source of truth:** `agent/tools/taskflow/tools/taskflow_resume.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_retry.py`, `agent/tools/taskflow/step_judge.py`, `agent/tools/taskflow/evidence_collector.py`, `config/features/agent_side/step_judge.py`, `config/features/agent_side/goal_gate.py`. Every constant, verdict and rejection text below was verified against that code.
 
@@ -17,7 +17,7 @@ A claim is not a fact. A child subagent says "done"; the engine has to decide wh
 
 **A caller-declared outcome outranks every gate; nothing else short-circuits anything.** `step_outcome` is how the caller states how the run ended — `failure` marks the step `failed` and skips the judge entirely, `skipped` marks it `skipped` (its dependents cascade to `skipped`), and `success` / `partial` are recorded on the result while the gates still run. An unknown value is rejected before any state change. Everything below applies when the caller declared nothing.
 
-## Step level (`taskflow_resume`)
+## Step level (`taskflow_step(action="resume")`)
 
 ### 0. Failure detection — is this a failure at all?
 
@@ -26,7 +26,7 @@ Tier 1 schema validation runs **first** (see below) and produces `schema_validat
 - **The structure.** `schema_validated=false` (Tier 1's output) is a failure text classification cannot see, and it re-dispatches here — **before** any judge call, so a broken shape never spends judge tokens.
 - **The result text.** `classify_failure` (`_retry.py`) is a lowercased substring scan over a pattern table, with the negated phrasings pre-stripped (`cannot connect` must not read as a connection failure). A failure phrased outside the table is not caught — the classifier is a heuristic, not a verdict.
 
-A step carrying a `retry_policy` re-dispatches a classified failure onto a replacement child instead of settling it, while the policy's budget lasts. `taskflow_wait_all` cannot classify a dead child that returned no text, so it always consumes retry budget while one remains. No policy configured = the failure is recorded and the step settles (`failed` unless the caller said otherwise).
+A step carrying a `retry_policy` re-dispatches a classified failure onto a replacement child instead of settling it, while the policy's budget lasts. `taskflow_step(action="wait_all")` cannot classify a dead child that returned no text, so it always consumes retry budget while one remains. No policy configured = the failure is recorded and the step settles (`failed` unless the caller said otherwise).
 
 ### Tier 1 — structure (free)
 
@@ -52,23 +52,23 @@ Details that change behaviour:
 - **The evidence summary rides along.** With `STEP_JUDGE["evidence_aware"]` (default on) the prompt carries `collect_evidence_summary` for the flow — the child's recorded verification rows and their derived staleness (see [Evidence Ledger](../gates/evidence-ledger/README.md)).
 - **Fail-open, always.** A model error or an unparseable response degrades to `pass`: an unreachable judge never blocks progress. The trade is explicit — the verdict is best-effort, so criteria compliance is never a hard guarantee.
 - **Settled steps only.** The judge runs when the step is actually settled (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and is judged on the eventual resume.
-- **Passing `validation_criteria` to `taskflow_resume` overrides** the stored value for that call — e.g. to tighten or correct it based on what the child actually did.
+- **Passing `validation_criteria` to `taskflow_step(action="resume")` overrides** the stored value for that call — e.g. to tighten or correct it based on what the child actually did.
 - **Result-text budget.** `STEP_JUDGE["max_result_chars"]` (8000) bounds what the judge prompt sees.
 
 ### Then: `done` means "the configured gates passed"
 
-A step's `done` never means "the work is right" by itself. With **no** expectation configured (`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) it degrades to the older meaning — "a result was injected" — so a child that reported an error can still land `done` and unlock successors. Declare an expectation (a `response_schema` is validated for free, before any judge call) or report `step_outcome="failure"` and the closure catches it: `failed` / `skipped` / `cancelled` are real step statuses, a failure never unlocks its dependents, and `taskflow_finish` refuses to complete over an unresolved step.
+A step's `done` never means "the work is right" by itself. With **no** expectation configured (`response_schema`, `judge_criteria` / `validation_criteria`, `retry_policy`) it degrades to the older meaning — "a result was injected" — so a child that reported an error can still land `done` and unlock successors. Declare an expectation (a `response_schema` is validated for free, before any judge call) or report `step_outcome="failure"` and the closure catches it: `failed` / `skipped` / `cancelled` are real step statuses, a failure never unlocks its dependents, and `taskflow_flow(action="finish")` refuses to complete over an unresolved step.
 
-## Flow level (`taskflow_finish`)
+## Flow level (`taskflow_flow(action="finish")`)
 
-`taskflow_finish` gates the DONE transition on four checks, in order:
+`taskflow_flow(action="finish")` gates the DONE transition on four checks, in order:
 
 | Gate | Checks | Reject reason |
 | :--- | :--- | :--- |
 | **A — DAG completeness** | every step is `done` or `blocked` | `step(s) not done/blocked` |
 | **B — no unresolved steps** | no step is `failed`, `skipped`, `cancelled` or `blocked` | the offending steps by id, each with its recorded reason |
 | **C — evidence** | the flow's evidence carries no `FAIL`, no `[broken]` and no `[stale]` row (see [Evidence Ledger](../gates/evidence-ledger/README.md)) | `failing verification evidence` / `confirmed regression` / `stale evidence` |
-| **E — goal judge** | an auxiliary model judges whether the collected results satisfy the flow's `description` | a rejection that names `taskflow_replan` |
+| **E — goal judge** | an auxiliary model judges whether the collected results satisfy the flow's `description` | a rejection that names `taskflow_flow(action="replan")` |
 
 Every gate is **fail-open**: an unreadable collector, a model error or an unparseable verdict passes rather than blocking a finish. Gate E runs only for a flow with a `description` and at least `GOAL_GATE["min_steps"]` (3) steps — a one- or two-step flow is already covered by the child-level [completion judge](../../subagent/README.md), and a second verdict on the same work is that overlap; `GOAL_GATE["enabled"]` is its master switch and `GOAL_GATE["max_result_chars"]` (4000) bounds each result handed to it.
 

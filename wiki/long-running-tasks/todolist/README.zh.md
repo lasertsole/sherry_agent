@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> 会话级、轻量的规划与纪律层，建立在既有 TaskFlow 系统之上。它**不是任务引擎**，**不是 DAG**，**不实现调度器**。会话级计划由 `todowrite` / `todoread` 管理（通过系统提示词注入，天然免疫压缩）。跨会话、可持久、会派发子代理的执行由 **TaskFlow** 承担（`depends_on`、`blocked/ready/dispatched/done`、`taskflow_dispatch`、`taskflow_wait_all`）。两层用 `flow_id` / `step_id` 关联；同一份状态只有一个权威源，不跨层复制。
+> 会话级、轻量的规划与纪律层，建立在既有 TaskFlow 系统之上。它**不是任务引擎**，**不是 DAG**，**不实现调度器**。会话级计划由 `todowrite` / `todoread` 管理（通过系统提示词注入，天然免疫压缩）。跨会话、可持久、会派发子代理的执行由 **TaskFlow** 承担（`depends_on`、`blocked/ready/dispatched/done`、`taskflow_step(action="dispatch")`、`taskflow_step(action="wait_all")`）。两层用 `flow_id` / `step_id` 关联；同一份状态只有一个权威源，不跨层复制。
 
 ---
 
@@ -42,9 +42,9 @@
 | 作用范围 | 单个 session，轻量                                  | 跨 session，durable                                                                       |
 | 状态内容 | todo 的 content/status/priority/category/delegation | step 的 depends_on/status/child_session_key/results                                       |
 | 持久化   | `todos.db`（会话级）                                | `taskflow_registry.db` + flow `state_json`                                                |
-| 注入方式 | 系统提示词 block（每次压缩后重建，天然免疫压缩）    | 工具返回文本（`taskflow_summary` 回读）                                                   |
+| 注入方式 | 系统提示词 block（每次压缩后重建，天然免疫压缩）    | 工具返回文本（`taskflow_inspect(action="summary")` 回读）                                                   |
 | 主要职责 | 计划、可见性、纪律强制（E1–E7）                     | 依赖满足、阻塞/解锁、并行派发、有界等待、结果注入                                         |
-| 是否调度 | 否                                                  | 是（`taskflow_run_task` / `taskflow_dispatch` / `taskflow_wait_all` / `taskflow_resume`） |
+| 是否调度 | 否                                                  | 是（`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`） |
 
 一句话：**规划与纪律层负责"想清楚、盯住、逼完成"，TaskFlow 负责"真的跑、跨会话、管依赖"。**
 
@@ -53,7 +53,7 @@
 | 关注点                       | 权威源                | 说明                                                   |
 | ---------------------------- | --------------------- | ------------------------------------------------------ |
 | todo 是否完成                | `todos.db`            | 只有 `todowrite` 能改 todo 状态                        |
-| step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_resume` 能把 step 标 `done` 并解锁后继  |
+| step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_step(action="resume")` 能把 step 标 `done` 并解锁后继  |
 | 子会话是否还在跑             | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run` |
 | 计划文件进度（checkbox）     | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
 | 执行证据                     | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`（共享，WAL，保留期/清理）       |
@@ -66,7 +66,7 @@ todo 可携带两个可选字段指向 TaskFlow：
 - `flow_id`：关联的 TaskFlow flow id。
 - `step_id`：关联的 TaskFlow step id（形如 `step-2`），用于回读该 step 的 DAG 状态。
 
-**不镜像**原则：todo 层不复制 `depends_on`、不保存波次、不缓存 step 状态。需要 DAG 状态时调用只读的 `taskflow_summary(flow_id)`，把 `blocked/ready/dispatched/done` 映射回 UI/提示即可。
+**不镜像**原则：todo 层不复制 `depends_on`、不保存波次、不缓存 step 状态。需要 DAG 状态时调用只读的 `taskflow_inspect(action="summary", flow_id)`，把 `blocked/ready/dispatched/done` 映射回 UI/提示即可。
 
 ---
 
@@ -168,8 +168,8 @@ class TodoService:
         DAG 调度住在 TaskFlow；本方法只调用只读的 taskflow_summary。"""
         from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
         linked = await store.get_todos_by_flow(session_id, flow_id)
-        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
-        return {"todos": linked, "taskflow_summary": summary_text}
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id, "session_id": session_id})
+        return {"todos": linked, "summary": summary_text}
 ```
 
 ### EvidenceLedger
@@ -203,7 +203,7 @@ async def todowrite(todos: list[dict], session_id: Annotated[str, InjectedState(
     """Update the todo list for the current session (full replacement).
     Pass the COMPLETE list every time.
     DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_run_task(flow_id, task, depends_on=[...])."""
+    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
     result = await service.update_todos(session_id, todos)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:
@@ -267,9 +267,9 @@ Phase 2: Create or update Boulder state → 写 boulder.json，注册所有 Phas
 Phase 3: Execute next checkbox（调度全部交给 TaskFlow）
   → 读计划，找到第一个未勾选的 checkbox
   → 分解为 atomic sub-tasks
-  → taskflow_run_task(flow_id, task, depends_on=[...]) 登记
-  → blocked 不派发；ready 步骤 taskflow_dispatch 批量派发
-  → taskflow_wait_all → taskflow_resume（注入结果，解锁后继）
+  → taskflow_step(action="run_task", flow_id, task, depends_on=[...]) 登记
+  → blocked 不派发；ready 步骤 taskflow_step(action="dispatch") 批量派发
+  → taskflow_step(action="wait_all") → taskflow_step(action="resume")（注入结果，解锁后继）
   → DELEGATE EVERYTHING via delegation router (E6)
 Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.db
 Phase 5: Mark progress → 编辑 checkbox - [ ] → - [x]，不询问是否继续
@@ -277,20 +277,20 @@ Phase 5: Mark progress → 编辑 checkbox - [ ] → - [x]，不询问是否继�
 
 ### 计划 → TaskFlow 的落地方式
 
-1. `taskflow_create(flow_id, description, initial_state)` — 建流。
-2. `taskflow_run_task(flow_id, task, depends_on=[...])` — 登记：无依赖 → `dispatched`；依赖未满足 → `blocked` 不派发；未知依赖 → 报错不改状态。
-3. `taskflow_resume(flow_id, child_session_key, result)` — 注入结果：step 变 `done`，blocked 依赖解锁为 `ready`。**resume 不自动派发。**
-4. `taskflow_dispatch(flow_id, step_ids)` — 批量并行派发 ready 步骤。
-5. `taskflow_wait_all(flow_id, timeout, poll_interval)` — 等本流派发的子会话 settle。
-6. `taskflow_finish(flow_id, summary)` — 收尾；`taskflow_summary` 随时回读。
+1. `taskflow_flow(action="create", flow_id, description, initial_state)` — 建流。
+2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — 登记：无依赖 → `dispatched`；依赖未满足 → `blocked` 不派发；未知依赖 → 报错不改状态。
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 注入结果：step 变 `done`，blocked 依赖解锁为 `ready`。**resume 不自动派发。**
+4. `taskflow_step(action="dispatch", flow_id, step_ids)` — 批量并行派发 ready 步骤。
+5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — 等本流派发的子会话 settle。
+6. `taskflow_flow(action="finish", flow_id, summary)` — 收尾；`taskflow_inspect(action="summary")` 随时回读。
 
 ### step 状态机（TaskFlow 权威定义）
 
 ```
 blocked (依赖未全部 done；run_task 只登记、不派发)
-  → ready (依赖已满足，等待派发；由 taskflow_resume 解锁)
+  → ready (依赖已满足，等待派发；由 taskflow_step(action="resume") 解锁)
   → dispatched (已派发 detached 子会话，child_session_key 落库)
-  → done (已通过 taskflow_resume 把子会话结果注入流状态)
+  → done (已通过 taskflow_step(action="resume") 把子会话结果注入流状态)
 ```
 
 ### 计划层概念 → TaskFlow 能力映射
@@ -300,18 +300,18 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | Checkbox 之间的依赖  | step 的 `depends_on`（step-id 列表）                              |
 | Wave / 波次          | 不显式建 wave；`ready` 状态等价于"当前波次"                       |
 | 节点状态             | `status ∈ {blocked, ready, dispatched, done}` 在 `state_json`     |
-| Frontier             | `ready` 状态 + `taskflow_dispatch` 校验 `deps_satisfied`          |
-| 依赖未满足时阻塞     | `taskflow_run_task(..., depends_on=[...])` 记 `blocked`，不 spawn |
-| 完成一个节点解锁后继 | `taskflow_resume` 标 `done` + `unlock_dependents`                 |
-| 并行派发             | `taskflow_dispatch(flow_id, step_ids)` 批量派发 ready 步骤        |
-| 等待并行子会话       | `taskflow_wait_all(...)` 按 flow 范围有界轮询                     |
-| 回读 DAG 状态        | `taskflow_summary(flow_id)` 渲染每步 status/depends_on + 计数     |
+| Frontier             | `ready` 状态 + `taskflow_step(action="dispatch")` 校验 `deps_satisfied`          |
+| 依赖未满足时阻塞     | `taskflow_step(action="run_task", ..., depends_on=[...])` 记 `blocked`，不 spawn |
+| 完成一个节点解锁后继 | `taskflow_step(action="resume")` 标 `done` + `unlock_dependents`                 |
+| 并行派发             | `taskflow_step(action="dispatch", flow_id, step_ids)` 批量派发 ready 步骤        |
+| 等待并行子会话       | `taskflow_step(action="wait_all", ...)` 按 flow 范围有界轮询                     |
+| 回读 DAG 状态        | `taskflow_inspect(action="summary", flow_id)` 渲染每步 status/depends_on + 计数     |
 
 ### 并行投递通道决策
 
 | 拓扑                    | 条件                  | 策略                                        |
 | ----------------------- | --------------------- | ------------------------------------------- |
-| 独立通道 → 并行 workers | 分离文件，无共享契约  | 一次并行 spawn burst（`taskflow_dispatch`） |
+| 独立通道 → 并行 workers | 分离文件，无共享契约  | 一次并行 spawn burst（`taskflow_step(action="dispatch")`） |
 | 有序依赖通道 → 波次串行 | C 需要 A 和 B 先完成  | 等前置 step `done` 后执行（`depends_on` + `resume` 解锁） |
 | 重叠通道 → team         | 同模块/契约，并发更快 | 串行化或手动协调                            |
 
@@ -349,7 +349,7 @@ def _build_todo_block(session_id: str) -> str:
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
     lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
     return "\n".join(lines)
@@ -415,4 +415,4 @@ WS 事件：`todo_updated`（变更推送）+ `todo_refresh`（重连重发）�
 }
 ```
 
-`taskflow_status` 是 `taskflow_summary(flow_id)` 回读的 step 状态；前端不重算波次/依赖。
+`taskflow_status` 是 `taskflow_inspect(action="summary", flow_id)` 回读的 step 状态；前端不重算波次/依赖。

@@ -167,7 +167,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     first model call therefore sees mid-session FACTS/MEMORY/USER writes;
   │     first turns, unchanged controls, and reload failures keep the cache.
   │
-  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(8)
+  ├─ tools: build_main_tools() → taskflow(3 grouped over 16 actions) + todolist(2) + memory + subagent(8)
   │         + file_tools + web_search + web_fetch + terminal + python_repl + question + ...
   │
   ├─ graph wrappers: apply_graph_wrappers(inner)
@@ -206,7 +206,7 @@ User message → Robyn WS → agent.core.built_agent() graph
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
-      taskflow_resume (json parse + validate_structured_output); a miss is a
+      taskflow_step(action="resume") (json parse + validate_structured_output); a miss is a
       retry signal ("schema_error") that never spends a judge call, and an
       unretried miss marks the step failed. The retry carries the validator's
       own message as its feedback (the judge never ran, so judge_feedback is
@@ -220,7 +220,7 @@ User message → Robyn WS → agent.core.built_agent() graph
       text stays in the child's system prompt as the prompt-level fallback,
       and sessions_spawn exposes the same output_schema field so a
       tool-driven child can be constrained the same way
-    · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
+    · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
       caller-declared step_outcome outranks both
@@ -238,13 +238,13 @@ User message → Robyn WS → agent.core.built_agent() graph
       `modified_files`; a write also broadcasts a `scope="cross_session"` stale
       row to every OTHER session whose evidence command names the path OR whose
       `modified_files` contains it (gated by EVIDENCE_CROSS_SESSION_STALENESS;
-      the writer's own session is marked separately); at taskflow_finish the regression gate replays the flow's
+      the writer's own session is marked separately); at taskflow_flow(action="finish") the regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
       while a false-positive stale is cleared; read side derives
       broken/stale using the exact `modified_files` set, falling back to the
       command substring for legacy rows (evidence_collector.py)
-    · taskflow_finish gates A–C — DAG completeness, no unresolved steps
+    · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's AGGREGATED evidence (every dispatched step's child session +
       the creator's; rows carry a session key, never a flow id) carrying no
@@ -693,7 +693,7 @@ Two OPTIONAL internal families are configured here too, both system-level (they
 are deliberately NOT part of the per-session agent config):
 
 - `TASKFLOW_LLM_*` — the TaskFlow decision model. It serves the four internal
-  calls `taskflow_plan` / `taskflow_replan` / `step_judge` / `taskflow_finish`
+  calls `taskflow_flow(action="plan")` / `taskflow_flow(action="replan")` / `step_judge` / `taskflow_flow(action="finish")`
   (temperature 0). Non-taskflow callers stay on auxiliary: the subagent
   completion judge, the spawn/steer branches and plan extraction.
 - `COMPRESSION_LLM_*` — the summarization middleware's own model: the LLM
@@ -1625,7 +1625,7 @@ each suite is the version-controlled reference (threshold + model id).
 - `tests/agent/tools/subagent/conftest.py` pollutes `sys.modules` globally — use stub-tolerant imports in cross-suite tests
 - `agent/core.py::init()` imports `skills` lazily and calls `build_skills_snapshot()` at assembly time (server boot); a process that never calls `init()` still gets a live disk scan from `scan_skills(use_cache=True)`
 - `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
-- `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
+- `taskflow_step(action="resume")` and `taskflow_step(action="run_task")` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
 - a session's BOUND project directory is snapshotted into
@@ -1654,7 +1654,7 @@ each suite is the version-controlled reference (threshold + model id).
 - `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
-- a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_plan`'s planner may emit the field and `taskflow_update_steps` may change it.
+- a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_flow(action="plan")`'s planner may emit the field and `taskflow_step(action="update_steps")` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file), and a watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg_list` / `terminal_bg_output` (both `scope=main_only`, catalogue group `terminal`) are how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
 - terminal HITL cards can offer **本会话允许** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
@@ -1709,32 +1709,32 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
   finds the owning flow by scanning active flows' steps for the child key), and
-  `taskflow_resume` then dispatches the wave it unlocked
+  `taskflow_step(action="resume")` then dispatches the wave it unlocked
   (`auto_dispatch=True` default; `auto_dispatch=False` keeps the "unlock only"
   shape). The AI still supervises the exceptions — judge BLOCK, failures,
-  planning and the final finish — instead of driving every step. `taskflow_replan`
+  planning and the final finish — instead of driving every step. `taskflow_flow(action="replan")`
   regenerates a flow's REMAINING steps from the goal, the done results and the
   failure reason (transitively invalidated steps go back to `blocked`; bounded by
-  `REPLAN_MAX` replans per flow), `taskflow_plan` decomposes a goal into a
-  dependency-ordered flow without dispatching anything, and `taskflow_finish`
+  `REPLAN_MAX` replans per flow), `taskflow_flow(action="plan")` decomposes a goal into a
+  dependency-ordered flow without dispatching anything, and `taskflow_flow(action="finish")`
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
-  a rejection names `taskflow_replan`).
+  a rejection names `taskflow_flow(action="replan")`).
 - TaskFlow dispatch is **serialized per flow** and planning is idempotent:
   `_dispatch.flow_dispatch_lock(flow_id)` (process-local, keyed by loop + flow)
-  wraps the manual `taskflow_dispatch` read → validate → spawn → persist body
+  wraps the manual `taskflow_step(action="dispatch")` read → validate → spawn → persist body
   and the resume auto-dispatch wave, which re-checks each step is still `ready`
   after acquiring it — two dispatchers cannot spawn the same step twice. A
-  multi-process deployment would need a DB lease. `taskflow_plan` generates
+  multi-process deployment would need a DB lease. `taskflow_flow(action="plan")` generates
   `plan-<sha256(session_id + goal)[:10]>` (stable across processes, session
   scoped because `flow_id` is a global PK); repeating a goal/session returns
   the existing non-terminal flow as an idempotent success, and a duplicate
-  non-terminal `taskflow_create` does the same (terminal flows still error).
+  non-terminal `taskflow_flow(action="create")` does the same (terminal flows still error).
   A new signature-based tool-loop middleware was **not** added: 204 historical
   tool calls showed zero consecutive same-name + same-args successful mutating
   runs; `ToolGuardrails` remains the detector.
 - TaskFlow orphan collection is a **tri-color GC plus liveness** (v3), replacing
-  the per-scenario fixes: every `taskflow_create`/`taskflow_plan` binds a
+  the per-scenario fixes: every `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a
   flow-level `pending` todo (the GC root; `step_id` empty, so it stays active
   until the whole flow is terminal) — a missing `todo_content` falls back to the
   description/flow id rather than creating an unrooted flow. The sweeper marks
@@ -1750,32 +1750,32 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   failed/cancelled flow are cancelled. Both passes run at boot (before the
   first 60 s tick) and every tick; `task_flows` gains additive `updated_at`
   (bumped by every mutation) and `terminal_reason` columns. A superseded
-  predecessor becomes `cancelled`/`superseded`; `taskflow_finish` has three
+  predecessor becomes `cancelled`/`superseded`; `taskflow_flow(action="finish")` has three
   independent budgets (nudge / consecutive failures / protocol violations)
   that auto-fail and record detached children; terminal rows are pruned to
   `max_total_flows_per_session` (200) on a debounced post-mutation pass.
 - a dispatch wave spawns CONCURRENTLY, bounded by
   `TASKFLOW_INFRA["max_parallel_dispatch"]` (2; 1 restores the historical
   sequential behaviour) through `asyncio.gather` + a semaphore — the three
-  dispatch loops (`taskflow_dispatch`'s batch, `taskflow_resume`'s
-  auto-dispatch wave and `taskflow_wait_all`'s retry pass) all do. The SUBAGENT
+  dispatch loops (`taskflow_step(action="dispatch")`'s batch, `taskflow_step(action="resume")`'s
+  auto-dispatch wave and `taskflow_step(action="wait_all")`'s retry pass) all do. The SUBAGENT
   lane is the global backpressure; this cap only decides how many spawn calls
   are in flight at once. A partial wave failure persists every successful child
   (via `update_flow_with_conflict_retry`, so a concurrent writer cannot drop a
   spawned key) and names the failed step ids (`auto_dispatch_failed=…` on the
-  resume answer). `taskflow_resume`'s normal path also writes through that
+  resume answer). `taskflow_step(action="resume")`'s normal path also writes through that
   CAS-retry: the `build_state` callback re-applies the ALREADY-DECIDED verdict +
   result onto the freshly-read state and re-derives the unlock set from what was
   actually persisted — two children completing at once both land, and the same
   step is spawned exactly once. A superseded flow releases its per-session slot.
 - two nullable `task_flows` columns record flow lineage (`resumed_from` /
-  `superseded_by`, additive migration): `taskflow_create(resumed_from=…)` —
-  the CREATE path, since `taskflow_replan` rewrites in place and never forks —
+  `superseded_by`, additive migration): `taskflow_flow(action="create", resumed_from=…)` —
+  the CREATE path, since `taskflow_flow(action="replan")` rewrites in place and never forks —
   writes the successor's forward pointer and stamps the predecessor's
   back-pointer with a plain session-scoped UPDATE that deliberately does NOT bump
   `expected_revision` (lineage is metadata). `get_active_flows_sync` excludes a
   superseded flow even while it is still `running`; `get_all_flows_sync(all)`
-  and `taskflow_summary` still show it.
+  and `taskflow_inspect(action="summary")` still show it.
 - `_try_auto_resume_taskflow` only reports success when the resume answer is not
   an `Error:` (the resume genuinely failed → an error log, not an info log; the
   child's completion is still recorded, so nothing is lost).

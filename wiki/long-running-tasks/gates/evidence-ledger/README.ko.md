@@ -37,7 +37,7 @@ terminal / python_repl 이 명령을 실행
 
 **크로스 세션 전파.** 파일 쓰기는 먼저 writer 자신의 세션을 마크합니다. `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`가 true이면 `EvidenceLedger.mark_stale_for_path_all_sessions()`가 다른 세션의 evidence 행 중 `modified_files`에 편집 경로가 포함된 것, command가 실제 경로 토큰으로 지목한 것, 또는 레거시 행의 command가 포함한 것을 찾아, 영향을 받는 각 세션 아래에 `scope="cross_session"` stale 행을 하나씩 추가합니다. `source_session`은 writer를 기록하고, `max_sessions_scan`은 스캔 수를 제한하며, `exclude_self`는 이미 개별 마크된 writer를 건너뜁니다. 읽기 측 도출은 변경할 필요가 없습니다 — 브로드캐스트 행이 영향을 받는 세션 자신의 행 순서에 들어가기 때문입니다.
 
-**Finish 시 재검증.** `taskflow_finish`의 Gate C는 먼저 `regression_gate.reverify_flow_evidence()`를 호출합니다: flow 각 세션의 passed 명령을 중복 제거해 한 번씩 재실행하며(allowlist 실행 파일, 셸 없음, `max_reverify_commands` 및 명령별 타임아웃), 작업 디렉터리는 flow의 프로젝트 루트입니다. 성공하면 stale/broken이었던 명령에 `unmark`를 추가하고, 실패하면 `broken`을 추가합니다. 이 경로는 변경된 소스 파일을 stale 행이 지목하지 않아도 A의 테스트 명령을 다시 실행하므로 크로스 파일 import 파괴를 잡을 수 있는 유일한 경로입니다. 단계는 `file_deps`를 선언할 수 있으며, 다른 단계의 쓰기가 그중 하나에 닿으면 `prioritized_sessions()`가 해당 단계의 명령을 `max_reverify_commands` 상한 앞으로 옮깁니다(`file_deps_mode="prioritize"`, 기본). 선택형 `file_deps_mode="filter"`는 선언이 적중한 세션만 재실행합니다 — 더 저렴하지만 선언되지 않은 단계의 파괴를 놓칠 수 있습니다.
+**Finish 시 재검증.** `taskflow_flow(action="finish")`의 Gate C는 먼저 `regression_gate.reverify_flow_evidence()`를 호출합니다: flow 각 세션의 passed 명령을 중복 제거해 한 번씩 재실행하며(allowlist 실행 파일, 셸 없음, `max_reverify_commands` 및 명령별 타임아웃), 작업 디렉터리는 flow의 프로젝트 루트입니다. 성공하면 stale/broken이었던 명령에 `unmark`를 추가하고, 실패하면 `broken`을 추가합니다. 이 경로는 변경된 소스 파일을 stale 행이 지목하지 않아도 A의 테스트 명령을 다시 실행하므로 크로스 파일 import 파괴를 잡을 수 있는 유일한 경로입니다. 단계는 `file_deps`를 선언할 수 있으며, 다른 단계의 쓰기가 그중 하나에 닿으면 `prioritized_sessions()`가 해당 단계의 명령을 `max_reverify_commands` 상한 앞으로 옮깁니다(`file_deps_mode="prioritize"`, 기본). 선택형 `file_deps_mode="filter"`는 선언이 적중한 세션만 재실행합니다 — 더 저렴하지만 선언되지 않은 단계의 파괴를 놓칠 수 있습니다.
 
 ---
 
@@ -200,7 +200,7 @@ def derive_evidence_state(records, index):
 
 ### 레벨 1: 스텝별(TaskFlow step judge)
 
-`taskflow_resume`이 acceptance criteria를 가진 스텝을 디스패치할 때, `judge_step_result()`에 `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`를 전달합니다. step judge의 프롬프트에는 `## Verification Evidence` 섹션이 포함되어 요약(또는 `"(none recorded)"`)이 표시됩니다. judge는 이를 사용하여 PASS / RETRY / BLOCK을 결정합니다.
+`taskflow_step(action="resume")`이 acceptance criteria를 가진 스텝을 디스패치할 때, `judge_step_result()`에 `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`를 전달합니다. step judge의 프롬프트에는 `## Verification Evidence` 섹션이 포함되어 요약(또는 `"(none recorded)"`)이 표시됩니다. judge는 이를 사용하여 PASS / RETRY / BLOCK을 결정합니다.
 
 ### 레벨 2: 서브에이전트별(completion judge + drain gate)
 
@@ -208,7 +208,7 @@ def derive_evidence_state(records, index):
 - **Completion judge 프롬프트:** 스킵되지 않으면, `judge_completion()`이 프롬프트에서 에비던스 요약을 받습니다.
 - **Drain gate:** `SubagentCompletionDrainMiddleware`(부모 측 `before_model`)가 서브에이전트 완료 메시지를 드레인할 때 에비던스를 확인. 에비던스 없음 또는 `FAIL` → `[GATE] Completion blocked: verification evidence missing or failing` 차단 메시지를 주입.
 
-### 레벨 3: 플로별(taskflow_finish Gate C)
+### 레벨 3: 플로별(taskflow_flow(action="finish") Gate C)
 
 TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에비던스를 확인합니다——디스패치된 각 단계의 `child_session_key`와 플로의 `creator_session_key`의 합집합입니다(행은 세션 키로 저장되고 플로는 여러 세션에 걸치기 때문입니다. 단계를 한 번도 디스패치하지 않은 플로는 키가 없어 에비던스도 없고 따라서 통과합니다):
 

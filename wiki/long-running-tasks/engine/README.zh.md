@@ -58,35 +58,35 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 
 | 状态 | 含义 | 由谁设置 |
 | :--- | :--- | :--- |
-| `blocked` | 至少有一个 `depends_on` 尚未 `done`；不生成子 Agent | `taskflow_run_task` |
+| `blocked` | 至少有一个 `depends_on` 尚未 `done`；不生成子 Agent | `taskflow_step(action="run_task")` |
 | `ready` | 所有依赖已满足，等待派发 | 注册时，或恢复后的 `unlock_dependents` |
-| `dispatched` | 已派发一个分离的子会话；记录 `child_session_key` 与 `dispatched_at` | `taskflow_run_task` / `taskflow_dispatch` |
-| `done` | 已由 `taskflow_resume` 注入结果 | `taskflow_resume` |
+| `dispatched` | 已派发一个分离的子会话；记录 `child_session_key` 与 `dispatched_at` | `taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` |
+| `done` | 已由 `taskflow_step(action="resume")` 注入结果 | `taskflow_step(action="resume")` |
 
 `done` 的含义是**“已注入结果”**，而不是“子 Agent 成功”（参见[已知局限](../README.zh.md#-已知局限)）。没有 `status` 字段的旧步骤会被推导：带 `child_session_key` 的步骤视为 `dispatched`，否则视为 `ready`（`_shared.py:85`，`step_status`）。
 
 ### `depends_on` 语义
 
-`deps_satisfied(step, steps)`（`_shared.py:99`）为真，当且仅当每个 `depends_on` id 都存在于当前步骤列表中**且**为 `done`。缺失/为空的 `depends_on` 视为自然满足。未知的依赖 id 永远不满足，而**自依赖永远不满足**——因此自引用步骤会安全地保持阻塞，而不会陷入解锁死循环。`unlock_dependents(steps)`（`_shared.py:137`）对列表只做**单遍扫描**，从结构上杜绝了依赖环导致死循环。`taskflow_run_task` 会在任何派发或状态变更**之前**拒绝未知的依赖 id。
+`deps_satisfied(step, steps)`（`_shared.py:99`）为真，当且仅当每个 `depends_on` id 都存在于当前步骤列表中**且**为 `done`。缺失/为空的 `depends_on` 视为自然满足。未知的依赖 id 永远不满足，而**自依赖永远不满足**——因此自引用步骤会安全地保持阻塞，而不会陷入解锁死循环。`unlock_dependents(steps)`（`_shared.py:137`）对列表只做**单遍扫描**，从结构上杜绝了依赖环导致死循环。`taskflow_step(action="run_task")` 会在任何派发或状态变更**之前**拒绝未知的依赖 id。
 
-### 工具族（14 个工具）
+### 工具族（3 个分组工具）
 
-所有工具都是 `async`，装饰为 `@tool("taskflow_…")`，由 `build_taskflow_tools()`（`tools/__init__.py:58-76`）打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`。只有主 Agent 可以管理共享 flow 状态；子 Agent 工具策略会无条件丢弃整个工具族。
+模型面是三个分组分发器（`taskflow_flow`、`taskflow_step`、`taskflow_inspect`），底下是 16 个 `async` 模块函数。模块函数仍以 `@tool("taskflow_…")` 装饰，并由 `build_taskflow_tools()` 统一打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`；只有主 Agent 可以管理共享 flow 状态，子 Agent 工具策略会无条件丢弃整个工具族。
 
 | 工具 | 用途 |
 | :--- | :--- |
-| `taskflow_create` | 在版本 1 创建 flow；可选设置 `deadline_hours` |
-| `taskflow_run_task` | 注册一个步骤（可选 `validation_criteria` / `retry_policy`）并派发（或记录为 `blocked`） |
-| `taskflow_dispatch` | 全有或全无地批量派发多个就绪步骤 |
-| `taskflow_update_steps` | 全量替换 steps 列表（增/删/重排/改 task 或 depends_on；dispatched/done 安全规则；孤儿 child 警告） |
-| `taskflow_wait_all` | 按 flow 范围有界轮询，等待已派发步骤落定（对带策略的落定步骤自动重试） |
-| `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 步骤判别器） |
-| `taskflow_set_waiting` | 带上原因把 flow 置为 `waiting` |
-| `taskflow_summary` | 只读回读（也是冲突后的重读手段） |
-| `taskflow_progress` | 人类可读的进度/完成度报告 |
-| `taskflow_budget` | 查询或设置 token/成本预算 |
-| `taskflow_list` | 本会话面板（`active` / `all` / 状态名） |
-| `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | 终态转换 |
+| `taskflow_flow(action="create")` | 在版本 1 创建 flow；可选设置 `deadline_hours` |
+| `taskflow_step(action="run_task")` | 注册一个步骤（可选 `validation_criteria` / `retry_policy`）并派发（或记录为 `blocked`） |
+| `taskflow_step(action="dispatch")` | 全有或全无地批量派发多个就绪步骤 |
+| `taskflow_step(action="update_steps")` | 全量替换 steps 列表（增/删/重排/改 task 或 depends_on；dispatched/done 安全规则；孤儿 child 警告） |
+| `taskflow_step(action="wait_all")` | 按 flow 范围有界轮询，等待已派发步骤落定（对带策略的落定步骤自动重试） |
+| `taskflow_step(action="resume")` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 步骤判别器） |
+| `taskflow_flow(action="set_waiting")` | 带上原因把 flow 置为 `waiting` |
+| `taskflow_inspect(action="summary")` | 只读回读（也是冲突后的重读手段） |
+| `taskflow_inspect(action="progress")` | 人类可读的进度/完成度报告 |
+| `taskflow_flow(action="budget")` | 查询或设置 token/成本预算 |
+| `taskflow_inspect(action="list")` | 本会话面板（`active` / `all` / 状态名） |
+| `taskflow_flow(action="finish")` / `taskflow_flow(action="fail")` / `taskflow_flow(action="cancel")` | 终态转换 |
 
 ```python
 # agent/tools/taskflow/tools/taskflow_run_task.py:40
@@ -102,23 +102,23 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-### 派发——`taskflow_dispatch` 批量语义
+### 派发——`taskflow_step(action="dispatch")` 批量语义
 
-`taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）顺序派发，并在**一次** `update_flow` 调用中持久化。若批次中途派发失败，循环停止，已派发的子 Agent 会被持久化，确保没有子会话被静默丢弃，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。
+`taskflow_step(action="dispatch", flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）顺序派发，并在**一次** `update_flow` 调用中持久化。若批次中途派发失败，循环停止，已派发的子 Agent 会被持久化，确保没有子会话被静默丢弃，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。
 
 ### 合成——`aggregate_deps`
 
-步骤可在 `taskflow_run_task` 上设置 `aggregate_deps=true`（存为步骤的 `aggregate_deps` 字段）以启用依赖结果聚合。派发时 `_shared.build_task_with_dep_results(step, steps, results)` 会在任务文本后追加一个 `## Upstream Results` 区块：按 `depends_on` 顺序，为每个依赖生成一个 `### <dep_id>` 段落，并用依赖的 `child_session_key` 在 flow 的 `{child_session_key, result, result_hash}` 记录中查找其结果。没有记录结果的依赖会写入 `no result recorded` 占位符，而不是抛错。
+步骤可在 `taskflow_step(action="run_task")` 上设置 `aggregate_deps=true`（存为步骤的 `aggregate_deps` 字段）以启用依赖结果聚合。派发时 `_shared.build_task_with_dep_results(step, steps, results)` 会在任务文本后追加一个 `## Upstream Results` 区块：按 `depends_on` 顺序，为每个依赖生成一个 `### <dep_id>` 段落，并用依赖的 `child_session_key` 在 flow 的 `{child_session_key, result, result_hash}` 记录中查找其结果。没有记录结果的依赖会写入 `no result recorded` 占位符，而不是抛错。
 
-该标志为**可选加入（opt-in）**：不设置时，派发的任务与旧有纯文本逐字节一致，且已存储的 `step["task"]` 永不被改写。每条重派路径都会从稳定的依赖结果重新推导聚合，因此批量派发、StepJudge 重试以及重试策略路径（`taskflow_resume` + `taskflow_wait_all`）都会复现相同的聚合文本。
+该标志为**可选加入（opt-in）**：不设置时，派发的任务与旧有纯文本逐字节一致，且已存储的 `step["task"]` 永不被改写。每条重派路径都会从稳定的依赖结果重新推导聚合，因此批量派发、StepJudge 重试以及重试策略路径（`taskflow_step(action="resume")` + `taskflow_step(action="wait_all")`）都会复现相同的聚合文本。
 
-### 更新——`taskflow_update_steps` 全量替换
+### 更新——`taskflow_step(action="update_steps")` 全量替换
 
-`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）全量替换 flow 的 steps 列表（对 TaskFlow 而言类似 `todowrite`）：存储的 DAG 就是你传入的列表，因此可以增、删、重排步骤，或重写其 `task`/`depends_on`。安全规则：`step_id` 必须唯一；每个 `depends_on` 必须引用新列表内存在的 id（禁止自依赖）；`dispatched` 步骤保留其 `child_session_key`，不可降级为 `ready`/`blocked`；`done` 步骤不可修改 task/depends_on/status；新增步骤必须为 `ready`/`blocked`（派发仍走 `taskflow_dispatch`）；终态 flow 拒绝该调用。删除仍在运行的 `dispatched` 步骤会成功，但返回非阻塞的 `Warning:`（含 child key）——请先 kill 该 child，或用 `taskflow_wait_all`/`taskflow_resume` 让它落定。并发沿用同一乐观锁：`expected_revision` 不匹配时返回最新 revision，供重读后重试。
+`taskflow_step(action="update_steps", flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）全量替换 flow 的 steps 列表（对 TaskFlow 而言类似 `todowrite`）：存储的 DAG 就是你传入的列表，因此可以增、删、重排步骤，或重写其 `task`/`depends_on`。安全规则：`step_id` 必须唯一；每个 `depends_on` 必须引用新列表内存在的 id（禁止自依赖）；`dispatched` 步骤保留其 `child_session_key`，不可降级为 `ready`/`blocked`；`done` 步骤不可修改 task/depends_on/status；新增步骤必须为 `ready`/`blocked`（派发仍走 `taskflow_step(action="dispatch")`）；终态 flow 拒绝该调用。删除仍在运行的 `dispatched` 步骤会成功，但返回非阻塞的 `Warning:`（含 child key）——请先 kill 该 child，或用 `taskflow_step(action="wait_all")`/`taskflow_step(action="resume")` 让它落定。并发沿用同一乐观锁：`expected_revision` 不匹配时返回最新 revision，供重读后重试。
 
-### 等待——`taskflow_wait_all` 的 flow 范围
+### 等待——`taskflow_step(action="wait_all")` 的 flow 范围
 
-`taskflow_wait_all(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id="")`（`taskflow_wait_all.py:110`）**只**轮询记录在*当前* flow 的 `dispatched` 步骤上的子会话，因此无关的后台子 Agent 永远不会阻塞返回。未知或已被清理的 run 会被视为已落定（永不挂起）。轮询间隔被夹紧到 `TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]`（0.05 秒）。超时后返回部分报告，并提示对已落定的子 Agent 调用 `taskflow_resume`，然后再次调用 `wait_all`。它刻意**不**复用 `sessions_yield`，后者只在请求方会话的全部子 Agent 落定时才触发。
+`taskflow_step(action="wait_all", flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id="")`（`taskflow_wait_all.py:110`）**只**轮询记录在*当前* flow 的 `dispatched` 步骤上的子会话，因此无关的后台子 Agent 永远不会阻塞返回。未知或已被清理的 run 会被视为已落定（永不挂起）。轮询间隔被夹紧到 `TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]`（0.05 秒）。超时后返回部分报告，并提示对已落定的子 Agent 调用 `taskflow_step(action="resume")`，然后再次调用 `wait_all`。它刻意**不**复用 `sessions_yield`，后者只在请求方会话的全部子 Agent 落定时才触发。
 
 ### 乐观锁
 
@@ -127,7 +127,7 @@ async def taskflow_run_task(
 ```python
 # FlowConflictError 消息（store_sqlite.py:177）
 "TaskFlow '<id>' revision conflict: expected_revision=2 but latest revision=3;
- re-read with taskflow_summary and retry with expected_revision=3"
+ re-read with taskflow_inspect(action="summary") and retry with expected_revision=3"
 ```
 
 当子 Agent **已经派发**但写入竞争失败时，`update_flow_with_conflict_retry()`（`_shared.py:191`）会重新读取最新的 flow，通过 `build_state` 回调重建状态，并最多重试 `PERSIST_MAX_ATTEMPTS = 3` 次。若 flow 已消失或变为终态，或重试耗尽，它会返回一个列出所有已派发 `child_session_key` 的错误，并指示调用方**按 key 回收，绝不重新派发**。
@@ -137,7 +137,7 @@ async def taskflow_run_task(
 步骤可以携带一个声明式的 `retry_policy`，让失败的子 Agent 被自动重新派发，而不是被直接当成本步骤的最终结果。策略、计数器与替换子会话 key 全部存放在 `state_json` 中（无需迁移表结构），重试辅助函数位于 `agent/tools/taskflow/tools/_retry.py`。
 
 ```python
-# retry_policy on a step (stored by taskflow_run_task)
+# retry_policy on a step (stored by taskflow_step(action="run_task"))
 {"max_retries": 2, "retry_delay_seconds": 30.0, "retry_on": ["timeout", "rate_limit"]}
 ```
 
@@ -147,7 +147,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 非负数值 | `60.0`（`DEFAULT_RETRY_DELAY_SECONDS`） | 每次重新派发前休眠的退避时长 |
 | `retry_on` | `list[str]` | `[]` | 触发重试的失败类型；为空表示所有可分类失败 |
 
-`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而回退为无重试行为，而不是让该次调用失败。
+`validate_policy()`（`_retry.py:120`）会在 `taskflow_step(action="run_task")` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而回退为无重试行为，而不是让该次调用失败。
 
 `retry_count`（存放在步骤上，默认 `0`）统计的是**重新派发**次数，从不统计最初那次派发：第一个子 Agent 运行时为 `0`，生成第一个替换子 Agent 后为 `1`。只要 `retry_count < max_retries` 就允许重试（`retries_remaining`，`_retry.py:95`）。`apply_redispatch()`（`_retry.py:170`）就地改动步骤——写入新的 `child_session_key`、`dispatched_at`、`status = dispatched`，并递增 `retry_count`。
 
@@ -167,11 +167,11 @@ async def taskflow_run_task(
 
 | 入口 | 触发条件 | 行为 |
 | :--- | :--- | :--- |
-| `taskflow_wait_all` | 被轮询的子 Agent **死亡**落定且无结果 | `plan_settled_retries()` 在预算尚存时对每个落定步骤重新派发一次，否则以失败说明结果把它标记为 `done` |
-| `taskflow_resume` | 注入的结果文本**可分类为失败**且被 `retry_on` 允许 | 生成替换子 Agent、记录该失败结果，并让步骤在新子 Agent 上保持 `dispatched` |
+| `taskflow_step(action="wait_all")` | 被轮询的子 Agent **死亡**落定且无结果 | `plan_settled_retries()` 在预算尚存时对每个落定步骤重新派发一次，否则以失败说明结果把它标记为 `done` |
+| `taskflow_step(action="resume")` | 注入的结果文本**可分类为失败**且被 `retry_on` 允许 | 生成替换子 Agent、记录该失败结果，并让步骤在新子 Agent 上保持 `dispatched` |
 
-- **`taskflow_wait_all`** 在每个目标落定后调用 `_retry_settled_steps()`（`taskflow_wait_all.py:117`）。没有策略的步骤不产生任何动作（旧 flow 保持逐字节一致的输出）；结果已被注入的子 Agent 会被跳过。每次调用对每个落定步骤最多执行**一个**重试决策——生成并记录替换子 Agent，随后编排者再次调用 `wait_all` 等待它。工具内部不存在后台重试循环。替换子 Agent 通过 `persist_retry_actions()`（`_retry.py:254`）持久化，它借助 `update_flow_with_conflict_retry()` 把计划重新应用到刚读取的步骤列表上，因此并发写入者无法丢弃已生成的替换子 Agent。
-- **`taskflow_resume`** 在把步骤标记为 done 之前检查其策略（`taskflow_resume.py:122-144`）。遇到可重试失败时，它先休眠 `retry_delay_seconds`，再生成替换子 Agent；步骤在新子 Agent 上保持 `dispatched`。若替换子 Agent 的生成本身抛异常，步骤会带着失败结果保持 `done`，响应中携带一条列明该异常的 `retry:` 说明。
+- **`taskflow_step(action="wait_all")`** 在每个目标落定后调用 `_retry_settled_steps()`（`taskflow_wait_all.py:117`）。没有策略的步骤不产生任何动作（旧 flow 保持逐字节一致的输出）；结果已被注入的子 Agent 会被跳过。每次调用对每个落定步骤最多执行**一个**重试决策——生成并记录替换子 Agent，随后编排者再次调用 `wait_all` 等待它。工具内部不存在后台重试循环。替换子 Agent 通过 `persist_retry_actions()`（`_retry.py:254`）持久化，它借助 `update_flow_with_conflict_retry()` 把计划重新应用到刚读取的步骤列表上，因此并发写入者无法丢弃已生成的替换子 Agent。
+- **`taskflow_step(action="resume")`** 在把步骤标记为 done 之前检查其策略（`taskflow_resume.py:122-144`）。遇到可重试失败时，它先休眠 `retry_delay_seconds`，再生成替换子 Agent；步骤在新子 Agent 上保持 `dispatched`。若替换子 Agent 的生成本身抛异常，步骤会带着失败结果保持 `done`，响应中携带一条列明该异常的 `retry:` 说明。
 
 ### 耗尽与失败说明
 
@@ -179,14 +179,14 @@ async def taskflow_run_task(
 
 ```
 retry budget exhausted: step step-4 child agent:main:session:... settled without a
-result after 2 retry/retries (max_retries=2); marked done by taskflow_wait_all
+result after 2 retry/retries (max_retries=2); marked done by taskflow_step(action="wait_all")
 ```
 
 耗尽的步骤需要显式决策——恢复该失败说明，或让 flow 失败。`wait_all` 与 `resume` 两条路径都遵守 resume 的幂等契约：失败说明携带 `result_hash`，因此重复投递的落定结果绝不会被记录两次。
 
 ## 🪙 Token / 成本预算
 
-`taskflow_budget`（`taskflow_budget.py:10`）同时是查询器与设置器：
+`taskflow_flow(action="budget")`（`taskflow_budget.py:10`）同时是查询器与设置器：
 
 ```python
 @tool("taskflow_budget")
@@ -201,7 +201,7 @@ async def taskflow_budget(
 - **`query`** 报告 `total_tokens`、`total_cost`、预算、剩余 token，以及状态：当 `total_tokens >= budget` 时为 `EXCEEDED`；当用量 ≥ `MODEL_PRICING["budget_warn_threshold"]`（0.80）时为 `WARNING`；否则为 `ok`。未设置预算时，百分比会报告为未设置。
 - **`set`** 要求 `token_budget` 为正整数，拒绝终态 flow，并通过乐观锁写入（传入 `expected_revision` 可快速失败）。
 
-当调用方传入 `token_usage` 时，开销在 `taskflow_resume` 中聚合（`taskflow_resume.py:108-122`）：
+当调用方传入 `token_usage` 时，开销在 `taskflow_step(action="resume")` 中聚合（`taskflow_resume.py:108-122`）：
 
 ```python
 token_usage={"input_tokens": 1200, "output_tokens": 800, "model_name": "deepseek-chat"}
@@ -229,7 +229,7 @@ total_cost   = round(existing_total_cost + cost_delta, 6)
 
 ## ⏰ 任务截止时间
 
-`taskflow_create` 接受可选的 `deadline_hours`（`taskflow_create.py:17`）：
+`taskflow_flow(action="create")` 接受可选的 `deadline_hours`（`taskflow_create.py:17`）：
 
 ```python
 @tool("taskflow_create")
@@ -242,7 +242,7 @@ async def taskflow_create(
 ) -> str
 ```
 
-当 `deadline_hours` 为正时，工具会把 `deadline_ts = time.time() + deadline_hours * 3600` 存入 `deadline_ts` 列。`taskflow_summary` 会渲染截止时间，并在过期后标记为 `EXCEEDED`。真正的执行者是后台 **sweeper**（`agent/tools/subagent/registry/sweeper.py`），它在每个扫描周期运行 `_expire_overdue_taskflows()`（`sweeper.py:123`）：
+当 `deadline_hours` 为正时，工具会把 `deadline_ts = time.time() + deadline_hours * 3600` 存入 `deadline_ts` 列。`taskflow_inspect(action="summary")` 会渲染截止时间，并在过期后标记为 `EXCEEDED`。真正的执行者是后台 **sweeper**（`agent/tools/subagent/registry/sweeper.py`），它在每个扫描周期运行 `_expire_overdue_taskflows()`（`sweeper.py:123`）：
 
 ```python
 overdue = await taskflow_store.get_overdue_flows(time.time())
@@ -271,12 +271,12 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）；恢复时，携带标准的步骤由辅助 LLM 步骤判别器（`agent/tools/taskflow/step_judge.py`，`pass` / `retry` / `block`，fail-open）审查。整条门的栈——失败分类器、Tier 1 schema 门、判别器的预算与证据感知提示词、`step_outcome` 优先级，以及 `done` 到底是什么含义——统一记录在[判断门](../gates/README.zh.md)。
+`taskflow_step(action="run_task")` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）；恢复时，携带标准的步骤由辅助 LLM 步骤判别器（`agent/tools/taskflow/step_judge.py`，`pass` / `retry` / `block`，fail-open）审查。整条门的栈——失败分类器、Tier 1 schema 门、判别器的预算与证据感知提示词、`step_outcome` 优先级，以及 `done` 到底是什么含义——统一记录在[判断门](../gates/README.zh.md)。
 
 
 ## 📊 进度报告
 
-`taskflow_progress`（`taskflow_progress.py:22`）是一个只读报告，包含完成度百分比、状态分解、后续步骤和预计剩余时间：
+`taskflow_inspect(action="progress")`（`taskflow_progress.py:22`）是一个只读报告，包含完成度百分比、状态分解、后续步骤和预计剩余时间：
 
 ```python
 @tool("taskflow_progress")
@@ -303,7 +303,7 @@ Progress Report: <flow_id>
 
 ## 💤 空闲检测
 
-用 `taskflow_set_waiting` 停靠的 flow，其子 Agent 可能崩溃却永远不会恢复。sweeper 通过 `_scan_stale_waiting_taskflows()` 检测这种情况（`sweeper.py:154`）：
+用 `taskflow_flow(action="set_waiting")` 停靠的 flow，其子 Agent 可能崩溃却永远不会恢复。sweeper 通过 `_scan_stale_waiting_taskflows()` 检测这种情况（`sweeper.py:154`）：
 
 1. 读取所有 `waiting` flow。
 2. `timeout_secs = TASKFLOW_INFRA["waiting_timeout_hours"] * 3600`（默认 24 小时）。
@@ -311,11 +311,11 @@ Progress Report: <flow_id>
 4. 通过 `get_run_by_child_session_key(flow["child_session_key"])` + `is_live_unended_run(run)` 检查子 Agent 存活。若子 Agent 仍存活则跳过；若存活检测的导入本身失败，则把子 Agent 当作已死亡。
 5. 否则在 `wait_json` 中打上一个**非破坏性标记**：`stale_detected_at` 与 `stale_child_session_key`。
 
-空闲检测**从不自动把 flow 置为失败**——该标记只是提示性的，并且每个周期都会刷新。与此同时，`taskflow_summary` 会渲染等待状态，当等待超过 `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 小时）时打印 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`（`taskflow_summary.py:67-90`）。
+空闲检测**从不自动把 flow 置为失败**——该标记只是提示性的，并且每个周期都会刷新。与此同时，`taskflow_inspect(action="summary")` 会渲染等待状态，当等待超过 `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 小时）时打印 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_step(action="resume") with a failure result or re-dispatch`（`taskflow_summary.py:67-90`）。
 
 ## 📋 会话面板与隔离
 
-每个会话只能看到自己的数据。`taskflow_summary`、自动恢复的读取者**以及** `taskflow_list` 全部按 `session_id` 隔离，由存储在 SQL 层过滤——属于其他会话的 flow 与不存在的 flow 无法区分（变更时 `FlowNotFoundError`，读取时为 `None`）：
+每个会话只能看到自己的数据。`taskflow_inspect(action="summary")`、自动恢复的读取者**以及** `taskflow_inspect(action="list")` 全部按 `session_id` 隔离，由存储在 SQL 层过滤——属于其他会话的 flow 与不存在的 flow 无法区分（变更时 `FlowNotFoundError`，读取时为 `None`）：
 
 ```python
 # agent/tools/taskflow/tools/taskflow_list.py:85
@@ -353,6 +353,6 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 **子 Agent 边界。** 三个工具族都由各自的构建器打上 `metadata["scope"] = "main_only"` 标签（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）会**最先且无条件**丢弃 `main_only` 工具——先于任何 allow/deny 列表，且 ORCHESTRATOR 解禁也无法覆盖——因此派生出的子 Agent 永远不会拿到 `taskflow_*`、`todowrite`/`todoread` 或 `knowledge` 工具。同样的标签模式此前已覆盖 `memory`、`skill_manage`、`sessions_kill`、`sessions_steer`。真实工具集断言由 `tests/agent/tools/taskflow/test_taskflow_tools.py` 锁定，`_build_child_agent` 边界由 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` 锁定。
 
-**跨会话拒绝。** `taskflow_create` 遇到其他会话已占用的 `flow_id` 时只报告已存在、不泄露 revision；对其他会话的 flow 发起变更会得到与未知 id 相同的 "not found" 文本。`tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py` 与 `tests/server/service/test_session_cleanup_service.py` 覆盖读取/列表/更新/清除路径。
+**跨会话拒绝。** `taskflow_flow(action="create")` 遇到其他会话已占用的 `flow_id` 时只报告已存在、不泄露 revision；对其他会话的 flow 发起变更会得到与未知 id 相同的 "not found" 文本。`tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py` 与 `tests/server/service/test_session_cleanup_service.py` 覆盖读取/列表/更新/清除路径。
 
 

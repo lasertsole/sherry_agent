@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> セッションスコープの軽量な計画・規律レイヤーで、既存の TaskFlow システム上に構築されています。これは**タスクエンジンではなく**、**DAG ではなく**、**スケジューラを実装しません**。セッションレベルの計画は `todowrite` / `todoread` で管理され（システムプロンプト注入により圧縮に対して免疫）、クロスセッションで永続的かつサブエージェントをディスパッチする実行は **TaskFlow** が担当します（`depends_on`、`blocked/ready/dispatched/done`、`taskflow_dispatch`、`taskflow_wait_all`）。2つのレイヤーは `flow_id` / `step_id` でリンクされ、単一の状態には唯一の権威ソースがあり、レイヤー間で複製されません。
+> セッションスコープの軽量な計画・規律レイヤーで、既存の TaskFlow システム上に構築されています。これは**タスクエンジンではなく**、**DAG ではなく**、**スケジューラを実装しません**。セッションレベルの計画は `todowrite` / `todoread` で管理され（システムプロンプト注入により圧縮に対して免疫）、クロスセッションで永続的かつサブエージェントをディスパッチする実行は **TaskFlow** が担当します（`depends_on`、`blocked/ready/dispatched/done`、`taskflow_step(action="dispatch")`、`taskflow_step(action="wait_all")`）。2つのレイヤーは `flow_id` / `step_id` でリンクされ、単一の状態には唯一の権威ソースがあり、レイヤー間で複製されません。
 
 ---
 
@@ -42,9 +42,9 @@
 | スコープ         | 単一セッション、軽量                                             | クロスセッション、永続的                                                                    |
 | 状態             | todo の content/status/priority/category/delegation              | step の depends_on/status/child_session_key/results                                         |
 | 永続化           | `todos.db`（セッションレベル）                                   | `taskflow_registry.db` + flow `state_json`                                                  |
-| 注入方式         | システムプロンプトブロック（毎回圧縮後に再構築、天然で圧縮免疫） | ツール戻り値テキスト（`taskflow_summary` で再読取）                                         |
+| 注入方式         | システムプロンプトブロック（毎回圧縮後に再構築、天然で圧縮免疫） | ツール戻り値テキスト（`taskflow_inspect(action="summary")` で再読取）                                         |
 | 主な責務         | 計画、可視性、規律強制（E1–E7）                                  | 依存関係充足、ブロック/アンロック、並行ディスパッチ、有界待機、結果注入                     |
-| スケジューリング | なし                                                             | あり（`taskflow_run_task` / `taskflow_dispatch` / `taskflow_wait_all` / `taskflow_resume`） |
+| スケジューリング | なし                                                             | あり（`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`） |
 
 一言：**計画・規律レイヤーは「明確に考える、追跡する、完了させる」を担当し、TaskFlow は「実際に実行する、クロスセッション、依存関係を管理する」を担当します。**
 
@@ -53,7 +53,7 @@
 | 関心事                                 | 権威ソース            | 説明                                                           |
 | -------------------------------------- | --------------------- | -------------------------------------------------------------- |
 | todo が完了したか                      | `todos.db`            | `todowrite` のみが todo ステータスを変更可能                   |
-| step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_resume` のみが step を `done` にして後続をアンロック |
+| step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_step(action="resume")` のみが step を `done` にして後続をアンロック |
 | 子セッションが実行中か                 | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`         |
 | 計画ファイルの進捗（チェックボックス） | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
 | 実行エビデンス                         | `src/data/evidence-ledger.db`   | SQLite `EvidenceLedger`（共有、WAL、保持期間/パージ）          |
@@ -66,7 +66,7 @@ todo は TaskFlow を指す2つのオプションフィールドを保持でき�
 - `flow_id`：リンクされた TaskFlow flow id。
 - `step_id`：リンクされた TaskFlow step id（例：`step-2`）、その step の DAG ステータスを再読取するため。
 
-**非ミラーリング原則**：todo レイヤーは `depends_on` をコピーせず、ウェーブを保存せず、step ステータスをキャッシュしません。DAG ステータスが必要な時は読み取り専用の `taskflow_summary(flow_id)` を呼び出し、`blocked/ready/dispatched/done` を UI/プロンプトにマッピングします。
+**非ミラーリング原則**：todo レイヤーは `depends_on` をコピーせず、ウェーブを保存せず、step ステータスをキャッシュしません。DAG ステータスが必要な時は読み取り専用の `taskflow_inspect(action="summary", flow_id)` を呼び出し、`blocked/ready/dispatched/done` を UI/プロンプトにマッピングします。
 
 ---
 
@@ -166,8 +166,8 @@ class TodoService:
         DAG スケジューリングは TaskFlow が所有；本メソッドは読み取り専用の taskflow_summary を呼ぶだけ。"""
         from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
         linked = await store.get_todos_by_flow(session_id, flow_id)
-        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
-        return {"todos": linked, "taskflow_summary": summary_text}
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id, "session_id": session_id})
+        return {"todos": linked, "summary": summary_text}
 ```
 
 ### EvidenceLedger
@@ -201,7 +201,7 @@ async def todowrite(todos: list[dict], session_id: Annotated[str, InjectedState(
     """Update the todo list for the current session (full replacement).
     Pass the COMPLETE list every time.
     DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_run_task(flow_id, task, depends_on=[...])."""
+    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
     result = await service.update_todos(session_id, todos)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:
@@ -265,9 +265,9 @@ Phase 2: Boulder 状態の作成/更新 → boulder.json に書き込み、フ�
 Phase 3: 次のチェックボックスを実行（スケジューリングはすべて TaskFlow に委譲）
   → 最初の未チェックの checkbox を見つける
   → 原子サブタスクに分解
-  → taskflow_run_task(flow_id, task, depends_on=[...]) で登録
-  → blocked はディスパッチしない；ready は taskflow_dispatch で一括ディスパッチ
-  → taskflow_wait_all → taskflow_resume（結果注入、後続アンロック）
+  → taskflow_step(action="run_task", flow_id, task, depends_on=[...]) で登録
+  → blocked はディスパッチしない；ready は taskflow_step(action="dispatch") で一括ディスパッチ
+  → taskflow_step(action="wait_all") → taskflow_step(action="resume")（結果注入、後続アンロック）
   → DELEGATE EVERYTHING via delegation router (E6)
 Phase 4: 検証とエビデンス記録 → 5 gates → src/data/evidence-ledger.db
 Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねない
@@ -275,20 +275,20 @@ Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねな
 
 ### 計画 → TaskFlow のマッピング
 
-1. `taskflow_create(flow_id, description, initial_state)` — flow 作成。
-2. `taskflow_run_task(flow_id, task, depends_on=[...])` — step 登録：依存なし → `dispatched`；依存未充足 → `blocked`（ディスパッチしない）；未知の依存 id → エラー、状態変更なし。
-3. `taskflow_resume(flow_id, child_session_key, result)` — 結果注入：step が `done` になり、`blocked` 依存が `ready` にアンロック。**resume は自動ディスパッチしない。**
-4. `taskflow_dispatch(flow_id, step_ids)` — ready step を一括並行ディスパッチ。
-5. `taskflow_wait_all(flow_id, timeout, poll_interval)` — ディスパッチした子セッションの完了を待機。
-6. `taskflow_finish(flow_id, summary)` — 完了；`taskflow_summary` でいつでも再読取可能。
+1. `taskflow_flow(action="create", flow_id, description, initial_state)` — flow 作成。
+2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — step 登録：依存なし → `dispatched`；依存未充足 → `blocked`（ディスパッチしない）；未知の依存 id → エラー、状態変更なし。
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — 結果注入：step が `done` になり、`blocked` 依存が `ready` にアンロック。**resume は自動ディスパッチしない。**
+4. `taskflow_step(action="dispatch", flow_id, step_ids)` — ready step を一括並行ディスパッチ。
+5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — ディスパッチした子セッションの完了を待機。
+6. `taskflow_flow(action="finish", flow_id, summary)` — 完了；`taskflow_inspect(action="summary")` でいつでも再読取可能。
 
 ### step 状態機械（TaskFlow 権威定義）
 
 ```
 blocked（依存がすべて done ではない；run_task は登録のみ、spawn なし）
-  → ready（依存充足、ディスパッチ待ち；taskflow_resume でアンロック）
+  → ready（依存充足、ディスパッチ待ち；taskflow_step(action="resume") でアンロック）
   → dispatched（detached 子セッション spawn、child_session_key 永続化）
-  → done（taskflow_resume で結果注入済み）
+  → done（taskflow_step(action="resume") で結果注入済み）
 ```
 
 ### HTN → TaskFlow 機能マッピング
@@ -298,18 +298,18 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | チェックボックス間の依存   | step の `depends_on`（step-id リスト）                                      |
 | ウェーブ                   | 明示的なウェーブなし；`ready` ステータス = "現在のウェーブ"                 |
 | ノードステータス           | `status ∈ {blocked, ready, dispatched, done}`（`state_json` 内）            |
-| Frontier（実行可能項目）   | `ready` ステータス + `taskflow_dispatch` が `deps_satisfied` を検証         |
-| 依存未充足時のブロック     | `taskflow_run_task(..., depends_on=[...])` は `blocked` で登録、spawn なし  |
-| 完了による後続のアンロック | `taskflow_resume` が step を `done` に + `unlock_dependents`                |
-| 並行ディスパッチ           | `taskflow_dispatch(flow_id, step_ids)` で ready step を一括ディスパッチ     |
-| 並行子セッションの待機     | `taskflow_wait_all(...)` で flow スコープの有界ポーリング                   |
-| DAG ステータスの再読取     | `taskflow_summary(flow_id)` で各 step の status/depends_on + カウントを表示 |
+| Frontier（実行可能項目）   | `ready` ステータス + `taskflow_step(action="dispatch")` が `deps_satisfied` を検証         |
+| 依存未充足時のブロック     | `taskflow_step(action="run_task", ..., depends_on=[...])` は `blocked` で登録、spawn なし  |
+| 完了による後続のアンロック | `taskflow_step(action="resume")` が step を `done` に + `unlock_dependents`                |
+| 並行ディスパッチ           | `taskflow_step(action="dispatch", flow_id, step_ids)` で ready step を一括ディスパッチ     |
+| 並行子セッションの待機     | `taskflow_step(action="wait_all", ...)` で flow スコープの有界ポーリング                   |
+| DAG ステータスの再読取     | `taskflow_inspect(action="summary", flow_id)` で各 step の status/depends_on + カウントを表示 |
 
 ### 並行デリバリーチャネル決定
 
 | トポロジー                      | 条件                            | 戦略                                              |
 | ------------------------------- | ------------------------------- | ------------------------------------------------- |
-| 独立チャネル → 並行 workers     | 分離ファイル、共有契約なし      | 一括並行 spawn burst（`taskflow_dispatch`）       |
+| 独立チャネル → 並行 workers     | 分離ファイル、共有契約なし      | 一括並行 spawn burst（`taskflow_step(action="dispatch")`）       |
 | 順序依存チャネル → ウェーブ直列 | C が A と B の完了を必要        | 前提 step の `done` 後、`depends_on` + `resume` アンロックで実行 |
 | 重複チャネル → team             | 同じモジュール/契約、並行が高速 | 直列化または手動調整                              |
 
@@ -347,7 +347,7 @@ def _build_todo_block(session_id: str) -> str:
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
     lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
     return "\n".join(lines)
@@ -413,4 +413,4 @@ WS イベント：`todo_updated`（変更時プッシュ）+ `todo_refresh`（�
 }
 ```
 
-`taskflow_status` は `taskflow_summary(flow_id)` で再読取した step ステータスであり、フロントエンドはウェーブ/依存を再計算しません。
+`taskflow_status` は `taskflow_inspect(action="summary", flow_id)` で再読取した step ステータスであり、フロントエンドはウェーブ/依存を再計算しません。

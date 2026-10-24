@@ -30,7 +30,7 @@
 1. **誰が spawn でき、何を制御できるか？**——**深度ロール**（`SubagentSessionRole`）。ネスト深度から導出され、spawn 権限と制御スコープを単独で決めます。
 2. **どの種類の worker か？**——**機能ロール**（`FunctionalRole`）。明示的な特化であり、子 LLM のティア、ツール許可リスト、ロール固有のプロンプト節を単独で決めます。
 
-完了判定はその後、子実行から親ターンへと外側に積まれた四つの常時有効な層で検証されます：子実行の完了判定器と goal loop、TaskFlow のステップ判定器、`taskflow_finish` のフローゲート、そして親ターンの完了 drain プログラム的ゲートです。二つのロール軸とゲートスタックが本ページの主題です。API の詳細は[モジュール README](../../agent/tools/subagent/README.ja.md) にあります。
+完了判定はその後、子実行から親ターンへと外側に積まれた四つの常時有効な層で検証されます：子実行の完了判定器と goal loop、TaskFlow のステップ判定器、`taskflow_flow(action="finish")` のフローゲート、そして親ターンの完了 drain プログラム的ゲートです。二つのロール軸とゲートスタックが本ページの主題です。API の詳細は[モジュール README](../../agent/tools/subagent/README.ja.md) にあります。
 
 ### 🧱 不変条件
 
@@ -125,12 +125,12 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 |---|----|--------|------------|--------------------------|
 | 1 | 子実行 | 完了判定器 + goal loop（`spawn/completion_judge.py`） | タスク、最新応答、証跡サマリ；予算 `goal_max_turns`（既定 `5`） | モデルエラー / 解析不能 → `done` |
 | 2 | ステップ | TaskFlow ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `validation_criteria`（無ければ判定器を呼ばない） | モデルエラー / 解析不能 → `pass` |
-| 3 | フロー | `taskflow_finish` のゲート A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状態とフロー証跡 | 台帳が読めない → 通す |
+| 3 | フロー | `taskflow_flow(action="finish")` のゲート A–C（`agent/tools/taskflow/tools/taskflow_finish.py`） | DAG 状態とフロー証跡 | 台帳が読めない → 通す |
 | 4 | 親ターン | 完了 drain のプログラム的ゲート（`agent/middlewares/subagent_completion_drain/`） | セッションの検証証跡サマリ | 参照失敗 → ゲートを省略 |
 
-**第 2 層——ステップ判定器。** `taskflow_resume` が子結果を注入した後、`validation_criteria` を持つステップは `PASS` / `RETRY` / `BLOCK` と判定されます。`RETRY` はステップのリトライ回数が `STEP_JUDGE["max_retries"]`（既定 `2`）未満なら判定器のフィードバック付きで再ディスパッチし、予算を使い切るとステップをブロックします。判定基準は判定器の入力でありスイッチではありません——基準を持たないステップが判定器に送られることはありません。
+**第 2 層——ステップ判定器。** `taskflow_step(action="resume")` が子結果を注入した後、`validation_criteria` を持つステップは `PASS` / `RETRY` / `BLOCK` と判定されます。`RETRY` はステップのリトライ回数が `STEP_JUDGE["max_retries"]`（既定 `2`）未満なら判定器のフィードバック付きで再ディスパッチし、予算を使い切るとステップをブロックします。判定基準は判定器の入力でありスイッチではありません——基準を持たないステップが判定器に送られることはありません。
 
-**第 3 層——フローゲート。** `taskflow_finish` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ません（加えて、`description` を持つフローのステップ数が `GOAL_GATE["min_steps"]` 以上のときだけ走るオプトインの Gate E 目標判定）。
+**第 3 層——フローゲート。** `taskflow_flow(action="finish")` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ません（加えて、`description` を持つフローのステップ数が `GOAL_GATE["min_steps"]` 以上のときだけ走るオプトインの Gate E 目標判定）。
 
 **第 4 層——親ターンゲート。** drain が待機中の完了キャリアを注入するとき、親セッションの証跡も検査します。キャリアはそのまま注入され、セッションに合格証跡が無ければ検証必須メッセージがその後ろに追記されます。この検査は無条件で——どの設定でも無効化できず——証跡参照自体が利用不能なときにのみフェイルオープンします。
 
@@ -148,7 +148,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 
 ### 🧵 合成集約
 
-`taskflow_run_task(aggregate_deps=True)` は合成ステップを印付けし、ディスパッチされるタスクテキストに依存ステップの記録済み結果を載せます。フラグはステップに保存され、`build_task_with_dep_results(step, steps, results)` が `depends_on` 順に `## Upstream Results` ブロックを追記します。各依存につき `### {step_id}` 節を一つ、依存の `child_session_key` をフローの `{child_session_key, result, result_hash}` レコードと照合します。記録が無い依存は `no result recorded` プレースホルダを寄与します。集約はディスパッチや再試行のたびに安定したレコードから再導出されるため、保存済みステップタスクが書き換わることは決してありません。フラグが無ければタスクテキストは不変です。完全な挙動は[長期タスク README](../long-running-tasks/README.ja.md) にあります。
+`taskflow_step(action="run_task", aggregate_deps=True)` は合成ステップを印付けし、ディスパッチされるタスクテキストに依存ステップの記録済み結果を載せます。フラグはステップに保存され、`build_task_with_dep_results(step, steps, results)` が `depends_on` 順に `## Upstream Results` ブロックを追記します。各依存につき `### {step_id}` 節を一つ、依存の `child_session_key` をフローの `{child_session_key, result, result_hash}` レコードと照合します。記録が無い依存は `no result recorded` プレースホルダを寄与します。集約はディスパッチや再試行のたびに安定したレコードから再導出されるため、保存済みステップタスクが書き換わることは決してありません。フラグが無ければタスクテキストは不変です。完全な挙動は[長期タスク README](../long-running-tasks/README.ja.md) にあります。
 
 ## ⚙️ 設定
 

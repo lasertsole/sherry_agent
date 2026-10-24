@@ -30,7 +30,7 @@
 1. **누가 spawn할 수 있고, 무엇을 제어하는가?**——**깊이 역할**(`SubagentSessionRole`). 중첩 깊이에서 도출되며 spawn 권한과 제어 범위를 단독으로 결정합니다.
 2. **어떤 종류의 worker인가?**——**기능 역할**(`FunctionalRole`). 명시적 특수화로서 자식 LLM 티어, 도구 허용 목록, 역할별 프롬프트 절을 단독으로 결정합니다.
 
-완료는 그다음 자식 실행에서 부모 턴까지 바깥으로 쌓인 네 개의 상시 켜진 계층으로 검증됩니다: 자식 실행의 완료 판정기와 goal loop, TaskFlow 단계 판정기, `taskflow_finish` 흐름 게이트, 그리고 부모 턴의 완료 drain 프로그램 게이트. 두 역할 축과 게이트 스택이 이 페이지의 주제입니다. API 세부는 [모듈 README](../../agent/tools/subagent/README.ko.md)에 있습니다.
+완료는 그다음 자식 실행에서 부모 턴까지 바깥으로 쌓인 네 개의 상시 켜진 계층으로 검증됩니다: 자식 실행의 완료 판정기와 goal loop, TaskFlow 단계 판정기, `taskflow_flow(action="finish")` 흐름 게이트, 그리고 부모 턴의 완료 drain 프로그램 게이트. 두 역할 축과 게이트 스택이 이 페이지의 주제입니다. API 세부는 [모듈 README](../../agent/tools/subagent/README.ko.md)에 있습니다.
 
 ### 🧱 불변식
 
@@ -125,12 +125,12 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 |---|------|--------|-------------|----------------|
 | 1 | 자식 실행 | 완료 판정기 + goal loop(`spawn/completion_judge.py`) | 작업, 최신 응답, 증거 요약; 예산 `goal_max_turns`(기본 `5`) | 모델 오류 / 파싱 불가 → `done` |
 | 2 | 단계 | TaskFlow 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `validation_criteria`(없으면 판정기 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
-| 3 | 흐름 | `taskflow_finish` 게이트 A–C(`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG 상태와 흐름 증거 | 원장 읽기 불가 → 통과 |
+| 3 | 흐름 | `taskflow_flow(action="finish")` 게이트 A–C(`agent/tools/taskflow/tools/taskflow_finish.py`) | DAG 상태와 흐름 증거 | 원장 읽기 불가 → 통과 |
 | 4 | 부모 턴 | 완료 drain 프로그램 게이트(`agent/middlewares/subagent_completion_drain/`) | 세션의 검증 증거 요약 | 조회 실패 → 게이트 생략 |
 
-**2계층——단계 판정기.** `taskflow_resume`이 자식 결과를 주입한 뒤, `validation_criteria`를 가진 단계는 `PASS` / `RETRY` / `BLOCK`으로 판정됩니다. `RETRY`는 단계 재시도 횟수가 `STEP_JUDGE["max_retries"]`(기본 `2`) 미만이면 판정기 피드백과 함께 단계를 재디스패치하고, 예산을 다 쓰면 단계를 차단합니다. 판정 기준은 판정기의 입력이지 스위치가 아닙니다——기준이 없는 단계는 판정기로 보내지지 않습니다.
+**2계층——단계 판정기.** `taskflow_step(action="resume")`이 자식 결과를 주입한 뒤, `validation_criteria`를 가진 단계는 `PASS` / `RETRY` / `BLOCK`으로 판정됩니다. `RETRY`는 단계 재시도 횟수가 `STEP_JUDGE["max_retries"]`(기본 `2`) 미만이면 판정기 피드백과 함께 단계를 재디스패치하고, 예산을 다 쓰면 단계를 차단합니다. 판정 기준은 판정기의 입력이지 스위치가 아닙니다——기준이 없는 단계는 판정기로 보내지지 않습니다.
 
-**3계층——흐름 게이트.** `taskflow_finish`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않습니다(그리고 `description`이 있는 흐름의 단계 수가 `GOAL_GATE["min_steps"]` 이상일 때만 도는 옵트인 Gate E 목표 판정).
+**3계층——흐름 게이트.** `taskflow_flow(action="finish")`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않습니다(그리고 `description`이 있는 흐름의 단계 수가 `GOAL_GATE["min_steps"]` 이상일 때만 도는 옵트인 Gate E 목표 판정).
 
 **4계층——부모 턴 게이트.** drain이 대기 중인 완료 캐리어를 주입할 때 부모 세션의 증거도 검사합니다. 캐리어는 그대로 주입되고, 세션에 통과 증거가 없으면 필수 검증 메시지가 그 뒤에 덧붙습니다. 이 검사는 무조건적이며——어떤 설정으로도 끌 수 없고——증거 조회 자체가 이용 불가능할 때만 페일오픈합니다.
 
@@ -148,7 +148,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 
 ### 🧵 합성 집계
 
-`taskflow_run_task(aggregate_deps=True)`는 합성 단계를 표시해 디스패치되는 작업 텍스트에 의존 단계의 기록된 결과를 싣습니다. 플래그는 단계에 저장되고, `build_task_with_dep_results(step, steps, results)`가 `depends_on` 순서로 `## Upstream Results` 블록을 덧붙입니다. 각 의존성마다 `### {step_id}` 절 하나를 두고, 의존성의 `child_session_key`를 흐름의 `{child_session_key, result, result_hash}` 레코드와 대조합니다. 기록이 없는 의존성은 `no result recorded` 자리표시자를 기여합니다. 집계는 디스패치나 재시도마다 안정적인 레코드에서 다시 도출되므로 저장된 단계 작업이 재작성되는 일은 결코 없습니다. 플래그가 없으면 작업 텍스트는 그대로입니다. 전체 동작은 [장기 실행 작업 README](../long-running-tasks/README.ko.md)에 있습니다.
+`taskflow_step(action="run_task", aggregate_deps=True)`는 합성 단계를 표시해 디스패치되는 작업 텍스트에 의존 단계의 기록된 결과를 싣습니다. 플래그는 단계에 저장되고, `build_task_with_dep_results(step, steps, results)`가 `depends_on` 순서로 `## Upstream Results` 블록을 덧붙입니다. 각 의존성마다 `### {step_id}` 절 하나를 두고, 의존성의 `child_session_key`를 흐름의 `{child_session_key, result, result_hash}` 레코드와 대조합니다. 기록이 없는 의존성은 `no result recorded` 자리표시자를 기여합니다. 집계는 디스패치나 재시도마다 안정적인 레코드에서 다시 도출되므로 저장된 단계 작업이 재작성되는 일은 결코 없습니다. 플래그가 없으면 작업 텍스트는 그대로입니다. 전체 동작은 [장기 실행 작업 README](../long-running-tasks/README.ko.md)에 있습니다.
 
 ## ⚙️ 설정
 

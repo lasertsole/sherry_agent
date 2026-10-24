@@ -37,7 +37,7 @@ terminal / python_repl runs a command
 
 **Cross-session propagation.** A file write marks the writer's own session first. When `EVIDENCE_CROSS_SESSION_STALENESS["enabled"]` is true, `EvidenceLedger.mark_stale_for_path_all_sessions()` scans the OTHER sessions' evidence rows for the edited path — in a new row's `modified_files`, as a true path token named by the command, or in a legacy row's command — and appends one `scope="cross_session"` stale row under EACH affected session. `source_session` records the writer; `max_sessions_scan` caps the scan and `exclude_self` skips the already-marked writer. The read-side derivation below needs no change because the broadcast row lives in the affected session's own sequence.
 
-**Finish-time replay.** At `taskflow_finish`, Gate C first calls `regression_gate.reverify_flow_evidence()`: every unique passed command in the flow's sessions is replayed once (allowlisted executables, no shell, `max_reverify_commands` cap, per-command timeout) in the flow's project root. A pass appends an `unmark` event for a command whose evidence was stale/broken; a failure appends a `broken` event. This is the only path that catches a cross-file import break, because it re-runs A's test command even when no stale row names the changed source file. A step may declare `file_deps`; when another step's write touches one, `prioritized_sessions()` moves that step's commands to the front before the `max_reverify_commands` cap (`file_deps_mode="prioritize"`, the default). The opt-in `file_deps_mode="filter"` replays ONLY declared sessions — cheaper, but it can miss an undeclared step's break.
+**Finish-time replay.** At `taskflow_flow(action="finish")`, Gate C first calls `regression_gate.reverify_flow_evidence()`: every unique passed command in the flow's sessions is replayed once (allowlisted executables, no shell, `max_reverify_commands` cap, per-command timeout) in the flow's project root. A pass appends an `unmark` event for a command whose evidence was stale/broken; a failure appends a `broken` event. This is the only path that catches a cross-file import break, because it re-runs A's test command even when no stale row names the changed source file. A step may declare `file_deps`; when another step's write touches one, `prioritized_sessions()` moves that step's commands to the front before the `max_reverify_commands` cap (`file_deps_mode="prioritize"`, the default). The opt-in `file_deps_mode="filter"` replays ONLY declared sessions — cheaper, but it can miss an undeclared step's break.
 
 ---
 
@@ -200,7 +200,7 @@ This string is what the gates and judges parse — they search for the literal s
 
 ### Level 1: Per-step (TaskFlow step judge)
 
-When `taskflow_resume` dispatches a step with acceptance criteria, it calls `judge_step_result()` with `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`. The step judge's prompt includes a `## Verification Evidence` section containing the summary (or `"(none recorded)"`). The judge uses this to decide PASS / RETRY / BLOCK.
+When `taskflow_step(action="resume")` dispatches a step with acceptance criteria, it calls `judge_step_result()` with `evidence_summary=collect_evidence_summary(session_key=step.child_session_key)`. The step judge's prompt includes a `## Verification Evidence` section containing the summary (or `"(none recorded)"`). The judge uses this to decide PASS / RETRY / BLOCK.
 
 ### Level 2: Per-subagent (completion judge + drain gate)
 
@@ -208,7 +208,7 @@ When `taskflow_resume` dispatches a step with acceptance criteria, it calls `jud
 - **Completion judge prompt:** If not skipped, `judge_completion()` receives the evidence summary in its prompt.
 - **Drain gate:** `SubagentCompletionDrainMiddleware` (parent-side `before_model`) checks evidence when draining subagent-completion messages. No evidence or `FAIL` → injects a `[GATE] Completion blocked: verification evidence missing or failing` blocking message.
 
-### Level 3: Per-flow (taskflow_finish Gate C)
+### Level 3: Per-flow (taskflow_flow(action="finish") Gate C)
 
 Before a taskflow can transition to DONE, Gate C checks the flow's AGGREGATED evidence — the union of every dispatched step's `child_session_key` plus the flow's `creator_session_key`, because rows are keyed by session and a flow spans sessions (a flow that never dispatched a step has no keys, hence no evidence, and passes):
 

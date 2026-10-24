@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `flow_id`  | リンクされた TaskFlow flow id（DAG は TaskFlow が所有）            |
 | `step_id`  | リンクされた TaskFlow step id（例：`step-2`）、DAG ステータス再読取用 |
 
-> **設計境界**：`todos.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_summary(flow_id)` で再読取します。
+> **設計境界**：`todos.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_inspect(action="summary", flow_id)` で再読取します。
 
 CRUD インターフェース：
 

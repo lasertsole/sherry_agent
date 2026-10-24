@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> A session-scoped, lightweight planning and enforcement layer built on top of the existing TaskFlow system. It is **not a task engine**, **not a DAG**, and **does not implement a scheduler**. Session-level plans are managed by `todowrite` / `todoread` (compression-immune via system prompt injection). Cross-session, durable, subagent-dispatching execution is owned by **TaskFlow** (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_dispatch`, `taskflow_wait_all`). The two layers are linked by `flow_id` / `step_id`; a single state has one authoritative source — no cross-layer duplication.
+> A session-scoped, lightweight planning and enforcement layer built on top of the existing TaskFlow system. It is **not a task engine**, **not a DAG**, and **does not implement a scheduler**. Session-level plans are managed by `todowrite` / `todoread` (compression-immune via system prompt injection). Cross-session, durable, subagent-dispatching execution is owned by **TaskFlow** (`depends_on`, `blocked/ready/dispatched/done`, `taskflow_step(action="dispatch")`, `taskflow_step(action="wait_all")`). The two layers are linked by `flow_id` / `step_id`; a single state has one authoritative source — no cross-layer duplication.
 
 ---
 
@@ -42,9 +42,9 @@
 | Scope       | Single session, lightweight                                             | Cross-session, durable                                                                    |
 | State       | todo `content/status/priority/category/delegation`                      | step `depends_on/status/child_session_key/results`                                        |
 | Persistence | `todos.db` (session-level)                                              | `taskflow_registry.db` + flow `state_json`                                                |
-| Injection   | System prompt block (rebuilt after every compression, naturally immune) | Tool return text (`taskflow_summary` re-read)                                             |
+| Injection   | System prompt block (rebuilt after every compression, naturally immune) | Tool return text (`taskflow_inspect(action="summary")` re-read)                                             |
 | Main duty   | Planning, visibility, discipline enforcement (E1–E7)                    | Dependency satisfaction, block/unlock, parallel dispatch, bounded wait, result injection  |
-| Scheduling? | No                                                                      | Yes (`taskflow_run_task` / `taskflow_dispatch` / `taskflow_wait_all` / `taskflow_resume`) |
+| Scheduling? | No                                                                      | Yes (`taskflow_step(action="run_task")` / `taskflow_step(action="dispatch")` / `taskflow_step(action="wait_all")` / `taskflow_step(action="resume")`) |
 
 One-liner: **the planning & discipline layer is responsible for "think clearly, keep track, force completion"; TaskFlow is responsible for "actually run, cross-session, manage dependencies".**
 
@@ -53,7 +53,7 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 | Concern                                     | Authority             | Notes                                                               |
 | ------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
 | Whether a todo is complete                  | `todos.db`            | Only `todowrite` can change todo status                             |
-| Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_resume` can mark a step `done` and unlock successors |
+| Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_step(action="resume")` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
 | Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
 | Execution evidence                          | `src/data/evidence-ledger.db` | SQLite `EvidenceLedger` (shared, WAL, retention/purge)   |
@@ -69,7 +69,7 @@ A todo may carry two optional fields pointing to TaskFlow:
 The **no-mirroring** principle:
 
 - The todo layer does **not** copy `depends_on`, does **not** store a DAG/wave projection, does **not** cache step status.
-- When DAG status is needed, call the read-only `taskflow_summary(flow_id)` and map `blocked/ready/dispatched/done` back to the UI/prompt.
+- When DAG status is needed, call the read-only `taskflow_inspect(action="summary", flow_id)` and map `blocked/ready/dispatched/done` back to the UI/prompt.
 - When advancing the DAG, call TaskFlow tools; the todo layer only updates the corresponding todo status.
 
 ---
@@ -176,8 +176,8 @@ class TodoService:
         DAG scheduling lives in TaskFlow; this method only calls read-only taskflow_summary."""
         from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
         linked = await store.get_todos_by_flow(session_id, flow_id)
-        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
-        return {"todos": linked, "taskflow_summary": summary_text}
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id, "session_id": session_id})
+        return {"todos": linked, "summary": summary_text}
 ```
 
 ### EvidenceLedger
@@ -216,7 +216,7 @@ async def todowrite(
     Category (optional): quick|deep|ultrabrain|visual|git|writing.
     Delegation (optional): self|subagent.
     DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_run_task(flow_id, task, depends_on=[...])."""
+    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
     result = await service.update_todos(session_id, todos)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:
@@ -275,9 +275,9 @@ Phase 2: Create/update Boulder state → write boulder.json, register phases/tas
 Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Find first unchecked checkbox
   → Decompose into atomic sub-tasks
-  → Register as TaskFlow steps: taskflow_run_task(flow_id, task, depends_on=[...])
-  → Blocked steps not dispatched; ready steps via taskflow_dispatch
-  → taskflow_wait_all → taskflow_resume (inject result, unlock successors)
+  → Register as TaskFlow steps: taskflow_step(action="run_task", flow_id, task, depends_on=[...])
+  → Blocked steps not dispatched; ready steps via taskflow_step(action="dispatch")
+  → taskflow_step(action="wait_all") → taskflow_step(action="resume") (inject result, unlock successors)
   → DELEGATE EVERYTHING via delegation router (E6)
 Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.db
 Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without asking
@@ -285,24 +285,24 @@ Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without askin
 
 ### Plan → TaskFlow Mapping
 
-1. `taskflow_create(flow_id, description, initial_state)` — create the flow.
-2. `taskflow_run_task(flow_id, task, depends_on=[...])` — register steps:
+1. `taskflow_flow(action="create", flow_id, description, initial_state)` — create the flow.
+2. `taskflow_step(action="run_task", flow_id, task, depends_on=[...])` — register steps:
    - No deps → immediately `dispatched` (child session spawned).
    - Deps unsatisfied → `blocked`, not dispatched. Unknown dep id → error, no state change.
-3. `taskflow_resume(flow_id, child_session_key, result)` — inject result:
+3. `taskflow_step(action="resume", flow_id, child_session_key, result)` — inject result:
    - Step becomes `done`; dependent `blocked` steps unlock to `ready` (returned).
    - **Resume does NOT auto-dispatch.**
-4. `taskflow_dispatch(flow_id, step_ids)` — batch parallel dispatch ready steps.
-5. `taskflow_wait_all(flow_id, timeout, poll_interval)` — wait for dispatched children to settle.
-6. `taskflow_finish(flow_id, summary)` — wrap up; `taskflow_summary` anytime for re-read.
+4. `taskflow_step(action="dispatch", flow_id, step_ids)` — batch parallel dispatch ready steps.
+5. `taskflow_step(action="wait_all", flow_id, timeout, poll_interval)` — wait for dispatched children to settle.
+6. `taskflow_flow(action="finish", flow_id, summary)` — wrap up; `taskflow_inspect(action="summary")` anytime for re-read.
 
 ### Step State Machine (TaskFlow Authority)
 
 ```
 blocked (deps not all done; run_task only registers, no spawn)
-  → ready (deps satisfied, awaiting dispatch; unlocked by taskflow_resume)
+  → ready (deps satisfied, awaiting dispatch; unlocked by taskflow_step(action="resume"))
   → dispatched (detached child session spawned, child_session_key persisted)
-  → done (result injected via taskflow_resume)
+  → done (result injected via taskflow_step(action="resume"))
 ```
 
 ### HTN → TaskFlow Capability Mapping
@@ -312,18 +312,18 @@ blocked (deps not all done; run_task only registers, no spawn)
 | Inter-checkbox dependencies     | step `depends_on` (step-id list, e.g. `["step-1"]`)                      |
 | Wave / wave index               | No explicit wave; `ready` status = "current wave"                        |
 | Node status                     | `status ∈ {blocked, ready, dispatched, done}` in `state_json`            |
-| Frontier (executable items)     | `ready` status + `taskflow_dispatch` validates `deps_satisfied`          |
-| Block when deps unsatisfied     | `taskflow_run_task(..., depends_on=[...])` registers `blocked`, no spawn |
-| Unlock successors on completion | `taskflow_resume` marks step `done` + `unlock_dependents`                |
-| Parallel dispatch               | `taskflow_dispatch(flow_id, step_ids)` batch dispatch ready steps        |
-| Wait for parallel children      | `taskflow_wait_all(...)` flow-scoped bounded poll                        |
-| Re-read DAG status              | `taskflow_summary(flow_id)` renders per-step status + counts             |
+| Frontier (executable items)     | `ready` status + `taskflow_step(action="dispatch")` validates `deps_satisfied`          |
+| Block when deps unsatisfied     | `taskflow_step(action="run_task", ..., depends_on=[...])` registers `blocked`, no spawn |
+| Unlock successors on completion | `taskflow_step(action="resume")` marks step `done` + `unlock_dependents`                |
+| Parallel dispatch               | `taskflow_step(action="dispatch", flow_id, step_ids)` batch dispatch ready steps        |
+| Wait for parallel children      | `taskflow_step(action="wait_all", ...)` flow-scoped bounded poll                        |
+| Re-read DAG status              | `taskflow_inspect(action="summary", flow_id)` renders per-step status + counts             |
 
 ### Parallel Delivery Channel Decision
 
 | Topology                                 | Condition                               | Strategy                                                                  |
 | ---------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------- |
-| Independent channels → parallel workers  | Separate files, no shared contracts     | One parallel spawn burst (`taskflow_dispatch`)                            |
+| Independent channels → parallel workers  | Separate files, no shared contracts     | One parallel spawn burst (`taskflow_step(action="dispatch")`)                            |
 | Ordered dependency channel → wave serial | C needs A and B first                   | Wait for predecessor `done` then execute (`depends_on` + `resume` unlock) |
 | Overlapping channels → team              | Same module/contract, concurrent faster | Serialize or manually coordinate                                          |
 
@@ -361,7 +361,7 @@ def _build_todo_block(session_id: str) -> str:
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
     lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
-    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
     return "\n".join(lines)
@@ -430,4 +430,4 @@ WS events: `todo_updated` (push on change) + `todo_refresh` (re-send on reconnec
 }
 ```
 
-`taskflow_status` is the step status re-read from `taskflow_summary(flow_id)`; the frontend does not recompute step dependencies.
+`taskflow_status` is the step status re-read from `taskflow_inspect(action="summary", flow_id)`; the frontend does not recompute step dependencies.

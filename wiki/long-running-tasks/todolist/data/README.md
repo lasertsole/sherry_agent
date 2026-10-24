@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `flow_id`  | Linked TaskFlow flow id (DAG owned by TaskFlow)                    |
 | `step_id`  | Linked TaskFlow step id (e.g. `step-2`), for re-reading DAG status |
 
-> **Design boundary**: `todos.db` does **not** hold `depends_on` / DAG state / step status. The dependency graph, `blocked/ready/dispatched/done` and unlock logic are all provided by TaskFlow. The todo only points to the corresponding flow step via `flow_id`/`step_id`; DAG status is re-read via `taskflow_summary(flow_id)`.
+> **Design boundary**: `todos.db` does **not** hold `depends_on` / DAG state / step status. The dependency graph, `blocked/ready/dispatched/done` and unlock logic are all provided by TaskFlow. The todo only points to the corresponding flow step via `flow_id`/`step_id`; DAG status is re-read via `taskflow_inspect(action="summary", flow_id)`.
 
 CRUD interface:
 

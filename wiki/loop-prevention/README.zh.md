@@ -200,7 +200,7 @@
 
 ### 步骤级：`StepJudge` + 有界重试
 
-`agent/tools/taskflow/step_judge.py` 是一个温度 0 的辅助 LLM 判别器，按步骤的 `validation_criteria` 审查已派发步骤的结果，返回 `pass` / `retry` / `block`。仅当步骤携带验收标准（由 `taskflow_run_task` 或 `taskflow_resume` 设置）时才启动，因此普通步骤不会为一次判别调用付费。
+`agent/tools/taskflow/step_judge.py` 是一个温度 0 的辅助 LLM 判别器，按步骤的 `validation_criteria` 审查已派发步骤的结果，返回 `pass` / `retry` / `block`。仅当步骤携带验收标准（由 `taskflow_step(action="run_task")` 或 `taskflow_step(action="resume")` 设置）时才启动，因此普通步骤不会为一次判别调用付费。
 
 - `retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback`（`## Previous Attempt Feedback`）把判别器的指引注入替换任务。预算耗尽则该步骤标记为 `blocked`。
 - `block` 以判别器的理由把该步骤标记为 `blocked`。

@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 14 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, judges criteria-bearing step results with the TaskFlow decision LLM (`TASKFLOW_LLM_*`, auxiliary fallback unless configured) (`pass` / `retry` / `block`), aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
+> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_flow` / `taskflow_step` / `taskflow_inspect`, 3 grouped tools over 16 actions) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, judges criteria-bearing step results with the TaskFlow decision LLM (`TASKFLOW_LLM_*`, auxiliary fallback unless configured) (`pass` / `retry` / `block`), aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
 Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/core.py` (TaskFlow-context block), `agent/middlewares/subagent_completion_drain/core.py` (memory backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
@@ -43,8 +43,8 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | # | Subsystem | Entry point | Durable where |
 | :- | :--- | :--- | :--- |
 | 1 | **TaskFlow DAG engine** | `agent/tools/taskflow/` | `data/taskflow_registry.db` (SQLite, WAL) |
-| 2 | **Token / cost budget** | `taskflow_budget`, `taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
-| 3 | **Deadline** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
+| 2 | **Token / cost budget** | `taskflow_flow(action="budget")`, `taskflow_step(action="resume")` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
+| 3 | **Deadline** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
 | 5 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
 | 6 | **Tri-color orphan GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
@@ -53,7 +53,7 @@ The design contract throughout is **error-as-text**: tools never raise business 
 
 ## ♻️ Tri-color Orphan GC
 
-A TaskFlow is kept alive by an **active todo root**. `taskflow_create` and `taskflow_plan` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. The sweeper then runs two complementary passes at boot and every tick:
+A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="create")` and `taskflow_flow(action="plan")` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. The sweeper then runs two complementary passes at boot and every tick:
 
 | Pass | Condition | Action |
 | :--- | :--- | :--- |
@@ -64,15 +64,15 @@ A TaskFlow is kept alive by an **active todo root**. `taskflow_create` and `task
 | Zombie todo | active todo references a failed/cancelled flow | todo `cancelled` |
 | Prune | more than `max_total_flows_per_session` (200) terminal/superseded rows | oldest deleted |
 
-A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_finish` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the mark query never sees the empty window between DELETE and INSERT.
+A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the mark query never sees the empty window between DELETE and INSERT.
 
 Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_plan` auto-generates a **stable** id, `plan-<sha256(session_id + goal)[:10]>`; repeating the same goal in the same session returns the existing **non-terminal** flow as an idempotent success instead of creating a second one. A terminal flow still errors (pass another id, or create its successor). The session id is part of the seed because `flow_id` is a global primary key while ownership is per-session.
-- `taskflow_create` treats a duplicate **non-terminal** `flow_id` as an idempotent success (returns revision + status); a terminal flow, or an id that belongs to another session, remains an error.
-- Manual `taskflow_dispatch` and `taskflow_resume`'s auto-dispatch wave share `_dispatch.flow_dispatch_lock(flow_id)`: the whole read → validate → spawn → persist sequence is serialized per flow, and the wave re-checks that each step is still `ready` after acquiring the lock. The lock is **process-local** (one backend process, TaskFlow tools are main-only); a multi-process deployment would need a DB-backed lease.
+- `taskflow_flow(action="plan")` auto-generates a **stable** id, `plan-<sha256(session_id + goal)[:10]>`; repeating the same goal in the same session returns the existing **non-terminal** flow as an idempotent success instead of creating a second one. A terminal flow still errors (pass another id, or create its successor). The session id is part of the seed because `flow_id` is a global primary key while ownership is per-session.
+- `taskflow_flow(action="create")` treats a duplicate **non-terminal** `flow_id` as an idempotent success (returns revision + status); a terminal flow, or an id that belongs to another session, remains an error.
+- Manual `taskflow_step(action="dispatch")` and `taskflow_step(action="resume")`'s auto-dispatch wave share `_dispatch.flow_dispatch_lock(flow_id)`: the whole read → validate → spawn → persist sequence is serialized per flow, and the wave re-checks that each step is still `ready` after acquiring the lock. The lock is **process-local** (one backend process, TaskFlow tools are main-only); a multi-process deployment would need a DB-backed lease.
 - **Mutating-repeat measurement (2026-10-22):** 204 tool calls across 225 checkpoint threads — 122 `ast_grep_search`, 34 `terminal`, 23 `execute_code`, 10 `explore`, 5 `ast_grep_rewrite`, 5 `question`, 3 `write_file`, 1 `python_repl`, 1 `sessions_spawn` — produced **zero** consecutive same-name + same-args successful mutating runs. A separate `ToolCallSignature` middleware was therefore not implemented; `ToolGuardrails` remains the loop detector, and a mutating-repeat counter is reconsidered only if telemetry shows real repeats.
 
 Source: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`; tests: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`.
@@ -142,7 +142,7 @@ The constants most relevant to this document:
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
 ┌───────────────────┐     announce/settle     ┌────────────────────────┐           │
-│ child subagent    │ ──────────────────────▶ │ taskflow_resume        │           │
+│ child subagent    │ ──────────────────────▶ │ taskflow_step(action="resume")        │           │
 │ sessions          │                         │ (+ token_usage budget) │           │
 └───────────────────┘                         └───────────┬────────────┘           │
          │                                                │                        │
@@ -175,21 +175,21 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 
 | Tool | Signature | Returns |
 | :--- | :--- | :--- |
-| `taskflow_create` | `(flow_id, description="", initial_state=None, session_id, deadline_hours=None)` | created id/status/revision (+ deadline) |
-| `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | dispatched step, or `blocked` with pending deps |
-| `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | dispatched step ids + revision |
-| `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | per-step settled report (complete or partial; auto-retries policy steps) |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | resumed status, unlocked steps (**auto-dispatched by default**), step-status counts, criteria echo, judge verdict, retry note |
-| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting status + revision |
-| `taskflow_summary` | `(flow_id, session_id)` | full flow state incl. wait/deadline status |
-| `taskflow_progress` | `(flow_id, session_id)` | completion %, breakdown, next steps, est. remaining |
-| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | budget report, or set confirmation |
-| `taskflow_list` | `(status_filter="active", session_id)` | this session's board (`active` / `all` / status name) |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | terminal `done` (five-gate check incl. the goal judge, fail-open) |
-| `taskflow_replan` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | remaining steps regenerated from the goal + done results + failure reason (done/in-flight kept, downstream of a changed step re-blocked, ≤ 3 replans) |
-| `taskflow_plan` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | a new flow decomposed into dependency-ordered steps, registered but NOT dispatched |
-| `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `failed` |
-| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `cancelled` |
+| `taskflow_flow(action="create")` | `(flow_id, description="", initial_state=None, session_id, deadline_hours=None)` | created id/status/revision (+ deadline) |
+| `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | dispatched step, or `blocked` with pending deps |
+| `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | dispatched step ids + revision |
+| `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | per-step settled report (complete or partial; auto-retries policy steps) |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | resumed status, unlocked steps (**auto-dispatched by default**), step-status counts, criteria echo, judge verdict, retry note |
+| `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting status + revision |
+| `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | full flow state incl. wait/deadline status |
+| `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | completion %, breakdown, next steps, est. remaining |
+| `taskflow_flow(action="budget")` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | budget report, or set confirmation |
+| `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | this session's board (`active` / `all` / status name) |
+| `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | terminal `done` (five-gate check incl. the goal judge, fail-open) |
+| `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | remaining steps regenerated from the goal + done results + failure reason (done/in-flight kept, downstream of a changed step re-blocked, ≤ 3 replans) |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | a new flow decomposed into dependency-ordered steps, registered but NOT dispatched |
+| `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `failed` |
+| `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `cancelled` |
 
 ### Memory tool actions
 
@@ -224,11 +224,11 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 
 ### Step skill bindings (`skills`)
 
-A step may declare `skills: ["browser", "code-wiki"]`. At dispatch the system prepends each named skill's SKILL.md — wrapped in the same `[IMPORTANT: The user has invoked the "X" skill…]` header cron jobs use — to the step's task text, so the CHILD receives the skill's instructions directly and the orchestrator never spends its own context `skill_view`-ing a skill just to relay it (nor paraphrases it through a second LLM hop). The order is skills → step task → `## Upstream Results` → input parameters → judge feedback. A binding that no longer loads (the skill was deleted or renamed) is logged and skipped: the step still dispatches (fail-open). The prepend lives inside the shared task-text builder, so every dispatch path (dispatch / run_task / resume / auto-dispatch / retry) carries it. `taskflow_plan`'s planner may emit the field, and `taskflow_update_steps` can add or change it on an existing step. Loading a bound skill bumps its usage telemetry (the curator sees the skill as active), and the assembled prompt gets the same warning-only injection scan as cron.
+A step may declare `skills: ["browser", "code-wiki"]`. At dispatch the system prepends each named skill's SKILL.md — wrapped in the same `[IMPORTANT: The user has invoked the "X" skill…]` header cron jobs use — to the step's task text, so the CHILD receives the skill's instructions directly and the orchestrator never spends its own context `skill_view`-ing a skill just to relay it (nor paraphrases it through a second LLM hop). The order is skills → step task → `## Upstream Results` → input parameters → judge feedback. A binding that no longer loads (the skill was deleted or renamed) is logged and skipped: the step still dispatches (fail-open). The prepend lives inside the shared task-text builder, so every dispatch path (dispatch / run_task / resume / auto-dispatch / retry) carries it. `taskflow_flow(action="plan")`'s planner may emit the field, and `taskflow_step(action="update_steps")` can add or change it on an existing step. Loading a bound skill bumps its usage telemetry (the curator sees the skill as active), and the assembled prompt gets the same warning-only injection scan as cron.
 
 ### Synthesize aggregation (`aggregate_deps`)
 
-`taskflow_run_task(aggregate_deps=true)` marks a synthesis step whose dependency
+`taskflow_step(action="run_task", aggregate_deps=true)` marks a synthesis step whose dependency
 results are appended to the dispatched task as a `## Upstream Results` block.
 `build_task_with_dep_results(step, steps, results)` matches each dependency's
 `child_session_key` against the flow's `{child_session_key, result, result_hash}`
@@ -245,7 +245,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 | :--- | :--- |
 | `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), additive `session_id` migration, session purge |
 | `test_step_graph.py` | `deps_satisfied`, `mark_step_done`, `unlock_dependents`, legacy status derivation, self-dependency guard |
-| `test_summary_dag.py` | `taskflow_summary` DAG rendering |
+| `test_summary_dag.py` | `taskflow_inspect(action="summary")` DAG rendering |
 | `test_resume_dag.py` | Resume marks done, unlocks dependents, partial completion, idempotent no-op |
 | `test_taskflow_tools.py` | Full create→run→resume→finish across restart, conflict, terminal transitions |
 | `test_taskflow_dispatch.py` | Batch dispatch, all-or-nothing validation, mid-batch failure persistence |
@@ -260,7 +260,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 | `test_retry_policy.py` | policy validation, failure classification, re-dispatch, exhaustion |
 | `test_validation.py` | criteria storage, judge verdicts (`pass`/`retry`/`block`), override, fail-open |
 | `test_step_judge.py` | StepJudge response parsing, verdict coercion, fail-open to `pass`, prompt assembly |
-| `test_resume_with_judge.py` | `taskflow_resume` + judge: pass/retry/block, retry-feedback injection, budget exhaustion, fail-open |
+| `test_resume_with_judge.py` | `taskflow_step(action="resume")` + judge: pass/retry/block, retry-feedback injection, budget exhaustion, fail-open |
 | `test_evidence_collector.py` | evidence summary rendering for judge prompts; staleness derived from later `stale` rows |
 | `test_finish_gate.py` | finish gates A–C: DAG completeness, blocked steps, failing/stale evidence |
 | `test_chain_smoke.py` | integrated judge → retry-feedback → goal-loop → finish-gate smoke against a stub auxiliary LLM |
@@ -282,17 +282,17 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 
 ## ⚠️ Known Limitations
 
-- **`taskflow_list` is session-scoped.** Every read filters the owning `session_id` in SQL, so a session can no longer enumerate another session's flows; there is no global board. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
-- **`done` is not success by itself.** A step's `done` means "a result was injected and the step's configured gates passed"; with no expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to "a result was injected", so a child that reported an error can still land `done` and unlock successors. Declare an expectation — or report `step_outcome="failure"` — and the closure catches it: `failed` / `skipped` / `cancelled` are real step statuses now, a failure never unlocks its dependents, and `taskflow_finish` refuses to complete over an unresolved step.
-- **`taskflow_wait_all` is flow-scoped by design.** It waits only on children recorded on the given flow's dispatched steps, and unknown/already-cleaned runs count as settled. There is no global "wait for every active flow" primitive.
+- **`taskflow_inspect(action="list")` is session-scoped.** Every read filters the owning `session_id` in SQL, so a session can no longer enumerate another session's flows; there is no global board. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
+- **`done` is not success by itself.** A step's `done` means "a result was injected and the step's configured gates passed"; with no expectation configured (`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`) it degrades to "a result was injected", so a child that reported an error can still land `done` and unlock successors. Declare an expectation — or report `step_outcome="failure"` — and the closure catches it: `failed` / `skipped` / `cancelled` are real step statuses now, a failure never unlocks its dependents, and `taskflow_flow(action="finish")` refuses to complete over an unresolved step.
+- **`taskflow_step(action="wait_all")` is flow-scoped by design.** It waits only on children recorded on the given flow's dispatched steps, and unknown/already-cleaned runs count as settled. There is no global "wait for every active flow" primitive.
 - **Idle detection is advisory.** The sweeper stamps `stale_detected_at` / `stale_child_session_key` into `wait_json` but never auto-fails a stale `waiting` flow; a human or the model must act on the marker.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
 - **Registry size is 82.** The config registry holds 82 feature objects (54 agent-side + 28 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG` and `MODEL_DOWNLOADS` (its env-sourced defaults are covered by a dedicated builder test).
-- **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
+- **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_step(action="dispatch")` and `taskflow_step(action="wait_all")` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
-- **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.
+- **Token accounting is caller-supplied.** Cost is computed only when `taskflow_step(action="resume")` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.
 - **Result validation is judge-enforced when criteria exist.** A criteria-bearing step is reviewed by the TaskFlow decision LLM's step judge (`TASKFLOW_LLM_*`; auxiliary fallback unless configured) on resume: `retry` re-dispatches it within the step's own retry budget, and `block` (or an exhausted budget) marks it `blocked`. The judge is fail-open, so a model error or an unparseable response degrades to `pass` — there is still no hard guarantee that a result met its criteria, only a best-effort verdict before the step is accepted.
-- **Retry classification is text-based.** `classify_failure` is a substring heuristic over the result text: a failure phrased outside the pattern table (or a genuine failure hidden by a negated phrase) will not trigger a retry, while an empty `retry_on` retries every classified failure. `taskflow_wait_all` cannot classify a dead child with no result text, so it always consumes retry budget while one remains.
-- **`taskflow_list` is session-scoped.** There is no global cross-session board: every read filters the owning `session_id` in SQL, so a session cannot enumerate another session's flows. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
+- **Retry classification is text-based.** `classify_failure` is a substring heuristic over the result text: a failure phrased outside the pattern table (or a genuine failure hidden by a negated phrase) will not trigger a retry, while an empty `retry_on` retries every classified failure. `taskflow_step(action="wait_all")` cannot classify a dead child with no result text, so it always consumes retry budget while one remains.
+- **`taskflow_inspect(action="list")` is session-scoped.** There is no global cross-session board: every read filters the owning `session_id` in SQL, so a session cannot enumerate another session's flows. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
 - **Knowledge storage is keyed by plan identity, not by plan name.** Access is gated by ownership (`ownership.is_plan_associated()`: the session's `plan_ref`, a todo `plan_ref`, or a boulder work whose `session_ids` include the session), and the storage directory derives from the canonical plan path — `sha1(repo-relative path)[:12]` under `workspace/knowledge/plans/<plan_key>/`, with a `meta.json` recording the readable `plan_name` / `plan_ref`. Two sessions that hold same-named plans **in different plan files are physically isolated** (each writes its own key directory); sessions collaborating on **one plan file** through boulder `session_ids` resolve the same path and share one directory. A session whose plan file does not resolve writes under the fallback identity `session-<sha1(session_id)[:8]>` (the full-id hash keeps ids sharing an 8-char prefix apart). Legacy name-keyed directories remain readable; writes always land in the key directory, and `clear_session` deletes the session's private identity directories while retaining plans shared with another session. The subagent boundary stays absolute — `knowledge` is `main_only`.
