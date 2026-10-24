@@ -10,3 +10,9 @@ overrides:
   # declares ^0.16); forced to the patched line for GHSA-238p-pmpm-9mq7. Only
   # the markdown lint chain touches it, never the app bundle.
   katex: ^0.18.2
+  'undici@<8.12.2': '>=8.12.2'
+  'launch-editor@<2.14.2': '>=2.14.2'
+  'serialize-javascript@<7.1.3': '>=7.1.3'
+  'fast-uri@<3.1.9': '>=3.1.9'
+  'zod@<4.6.6': '>=4.6.6'
+  'vite@<8.3.3': '>=8.3.3'
