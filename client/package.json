@@ -20,7 +20,7 @@
     "@antv/g2": "^5.4.8",
     "@antv/g6": "^5.1.1",
     "@nuxtjs/i18n": "10.6.0",
-    "@pinia/nuxt": "^1.0.2",
+    "@pinia/nuxt": "^1.0.3",
     "@primevue/themes": "^4.5.4",
     "@tanstack/vue-virtual": "^3.13.47",
     "@tauri-apps/api": "^2.12.4",
@@ -39,7 +39,7 @@
     "pinia-plugin-persistedstate": "^4.7.1",
     "primeicons": "^8.0.2",
     "primevue": "^4.5.5",
-    "vue": "^3.5.43",
+    "vue": "^3.5.44",
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
