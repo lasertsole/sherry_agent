@@ -1,3 +1,5 @@
+import { ref } from 'vue';
+
 const previewSrc = ref<string>('');
 const isPreviewVisible = ref(false);
 
