@@ -40,6 +40,7 @@ const rightSidebarState = reactive({
   },
   openTab: vi.fn((kind: string) => `tab-${kind}`),
   tabsInScope: () => [],
+  setActiveSession: vi.fn(),
   setActiveScope: () => {},
   activateTab: () => {},
   closeTab: () => {},

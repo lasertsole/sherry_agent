@@ -121,6 +121,52 @@ describe('stores/right-sidebar', () => {
     expect(store.activeScope).toBe('global');
   });
 
+  it('keeps session tabs isolated per session while global tabs are shared', () => {
+    const store = useRightSidebarStore();
+
+    store.setActiveSession('s1');
+    const fileA = store.openTab('fileViewer', { path: 'src/a.ts' });
+    const contextA = store.openTab('contextViewer');
+    expect(store.tabsInScope('session').map(tab => tab.id)).toEqual([fileA, contextA]);
+    expect(store.activeTabId).toBe(contextA);
+
+    // A brand-new session starts with NO session tab on screen, even though
+    // the previous session's tabs are still retained.
+    store.setActiveSession('s2');
+    expect(store.tabsInScope('session')).toEqual([]);
+    expect(store.activeTabId).toBeNull();
+
+    const presetB = store.openTab('sessionPreset');
+    expect(store.tabsInScope('session').map(tab => tab.id)).toEqual([presetB]);
+
+    // The same file opened in two sessions is two tabs, not one shared tab.
+    store.setActiveSession('s1');
+    const fileAAgain = store.openTab('fileViewer', { path: 'src/a.ts' });
+    expect(fileAAgain).toBe(fileA);
+    store.setActiveSession('s2');
+    const fileB = store.openTab('fileViewer', { path: 'src/a.ts' });
+    expect(fileB).not.toBe(fileA);
+
+    // Global tabs are shared: switching sessions leaves the active global tab
+    // alive and every session sees it.
+    const logs = store.openTab('logs');
+    expect(store.activeScope).toBe('global');
+    store.setActiveSession('s1');
+    expect(store.activeTabId).toBe(logs);
+    expect(store.tabsInScope('global').map(tab => tab.id)).toEqual([logs]);
+
+    // Returning to the session group restores that session's own last tab.
+    store.setActiveScope('session');
+    expect(store.activeTabId).toBe(fileA);
+    store.setActiveSession('s2');
+    expect(store.activeTabId).toBe(fileB);
+
+    // Deleting a session drops its tabs and remembered active tab.
+    store.forgetSession('s2');
+    expect(store.tabs.some(tab => tab.id === presetB || tab.id === fileB)).toBe(false);
+    expect(store.tabsInScope('session')).toEqual([]);
+  });
+
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
     // The menu must never stack a second 系统配置 next to the open one — the
     // click belongs to the tab that already exists.

@@ -434,6 +434,9 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
+// The 当前会话 tab group belongs to the route's session: switching sessions
+// shows that session's own tabs (or an empty group), never the previous one's.
+watch(openSessionId, sid => rightSidebarStore.setActiveSession(sid), { immediate: true });
 
 /**
  * Close one right-sidebar tab. Closing a side-chat panel only detaches its

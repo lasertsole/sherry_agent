@@ -352,7 +352,12 @@ works.
   are forgotten (single or batch delete), so another session never sees them.
   Restoring a side chat reopens the panel on the SAME child session with its
   history, using `prefillQuote: false` so the original quote chip is not
-  inserted again.
+  inserted again. The 当前会话 tab group is PER SESSION: every session-scoped tab
+  carries its owning `sessionId`, `setActiveSession` (driven by the shell's route
+  watch) shows only that session's tabs and restores its last active one — or no
+  tab at all — so switching to a new session never displays the previous
+  session's tab; GLOBAL tabs remain shared and stay active across switches.
+  `forgetSession` drops a deleted session's tabs and recent entries.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 

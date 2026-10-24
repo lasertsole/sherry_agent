@@ -479,6 +479,7 @@ vi.stubGlobal('useRightSidebarStore', () =>
     fitToViewport: () => {},
     openTab: () => 'test-tab',
     tabsInScope: () => [],
+    setActiveSession: () => {},
     setActiveScope: () => {},
     activateTab: () => {},
     closeTab: () => {},

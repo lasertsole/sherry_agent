@@ -169,8 +169,10 @@ const store = useRightSidebarStore();
  * @param tab.id
  * @param tab.kind
  */
-const tabLabel = (tab: { id: string; kind: RightSidebarPanelKind }): string => {
-  const sameKind = store.tabs.filter(candidate => candidate.kind === tab.kind);
+const tabLabel = (tab: RightSidebarTab): string => {
+  // Count only the SAME visible group: twins in another session must not shift
+  // this session's numbering.
+  const sameKind = store.tabsInScope(tab.scope).filter(candidate => candidate.kind === tab.kind);
   const base = t(`rightSidebar.${tab.kind}`);
   if (sameKind.length <= 1) return base;
   return `${base} ${sameKind.findIndex(candidate => candidate.id === tab.id) + 1}`;
@@ -215,8 +217,14 @@ const emit = defineEmits<{ saved: []; 'close-tab': [tab: RightSidebarTab] }>();
 const PANEL_MIN_WIDTH = RIGHT_SIDEBAR_PANEL_MIN_WIDTH;
 const PANEL_MIN_HEIGHT = RIGHT_SIDEBAR_PANEL_MIN_HEIGHT;
 
-/** The active tab, or null (no tabs / stale id). */
-const activeTab = computed(() => store.tabs.find(tab => tab.id === store.activeTabId) ?? null);
+/** The active tab, or null (no tabs / stale id / a tab of another session). */
+const activeTab = computed(() => {
+  const tab = store.tabs.find(candidate => candidate.id === store.activeTabId) ?? null;
+  if (tab && tab.scope === 'session' && tab.sessionId !== undefined && tab.sessionId !== store.activeSessionId) {
+    return null;
+  }
+  return tab;
+});
 
 /**
  * The active tab's kind, or null. Null also when the active tab belongs to the
@@ -238,11 +246,14 @@ const activeTabPayload = computed<
       instance?: string;
       url?: string;
       sessionId?: string;
+      parentSessionId?: string;
+      inherited?: boolean;
       quote?: string;
       source?: string;
+      prefillQuote?: boolean;
     }
   | undefined
->(() => store.tabs.find(tab => tab.id === store.activeTabId)?.payload);
+>(() => activeTab.value?.payload);
 
 /**
  * Whether a tab can be dragged into the composer as a file mention. Only the
