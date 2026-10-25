@@ -26,11 +26,7 @@ export interface TrajectorySummary {
  * @param b
  */
 export function compareEvents(a: TrajectoryEvent, b: TrajectoryEvent): number {
-  return (
-    a.ts.localeCompare(b.ts) ||
-    a.seq - b.seq ||
-    a.event_id.localeCompare(b.event_id)
-  );
+  return a.ts.localeCompare(b.ts) || a.seq - b.seq || a.event_id.localeCompare(b.event_id);
 }
 
 /**
@@ -94,7 +90,10 @@ export function formatClock(ts: string): string {
   return date.toLocaleTimeString();
 }
 
-/** JSON with the given indentation, falling back to String for odd payloads. */
+/**
+ * JSON with the given indentation, falling back to String for odd payloads.
+ * @param value
+ */
 export function prettyJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
@@ -103,7 +102,11 @@ export function prettyJson(value: unknown): string {
   }
 }
 
-/** Compact one-line JSON (whitespace removed) capped at `limit` chars. */
+/**
+ * Compact one-line JSON (whitespace removed) capped at `limit` chars.
+ * @param value
+ * @param limit
+ */
 export function compactJson(value: unknown, limit = 120): string {
   let text: string;
   try {
@@ -130,9 +133,7 @@ export function previewOf(event: TrajectoryEvent): string {
     case 'compact': {
       const phase = String(payload.phase ?? '—');
       const reason = String(payload.reason ?? '—');
-      return `${phase}/${reason}, ${String(payload.messages_before ?? '?')}→${String(
-        payload.messages_after ?? '?'
-      )}`;
+      return `${phase}/${reason}, ${String(payload.messages_before ?? '?')}→${String(payload.messages_after ?? '?')}`;
     }
     case 'model_retry':
       return `${String(payload.attempt ?? '?')}/${String(payload.max_attempts ?? '?')} · ${String(

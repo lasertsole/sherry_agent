@@ -1,11 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  eventMatches,
-  formatDuration,
-  groupTurns,
-  previewOf,
-  summarizeTurns
-} from '@/composables/use-trajectory';
+import { eventMatches, formatDuration, groupTurns, previewOf, summarizeTurns } from '@/composables/use-trajectory';
 import type { TrajectoryEvent } from '@/composables/bridge/session';
 
 const event = (overrides: Partial<TrajectoryEvent>): TrajectoryEvent => ({
@@ -64,12 +58,22 @@ describe('use-trajectory', () => {
     expect(previewOf(event({ kind: 'tool_start', payload: { tool_name: 'read_file', args: { path: 'a.py' } } }))).toBe(
       'read_file {"path":"a.py"}'
     );
-    expect(previewOf(event({ kind: 'compact', payload: { phase: 'pre_request', reason: 'context_limit', messages_before: 10, messages_after: 4 } }))).toBe(
-      'pre_request/context_limit, 10→4'
-    );
-    expect(previewOf(event({ kind: 'model_retry', payload: { attempt: 2, max_attempts: 11, status: 'scheduled', reason: 'rate_limit', delay_ms: 1000 } }))).toBe(
-      '2/11 · scheduled · rate_limit · 1000ms'
-    );
+    expect(
+      previewOf(
+        event({
+          kind: 'compact',
+          payload: { phase: 'pre_request', reason: 'context_limit', messages_before: 10, messages_after: 4 }
+        })
+      )
+    ).toBe('pre_request/context_limit, 10→4');
+    expect(
+      previewOf(
+        event({
+          kind: 'model_retry',
+          payload: { attempt: 2, max_attempts: 11, status: 'scheduled', reason: 'rate_limit', delay_ms: 1000 }
+        })
+      )
+    ).toBe('2/11 · scheduled · rate_limit · 1000ms');
     expect(previewOf(event({ kind: 'turn_end', payload: { total_ms: 1200, ttfb_ms: 300 } }))).toBe(
       'total 1.20s · ttfb 300ms'
     );
