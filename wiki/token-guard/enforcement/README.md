@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> Part of [Token Guard](../README.md): the four gates that enforce the 128K floor, the read-only `GET /model-config` endpoint, and the advisory frontend behavior.
+> Part of [Token Guard](../README.md): the four gates that enforce the 200K floor, the read-only `GET /model-config` endpoint, and the advisory frontend behavior.
 
 ---
 
@@ -28,7 +28,7 @@ _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
 _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
 
 # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
 # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
 # is NOT exempt.
 _main_val = int(_main_raw) if _main_raw else None
@@ -45,12 +45,12 @@ except Exception as e:
 A bad value produces exactly this line and the process does not start:
 
 ```text
-CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked
+CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked
 ```
 
 ### 2. Graph build gate
 
-`agent/core.py` (gate at line 117) is the runtime second line of defense. Even if the server booted with a valid `.env`, a later edit that drops either value below 128K still refuses to build the graph:
+`agent/core.py` (gate at line 117) is the runtime second line of defense. Even if the server booted with a valid `.env`, a later edit that drops either value below 200K still refuses to build the graph:
 
 ```python
 _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
@@ -69,7 +69,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ```python
 # Subagent spawn bypasses built_agent(), so child LLM construction validates
-# the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
+# the same 200K MAX_TOKEN floor here instead of inheriting it implicitly.
 ...
 assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
@@ -77,7 +77,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ### 4. Config write gate
 
-`server/service/models_config.py` (`write_models_config()`) makes it impossible to persist a sub-128K value from the UI. The model keys live in `.models` now — `PUT /env` refuses them outright — and the gate below runs BEFORE the coercion loop, so a non-integer or below-floor value raises `ValueError` before the file is touched and the backup and the write both stay clean:
+`server/service/models_config.py` (`write_models_config()`) makes it impossible to persist a sub-200K value from the UI. The model keys live in `.models` now — `PUT /env` refuses them outright — and the gate below runs BEFORE the coercion loop, so a non-integer or below-floor value raises `ValueError` before the file is touched and the backup and the write both stay clean:
 
 ```python
 for key, value in changes.items():
@@ -89,7 +89,7 @@ for key, value in changes.items():
         raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. Refusing to save."
         )
 ```
 
@@ -101,9 +101,9 @@ The HTTP handler turns that into `{"success": False}` for the client, and the on
 
 ```json
 {
-  "main_max_token": 131072,
-  "aux_max_token": 131072,
-  "min_required": 131072,
+  "main_max_token": 200000,
+  "aux_max_token": 200000,
+  "min_required": 200000,
   "valid": true
 }
 ```
@@ -120,10 +120,10 @@ The HTTP handler turns that into `{"success": False}` for the client, and the on
 
 | Situation | `main_max_token` | `aux_max_token` | `valid` |
 | :-------- | :--------------- | :-------------- | :------ |
-| Both set to `131072` | `131072` | `131072` | `true` |
-| Main below floor | e.g. `65536` | `131072` | `false` |
-| Aux unset | `131072` | `121072` (fallback) | `false` |
-| Main unset | `null` | `131072` | `false` |
+| Both set to `200000` | `200000` | `200000` | `true` |
+| Main below floor | e.g. `65536` | `200000` | `false` |
+| Aux unset | `200000` | `121072` (fallback) | `false` |
+| Main unset | `null` | `200000` | `false` |
 
 There is no write endpoint for this resource (env writes go through the separate `/env` route); `GET /model-config` never mutates state.
 
@@ -141,7 +141,7 @@ The client warns early but never blocks the user. The backend remains the enforc
 
 ```ts
 function invalidModelConfig(): ModelConfig {
-  return { main_max_token: null, aux_max_token: null, min_required: 131072, valid: false };
+  return { main_max_token: null, aux_max_token: null, min_required: 200000, valid: false };
 }
 ```
 
@@ -163,7 +163,7 @@ When the config is valid, or when the fetch fails, the toast stays silent. The s
 `client/app/pages/home/components/ConfigPanel.vue`:
 
 - When the env tab exposes any `*_MAX_TOKEN` key (`hasMaxTokenKeys`, line 344), an amber banner renders `config.env.maxTokenHint` (line 211).
-- On save, `persistEnvChanges()` pre-validates the guarded token keys (lines 379 to 389). A non-integer or sub-`131072` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
+- On save, `persistEnvChanges()` pre-validates the guarded token keys (lines 379 to 389). A non-integer or sub-`200000` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
 
 ```ts
 const TOKEN_KEYS = [
@@ -172,7 +172,7 @@ const TOKEN_KEYS = [
   'TASKFLOW_LLM_MAX_TOKEN',
   'COMPRESSION_LLM_MAX_TOKEN'
 ];
-const MIN_TOKEN = 131072;
+const MIN_TOKEN = 200000;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {
     const num = parseInt(value, 10);

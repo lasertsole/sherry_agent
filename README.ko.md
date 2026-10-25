@@ -177,7 +177,7 @@ sherry_agent/
 │   ├── loop-prevention/    # 폭주 루프 방지 하네스
 │   ├── llm-retry/         # 재시도 예산, fallback 상한, 차단 범위
 │   ├── sandbox/            # 평가 샌드박스 및 도구 격리
-│   ├── token-guard/        # 128K 컨텍스트 윈도우 하한
+│   ├── token-guard/        # 200K 컨텍스트 윈도우 하한
 │   ├── context-governance/ # 영속화, 축출, 테일 클립, 요약 필터링
 │   ├── long-running-tasks/ # TaskFlow 오케스트레이션
 │   ├── subagent/           # Subagent design invariants & completion gates
@@ -334,7 +334,7 @@ sherry_agent/
 | **위협 모델** | 신뢰 경계, 데이터 분류, 위협별 방어 현황, 그리고 prompt 주입 스캐너 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **사용자 로그인** | 선택형 계정 보호: loopback 클라이언트는 면제되며, 원격 접근은 scrypt 비밀번호와 HttpOnly JWT 세션 쿠키로 제어됩니다 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
 | **장기 실행 작업** | TaskFlow DAG 엔진, 단계 판정기, 토큰 예산, 데드라인, 검증된 완료 게이트, 삼색 고아 GC, 턴 간 메모리 연속성 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Token Guard** | 두 LLM의 200K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute: 읽기 전용 설계, 계획 승인 게이트, 리비전 결속 재제출 루프와 수정 예산 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링, message 행의 턴 식별자 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
 | **스트림 복구** | 턴 도중 WebSocket 복구: 스냅샷 + 턴별 `seq` 워터마크, 재생 없음, 중복 없음, 도구 호출은 trajectory ledger에 유지 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
@@ -367,12 +367,12 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 
 | 변수 | 필수 | 설명 |
 | :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 메인 채팅 모델(JSON 출력 및 도구 호출 지원 필요); `MAIN_LLM_MAX_TOKEN`은 131072 (128K) 이상이어야 합니다 |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 메인 채팅 모델(JSON 출력 및 도구 호출 지원 필요); `MAIN_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 범용 추론 스위치. 프로바이더별로 매핑됨(DeepSeek / OpenAI / GLM / Anthropic) |
 | `TAVILY_API_KEY` | 웹 검색 사용 시 ✅ | 웹 검색 도구 활성화 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 자체 호스팅 SearXNG를 웹 검색의 백엔드(또는 Tavily의 대안)로 사용. `TAVILY_API_KEY`가 없으면 유일한 백엔드입니다. 「모델 검색」 패널에서 설정하며, Tavily 실패 시 자동으로 이쪽으로 폴백합니다 |
-| `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 131072 (128K) 이상이어야 합니다 |
-| `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 131072 (128K) 이상이어야 합니다 |
+| `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
+| `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
 | `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약). 메모리 리뷰는 `MAIN_LLM`, 계획 추출은 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
 | `REASONER_LLM_*` | — | 사고 연쇄(Chain-of-thought) 추론 모델 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |

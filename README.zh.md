@@ -177,7 +177,7 @@ sherry_agent/
 │   ├── loop-prevention/    # 防失控循环防护
 │   ├── llm-retry/         # 重试预算、fallback 上限与熔断范围
 │   ├── sandbox/            # 评估沙箱与工具隔离
-│   ├── token-guard/        # 128K 上下文窗口下限
+│   ├── token-guard/        # 200K 上下文窗口下限
 │   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
 │   ├── long-running-tasks/ # TaskFlow 编排
 │   ├── subagent/           # Subagent design invariants & completion gates
@@ -334,7 +334,7 @@ sherry_agent/
 | **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
 | **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门、三色孤儿回收与跨轮次记忆连续性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Token Guard** | 两个 LLM 的 200K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤、message 行的 conversation-turn 身份 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
 | **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
@@ -367,12 +367,12 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 
 | 变量 | 必填 | 说明 |
 | :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 主聊天模型（需支持 JSON 输出与工具调用）；`MAIN_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 主聊天模型（需支持 JSON 输出与工具调用）；`MAIN_LLM_MAX_TOKEN` 必须 >= 200000 (200K) |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 通用推理开关，按提供商映射（DeepSeek / OpenAI / GLM / Anthropic） |
 | `TAVILY_API_KEY` | 使用联网搜索时必填 | 启用联网搜索工具 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 自托管 SearXNG，作为联网搜索的后端（或 Tavily 的替代）；未配 `TAVILY_API_KEY` 时它是唯一后端。在「模型联网」面板中配置；Tavily 失效时自动降级到它 |
-| `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
-| `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 200000 (200K) |
+| `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 200000 (200K) |
 | `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |

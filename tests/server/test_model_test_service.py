@@ -24,7 +24,7 @@ def _chat_params(**overrides: str) -> dict[str, str]:
         "MAIN_LLM_API_BASE": "https://gateway.example/v1",
         "MAIN_LLM_API_KEY": "sk-test",
         "MAIN_LLM_NAME": "glm-4.6",
-        "MAIN_LLM_MAX_TOKEN": "131072",
+        "MAIN_LLM_MAX_TOKEN": "200000",
     }
     params.update(overrides)
     return params

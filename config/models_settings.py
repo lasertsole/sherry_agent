@@ -59,7 +59,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "MAIN_LLM_NAME": "",
     "MAIN_LLM_API_BASE": "",
     "MAIN_LLM_API_KEY": "",
-    "MAIN_LLM_MAX_TOKEN": 131072,
+    "MAIN_LLM_MAX_TOKEN": 200000,
     "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
     # Sampling-time repetition penalties (empty = REPETITION_PENALTY default).
     "MAIN_LLM_FREQUENCY_PENALTY": "",
@@ -72,7 +72,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "AUXILIARY_LLM_API_NAME": "",
     "AUXILIARY_LLM_API_BASE": "",
     "AUXILIARY_LLM_API_KEY": "",
-    "AUXILIARY_LLM_MAX_TOKEN": 131072,
+    "AUXILIARY_LLM_MAX_TOKEN": 200000,
     "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
     "AUXILIARY_LLM_FREQUENCY_PENALTY": "",
     "AUXILIARY_LLM_PRESENCE_PENALTY": "",
@@ -82,7 +82,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "TASKFLOW_LLM_API_NAME": "",
     "TASKFLOW_LLM_API_BASE": "",
     "TASKFLOW_LLM_API_KEY": "",
-    "TASKFLOW_LLM_MAX_TOKEN": 131072,
+    "TASKFLOW_LLM_MAX_TOKEN": 200000,
     "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
     "TASKFLOW_LLM_FREQUENCY_PENALTY": "",
     "TASKFLOW_LLM_PRESENCE_PENALTY": "",
@@ -92,7 +92,7 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "COMPRESSION_LLM_API_NAME": "",
     "COMPRESSION_LLM_API_BASE": "",
     "COMPRESSION_LLM_API_KEY": "",
-    "COMPRESSION_LLM_MAX_TOKEN": 131072,
+    "COMPRESSION_LLM_MAX_TOKEN": 200000,
     "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
     "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
     "COMPRESSION_LLM_PRESENCE_PENALTY": "",
@@ -333,6 +333,7 @@ def ensure_models_config_file() -> None:
     unparseable file is never rewritten.
     """
     if MODELS_CONFIG_PATH.exists():
+        _ensure_context_window_floor()
         _ensure_pricing_table_key()
         _ensure_optional_family_keys()
         _ensure_output_cap_keys()
@@ -344,6 +345,68 @@ def ensure_models_config_file() -> None:
     try:
         MODELS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MODELS_CONFIG_PATH.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+#: The context-window floor before the 200K bump. An existing ``.models`` that
+#: still carries this value was seeded when it was valid; migrate it so the boot
+#: gate does not brick the install. Any OTHER below-floor value is left alone —
+#: the save path and the boot gate report it as a real misconfiguration.
+_LEGACY_CONTEXT_FLOOR_TOKEN = 131_072
+
+#: The guarded context-window keys (the optional families share the same floor).
+_CONTEXT_WINDOW_KEYS: tuple[str, ...] = (
+    "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_TOKEN",
+)
+
+
+def _ensure_context_window_floor() -> None:
+    """Migrate the legacy 128K default to the current 200K floor, in place.
+
+    Only the exact previous floor is rewritten, so a deliberate (but invalid)
+    value such as ``100000`` still fails the boot gate instead of being
+    silently "fixed". Comments and line shape are preserved; an unparseable
+    file is never rewritten.
+    """
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+        data = json5.loads(text)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    legacy: set[str] = set()
+    for key in _CONTEXT_WINDOW_KEYS:
+        raw = data.get(key)
+        if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value == _LEGACY_CONTEXT_FLOOR_TOKEN:
+            legacy.add(key)
+    if not legacy:
+        return
+    target = MODEL_SETTING_DEFAULTS["MAIN_LLM_MAX_TOKEN"]
+    out: list[str] = []
+    changed = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        match = _TEMPLATE_ASSIGN_RE.match(stripped)
+        if match and match.group(2) in legacy:
+            out.append(f"{match.group(1)}{target}{match.group(4)}{line[len(stripped) :]}")
+            changed = True
+        else:
+            out.append(line)
+    if not changed:
+        return
+    try:
+        MODELS_CONFIG_PATH.write_text("".join(out), encoding="utf-8")
     except OSError:
         pass
 

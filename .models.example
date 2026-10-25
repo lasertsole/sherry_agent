@@ -14,8 +14,8 @@
   "MAIN_LLM_API_BASE": "",
   "MAIN_LLM_API_KEY": "",
   // Context window; drives the summarization trigger threshold.
-  // MUST be >= 131072 (128K) — the server refuses to start below this.
-  "MAIN_LLM_MAX_TOKEN": 131072,
+  // MUST be >= 200000 (200K) — the server refuses to start below this.
+  "MAIN_LLM_MAX_TOKEN": 200000,
   // Per-request output cap (NOT the context window). Empty = do not send the
   // field; the provider applies its own default (OpenAI-compatible APIs: 4096).
   // When set it must be >= 8192 (8K): thinking-mode reasoning and the visible
@@ -38,9 +38,9 @@
   "AUXILIARY_LLM_API_NAME": "",
   "AUXILIARY_LLM_API_BASE": "",
   "AUXILIARY_LLM_API_KEY": "",
-  // MUST be >= 131072 (128K): an unset value falls back to 121072 (<128K),
+  // MUST be >= 200000 (200K): an unset value falls back to 121072 (<200K),
   // which blocks startup too (the floor applies in local mode as well).
-  "AUXILIARY_LLM_MAX_TOKEN": 131072,
+  "AUXILIARY_LLM_MAX_TOKEN": 200000,
   // Per-request output cap (same rule as MAIN_LLM_MAX_OUTPUT_TOKEN: empty =
   // provider default, set = >= 8192/8K).
   "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
@@ -52,13 +52,13 @@
   // Used by: taskflow_plan / taskflow_replan / step_judge / taskflow_finish.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).
-  // MUST be >= 131072 (128K): a replan prompt carries every done step's result.
+  // MUST be >= 200000 (200K): a replan prompt carries every done step's result.
   "TASKFLOW_LLM_MODEL_LOCAL": false,
   "TASKFLOW_LLM_PROVIDER": "",
   "TASKFLOW_LLM_API_NAME": "",
   "TASKFLOW_LLM_API_BASE": "",
   "TASKFLOW_LLM_API_KEY": "",
-  "TASKFLOW_LLM_MAX_TOKEN": 131072,
+  "TASKFLOW_LLM_MAX_TOKEN": 200000,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
@@ -70,13 +70,13 @@
   // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).
-  // MUST be >= 131072 (128K): the prompt carries the discarded slice verbatim.
+  // MUST be >= 200000 (200K): the prompt carries the discarded slice verbatim.
   "COMPRESSION_LLM_MODEL_LOCAL": false,
   "COMPRESSION_LLM_PROVIDER": "",
   "COMPRESSION_LLM_API_NAME": "",
   "COMPRESSION_LLM_API_BASE": "",
   "COMPRESSION_LLM_API_KEY": "",
-  "COMPRESSION_LLM_MAX_TOKEN": 131072,
+  "COMPRESSION_LLM_MAX_TOKEN": 200000,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.

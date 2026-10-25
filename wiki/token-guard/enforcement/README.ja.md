@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> [Token Guard](../README.ja.md) の一部：128K 下限を強制する 4 つのゲート、読み取り専用の `GET /model-config` エンドポイント、警告のみでブロックしないフロントエンドの挙動。
+> [Token Guard](../README.ja.md) の一部：200K 下限を強制する 4 つのゲート、読み取り専用の `GET /model-config` エンドポイント、警告のみでブロックしないフロントエンドの挙動。
 
 ---
 
@@ -28,7 +28,7 @@ _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
 _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
 
 # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
 # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
 # is NOT exempt.
 _main_val = int(_main_raw) if _main_raw else None
@@ -45,12 +45,12 @@ except Exception as e:
 不正な値ではまさにこの行が出て、プロセスは起動しません:
 
 ```text
-CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked
+CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked
 ```
 
 ### 2. グラフ構築ゲート
 
-`agent/core.py`（ゲートは 117 行目）は実行時の第二防衛線です。サーバーが有効な `.env` で起動していても、後からの編集でどちらかの値が 128K を下回れば、グラフの構築を拒否します:
+`agent/core.py`（ゲートは 117 行目）は実行時の第二防衛線です。サーバーが有効な `.env` で起動していても、後からの編集でどちらかの値が 200K を下回れば、グラフの構築を拒否します:
 
 ```python
 _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
@@ -69,7 +69,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ```python
 # Subagent spawn bypasses built_agent(), so child LLM construction validates
-# the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
+# the same 200K MAX_TOKEN floor here instead of inheriting it implicitly.
 ...
 assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
@@ -77,7 +77,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ### 4. 設定書き込みゲート
 
-`server/service/models_config.py`（`write_models_config()`）は、UI から 128K 未満の値を永続化できないようにします。モデルキーは `.models` に移り（`PUT /env` は受け付けません）、ゲートは型変換より先に走るため、非整数または下限未満の値はファイルに触れる前に `ValueError` を投げ、バックアップも書き込みも汚れません:
+`server/service/models_config.py`（`write_models_config()`）は、UI から 200K 未満の値を永続化できないようにします。モデルキーは `.models` に移り（`PUT /env` は受け付けません）、ゲートは型変換より先に走るため、非整数または下限未満の値はファイルに触れる前に `ValueError` を投げ、バックアップも書き込みも汚れません:
 
 ```python
 for key, value in changes.items():
@@ -89,7 +89,7 @@ for key, value in changes.items():
         raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. Refusing to save."
         )
 ```
 
@@ -101,9 +101,9 @@ HTTP ハンドラーはそれを `{"success": False}` に変換してクライ�
 
 ```json
 {
-  "main_max_token": 131072,
-  "aux_max_token": 131072,
-  "min_required": 131072,
+  "main_max_token": 200000,
+  "aux_max_token": 200000,
+  "min_required": 200000,
   "valid": true
 }
 ```
@@ -120,10 +120,10 @@ HTTP ハンドラーはそれを `{"success": False}` に変換してクライ�
 
 | 状況 | `main_max_token` | `aux_max_token` | `valid` |
 | :-------- | :--------------- | :-------------- | :------ |
-| 両方 `131072` | `131072` | `131072` | `true` |
-| メインが下限未満 | 例 `65536` | `131072` | `false` |
-| 補助が未設定 | `131072` | `121072`（フォールバック） | `false` |
-| メインが未設定 | `null` | `131072` | `false` |
+| 両方 `200000` | `200000` | `200000` | `true` |
+| メインが下限未満 | 例 `65536` | `200000` | `false` |
+| 補助が未設定 | `200000` | `121072`（フォールバック） | `false` |
+| メインが未設定 | `null` | `200000` | `false` |
 
 このリソースに書き込みエンドポイントはありません（環境の書き込みは別の `/env` ルートを通ります）。`GET /model-config` は状態を決して変更しません。
 
@@ -141,7 +141,7 @@ HTTP ハンドラーはそれを `{"success": False}` に変換してクライ�
 
 ```ts
 function invalidModelConfig(): ModelConfig {
-  return { main_max_token: null, aux_max_token: null, min_required: 131072, valid: false };
+  return { main_max_token: null, aux_max_token: null, min_required: 200000, valid: false };
 }
 ```
 
@@ -163,7 +163,7 @@ if (!cfg.valid) {
 `client/app/pages/home/components/ConfigPanel.vue`:
 
 - 環境タブが `*_MAX_TOKEN` キーを一つでも公開すると（`hasMaxTokenKeys`、344 行目）、琥珀色のバナーが `config.env.maxTokenHint`（211 行目）を描画します。
-- 保存時に `persistEnvChanges()` が保護されたトークンキーを事前検証します（379 行目から 389 行目）。非整数または `131072` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
+- 保存時に `persistEnvChanges()` が保護されたトークンキーを事前検証します（379 行目から 389 行目）。非整数または `200000` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
 
 ```ts
 const TOKEN_KEYS = [
@@ -172,7 +172,7 @@ const TOKEN_KEYS = [
   'TASKFLOW_LLM_MAX_TOKEN',
   'COMPRESSION_LLM_MAX_TOKEN'
 ];
-const MIN_TOKEN = 131072;
+const MIN_TOKEN = 200000;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {
     const num = parseInt(value, 10);

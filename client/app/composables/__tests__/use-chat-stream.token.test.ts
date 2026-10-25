@@ -2,7 +2,7 @@
  * MAX_TOKEN toast guard tests for `useChatStream.handleSend`.
  *
  * `handleSend` must surface a warn toast only when `/model-config` reports an
- * invalid (< 128K) config; a valid config stays silent and NEVER blocks the send.
+ * invalid (< 200K) config; a valid config stays silent and NEVER blocks the send.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ref } from 'vue';
@@ -119,7 +119,7 @@ beforeEach(() => {
   sendState.count = 0;
 });
 
-describe('useChatStream 128K MAX_TOKEN toast guard', () => {
+describe('useChatStream 200K MAX_TOKEN toast guard', () => {
   it('warns (without blocking the send) when the config is invalid', async () => {
     configState.value = { valid: false };
     const harness = makeHarness();

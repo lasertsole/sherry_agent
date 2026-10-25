@@ -100,7 +100,7 @@
     },
     "tokenGuard": {
       "title": "Model Config Below Minimum",
-      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Model Config."
+      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 200K (200000). The agent may refuse to run. Fix in System Config → Model Config."
     }
   },
   "errors": {
@@ -404,8 +404,8 @@
       "saveFailed": "Failed to save model config.",
       "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
       "noEnvFile": "No .env file found.",
-      "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
-      "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+      "maxTokenError": "{key} must be >= 200000 (200K); current value does not meet the requirement, cannot save.",
+      "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
     },
     "sherry": {
       "loadError": "Failed to load app config. Please check the backend service.",

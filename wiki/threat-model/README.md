@@ -172,7 +172,7 @@ Operating consequences we accept and state plainly:
 
 ## Operations
 
-**Boot checks.** The 128K context floor refuses to start (both LLMs); the gateway
+**Boot checks.** The 200K context floor refuses to start (both LLMs); the gateway
 mints a per-boot token, so a page open across a restart reconnects only after a
 reload; secrets belong in ``.env`` (env vars only — the config files are not a
 secret store).

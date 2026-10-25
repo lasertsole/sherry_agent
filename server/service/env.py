@@ -40,7 +40,7 @@ NETWORK_SPLIT_OUT_KEYS = frozenset(NETWORK_SETTING_KEYS)
 # panel renders the former with its profile manager and the latter as a card.
 MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
 
-# MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
+# MAX_TOKEN keys whose saved values must satisfy token_guard's 200K floor.
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
 
 # Simple env-line parser: KEY = VALUE  (allow surrounding whitespace, quoted values).
@@ -202,7 +202,7 @@ def write_env_file(changes: dict[str, str]) -> None:
 
     by_key = {e.key: e for e in entries}
 
-    # MAX_TOKEN guard: refuse to persist a sub-128K context window, so the
+    # MAX_TOKEN guard: refuse to persist a sub-200K context window, so the
     # .env can never be saved into a state that blocks the next server boot.
     for key, value in changes.items():
         if key in TOKEN_KEYS:
@@ -212,7 +212,7 @@ def write_env_file(changes: dict[str, str]) -> None:
                 raise ValueError(f"{key} must be an integer, got: {value}")
             if num < MIN_REQUIRED_MAX_TOKEN:
                 raise ValueError(
-                    f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
+                    f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. "
                     f"Refusing to save."
                 )
 

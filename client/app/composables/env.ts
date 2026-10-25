@@ -134,7 +134,7 @@ async function putGroupedConfig(url: string, changes: Record<string, string>): P
 
 /**
  * Update keys that already exist in `.models` (model providers, endpoints,
- * keys, local-model switches). The 128K floor on the MAX_TOKEN keys applies.
+ * keys, local-model switches). The 200K floor on the MAX_TOKEN keys applies.
  * @param changes
  */
 export async function writeModelsConfig(changes: Record<string, string>): Promise<boolean> {

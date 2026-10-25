@@ -137,8 +137,8 @@ def test_the_penalty_append_is_idempotent(tmp_path, monkeypatch):
 def test_an_older_file_gains_every_chat_family_output_cap(tmp_path, monkeypatch):
     path = tmp_path / ".models"
     path.write_text(
-        '{\n  "MAIN_LLM_MAX_TOKEN": 131072,\n'
-        '  "AUXILIARY_LLM_MAX_TOKEN": 131072,\n'
+        '{\n  "MAIN_LLM_MAX_TOKEN": 200000,\n'
+        '  "AUXILIARY_LLM_MAX_TOKEN": 200000,\n'
         '  "REASONER_LLM_MAX_TOKEN": ""\n}\n',
         encoding="utf-8",
     )

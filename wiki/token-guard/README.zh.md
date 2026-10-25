@@ -1,8 +1,8 @@
-# 🛡️ 128K MAX_TOKEN 强制闸门
+# 🛡️ 200K MAX_TOKEN 强制闸门
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> Agent 如何对两个 LLM 强制 128K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.env` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
+> Agent 如何对两个 LLM 强制 200K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.env` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
 
 事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、`server/service/models_config.py`，以及 `.models`。本文档中的每一个行号与常量都已对照该代码核对。
 
@@ -23,7 +23,7 @@
 
 这条闸门只有一条不变量，但在四个彼此独立的位置强制执行：
 
-> **Agent 所运行的两个 LLM 都必须预留至少 128K token（`131_072`）的上下文窗口。**
+> **Agent 所运行的两个 LLM 都必须预留至少 200K token（`200_000`）的上下文窗口。**
 
 - **主 LLM**（`MAIN_LLM_MAX_TOKEN`）驱动摘要触发阈值与整段对话的预算。
 - **辅助 LLM**（`AUXILIARY_LLM_MAX_TOKEN`）是压缩、记忆整理、工具输出摘要以及所有非主 Agent 子 Agent 角色的回退模型。两个可选家族可接管其中一部分：`COMPRESSION_LLM_*`（压缩中间件自己的模型）与 `TASKFLOW_LLM_*`（plan / replan / 步骤判定 / 目标达成判定）；未配置时都跟随辅助模型。
@@ -31,7 +31,7 @@
 阈值只存在于一个模块 `config/features/agent_side/token_guard.py`：
 
 ```python
-MIN_REQUIRED_MAX_TOKEN: int = 131_072
+MIN_REQUIRED_MAX_TOKEN: int = 200_000
 
 
 class TokenGuardError(RuntimeError):
@@ -41,10 +41,10 @@ class TokenGuardError(RuntimeError):
 def assert_max_token_valid(key: str, value: int | None) -> None:
     """Raise TokenGuardError if value is None or < MIN_REQUIRED_MAX_TOKEN."""
     if value is None:
-        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (128K)")
+        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (200K)")
     if value < MIN_REQUIRED_MAX_TOKEN:
         raise TokenGuardError(
-            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (128K); "
+            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (200K); "
             f"agent startup is blocked"
         )
 ```
@@ -53,9 +53,9 @@ def assert_max_token_valid(key: str, value: int | None) -> None:
 
 | 输入 | 结果 |
 | :---- | :----- |
-| `value is None`（环境变量未设或为空） | 抛出 `"{key} is not set; must be >= 131072 (128K)"` |
-| `0 <= value < 131072` | 抛出 `"{key} = {value} is below the minimum 131072 (128K); agent startup is blocked"` |
-| `value >= 131072` | 通过（返回 `None`） |
+| `value is None`（环境变量未设或为空） | 抛出 `"{key} is not set; must be >= 200000 (200K)"` |
+| `0 <= value < 200000` | 抛出 `"{key} = {value} is below the minimum 200000 (200K); agent startup is blocked"` |
+| `value >= 200000` | 通过（返回 `None`） |
 
 没有上限，也没有任何办法把下限调低。`TokenGuardError` 继承自 `RuntimeError`，由各调用点自行决定如何呈现：启动时硬退出、运行中回一个 WebSocket error chunk，或写入时抛 `ValueError`。
 
@@ -73,10 +73,10 @@ from config.features import (
 
 | 环境变量 | 含义 | 要求 | `.models` 默认值 |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | 主模型上下文窗口 | `>= 131072` | `131072` |
-| `AUXILIARY_LLM_MAX_TOKEN` | 辅助模型上下文窗口 | `>= 131072` | `131072` |
-| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 决策模型窗口（可选） | 未设为跟随辅助；设置则 `>= 131072` | `131072` |
-| `COMPRESSION_LLM_MAX_TOKEN` | 压缩模型窗口（可选） | 未设为跟随辅助；设置则 `>= 131072` | `131072` |
+| `MAIN_LLM_MAX_TOKEN` | 主模型上下文窗口 | `>= 200000` | `200000` |
+| `AUXILIARY_LLM_MAX_TOKEN` | 辅助模型上下文窗口 | `>= 200000` | `200000` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow 决策模型窗口（可选） | 未设为跟随辅助；设置则 `>= 200000` | `200000` |
+| `COMPRESSION_LLM_MAX_TOKEN` | 压缩模型窗口（可选） | 未设为跟随辅助；设置则 `>= 200000` | `200000` |
 
 两个键同时登记在配置写入白名单 `TOKEN_KEYS` 中（`server/service/models_config.py`；`.env` 本身已不再接受模型键）：
 
@@ -102,7 +102,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 - **`MAIN_LLM_MAX_TOKEN` 未设**时解析为 `None`，会被无条件拒绝，即便是全新部署也一样。
 - **`AUXILIARY_LLM_MAX_TOKEN` 未设**时解析为 `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`，低于下限，同样被拒绝。省略它并不是捷径。
-- 两个**可选**键只在设置时校验：未配置的家族跟随辅助模型（后者的校验已经跑过）。设置为低于 128K 的值会被保存路径拒绝，并阻断下一次启动。
+- 两个**可选**键只在设置时校验：未配置的家族跟随辅助模型（后者的校验已经跑过）。设置为低于 200K 的值会被保存路径拒绝，并阻断下一次启动。
 - 本地辅助模式（`AUXILIARY_LLM_MODEL_LOCAL=true`）不会改变这一点，因为不存在豁免（见[局限](#%EF%B8%8F-局限与非目标)）。
 
 ## 🧭 运维指南
@@ -110,32 +110,34 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 ### 修复不达标的配置
 
 1. 打开仓库根目录的 `.models`，或使用 UI 的 系统配置 → 模型配置 标签。
-2. 把两个键都设为 `>= 131072`：
+2. 把两个键都设为 `>= 200000`：
 
 ```bash
-MAIN_LLM_MAX_TOKEN = 131072
-AUXILIARY_LLM_MAX_TOKEN = 131072
+MAIN_LLM_MAX_TOKEN = 200000
+AUXILIARY_LLM_MAX_TOKEN = 200000
 ```
 
-3. 重启后端，让启动闸门重新运行。仓库自带的 `.models.example` 里两个键已经是 `131072`。
+3. 重启后端，让启动闸门重新运行。仓库自带的 `.models.example` 里两个键已经是 `200000`。
 
-> 如果你的本地 `.env` 仍然是 `100000`，服务会拒绝启动并报 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`。启动前把它调到 `>= 131072`。
+已有 `.models` 里如果还是旧的 `131072` 默认值，加载时会自动迁移到 `200000`；其他低于下限的值不会被自动修正，仍由启动闸门拒绝。
+
+> 如果你的本地 `.env` 仍然是 `100000`，服务会拒绝启动并报 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`。启动前把它调到 `>= 200000`。
 
 ### 症状、原因、修复
 
 | 症状 | 原因 | 修复 |
 | :------ | :---- | :-- |
-| 服务立即退出；日志出现 `STARTUP ABORTED: ...` | 某个键未设或低于 `131072` | 把两个键都设为 `>= 131072`，然后重启 |
+| 服务立即退出；日志出现 `STARTUP ABORTED: ...` | 某个键未设或低于 `200000` | 把两个键都设为 `>= 200000`，然后重启 |
 | 日志出现 `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | 辅助键未设，回退到了 `121072` | 显式设置 `AUXILIARY_LLM_MAX_TOKEN` |
 | 没有回复，而是收到 WebSocket error chunk | 运行途中改环境，把某个值降到下限以下 | 修好 `.env`，然后重试该回合 |
-| 环境标签保存时报 maxToken 错误 | 值不是整数或 `< 131072` | 输入 `>= 131072` 的整数 |
+| 环境标签保存时报 maxToken 错误 | 值不是整数或 `< 200000` | 输入 `>= 200000` 的整数 |
 | 发送时出现 "模型配置不达标" toast | `GET /model-config` 报告 `valid: false` | 修好 `.env`；保存成功后缓存会自动刷新 |
 
 ## 🧪 测试
 
 | 套件 | 标记 | 覆盖 |
 | :---- | :----- | :----- |
-| `tests/config/test_token_guard.py` | `unit` | 阈值为 `131_072`；`None` 与低于下限抛错；错误信息点出键名；等于或高于下限通过 |
+| `tests/config/test_token_guard.py` | `unit` | 阈值为 `200_000`；`None` 与低于下限抛错；错误信息点出键名；等于或高于下限通过 |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()` 拒绝主值过低、主值未设、辅助值未设回退；合法环境可构建 |
 | `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()` 在**不写盘**的前提下拒绝低于下限与非整数；合法值与非 token 键通过 |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` 的响应形状与 `valid`：两者达最小值、主值过低、辅助未设、主值未设 |
@@ -155,9 +157,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 ## ⚠️ 局限与非目标
 
 - **没有豁免开关。** 两个键都无法退出这条下限。没有环境变量开关、没有按角色覆盖、没有旁路。
-- **本地辅助模式不豁免。** `AUXILIARY_LLM_MODEL_LOCAL=true` 仍须满足 `>= 131072`。本地模型路径硬编码为 `n_ctx=40960`，因此在窗口变大之前，标准的本地配置*预期*会被拒绝。
+- **本地辅助模式不豁免。** `AUXILIARY_LLM_MODEL_LOCAL=true` 仍须满足 `>= 200000`。本地模型路径硬编码为 `n_ctx=40960`，因此在窗口变大之前，标准的本地配置*预期*会被拒绝。
 - **辅助值未设是陷阱，不是捷径。** 不设 `AUXILIARY_LLM_MAX_TOKEN` 时解析出的回退值是 `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`，低于下限，启动照样被阻断。
-- **下限固定在 128K。** 没有 per-provider 阈值、没有上限、没有运行时热重载。运行途中的改动只对下一次图构建生效（由闸门 2 强制），对进行中的回合永不生效。
+- **下限固定在 200K。** 没有 per-provider 阈值、没有上限、没有运行时热重载。运行途中的改动只对下一次图构建生效（由闸门 2 强制），对进行中的回合永不生效。
 - **前端 toast 只是提醒。** 它不阻止发送；执法完全在后端。
 - **与其他护栏无关。** 它与 `ToolGuardrails` 和 CJK token 估算相互独立，不触碰压缩阈值或 `summarization` 调参。它只固定上下文窗口的*最小值*，而非这个窗口如何被花掉。
 
@@ -175,4 +177,4 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | 前端缓存 | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
 | 前端告警 | `client/app/composables/use-chat-stream.ts:435` | 发送时的非阻断 toast |
 | 前端面板 | `client/app/pages/home/components/ConfigPanel.vue` | 横幅、保存前校验、缓存失效 |
-| 默认值 | `.models.example` | 两个键默认均为 `131072` |
+| 默认值 | `.models.example` | 两个键默认均为 `200000` |

@@ -617,7 +617,7 @@ def _validate_custom_mapping(mapping: dict) -> dict:
             raise ValueError("'thinking_budgets' must be an object")
         from models.LLMs import main_llm as _main_llm
 
-        ceiling = int(getattr(_main_llm, "max_tokens", 0) or 0) or 131072
+        ceiling = int(getattr(_main_llm, "max_tokens", 0) or 0) or 200000
         budgets: dict[str, int] = {}
         for key, value in raw_budgets.items():
             if key not in THINKING_LEVELS:

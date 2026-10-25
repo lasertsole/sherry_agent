@@ -2,7 +2,7 @@
  * `.env` contract constants shared by the environment-config UI and its model
  * panels.
  *
- * The 128K floor is enforced in three places, all reading these values so the
+ * The 200K floor is enforced in three places, all reading these values so the
  * hint, the client-side pre-check, and the backend stay in step:
  *  - the inline hint above each guarded input (`LlmModelManager.vue`);
  *  - the pre-PUT guard in `ConfigPanel.vue::persistEnvChanges` (the right-sidebar
@@ -29,4 +29,4 @@ export const MAX_TOKEN_GUARD_KEYS = [
 ] as const;
 
 /** Smallest accepted context window (tokens) for the guarded keys. */
-export const MIN_REQUIRED_MAX_TOKEN = 131072;
+export const MIN_REQUIRED_MAX_TOKEN = 200000;

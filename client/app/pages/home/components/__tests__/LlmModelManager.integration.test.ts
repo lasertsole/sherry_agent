@@ -18,7 +18,7 @@ const ENV_VALUES: Record<string, string> = {
   MAIN_LLM_NAME: 'glm-5.3-flash',
   MAIN_LLM_API_BASE: 'https://example.invalid/v4',
   MAIN_LLM_API_KEY: 'sk-env',
-  MAIN_LLM_MAX_TOKEN: '131072',
+  MAIN_LLM_MAX_TOKEN: '200000',
   MAIN_LLM_ENABLE_THINKING: 'true'
 };
 
@@ -143,10 +143,10 @@ const rowFor = (wrapper: VueWrapper, label: string) =>
 const buttonFor = (wrapper: VueWrapper, label: string) => wrapper.findAll('button.btn').find(b => b.text() === label);
 
 /**
- * Number of 128K-floor hints rendered in the panel (one per guarded input).
+ * Number of 200K-floor hints rendered in the panel (one per guarded input).
  * @param wrapper
  */
-const countHints = (wrapper: VueWrapper) => (wrapper.text().match(/必须 >= 131072/g) ?? []).length;
+const countHints = (wrapper: VueWrapper) => (wrapper.text().match(/必须 >= 200000/g) ?? []).length;
 
 describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
@@ -553,11 +553,11 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(rowFor(wrapper, 'tti')).toBeTruthy();
   });
 
-  it('warns about the 128K floor on MAIN_LLM_MAX_TOKEN, and only there', async () => {
+  it('warns about the 200K floor on MAIN_LLM_MAX_TOKEN, and only there', async () => {
     const KEYS = ['MAIN_LLM_PROVIDER', 'MAIN_LLM_MAX_TOKEN', 'REASONER_LLM_MAX_TOKEN'];
     const VALUES: Record<string, string> = {
       MAIN_LLM_PROVIDER: 'deepseek',
-      MAIN_LLM_MAX_TOKEN: '131072',
+      MAIN_LLM_MAX_TOKEN: '200000',
       REASONER_LLM_MAX_TOKEN: '100000'
     };
     makeStore([{ id: 'p1', label: 'm', params: { ...VALUES } }], 'p1');
@@ -565,19 +565,19 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     await expand(wrapper);
 
     // One guarded key in this panel → exactly one hint, and the free
-    // REASONER_LLM_MAX_TOKEN (deliberately below 128K) must not carry it.
+    // REASONER_LLM_MAX_TOKEN (deliberately below 200K) must not carry it.
     expect(countHints(wrapper)).toBe(1);
     const tokenSpan = wrapper.get('span[title="MAIN_LLM_MAX_TOKEN"]');
-    expect(tokenSpan.element.parentElement?.textContent ?? '').toContain('必须 >= 131072 (128K)');
+    expect(tokenSpan.element.parentElement?.textContent ?? '').toContain('必须 >= 200000 (200K)');
     const freeSpan = wrapper.get('span[title="REASONER_LLM_MAX_TOKEN"]');
-    expect(freeSpan.element.parentElement?.textContent ?? '').not.toContain('131072 (128K)');
+    expect(freeSpan.element.parentElement?.textContent ?? '').not.toContain('200000 (200K)');
   });
 
-  it('hides the 128K warning for the built-in local entry (its budget is unused)', async () => {
+  it('hides the 200K warning for the built-in local entry (its budget is unused)', async () => {
     const KEYS = ['AUXILIARY_LLM_MODEL_LOCAL', 'AUXILIARY_LLM_MAX_TOKEN'];
     const VALUES: Record<string, string> = {
       AUXILIARY_LLM_MODEL_LOCAL: 'true',
-      AUXILIARY_LLM_MAX_TOKEN: '131072'
+      AUXILIARY_LLM_MAX_TOKEN: '200000'
     };
     makeStore([{ id: 'a1', label: 'aux', params: { ...VALUES } }], 'a1', 'AUXILIARY_LLM');
     const wrapper = mountPanel('AUXILIARY_LLM', KEYS, VALUES);
@@ -710,7 +710,7 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'TASKFLOW_LLM_API_KEY',
       'TASKFLOW_LLM_MAX_TOKEN'
     ];
-    const values = Object.fromEntries(keys.map(key => [key, key === 'TASKFLOW_LLM_MAX_TOKEN' ? '131072' : '']));
+    const values = Object.fromEntries(keys.map(key => [key, key === 'TASKFLOW_LLM_MAX_TOKEN' ? '200000' : '']));
     makeStore([], null, 'TASKFLOW_LLM');
     const wrapper = mountPanel('TASKFLOW_LLM', keys, values);
     await expand(wrapper);
@@ -729,7 +729,7 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const keys = ['TASKFLOW_LLM_MODEL_LOCAL', 'TASKFLOW_LLM_MAX_TOKEN'];
     const values: Record<string, string> = {
       TASKFLOW_LLM_MODEL_LOCAL: 'false',
-      TASKFLOW_LLM_MAX_TOKEN: '131072'
+      TASKFLOW_LLM_MAX_TOKEN: '200000'
     };
     makeStore([{ id: 't1', label: 'tf', params: { ...values } }], 't1', 'TASKFLOW_LLM');
     downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({

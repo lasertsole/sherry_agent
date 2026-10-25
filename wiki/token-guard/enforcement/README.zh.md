@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> [Token Guard](../README.zh.md) 的一部分：强制 128K 下限的四道闸门、只读的 `GET /model-config` 接口，以及只告警不拦截的前端行为。
+> [Token Guard](../README.zh.md) 的一部分：强制 200K 下限的四道闸门、只读的 `GET /model-config` 接口，以及只告警不拦截的前端行为。
 
 ---
 
@@ -28,7 +28,7 @@ _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
 _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
 
 # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
 # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
 # is NOT exempt.
 _main_val = int(_main_raw) if _main_raw else None
@@ -45,12 +45,12 @@ except Exception as e:
 一个坏值会产出下面这一行，进程不会启动：
 
 ```text
-CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked
+CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked
 ```
 
 ### 2. 图构建闸门
 
-`agent/core.py`（闸门在第 117 行）是运行时的第二道防线。即便服务带着合法 `.env` 启动，之后某次改动把任一值降到 128K 以下，仍然会拒绝构建图：
+`agent/core.py`（闸门在第 117 行）是运行时的第二道防线。即便服务带着合法 `.env` 启动，之后某次改动把任一值降到 200K 以下，仍然会拒绝构建图：
 
 ```python
 _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
@@ -69,7 +69,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ```python
 # Subagent spawn bypasses built_agent(), so child LLM construction validates
-# the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
+# the same 200K MAX_TOKEN floor here instead of inheriting it implicitly.
 ...
 assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
@@ -77,7 +77,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ### 4. 配置写入闸门
 
-`server/service/models_config.py`（`write_models_config()`）让 UI 无法持久化低于 128K 的值。模型键现在住在 `.models`（`PUT /env` 直接拒绝它们），且闸门先于类型转换执行，因此非整数或低于下限的值会在触碰文件之前抛出 `ValueError`，备份与写入都保持干净：
+`server/service/models_config.py`（`write_models_config()`）让 UI 无法持久化低于 200K 的值。模型键现在住在 `.models`（`PUT /env` 直接拒绝它们），且闸门先于类型转换执行，因此非整数或低于下限的值会在触碰文件之前抛出 `ValueError`，备份与写入都保持干净：
 
 ```python
 for key, value in changes.items():
@@ -89,7 +89,7 @@ for key, value in changes.items():
         raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. Refusing to save."
         )
 ```
 
@@ -101,9 +101,9 @@ HTTP 处理器会把它变成 `{"success": False}` 返回客户端，磁盘上�
 
 ```json
 {
-  "main_max_token": 131072,
-  "aux_max_token": 131072,
-  "min_required": 131072,
+  "main_max_token": 200000,
+  "aux_max_token": 200000,
+  "min_required": 200000,
   "valid": true
 }
 ```
@@ -120,10 +120,10 @@ HTTP 处理器会把它变成 `{"success": False}` 返回客户端，磁盘上�
 
 | 情况 | `main_max_token` | `aux_max_token` | `valid` |
 | :-------- | :--------------- | :-------------- | :------ |
-| 两者都设为 `131072` | `131072` | `131072` | `true` |
-| 主值低于下限 | 例如 `65536` | `131072` | `false` |
-| 辅助值未设 | `131072` | `121072`（回退） | `false` |
-| 主值未设 | `null` | `131072` | `false` |
+| 两者都设为 `200000` | `200000` | `200000` | `true` |
+| 主值低于下限 | 例如 `65536` | `200000` | `false` |
+| 辅助值未设 | `200000` | `121072`（回退） | `false` |
+| 主值未设 | `null` | `200000` | `false` |
 
 该资源没有写端点（环境写入走单独的 `/env` 路由）；`GET /model-config` 从不修改状态。
 
@@ -141,7 +141,7 @@ HTTP 处理器会把它变成 `{"success": False}` 返回客户端，磁盘上�
 
 ```ts
 function invalidModelConfig(): ModelConfig {
-  return { main_max_token: null, aux_max_token: null, min_required: 131072, valid: false };
+  return { main_max_token: null, aux_max_token: null, min_required: 200000, valid: false };
 }
 ```
 
@@ -163,7 +163,7 @@ if (!cfg.valid) {
 `client/app/pages/home/components/ConfigPanel.vue`：
 
 - 当环境标签暴露任意 `*_MAX_TOKEN` 键（`hasMaxTokenKeys`，第 344 行）时，渲染一条琥珀色横幅显示 `config.env.maxTokenHint`（第 211 行）。
-- 保存时，`persistEnvChanges()` 会预校验受保护的 token 键（第 379 至 389 行）。非整数或低于 `131072` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
+- 保存时，`persistEnvChanges()` 会预校验受保护的 token 键（第 379 至 389 行）。非整数或低于 `200000` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
 
 ```ts
 const TOKEN_KEYS = [
@@ -172,7 +172,7 @@ const TOKEN_KEYS = [
   'TASKFLOW_LLM_MAX_TOKEN',
   'COMPRESSION_LLM_MAX_TOKEN'
 ];
-const MIN_TOKEN = 131072;
+const MIN_TOKEN = 200000;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {
     const num = parseInt(value, 10);

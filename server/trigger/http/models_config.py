@@ -17,7 +17,7 @@ async def read_models_config_handler(request) -> dict:
 async def write_models_config_handler(request):
     """
     Update values of known .models keys (values are coerced to their declared
-    types; the 128K floor applies to the MAX_TOKEN keys).
+    types; the 200K floor applies to the MAX_TOKEN keys).
     Body: {"changes": {"KEY": "new value", ...}}
     """
     request_json = request.json()

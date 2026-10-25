@@ -29,7 +29,7 @@ GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_group_prefixes"]
 MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
 OTHER_GROUP = "other"
 
-# MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
+# MAX_TOKEN keys whose saved values must satisfy token_guard's 200K floor.
 TOKEN_KEYS = frozenset(
     {
         "MAIN_LLM_MAX_TOKEN",
@@ -140,7 +140,7 @@ def write_models_config(changes: dict[str, str]) -> None:
     if unknown:
         raise ValueError(f"Unknown models config keys: {', '.join(sorted(unknown))}")
 
-    # MAX_TOKEN guard FIRST: refuse to persist a sub-128K context window, so the
+    # MAX_TOKEN guard FIRST: refuse to persist a sub-200K context window, so the
     # file can never be saved into a state that blocks the next server boot. It
     # runs before the coercion loop so a non-integer value gets this message
     # rather than a bare int() error.
@@ -153,7 +153,7 @@ def write_models_config(changes: dict[str, str]) -> None:
             raise ValueError(f"{key} must be an integer, got: {value}") from None
         if num < MIN_REQUIRED_MAX_TOKEN:
             raise ValueError(
-                f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+                f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. Refusing to save."
             )
 
     # OUTPUT cap guard: empty means "provider default"; a set value below 8K is

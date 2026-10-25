@@ -1,8 +1,8 @@
-# 🛡️ 128K MAX_TOKEN Guard
+# 🛡️ 200K MAX_TOKEN Guard
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> How the agent enforces a hard 128K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and the `.models` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
+> How the agent enforces a hard 200K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and the `.models` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
 
 Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, `server/service/models_config.py`, plus `.models`. Every line number and constant in this document was verified against that code.
 
@@ -23,7 +23,7 @@ Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.p
 
 The guard is one invariant, enforced in four independent places:
 
-> **Both LLMs the agent runs on must reserve a context window of at least 128K tokens (`131_072`).**
+> **Both LLMs the agent runs on must reserve a context window of at least 200K tokens (`200_000`).**
 
 - The **main LLM** (`MAIN_LLM_MAX_TOKEN`) drives the summarization trigger and the whole conversation budget.
 - The **auxiliary LLM** (`AUXILIARY_LLM_MAX_TOKEN`) is the fallback for compaction, memory work, tool-output summaries, and every non-main subagent role. Two optional families can take over part of that work: `COMPRESSION_LLM_*` (the summarization middleware's own model) and `TASKFLOW_LLM_*` (plan / replan / step judge / goal gate). Both follow the auxiliary model when unconfigured.
@@ -31,7 +31,7 @@ The guard is one invariant, enforced in four independent places:
 The threshold lives in exactly one module, `config/features/agent_side/token_guard.py`:
 
 ```python
-MIN_REQUIRED_MAX_TOKEN: int = 131_072
+MIN_REQUIRED_MAX_TOKEN: int = 200_000
 
 
 class TokenGuardError(RuntimeError):
@@ -41,10 +41,10 @@ class TokenGuardError(RuntimeError):
 def assert_max_token_valid(key: str, value: int | None) -> None:
     """Raise TokenGuardError if value is None or < MIN_REQUIRED_MAX_TOKEN."""
     if value is None:
-        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (128K)")
+        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (200K)")
     if value < MIN_REQUIRED_MAX_TOKEN:
         raise TokenGuardError(
-            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (128K); "
+            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (200K); "
             f"agent startup is blocked"
         )
 ```
@@ -53,9 +53,9 @@ def assert_max_token_valid(key: str, value: int | None) -> None:
 
 | Input | Result |
 | :---- | :----- |
-| `value is None` (env var unset or empty) | raise `"{key} is not set; must be >= 131072 (128K)"` |
-| `0 <= value < 131072` | raise `"{key} = {value} is below the minimum 131072 (128K); agent startup is blocked"` |
-| `value >= 131072` | pass (returns `None`) |
+| `value is None` (env var unset or empty) | raise `"{key} is not set; must be >= 200000 (200K)"` |
+| `0 <= value < 200000` | raise `"{key} = {value} is below the minimum 200000 (200K); agent startup is blocked"` |
+| `value >= 200000` | pass (returns `None`) |
 
 There is no upper bound and no way to lower the floor. `TokenGuardError` subclasses `RuntimeError`, and each caller decides how to surface it: a hard exit at boot, a WebSocket error chunk mid-run, or a `ValueError` on write.
 
@@ -73,10 +73,10 @@ from config.features import (
 
 | Env var | Meaning | Required | `.models` default |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | Main model context window | `>= 131072` | `131072` |
-| `AUXILIARY_LLM_MAX_TOKEN` | Auxiliary model context window | `>= 131072` | `131072` |
-| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow decision model window (optional) | unset = follows auxiliary; set `>= 131072` | `131072` |
-| `COMPRESSION_LLM_MAX_TOKEN` | Compression model window (optional) | unset = follows auxiliary; set `>= 131072` | `131072` |
+| `MAIN_LLM_MAX_TOKEN` | Main model context window | `>= 200000` | `200000` |
+| `AUXILIARY_LLM_MAX_TOKEN` | Auxiliary model context window | `>= 200000` | `200000` |
+| `TASKFLOW_LLM_MAX_TOKEN` | TaskFlow decision model window (optional) | unset = follows auxiliary; set `>= 200000` | `200000` |
+| `COMPRESSION_LLM_MAX_TOKEN` | Compression model window (optional) | unset = follows auxiliary; set `>= 200000` | `200000` |
 
 Both keys are also registered in the config-write allow-list `TOKEN_KEYS` (`server/service/models_config.py`; `.env` itself no longer accepts the model keys):
 
@@ -102,7 +102,7 @@ Consequences worth memorizing:
 
 - An **unset `MAIN_LLM_MAX_TOKEN`** resolves to `None` and is always rejected, even on a stock boot.
 - An **unset `AUXILIARY_LLM_MAX_TOKEN`** resolves to `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`, which is below the floor, so it is rejected too. Leaving it out is not a shortcut.
-- The two **optional** keys are validated only when set: an unset family follows the auxiliary model (whose own check already ran). A set value below 128K is refused by the save path and aborts the next boot.
+- The two **optional** keys are validated only when set: an unset family follows the auxiliary model (whose own check already ran). A set value below 200K is refused by the save path and aborts the next boot.
 - Local auxiliary mode (`AUXILIARY_LLM_MODEL_LOCAL=true`) does not change this, because no exemption exists (see [Limitations](#%EF%B8%8F-limitations--non-goals)).
 
 ## 🧭 Operating Guide
@@ -110,32 +110,34 @@ Consequences worth memorizing:
 ### Fix a failing config
 
 1. Open `.models` at the repo root, or use System Config then the 模型配置 (Model Config) tab in the UI.
-2. Set both keys to `>= 131072`:
+2. Set both keys to `>= 200000`:
 
 ```bash
-MAIN_LLM_MAX_TOKEN = 131072
-AUXILIARY_LLM_MAX_TOKEN = 131072
+MAIN_LLM_MAX_TOKEN = 200000
+AUXILIARY_LLM_MAX_TOKEN = 200000
 ```
 
-3. Restart the backend so the boot gate re-runs. The shipped `.models.example` already has both at `131072`.
+3. Restart the backend so the boot gate re-runs. The shipped `.models.example` already has both at `200000`.
 
-> If your local `.models` still holds `100000`, the server refuses to start with `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`. Raise it to `>= 131072` before launching.
+An existing `.models` that still carries the previous `131072` default is migrated to `200000` when the file is loaded; any other below-floor value is left for the boot gate to reject.
+
+> If your local `.models` still holds `100000`, the server refuses to start with `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked`. Raise it to `>= 200000` before launching.
 
 ### Symptom, cause, fix
 
 | Symptom | Cause | Fix |
 | :------ | :---- | :-- |
-| Server exits immediately; log shows `STARTUP ABORTED: ...` | A key is unset or below `131072` | Set both keys to `>= 131072`, then restart |
+| Server exits immediately; log shows `STARTUP ABORTED: ...` | A key is unset or below `200000` | Set both keys to `>= 200000`, then restart |
 | Log shows `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | Aux key unset, so it fell back to `121072` | Set `AUXILIARY_LLM_MAX_TOKEN` explicitly |
 | WebSocket error chunk instead of a reply | A mid-run env edit dropped a value below the floor | Fix `.models`, then retry the turn |
-| Save in the env tab shows the maxToken error | Value is non-integer or `< 131072` | Enter an integer `>= 131072` |
+| Save in the env tab shows the maxToken error | Value is non-integer or `< 200000` | Enter an integer `>= 200000` |
 | Send shows the "Model Config Below Minimum" toast | `GET /model-config` reports `valid: false` | Fix `.models`; the cache refreshes after a successful save |
 
 ## 🧪 Testing
 
 | Suite | Marker | Covers |
 | :---- | :----- | :----- |
-| `tests/config/test_token_guard.py` | `unit` | Threshold is `131_072`; `None` and below-floor raise; the error names the key; at or above floor passes |
+| `tests/config/test_token_guard.py` | `unit` | Threshold is `200_000`; `None` and below-floor raise; the error names the key; at or above floor passes |
 | `tests/agent/core/test_built_agent_guard.py` | `unit` | `built_agent()` rejects main-below, main-unset, and aux-unset-fallback; builds with a valid env |
 | `tests/server/service/test_env_guard.py` | `unit` | `write_env_file()` rejects below-floor and non-integer without writing; a valid value and non-token keys pass |
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` shape and `valid` for both-at-minimum, main-below, aux-unset, main-unset |
@@ -155,9 +157,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 ## ⚠️ Limitations & Non-goals
 
 - **No exemption switch.** Neither key can opt out of the floor. There is no env flag, no per-role override, and no bypass.
-- **Local auxiliary mode is not exempt.** `AUXILIARY_LLM_MODEL_LOCAL=true` still must satisfy `>= 131072`. The local model path is hard-coded to `n_ctx=40960`, so a stock local setup is expected to be rejected until that window grows.
+- **Local auxiliary mode is not exempt.** `AUXILIARY_LLM_MODEL_LOCAL=true` still must satisfy `>= 200000`. The local model path is hard-coded to `n_ctx=40960`, so a stock local setup is expected to be rejected until that window grows.
 - **Unset aux is a trap, not a shortcut.** With no `AUXILIARY_LLM_MAX_TOKEN`, the resolved fallback is `LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072`, below the floor, so startup blocks anyway.
-- **The floor is fixed at 128K.** There is no per-provider threshold, no upper cap, and no runtime hot-reload. A mid-run edit only takes effect on the next graph build (enforced by gate 2), never on an in-flight turn.
+- **The floor is fixed at 200K.** There is no per-provider threshold, no upper cap, and no runtime hot-reload. A mid-run edit only takes effect on the next graph build (enforced by gate 2), never on an in-flight turn.
 - **The frontend toast is advisory.** It does not prevent sending; enforcement is entirely server-side.
 - **Unrelated to other guards.** This is independent of `ToolGuardrails` and CJK token estimation. It does not touch compression thresholds or `summarization` tuning. It fixes the minimum context window, not how that window is spent.
 
@@ -175,4 +177,4 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | Frontend cache | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
 | Frontend warn | `client/app/composables/use-chat-stream.ts:435` | Non-blocking toast on send |
 | Frontend panel | `client/app/pages/home/components/ConfigPanel.vue` | Banner, pre-save validation, cache invalidation |
-| Defaults | `.models.example` | Both keys ship at `131072` |
+| Defaults | `.models.example` | Both keys ship at `200000` |

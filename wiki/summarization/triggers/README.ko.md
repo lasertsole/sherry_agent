@@ -110,4 +110,4 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 **꼬리 내용을 버려도 안전한 이유:** 모든 도구 결과는 반환되는 순간 MesMemory에 플러시되었고(`MessagePersistenceMiddleware`), `message_search` 도구로 계속 조회할 수 있습니다. P0-2로 축출된 결과는 스텁 안에 `[evicted to: …]` 포인터를 유지하며(`read_file`이 계속 동작), P2-4로 슬라이스된 `read_file` 결과는 슬라이스 안내를 그대로 유지합니다; 그리고 스텁된 메시지는 스캔 대상 배치를 종료시키므로 두 번째 클립은 no-op이며 이 마커들을 절대 파괴하지 않습니다. 설정: `overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep`.
 
-윈도우 산술(테스트 계약): 윈도우 `41 600` → usable `25 600`, 두 경계선 `17 920` / `20 480`, 트렁케이트 예산 `15 360`. 테스트 고정값 `MAIN_LLM_MAX_TOKEN = 65536`일 때(런타임 `.env` 값은 131072 / 128K 이상 필요) 등록된 T2 절은 `52 428`에 놓입니다.
+윈도우 산술(테스트 계약): 윈도우 `41 600` → usable `25 600`, 두 경계선 `17 920` / `20 480`, 트렁케이트 예산 `15 360`. 테스트 고정값 `MAIN_LLM_MAX_TOKEN = 65536`일 때(런타임 `.env` 값은 200000 / 200K 이상 필요) 등록된 T2 절은 `52 428`에 놓입니다.

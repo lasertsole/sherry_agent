@@ -28,7 +28,7 @@ def test_existing_file_gains_both_optional_families(existing_models):
     data = json5.loads(existing_models.read_text(encoding="utf-8"))
     assert data["MAIN_LLM_PROVIDER"] == "openai"
     assert data["TASKFLOW_LLM_PROVIDER"] == ""
-    assert data["TASKFLOW_LLM_MAX_TOKEN"] == 131072
+    assert data["TASKFLOW_LLM_MAX_TOKEN"] == 200000
     assert data["COMPRESSION_LLM_PROVIDER"] == ""
     assert data["COMPRESSION_LLM_MAX_OUTPUT_TOKEN"] == ""
 
@@ -63,8 +63,43 @@ def test_a_one_line_document_stays_parseable(tmp_path, monkeypatch):
 
     data = json5.loads(path.read_text(encoding="utf-8"))
     assert data["MAIN_LLM_NAME"] == "fresh-name"
-    assert data["TASKFLOW_LLM_MAX_TOKEN"] == 131072
-    assert data["COMPRESSION_LLM_MAX_TOKEN"] == 131072
+    assert data["TASKFLOW_LLM_MAX_TOKEN"] == 200000
+    assert data["COMPRESSION_LLM_MAX_TOKEN"] == 200000
+
+
+def test_the_legacy_128k_floor_is_migrated_in_place(tmp_path, monkeypatch):
+    """A file seeded at the old 128K default must not brick the 200K boot gate."""
+    path = tmp_path / ".models"
+    path.write_text(
+        "{\n"
+        "  // keep this comment\n"
+        '  "MAIN_LLM_MAX_TOKEN": 131072,\n'
+        '  "AUXILIARY_LLM_MAX_TOKEN": "131072",\n'
+        '  "MAIN_LLM_NAME": "kept",\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ms, "MODELS_CONFIG_PATH", path)
+
+    ms.ensure_models_config_file()
+
+    text = path.read_text(encoding="utf-8")
+    data = json5.loads(text)
+    assert data["MAIN_LLM_MAX_TOKEN"] == 200000
+    assert data["AUXILIARY_LLM_MAX_TOKEN"] == 200000
+    assert data["MAIN_LLM_NAME"] == "kept"
+    assert "// keep this comment" in text
+
+
+def test_another_below_floor_value_is_left_for_the_gate(tmp_path, monkeypatch):
+    """Only the exact legacy default is migrated; a real typo must still fail."""
+    path = tmp_path / ".models"
+    path.write_text('{\n  "MAIN_LLM_MAX_TOKEN": 100000\n}\n', encoding="utf-8")
+    monkeypatch.setattr(ms, "MODELS_CONFIG_PATH", path)
+
+    ms.ensure_models_config_file()
+
+    assert json5.loads(path.read_text(encoding="utf-8"))["MAIN_LLM_MAX_TOKEN"] == 100000
 
 
 def test_a_partially_present_family_is_not_rewritten(existing_models):

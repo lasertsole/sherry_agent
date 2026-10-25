@@ -919,7 +919,7 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param text User input content
    */
   const handleSend = async (text: string) => {
-    // 128K MAX_TOKEN guard: warn (non-blocking) when the backend config is
+    // 200K MAX_TOKEN guard: warn (non-blocking) when the backend config is
     // invalid; the warning stays silent when valid or when the fetch fails.
     try {
       const cfg = await getModelConfigCached();

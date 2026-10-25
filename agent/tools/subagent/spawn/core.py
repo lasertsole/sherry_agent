@@ -1385,7 +1385,7 @@ def _build_child_middlewares(
 
 
 def _assert_child_token_floor() -> None:
-    """Subagent spawn bypasses ``built_agent()``, so validate the 128K floor here.
+    """Subagent spawn bypasses ``built_agent()``, so validate the 200K floor here.
 
     Child LLM construction would otherwise inherit the floor implicitly — this
     is the same guard the main agent applies.

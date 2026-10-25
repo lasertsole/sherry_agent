@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> [Token Guard](../README.ko.md)의 일부: 128K 하한을 강제하는 네 개의 게이트, 읽기 전용 `GET /model-config` 엔드포인트, 경고만 하고 차단하지 않는 프런트엔드 동작.
+> [Token Guard](../README.ko.md)의 일부: 200K 하한을 강제하는 네 개의 게이트, 읽기 전용 `GET /model-config` 엔드포인트, 경고만 하고 차단하지 않는 프런트엔드 동작.
 
 ---
 
@@ -28,7 +28,7 @@ _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
 _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
 
 # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+# LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
 # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
 # is NOT exempt.
 _main_val = int(_main_raw) if _main_raw else None
@@ -45,12 +45,12 @@ except Exception as e:
 잘못된 값은 정확히 이 줄을 만들어내고 프로세스는 시작하지 않습니다:
 
 ```text
-CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked
+CRITICAL  STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 200000 (200K); agent startup is blocked
 ```
 
 ### 2. 그래프 빌드 게이트
 
-`agent/core.py`(게이트는 117행)는 런타임 두 번째 방어선입니다. 서버가 유효한 `.env`로 부팅했더라도, 이후 편집으로 어느 한 값이 128K 미만으로 떨어지면 그래프 빌드를 거부합니다:
+`agent/core.py`(게이트는 117행)는 런타임 두 번째 방어선입니다. 서버가 유효한 `.env`로 부팅했더라도, 이후 편집으로 어느 한 값이 200K 미만으로 떨어지면 그래프 빌드를 거부합니다:
 
 ```python
 _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
@@ -69,7 +69,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ```python
 # Subagent spawn bypasses built_agent(), so child LLM construction validates
-# the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
+# the same 200K MAX_TOKEN floor here instead of inheriting it implicitly.
 ...
 assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
@@ -77,7 +77,7 @@ assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
 ### 4. 설정 쓰기 게이트
 
-`server/service/models_config.py`(`write_models_config()`)는 UI에서 128K 미만 값을 영속화할 수 없게 만듭니다. 모델 키는 이제 `.models`에 있고(`PUT /env`는 거부합니다), 게이트가 형 변환보다 먼저 실행되므로 비정수 또는 하한 미만 값은 파일을 건드리기 전에 `ValueError`를 던져 백업과 쓰기가 모두 깨끗하게 유지됩니다:
+`server/service/models_config.py`(`write_models_config()`)는 UI에서 200K 미만 값을 영속화할 수 없게 만듭니다. 모델 키는 이제 `.models`에 있고(`PUT /env`는 거부합니다), 게이트가 형 변환보다 먼저 실행되므로 비정수 또는 하한 미만 값은 파일을 건드리기 전에 `ValueError`를 던져 백업과 쓰기가 모두 깨끗하게 유지됩니다:
 
 ```python
 for key, value in changes.items():
@@ -89,7 +89,7 @@ for key, value in changes.items():
         raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (200K); got {num}. Refusing to save."
         )
 ```
 
@@ -101,9 +101,9 @@ HTTP 핸들러는 이를 `{"success": False}`로 바꿔 클라이언트에 반�
 
 ```json
 {
-  "main_max_token": 131072,
-  "aux_max_token": 131072,
-  "min_required": 131072,
+  "main_max_token": 200000,
+  "aux_max_token": 200000,
+  "min_required": 200000,
   "valid": true
 }
 ```
@@ -120,10 +120,10 @@ HTTP 핸들러는 이를 `{"success": False}`로 바꿔 클라이언트에 반�
 
 | 상황 | `main_max_token` | `aux_max_token` | `valid` |
 | :-------- | :--------------- | :-------------- | :------ |
-| 둘 다 `131072` | `131072` | `131072` | `true` |
-| 메인이 하한 미만 | 예: `65536` | `131072` | `false` |
-| 보조 미설정 | `131072` | `121072` (폴백) | `false` |
-| 메인 미설정 | `null` | `131072` | `false` |
+| 둘 다 `200000` | `200000` | `200000` | `true` |
+| 메인이 하한 미만 | 예: `65536` | `200000` | `false` |
+| 보조 미설정 | `200000` | `121072` (폴백) | `false` |
+| 메인 미설정 | `null` | `200000` | `false` |
 
 이 리소스에는 쓰기 엔드포인트가 없습니다(환경 쓰기는 별도의 `/env` 라우트를 통합니다). `GET /model-config`는 상태를 결코 변경하지 않습니다.
 
@@ -141,7 +141,7 @@ HTTP 핸들러는 이를 `{"success": False}`로 바꿔 클라이언트에 반�
 
 ```ts
 function invalidModelConfig(): ModelConfig {
-  return { main_max_token: null, aux_max_token: null, min_required: 131072, valid: false };
+  return { main_max_token: null, aux_max_token: null, min_required: 200000, valid: false };
 }
 ```
 
@@ -163,7 +163,7 @@ if (!cfg.valid) {
 `client/app/pages/home/components/ConfigPanel.vue`:
 
 - 환경 탭이 `*_MAX_TOKEN` 키를 하나라도 노출하면(`hasMaxTokenKeys`, 344행) 호박색 배너가 `config.env.maxTokenHint`(211행)를 렌더링합니다.
-- 저장 시 `persistEnvChanges()`가 보호된 토큰 키를 사전 검증합니다(379행부터 389행). 비정수 또는 `131072` 미만 값은 `config.env.maxTokenError`를 설정하고 `false`를 반환하므로, PUT은 결코 전송되지 않습니다:
+- 저장 시 `persistEnvChanges()`가 보호된 토큰 키를 사전 검증합니다(379행부터 389행). 비정수 또는 `200000` 미만 값은 `config.env.maxTokenError`를 설정하고 `false`를 반환하므로, PUT은 결코 전송되지 않습니다:
 
 ```ts
 const TOKEN_KEYS = [
@@ -172,7 +172,7 @@ const TOKEN_KEYS = [
   'TASKFLOW_LLM_MAX_TOKEN',
   'COMPRESSION_LLM_MAX_TOKEN'
 ];
-const MIN_TOKEN = 131072;
+const MIN_TOKEN = 200000;
 for (const [key, value] of Object.entries(changes)) {
   if (TOKEN_KEYS.includes(key)) {
     const num = parseInt(value, 10);

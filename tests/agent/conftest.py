@@ -58,8 +58,8 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     monkeypatch.setattr(agent_core, "validate_required_middleware", lambda *_, **__: None)
     # CI runs without .env: give the MAX_TOKEN gate a valid pair through the
     # real env vars (never by patching the guard itself).
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     # The gate passes, but models.LLMs.main_llm.max_tokens is still None in CI,
     # so built_agent's trigger math (main_llm_max_tokens *
     # COMPRESSION_TRIGGER_RATIO) would raise. Pin the window deterministically

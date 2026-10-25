@@ -2,7 +2,7 @@
  * Integration tests for the ConfigPanel MAX_TOKEN guard (backend mocked).
  *
  * Mounts the real ConfigPanel (the system-config right-sidebar tab) with the env
- * transport mocked: a sub-128K token
+ * transport mocked: a sub-200K token
  * value must be rejected BEFORE any PUT (specific error shown, nothing written),
  * while a valid value is persisted and the model-config cache is invalidated.
  */
@@ -18,7 +18,7 @@ const envState = vi.hoisted(() => {
     {
       name: 'MAIN_LLM',
       entries: [
-        { key: 'MAIN_LLM_MAX_TOKEN', value: '131072', value_edited: false },
+        { key: 'MAIN_LLM_MAX_TOKEN', value: '200000', value_edited: false },
         { key: 'MAIN_LLM_NAME', value: 'test-model', value_edited: false }
       ]
     }
@@ -104,7 +104,7 @@ async function mountWithEnvTab() {
 }
 
 beforeEach(() => {
-  envState.groups[0]!.entries[0]!.value = '131072';
+  envState.groups[0]!.entries[0]!.value = '200000';
   readModelsConfigMock.mockClear();
   writeModelsConfigMock.mockClear();
   invalidateModelConfigCacheMock.mockClear();
@@ -131,7 +131,7 @@ describe('ConfigPanel per-area saving', () => {
 });
 
 describe('ConfigPanel MAX_TOKEN guard', () => {
-  it('keeps the 128K rule off the tab header (it sits on the guarded inputs)', async () => {
+  it('keeps the 200K rule off the tab header (it sits on the guarded inputs)', async () => {
     const { wrapper } = await mountWithEnvTab();
 
     // The tab no longer repeats the rule as a banner above every group; the
@@ -139,7 +139,7 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
     expect(wrapper.find('.border-amber-300').exists()).toBe(false);
   });
 
-  it('rejects a sub-128K value with the key-specific error and writes nothing', async () => {
+  it('rejects a sub-200K value with the key-specific error and writes nothing', async () => {
     const { vm } = await mountWithEnvTab();
     tokenEntry(vm).value = '65536';
 
@@ -147,7 +147,7 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
 
     expect(writeModelsConfigMock).not.toHaveBeenCalled();
     expect(invalidateModelConfigCacheMock).not.toHaveBeenCalled();
-    expect(vm.envLoadError).toBe(`${MAIN_TOKEN_KEY} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。`);
+    expect(vm.envLoadError).toBe(`${MAIN_TOKEN_KEY} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。`);
   });
 
   it('persists a valid value and invalidates the model-config cache', async () => {

@@ -46,8 +46,8 @@ def _wiring(monkeypatch):
 
     # CI runs without .env: give the spawn-path MAX_TOKEN gate a valid pair
     # through the real env vars (never by patching the guard itself).
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     # models.LLMs.main_llm.max_tokens is also unset in CI and spawn/core would
     # crash on `None * COMPRESSION_TRIGGER_RATIO` — pin the window deterministically
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)

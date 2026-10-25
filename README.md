@@ -178,7 +178,7 @@ sherry_agent/
 │   ├── loop-prevention/    # Runaway-loop prevention harness
 │   ├── llm-retry/         # Retry budget, fallback cap, stale-streak scope
 │   ├── sandbox/            # Eval sandbox & tool isolation
-│   ├── token-guard/        # 128K context-window floor
+│   ├── token-guard/        # 200K context-window floor
 │   ├── context-governance/ # Persistence, eviction, tail clip, summary filtering
 │   ├── long-running-tasks/ # TaskFlow orchestration
 │   ├── subagent/           # Subagent design invariants & completion gates
@@ -335,7 +335,7 @@ Each major subsystem has its own detailed README:
 | **Threat Model** | Trust boundaries, data classification, per-threat protection status, and the prompt-injection scanner | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **User Login** | Opt-in account protection: loopback clients stay exempt, remote access is gated by a scrypt password and HttpOnly JWT session cookies | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
 | **Long-Running Tasks** | TaskFlow DAG engine, step judge, budgets, deadlines, verified completion gates, tri-color orphan GC, and cross-turn memory continuity | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | Hard 128K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Token Guard** | Hard 200K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute: read-only design, an approval gate on the plan, a revision-bound resubmit loop and a mutation budget | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | Per-boundary persistence, tool-result & human-message eviction, `read_file` slice, overflow tail clip, summary filtering, conversation-turn identity on message rows | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
 | **Stream Recovery** | Mid-turn WebSocket recovery: snapshot + per-turn `seq` watermark, no replay, no duplication, tool calls stay in the trajectory ledger | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
@@ -368,12 +368,12 @@ Fill in at least the main chat model in `.models` and, for web search, a Tavily 
 
 | Variable | Required | Description |
 | :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | Primary chat model (must support JSON output and tool calling); `MAIN_LLM_MAX_TOKEN` must be >= 131072 (128K) |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | Primary chat model (must support JSON output and tool calling); `MAIN_LLM_MAX_TOKEN` must be >= 200000 (200K) |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | Universal reasoning switch, mapped per provider (DeepSeek / OpenAI / GLM / Anthropic) |
 | `TAVILY_API_KEY` | ✅ for web search | Enables the web search tool |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | Self-hosted SearXNG as the (or an alternative) web-search backend; without `TAVILY_API_KEY` it is the only one. Configure it in the 模型联网 panel; Tavily failures fall back to it automatically |
-| `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 131072 (128K) |
-| `TASKFLOW_LLM_*` | — | TaskFlow decision model (plan / replan / step judge / goal gate). An empty provider + API base follows `AUXILIARY_LLM_*`; local mode reuses the auxiliary GGUF. `TASKFLOW_LLM_MAX_TOKEN` must be >= 131072 (128K) |
+| `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 200000 (200K) |
+| `TASKFLOW_LLM_*` | — | TaskFlow decision model (plan / replan / step judge / goal gate). An empty provider + API base follows `AUXILIARY_LLM_*`; local mode reuses the auxiliary GGUF. `TASKFLOW_LLM_MAX_TOKEN` must be >= 200000 (200K) |
 | `COMPRESSION_LLM_*` | — | Compression model (LLM summary). Memory review uses `MAIN_LLM` and plan extraction uses `AUXILIARY_LLM_*`; an empty provider + API base follows `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |

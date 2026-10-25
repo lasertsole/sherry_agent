@@ -177,7 +177,7 @@ sherry_agent/
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
 │   ├── llm-retry/         # リトライ予算、fallback 上限、遮断範囲
 │   ├── sandbox/            # 評価サンドボックスとツール分離
-│   ├── token-guard/        # 128K コンテキストウィンドウ下限
+│   ├── token-guard/        # 200K コンテキストウィンドウ下限
 │   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
 │   ├── long-running-tasks/ # TaskFlow オーケストレーション
 │   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
@@ -334,7 +334,7 @@ sherry_agent/
 | **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
 | **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、三色孤児 GC、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Token Guard** | 両 LLM の 200K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング、message 行のターン識別子 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
 | **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
@@ -367,12 +367,12 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 
 | 変数 | 必須 | 説明 |
 | :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 汎用推論スイッチ。プロバイダーごとにマッピング（DeepSeek / OpenAI / GLM / Anthropic） |
 | `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
-| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
-| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
+| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
 | `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |

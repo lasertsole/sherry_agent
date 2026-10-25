@@ -580,7 +580,7 @@ const persistEnvChanges = async (): Promise<boolean> => {
   );
   if (changedSources.length === 0) return true;
 
-  // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
+  // MAX_TOKEN guard: pre-validate before the PUT so a sub-200K value is rejected
   // in the dialog (the backend write_models_config enforces the same floor).
   for (const source of changedSources) {
     for (const [key, value] of Object.entries(perSource[source])) {
@@ -1126,8 +1126,8 @@ onBeforeUnmount(onHide);
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
         "noModelGroups": "暂无模型配置项。",
-        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
-        "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+        "maxTokenError": "{key} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。",
+        "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
       },
       "sherry": {
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
@@ -1456,8 +1456,8 @@ onBeforeUnmount(onHide);
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
         "noModelGroups": "No model settings.",
-        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
-        "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+        "maxTokenError": "{key} must be >= 200000 (200K); current value does not meet the requirement, cannot save.",
+        "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
       },
       "sherry": {
         "loadError": "Failed to load app config. Please check the backend service.",
@@ -1786,8 +1786,8 @@ onBeforeUnmount(onHide);
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
         "noModelGroups": "モデル設定はありません。",
-        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
-        "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+        "maxTokenError": "{key} は 200000 (200K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+        "maxTokenHint": "200000 (200K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
       "sherry": {
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
@@ -2116,8 +2116,8 @@ onBeforeUnmount(onHide);
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
         "noModelGroups": "모델 설정이 없습니다.",
-        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
-        "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+        "maxTokenError": "{key}는 200000 (200K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
+        "maxTokenHint": "200000 (200K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
       "sherry": {
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",

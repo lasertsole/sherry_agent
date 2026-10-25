@@ -110,7 +110,7 @@
             :title="key"
             >{{ paramLabel(key) }}</span
           >
-          <!-- 128K floor, shown on the input it constrains instead of once at the
+          <!-- 200K floor, shown on the input it constrains instead of once at the
                top of the tab; hidden for the built-in local entry, whose budget the
                backend never reads. -->
           <p
@@ -399,7 +399,7 @@ const localFlagKey = computed(() => props.keys.find(k => k.endsWith('_MODEL_LOCA
 const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value));
 
 /**
- * Whether a parameter carries the 128K context-window floor the backend refuses
+ * Whether a parameter carries the 200K context-window floor the backend refuses
  * to start below (only MAIN_LLM / AUXILIARY_LLM are guarded, not every
  * `*_MAX_TOKEN` key — the hint must not cry wolf on the free ones).
  * @param key

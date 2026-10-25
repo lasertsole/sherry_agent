@@ -153,7 +153,7 @@ class TestPerModelKwargs:
         monkeypatch.setenv("MAIN_LLM_NAME", "gpt-4o-mini")
         monkeypatch.setenv("MAIN_LLM_API_KEY", "  ")
         monkeypatch.setenv("MAIN_LLM_API_BASE", "https://main.invalid/v1")
-        monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
+        monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
         monkeypatch.setenv("MAIN_LLM_ENABLE_THINKING", "false")
         module = _load("_main_env_builder", "models/LLMs/main_llm.py")
 
@@ -168,7 +168,7 @@ class TestPerModelKwargs:
             "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
-            "profile": {"max_input_tokens": 131072},
+            "profile": {"max_input_tokens": 200000},
             "frequency_penalty": 0.3,
             "presence_penalty": 0.2,
         }

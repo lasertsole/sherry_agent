@@ -100,7 +100,7 @@
     },
     "tokenGuard": {
       "title": "模型配置不达标",
-      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
+      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 200K (200000)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
     }
   },
   "errors": {
@@ -404,8 +404,8 @@
       "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
       "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
       "noEnvFile": "未找到 .env 文件。",
-      "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
-      "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+      "maxTokenError": "{key} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。",
+      "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
     },
     "sherry": {
       "loadError": "应用配置加载失败，请检查后端服务是否已启动。",

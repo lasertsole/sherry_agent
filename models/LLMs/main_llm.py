@@ -32,7 +32,7 @@ if max_tokens:
     try:
         max_tokens = int(max_tokens)
     except ValueError as exc:
-        # A typo ("128K") must name the variable instead of dying inside int().
+        # A typo ("200K") must name the variable instead of dying inside int().
         raise ValueError(
             f"MAIN_LLM_MAX_TOKEN must be an integer number of tokens, got {max_tokens!r}"
         ) from exc

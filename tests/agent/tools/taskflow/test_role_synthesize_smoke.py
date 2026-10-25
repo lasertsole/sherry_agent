@@ -92,8 +92,8 @@ def _wiring(monkeypatch):
 
     main_llm = SimpleNamespace(kind="main")
     aux_llm = SimpleNamespace(kind="aux")
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: main_llm)
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: aux_llm)

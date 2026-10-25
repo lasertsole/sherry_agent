@@ -82,7 +82,7 @@ def main() -> None:
         )
 
     # MAX_TOKEN gate (config.features.token_guard): both agents must run on a
-    # >= 128K context window. Fail fast BEFORE any agent-core work, so a
+    # >= 200K context window. Fail fast BEFORE any agent-core work, so a
     # misconfigured .env can never serve a crippled agent.
     from config.features import (
         LLM_CLIENT_DEFAULTS,
@@ -95,7 +95,7 @@ def main() -> None:
 
     # Resolve effective values (mirrors main_llm.py / auxiliary_llm/core.py logic):
     # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-    # LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+    # LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
     # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
     # is NOT exempt.
     _main_val = int(_main_raw) if _main_raw else None

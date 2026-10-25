@@ -705,7 +705,7 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   their `.example` templates) and `sherry.jsonc`. Locations
   reported to the UI keep the CHECKOUT shape (`./skills/auto/…`) whichever home
   they live in (`app_relative` / `resolve_app_path` map between the two).
-- **First run without a model**: the boot's 128K token gate aborts a SERVER,
+- **First run without a model**: the boot's 200K token gate aborts a SERVER,
   but `SHERRY_DESKTOP=1` (set by the shell) lets an UNCONFIGURED desktop app
   serve anyway, so the window can open and 模型配置 can write the files; a
   CONFIGURED-but-invalid value still aborts. The backend must be restarted
@@ -757,7 +757,7 @@ falls back to `build_auxiliary_llm()` (an existing deployment is unchanged), a
 remote configuration builds the same client shape as auxiliary (bounded
 timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
 the auxiliary GGUF — there is no second local model to download. A configured
-`*_MAX_TOKEN` must be >= 131072 (128K) and `*_MAX_OUTPUT_TOKEN` empty or
+`*_MAX_TOKEN` must be >= 200000 (200K) and `*_MAX_OUTPUT_TOKEN` empty or
 >= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
 abort, exactly like the main/auxiliary keys. The 模型配置 tab renders both
 families as model-profile cards, whose local entry reports the aux family's
@@ -765,7 +765,10 @@ download progress; a pre-existing `.models` gains a wholly missing family block
 on import (`ensure_models_config_file`), because the panel only renders keys the
 file contains. A configured-but-unbuildable remote model (unknown provider)
 logs a warning and falls back to auxiliary instead of stranding TaskFlow or
-compression.
+compression. An existing `.models` that still carries the previous `131072`
+default is migrated to `200000` when the file is loaded
+(`models_settings._ensure_context_window_floor`); any other below-floor value is
+left for the boot gate to reject.
 
 Drift is refused, not merged: `server/service/env.py` treats the moved keys as
 `SPLIT_OUT_KEYS` (the two registries are the source of truth) — a legacy `.env`
