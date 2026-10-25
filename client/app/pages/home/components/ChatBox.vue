@@ -158,7 +158,9 @@
                   :result-label="t('chatBox.toolResult')"
                   :running-label="t('chatBox.toolRunning')"
                   :no-output-label="t('chatBox.toolNoOutput')"
-                  @toggle="toggleToolCard(message.id)" />
+                  :trajectory-label="t('chatBox.openTrajectory')"
+                  @toggle="toggleToolCard(message.id)"
+                  @open-trajectory="openTrajectory" />
                 <!-- Conversation content bubble: skipped when the message has nothing to
                      put in it — an AI turn that only produced reasoning keeps its thinking
                      block and metadata, but must not leave an empty white box behind. -->
@@ -360,6 +362,14 @@ const rightSidebar = useRightSidebarStore();
  */
 const openContextViewer = (): void => {
   rightSidebar.openTab('contextViewer');
+};
+
+/**
+ * Open (or focus) the session's trajectory panel. Like the context viewer it
+ * is session-scoped, and the store dedupes by kind.
+ */
+const openTrajectory = (): void => {
+  rightSidebar.openTab('trajectory');
 };
 
 /** User display name: falls back to the i18n default when the prop is empty */

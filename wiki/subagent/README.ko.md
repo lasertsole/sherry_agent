@@ -105,7 +105,7 @@ spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 
 
 ## 🧪 완료 판정기와 goal loop
 
-완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
+완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
 
 goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, `COMPLETION_JUDGE["goal_max_turns"]`(기본 `5`)를 예산으로 삼아 첫 턴까지 포함합니다. spawn별 `goal_max_turns` 파라미터가 이를 재정의합니다. `CONTINUE`일 때 판정기의 프롬프트는 **같은 checkpoint 스레드**의 다음 `HumanMessage`로 주입되므로, 연속은 새 대화가 아니라 같은 자식 대화를 연장합니다.
 
@@ -161,6 +161,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 선택적 역할 재정의를 두는 워크스페이스 디렉터리 |
 | `max_spawn_depth` | `SubagentConfig` | `2` | 역할이 `LEAF`로 뒤집히는 깊이(하드 상한 `2`) |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 명령군 | 검증 증거로 자동 기록되는 명령 |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 기존 값 | 설정된 serving model 출력 예산 `W`에 따라 저장/전달/요약/판정/읽기 상한을 `W/8000`으로 조정합니다. 미설정 시 기존 값 유지 |
 
 ## 🗺️ 테스트 맵
 

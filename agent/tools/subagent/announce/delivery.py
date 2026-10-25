@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage
 
 from config.features import SUBAGENT_INFRA
 from runtime import hooks
+from ..output_caps import resolve_subagent_output_caps
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus
 from ..types.delivery import DeliveryContext
 from ..config import get_config
@@ -240,8 +241,9 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
         return  # the parent turn already consumed it — no double-inject
 
     content = run.completion.result_text or ""
-    if len(content) > 4000:  # mirrors the user-facing completion message budget
-        content = content[:4000] + "\n... [truncated]"
+    delivery_chars = resolve_subagent_output_caps(run.max_output_tokens).delivery_chars
+    if len(content) > delivery_chars:  # follows the run's serving-model budget
+        content = content[:delivery_chars] + "\n... [truncated]"
     builder_status = _resolve_builder_status(run)
     injection = build_completion_message(run, content, builder_status)
 
@@ -515,6 +517,7 @@ def _build_delivery_context(run: SubagentRunRecord) -> DeliveryContext:
         run_id=run.run_id,
         depth=run.depth,
         is_requester_subagent=origin.is_requester_subagent,
+        max_output_tokens=run.max_output_tokens,
     )
 
 
@@ -567,8 +570,9 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
     content_parts.append(f"Task: {ctx.task}")
     if ctx.result_text:
         text = ctx.result_text
-        if len(text) > 4000:  # Truncate long results to prevent oversized messages
-            text = text[:4000] + "\n... [truncated]"
+        delivery_chars = resolve_subagent_output_caps(ctx.max_output_tokens).delivery_chars
+        if len(text) > delivery_chars:  # Truncate long results to prevent oversized messages
+            text = text[:delivery_chars] + "\n... [truncated]"
         content_parts.append(f"Result:\n{text}")
     elif ctx.outcome.status == "timeout":
         # No partial result to show: the first turn timed out before any text

@@ -144,15 +144,17 @@ async def judge_completion(
     task_text: str,
     last_response: str,
     evidence_summary: str | None = None,
+    max_chars: int | None = None,
 ) -> CompletionJudgeResult:
     """Judge whether a subagent run is complete.
 
     Fail-open: any error (model failure, unparseable output) degrades to DONE so
-    the judge can never trap a subagent in a goal loop.
+    the judge can never trap a subagent in a goal loop. ``max_chars`` follows
+    the run's serving-model output budget; ``None`` keeps the inline default.
     """
     prompt = _build_completion_prompt(
         task_text,
-        (last_response or "")[:_MAX_RESPONSE_CHARS],
+        (last_response or "")[: (max_chars or _MAX_RESPONSE_CHARS)],
         evidence_summary,
     )
     try:

@@ -105,7 +105,7 @@ spawn 権限は二つの独立した地点で執行されるため、単一の�
 
 ## 🧪 完了判定器と goal loop
 
-完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
+完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
 
 goal loop は予算が 1 ターンを超えるすべての spawn で実行され、`COMPLETION_JUDGE["goal_max_turns"]`（既定 `5`）を予算とし、最初のターンも算入します。spawn ごとの `goal_max_turns` パラメータがこれを上書きします。`CONTINUE` のとき、判定器のプロンプトは**同じ checkpoint スレッド**上の次の `HumanMessage` として注入されるため、継続は新しい会話ではなく同じ子会話を延長します。
 
@@ -161,6 +161,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 任意のロール上書きを置くワークスペースディレクトリ |
 | `max_spawn_depth` | `SubagentConfig` | `2` | ロールが `LEAF` に反転する深度（ハード上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format のコマンド群 | 検証証跡として自動記録されるコマンド |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 旧値 | 設定された serving model の出力予算 `W` により、保存/配信/要約/判定/読み戻しの上限を `W/8000` で拡大縮小します。未設定なら旧値のままです |
 
 ## 🗺️ テストマップ
 

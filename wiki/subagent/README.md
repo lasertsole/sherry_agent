@@ -105,7 +105,7 @@ The call-time guard backs `sessions_spawn` (the escalation path) in both the too
 
 ## 🧪 Completion Judge & Goal Loop
 
-The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
+The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
 
 The goal loop runs on every spawn whose budget exceeds one turn, under `COMPLETION_JUDGE["goal_max_turns"]` (default `5`), which counts the first turn. A per-spawn `goal_max_turns` parameter overrides it. On `CONTINUE` the judge's prompt is injected as the next `HumanMessage` on the **same checkpoint thread**, so the continuation extends the same child conversation instead of starting a new one.
 
@@ -161,6 +161,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | workspace directory holding optional role overrides |
 | `max_spawn_depth` | `SubagentConfig` | `2` | depth at which the role flips to `LEAF` (hard cap `2`) |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format families | commands auto-recorded as verification evidence |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | legacy values | scales the stored/delivery/summary/judge/transcript caps by `W/8000` for a configured serving-model output budget `W`; unset keeps the legacy values |
 
 ## 🗺️ Test Map
 

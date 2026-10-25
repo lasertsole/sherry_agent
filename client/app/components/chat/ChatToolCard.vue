@@ -1,8 +1,14 @@
 <template>
   <!-- Tool call card -->
   <div
-    class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto"
+    class="relative flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto"
     :class="highlighted ? 'ring-2 ring-theme-main/50 transition-shadow' : ''">
+    <button
+      type="button"
+      class="absolute right-2 top-1.5 pi pi-history text-xs text-gray-400 hover:text-theme-main"
+      :title="trajectoryLabel"
+      :aria-label="trajectoryLabel"
+      @click.stop="$emit('open-trajectory')"></button>
     <button
       type="button"
       class="flex items-center gap-2 w-full text-left cursor-pointer select-none"
@@ -99,9 +105,11 @@ interface Props {
   runningLabel: string;
   /** Localized "No output" label */
   noOutputLabel: string;
+  /** Localized tooltip/aria label for the trajectory jump */
+  trajectoryLabel: string;
 }
 const props = defineProps<Props>();
-defineEmits<{ toggle: [] }>();
+defineEmits<{ toggle: []; 'open-trajectory': [] }>();
 
 /**
  * The inline diff for file-editing results: patch_file always carries a

@@ -28,6 +28,8 @@ export type RightSidebarPanelKind =
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
   | 'contextViewer'
+  /** The session's trajectory ledger: one event timeline per turn. */
+  | 'trajectory'
   /** The toolbox's browser: a URL bar over an embedded page. */
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
@@ -75,6 +77,8 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   gitDiff: 'session',
   // The live context is read from the session's own checkpoint.
   contextViewer: 'session',
+  // The trajectory ledger is per session, like the context it records.
+  trajectory: 'session',
   // The browser and the terminal work on the session's own project (the
   // terminal's cwd IS that directory), so both live in its group.
   browser: 'session',

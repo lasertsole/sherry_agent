@@ -63,6 +63,7 @@
     "thinking": "Thinking",
     "toolArgs": "Arguments",
     "toolNoOutput": "No output",
+    "openTrajectory": "View trajectory",
     "toolResult": "Result",
     "toolRunning": "Running…",
     "turnHistoryTools": "Tools executed: {n}",

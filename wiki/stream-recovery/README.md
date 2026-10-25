@@ -100,6 +100,29 @@ This division is deliberate. Text is the only state whose partial rendering cann
 - **Replay all deltas.** Requires per-viewer history, a cursor, and retention; the exact race the `seq` watermark solves is reintroduced.
 - **ZCode's seven-event anchor protocol.** It gives finer-grained reasoning/tool-input recovery, but needs a frontend protocol and a durable anchor/tail-discard pipeline. Sherry's snapshot protocol meets the user-visible recovery goal with less machinery; the finer-grained event types remain unimplemented by design.
 
+## Trajectory Panel
+
+The ledger also has a UI consumer: a SESSION-scoped right-sidebar tab
+(`client/app/pages/home/components/TrajectoryPanel.vue`) reads
+`GET /sessions/:session_id/trajectory` and renders one timeline per turn. It is
+a debug view, not part of the reconnect protocol: opening it fetches the newest
+two 500-row pages once (1000 events, then a truncation note), and refresh is a
+button rather than a live subscription.
+
+Rows are grouped by `turn_id` and re-sorted by `(ts, seq, event_id)`, because
+`read()` orders by `seq` and every lifecycle event (turn_start / turn_end /
+compact / model_retry / invalid_tool_call) uses `seq=0`; without the re-sort
+they would all sit before the tool rows and `turn_end` would appear first. Tool
+rows show name/status/duration plus expandable args/result JSON; lifecycle rows
+show a kind badge and expandable payload. The header offers filter-style search
+with an n/m counter, two folding switches (tool rows default collapsed),
+expand/collapse-all, a per-turn filter and refresh. A tool card's history button
+opens the same single tab via `ChatBox.vue`.
+
+The pure helpers (`groupTurns`, `summarizeTurns`, `formatDuration`,
+`previewOf`, `eventMatches`) live in `client/app/composables/use-trajectory.ts`;
+the bridge call is `fetchTrajectory` in `bridge/session.ts`.
+
 ## Code Map
 
 - `server/service/stream_dispatch.py`: `StreamTurn` (`ai_text`, `_frame_seq`, `turn_id`, `_ACTIVE_TURNS`) and `active_turn_snapshot`.

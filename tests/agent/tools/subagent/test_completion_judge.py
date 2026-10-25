@@ -140,6 +140,18 @@ async def test_judge_truncates_long_response(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_judge_uses_the_scaled_response_window(monkeypatch: pytest.MonkeyPatch):
+    recorder: list = []
+    _install_llm(monkeypatch, '{"verdict": "done", "reason": "ok"}', recorder)
+
+    await judge_completion("do X", "Y" * 20000, max_chars=16384)
+
+    prompt = _user_prompt(recorder)
+    assert "Y" * 16384 in prompt
+    assert "Y" * 16385 not in prompt
+
+
+@pytest.mark.asyncio
 async def test_judge_response_shape_is_named_tuple(monkeypatch: pytest.MonkeyPatch):
     recorder: list = []
     _install_llm(monkeypatch, '{"verdict": "done", "reason": "ok"}', recorder)

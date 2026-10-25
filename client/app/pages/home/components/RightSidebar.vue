@@ -201,6 +201,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
   contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue')),
+  trajectory: defineAsyncComponent(() => import('./TrajectoryPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
   sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
@@ -391,6 +392,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "预设角色",
       "gitDiff": "提交差异",
       "contextViewer": "Agent 上下文",
+      "trajectory": "轨迹",
       "browser": "浏览器",
       "terminal": "终端",
       "scopes": {
@@ -425,6 +427,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "Presets & Role",
       "gitDiff": "Commit diff",
       "contextViewer": "Agent context",
+      "trajectory": "Trajectory",
       "browser": "Browser",
       "terminal": "Terminal",
       "scopes": {
@@ -459,6 +462,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "プリセットと役割",
       "gitDiff": "コミット差分",
       "contextViewer": "エージェント コンテキスト",
+      "trajectory": "軌跡",
       "browser": "ブラウザ",
       "terminal": "ターミナル",
       "scopes": {
@@ -493,6 +497,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "프리셋과 역할",
       "gitDiff": "커밋 diff",
       "contextViewer": "에이전트 컨텍스트",
+      "trajectory": "궤적",
       "browser": "브라우저",
       "terminal": "터미널",
       "scopes": {

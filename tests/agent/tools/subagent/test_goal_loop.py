@@ -90,7 +90,12 @@ def _install_judge(monkeypatch: pytest.MonkeyPatch, decisions: list[CompletionJu
     recorded: list[tuple[str, str]] = []
     iterator = iter(decisions)
 
-    async def _fake(task_text: str, last_response: str, evidence_summary: str | None = None):
+    async def _fake(
+        task_text: str,
+        last_response: str,
+        evidence_summary: str | None = None,
+        **_: object,
+    ):
         recorded.append((task_text, last_response))
         return next(iterator)
 

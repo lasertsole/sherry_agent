@@ -33,7 +33,8 @@ const mountCard = (message: MessageItem) =>
       argsLabel: 'args',
       resultLabel: 'result',
       runningLabel: 'running',
-      noOutputLabel: 'no output'
+      noOutputLabel: 'no output',
+      trajectoryLabel: 'trajectory'
     }
   });
 
@@ -53,6 +54,14 @@ describe('ChatToolCard duration', () => {
   it('shows nothing when the duration is unknown', () => {
     const wrapper = mountCard(toolMessage({ toolDurationMs: undefined }));
     expect(wrapper.text()).not.toMatch(/\d+ms|\d+\.\d+s/);
+  });
+
+  it('emits open-trajectory from the header jump', async () => {
+    const wrapper = mountCard(toolMessage());
+
+    await wrapper.find('button[aria-label="trajectory"]').trigger('click');
+
+    expect(wrapper.emitted('open-trajectory')).toHaveLength(1);
   });
 
   it('counts up while running and freezes on the measured value', async () => {
@@ -129,7 +138,8 @@ const mountExpanded = (message: MessageItem) =>
       argsLabel: 'args',
       resultLabel: 'result',
       runningLabel: 'running',
-      noOutputLabel: 'no output'
+      noOutputLabel: 'no output',
+      trajectoryLabel: 'trajectory'
     }
   });
 

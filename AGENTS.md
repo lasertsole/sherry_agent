@@ -193,6 +193,16 @@ User message → Robyn WS → agent.core.built_agent() graph
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
 
+     Result-text caps scale with the serving model's output budget
+     (`agent/tools/subagent/output_caps.py`): the stored result (24000 B),
+     delivery (4000 chars), summary (2000), judge view (8000) and transcript
+     read (4000/500 tokens) are calibrated at an 8000-token output window. A
+     configured `*_MAX_OUTPUT_TOKEN=W` multiplies each by `W/8000` (8192 →
+     ×1.024), while an unset value keeps the legacy numbers exactly. The
+     effective limit is resolved at spawn (role profile / tier / depth role)
+     and frozen on the run's `max_output_tokens`; completion, delivery,
+     announcement, the completion judge and `sessions_messages` all read it.
+
      Checkpoint retention is latest-only per thread: a child's
      `_release_child_resources` prunes its thread to the newest top-level
      checkpoint + its writes (tools/model namespaces dropped), and a main
@@ -1552,6 +1562,20 @@ its last viewer disconnects (the socket release no longer cancels it), the
 reconnect resumes the SAME turn. Inbound frames are also checked against the
 socket's registered session (`_frame_session_allowed`) so one session's socket
 can never read another's.
+
+The per-turn trajectory ledger also has a UI consumer: `TrajectoryPanel.vue` is
+a SESSION-scoped right-sidebar tab (`right-sidebar.ts` kind/scope, opened from a
+tool card's history button or `ChatBox.vue::openTrajectory`). It consumes the
+existing `GET /sessions/:session_id/trajectory` only — no backend change —
+groups rows by `turn_id`, re-sorts each turn by `(ts, seq, event_id)` (the
+ledger's lifecycle rows all carry `seq=0`, so the server order would put them
+before every tool row), and caps at two 500-row pages. It renders tool rows
+(name/status/duration/args/result) and lifecycle rows (compact / model_retry /
+invalid_tool_call / turn_start / turn_end) with a kind badge; search is
+filter-style with an n/m counter, folding is two section switches plus
+expand/collapse-all, and a turn menu filters one turn. The pure helpers live in
+`client/app/composables/use-trajectory.ts`; `fetchTrajectory` is in
+`bridge/session.ts`. No polling and no virtual scrolling in v1.
 
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 

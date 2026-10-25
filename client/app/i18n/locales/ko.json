@@ -63,6 +63,7 @@
     "thinking": "생각",
     "toolArgs": "인자",
     "toolNoOutput": "출력 없음",
+    "openTrajectory": "궤적 보기",
     "toolResult": "실행 결과",
     "toolRunning": "실행 중…",
     "turnHistoryTools": "실행한 도구: {n}",

@@ -100,6 +100,26 @@ WS handler `_handle_resume_stream` 及其 `stream_resume` 回复作为旧客户�
 - **重放全部增量。** 需要按观看者的历史、游标和保留策略；`seq` 水位解决的那个竞态会重新出现。
 - **ZCode 的七事件锚点协议。** 它能恢复更细的推理/工具输入，但需要前端协议和持久的 anchor/tail-discard 管线。Sherry 的快照协议用更少机制达到用户可见的恢复目标；更细的事件类型按设计仍未实现。
 
+## 轨迹面板
+
+账本也有前端消费者：一个 SESSION 作用域的右栏标签
+（`client/app/pages/home/components/TrajectoryPanel.vue`）读取
+`GET /sessions/:session_id/trajectory`，按 turn 渲染时间线。它是调试视图，不属于重连协议：
+打开时只取最新两页（每页 500 条，共 1000 条，触顶显示截断提示），刷新是按钮而不是
+实时订阅。
+
+事件按 `turn_id` 分组，再按 `(ts, seq, event_id)` 重排。原因是 `read()` 按 `seq`
+排序，而所有生命周期事件（turn_start / turn_end / compact / model_retry /
+invalid_tool_call）的 `seq=0`；不重排的话它们会全部排在工具行之前，`turn_end`
+甚至会出现在最前面。工具行显示名称/状态/时长，并可展开参数与结果 JSON；生命周期行显示
+kind 徽标与可展开 payload。头部提供过滤式搜索（n/m 计数）、两个折叠开关（工具行默认
+折叠）、全部展开/折叠、按 turn 过滤和刷新。工具卡片上的历史按钮通过 `ChatBox.vue`
+打开同一个去重标签。
+
+纯函数（`groupTurns`、`summarizeTurns`、`formatDuration`、`previewOf`、
+`eventMatches`）在 `client/app/composables/use-trajectory.ts`；bridge 调用是
+`bridge/session.ts` 的 `fetchTrajectory`。
+
 ## 代码地图
 
 - `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）和 `active_turn_snapshot`。

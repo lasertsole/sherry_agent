@@ -105,7 +105,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 
 ## 🧪 完成判别器与 goal loop
 
-完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
+完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
 
 只要某次 spawn 的预算大于一轮，goal loop 就会运行；预算取 `COMPLETION_JUDGE["goal_max_turns"]`（默认 `5`），且计入第一轮。每次 spawn 的 `goal_max_turns` 参数可覆盖它。收到 `CONTINUE` 时，判别器的提示会作为下一条 `HumanMessage` 注入**同一 checkpoint 线程**，因此续轮延续的是同一个子对话，而不是新开一个。
 
@@ -161,6 +161,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 存放可选角色覆盖的工作区目录 |
 | `max_spawn_depth` | `SubagentConfig` | `2` | 角色翻转为 `LEAF` 的深度（硬上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 命令族 | 自动记入验证证据的命令 |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 原值 | 已配置的 serving model 输出预算 `W` 会把存储/投递/摘要/判别器/回读上限按 `W/8000` 缩放；未设置保持原值 |
 
 ## 🗺️ 测试地图
 

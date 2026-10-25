@@ -167,6 +167,20 @@ describe('stores/right-sidebar', () => {
     expect(store.tabsInScope('session')).toEqual([]);
   });
 
+  it('registers the trajectory viewer as a deduped session tab', () => {
+    const store = useRightSidebarStore();
+
+    store.setActiveSession('s1');
+    const first = store.openTab('trajectory');
+
+    expect(store.tabs.find(tab => tab.id === first)?.scope).toBe('session');
+    expect(store.openTab('trajectory')).toBe(first);
+    expect(store.activeScope).toBe('session');
+
+    store.setActiveSession('s2');
+    expect(store.tabsInScope('session')).toEqual([]);
+  });
+
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
     // The menu must never stack a second 系统配置 next to the open one — the
     // click belongs to the tab that already exists.

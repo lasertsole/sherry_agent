@@ -44,6 +44,7 @@ from .plan import (
     resolve_role_model_profile,
     resolve_run_timeout_seconds,
 )
+from ..output_caps import resolve_child_max_output_tokens, resolve_subagent_output_caps
 from .task_name import normalize_subagent_task_name
 from .system_prompt import build_subagent_system_prompt
 from .initial_message import build_subagent_initial_user_message
@@ -705,6 +706,13 @@ async def spawn_subagent_direct(
         cleanup=cleanup,
         agent_id=agent_id,
         thinking=thinking_resolved or thinking,
+        max_output_tokens=resolve_child_max_output_tokens(
+            model_profile=role_model_profile,
+            model_override=model,
+            functional_role=functional_role,
+            model_tier=resolved_model_tier,
+            role=role,
+        ),
         depth=child_depth,
         label=label,
         functional_role=functional_role,
@@ -981,6 +989,7 @@ async def _run_goal_loop(
             task_text=user_message,
             last_response=result_text or "",
             evidence_summary=evidence_summary,
+            max_chars=resolve_subagent_output_caps(run.max_output_tokens).judge_chars,
         )
         if judge_result.verdict == CompletionVerdict.DONE:
             return result_text, None

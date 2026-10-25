@@ -916,3 +916,40 @@ export async function resetTokenBudgetUsage(sessionId: string): Promise<TokenBud
   });
   return toTokenBudgetState(res);
 }
+
+/** One row of the session's trajectory ledger (`GET /sessions/{sid}/trajectory`). */
+export interface TrajectoryEvent {
+  event_id: string;
+  turn_id: string;
+  seq: number;
+  /** Local time, second precision, no timezone suffix. */
+  ts: string;
+  kind: string;
+  is_error: boolean;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Read the session's trajectory ledger, newest events first on the wire (the
+ * store orders by seq; the panel re-sorts by `(ts, seq, event_id)`).
+ *
+ * A failed request returns an empty list so the panel renders its fail-open
+ * empty state instead of throwing.
+ * @param sessionId Session whose ledger to read.
+ * @param opts turn filter / pagination.
+ */
+export async function fetchTrajectory(
+  sessionId: string,
+  opts: { turnId?: string; limit?: number; offset?: number } = {}
+): Promise<TrajectoryEvent[]> {
+  const params = new URLSearchParams();
+  if (opts.turnId) params.set('turn_id', opts.turnId);
+  params.set('limit', String(opts.limit ?? 500));
+  params.set('offset', String(opts.offset ?? 0));
+  const res = await fetchApiPayload<{ events?: TrajectoryEvent[] } | null>({
+    url: `/sessions/${encodeURIComponent(sessionId)}/trajectory?${params.toString()}`,
+    method: 'get'
+  });
+  return Array.isArray(res?.events) ? res.events : [];
+}

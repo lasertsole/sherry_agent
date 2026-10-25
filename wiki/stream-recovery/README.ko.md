@@ -100,6 +100,27 @@ WS handler `_handle_resume_stream`과 `stream_resume` 응답은 구버전 클라
 - **모든 델타 재생.** 시청자별 히스토리·커서·보존이 필요하며, `seq` 워터마크가 해결하는 경쟁이 다시 도입됩니다.
 - **ZCode의 7이벤트 앵커 프로토콜.** 더 세밀한 추론/도구 입력 복구를 제공하지만 프런트엔드 프로토콜과 영속 anchor/tail-discard 파이프라인이 필요합니다. Sherry의 스냅샷 프로토콜은 더 적은 기계장치로 사용자 가시 복구 목표를 충족하며, 세밀한 이벤트 타입은 설계상 미구현으로 남습니다.
 
+## 궤적 패널
+
+원장에는 UI 소비자도 있습니다. SESSION 범위의 오른쪽 사이드바 탭
+(`client/app/pages/home/components/TrajectoryPanel.vue`)이
+`GET /sessions/:session_id/trajectory`를 읽어 턴별 타임라인을 표시합니다. 재연결
+프로토콜이 아니라 디버그 뷰입니다. 열면 최신 500행 페이지를 두 번만 가져오고(최대 1000개
+이벤트, 초과 시 잘림 안내), 새로고침은 버튼이며 라이브 구독은 없습니다.
+
+이벤트는 `turn_id`로 묶고 `(ts, seq, event_id)`로 다시 정렬합니다. `read()`는 `seq`
+순서이고 모든 라이프사이클 이벤트(turn_start / turn_end / compact / model_retry /
+invalid_tool_call)가 `seq=0`이기 때문에, 다시 정렬하지 않으면 모두 도구 행보다 앞에
+모이고 `turn_end`가 맨 앞에 오게 됩니다. 도구 행은 이름/상태/시간과 펼칠 수 있는
+인수·결과 JSON을, 라이프사이클 행은 종류 배지와 펼칠 수 있는 payload를 보여줍니다.
+헤더에는 필터식 검색(n/m 카운트), 두 개의 접기 스위치(도구 행은 기본 접힘),
+모두 펼치기/접기, 턴 필터, 새로고침이 있습니다. 도구 카드의 기록 버튼은 `ChatBox.vue`를
+통해 같은 단일 탭을 엽니다.
+
+순수 함수(`groupTurns`, `summarizeTurns`, `formatDuration`, `previewOf`,
+`eventMatches`)는 `client/app/composables/use-trajectory.ts`에 있고, bridge 호출은
+`bridge/session.ts`의 `fetchTrajectory`입니다.
+
 ## 코드 맵
 
 - `server/service/stream_dispatch.py`: `StreamTurn`(`ai_text`, `_frame_seq`, `turn_id`, `_ACTIVE_TURNS`)과 `active_turn_snapshot`.

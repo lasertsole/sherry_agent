@@ -100,6 +100,28 @@ WS handler `_handle_resume_stream` と `stream_resume` 応答は旧クライア�
 - **全差分を再生する。** 視聴者ごとの履歴・カーソル・保持が必要で、`seq` 水位が解く競合が再導入されます。
 - **ZCode の 7 イベントアンカープロトコル。** より細かい推論／ツール入力回復を与えますが、フロントエンドプロトコルと永続 anchor/tail-discard パイプラインが必要です。Sherry のスナップショットプロトコルはより少ない機構でユーザー可視の回復目標を満たし、細粒度イベント型は設計上未実装のままです。
 
+## 軌跡パネル
+
+台帳には UI 消費側もあります。SESSION スコープの右サイドバータブ
+（`client/app/pages/home/components/TrajectoryPanel.vue`）が
+`GET /sessions/:session_id/trajectory` を読み、ターンごとのタイムラインを表示します。
+これは再接続プロトコルではなくデバッグビューです。開くと最新の 500 行ページを 2 回だけ
+取得し（最大 1000 イベント、超えたら切り詰め表示）、更新はボタンで行います（ライブ購読
+なし）。
+
+イベントは `turn_id` でグループ化し、`(ts, seq, event_id)` で並べ替えます。`read()` は
+`seq` 順であり、すべてのライフサイクルイベント（turn_start / turn_end / compact /
+model_retry / invalid_tool_call）が `seq=0` のため、並べ替えないとツール行より前に
+集まり、`turn_end` が先頭に来てしまいます。ツール行は名前/状態/時間と展開可能な
+引数・結果 JSON、ライフサイクル行は種別バッジと展開可能な payload を表示します。
+ヘッダーにはフィルター式検索（n/m カウント）、2 つの折りたたみスイッチ（ツール行は既定で
+折りたたみ）、すべて展開/折りたたみ、ターンフィルター、更新があります。ツールカードの
+履歴ボタンは `ChatBox.vue` 経由で同じ単一タブを開きます。
+
+純粋関数（`groupTurns`、`summarizeTurns`、`formatDuration`、`previewOf`、
+`eventMatches`）は `client/app/composables/use-trajectory.ts` にあり、bridge 呼び出しは
+`bridge/session.ts` の `fetchTrajectory` です。
+
 ## コードマップ
 
 - `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）と `active_turn_snapshot`。

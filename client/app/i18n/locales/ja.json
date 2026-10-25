@@ -63,6 +63,7 @@
     "thinking": "思考",
     "toolArgs": "引数",
     "toolNoOutput": "出力なし",
+    "openTrajectory": "軌跡を表示",
     "toolResult": "実行結果",
     "toolRunning": "実行中…",
     "turnHistoryTools": "実行したツール: {n}",

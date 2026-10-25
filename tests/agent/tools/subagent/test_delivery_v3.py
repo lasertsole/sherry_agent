@@ -158,6 +158,36 @@ class TestDeliverCompletionMessage:
             assert "internal" not in msg.metadata
 
     @pytest.mark.asyncio
+    async def test_completion_delivery_scales_with_the_model_budget(self):
+        mock_bus = MagicMock()
+        mock_bus.publish_internal = AsyncMock()
+        with patch("agent.tools.subagent.events.get_event_bus", return_value=mock_bus):
+            scaled = DeliveryContext(
+                requester_session_key="agent:main:session:user1",
+                child_session_key="agent:main:subagent:child",
+                task="test",
+                result_text="x" * 6000,
+                outcome=RunOutcome(status=RunOutcomeStatus.OK),
+                run_id="r1",
+                max_output_tokens=16384,
+            )
+            await _deliver_completion_message(scaled)
+            assert "x" * 6000 in mock_bus.publish_internal.call_args[0][0].content
+
+            legacy = DeliveryContext(
+                requester_session_key="agent:main:session:user1",
+                child_session_key="agent:main:subagent:child",
+                task="test",
+                result_text="x" * 6000,
+                outcome=RunOutcome(status=RunOutcomeStatus.OK),
+                run_id="r1",
+            )
+            await _deliver_completion_message(legacy)
+            content = mock_bus.publish_internal.call_args[0][0].content
+            assert "x" * 6000 not in content
+            assert "[truncated]" in content
+
+    @pytest.mark.asyncio
     async def test_completion_message_killed(self):
         ctx = DeliveryContext(
             requester_session_key="agent:main:session:user1",
