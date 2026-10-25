@@ -19,7 +19,7 @@ Two design rules run through every guard below:
 |---|---|---|
 | **Text death loop** (one model call) | Same sentence / character run streamed forever | Per-family sampling penalty (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
-| **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 60 worker combined calls) |
+| **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 90 executor / 60 other workers, combined calls) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
 | **Overflow retry spiral** | An oversized context is rejected → compression fires → the compacted context still overflows → the provider errors again | `Summarization`: no-LLM overflow tail clip first, then the existing overflow route, then forced recovery |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@ Details that matter:
 
 ### Turn level: `IterationBudget`
 
-Counts model calls and tool calls **combined** per turn. Main agent 90, worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+Counts model calls and tool calls **combined** per turn. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 

@@ -164,6 +164,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format のコマンド群 | 検証証跡として自動記録されるコマンド |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 旧値 | 設定された serving model の出力予算 `W` により、保存/配信/要約/判定/読み戻しの上限を `W/8000` で拡大縮小します。未設定なら旧値のままです |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | ロール モデル プロファイル自身の出力上限（10 進文字列、最低 8K）。子エージェントのリクエストと結果テキスト上限の両方に使われ、MAIN 環境予算とは独立です |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 子エージェントのターンごとのモデル+ツール呼び出し予算。他のサブエージェント ロールは `worker_max_iterations=60` のままです |
 
 ## 🗺️ テストマップ
 

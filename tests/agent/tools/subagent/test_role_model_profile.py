@@ -52,6 +52,7 @@ def wiring(monkeypatch: pytest.MonkeyPatch) -> dict:
     def _fake_create_agent(**kwargs):
         captured["model"] = kwargs.get("model")
         captured["tools"] = kwargs.get("tools", [])
+        captured["middleware"] = kwargs.get("middleware", [])
         return SimpleNamespace(name="child-graph")
 
     async def _fake_checkpointer(*_args, **_kwargs):
@@ -199,6 +200,26 @@ def test_a_role_profile_passes_its_own_output_cap_to_the_builder(
     )
 
     assert calls[0]["max_output_tokens"] == 16384
+
+
+def test_the_executor_child_gets_the_90_iteration_budget(
+    wiring: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.middlewares.iteration_budget import IterationBudget
+
+    asyncio.run(
+        _build_child_agent(
+            system_prompt="prompt",
+            tools=[_StubTool("read_file")],
+            tool_allow=None,
+            tool_deny=[],
+            role=SubagentSessionRole.LEAF,
+            functional_role=FunctionalRole.EXECUTOR,
+        )
+    )
+
+    budget = next(mw for mw in wiring["middleware"] if isinstance(mw, IterationBudget))
+    assert budget.max_iterations == 90
 
 
 def test_without_a_profile_the_role_tier_still_decides(

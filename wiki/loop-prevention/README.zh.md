@@ -19,7 +19,7 @@
 |---|---|---|
 | **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | 按模型族的采样惩罚（`frequency_penalty` / `presence_penalty`）→ `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
-| **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / worker 60 次，合并计数） |
+| **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / 执行者 90 次 / 其他 worker 60 次，合并计数） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
 | **溢出重试螺旋** | 超长上下文被拒绝 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错 | `Summarization`：先做不调 LLM 的溢出尾部裁剪，再走既有溢出路由，最后强制恢复 |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@
 
 ### 回合级：`IterationBudget`
 
-每回合把模型调用和工具调用**合并**计数。主 Agent 90 次，worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+每回合把模型调用和工具调用**合并**计数。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

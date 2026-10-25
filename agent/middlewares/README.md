@@ -154,7 +154,7 @@ middleware = [
             ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
         ],
     ),
-    IterationBudget(60),
+    IterationBudget(90 if functional_role == EXECUTOR else 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
@@ -297,7 +297,7 @@ Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_R
 **Module:** `agent/middlewares/iteration_budget/core.py` · **Class:** `IterationBudget(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
-Hard cap on **model calls + tool calls combined** within one turn. Constructor: `__init__(max_iterations: int = 50)`; the main agent registers `IterationBudget(90)` and worker agents `IterationBudget(60)`.
+Hard cap on **model calls + tool calls combined** within one turn. Constructor: `__init__(max_iterations: int = 50)`; the main agent and the executor subagent register `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
 
 - `before_agent` resets the counters in `state_register_mem`: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call` consumes 1 per model call; when the budget is exhausted it returns a terminal `AIMessage` **without calling the model**.
@@ -855,7 +855,7 @@ Middleware tuning lives in per-object TypedDict modules — the env only supplie
 
 | Module                    | Knobs                                                                                                                                                                                                                             |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                                                           |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                               |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"` (`"true"` / `"false"` / `"auto"`; any other value takes the fail-safe skill path), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` plus the preserve/attempt/cooldown/threshold constants read by `Summarization` and `summarization/nudges.py`                                                                                     |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, preview head/tail 5, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                                            |

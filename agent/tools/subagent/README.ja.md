@@ -133,7 +133,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     └── create_agent() で 7 層のミドルウェアを構成：
   │           ├── Summarization(model=<補助 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)])
-  │           ├── IterationBudget(60)      — 最大反復回数
+  │           ├── IterationBudget(executor 90 / 他 60) — 最大反復回数
   │           ├── ToolGuardrails()         — ツール安全ガードレール
   │           ├── OutputRepetitionGuard()  — 出力反復抑制
   │           ├── MaxTokensBoostMiddleware() — ツール呼び出し切断時に max_tokens を

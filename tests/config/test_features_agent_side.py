@@ -140,6 +140,7 @@ SPOT_DEFAULTS = [
     (ITERATION_BUDGET, "default_max_iterations", 50),
     (ITERATION_BUDGET, "main_agent_max_iterations", 90),
     (ITERATION_BUDGET, "worker_max_iterations", 60),
+    (ITERATION_BUDGET, "executor_max_iterations", 90),
     (HEARTBEAT_STALENESS, "heartbeat_interval_minutes", 1),
     (HEARTBEAT_STALENESS, "stale_cycles_idle", 7),
     (HEARTBEAT_STALENESS, "stale_cycles_in_tool", 20),

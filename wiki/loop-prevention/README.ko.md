@@ -19,7 +19,7 @@
 |---|---|---|
 | **텍스트 데스 루프** (모델 호출 1회) | 같은 문장 / 같은 문자열이 영원히 스트리밍됨 | 모델 패밀리별 샘플링 페널티 (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (워커) + `RepetitionGuardWrapper` (메인 에이전트 스트림) |
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
-| **무한 턴** | 모델/도구 호출이 끝나지 않음 | `IterationBudget` (메인 90 / 워커 60, 합산 호출) |
+| **무한 턴** | 모델/도구 호출이 끝나지 않음 | `IterationBudget` (메인 90 / executor 90 / 기타 워커 60, 합산 호출) |
 | **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
 | **오버플로 재시도 나선** | 과대한 컨텍스트가 거부됨 → 압축 실행 → 압축된 컨텍스트도 여전히 오버플로 → 프로바이더가 다시 오류 | `Summarization`: LLM 없는 오버플로 테일 클립을 먼저, 그다음 기존 라우트, 마지막으로 강제 복구 |
 | **멈춘 턴** | 수 분간 진행 없음 (도구 행, 끼인 루프) | `HeartbeatStaleness` 와치독 → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@
 
 ### 턴 수준: `IterationBudget`
 
-턴당 모델 호출과 도구 호출을 **합산**해서 셉니다. 메인 에이전트 90, 워커 에이전트 60 (기본값 50). 소진된 모델 호출은 터미널 AIMessage를 반환하고, 소진된 도구 호출은 에러 ToolMessage를 반환해 모델이 루프 한가운데서 죽지 않고 마무리할 수 있게 합니다. 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+턴당 모델 호출과 도구 호출을 **합산**해서 셉니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 터미널 AIMessage를 반환하고, 소진된 도구 호출은 에러 ToolMessage를 반환해 모델이 루프 한가운데서 죽지 않고 마무리할 수 있게 합니다. 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 

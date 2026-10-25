@@ -164,6 +164,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format families | commands auto-recorded as verification evidence |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | legacy values | scales the stored/delivery/summary/judge/transcript caps by `W/8000` for a configured serving-model output budget `W`; unset keeps the legacy values |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | the role profile's own output cap (decimal string, min 8K); drives both the child request and its result-text caps, independent of the MAIN env budget |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | per-turn model+tool call budget for the executor child; other subagent roles keep `worker_max_iterations=60` |
 
 ## 🗺️ Test Map
 

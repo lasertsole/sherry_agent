@@ -1336,12 +1336,15 @@ def _build_child_middlewares(
     *,
     auxiliary_llm: Any,
     main_llm_context_window: int,
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
 ) -> list[Any]:
     """Assemble the child-agent middleware pipeline.
 
     ORDER IS A CONTRACT (the subagent side of the middleware-order tests).
     Extracted from :func:`_build_child_agent` so the scaffolding validation and
     its drift-guard test can inspect the exact list handed to ``create_agent``.
+    The executor is the write-capable worker and gets the larger iteration
+    budget; every other role keeps the standard worker budget.
     """
     from agent.middlewares import (
         HeartbeatStaleness,
@@ -1356,6 +1359,12 @@ def _build_child_middlewares(
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from config.features import ITERATION_BUDGET
 
+    iteration_limit = (
+        ITERATION_BUDGET["executor_max_iterations"]
+        if functional_role == FunctionalRole.EXECUTOR
+        else ITERATION_BUDGET["worker_max_iterations"]
+    )
+
     return [
         Summarization(
             model=auxiliary_llm,
@@ -1368,7 +1377,7 @@ def _build_child_middlewares(
                 ),
             ],
         ),
-        IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
+        IterationBudget(iteration_limit),
         ToolGuardrails(),
         # Same process/system and per-session interaction locks as the parent.
         ToolResourceLockMiddleware(),
@@ -1637,6 +1646,7 @@ async def _build_child_agent(
     child_middleware = _build_child_middlewares(
         auxiliary_llm=child_llm,
         main_llm_context_window=main_llm_max_tokens,
+        functional_role=functional_role,
     )
     # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
     # middleware must abort the spawn, not ship a weakened child.

@@ -154,7 +154,7 @@ middleware = [
             ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
         ],
     ),
-    IterationBudget(60),
+    IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
@@ -297,7 +297,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/iteration_budget/core.py` · **クラス：** `IterationBudget(AgentMiddleware)`
 **フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
-1 ターン内の**モデル呼び出し + ツール呼び出しの合計**に対するハード上限。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントは `IterationBudget(90)`、ワーカーエージェントは `IterationBudget(60)` を登録します。
+1 ターン内の**モデル呼び出し + ツール呼び出しの合計**に対するハード上限。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントと executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
 
 - `before_agent` は `state_register_mem` のカウンターをリセット：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` はモデル呼び出しごとに 1 消費。予算が尽きると**モデルを呼ばずに**終端 `AIMessage` を返します。
@@ -851,7 +851,7 @@ glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关�
 
 | モジュール                | ノブ                                                                                                                                                                                                                     |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                                                  |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                    |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`。それ以外はフェイルセーフのスキルパス）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` に加え、`Summarization` と `summarization/nudges.py` が読む保持/試行/クールダウン/しきい値の各定数                                                                                      |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、プレビュー先頭/末尾 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |

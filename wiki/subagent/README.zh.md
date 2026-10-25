@@ -164,6 +164,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 命令族 | 自动记入验证证据的命令 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 原值 | 已配置的 serving model 输出预算 `W` 会把存储/投递/摘要/判别器/回读上限按 `W/8000` 缩放；未设置保持原值 |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 角色模型 profile 自己的输出上限（十进制字符串，最低 8K）；同时驱动子代理请求和结果文本上限，与 MAIN 环境预算无关 |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | 执行者子代理的每回合模型+工具调用预算；其他子代理角色保持 `worker_max_iterations=60` |
 
 ## 🗺️ 测试地图
 

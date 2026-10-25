@@ -142,7 +142,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     └── create_agent() with seven middlewares:
   │           ├── Summarization(model=<aux LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)])
-  │           ├── IterationBudget(60)      — max iteration count
+  │           ├── IterationBudget(executor 90 / others 60) — max iteration count
   │           ├── ToolGuardrails()         — tool safety guardrails
   │           ├── OutputRepetitionGuard()  — output repetition suppression
   │           ├── MaxTokensBoostMiddleware() — re-calls with boosted max_tokens on

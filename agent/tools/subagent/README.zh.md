@@ -131,7 +131,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     └── create_agent() 组装七层中间件：
   │           ├── Summarization(model=<辅助 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)])
-  │           ├── IterationBudget(60)      — 最大迭代次数
+  │           ├── IterationBudget(执行者 90 / 其他 60) — 最大迭代次数
   │           ├── ToolGuardrails()         — 工具安全护栏
   │           ├── OutputRepetitionGuard()  — 输出重复抑制
   │           ├── MaxTokensBoostMiddleware() — 工具调用被截断时以提升的 max_tokens

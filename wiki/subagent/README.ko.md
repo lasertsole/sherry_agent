@@ -164,6 +164,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 명령군 | 검증 증거로 자동 기록되는 명령 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 기존 값 | 설정된 serving model 출력 예산 `W`에 따라 저장/전달/요약/판정/읽기 상한을 `W/8000`으로 조정합니다. 미설정 시 기존 값 유지 |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 역할 모델 프로필 자체의 출력 상한(10진 문자열, 최소 8K)입니다. 자식 요청과 결과 텍스트 상한 모두에 사용되며 MAIN 환경 예산과 무관합니다 |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 자식의 턴당 모델+도구 호출 예산입니다. 다른 서브에이전트 역할은 `worker_max_iterations=60`을 유지합니다 |
 
 ## 🗺️ 테스트 맵
 
