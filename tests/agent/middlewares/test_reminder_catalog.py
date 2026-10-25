@@ -267,6 +267,40 @@ class TestMiddleware:
         assert await mw.abefore_model(state) is None, "the user message is no longer last"
 
     @pytest.mark.asyncio
+    async def test_a_resumed_turn_does_not_reinject_the_reminder_block(self):
+        """The block sits BEFORE the user, so a crash-resume must detect it."""
+        mw = DynamicReminderMiddleware()
+        state = self._state(
+            HumanMessage(
+                content='<system-reminder source="x">…</system-reminder>',
+                metadata=system_reminder_metadata("x"),
+            ),
+            HumanMessage(content="hi"),
+        )
+
+        assert await mw.abefore_model({**state, "alpha_text": "A"}) is None, (
+            "this turn's block is already present"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_new_turn_after_an_assistant_reply_injects_again(self):
+        mw = DynamicReminderMiddleware()
+        state = self._state(
+            HumanMessage(
+                content='<system-reminder source="x">…</system-reminder>',
+                metadata=system_reminder_metadata("x"),
+            ),
+            HumanMessage(content="first"),
+            AIMessage(content="answer"),
+            HumanMessage(content="second"),
+        )
+
+        out = await mw.abefore_model({**state, "alpha_text": "A"})
+
+        assert out is not None
+        assert out["messages"][-1].content == "second"
+
+    @pytest.mark.asyncio
     async def test_no_session_id_injects_nothing(self):
         mw = DynamicReminderMiddleware()
         state = {"messages": [HumanMessage(content="hi")], "alpha_text": "A"}

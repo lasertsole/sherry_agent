@@ -113,7 +113,9 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     the END of the reminder block, immediately BEFORE the turn's user
   │     message — live state first, then the request, with the user's own input
   │     staying LAST (the reducer only appends, so the block is positioned with a
-  │     `RemoveMessage(REMOVE_ALL_MESSAGES)` whole-list rewrite). They used to be
+  │     `RemoveMessage(REMOVE_ALL_MESSAGES)` whole-list rewrite). A resumed turn
+  │     that already carries the block before its user message skips
+  │     re-injection. They used to be
   │     REBUILT INTO THE CACHED SYSTEM PROMPT,
   │     which froze them until the next rebuild and made the prompt a bad cache
   │     citizen; the prompt now holds only stable content (persona + memory +
@@ -1460,7 +1462,9 @@ wait is bounded at 10 s: on timeout the response is gated out of the chat merge,
 the queue is released without a watermark, and terminal frames or the busy
 watchdog settle the turn. Only a send that already received a chunk can be
 concluded as ended-while-disconnected; a pre-chunk send is re-sent (deduped by
-`msg_id`) and stays pending. The old `resume_stream` WS handler and its
+`msg_id` while ACTIVE, and also against a recently `DELIVERED` row so a replay
+that arrives after the turn finished cannot start a duplicate turn) and stays
+pending. The old `resume_stream` WS handler and its
 `stream_resume` reply are retained as a legacy fallback, but the client no
 longer sends that frame. This snapshot + per-turn `seq` pair is Sherry's
 stream-recovery anchor: it restores the text tail without replaying any frame,

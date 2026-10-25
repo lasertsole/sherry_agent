@@ -18,11 +18,15 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage, RemoveMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from loguru import logger
 
-from pub.func.message.system_reminder import system_reminder_metadata, wrap_reminder
+from pub.func.message.system_reminder import (
+    is_system_reminder,
+    system_reminder_metadata,
+    wrap_reminder,
+)
 
 from .core import clear_session, resolve_injections
 
@@ -41,6 +45,22 @@ def _is_injected(msg: Any) -> bool:
         return True
     content = getattr(msg, "content", None)
     return isinstance(content, str) and content.startswith("[SYSTEM DIRECTIVE")
+
+
+def _already_injected_this_turn(messages: list[Any]) -> bool:
+    """Whether a reminder block from THIS turn already sits before the user.
+
+    Reminders are placed before the user message, so after a crash between the
+    injection and the model call the resumed state again ends with the user
+    message. Scanning back to the previous assistant turn finds the already
+    injected block and prevents a second copy.
+    """
+    for message in reversed(messages[:-1]):
+        if isinstance(message, AIMessage):
+            return False
+        if is_system_reminder(message):
+            return True
+    return False
 
 
 class DynamicReminderMiddleware(AgentMiddleware):
@@ -66,6 +86,8 @@ class DynamicReminderMiddleware(AgentMiddleware):
                     last_human = msg
                     break
             if last_human is None or last_human is not final:
+                return None
+            if _already_injected_this_turn(list(messages)):
                 return None
 
             session_id = str(state.get("session_id") or "")
