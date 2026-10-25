@@ -395,6 +395,38 @@ async def test_duplicate_msg_id_is_silent(ws_env):
         assert await store.count_active("s1") == 1
 
 
+@pytest.mark.asyncio
+async def test_a_late_replay_after_delivery_is_also_silent(ws_env):
+    """The reconnect replay may arrive after the original turn finished.
+
+    The ACTIVE dedup alone would miss that terminal row; the frame must still
+    be silent and must not create a second row / turn.
+    """
+    store = ws_env.store
+    ws_env.detector["busy"] = True
+    row = await _enqueue(store, "s1", "original", client_msg_id="m-late")
+    await store.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m-late", "original"))
+        await asyncio.sleep(0.1)
+        assert socket.frames == [], "a replay of a DELIVERED message must be silent"
+        assert await store.count_active("s1") == 0
+        # No new row: the delivered row is the only one.
+        conn = sqlite3.connect(store._db_path)  # noqa: SLF001
+        try:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM user_input_queue WHERE session_id = 's1'"
+                ).fetchone()[0]
+                == 1
+            )
+        finally:
+            conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Queue management frames: cancel_queued / edit_queued / send_now
 # ---------------------------------------------------------------------------
