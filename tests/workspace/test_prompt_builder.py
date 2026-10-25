@@ -404,3 +404,31 @@ class TestProjectInstructions:
         _, session_id = self._bind(monkeypatch, tmp_path, "none")
 
         assert _build_project_instructions_block(session_id) == ""
+
+    def test_an_unbound_default_root_is_not_injected(self, monkeypatch, tmp_path):
+        """No project directory → the checkout's AGENTS.md must not leak in."""
+        import runtime.session.project_dir as project_dir
+
+        from workspace.prompt_builder import _build_project_instructions_block
+
+        root = tmp_path / "checkout"
+        root.mkdir()
+        (root / "AGENTS.md").write_text("CHECKOUT RULES", encoding="utf-8")
+        monkeypatch.setattr(project_dir, "current_project_dir", lambda _sid: root)
+        monkeypatch.setattr(project_dir, "project_dir_source", lambda _sid: "default")
+
+        assert _build_project_instructions_block("sess-unbound") == ""
+
+    def test_a_process_default_still_counts_as_a_chosen_project(self, monkeypatch, tmp_path):
+        """``SHERRY_PROJECT_DIR`` / ``sherry.jsonc`` is a real project choice."""
+        import runtime.session.project_dir as project_dir
+
+        from workspace.prompt_builder import _build_project_instructions_block
+
+        root = tmp_path / "configured"
+        root.mkdir()
+        (root / "AGENTS.md").write_text("CONFIGURED RULES", encoding="utf-8")
+        monkeypatch.setattr(project_dir, "current_project_dir", lambda _sid: root)
+        monkeypatch.setattr(project_dir, "project_dir_source", lambda _sid: "env")
+
+        assert _build_project_instructions_block("sess-env") == "CONFIGURED RULES"

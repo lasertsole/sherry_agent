@@ -481,8 +481,12 @@ registered as the `project_instructions` reminder source
 65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`) —
 never the cached system prompt, so a large file cannot invalidate the provider
 prefix cache and a directory switch automatically re-reads the new project's
-file. No nested traversal (git root → cwd) yet, no file creation, no
-`.gitignore` edits.
+file. Only an EXPLICIT root contributes these files: a session binding or a
+process default (`SHERRY_PROJECT_DIR` / `sherry.jsonc`) counts, while the
+`project_dir_source == "default"` fallback to the sherry checkout injects
+nothing — the checkout's own AGENTS.md is the agent's developer guide, never the
+user's project rules. No nested traversal (git root → cwd) yet, no file creation,
+no `.gitignore` edits.
 
 **FACTS.md is ONE global, system-level file.** All three memory files live in
 `workspace/memory/` (`MEMORY.md`, `USER.md`, `FACTS.md`) and are loaded by the
