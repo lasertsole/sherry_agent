@@ -28,6 +28,7 @@
 - `budget_warning`은 `MODEL_PRICING["budget_warn_threshold"]`(0.80)에서 1회,
   `budget_limited`는 상한 최초 도달 시 1회 WS로 best-effort 전송됩니다.
 
+- 시스템 설정 → Token 예산 탭(`TokenBudgetPanel.vue`)에서 열린 세션의 상한을 편집하고 사용량을 초기화합니다. 셸의 활성 세션을 따르며, 세션이 없으면 빈 상태를 표시합니다.
 ## 🧮 가격 조회
 
 가격표는 `.models`에서 사용자가 설정합니다:

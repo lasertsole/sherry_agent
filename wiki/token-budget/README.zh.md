@@ -28,6 +28,7 @@ model call，不再请求 provider。该 turn 以“请总结”的提示结束�
 - `budget_warning` 在 `MODEL_PRICING["budget_warn_threshold"]`（0.80）触发一次；
   `budget_limited` 在上限首次触达时触发一次；两者都是 best-effort WS 推送。
 
+- 系统配置 → Token 预算 标签（`TokenBudgetPanel.vue`）编辑当前会话的上限并重置用量；它跟随 shell 的活动会话，未打开会话时显示空状态。
 ## 🧮 价格查找
 
 价格表在 `.models` 中由用户配置：

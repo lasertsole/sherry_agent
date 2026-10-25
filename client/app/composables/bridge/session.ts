@@ -841,3 +841,78 @@ export async function setSessionModel(
     pending: res.pending === true
   };
 }
+
+/**
+ * Session token-budget read model (``GET /sessions/budget``).
+ *
+ * ``cap`` is the effective NEXT-turn cap (a parked mid-turn choice included),
+ * ``None``/0 = unlimited; ``used`` / ``cost`` accumulate across turns and
+ * ``limited`` latches once the cap is reached.
+ */
+export interface TokenBudgetState {
+  cap: number | null;
+  used: number;
+  cost: number;
+  limited: boolean;
+  pending: boolean;
+}
+
+/**
+ * Normalize the HTTP budget payload (the bridge contract is always present).
+ * @param res Raw payload, possibly null on a failed request.
+ */
+function toTokenBudgetState(res: Partial<TokenBudgetState> | null): TokenBudgetState {
+  const cap = res?.cap;
+  return {
+    cap: typeof cap === 'number' ? cap : null,
+    used: Number(res?.used ?? 0),
+    cost: Number(res?.cost ?? 0),
+    limited: res?.limited === true,
+    pending: res?.pending === true
+  };
+}
+
+/**
+ * Read the session's token cap, accumulated usage/cost and exhausted latch.
+ * @param sessionId Session whose budget should be read.
+ */
+export async function fetchTokenBudget(sessionId: string): Promise<TokenBudgetState> {
+  const res = await fetchApiPayload<Partial<TokenBudgetState> | null>({
+    url: '/sessions/budget',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return toTokenBudgetState(res);
+}
+
+/**
+ * Persist the session's token cap (``null`` = unlimited).
+ *
+ * A change made while a turn runs is parked and lands on the next turn.
+ * @param sessionId Session whose cap should change.
+ * @param cap New cap in tokens, or null for unlimited.
+ */
+export async function setTokenBudgetCap(
+  sessionId: string,
+  cap: number | null
+): Promise<{ pending: boolean }> {
+  const res = await fetchApiPayload<{ pending?: boolean }>({
+    url: '/sessions/budget',
+    opts: { session_id: sessionId, cap },
+    method: 'put'
+  });
+  return { pending: res.pending === true };
+}
+
+/**
+ * Clear the session's accumulated usage/cost/latch, preserving the cap.
+ * @param sessionId Session whose counters should reset.
+ */
+export async function resetTokenBudgetUsage(sessionId: string): Promise<TokenBudgetState> {
+  const res = await fetchApiPayload<Partial<TokenBudgetState> | null>({
+    url: '/sessions/budget/reset',
+    opts: { session_id: sessionId },
+    method: 'post'
+  });
+  return toTokenBudgetState(res);
+}

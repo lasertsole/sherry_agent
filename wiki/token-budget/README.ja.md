@@ -28,6 +28,7 @@
 - `budget_warning` は `MODEL_PRICING["budget_warn_threshold"]`（0.80）で 1 回、
   `budget_limited` は上限初到達時に 1 回、WS へ best-effort で送られます。
 
+- システム設定 → Token 予算 タブ（`TokenBudgetPanel.vue`）で開いているセッションの上限を編集し、使用量をリセットできます。シェルのアクティブセッションに追従し、セッションがない場合は空状態を表示します。
 ## 🧮 価格の解決
 
 価格表は `.models` でユーザーが設定します：

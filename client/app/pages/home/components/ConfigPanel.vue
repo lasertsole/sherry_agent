@@ -318,12 +318,22 @@
             </template>
           </div>
         </TabPanel>
+
+        <!-- Token budget tab: the per-session cap on cumulative model tokens.
+             It saves/resets on its own (no footer button), and follows the
+             session the shell is showing. -->
+        <TabPanel
+          value="budget"
+          :header="t('config.tabs.budget')">
+          <TokenBudgetPanel :session-id="budgetSessionId" />
+        </TabPanel>
       </TabView>
     </template>
 
     <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
          scrolls), and only the background / sherry tabs use it — every env item
-         saves or applies on its own inside its own group card.
+         saves or applies on its own inside its own group card, and the budget
+         tab owns its Save/Reset pair.
          (角色配置 moved to the 预设 panel together with the persona presets.) -->
     <div
       v-if="activeTab !== 1"
@@ -362,6 +372,7 @@ import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
+import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -372,6 +383,10 @@ const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
 const setBackground = chatBackgroundStore.setBackground;
 
 const { t } = useI18n({ useScope: 'local' });
+/** The session the System Config tab is acting on (the shell keeps the store in sync). */
+const rightSidebarStore = useRightSidebarStore();
+const budgetSessionId = computed(() => rightSidebarStore.activeSessionId || '');
+
 
 /** Localized headings for the two optional internal model families. */
 const GROUP_TITLE_KEYS: Record<string, string> = {
@@ -1052,6 +1067,7 @@ onBeforeUnmount(onHide);
         "env": "模型配置",
         "sherry": "应用配置",
         "memoryAgent": "记忆·Agent",
+        "budget": "Token 预算",
         "memoryUser": "记忆·用户"
       },
       "role": {
@@ -1382,6 +1398,7 @@ onBeforeUnmount(onHide);
         "env": "Model Config",
         "sherry": "App Config",
         "memoryAgent": "Memory · Agent",
+        "budget": "Token Budget",
         "memoryUser": "Memory · User"
       },
       "role": {
@@ -1712,6 +1729,7 @@ onBeforeUnmount(onHide);
         "env": "モデル設定",
         "sherry": "アプリ設定",
         "memoryAgent": "記憶・Agent",
+        "budget": "Token 予算",
         "memoryUser": "記憶・ユーザー"
       },
       "role": {
@@ -2042,6 +2060,7 @@ onBeforeUnmount(onHide);
         "env": "모델 설정",
         "sherry": "앱 설정",
         "memoryAgent": "메모리·Agent",
+        "budget": "Token 예산",
         "memoryUser": "메모리·사용자"
       },
       "role": {
