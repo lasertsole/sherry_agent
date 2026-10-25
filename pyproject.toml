@@ -121,16 +121,19 @@ editdistance = { path = "models/STT_model/editdistance-0.8.1-py3-none-any.whl" }
 [tool.ruff]
 target-version = "py313"
 line-length = 100
+# Leading slashes matter: an unanchored pattern matches a same-named directory
+# at ANY depth (the old bare "docs" silently skipped tests/docs/). Anchor
+# everything to the repo root.
 extend-exclude = [
-    "client",           # Nuxt/Tauri frontend
-    "src",              # runtime data (checkpoints, media, rag index)
-    "temp",
-    ".omo",
-    ".playwright-mcp",
-    "docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
-    "TODO",             # hand-written plan notes (same rationale as docs)
-    "wiki",             # generated Obsidian code-map vault
-    "graphify-out",     # generated code-graph output
+    "/client",           # Nuxt/Tauri frontend
+    "/src",              # runtime data (checkpoints, media, rag index)
+    "/temp",
+    "/.omo",
+    "/.playwright-mcp",
+    "/docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
+    "/TODO",             # hand-written plan notes (same rationale as docs)
+    "/wiki",             # generated Obsidian code-map vault
+    "/graphify-out",     # generated code-graph output
 ]
 
 [tool.ruff.lint]
@@ -163,20 +166,22 @@ extend-ignore-names = [
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
+# Anchored like [tool.ruff] — a bare name matches a same-named directory at
+# any depth (the old bare "src" also matched every eval sandbox's src/).
 exclude = [
-    "client",
-    "src",
-    "temp",
+    "/client",
+    "/src",
+    "/temp",
     ".venv",             # site-packages resolve fine even when excluded
-    "logs",              # rotating log output
+    "/logs",             # rotating log output
     "**/.*",             # restate pyright default: dot-dirs (.git, .omo, ...)
     "**/__pycache__",    # restate pyright default: bytecode caches
     "**/node_modules",   # restate pyright default
-    "docs",
-    "wiki",
-    "graphify-out",
-    ".omo",
-    ".playwright-mcp",
+    "/docs",
+    "/wiki",
+    "/graphify-out",
+    "/.omo",
+    "/.playwright-mcp",
     "**/vendored_raganything/**",
     "**/vendored_lightrag/**",
     "**/vendored_kg/**",
@@ -185,8 +190,10 @@ ignore = [
     # Type-debt registry (Phase 1 rollout): these subtrees predate type checking
     # and carry the bulk of the ~3600 diagnostics. Files here are analyzed but
     # their diagnostics are not reported; shrink this list as they get typed.
-    # NOTE: keep in sync with the basedpyright hook exclude in
-    # .pre-commit-config.yaml (explicitly-passed files bypass this ignore).
+    # NOTE: `ignore` applies EVEN WHEN the file is passed explicitly on the CLI
+    # (pinned empirically with a deliberate type error), so the pre-push
+    # basedpyright hook reports nothing for these subtrees while they stand —
+    # this registry, not the hook, is what must shrink.
     "tests",
     "agent",
     "models",
