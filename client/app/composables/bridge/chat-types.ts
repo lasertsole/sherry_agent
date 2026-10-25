@@ -66,7 +66,12 @@ export type AgentWsEventType =
    * over). Best-effort: the search itself already succeeded by the time it is
    * sent, so the frame only feeds the non-blocking banner.
    */
-  | 'search_backend_fallback';
+  | 'search_backend_fallback'
+  /**
+   * The model-call retry loop scheduled / completed / exhausted a retry. The
+   * chat row renders the attempt counter while the turn streams.
+   */
+  | 'model_retry';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
@@ -81,7 +86,7 @@ export interface HitlInterruptData {
 
 /** HITL decision sent by the client to resume the agent. */
 export interface HitlResponse {
-  decision: 'approve' | 'approve_dir' | 'reject' | 'edit' | 'yolo';
+  decision: 'approve' | 'approve_dir' | 'reject' | 'session' | 'edit' | 'yolo';
   message?: string;
   edited_args?: Record<string, unknown>;
 }
@@ -105,7 +110,11 @@ export interface AgentWsEvent {
    * under `content`).
    */
   content?: string | HitlInterruptData;
-  /** Turn id (carried only on `turn_started`; identifies the generation turn). */
+  /**
+   * Turn id (carried on every stream frame — `turn_started`, `chunk`, `done`,
+   * `hitl_request`, `error`, `stopped`). Lets a reconnecting client route a
+   * queued frame to the turn it belongs to even if the turn changed meanwhile.
+   */
   turn_id?: string;
   /**
    * Client `msg_id`s belonging to this generation turn (carried on `turn_started`,
@@ -215,6 +224,8 @@ export type OnChunkCallback = (
     error?: boolean;
     /** Tool execution duration in ms (present on `tool_result` frames). */
     duration_ms?: number | null;
+    /** Turn identity (present on every stream frame from the new backend). */
+    turn_id?: string;
   }
 ) => void;
 
@@ -241,7 +252,13 @@ export interface QueuedInfo {
 export type OnQueuedCallback = (info: QueuedInfo) => void;
 
 /** Stream-end callback: carries optional model metadata (model_name/input_tokens/output_tokens, from the done frame). */
-export type OnDoneCallback = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => void;
+export type OnDoneCallback = (meta?: {
+  modelName?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Turn identity of the finished turn (present from the new backend). */
+  turnId?: string;
+}) => void;
 
 /**
  * A handle that can be used to stop an ongoing generation request.

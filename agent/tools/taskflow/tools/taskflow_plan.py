@@ -10,6 +10,7 @@ with ``taskflow_update_steps`` and then starts it with ``taskflow_dispatch`` or
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from langchain_core.tools import tool
@@ -20,7 +21,15 @@ from config.features import TASKFLOW_INFRA
 
 from ..config import StepStatus
 from ..registry import store_sqlite
-from ._shared import default_state, new_step, requester_session_key
+from ..registry.store_sqlite import FlowExistsError
+from ._shared import (
+    bind_flow_todo,
+    compensate_flow_without_todo,
+    default_state,
+    is_terminal,
+    new_step,
+    requester_session_key,
+)
 
 #: Steps beyond this are dropped (the planner is told, but never trusted).
 PLAN_MAX_STEPS = 12
@@ -31,7 +40,7 @@ Return ONLY a JSON array of steps, in an order where dependencies come first:
 
 [{"step_id": "step-1", "task": "...", "depends_on": [], \
 "judge_criteria": "optional acceptance criteria", "response_schema": {optional JSON schema}, \
-"skills": ["optional", "skill-names"]}]
+"skills": ["optional", "skill-names"], "file_deps": ["optional/project-relative-files"]}]
 
 Rules:
 * ``step_id`` values are unique and stable ("step-1", "step-2", ...).
@@ -45,6 +54,10 @@ what to produce. Include the concrete artefact or command when it is known.
 worker as its instructions (name the skill EXACTLY as the skills index spells \
 it). The system prepends those SKILL.md files to the step's task when it is \
 dispatched, so the task text itself should stay focused on the deliverable.
+* Add ``file_deps`` when this step verifies code that other steps may change: \
+list the project-relative source files its verification depends on. The \
+finish-time regression gate replays this step's verification first when one \
+of those files was written by another step.
 * Prefer 3-8 steps. No prose, no markdown fence: the JSON array only.
 """
 
@@ -85,6 +98,12 @@ def _parse_plan(raw: str) -> list[dict]:
         if unknown:
             deps = [dep for dep in deps if dep in seen]
         seen.add(step_id)
+        raw_file_deps = entry.get("file_deps")
+        file_deps = (
+            [dep.strip() for dep in raw_file_deps if isinstance(dep, str) and dep.strip()]
+            if isinstance(raw_file_deps, list)
+            else None
+        )
         plan.append(
             {
                 "step_id": step_id,
@@ -95,6 +114,8 @@ def _parse_plan(raw: str) -> list[dict]:
                 # Skill names whose SKILL.md the dispatch path prepends.
                 # ``None``/absent = no binding (the historical behaviour).
                 "skills": entry.get("skills"),
+                # Project-relative files this step's verification depends on.
+                "file_deps": file_deps or None,
             }
         )
     if not plan:
@@ -122,14 +143,26 @@ async def taskflow_plan(
         return "Error: goal is required"
     flow_id = (flow_id or "").strip()
     if not flow_id:
-        flow_id = f"plan-{abs(hash(goal)) % 10**10}"
+        # Stable across processes (hash() is randomized per interpreter). The
+        # session id is part of the seed because flow_id is a GLOBAL primary key
+        # while ownership is per-session: two sessions planning the same goal
+        # must get different ids, or the second insert collides.
+        seed = f"{session_id}\x1f{goal}".encode()
+        flow_id = f"plan-{hashlib.sha256(seed).hexdigest()[:10]}"
     limit = max(1, min(int(max_steps or 8), PLAN_MAX_STEPS))
 
     existing = await store_sqlite.get_flow(flow_id, session_id)
     if existing is not None:
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: flow_id '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass another flow_id to plan new work"
+            )
         return (
-            f"Error: flow_id '{flow_id}' already exists "
-            f"(status={existing['status']}); pass another flow_id"
+            f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
+            "taskflow_step(action='dispatch') if it is still pending."
         )
 
     # Refuse BEFORE spending a planner call: the flow could not be created anyway.
@@ -141,10 +174,10 @@ async def taskflow_plan(
             "flows before planning a new one."
         )
 
-    from models import build_auxiliary_llm
+    from models import build_taskflow_llm
 
     try:
-        llm = build_auxiliary_llm(temperature=0)
+        llm = build_taskflow_llm(temperature=0)
         response = await llm.ainvoke(
             [
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -166,17 +199,48 @@ async def taskflow_plan(
             response_schema=entry.get("response_schema"),
             judge_criteria=entry.get("judge_criteria"),
             skills=entry.get("skills"),
+            file_deps=entry.get("file_deps"),
         )
         for entry in plan
     ]
 
     state = default_state(goal, None, creator_session_key=requester_session_key(session_id))
     state["steps"] = steps
-    flow = await store_sqlite.create_flow(flow_id, state, session_id=session_id)
+    try:
+        flow = await store_sqlite.create_flow(flow_id, state, session_id=session_id)
+    except FlowExistsError:
+        # Race: another turn inserted the same stable id after our read. Treat
+        # it as the same idempotent answer rather than surfacing a raw conflict.
+        existing = await store_sqlite.get_flow(flow_id, session_id)
+        if existing is None:
+            return f"Error: flow_id '{flow_id}' already exists; pass another flow_id"
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: flow_id '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass another flow_id to plan new work"
+            )
+        return (
+            f"TaskFlow already planned (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Inspect with taskflow_inspect(action='summary'); dispatch with "
+            "taskflow_step(action='dispatch') if it is still pending."
+        )
+
+    # Same entry defense as taskflow_create: a planned flow must own a GC root
+    # from birth. The goal is the natural todo text.
+    try:
+        await bind_flow_todo(session_id, flow_id, goal)
+    except Exception as exc:  # noqa: BLE001 - report the compensated outcome
+        await compensate_flow_without_todo(flow)
+        return (
+            f"Error: TaskFlow '{flow_id}' was planned but its todo could not be "
+            f"bound ({type(exc).__name__}: {exc}); the flow was failed so it cannot "
+            "outlive its root. Retry the plan."
+        )
 
     lines = [
         f"TaskFlow planned: flow_id={flow_id}, revision={flow['expected_revision']}, "
-        f"steps={len(steps)} (nothing dispatched)",
+        f"steps={len(steps)} (nothing dispatched); todo bound: {goal}",
     ]
     for step in steps:
         deps = ",".join(step.get("depends_on") or []) or "-"
@@ -190,8 +254,8 @@ async def taskflow_plan(
             f"  [{step['step_id']}] ({step['status']}) deps={deps}{gate_text} {step['task']}"
         )
     lines.append(
-        "Review the plan, then taskflow_dispatch(flow_id, [ids]) to start "
-        "(or taskflow_update_steps to change it first)."
+        "Review the plan, then taskflow_step(action='dispatch', flow_id=..., step_ids=[...]) to start "
+        "(or taskflow_step(action='update_steps') to change it first)."
     )
     return "\n".join(lines)
 

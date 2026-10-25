@@ -56,8 +56,9 @@ TERMINAL_SCHEMA = {
             "description": (
                 "Run the command in the background and return immediately with a task "
                 "id (the process keeps running; its output is captured to a file). Use "
-                "terminal_bg_list to see this session's tasks and terminal_bg_output to "
-                "read one's output. You are notified when it exits. Good for servers, "
+                "terminal_bg(action='list') to see this session's tasks and "
+                "terminal_bg(action='output', task_id=...) to read one's output. "
+                "You are notified when it exits. Good for servers, "
                 "watchers, and anything longer than the timeout."
             ),
             "title": "Run In Background",

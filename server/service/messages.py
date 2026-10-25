@@ -218,12 +218,45 @@ class _GenerateTurn(StreamTurn):
             # ONE graph turn fed with the whole FIFO batch: each queued input
             # becomes its own HumanMessage so the model sees them as distinct
             # user messages in order, and produces ONE combined reply.
+            input_messages = [
+                HumanMessage(content=_get_content_list(m), metadata=self.origin)
+                for m in self.messages
+            ]
+            # A newly created side chat forks the parent's model history: the
+            # child sees the SAME checkpoint messages (including browser/tool
+            # results), all marked model-only. MessagePersistence filters the
+            # marker, so the side chat's visible history stays empty. Older
+            # side chats fall back to the bounded text snapshot.
+            inherited: list[Any] = []
+            try:
+                from server.service.side_chat_service import (
+                    get_checkpoint_fork_for_turn,
+                    get_context_for_turn,
+                )
+
+                forked = await get_checkpoint_fork_for_turn(self.session_id)
+                if forked:
+                    inherited = forked
+                else:
+                    context_text = await asyncio.to_thread(get_context_for_turn, self.session_id)
+                    if context_text:
+                        inherited = [
+                            HumanMessage(
+                                content=context_text,
+                                additional_kwargs={"side_chat_context": True},
+                                metadata={
+                                    "internal": True,
+                                    "provenance": "side_chat_context",
+                                },
+                            )
+                        ]
+            except Exception:  # noqa: BLE001 - inheritance is fail-open
+                inherited = []
+            if inherited:
+                input_messages = [*inherited, *input_messages]
             input_dict = {
                 "session_id": self.session_id,
-                "messages": [
-                    HumanMessage(content=_get_content_list(m), metadata=self.origin)
-                    for m in self.messages
-                ],
+                "messages": input_messages,
             }
         if self.is_stream:
             return "stream", self._agent.astream(
@@ -601,8 +634,9 @@ def get_history_by_turn_page(
 def get_session_list() -> list[dict[str, Any]]:
     """Enumerate all distinct sessions, newest activity first.
 
-    Returns a list of
-    ``{"session_id": str, "last_time": str, "title": str}`` dicts.
+    Side chats are ordinary sessions here: closing their right-sidebar panel
+    keeps them, so the list is how the user finds and reopens one. Deleting the
+    parent still cascades the child purge.
     """
     return get_session_ids()
 

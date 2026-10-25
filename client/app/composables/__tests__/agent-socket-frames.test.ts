@@ -8,6 +8,7 @@ type Turn = { turnId: string; msgIds: string[] } | null;
 function makeCtx(handlers: AgentSocketHandlers = {}, pendingKeys: string[] = ['p1']) {
   let activeTurn: Turn = null;
   let snapshotSeq = 0;
+  let snapshotTurnId = '';
   const ctx: AgentFrameContext = {
     sessionId: 'sess',
     handlers,
@@ -23,6 +24,10 @@ function makeCtx(handlers: AgentSocketHandlers = {}, pendingKeys: string[] = ['p
     getSnapshotSeq: () => snapshotSeq,
     setSnapshotSeq: seq => {
       snapshotSeq = seq;
+    },
+    getSnapshotTurnId: () => snapshotTurnId,
+    setSnapshotTurnId: turnId => {
+      snapshotTurnId = turnId;
     }
   };
   return { ctx, getActiveTurn: () => activeTurn };
@@ -43,14 +48,16 @@ describe('routeAgentFrame', () => {
       tool_id: 't',
       tool_name: 'n',
       args: { a: 1 },
-      error: true
+      error: true,
+      turn_id: undefined
     });
     expect(ctx.markAllReceivedChunk).toHaveBeenCalledTimes(1);
     expect(onChunk).toHaveBeenCalledWith('hi', 'tool_result', 's1', {
       tool_id: 't',
       tool_name: 'n',
       args: { a: 1 },
-      error: true
+      error: true,
+      turn_id: undefined
     });
   });
 
@@ -62,7 +69,8 @@ describe('routeAgentFrame', () => {
       tool_id: undefined,
       tool_name: undefined,
       args: undefined,
-      error: undefined
+      error: undefined,
+      turn_id: undefined
     });
   });
 
@@ -109,7 +117,7 @@ describe('routeAgentFrame', () => {
     fire(ctx, { event: 'done', message_ids: ['a'], model_name: 'm', input_tokens: 1, output_tokens: 2 });
     expect(ctx.settleResolve).toHaveBeenCalledWith(['a']);
     expect(getActiveTurn()).toBeNull();
-    expect(onDone).toHaveBeenCalledWith({ modelName: 'm', inputTokens: 1, outputTokens: 2 });
+    expect(onDone).toHaveBeenCalledWith({ modelName: 'm', inputTokens: 1, outputTokens: 2, turnId: undefined });
   });
 
   it('done: falls back to the active turn ids, then to every pending key', () => {
@@ -151,6 +159,20 @@ describe('routeAgentFrame', () => {
     off('ws:todo_updated', spy);
   });
 
+  it('model_retry: re-emits on the mitt bus', () => {
+    const spy = vi.fn();
+    on('ws:model_retry', spy);
+    const { ctx } = makeCtx({});
+    const frame = {
+      event: 'model_retry',
+      session_id: 's1',
+      content: { status: 'scheduled', attempt: 2, max_attempts: 11, retries: 1 }
+    };
+    fire(ctx, frame);
+    expect(spy).toHaveBeenCalledWith(frame);
+    off('ws:model_retry', spy);
+  });
+
   it('model_download_updated: re-emits on the mitt bus', () => {
     const spy = vi.fn();
     on('ws:model_download_updated', spy);
@@ -186,7 +208,9 @@ describe('routeAgentFrame — stream_resume (snapshot reply)', () => {
         content: { status: 'ok', text: 'abc', has_reasoning: true }
       });
       expect(ctx.settleResolve).not.toHaveBeenCalled();
-      expect(seen).toEqual([{ sessionId: 's1', status: 'ok', text: 'abc', hasReasoning: true }]);
+      expect(seen).toEqual([
+        { sessionId: 's1', status: 'ok', text: 'abc', hasReasoning: true, seq: 0, turnId: '', turnNum: undefined }
+      ]);
       // A replacement value only — never a frame log the client could replay.
       expect(seen[0]).not.toHaveProperty('frames');
     } finally {
@@ -227,6 +251,23 @@ describe('routeAgentFrame — stream_resume (snapshot reply)', () => {
     fire(ctx, { event: 'chunk', content: 'ghi', type: 'text', seq: 11 });
     expect(onChunk).toHaveBeenCalledTimes(1);
     expect(onChunk.mock.calls[0]![0]).toBe('ghi');
+  });
+
+  it('scopes the watermark to the snapshot turn (a new turn restarts at seq 1)', () => {
+    const onChunk = vi.fn();
+    const { ctx } = makeCtx({ onChunk });
+    fire(ctx, {
+      event: 'stream_resume',
+      session_id: 's1',
+      content: { status: 'ok', text: 'abc', seq: 10, turn_id: 't1' }
+    });
+    // Same turn, already covered → dropped.
+    fire(ctx, { event: 'chunk', content: 'abc', type: 'text', seq: 9, turn_id: 't1' });
+    expect(onChunk).not.toHaveBeenCalled();
+    // A NEW turn's seq restarts at 1; it must not be dropped by t1's watermark.
+    fire(ctx, { event: 'chunk', content: 'new', type: 'text', seq: 1, turn_id: 't2' });
+    expect(onChunk).toHaveBeenCalledTimes(1);
+    expect(onChunk.mock.calls[0]![0]).toBe('new');
   });
 
   it('gone: settles the send (nothing to resume) and emits the status', () => {

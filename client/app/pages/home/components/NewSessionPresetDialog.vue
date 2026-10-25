@@ -64,8 +64,6 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ensureSessionCharacter } from './SessionSidebar.vue';
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { entryName } from '~/composables/persona-catalog';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n();

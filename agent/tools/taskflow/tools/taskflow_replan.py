@@ -210,7 +210,7 @@ async def _taskflow_replan_async(
     if replan_count >= REPLAN_MAX:
         return (
             f"Error: flow_id '{flow_id}' already spent {replan_count} replan(s) "
-            f"(max {REPLAN_MAX}); use taskflow_fail or a new flow"
+            f"(max {REPLAN_MAX}); use taskflow_flow(action='fail') or a new flow"
         )
 
     steps = list(state.get("steps") or [])
@@ -218,10 +218,10 @@ async def _taskflow_replan_async(
         return f"Error: flow_id '{flow_id}' has no steps to replan"
 
     prompt = _build_replan_prompt(flow, reason, blocked_step_id)
-    from models import build_auxiliary_llm
+    from models import build_taskflow_llm
 
     try:
-        llm = build_auxiliary_llm(temperature=0)
+        llm = build_taskflow_llm(temperature=0)
         response = await llm.ainvoke(
             [
                 {"role": "system", "content": _SYSTEM_PROMPT},

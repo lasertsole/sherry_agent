@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+
 import pytest
 
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 
 import agent.tools.file_tools.patch_file as patch_file
 import agent.tools.file_tools.write_file as write_file
@@ -46,7 +49,7 @@ def test_write_file_appends_stale_event(ledger_path, tmp_path, _pin_resolver):
 
     result = tool._run("foo.py", "print('x')\n", session_id="s1")
 
-    assert "successfully" in result
+    assert json.loads(result)["success"] is True
     stale = EvidenceLedger.read_all()[-1]
     assert stale["event"] == "stale"
     assert stale["file_path"] == "foo.py"
@@ -65,6 +68,21 @@ def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, _p
     evidence, stale = rows[0], rows[1]
     assert stale["event"] == "stale"
     assert stale["file_path"] in evidence["command"]
+
+
+def test_write_file_broadcasts_stale_to_another_session(ledger_path, tmp_path, _pin_resolver):
+    """The real write decorator, not just the recorder helper, broadcasts."""
+    target = tmp_path / "foo.py"
+    _pin_resolver["target"] = target
+    EvidenceLedger.for_session("session-a").append(
+        kind="test", command="pytest foo.py", status="passed"
+    )
+    tool = write_file.build_write_file_tool()
+
+    tool._run("foo.py", "print('x')\n", session_id="session-b")
+
+    summary = collect_evidence_summary(session_key="session-a") or ""
+    assert "[stale]" in summary
 
 
 def test_patch_file_appends_stale_event(ledger_path, tmp_path, _pin_resolver):
@@ -93,4 +111,4 @@ def test_write_file_survives_ledger_failure(ledger_path, tmp_path, _pin_resolver
 
     monkeypatch.setattr(EvidenceLedger, "append", _boom)
 
-    assert "successfully" in tool._run("foo.py", "print('x')\n", session_id="s1")
+    assert json.loads(tool._run("foo.py", "print('x')\n", session_id="s1"))["success"] is True

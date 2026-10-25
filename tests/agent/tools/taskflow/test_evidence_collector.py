@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 
 pytestmark = [pytest.mark.unit]
@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture
 def ledger_path(tmp_path, monkeypatch):
-    path = tmp_path / "evidence.jsonl"
+    path = tmp_path / "evidence.db"
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(path))
     return path
 
@@ -124,20 +124,21 @@ class TestMultiKeyScope:
         assert summary.count("pytest foo.py") == 2
         assert summary.count("[stale]") == 1
 
-    def test_one_pass_over_the_ledger(self, ledger_path, monkeypatch):
-        """Keys are aggregated in ONE read, not one read per key."""
+    def test_one_sql_read_for_all_keys(self, ledger_path, monkeypatch):
+        """Keys are aggregated in ONE indexed query, not one read per key."""
         EvidenceLedger.for_session("child-a").append(
             kind="test", command="pytest a.py", status="passed"
         )
-        calls: list[int] = []
-        real_read_all = EvidenceLedger.read_all.__func__
+        calls: list[list[str]] = []
+        real_read_for_keys = EvidenceLedger.read_for_keys.__func__
 
-        def _counting_read_all(cls):
-            calls.append(1)
-            return real_read_all(cls)
+        def _counting_read_for_keys(cls, keys):
+            calls.append(list(keys))
+            return real_read_for_keys(cls, keys)
 
-        monkeypatch.setattr(EvidenceLedger, "read_all", classmethod(_counting_read_all))
+        monkeypatch.setattr(EvidenceLedger, "read_for_keys", classmethod(_counting_read_for_keys))
 
         assert collect_evidence_summary(session_keys=["child-a", "child-b", "child-c"])
 
         assert len(calls) == 1
+        assert calls[0] == ["child-a", "child-b", "child-c"]

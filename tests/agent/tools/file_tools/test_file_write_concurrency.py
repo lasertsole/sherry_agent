@@ -218,7 +218,7 @@ def test_appending_python_rewrites_once_and_atomically(root):
         file_path=str(target), text="\ndef b():\n    return 2\n", append=True, session_id=SESSION
     )
 
-    assert "successfully" in result
+    assert json.loads(result)["success"] is True
     content = target.read_text(encoding="utf-8")
     assert "def a():" in content and "def b():" in content
     # No torn remnant of the old append-then-rewrite pair.

@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> 设计层姊妹篇——角色轴、spawn 权限守卫与四层完成门禁：[docs/subagent/README.zh.md](../../../docs/subagent/README.zh.md)
+> 设计层姊妹篇——角色轴、spawn 权限守卫与四层完成门禁：[wiki/subagent/README.zh.md](../../../wiki/subagent/README.zh.md)
 
 ## 更新记录（2026-10-15）
 
@@ -527,10 +527,10 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 |-------|------|----------------|--------------------|
 | 子运行 | 完成判别器 + goal loop（`agent/tools/subagent/spawn/completion_judge.py`） | 任务与子代理最新回复；预算 `COMPLETION_JUDGE["goal_max_turns"]`（默认 5） | 判别器报错 → `done` |
 | 步骤 | 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `validation_criteria`（无标准则不调用判别器） | 模型报错 / 无法解析 → `pass` |
-| 流程 | `taskflow_finish` 门 A–D | DAG 状态与流程证据 | 账本不可读 / 验证器报错 → 放行 |
+| 流程 | `taskflow_flow(action="finish")` 门 A–C | DAG 状态与流程证据 | 账本不可读 / 验证器报错 → 放行 |
 | 父回合 | 完成 drain 程序化门控（`SubagentCompletionDrainMiddleware`） | 会话的验证证据 | 查询不可用 → 不门控 |
 
-完成判别器在每次 spawn 时运行；`goal_max_turns` 是它唯一的预算旋钮（预算为 1 时子代理保持单轮）。步骤判别器同样对每个携带标准的步骤运行——`validation_criteria` 是它的输入，而不是开关——且 `taskflow_finish` 要求证据门全部通过后流程才能到达 DONE。
+完成判别器在每次 spawn 时运行；`goal_max_turns` 是它唯一的预算旋钮（预算为 1 时子代理保持单轮）。步骤判别器同样对每个携带标准的步骤运行——`validation_criteria` 是它的输入，而不是开关——且 `taskflow_flow(action="finish")` 要求证据门全部通过后流程才能到达 DONE。
 
 ### 7. 附件系统
 
@@ -585,7 +585,7 @@ sweeper_interval_seconds，默认 60 秒）
   9. persist_runs_to_disk()               — 内存全量快照写入 SQLite
 ```
 
-▶️ 完整文档：[docs/loop-prevention/README.md](../../../docs/loop-prevention/README.md) · [中文](../../../docs/loop-prevention/README.zh.md) · [한국어](../../../docs/loop-prevention/README.ko.md) · [日本語](../../../docs/loop-prevention/README.ja.md)
+▶️ 完整文档：[wiki/loop-prevention/README.md](../../../wiki/loop-prevention/README.md) · [中文](../../../wiki/loop-prevention/README.zh.md) · [한국어](../../../wiki/loop-prevention/README.ko.md) · [日本語](../../../wiki/loop-prevention/README.ja.md)
 
 #### 孤儿恢复（orphan/recovery.py）
 
@@ -642,7 +642,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer / librarian）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
 | `run_timeout_seconds` | float\|None | None | 本次 spawn 的墙钟超时（秒）。默认 600，clamp 到 [600, 7200]；非正值表示"未设"（走全局默认） |
-| `isolation` | bool | False | 让子代理在项目的一份私有 git worktree 里工作，完成时把改动合并回来（见 `docs/file-safety/README.zh.md`）。当调用方的 cwd 已在隔离工作区内时**被忽略**——子代理复用那棵树 |
+| `isolation` | bool | False | 让子代理在项目的一份私有 git worktree 里工作，完成时把改动合并回来（见 `wiki/file-safety/README.zh.md`）。当调用方的 cwd 已在隔离工作区内时**被忽略**——子代理复用那棵树 |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 

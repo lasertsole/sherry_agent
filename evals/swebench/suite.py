@@ -13,8 +13,8 @@ What the report claims, and what it does not:
   benchmark's own metric, on the benchmark's own verdict;
 - it does NOT claim a leaderboard position: the agent is not SWE-agent (no
   scaffold from the paper), the interpreter/env differs from the official
-  images, and the slice is three instances, not 300. Small-sample honesty rules
-  from ``TODO/对标计划_编码能力实测方案.md`` §六 apply unchanged.
+  images, and the slice is three instances, not 300. The small-sample honesty
+  discipline applies unchanged: report ``N of M``, never a capability percentage.
 
 Usage::
 
@@ -178,6 +178,11 @@ def _run(
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates .env / .models / .network
+
+    # Bind the REAL build_main_tools before EvalSandbox patches it for child
+    # agents: agent.core imported it at module load, so this import must happen
+    # before sandbox.apply() or init() would see only the child-safe subset.
+    import agent.core  # noqa: F401
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
         print(

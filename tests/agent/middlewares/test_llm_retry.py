@@ -43,7 +43,7 @@ def _ok_result(req: ModelRequest) -> str:
 
 def _zero_backoff(monkeypatch) -> None:
     monkeypatch.setattr(
-        "agent.middlewares.llm_retry.core.jittered_backoff", lambda attempt, **kw: 0.0
+        "agent.middlewares.llm_retry.core.compute_retry_delay", lambda attempt, **kw: 0.0
     )
 
 
@@ -200,6 +200,18 @@ class TestStaleStreakBreaker:
 
         with pytest.raises(RuntimeError, match="Provider unresponsive"):
             mw.wrap_model_call(_request(), handler)
+
+    def test_turn_scope_recovers_a_tripped_streak(self):
+        mw = _sync_middleware(stale_giveup_threshold=5)
+        state_register_mem.set_state(SID, "llm_stale_streak", 5)
+
+        with pytest.raises(RuntimeError, match="Provider unresponsive"):
+            mw.wrap_model_call(_request(), lambda req: _ok_result(req))
+
+        mw.before_agent({"session_id": SID})
+
+        assert state_register_mem.get_state(SID, "llm_stale_streak", 0) == 0
+        assert mw.wrap_model_call(_request(), lambda req: _ok_result(req)) == "ok:main"
 
     def test_resets_on_success(self, monkeypatch):
         _zero_backoff(monkeypatch)
@@ -453,7 +465,10 @@ class TestFallbackChain:
 
     def test_non_retryable_fallback_switches_model_and_resets_retries(self, monkeypatch):
         _zero_backoff(monkeypatch)
-        mw = LLMRetryMiddleware(fallback_chain=self._chain())
+        mw = LLMRetryMiddleware(
+            fallback_chain=self._chain(),
+            config=LLMRetryConfig(max_fallback_switches=2),
+        )
         seen = []
         attempts_per_model: dict[str, int] = {}
 
@@ -471,7 +486,10 @@ class TestFallbackChain:
         assert attempts_per_model == {"main": 1, "fb1": 1, "fb2": 1}
 
     def test_chain_exhausted_reraises_original(self):
-        mw = LLMRetryMiddleware(fallback_chain=self._chain())
+        mw = LLMRetryMiddleware(
+            fallback_chain=self._chain(),
+            config=LLMRetryConfig(max_fallback_switches=2),
+        )
 
         def handler(req):
             raise type("PermissionDeniedError", (Exception,), {})("denied")
@@ -491,6 +509,82 @@ class TestFallbackChain:
 
         assert mw.wrap_model_call(_request(), handler) == "ok:fb1"
         assert seen == ["fb1"]
+
+    def test_default_cap_allows_only_one_switch_per_turn(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = LLMRetryMiddleware(fallback_chain=self._chain())
+        seen: list[str] = []
+
+        def handler(req):
+            name = getattr(req.model, "model_name", "?")
+            seen.append(name)
+            if name in ("main", "fb1"):
+                raise type("PermissionDeniedError", (Exception,), {})("denied")
+            return _ok_result(req)
+
+        with pytest.raises(Exception, match="denied"):
+            mw.wrap_model_call(_request(), handler)
+
+        assert seen == ["main", "fb1"]
+        assert state_register_mem.get_state(SID, "llm_fallback_index", 0) == 1
+        assert state_register_mem.get_state(SID, "llm_fallback_switches", 0) == 1
+
+    def test_zero_cap_ignores_a_sticky_candidate(self):
+        mw = LLMRetryMiddleware(
+            fallback_chain=self._chain(),
+            config=LLMRetryConfig(max_fallback_switches=0),
+        )
+        state_register_mem.set_state(SID, "llm_fallback_index", 1)
+        seen: list[str] = []
+
+        def handler(req):
+            seen.append(getattr(req.model, "model_name", "?"))
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+        assert seen == ["main"]
+
+    def test_zero_cap_blocks_a_new_switch(self):
+        mw = LLMRetryMiddleware(
+            fallback_chain=self._chain(),
+            config=LLMRetryConfig(max_fallback_switches=0),
+        )
+
+        def handler(req):
+            raise type("PermissionDeniedError", (Exception,), {})("denied")
+
+        with pytest.raises(Exception, match="denied"):
+            mw.wrap_model_call(_request(), handler)
+        assert state_register_mem.get_state(SID, "llm_fallback_index", 0) == 0
+        assert state_register_mem.get_state(SID, "llm_fallback_switches", 0) == 0
+
+    def test_before_agent_resets_the_per_turn_switch_counter(self):
+        mw = _sync_middleware()
+        state_register_mem.set_state(SID, "llm_fallback_switches", 1)
+        state_register_mem.set_state(SID, "llm_stale_streak", 3)
+
+        mw.before_agent({"session_id": SID})
+
+        assert state_register_mem.get_state(SID, "llm_fallback_switches", 0) == 0
+        assert state_register_mem.get_state(SID, "llm_stale_streak", 0) == 0
+
+    def test_before_agent_session_scope_keeps_the_streak(self):
+        mw = _sync_middleware(stale_giveup_scope="session")
+        state_register_mem.set_state(SID, "llm_stale_streak", 3)
+
+        mw.before_agent({"session_id": SID})
+
+        assert state_register_mem.get_state(SID, "llm_stale_streak", 3) == 3
+
+    def test_abefore_agent_resets_the_same_counters(self):
+        mw = _sync_middleware()
+        state_register_mem.set_state(SID, "llm_fallback_switches", 1)
+        state_register_mem.set_state(SID, "llm_stale_streak", 4)
+
+        asyncio.run(mw.abefore_agent({"session_id": SID}))
+
+        assert state_register_mem.get_state(SID, "llm_fallback_switches", 0) == 0
+        assert state_register_mem.get_state(SID, "llm_stale_streak", 0) == 0
 
     def test_empty_chain_is_plain_retry(self, monkeypatch):
         _zero_backoff(monkeypatch)
@@ -837,3 +931,156 @@ class TestMultimodalFallback:
         assert mw.wrap_model_call(_request(), handler) == "ok"
         assert calls["n"] == 2
         assert state_register_mem.has_key(SID, MODEL_KEY) is False
+
+
+# ---- ZCode-parity retry progress / Retry-After / empty completion ----------
+
+
+class TestRetryProgress:
+    def _events(self, monkeypatch):
+        events: list[dict] = []
+
+        def capture(session_id, **kw):
+            events.append({"session_id": session_id, **kw})
+
+        monkeypatch.setattr("agent.middlewares.llm_retry.core.publish_model_retry", capture)
+        return events
+
+    def test_scheduled_and_succeeded_events_carry_attempt_counts(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=3)
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TimeoutError("timed out")
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+
+        assert [event["status"] for event in events] == ["scheduled", "succeeded"]
+        assert events[0]["attempt"] == 2
+        assert events[0]["budget_attempt"] == 2
+        assert events[0]["max_attempts"] == 4
+        assert events[0]["retries"] == 1
+        assert events[0]["extra_attempts"] == 0
+        assert events[0]["fallback_switches"] == 0
+        assert events[0]["reason"] == "timeout"
+        assert events[1]["retries"] == 1
+
+    def test_exhaustion_event_is_pushed_before_reraise(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=1)
+
+        def handler(req):
+            raise type("InternalServerError", (Exception,), {"status_code": 500})("boom")
+
+        with pytest.raises(Exception, match="boom"):
+            mw.wrap_model_call(_request(), handler)
+
+        assert [event["status"] for event in events] == ["scheduled", "exhausted"]
+        assert events[-1]["attempt"] == 2
+        assert events[-1]["budget_attempt"] == 2
+        assert events[-1]["max_attempts"] == 2
+        assert events[-1]["retries"] == 1
+
+    def test_retry_after_header_sets_the_delay(self, monkeypatch):
+        events = self._events(monkeypatch)
+        sleeps: list[float] = []
+        monkeypatch.setattr("agent.middlewares.llm_retry.core.time.sleep", sleeps.append)
+        mw = _sync_middleware(max_retries=1, respect_retry_after=True)
+        calls = {"n": 0}
+
+        class RateLimitedError(Exception):
+            status_code = 429
+            headers = {"Retry-After": "7"}
+
+        def handler(req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RateLimitedError("slow down")
+            return _ok_result(req)
+
+        assert mw.wrap_model_call(_request(), handler) == "ok:main"
+        assert sleeps == [7.0]
+        assert events[0]["delay_ms"] == 7000
+
+    def test_empty_completion_retries_once(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=3, empty_completion_retries=1)
+        results = [AIMessage(content=""), AIMessage(content="answered")]
+
+        def handler(req):
+            return results.pop(0)
+
+        assert mw.wrap_model_call(_request(), handler).content == "answered"
+        assert [event["reason"] for event in events] == ["empty_completion", "empty_completion"]
+        assert [event["status"] for event in events] == ["scheduled", "succeeded"]
+
+    def test_empty_completion_budget_exhaustion_returns_the_empty_result(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=3, empty_completion_retries=1)
+
+        def handler(req):
+            return AIMessage(content="")
+
+        assert mw.wrap_model_call(_request(), handler).content == ""
+        assert [event["status"] for event in events] == ["scheduled", "exhausted"]
+        assert [event["attempt"] for event in events] == [2, 2]
+        assert [event["budget_attempt"] for event in events] == [2, 2]
+        assert events[-1]["retries"] == 1
+        assert events[-1]["reason"] == "empty_completion"
+
+    def test_extra_attempts_shift_only_the_physical_attempt(self, monkeypatch):
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=10)
+
+        mw._emit_retry(
+            SID,
+            "scheduled",
+            1,
+            "rate_limit",
+            1.0,
+            physical_attempt=3,
+            extra_attempts=1,
+        )
+
+        event = events[0]
+        assert event["attempt"] == 3
+        assert event["budget_attempt"] == 2
+        assert event["max_attempts"] == 12
+        assert event["retries"] == 1
+        assert event["extra_attempts"] == 1
+
+    def test_event_carries_the_per_turn_fallback_switches(self, monkeypatch):
+        events = self._events(monkeypatch)
+        mw = _sync_middleware(max_retries=10)
+        state_register_mem.set_state(SID, "llm_fallback_switches", 1)
+
+        mw._emit_retry(SID, "scheduled", 1, "rate_limit", 1.0, physical_attempt=2)
+
+        assert events[0]["fallback_switches"] == 1
+
+
+def test_empty_completion_without_retry_budget_is_untouched(monkeypatch):
+    _zero_backoff(monkeypatch)
+    events = []
+    monkeypatch.setattr(
+        "agent.middlewares.llm_retry.core.publish_model_retry",
+        lambda session_id, **kw: events.append(kw),
+    )
+    mw = _sync_middleware(max_retries=3, empty_completion_retries=0)
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return AIMessage(content="")
+
+    assert mw.wrap_model_call(_request(), handler).content == ""
+    assert calls["n"] == 1
+    assert events == []

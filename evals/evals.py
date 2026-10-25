@@ -25,9 +25,14 @@ SUITES: dict[str, str] = {
     "session_memory": "evals.session_memory.suite",
     "nudge_extraction": "evals.nudge_extraction.suite",
     "coding_capability": "evals.coding_capability.suite",
-    # External benchmark: SWE-bench_Lite instances (own process, same reason as
-    # coding_capability — it repoints SHERRY_WORKSPACE_DIR).
+    # External benchmarks: each runs in its own process (they repoint
+    # SHERRY_WORKSPACE_DIR); the container suites need Docker, the tool/agent
+    # benchmarks need their own official keys — without them they skip loudly.
     "swebench": "evals.swebench.suite",
+    "deepswe": "evals.deepswe.suite",
+    "terminal_bench": "evals.terminal_bench.suite",
+    "agentbench": "evals.agentbench.suite",
+    "toolbench": "evals.toolbench.suite",
 }
 
 

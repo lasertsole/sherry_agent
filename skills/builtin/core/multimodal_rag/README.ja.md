@@ -6,7 +6,7 @@
 
 ## ✨ 概要
 
-`multimodal_rag` は [EMA AI Agent](https://github.com/your-repo/EMA_AI_agent)（[トップレベル README](../../../../README.md)）の内蔵コアスキルです。プライベートな自己ホスト型 RAG ナレッジベースを提供します。
+`multimodal_rag` は [EMA AI Agent](https://github.com/your-repo/sherry_agent)（[トップレベル README](../../../../README.md)）の内蔵コアスキルです。プライベートな自己ホスト型 RAG ナレッジベースを提供します。
 
 - **マルチモーダル取り込み**：さまざまな形式の文書（TXT / Markdown / PDF など）を有効なパーサーでインデックスします。
 - **ナレッジグラフ**：フラットなベクトルチャンクの代わりに、文書からエンティティ–関係グラフを構築します。

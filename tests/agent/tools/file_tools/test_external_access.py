@@ -190,7 +190,7 @@ class TestFileToolsExternalAccess:
         out = _invoke_and_resume(graph, "t-g3", "s-main", {"type": "approve"})
 
         tool_msg = _tool_messages(out)[0].content
-        assert "successfully" in tool_msg
+        assert json.loads(tool_msg)["success"] is True
         assert target.read_text(encoding="utf-8") == "hello external"
 
     def test_write_file_external_without_approval_is_refused(self, tmp_path, clean_state):

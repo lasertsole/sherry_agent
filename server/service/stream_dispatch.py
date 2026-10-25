@@ -259,6 +259,7 @@ def active_turn_snapshot(session_id: str) -> dict[str, Any] | None:
         "text": engine.ai_text,
         "has_reasoning": engine._has_reasoning,
         "seq": int(getattr(engine, "_frame_seq", 0)),
+        "turn_id": str(getattr(engine, "turn_id", "") or ""),
     }
 
 
@@ -272,6 +273,10 @@ class StreamTurn:
 
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
+        # The turn identity from the surrounding ``turn_scope``. Every frame
+        # carries it so a reconnecting client can route a queued frame to the
+        # turn it belongs to even when the turn changed during the reconnect.
+        self.turn_id: str = current_turn_id.get("")
         # Transcript accumulator (drives the cancelled/timeout interrupt
         # marker on the generate turn; a running tool-call note is appended).
         self.ai_text: str = ""
@@ -498,6 +503,8 @@ class StreamTurn:
         async for frame in self._run_frames():
             self._frame_seq += 1
             frame["seq"] = self._frame_seq
+            if self.turn_id:
+                frame["turn_id"] = self.turn_id
             yield frame
 
     async def _run_frames(self) -> AsyncGenerator[dict[str, Any]]:

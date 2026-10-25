@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> Design-level companion — role axes, spawn-privilege guards, and the four-layer completion gates: [docs/subagent/README.md](../../../docs/subagent/README.md)
+> Design-level companion — role axes, spawn-privilege guards, and the four-layer completion gates: [wiki/subagent/README.md](../../../wiki/subagent/README.md)
 
 ## Update Notes (2026-10-15)
 
@@ -543,10 +543,10 @@ Completion gates layer from the child run through the step to the flow, and all 
 |-------|------|----------------|--------------------|
 | Child run | completion judge + goal loop (`agent/tools/subagent/spawn/completion_judge.py`) | the task and the child's latest response; budget `COMPLETION_JUDGE["goal_max_turns"]` (default 5) | judge error → `done` |
 | Step | step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (no criteria → no judge call) | model error / unparseable → `pass` |
-| Flow | `taskflow_finish` gates A–C (+ the opt-in Gate E judge) | DAG state and the flow's evidence | unreadable ledger / judge error → pass |
+| Flow | `taskflow_flow(action="finish")` gates A–C (+ the opt-in Gate E judge) | DAG state and the flow's evidence | unreadable ledger / judge error → pass |
 | Parent turn | completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`) | the session's verification evidence | unavailable lookup → no gate |
 
-The completion judge runs on every spawn; `goal_max_turns` is its only budget knob (a budget of 1 keeps the child single-turn). The step judge equally runs for every criteria-bearing step — `validation_criteria` is its input, not a switch — and `taskflow_finish` requires the evidence gates to pass before a flow can reach DONE.
+The completion judge runs on every spawn; `goal_max_turns` is its only budget knob (a budget of 1 keeps the child single-turn). The step judge equally runs for every criteria-bearing step — `validation_criteria` is its input, not a switch — and `taskflow_flow(action="finish")` requires the evidence gates to pass before a flow can reach DONE.
 
 ### 7. Attachment System
 
@@ -603,7 +603,7 @@ Each sweep executes:
   9. persist_runs_to_disk()               — full memory snapshot to SQLite
 ```
 
-▶️ Full details: [docs/loop-prevention/README.md](../../../docs/loop-prevention/README.md) · [中文](../../../docs/loop-prevention/README.zh.md) · [한국어](../../../docs/loop-prevention/README.ko.md) · [日本語](../../../docs/loop-prevention/README.ja.md)
+▶️ Full details: [wiki/loop-prevention/README.md](../../../wiki/loop-prevention/README.md) · [中文](../../../wiki/loop-prevention/README.zh.md) · [한국어](../../../wiki/loop-prevention/README.ko.md) · [日本語](../../../wiki/loop-prevention/README.ja.md)
 
 #### Orphan Recovery (orphan/recovery.py)
 
@@ -660,7 +660,7 @@ All eight tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
 | `run_timeout_seconds` | float\|None | None | Wall-clock timeout for this spawn (seconds). Default 600, clamped to [600, 7200]; a non-positive value means "unset" (global default) |
-| `isolation` | bool | False | Run the child in a private git worktree of the project and merge its changes back on completion (see `docs/file-safety/README.md`). IGNORED when the caller's cwd is already inside an isolated worktree — the child reuses that tree |
+| `isolation` | bool | False | Run the child in a private git worktree of the project and merge its changes back on completion (see `wiki/file-safety/README.md`). IGNORED when the caller's cwd is already inside an isolated worktree — the child reuses that tree |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 

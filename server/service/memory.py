@@ -5,7 +5,7 @@ from config.path import MEMORY_DIR
 from server.service.file_store import FileStore
 
 # Memory directories (workspace/memory/). Only these file names are allowed to be
-# read/written through the UI. USER.md overlaps with the workspace-root USER.md
+# read/written through the UI/API. USER.md overlaps with the workspace-root USER.md
 # naming but lives in a separate directory (the long-term memory store).
 MEMORY_SYSTEM_FILE_NAMES: list[str] = SERVER_HTTP["memory_system_file_names"]
 
@@ -34,7 +34,7 @@ _store = _MemoryFileStore()
 
 
 def read_memory_files() -> dict[str, str]:
-    """Read memory files."""
+    """Read the global memory files."""
     return _store.read_files()
 
 

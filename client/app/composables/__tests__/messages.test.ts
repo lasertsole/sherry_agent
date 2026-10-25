@@ -27,7 +27,13 @@ vi.mock('../requestApi', () => ({
   withGatewayToken: (url: string) => url
 }));
 
-import { get_history_by_turn_page, clearSession, getPendingInterrupt, postAgentStream } from '../messages';
+import {
+  get_history_by_turn_page,
+  get_history_page_with_active_turn,
+  clearSession,
+  getPendingInterrupt,
+  postAgentStream
+} from '../messages';
 import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 function stubFetchApi(data: unknown) {
@@ -120,6 +126,43 @@ describe('get_history_by_turn_page', () => {
       method: 'get'
     });
     expect(mockDb.cacheMessages).toHaveBeenCalledWith(fetched);
+  });
+
+  it('include_active_turn returns the running-turn snapshot with the rows', async () => {
+    mockDb.cachedMaxTurnNum.mockResolvedValue(0);
+    const fetched = [{ ...rows[0], id: 20, turn_num: 1 }];
+    const mock = stubFetchApi({
+      messages: fetched,
+      active_turn: {
+        text: 'partial',
+        has_reasoning: true,
+        seq: 4,
+        turn_id: 'turn-1',
+        turn_num: 2
+      }
+    });
+
+    const result = await get_history_page_with_active_turn('s1', 0, 10, 1);
+
+    expect(result.messages).toEqual(fetched);
+    expect(result.activeTurn).toEqual({
+      text: 'partial',
+      has_reasoning: true,
+      seq: 4,
+      turn_id: 'turn-1',
+      turn_num: 2
+    });
+    expect(mock).toHaveBeenCalledWith({
+      url: '/get_history_by_turn_page',
+      opts: {
+        session_id: 's1',
+        min_turn_num: 1,
+        turn_page_size: 10,
+        turn_page_num: 1,
+        include_active_turn: 1
+      },
+      method: 'get'
+    });
   });
 
   it('uses caller provided min_turn_num when cache is empty', async () => {

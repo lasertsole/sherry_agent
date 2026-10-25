@@ -6,16 +6,15 @@ _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+# The GraphRAG env defaults (graph size caps + retrieval thresholds) live in
+# ``graph_rag/__init__.py``: they must be installed before the vendored package
+# is imported, because QueryParam/LightRAG read them into class-level defaults
+# at import time. Setting them here would be too late.
+
 from graph_rag.vendored_lightrag import LightRAG
 from config.path import SRC_DIR
 from graph_rag.vendored_lightrag.utils import EmbeddingFunc
 from langchain_core.messages import SystemMessage, HumanMessage
-
-# Set environment variables that control LightRAG knowledge-graph size to curb unbounded graph growth
-os.environ.setdefault("MAX_SOURCE_IDS_PER_ENTITY", "50")
-os.environ.setdefault("MAX_SOURCE_IDS_PER_RELATION", "50")
-os.environ.setdefault("SOURCE_IDS_LIMIT_METHOD", "FIFO")
-os.environ.setdefault("RELATED_CHUNK_NUMBER", "5")
 
 
 async def _llm_model_func(

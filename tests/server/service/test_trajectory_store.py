@@ -56,6 +56,24 @@ async def test_tool_start_and_end_merge_into_one_row(store):
 
 
 @pytest.mark.asyncio
+async def test_retry_transitions_keep_one_row_each(store):
+    """scheduled → succeeded are separate transitions, not one refined event."""
+    for status in ("scheduled", "succeeded"):
+        await store.append(
+            "s1",
+            "t1",
+            "model_retry",
+            {"type": "model_retry", "status": status, "attempt": 2},
+            seq=0,
+        )
+
+    events = await store.read("s1", turn_id="t1")
+
+    assert len(events) == 2, events
+    assert {event["payload"]["status"] for event in events} == {"scheduled", "succeeded"}
+
+
+@pytest.mark.asyncio
 async def test_events_read_back_in_seq_order(store):
     for seq, kind in enumerate(("tool_start", "tool_end"), start=1):
         await store.append(

@@ -49,7 +49,7 @@ class _FakeFactsStore:
     def __init__(self, content: str = "KNOWN-FACT: test_auth_17 needs network") -> None:
         self.content = content
 
-    def format_live_content(self, target: str) -> str:
+    def format_live_content(self, target: str, session_id: str | None = None) -> str:
         assert target == "facts"
         return self.content
 
@@ -310,3 +310,23 @@ class TestModuleNotesBehavior:
         text = existing_md.read_text(encoding="utf-8")
         assert "- existing row" in text
         assert "- appended row" in text
+
+
+class TestFactsSystemLevelRouting:
+    """FACTS is global and system-level only; project facts route to MEMORY."""
+
+    def test_the_memory_review_prompt_requires_system_level_facts(self):
+        prompt = nudge_mod._MEMORY_REVIEW_PROMPT
+
+        assert "SYSTEM-LEVEL or CROSS-PROJECT" in prompt
+        assert "FACTS.md is for SYSTEM-LEVEL facts only" in prompt
+        assert "Project-specific facts" in prompt
+        assert "remove it from FACTS.md and add it to MEMORY.md" in prompt
+
+    def test_the_plan_extraction_prompt_requires_system_level_facts(self):
+        prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
+
+        assert "SYSTEM-LEVEL/CROSS-PROJECT pitfall" in prompt
+        assert "Project-specific pitfall or convention → MEMORY" in prompt
+        assert "ONLY\nwrite system-level/cross-project facts here" in prompt
+        assert "remove it from FACTS.md" in prompt

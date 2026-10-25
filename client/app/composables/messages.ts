@@ -89,12 +89,56 @@ export const SESSION_ABORT_STREAM_EVENT = 'session:abort-stream';
  */
 const MAX_TURN_PAGE_SIZE = 200;
 
-export async function get_history_by_turn_page(
+/** The running turn's snapshot returned alongside a history page. */
+export interface ActiveTurnSnapshot {
+  text: string;
+  has_reasoning: boolean;
+  /** Per-turn frame seq at which the snapshot was read. */
+  seq: number;
+  turn_id: string;
+  /** The next persisted turn number (display/row key when available). */
+  turn_num?: number;
+}
+
+/** A history page plus the optional running-turn snapshot. */
+export interface HistoryPageResult {
+  messages: CachedMessage[];
+  activeTurn: ActiveTurnSnapshot | null;
+}
+
+/**
+ * Normalize the server's active_turn object (fail-closed on a malformed value).
+ * @param value
+ */
+function normalizeActiveTurn(value: unknown): ActiveTurnSnapshot | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.text !== 'string') return null;
+  return {
+    text: raw.text,
+    has_reasoning: raw.has_reasoning === true,
+    seq: typeof raw.seq === 'number' ? raw.seq : 0,
+    turn_id: typeof raw.turn_id === 'string' ? raw.turn_id : '',
+    turn_num: typeof raw.turn_num === 'number' ? raw.turn_num : undefined
+  };
+}
+
+/**
+ * Fetch one history page (cache + server increment), optionally with the
+ * running turn's text snapshot in the SAME round trip.
+ * @param session_id
+ * @param min_turn_num
+ * @param turn_page_size
+ * @param turn_page_num
+ * @param includeActiveTurn
+ */
+async function fetchHistoryPage(
   session_id: string,
   min_turn_num: number,
   turn_page_size: number,
-  turn_page_num: number
-): Promise<CachedMessage[]> {
+  turn_page_num: number,
+  includeActiveTurn: boolean
+): Promise<HistoryPageResult> {
   const cached = await readCachedMessages(session_id);
   // Use the max turn_num of the existing local cache as min_turn_num,
   // requesting from the server only the newer turns missing from the cache;
@@ -107,33 +151,77 @@ export async function get_history_by_turn_page(
   const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : Math.max(min_turn_num, 1);
 
   try {
-    const res = await fetchApi<CachedMessage[] | Response<CachedMessage[]>>({
+    const res = await fetchApi<
+      | CachedMessage[]
+      | { messages?: CachedMessage[]; active_turn?: unknown; data?: CachedMessage[] }
+      | Response<CachedMessage[]>
+    >({
       url: '/get_history_by_turn_page',
       opts: {
         session_id,
         min_turn_num: effectiveMinTurn,
         turn_page_size: Math.min(Math.max(turn_page_size, 1), MAX_TURN_PAGE_SIZE),
-        turn_page_num
+        turn_page_num,
+        ...(includeActiveTurn ? { include_active_turn: 1 } : {})
       },
       method: 'get'
     });
     // null = request failed: fall back to the local cache, same as the catch below.
-    if (res === null) return cached;
+    if (res === null) return { messages: cached, activeTurn: null };
 
-    // The server's /get_history_by_turn_page directly returns an array of message rows
-    // (list[dict]), not a { data: [...] } wrapper object. Compatibility handling here: if the
-    // response itself is an array, use it directly; otherwise fall back to reading res.data
-    // (for the legacy wrapped format).
-    const fetched: CachedMessage[] = Array.isArray(res) ? res : res.data || [];
+    // The default response is a plain row array. With include_active_turn it is
+    // {messages, active_turn}; the legacy {data} envelope is tolerated too.
+    let fetched: CachedMessage[] = [];
+    let activeTurn: ActiveTurnSnapshot | null = null;
+    if (Array.isArray(res)) {
+      fetched = res;
+    } else if ('messages' in res || 'active_turn' in res) {
+      fetched = res.messages ?? [];
+      activeTurn = normalizeActiveTurn(res.active_turn);
+    } else {
+      fetched = res.data || [];
+    }
 
     // Write to the cache (bulkPut deduplicates by the id primary key)
     await cacheMessages(fetched);
 
-    return mergeDedup(cached, fetched);
+    return { messages: mergeDedup(cached, fetched), activeTurn };
   } catch {
     // When the server request fails, fall back to returning the local cache to guarantee offline availability
-    return cached;
+    return { messages: cached, activeTurn: null };
   }
+}
+
+/**
+ * Request a plain history page (existing callers keep this array contract).
+ * @param session_id
+ * @param min_turn_num
+ * @param turn_page_size
+ * @param turn_page_num
+ */
+export async function get_history_by_turn_page(
+  session_id: string,
+  min_turn_num: number,
+  turn_page_size: number,
+  turn_page_num: number
+): Promise<CachedMessage[]> {
+  return (await fetchHistoryPage(session_id, min_turn_num, turn_page_size, turn_page_num, false)).messages;
+}
+
+/**
+ * Request a history page together with the running turn's snapshot.
+ * @param session_id
+ * @param min_turn_num
+ * @param turn_page_size
+ * @param turn_page_num
+ */
+export async function get_history_page_with_active_turn(
+  session_id: string,
+  min_turn_num: number,
+  turn_page_size: number,
+  turn_page_num: number
+): Promise<HistoryPageResult> {
+  return fetchHistoryPage(session_id, min_turn_num, turn_page_size, turn_page_num, true);
 }
 
 /**

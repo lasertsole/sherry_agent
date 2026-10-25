@@ -1,8 +1,8 @@
 """Memory-tool store configuration.
 
 Char caps for the three single-file memory stores the ``memory`` tool owns:
-MEMORY.md (agent notes), USER.md (user profile) and FACTS.md (broad,
-module-independent pitfalls and conventions). Char counts — not tokens —
+MEMORY.md (agent notes), USER.md (user profile) and FACTS.md (SYSTEM-LEVEL /
+CROSS-PROJECT pitfalls and conventions). Char counts — not tokens —
 because char counts are model-independent.
 """
 

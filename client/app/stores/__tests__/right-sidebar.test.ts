@@ -2,11 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import {
+  RECENT_CLOSED_LIMIT,
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH,
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
+  type RightSidebarPanelKind,
+  type RightSidebarTab,
   useRightSidebarStore
 } from '../right-sidebar';
 
@@ -91,6 +94,13 @@ describe('stores/right-sidebar', () => {
     expect(store.tabs.find(tab => tab.id === viewer)?.scope).toBe('session');
     expect(store.openTab('contextViewer')).toBe(viewer);
 
+    // A side chat is one tab per side session: the initial quote is content,
+    // not identity, while a second session gets its own tab.
+    const side = store.openTab('sideChat', { sessionId: 'side-1', quote: 'first' });
+    expect(store.tabs.find(tab => tab.id === side)?.scope).toBe('session');
+    expect(store.openTab('sideChat', { sessionId: 'side-1', quote: 'second' })).toBe(side);
+    expect(store.openTab('sideChat', { sessionId: 'side-2' })).not.toBe(side);
+
     store.setActiveScope('global');
     store.activateTab(preset);
     expect(store.activeScope).toBe('session');
@@ -109,6 +119,52 @@ describe('stores/right-sidebar', () => {
     }
     expect(store.activeTabId).toBe(logs);
     expect(store.activeScope).toBe('global');
+  });
+
+  it('keeps session tabs isolated per session while global tabs are shared', () => {
+    const store = useRightSidebarStore();
+
+    store.setActiveSession('s1');
+    const fileA = store.openTab('fileViewer', { path: 'src/a.ts' });
+    const contextA = store.openTab('contextViewer');
+    expect(store.tabsInScope('session').map(tab => tab.id)).toEqual([fileA, contextA]);
+    expect(store.activeTabId).toBe(contextA);
+
+    // A brand-new session starts with NO session tab on screen, even though
+    // the previous session's tabs are still retained.
+    store.setActiveSession('s2');
+    expect(store.tabsInScope('session')).toEqual([]);
+    expect(store.activeTabId).toBeNull();
+
+    const presetB = store.openTab('sessionPreset');
+    expect(store.tabsInScope('session').map(tab => tab.id)).toEqual([presetB]);
+
+    // The same file opened in two sessions is two tabs, not one shared tab.
+    store.setActiveSession('s1');
+    const fileAAgain = store.openTab('fileViewer', { path: 'src/a.ts' });
+    expect(fileAAgain).toBe(fileA);
+    store.setActiveSession('s2');
+    const fileB = store.openTab('fileViewer', { path: 'src/a.ts' });
+    expect(fileB).not.toBe(fileA);
+
+    // Global tabs are shared: switching sessions leaves the active global tab
+    // alive and every session sees it.
+    const logs = store.openTab('logs');
+    expect(store.activeScope).toBe('global');
+    store.setActiveSession('s1');
+    expect(store.activeTabId).toBe(logs);
+    expect(store.tabsInScope('global').map(tab => tab.id)).toEqual([logs]);
+
+    // Returning to the session group restores that session's own last tab.
+    store.setActiveScope('session');
+    expect(store.activeTabId).toBe(fileA);
+    store.setActiveSession('s2');
+    expect(store.activeTabId).toBe(fileB);
+
+    // Deleting a session drops its tabs and remembered active tab.
+    store.forgetSession('s2');
+    expect(store.tabs.some(tab => tab.id === presetB || tab.id === fileB)).toBe(false);
+    expect(store.tabsInScope('session')).toEqual([]);
   });
 
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
@@ -258,5 +314,122 @@ describe('stores/right-sidebar', () => {
     expect(store.collapsed).toBe(false);
     store.expand();
     expect(store.collapsed).toBe(false);
+  });
+
+  it('remembers a closed side chat per parent session and reopens it without prefill', () => {
+    const store = useRightSidebarStore();
+    const tab: RightSidebarTab = {
+      id: 'sideChat-1',
+      kind: 'sideChat',
+      scope: 'session',
+      payload: {
+        sessionId: 'child',
+        parentSessionId: 'parent',
+        quote: 'quoted text',
+        source: 'AI'
+      }
+    };
+
+    store.rememberClosed(tab, 'parent');
+
+    expect(store.recentClosedFor('session', 'parent')).toHaveLength(1);
+    expect(store.recentClosedFor('session', 'other')).toEqual([]);
+    expect(store.recentClosedFor('global', 'parent')).toEqual([]);
+
+    const entry = store.recentClosedFor('session', 'parent')[0];
+    const reopenedId = store.reopenClosed(entry);
+    const reopened = store.tabs.find(candidate => candidate.id === reopenedId);
+
+    expect(reopened?.kind).toBe('sideChat');
+    expect(reopened?.payload).toMatchObject({
+      sessionId: 'child',
+      parentSessionId: 'parent',
+      prefillQuote: false
+    });
+    // Reopened tabs leave the recent list.
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('dedupes a re-closed tab, orders newest first and forgets deleted sessions', () => {
+    const store = useRightSidebarStore();
+    const sideChat: RightSidebarTab = {
+      id: 'sideChat-1',
+      kind: 'sideChat',
+      scope: 'session',
+      payload: { sessionId: 'child', parentSessionId: 'parent' }
+    };
+    const file: RightSidebarTab = {
+      id: 'fileViewer-1',
+      kind: 'fileViewer',
+      scope: 'session',
+      payload: { path: 'src/a.ts' }
+    };
+
+    store.rememberClosed(sideChat, 'parent');
+    store.rememberClosed(sideChat, 'parent');
+    store.rememberClosed(file, 'parent');
+
+    expect(store.recentClosedFor('session', 'parent').map(entry => entry.kind)).toEqual(['fileViewer', 'sideChat']);
+
+    // Deleting the parent removes both its own entries and its side chats.
+    store.forgetSession('parent');
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('lists global recent tabs for every session', () => {
+    const store = useRightSidebarStore();
+    const tab: RightSidebarTab = { id: 'logs-1', kind: 'logs', scope: 'global' };
+
+    store.rememberClosed(tab, 'parent');
+
+    expect(store.recentClosedFor('global', 'parent')).toHaveLength(1);
+    expect(store.recentClosedFor('global', 'someone-else')).toHaveLength(1);
+    expect(store.recentClosedFor('session', 'parent')).toEqual([]);
+  });
+
+  it('keeps only the newest 10 pages per session and 10 global pages', () => {
+    const store = useRightSidebarStore();
+
+    for (let index = 0; index < RECENT_CLOSED_LIMIT + 2; index += 1) {
+      store.rememberClosed(
+        {
+          id: `fileViewer-${index}`,
+          kind: 'fileViewer',
+          scope: 'session',
+          payload: { path: `src/file-${index}.ts` }
+        },
+        'parent'
+      );
+    }
+
+    const sessionEntries = store.recentClosedFor('session', 'parent');
+    expect(sessionEntries).toHaveLength(RECENT_CLOSED_LIMIT);
+    expect(sessionEntries[0].payload?.path).toBe(`src/file-${RECENT_CLOSED_LIMIT + 1}.ts`);
+    expect(sessionEntries.at(-1)?.payload?.path).toBe('src/file-2.ts');
+    // Other sessions never see this session's history.
+    expect(store.recentClosedFor('session', 'other')).toEqual([]);
+
+    const globalKinds: RightSidebarPanelKind[] = [
+      'logs',
+      'stats',
+      'knowledgeGraph',
+      'skills',
+      'systemConfig',
+      'persona',
+      'memory',
+      'heartbeat',
+      'cron',
+      'extend',
+      'webSearch',
+      'account'
+    ];
+    globalKinds.forEach((kind, index) => {
+      store.rememberClosed({ id: `global-${index}`, kind, scope: 'global' }, 'parent');
+    });
+
+    const globalEntries = store.recentClosedFor('global', 'other-session');
+    expect(globalEntries).toHaveLength(RECENT_CLOSED_LIMIT);
+    expect(globalEntries[0].kind).toBe(globalKinds.at(-1));
+    expect(globalEntries.map(entry => entry.kind)).not.toContain('logs');
   });
 });

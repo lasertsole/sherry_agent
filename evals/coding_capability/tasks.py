@@ -3,8 +3,8 @@
 Each task is a throwaway git repository built under the run's results directory.
 Its tests fail until the agent changes the code, and the verdict is produced by
 running that repository's OWN test suite — objective, offline, no LLM judge and
-no external benchmark (see ``TODO/对标计划_编码能力实测方案.md`` §六 for the
-reporting discipline this shape enforces).
+no external benchmark. The suite module documents the reporting discipline this
+shape enforces.
 
 Two harness artifacts are deliberately kept out of the measurement:
 
@@ -418,7 +418,7 @@ def verify_reference_fix(task: Task) -> tuple[bool, str]:
 
     A task that fails this check is a broken TASK (harness bug) — the suite
     reports it separately so "the model failed" and "the harness failed" never
-    get confused (the plan's exit criterion 1).
+    get confused (a broken task is never a model failure).
     """
     with tempfile.TemporaryDirectory(prefix=f"eval-task-{task.id}-") as tmp:
         repo = Path(tmp) / task.id

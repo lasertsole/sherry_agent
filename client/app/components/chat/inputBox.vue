@@ -22,6 +22,28 @@
       @keydown.escape.stop.prevent="handleKeyEscape"></div>
 
     <div class="sendActions">
+      <!-- Voice input: mic → record → transcribe → insert at the caret, fully
+          inside this component (the composable is UI-free). Hidden while the
+          box is disabled (a HITL card owns the input slot); disabled when STT
+          is unconfigured (the status route's weights probe). While recording
+          the button turns into the stop control, so it must stay clickable. -->
+      <span
+        v-if="voiceRecording"
+        class="voiceTimer"
+        >{{ voiceTimerLabel }}</span
+      >
+      <Button
+        v-if="!disabled"
+        v-debounce:click.300="toggleVoiceRecording"
+        class="voice"
+        :class="{ 'voice-recording': voiceRecording }"
+        :icon="voiceIcon"
+        text
+        rounded
+        :severity="voiceRecording ? 'danger' : 'secondary'"
+        :aria-label="voiceAriaLabel"
+        :title="voiceTooltip"
+        :disabled="voiceStartBlocked && !voiceRecording" />
       <!-- Stop: only while generating; Send stays enabled/clickable while streaming —
           the backend queues the new message (queued frame) instead of rejecting it -->
       <Button
@@ -47,6 +69,7 @@ import { useI18n } from 'vue-i18n';
 // exports (the repo's `no-restricted-imports` rule keeps value imports out of
 // components).
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import type { VoiceErrorKind } from '~/composables/use-voice-input';
 
 const { t } = useI18n();
 
@@ -74,6 +97,62 @@ const emit = defineEmits<{
 
 /** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
+
+/**
+ * Voice input state machine (mic button: record → transcribe → insert).
+ * `probeAvailability` runs once on mount; `null` (backend unreachable) keeps
+ * the button clickable so the first attempt surfaces the real error.
+ */
+const voice = useVoiceInput();
+
+const voiceRecording = computed(() => voice.state.value === 'recording');
+const voiceTranscribing = computed(() => voice.state.value === 'transcribing');
+
+/** The mic is blocked while a transcription runs or the box itself is disabled; unconfigured STT stays CLICKABLE — the click toasts the reason instead of silently refusing. */
+const voiceStartBlocked = computed(() => props.disabled || voiceTranscribing.value);
+
+const voiceIcon = computed(() =>
+  voiceTranscribing.value ? 'pi pi-spin pi-spinner' : voiceRecording.value ? 'pi pi-stop-circle' : 'pi pi-microphone'
+);
+
+const voiceTimerLabel = computed(() => {
+  const total = voice.elapsedSec.value;
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+});
+
+const voiceAriaLabel = computed(() => (voiceRecording.value ? t('chatInput.voiceStop') : t('chatInput.voiceRecord')));
+
+const voiceTooltip = computed(() => {
+  if (voice.isSttAvailable.value === false) return t('chatInput.voiceUnavailable');
+  return voiceAriaLabel.value;
+});
+
+/** Toast-able failure kinds → the `chatInput.voice*` key that explains them. */
+const VOICE_ERROR_KEYS: Record<VoiceErrorKind, string> = {
+  permission: 'chatInput.voicePermissionDenied',
+  unsupported: 'chatInput.voiceFailed',
+  too_short: 'chatInput.voiceTooShort',
+  warming: 'chatInput.voiceWarming',
+  unavailable: 'chatInput.voiceUnavailable',
+  failed: 'chatInput.voiceFailed'
+};
+
+/** Mic click: toggle record/stop; the stop half inserts the transcript at the caret. */
+async function toggleVoiceRecording(): Promise<void> {
+  if (voiceRecording.value) {
+    const result = await voice.stopRecording();
+    if (result.ok && result.text) {
+      insertVoiceText(result.text);
+    } else if (result.reason && result.reason !== 'idle') {
+      toastWarn(t(VOICE_ERROR_KEYS[result.reason as VoiceErrorKind] ?? 'chatInput.voiceFailed'));
+    }
+    return;
+  }
+  const started = await voice.startRecording();
+  if (!started && voice.lastError.value) {
+    toastWarn(t(VOICE_ERROR_KEYS[voice.lastError.value] ?? 'chatInput.voiceFailed'));
+  }
+}
 
 /** True while a workspace file is dragged over the composer (highlight hint). */
 const isDragOver = ref(false);
@@ -120,6 +199,18 @@ function onDrop(event: DragEvent): void {
 function addFileMention(payload: FileMentionPayload): void {
   if (props.disabled) return;
   insertFileMention(inputDom.value, payload);
+}
+
+/**
+ * Insert a quoted-selection chip programmatically (the chat transcript's
+ * right-click menu). The full text stays in the chip's attribute; the visible
+ * label is only a preview.
+ * @param text The selected text.
+ * @param source A localized "from X" label for the chip's tooltip.
+ */
+function addQuoteChip(text: string, source?: string): void {
+  if (props.disabled) return;
+  insertQuoteChip(inputDom.value, text, source || t('chat.selection.quoteTooltip'));
 }
 
 /**
@@ -333,7 +424,12 @@ function syncDraftToDom(): void {
 watch(draft, () => syncDraftToDom());
 
 // Sync once after the component mounts (onMounted also fires on KeepAlive restore)
-onMounted(() => syncDraftToDom());
+onMounted(() => {
+  syncDraftToDom();
+  // Voice availability is a one-shot probe; a backend that is down leaves
+  // `null` (unknown) and the button stays clickable.
+  void voice.probeAvailability();
+});
 
 /**
  * Clears this session's history cache and browse state (for the parent to call when a session is deleted).
@@ -350,7 +446,37 @@ function clearHistory(): void {
   browsingSnapshot = '';
 }
 
-defineExpose({ clearHistory, addFileMention });
+/**
+ * Insert transcribed voice text at the caret (plain text — no chip), with the
+ * same flow as the mention chip's insertion: caret-in-composer range insert,
+ * append-at-end fallback, then one synthetic input event so `inputFunc` syncs
+ * the draft model. Newlines inside a transcript survive both the DOM (they are
+ * part of the text node) and `extractTextForSend`.
+ * @param text The transcript to drop into the composer.
+ */
+function insertVoiceText(text: string): void {
+  if (props.disabled || !inputDom.value || !text) return;
+  const node = document.createTextNode(text);
+  const selection = window.getSelection();
+  const range =
+    selection && selection.rangeCount > 0 && inputDom.value.contains(selection.getRangeAt(0).commonAncestorContainer)
+      ? selection.getRangeAt(0)
+      : null;
+  if (range) {
+    range.deleteContents();
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } else {
+    inputDom.value.appendChild(node);
+  }
+  inputDom.value.focus();
+  inputDom.value.dispatchEvent(new InputEvent('input', { bubbles: true }));
+}
+
+defineExpose({ clearHistory, addFileMention, addQuoteChip, insertVoiceText });
 </script>
 
 <style lang="scss" scoped>
@@ -415,6 +541,28 @@ defineExpose({ clearHistory, addFileMention });
     cursor: default;
   }
 
+  // A quoted selection: the same atomic shape as a file mention, tinted as a
+  // quote; its `data-quote-text` turns into a blockquote on send.
+  :deep(.text-quote-chip) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0 0.375rem;
+    margin: 0 0.125rem;
+    border-radius: 0.375rem;
+    background-color: color-mix(in srgb, var(--color-theme-main) 7%, transparent);
+    border-left: 2px solid var(--color-theme-main);
+    color: var(--color-theme-main);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    max-width: 20rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+  }
+
   // Send/stop buttons cluster: pinned bottom-right; the stop button (rendered only while
   // generating) sits left of the always-present send button via flex layout
   > .sendActions {
@@ -422,7 +570,32 @@ defineExpose({ clearHistory, addFileMention });
     right: 0.5rem;
     bottom: 0.5rem;
     display: flex;
+    align-items: center;
     gap: 0.5rem;
+  }
+
+  // Recording timer next to the mic button: tabular digits keep the mm:ss steady.
+  > .sendActions > .voiceTimer {
+    font-size: 0.75rem;
+    color: #ef4444;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+
+  // The recording mic breathes instead of blinking — a stop control you can
+  // still aim at, never a seizure risk.
+  > .sendActions > .voice.voice-recording {
+    animation: voice-pulse 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 </style>

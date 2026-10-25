@@ -34,6 +34,14 @@ export function useChatCardExpansion() {
   const expandedCarriers = reactive(new Set<number>());
 
   /**
+   * Set of assistant-work group keys whose hidden execution history is open
+   * (collapsed by default). The key is the group's first message id, so it
+   * survives streaming re-renders and does not change when the final row id
+   * arrives later.
+   */
+  const expandedTurnHistory = reactive(new Set<number>());
+
+  /**
    * Toggle the expand/collapse state of a tool card
    * @param id
    */
@@ -70,6 +78,18 @@ export function useChatCardExpansion() {
   };
 
   /**
+   * Toggle a turn's hidden execution history
+   * @param key Group key (the first message id of the assistant work group)
+   */
+  const toggleTurnHistory = (key: number) => {
+    if (expandedTurnHistory.has(key)) {
+      expandedTurnHistory.delete(key);
+    } else {
+      expandedTurnHistory.add(key);
+    }
+  };
+
+  /**
    * Toggle a long message's full-text view
    * @param id
    */
@@ -86,9 +106,11 @@ export function useChatCardExpansion() {
     expandedThinking,
     expandedCarriers,
     expandedLongMessages,
+    expandedTurnHistory,
     toggleToolCard,
     toggleThinking,
     toggleCarrier,
+    toggleTurnHistory,
     toggleLongMessage
   };
 }

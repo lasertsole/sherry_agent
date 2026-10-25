@@ -184,6 +184,19 @@ class TestApplyThinkingBudget:
         result = main_llm.apply_thinking_budget(config, "deepseek", "deepseek-chat", True)
         assert result["max_tokens"] == main_llm.OUTPUT_MAX_TOKEN + 4096
 
+    def test_configured_output_cap_is_the_thinking_base(self, monkeypatch):
+        monkeypatch.setenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "32768")
+        import importlib
+
+        importlib.reload(main_llm)
+        try:
+            config: dict = {}
+            main_llm.apply_thinking_budget(config, "deepseek", "deepseek-chat", True)
+            assert config["max_tokens"] == 32768 + 4096
+        finally:
+            monkeypatch.delenv("MAIN_LLM_MAX_OUTPUT_TOKEN", raising=False)
+            importlib.reload(main_llm)
+
     def test_thinking_disabled_leaves_key_absent(self):
         config: dict = {}
         main_llm.apply_thinking_budget(config, "deepseek", "deepseek-chat", False)

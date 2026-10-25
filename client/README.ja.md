@@ -9,6 +9,7 @@
 **Tauri 2 + Nuxt 4（Vue 3 + TypeScript）** で構築されています：
 
 - **ストリーミングチャット** — エージェントの応答は WebSocket（`/sessions/agent/ws`）経由で型付きチャンク（`text` / `reasoning` / `tool_start` / `tool_end` / `tool_result`）としてストリーミングされ、HITL（human-in-the-loop）承認カードに対応
+- **折りたたみ可能なターン履歴** — ツール/推論の作業がある完了ターンは実行要約と最終回答のみを表示し、展開するとツールカード・途中メッセージ・推論が戻ります
 - **オフラインファーストの履歴** — Dexie.js（IndexedDB）が会話履歴、サブエージェント実行レコード、キャラクタープロファイル、チャット背景画像をキャッシュ。履歴リクエストはキャッシュ優先で、欠落しているターンのみ取得
 - **充実したツール UI** — スキルマネージャー、cron ジョブ、ハートビートエディター、チャネル設定、ログビューアー（サーバー + クライアントログ）、統計チャート、サブエージェントフローグラフ、ナレッジグラフビューアー
 - **ダーク/ライトモード + i18n** — `@nuxtjs/color-mode` によるテーマと 4 ロケール（`zh` / `en` / `ja` / `ko`）
@@ -92,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共有ユーティリティ（dayjs セットアップ、formatCompactTimeString、...）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # チャット入力ボックスコンポーネント（i18n 対応）
+│   │   ├── chat/DiffPreview.vue   # ツールカード内の patch_file / write_file 結果のカラーインライン diff
 │   │   └── ImagePreviewOverlay.vue# フルスクリーン画像プレビューオーバーレイ（body へ Teleport）
 │   ├── composables/               # Vue 3 コンポーザブルロジック（ユニットテストは __tests__/ 配下）
 │   │   ├── bridge.ts              # 統合 Tauri/Browser ブリッジ — チャットストリーミング、セッション、システムプロンプト、
@@ -124,10 +126,11 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 49 のページコンポーネント：
-│   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
+│   │       └── components/        # 50 のページコンポーネント：
+│   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由、選択テキストを右クリックで引用）
+│   │           ├── SideChatPanel.vue          # 補助セッションタブ：引用から通常の子セッションを作成し、独立ストリーム + HITL 承認
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
-│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
+│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow のフラットなステップ一覧、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグル、またはモデル宣言のレベルピッカー（off 含む）、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（モデル設定 MAIN_LLM プロファイル、次ターンから有効）
@@ -166,7 +169,9 @@ client/
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
-│   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
+│   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file：テキスト + markdown、画像/PDF/docx は GET /project/file/blob 経由）
+│   │           ├── PdfViewer.vue             # ファイルビューア内の PDF プレビュー（pdf.js、ページ送り + 幅合わせ、GET /project/file/blob）
+│   │           ├── DocxViewer.vue            # ファイルビューア内の docx プレビュー（mammoth → HTML → DOMPurify、GET /project/file/blob）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
@@ -196,7 +201,7 @@ client/
 │   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
 │   │   ├── notification.ts     # 通知リスト + 未読バッジ（タブを閉じてもカウント継続）
 │   │   ├── agent-config.ts     # プリセットの agent 設定（ツール / ミドルウェア / エージェント モデル / スキル）をセッション単位で保持；必須ツールと必須スキルはロック解除不可、タスクと計画 / サブエージェントの 2 グループは一括選択のみ
-│   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + wave、taskflow_updated で更新）
+│   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + フラットなステップ、taskflow_updated で更新）
 │   │   ├── web-search.ts       # セッションごとの検索バックエンド + Tavily→SearXNG の降格通知
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   ├── plugins/                   # Nuxt プラグイン
@@ -208,7 +213,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、...
 │       ├── response.d.ts          # API レスポンス型定義
 │       └── backend/               # ts-rs 生成のバックエンド型（ChatRequest、HealthStatus、...）
-├── docs/                          # VitePress ドキュメントサイト（guide/commands/events/types/zh）
+├── wiki/                          # VitePress ドキュメントサイト（guide/commands/events/types/zh）
 ├── public/                        # 静的アセット（favicon.svg、robots.txt、avatar/）
 ├── repros/                        # Playwright repro テスト（playwright.config.ts で実行）
 ├── src-tauri/                     # Tauri 2 ネイティブシェル
@@ -308,7 +313,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 - Base64 メディアは先に `POST /images/upload`、`/audio/upload`、`/video/upload` でアップロードされ、URL で参照される
 - サーバーフレーム：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；チャンクは `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）とツールメタデータを保持
 - ストリーム切断時は指数バックオフで再接続（1s/2s/4s、`WS_RECONNECT_MAX_ATTEMPTS` により最大 3 回）；ストリーム中の損失は `StreamInterruptedError` を投げ、mitt 経由で `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` を発行
-- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信。同じカードが Plan-Then-Execute の承認（`exit_plan_mode`）も描画します：計画本文、フィードバック欄、**修正を依頼**（reject + フィードバック）、**承認** —— 詳細は `../docs/plan-mode/`
+- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信。同じカードが Plan-Then-Execute の承認（`exit_plan_mode`）も描画します：計画本文、フィードバック欄、**修正を依頼**（reject + フィードバック）、**承認** —— 詳細は `../wiki/plan-mode/`
 - このページが送信していないターン（計画継続の auto-turn、サブエージェント完了の注入、cron 実行）には **`turn_started` が来ません**——auto-turn はターン識別を渡しません——そのためチャンクをローカル行へ流せません。`done` ハンドラーが最新ターンページを再取得し、リロードなしで最終回答を表示します
 
 ### WebSocket シングルトン（ws.ts）
@@ -376,6 +381,12 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 - 不明なときは空欄のまま——この機能より前のカードや、人が拒否した呼び出しには、偽の `0ms` ではなく**何も表示しません**。
 
 数値は常に一致する二つの経路から来ます：ライブの `tool_result` フレームが `duration_ms` を運び、履歴行が `messages.tool_duration_ms` を運びます（ミドルウェアの権威ある計測で、フレームは刻印があるときそれを優先します）。承認待ちとキュー待ちは構造上ウィンドウの外です。
+
+### インライン編集 diff（`ChatToolCard.vue` / `DiffPreview.vue`）
+
+`patch_file` と `write_file` の結果は、生の JSON の代わりにカラー unified diff として描画されます。クライアントはバックエンドの `difflib` 出力を解析します（`app/utils/tool-diff.ts`、純粋な接頭辞分類 — 追加は緑、削除は赤、コンテキストはそのまま、`@@` ハンクヘッダは青、新旧の行番号ガターと `+N −M` ヘッダー付き）。`write_file` は 2026-10-24 から `diff` / `isNew` を含む JSON を返します（新規作成では「新規ファイル」バッジと、書き込んだ `text` からの全追加プレビュー）。解析できない形状はすべて素の `<pre>` にフォールバック — 構造上 fail-open です。
+
+チャットとファイルビューアの markdown は v-safe-html パイプラインを経由し、2026-10-24 の描画拡張を含みます：Shiki v4 がストリーム確定後にコードフェンスを着色（ライト/ダーク両テーマ、コピー/折り返しツールバー、ストリーミング中はゼロコスト）、` ```mermaid ` フェンスは消毒済み SVG 図として描画（クリックで拡大）、KaTeX が `$…$`/`$$…$$` 数式を描画、ファイルビューアは ≤256 KB のコードファイルをハイライト — すべて DOMPurify ホワイトリストと信頼ルートにスコープされたインラインスタイル（`security.ts`）経由で、生 HTML の経路はありません。
 
 ### 状態とイベント
 

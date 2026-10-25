@@ -1,23 +1,28 @@
-"""DAG waves + the ``taskflow_updated`` payload the progress panel renders.
+"""The flat ``taskflow_updated`` payload the progress panel renders.
 
 The contract under test:
 
-* waves are longest-path levels: a step lands one wave after its deepest
-  dependency, and dependencies that are not in the step list are ignored (they can
-  never be waited on);
-* a dependency cycle is reported in a trailing wave flagged ``cyclic`` instead of
-  looping or dropping the steps silently;
-* the payload carries what the panel needs — per-wave counts, the first wave with
-  open work (``current_wave``), per-status totals and a clipped task line — and it
-  never invents state the flow does not have.
+* a flow's wire shape is a FLAT ordered step list plus per-status totals — no
+  wave/level projection, because the scheduler unlocks each step on its own
+  ``depends_on`` and the old grouping implied a round barrier that never existed;
+* the payload carries what the panel needs — per-status counts, clipped task
+  lines, and the flow identity — and it never invents state the flow does not
+  have;
+* the same shape serves the push and the ``taskflow_refresh`` snapshot.
 """
 
 from __future__ import annotations
 
-from agent.tools.taskflow.progress_push import flow_progress, progress_payload
-from agent.tools.taskflow.waves import STATUS_ORDER, compute_waves
+import json
 
 import pytest
+
+from agent.tools.taskflow.progress_push import (
+    STATUS_ORDER,
+    flow_progress,
+    progress_payload,
+    push_taskflow_progress,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -41,87 +46,10 @@ def _flow(steps: list[dict], *, description: str = "demo") -> dict:
     }
 
 
-# ── compute_waves ────────────────────────────────────────────────────────────
-
-
-def test_independent_steps_share_the_first_wave() -> None:
-    waves = compute_waves([_step("a"), _step("b"), _step("c")])
-
-    assert [wave["total"] for wave in waves] == [3]
-    assert waves[0]["index"] == 1
-
-
-def test_a_step_lands_one_wave_after_its_deepest_dependency() -> None:
-    steps = [_step("a"), _step("b", deps=["a"]), _step("c", deps=["a", "b"])]
-
-    waves = compute_waves(steps)
-
-    assert [[s["step_id"] for s in wave["steps"]] for wave in waves] == [["a"], ["b"], ["c"]]
-    assert [wave["index"] for wave in waves] == [1, 2, 3]
-
-
-def test_two_branches_of_different_depth_stay_on_their_own_levels() -> None:
-    steps = [
-        _step("root"),
-        _step("short", deps=["root"]),
-        _step("long-1", deps=["root"]),
-        _step("long-2", deps=["long-1"]),
-        _step("join", deps=["short", "long-2"]),
-    ]
-
-    waves = compute_waves(steps)
-
-    assert [[s["step_id"] for s in wave["steps"]] for wave in waves] == [
-        ["root"],
-        ["short", "long-1"],
-        ["long-2"],
-        ["join"],
-    ]
-
-
-def test_dependencies_outside_the_list_are_ignored() -> None:
-    waves = compute_waves([_step("a", deps=["ghost"])])
-
-    assert len(waves) == 1
-    assert waves[0]["steps"][0]["step_id"] == "a"
-
-
-def test_self_and_mutual_dependencies_are_reported_as_cyclic() -> None:
-    steps = [_step("a", deps=["b"]), _step("b", deps=["a"]), _step("solo")]
-
-    waves = compute_waves(steps)
-
-    assert len(waves) == 2
-    assert waves[0]["steps"][0]["step_id"] == "solo"
-    assert waves[1]["cyclic"] is True
-    assert {s["step_id"] for s in waves[1]["steps"]} == {"a", "b"}
-
-
-def test_wave_counts_track_statuses() -> None:
-    steps = [
-        _step("a", status="done"),
-        _step("b", status="failed"),
-        _step("c", deps=["a"], status="dispatched"),
-    ]
-
-    waves = compute_waves(steps)
-
-    assert (waves[0]["total"], waves[0]["done"]) == (2, 1)
-    assert waves[0]["by_status"]["failed"] == 1
-    assert set(waves[0]["by_status"]) == set(STATUS_ORDER)
-    assert (waves[1]["total"], waves[1]["done"]) == (1, 0)
-
-
-def test_empty_and_malformed_inputs_are_safe() -> None:
-    assert compute_waves([]) == []
-    assert compute_waves([{}, {"step_id": ""}]) == []
-    assert compute_waves([{"step_id": "a"}])[0]["steps"][0]["status"] == "ready"
-
-
 # ── flow_progress ────────────────────────────────────────────────────────────
 
 
-def test_flow_progress_points_at_the_first_wave_with_open_work() -> None:
+def test_flow_progress_is_a_flat_step_list_in_flow_order() -> None:
     progress = flow_progress(
         _flow(
             [
@@ -135,35 +63,47 @@ def test_flow_progress_points_at_the_first_wave_with_open_work() -> None:
 
     assert progress["total"] == 4
     assert progress["done"] == 2
-    assert progress["current_wave"] == 2
-    assert [wave["index"] for wave in progress["waves"]] == [1, 2, 3]
+    assert [step["step_id"] for step in progress["steps"]] == ["a", "b", "c", "d"]
+    assert [step["status"] for step in progress["steps"]] == [
+        "done",
+        "done",
+        "dispatched",
+        "blocked",
+    ]
     assert progress["by_status"]["blocked"] == 1
+    assert set(progress["by_status"]) == set(STATUS_ORDER)
+    assert "waves" not in progress and "current_wave" not in progress
 
 
-def test_flow_progress_reports_zero_current_wave_once_everything_is_done() -> None:
-    progress = flow_progress(
-        _flow([_step("a", status="done"), _step("b", deps=["a"], status="done")])
-    )
+def test_flow_progress_preserves_dependency_metadata_only_for_the_store() -> None:
+    """``depends_on`` is scheduling data; the wire row carries no DAG projection."""
+    progress = flow_progress(_flow([_step("b", deps=["a"], status="ready")]))
 
-    assert progress["current_wave"] == 0
-    assert progress["done"] == progress["total"] == 2
+    assert progress["steps"] == [{"step_id": "b", "task": "task b", "status": "ready"}]
 
 
 def test_flow_progress_without_steps_is_empty_not_missing() -> None:
     progress = flow_progress({"flow_id": "f", "status": "active", "state": {}})
 
-    assert progress["waves"] == []
+    assert progress["steps"] == []
     assert progress["total"] == 0
-    assert progress["current_wave"] == 0
+    assert progress["by_status"]["done"] == 0
 
 
 def test_flow_progress_clips_long_text_and_carries_the_identity() -> None:
     progress = flow_progress(_flow([_step("a", task="x" * 500)], description="d" * 500))
 
     assert len(progress["description"]) == 200
-    assert len(progress["waves"][0]["steps"][0]["task"]) == 200
+    assert len(progress["steps"][0]["task"]) == 200
     assert progress["flow_id"] == "flow-1"
     assert progress["status"] == "active"
+
+
+def test_flow_progress_normalizes_missing_status_and_id() -> None:
+    progress = flow_progress(_flow([{"task": "no id or status"}]))
+
+    # A malformed step is still represented; the store validates real writes.
+    assert progress["steps"] == [{"step_id": "", "task": "no id or status", "status": "ready"}]
 
 
 # ── progress_payload ─────────────────────────────────────────────────────────
@@ -184,14 +124,9 @@ def test_payload_aggregates_the_sessions_flows(monkeypatch: pytest.MonkeyPatch) 
 
     payload = progress_payload("sess-1")
 
-    assert payload["totals"] == {
-        "flows": 2,
-        "total": 3,
-        "done": 2,
-        "current_wave": 2,
-        "waves": 3,
-    }
+    assert payload["totals"] == {"flows": 2, "total": 3, "done": 2}
     assert [flow["flow_id"] for flow in payload["flows"]] == ["flow-1", "flow-2"]
+    assert [step["step_id"] for step in payload["flows"][0]["steps"]] == ["a", "b"]
 
 
 def test_payload_without_flows_is_an_empty_board(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,7 +137,7 @@ def test_payload_without_flows_is_an_empty_board(monkeypatch: pytest.MonkeyPatch
     payload = progress_payload("sess-none")
 
     assert payload["flows"] == []
-    assert payload["totals"] == {"flows": 0, "total": 0, "done": 0, "current_wave": 0, "waves": 0}
+    assert payload["totals"] == {"flows": 0, "total": 0, "done": 0}
 
 
 # ── push_taskflow_progress ───────────────────────────────────────────────────
@@ -220,8 +155,6 @@ class _FakeWebSocket:
 async def test_push_sends_the_frame_to_the_sessions_websocket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import json
-
     from agent.tools.taskflow import progress_push
 
     socket = _FakeWebSocket()
@@ -236,13 +169,14 @@ async def test_push_sends_the_frame_to_the_sessions_websocket(
         lambda sid: [_flow([_step("a", status="done")])],
     )
 
-    await progress_push.push_taskflow_progress("sess-1")
+    await push_taskflow_progress("sess-1")
 
     assert len(socket.sent) == 1
     frame = json.loads(socket.sent[0])
     assert frame["event"] == "taskflow_updated"
     assert frame["session_id"] == "sess-1"
     assert frame["content"]["totals"]["done"] == 1
+    assert frame["content"]["flows"][0]["steps"][0]["step_id"] == "a"
 
 
 @pytest.mark.asyncio
@@ -257,8 +191,8 @@ async def test_push_is_a_quiet_no_op_without_a_socket(monkeypatch: pytest.Monkey
         progress_push.store_sqlite, "get_active_flows_sync", lambda sid: called.append(sid) or []
     )
 
-    await progress_push.push_taskflow_progress("sess-1")
-    await progress_push.push_taskflow_progress("   ")
+    await push_taskflow_progress("sess-1")
+    await push_taskflow_progress("   ")
 
     # No socket ⇒ never even read the store; a blank session is skipped outright.
     assert called == []
@@ -280,7 +214,7 @@ async def test_push_swallows_a_failing_socket(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(progress_push.store_sqlite, "get_active_flows_sync", lambda sid: [])
 
     # Must not raise: a send failure can never break the tool that mutated the flow.
-    await progress_push.push_taskflow_progress("sess-1")
+    await push_taskflow_progress("sess-1")
 
 
 # ── wiring: a real mutation pushes, and the refresh answers the same shape ───
@@ -296,7 +230,6 @@ async def test_a_real_step_update_pushes_a_frame(
     websocket and the dependency registry stubbed.
     """
     import importlib
-    import json
 
     update_mod = importlib.import_module("agent.tools.taskflow.tools.taskflow_update_steps")
     from agent.tools.taskflow.registry import store_sqlite
@@ -329,7 +262,7 @@ async def test_a_real_step_update_pushes_a_frame(
     assert len(socket.sent) == 1, socket.sent
     frame = json.loads(socket.sent[0])
     assert frame["event"] == "taskflow_updated"
-    assert frame["content"]["flows"][0]["waves"][1]["steps"][0]["step_id"] == "b"
+    assert frame["content"]["flows"][0]["steps"][1]["step_id"] == "b"
     assert frame["content"]["totals"]["total"] == 2
 
 

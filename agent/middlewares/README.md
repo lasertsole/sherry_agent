@@ -238,7 +238,7 @@ Coalescing is by construction — only the comparison at send time matters: any 
 
 The notices are `HumanMessage`s — the injected-carrier role — carrying `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` (with `git_head` as the origin for the branch notice). The persistence layer keeps that origin on the human row, so the chat renders it as a neutral system card (labels **Working directory** / **Git branch**, folder and branch glyphs) instead of a user bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on USER rows as well as AI rows (the legacy shape, written while the notice was an `AIMessage`).
 
-Because a notice is a human message by role but was never written by the user, every scanner that walks human messages skips it through `pub.func.message.workspace_notice.is_workspace_notice`: `split_into_turns` (a notice is not a turn boundary, so compression's turn budget is unaffected), HITL's `_is_headless_turn` (a trailing notice must not make a turn operator-less) and the summarizer / memory-flush serializers (labelled `[System notice]` / `system`, never `[User]`).
+Because a notice is a human message by role but was never written by the user, every scanner that walks human messages skips it through `pub.func.message.workspace_notice.is_workspace_notice`: `split_into_turns` (a notice is not a turn boundary, so compression's turn budget is unaffected), HITL's `_is_headless_turn` (a trailing notice must not make a turn operator-less) and the summarizer's serializer (labelled `[System notice]` / `system`, never `[User]`).
 
 The real `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notices instead. Fail-open: any error is logged and the hook returns `None`.
 
@@ -254,7 +254,7 @@ Runs the session's own tool set (预设角色-工具 tab → `AGENT_CONFIG["tool
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` is unioned back into the enabled set (the 工具 tab shows those rows locked): the service already refuses a payload that omits one, this is the second guard so a register value written before a tool became required cannot strip it either.
 
-**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `docs/plan-mode/`.
+**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `wiki/plan-mode/`.
 
 Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
 
@@ -327,7 +327,7 @@ Detects five failure pathologies and reacts with a four-level escalation `ALLOW 
 - **No progress means stagnation** (`is_stagnant`): a successful idempotent call only counts as no-progress when the _same tool_ already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while _both_ consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - `ToolCallGuardrailConfig` defaults: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — with `hard_stop_enabled=True` every _block_ threshold converts into HALT (the old strict wall); `recovery_mode_enabled=False` restores the immediate block behavior.
 
-▶️ Full details: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ Full details: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -358,7 +358,7 @@ Screening is deliberately conservative:
 - a value resolving outside `ROOT_DIR` is passed through **unless** it hits the hard-deny floor (the YOLO deny list / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`);
 - every other external path is left to the tool's own `resolve_external_path()` HITL flow — the middleware never approves, rewrites args, or raises an interrupt, because the tool re-runs the same gate during execution (intercepting here would decide twice).
 
-On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [docs/sandbox/isolation/README.md §5](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
+On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [wiki/sandbox/isolation/README.md §5](../../wiki/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -389,7 +389,7 @@ Injection happens only on the first model call of a turn (the last non-directive
 **Module:** `agent/middlewares/todo_continuation/core.py` · **Class:** `PlanContinuationEnforcer(AgentMiddleware)`
 **Hooks:** `aafter_agent` only (async turn-end hook)
 
-Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `after_agent` hooks execute in reverse list order, and the enforcer must observe the truly finished turn. It gates the whole **plan**: the session's todo list (`pending` / `in_progress`) AND its non-terminal TaskFlow flows (`ready` / `blocked` / `dispatched` steps, plus a flow whose steps are all settled but which was never closed) — either surface keeps the turn alive, and the directive names the remaining waves/steps together with the board call that closes them. Delivery is fire-and-forget through the server-owned auto-turn hook (`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, resolved at call time; an unregistered hook degrades to a no-op that leaves the session retryable).
+Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `after_agent` hooks execute in reverse list order, and the enforcer must observe the truly finished turn. It gates the whole **plan**: the session's todo list (`pending` / `in_progress`) AND its non-terminal TaskFlow flows (`ready` / `blocked` / `dispatched` steps, plus a flow whose steps are all settled but which was never closed) — either surface keeps the turn alive, and the directive names the remaining steps together with the board call that closes them. Delivery is fire-and-forget through the server-owned auto-turn hook (`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, resolved at call time; an unregistered hook degrades to a no-op that leaves the session retryable).
 
 - Abort-class turn errors (user cancel / timeout, `stagnation_tracker.is_abort_error`) never continue; an empty or fully complete todo list resets the stagnation tracker.
 - Stagnation handling (`agent/tools/todolist/stagnation_tracker.py`): an unchanged list across attempts enters recovery mode with `_RECOVERY_PROMPT`; `is_in_cooldown` throttles repeat injections; the trigger is recorded via `mark_injected` only after a successful delivery.
@@ -405,7 +405,7 @@ Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `aft
 Registered immediately AFTER `TaskIntentMiddleware` (whose per-turn dedup needs the user message still last when it runs). On the turn's FIRST model call it injects the LIVE views as `<system-reminder source="…">` HumanMessages: plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index. The system prompt itself now carries only stable content (persona + memory + skills index) — a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it, and a prompt only rebuilt on a config change / compaction showed a STALE todo list in between.
 
 - **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the TaskFlow board / boulder: at most once per 5 turns) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
-- **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer / memory-flush labels.
+- **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer's labels.
 - **After a compaction** the catalogue is reset, so the next turn re-derives every source from live state — the layer never depends on the older reminders surviving the compression.
 - **Gated** like the other optional entries (`middleware_enabled`), and fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn.
 
@@ -435,7 +435,7 @@ Per-call pipeline in `after_model`:
 1. Hard-line / dangerous command detection (`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, backed by `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`) via `ApprovalPipeline.check_command` (`approval.py`).
 2. Smart approval (`ApprovalMode.SMART`, optional `smart_approval_llm`) — auto-approves clearly safe calls.
 3. `interrupt()` — decision timeout 60 s by default.
-4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [docs/sandbox/isolation/README.md](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools)).
+4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [wiki/sandbox/isolation/README.md](../../wiki/sandbox/isolation/README.md#5-external-file-path-gate-file-tools)).
 5. `wrap_tool_call` rejects execution for calls whose approval was denied or timed out (the per-turn flag is reset in `before_agent`).
 
 Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. State is namespaced under `hitl:` keys in `state_register_mem`.
@@ -625,7 +625,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Plan-extraction dedup:** `_detect_todo_all_complete` fires when every todo is `completed`/`cancelled` and the plan's **snapshot fingerprint** (`_plan_snapshot_hash`: id + content + status + plan_ref) differs from the one stored under `nudge_plan_snapshot_hash` after the last SUCCESSFUL pass — so an in-place edit of a completed todo re-extracts, an unchanged plan does not, and a failed pass retries on the next completion turn. Gates in front of it: the per-session `Summarization → nudge` option, `NUDGE["plan_extraction_enabled"]`, the `nudge_plan_extraction_lock`, and a running event loop.
 - **Post-compression todo update:** when `compression_todo_update_enabled` (default on) is set and a compaction actually discards messages, the async path fire-and-forgets a dedicated nudge agent (`_COMPRESSION_TODO_PROMPT`) whose graph runs under a derived session key (`<id>::compression-todo`, so `IterationBudget` / `ToolGuardrails` state can never touch the main session) and whose tool set is exactly one metadata-marked `todowrite` shim (`todo_update: True`, admitted by `_NudgeLimitTool(allowed_metadata_key="todo_update")`) bound to the main session. It reconciles the session todo list with the discarded slice — marking actually-finished items `completed` / `cancelled`, adding evidenced new work as `pending`, writing the COMPLETE list back via `todowrite`. It never blocks or fails compression; a per-session `compression_todo_update_lock` prevents overlapping runs and the sync path only schedules when an event loop is already running.
 
-▶️ Full details: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ Full details: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 ### MaxTokensBoostMiddleware
 
@@ -1093,7 +1093,6 @@ agent/middlewares/
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── media_offload.py         # compression-time inline-media offload
-│   ├── memory_flush.py          # pre-compression memory flush
 │   ├── nudges.py                # compression-time nudge scheduling + prompts
 │   ├── plan_context.py          # active-plan detection for the plan-extraction nudge
 │   └── summary_doc.py           # SummaryDoc schema + deterministic Markdown renderer

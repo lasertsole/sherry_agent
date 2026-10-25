@@ -1002,15 +1002,20 @@ def _first_turn_self_evident(result_text: str | None, evidence_summary: str | No
     """True when the opening turn needs no judge: result + passing evidence.
 
     The summary format is the evidence collector's (``[pass]`` / ``[FAIL]`` /
-    ``?`` per row, `` [stale]`` suffixed): a pass exists, nothing failed, and
-    nothing went stale. Any read failure returns False — the shortcut must
-    never suppress a judge on incomplete information (fail towards judging).
+    ``?`` per row, `` [stale]`` / `` [broken]`` suffixed): a pass exists, nothing
+    failed, nothing went stale, and no command was re-verified as broken. Any
+    read failure returns False — the shortcut must never suppress a judge on
+    incomplete information (fail towards judging).
     """
     if not (result_text or "").strip():
         return False
     if not evidence_summary or "[pass]" not in evidence_summary:
         return False
-    return "FAIL" not in evidence_summary and "[stale]" not in evidence_summary
+    return (
+        "FAIL" not in evidence_summary
+        and "[stale]" not in evidence_summary
+        and "[broken]" not in evidence_summary
+    )
 
 
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
@@ -1022,6 +1027,22 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
     """
     child_checkpointer = getattr(child_agent, "checkpointer", None)
     if child_checkpointer is not None:
+        # Keep this child thread to one readable top-level checkpoint (plus its
+        # writes). The child is no longer running here; tools/model namespaces
+        # are safe to drop, while the latest top-level row is what
+        # sessions_messages reads after a timeout/kill.
+        cleaner = getattr(child_checkpointer, "aclean_thread_checkpoints", None)
+        if callable(cleaner):
+            try:
+                from pub.func import rand_str_to_int
+
+                await cleaner(str(rand_str_to_int(run.child_session_key)))
+            except Exception:
+                logger.warning(
+                    "Failed to prune child checkpoints for {}",
+                    run.run_id,
+                    exc_info=True,
+                )
         try:
             await child_checkpointer.aclose()
         except Exception:
@@ -1284,6 +1305,20 @@ async def _execute_subagent_scoped(
         await _finalize_child_run(run, outcome, result_text)
 
 
+def _compression_threshold_for_children(context_window: int) -> int:
+    """The main-model compression line shared by child Summarization triggers."""
+    from config.features import SUMMARIZATION
+    from models.LLMs.main_llm import get_max_output_tokens
+
+    from agent.middlewares.summarization.thresholds import resolve_compression_threshold
+
+    return resolve_compression_threshold(
+        context_window,
+        get_max_output_tokens(),
+        fallback_ratio=SUMMARIZATION["compression_trigger_ratio"],
+    )[0]
+
+
 def _build_child_middlewares(
     *,
     auxiliary_llm: Any,
@@ -1306,7 +1341,7 @@ def _build_child_middlewares(
         ToolResourceLockMiddleware,
     )
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
-    from config.features import ITERATION_BUDGET, SUMMARIZATION
+    from config.features import ITERATION_BUDGET
 
     return [
         Summarization(
@@ -1316,7 +1351,7 @@ def _build_child_middlewares(
                 ("messages", 40),
                 (
                     "tokens",
-                    int(main_llm_context_window * SUMMARIZATION["compression_trigger_ratio"]),
+                    _compression_threshold_for_children(main_llm_context_window),
                 ),
             ],
         ),
@@ -1355,14 +1390,26 @@ def _assert_child_token_floor() -> None:
     Child LLM construction would otherwise inherit the floor implicitly — this
     is the same guard the main agent applies.
     """
-    from config.features import LLM_CLIENT_DEFAULTS, assert_max_token_valid
+    from config.features import (
+        LLM_CLIENT_DEFAULTS,
+        assert_max_output_valid,
+        assert_max_token_valid,
+    )
 
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
     assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
     assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+    assert_max_output_valid(
+        "MAIN_LLM_MAX_OUTPUT_TOKEN", int(_main_out_raw) if _main_out_raw else None
+    )
+    assert_max_output_valid(
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN", int(_aux_out_raw) if _aux_out_raw else None
+    )
 
 
 def _assemble_child_tools(

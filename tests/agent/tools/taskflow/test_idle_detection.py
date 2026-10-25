@@ -96,7 +96,7 @@ async def test_summary_shows_stale(isolated_db: Path):
 
     assert "wait_status: STALE" in out
     assert "timeout=24h" in out
-    assert "consider taskflow_resume" in out
+    assert "consider taskflow_step(action='resume')" in out
 
 
 @pytest.mark.asyncio

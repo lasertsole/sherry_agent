@@ -21,10 +21,9 @@ the agent must hear about.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
-from config.features import GIT_GRAPH
+from agent.tools.pub_base.shadow_git import shadow_head
 from pub.func.message.workspace_notice import (
     GIT_HEAD_NOTICE_ORIGIN,
     workspace_notice_metadata,
@@ -49,33 +48,16 @@ _SHORT_HASH_CHARS = 8
 
 
 def read_git_head(directory: str | Path) -> str | None:
-    """The root's git branch + HEAD as ``<branch>@<short-hash>``; ``None`` if none.
+    """The root's shadow checkpoint as ``checkpoint@<short-hash>``; ``None`` if none.
 
-    One bounded ``git rev-parse`` answers both facts. ``None`` covers every
-    "there is nothing to announce" case — no git binary, not a repository, a
-    repository without commits (git fails), or a call that timed out — so the
-    caller never needs to distinguish them: a missing token simply means no
-    notice.
-
-    Blocking (a subprocess, measured ~14 ms locally); the caller runs it once
-    per turn at send time, the same budget class as the state reads beside it.
+    Reads the per-project shadow store only; the user's own ``.git`` is never
+    consulted. A missing store/ref (or git) simply means "nothing to announce".
     """
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD", "--abbrev-ref", "HEAD"],
-            cwd=str(directory),
-            capture_output=True,
-            text=True,
-            timeout=GIT_GRAPH["timeout_s"],
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        head = shadow_head(Path(directory))
+    except (FileNotFoundError, OSError):
         return None
-    if result.returncode != 0:
-        return None
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    if len(lines) < 2 or not lines[0] or not lines[1]:
-        return None
-    return f"{lines[1]}@{lines[0][:_SHORT_HASH_CHARS]}"
+    return f"checkpoint@{head[:_SHORT_HASH_CHARS]}" if head else None
 
 
 def announced_git_head(session_id: str | None) -> str | None:

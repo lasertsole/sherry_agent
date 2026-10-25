@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.step_judge import JudgeResult, StepVerdict
@@ -59,7 +59,7 @@ class _DispatchRecorder:
 
 
 def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 def _done_dep(step_id: str, child: str, result: str) -> tuple[dict, dict]:

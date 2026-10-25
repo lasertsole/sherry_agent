@@ -14,8 +14,11 @@
           :user-name="characterInfo.userName"
           :ai-name="characterInfo.aiName"
           :loading-older="loadingOlder"
+          :selection-enabled="!hitlRequest"
           @reach-top="loadOlderHistory"
-          @release-head="onReleaseHead" />
+          @release-head="onReleaseHead"
+          @selection-add="onSelectionAdd"
+          @selection-side-chat="onSelectionSideChat" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -363,6 +366,14 @@
                     :title="t('hitl.approveDirTooltip')"
                     @click="handleHitlDecision('approve_dir')" />
                   <Button
+                    v-if="(hitlRequest?.allowed_decisions ?? []).includes('session')"
+                    :label="t('hitl.approveSession')"
+                    icon="pi pi-bookmark"
+                    severity="secondary"
+                    size="small"
+                    :title="t('hitl.approveSessionTooltip')"
+                    @click="handleHitlDecision('session')" />
+                  <Button
                     :label="t('hitl.approve')"
                     icon="pi pi-check"
                     size="small"
@@ -418,6 +429,8 @@ import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import type { SelectionPayload } from '~/composables/use-chat-selection';
+import { logUtil } from '~/utils/log';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -453,7 +466,7 @@ const mySid = String(route.params.sid ?? '');
 
 const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
-/** TaskFlow wave progress for the floating panel (same init contract). */
+/** TaskFlow step progress for the floating panel (same init contract). */
 const taskflowStore = useTaskflowStore();
 const rightSidebarStore = useRightSidebarStore();
 /** Mandatory new-session preset dialog (owned by the shell). */
@@ -509,7 +522,7 @@ onActivated(() => {
   if (mySid) restorePendingHitl(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
   if (mySid) todoStore.init(mySid);
-  // Same pull for the TaskFlow wave board that feeds the floating progress panel.
+  // Same pull for the TaskFlow board that feeds the floating progress panel.
   if (mySid) taskflowStore.init(mySid);
 });
 onDeactivated(() => {
@@ -934,7 +947,9 @@ const doLoadFor = (sid: string) => {
   clearMediaSelection();
   // Load this session's locked character snapshot (if none, lock using the global profile)
   ensureSessionCharacter(sid);
-  loadSessionHistory(sid);
+  // One round trip: history + the running turn's snapshot. Frames arriving
+  // during the request are held and flushed after the snapshot is applied.
+  void stream.syncHistory(sid);
   // Restore a possibly still-pending HITL interrupt card in three-tier persistence scenarios (session switch / refresh / browser reopen / server restart)
   restorePendingHitl(sid);
   mySidLoaded = true;
@@ -1002,6 +1017,58 @@ function onFileMentionRequest(request: unknown): void {
   chatInputBoxRef.value?.addFileMention?.(payload.payload);
 }
 
+/** True while a side session is being created (guards a double-click). */
+const creatingSideChat = ref(false);
+
+/**
+ * The localized "from X" tooltip for a quote chip.
+ * @param role The quoted message's role.
+ */
+function selectionRoleLabel(role?: string): string {
+  if (role === CHAT_ROLE.USER) return t('chat.selection.sourceUser');
+  if (role === CHAT_ROLE.AI) return t('chat.selection.sourceAi');
+  return t('chat.selection.sourceTool');
+}
+
+/**
+ * "添加到当前会话": insert the selected text as a quote chip at the caret.
+ * @param payload The quoted selection.
+ */
+function onSelectionAdd(payload: SelectionPayload): void {
+  if (!payload?.text) return;
+  chatInputBoxRef.value?.addQuoteChip?.(payload.text, selectionRoleLabel(payload.sourceRole));
+}
+
+/**
+ * "在辅助会话中提问": create a normal session derived from this one (same
+ * preset binding and character snapshot, no subagent semantics), open it in a
+ * right-sidebar side-chat tab and hand it the quoted text.
+ *
+ * The child is an ephemeral session: it inherits a model-only snapshot of this
+ * session's history, is hidden from the normal session list, and is purged
+ * when this tab closes (or this parent session is deleted).
+ * @param payload The quoted selection.
+ */
+async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
+  if (!payload?.text || creatingSideChat.value || !mySid) return;
+  creatingSideChat.value = true;
+  try {
+    const { sessionId: childSid, inherited } = await createSideChatSession(mySid, t('chat.selection.sideChatTitle'));
+    rightSidebarStore.openTab('sideChat', {
+      sessionId: childSid,
+      parentSessionId: mySid,
+      inherited,
+      quote: payload.text,
+      source: selectionRoleLabel(payload.sourceRole)
+    });
+  } catch (e) {
+    logUtil.e('[SideChat] Failed to create the side session:', e);
+    toastError(t('chat.selection.sideChatFailed'), e instanceof Error ? e.message : String(e));
+  } finally {
+    creatingSideChat.value = false;
+  }
+}
+
 // After mount, ensure character info is loaded (immediate already fired on KeepAlive restore; this is a fallback)
 onMounted(() => {
   if (sessionId.value) {
@@ -1058,6 +1125,8 @@ onUnmounted(() => {
       "approve": "批准",
       "approveDir": "批准整个目录",
       "approveDirTooltip": "允许整个目录（本会话内有效，子代理同样适用），目录内文件不再弹出审批",
+      "approveSession": "本会话允许",
+      "approveSessionTooltip": "允许本会话内执行相同命令，不再弹出审批（前两个词匹配，如 \"git push\" 覆盖所有 git push 子命令）",
       "reject": "拒绝",
       "title": "操作需要审批",
       "tool": "工具",
@@ -1076,6 +1145,8 @@ onUnmounted(() => {
       "approve": "Approve",
       "approveDir": "Approve Entire Directory",
       "approveDirTooltip": "Allow the entire directory for this session (also inherited by subagents) — files inside never prompt again",
+      "approveSession": "Allow for Session",
+      "approveSessionTooltip": "Allow the same command for this session — no more prompts (matches the first two words, e.g. \"git push\" covers all git push subcommands)",
       "reject": "Reject",
       "title": "Action Requires Approval",
       "tool": "Tool",
@@ -1094,6 +1165,8 @@ onUnmounted(() => {
       "approve": "承認",
       "approveDir": "ディレクトリ全体を承認",
       "approveDirTooltip": "ディレクトリ全体を許可します（このセッション内有効、サブエージェントにも継承）。配下のファイルでは確認ダイアログは表示されません",
+      "approveSession": "セッション内で許可",
+      "approveSessionTooltip": "このセッション内で同じコマンドを許可し、確認を省略（先頭2語でマッチ、\"git push\" はすべての git push サブコマンドをカバー）",
       "reject": "拒否",
       "title": "操作の承認が必要です",
       "tool": "ツール",
@@ -1112,6 +1185,8 @@ onUnmounted(() => {
       "approve": "승인",
       "approveDir": "디렉터리 전체 승인",
       "approveDirTooltip": "디렉터리 전체를 허용합니다(이 세션에 한정, 하위 에이전트에도 상속). 디렉터리 내 파일은 다시 승인을 요구하지 않습니다",
+      "approveSession": "세션 내 허용",
+      "approveSessionTooltip": "이 세션 내에서 동일한 명령을 허용하고 확인을 생략 (처음 두 단어로 매칭, \"git push\"는 모든 git push 하위 명령을 포함)",
       "reject": "거부",
       "title": "작업 승인이 필요합니다",
       "tool": "도구",

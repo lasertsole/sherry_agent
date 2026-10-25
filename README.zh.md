@@ -4,7 +4,7 @@
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
-[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki)
 
 > **一个基于 LangChain/LangGraph 与多模态技术的深度角色扮演 AI Agent。**
 
@@ -25,16 +25,16 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **上下文治理**：超大工具结果与人类消息被驱逐出提示词并保留可恢复的磁盘副本，`read_file` 结果被切片，任何压缩之前先运行不调 LLM 的尾部裁剪，链式摘要被挡在对话载荷之外
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：三条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
-- ▶️ _详见 [Experience README](docs/experience/README.zh.md) 了解四条抽取路径与技能策展_
+- ▶️ _详见 [Experience README](wiki/experience/README.zh.md) 了解三条抽取路径与技能策展_
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
 - **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
 - **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
-- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](docs/experience/README.zh.md)
+- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](wiki/experience/README.zh.md)
 - **工具超时**：真实的分工具限制来自 `TOOLS_TIMEOUTS` 注册表（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）；`TOOL_CALL_TIMEOUT_MINUTES` 只是存储设置，**没有任何执行路径消费它**
 - ▶️ _详见 [Middlewares README](agent/middlewares/README.md) 了解中间件流水线（护栏、迭代预算、HITL、规范化、摘要、多模态处理）_
 
@@ -47,7 +47,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
 - **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
 - **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer / librarian）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
-- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](docs/file-safety/README.md)
+- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](wiki/file-safety/README.md)
 - ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
 
 ### 4. 🌐 多渠道接入
@@ -68,14 +68,15 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **Heartbeat 服务**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：周期性唤醒（默认 30 分钟），检查 `HEARTBEAT.md` 中的待办任务，由 LLM 决定 skip/run，结果经过通知门控过滤
 
 ### 7. ⚙️ 运行时、并发与会话控制
-- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录
+- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录。根目录的 `AGENTS.md`（回退 `CLAUDE.md`）在内容变化时作为 `project_instructions` 提醒注入；显式绑定的项目会在首条消息时获得一个统一的 `.sherry/` 目录——代码索引与 shadow git——仅在绑定时不创建
 - **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框。行的右键菜单提供 打开 / 打开方式 / 用内置浏览器打开（HTML）/ 在文件管理器中显示 / 复制绝对或相对路径 / 添加到聊天；行（或文件查看器标签）还可拖入输入框——两种方式都只往消息里插入 `@./path` 引用 chip，绝不带文件内容：文件由 agent 自己读取
-- **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 `browser_*` 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过 8 个仅主代理可用的工具（navigate / snapshot / click / type / press / scroll / screenshot / evaluate，最后一个还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
+- **选区引用与辅助会话**：在单条聊天消息内选中文字后右键会弹出小菜单——「添加到当前会话」把原子引用 chip 插入输入框（发送为 markdown 引用块），「在辅助会话中提问」新建一个父会话的**完整 fork** 子会话：首轮注入父会话 checkpoint 中的完整历史（仅模型可见，辅助会话自身的可见历史仍为空），并复制父会话的预设、agent 配置、会话级模型设置与项目目录；fork 截止到父会话最后一个完成的回答，未完成的工具调用绝不会被重放。它在「当前会话」右栏标签页中打开并预填引用；关闭该标签页只会收起面板，子会话及其全部状态都会保留，并继续出现在会话列表中以便重新打开，只有删除父会话时才会清除。标签条最左侧的下箭头菜单会按「当前会话 / 全局」列出最近关闭的 10 个标签页（当前会话的记录只属于该会话，随会话销毁而清除），恢复已关闭的辅助会话时历史对话原样保留。「当前会话」标签组按会话隔离——切换会话只显示该会话自己的标签（没有则为空），不会带出上一个会话的页面；「全局」标签则跨会话共享。跨消息行、从控件/审批卡片开始、或超过 8,000 字符的选区不弹菜单，保留浏览器原生右键
+- **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 browser 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过合并后的主代理专用 `browser` 工具（navigate / snapshot / click / type / press / scroll / screenshot），以及 `browser_evaluate`（还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
 - **用户生命周期 Hook** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/))：`sherry.jsonc` 的 `hooks` 段让运维者自配的命令挂到回合上——`PostToolUse` / `PostToolUseFailure`（载荷含 `toolName`、`toolCallId`、有界的结果/错误预览与 `durationMs`）与 `Stop`（`responsePreview`、`toolCallCount`）。设计上只读：hook 只能审计、通知、计量，不能阻断工具、改写参数或注入上下文。默认关闭（入库的配置文件不能自行让 agent 执行命令）；命令经 `shlex` 拆分、不经 shell、环境已擦洗，每个 hook 有超时且超时会杀进程，stdout 有上限并按可选 JSON 解析（非 JSON 输出视为成功）。注册在工具护栏之后，可按会话关闭- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
-- **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_create(resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列增量迁移）；被取代的流退出 active 读取，但仍留在看板上
-- **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
-- **流恢复锚点** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py))：回合中途断线的客户端重连后发送 `resume_stream`，服务端只向该 socket 返回运行中回合的 `ai_text` 快照与当前 `seq`。客户端先 flush 已缓冲的 delta，再用快照替换该回合文本，并丢弃 `seq` 及以下的帧，因此不会重放或重复任何帧；已 committed 的工具调用仍可在 trajectory ledger（`GET /sessions/:session_id/trajectory`）中查询。
+- **并行步骤派发与血缘指针** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py))：一波派发以并发方式 spawn，上限为 `TASKFLOW_INFRA["max_parallel_dispatch"]`（2；设为 1 即还原顺序行为）——部分失败时已 spawn 的子代理全部持久化、失败的步骤 id 逐个点名；两个子代理同时完成时两个结果都会落地（resume 的写入经 `update_flow_with_conflict_retry` 重新应用已判定的结论，结果不会因冲突丢失，同一步骤也不会被派发两次）。`taskflow_flow(action="create", resumed_from=…)` 记录血缘（`resumed_from` / `superseded_by` 两列增量迁移）；被取代的流退出 active 读取，但仍留在看板上
+- **TaskFlow 进度** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py))：每个流程的扁平步骤列表（id、任务、状态）与按状态计数会进入浮动进度面板；调度器仍按各自的 `depends_on` 逐个解锁步骤。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
+- **流恢复** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py))：回合中途断线的客户端重连时发一次历史请求（`include_active_turn=1`），同时拿到断线期间完成的回合和运行中回合的快照（`turn_id`、`seq`、文本）。请求在途时 socket 暂存收到的帧；客户端合并历史、应用快照，只丢弃同一回合中 `seq` 及以下的帧——不会重放或重复任何内容。已 committed 的工具调用仍可在 trajectory ledger（`GET /sessions/:session_id/trajectory`）中查询。
 - **工具耗时**：每次工具调用仅在工具返回时被计时一次（使用 `time.monotonic()`，下限钳制为 0），由消息持久化包装器完成，写入 `ToolMessage.additional_kwargs["tool_duration_ms"]` 并持久化到 `messages.tool_duration_ms`；实时卡片在运行中显示计时器，结束后显示实测值。按设计，审批等待和排队时间不计入该窗口
 - **会话级模型与思考**：`PUT /sessions/thinking` 与 `PUT /sessions/model` 为单个会话覆盖思考开关和主模型（启用登录时，客户端会预取一次性使用的 `GET /auth/ws-ticket`），思考控制中间件据此将请求模型替换为 `build_main_llm(thinking=...)` 变体——会话没有显式选择时回退到环境变量默认值
 
@@ -112,7 +113,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ## 📂 项目结构
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # Agent 核心逻辑
 │   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
 │   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
@@ -169,23 +170,26 @@ EMA_AI_agent/
 │   ├── embeddings/         # 向量语义搜索（indexer / search）
 │   └── curator/            # 自动技能维护
 │
-├── docs/                   # 子系统设计文档（各语言 README）
+├── wiki/                   # 子系统设计文档（各语言 README）
 │   ├── experience/         # 经验抽取路径 + 技能策展
 │   ├── session_memory/     # 会话记忆能力
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
+│   ├── llm-retry/         # 重试预算、fallback 上限与熔断范围
 │   ├── sandbox/            # 评估沙箱与工具隔离
 │   ├── token-guard/        # 128K 上下文窗口下限
 │   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
 │   ├── long-running-tasks/ # TaskFlow 编排
 │   ├── subagent/           # Subagent design invariants & completion gates
 │   ├── code-intel/         # Code retrieval layers
+│   ├── graph-rag/          # 多跳路径检索与召回调优
+│   ├── llm-wiki/          # markdown 知识库 + 派生图查询
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │
-├── evals/                  # 评估框架（dispatcher + 7 个套件）
+├── evals/                  # 评估框架（dispatcher + 11 个套件）
 │   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
 │   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
@@ -310,29 +314,33 @@ EMA_AI_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
-| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **经验体系** | 将对话历史沉淀为可复用经验的三条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **会话内存** | SESSION 计划能力：memory review、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
-| **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
-| **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
+| **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索——并带 imports/继承/mixin 边与双向 `path` 工具 | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **LLM Wiki 图层** | markdown 优先的知识库 + 显式派生图：带 EXTRACTED/INFERRED confidence 的 wikilink/mention 边、多模态 ingest，以及 path/god-node/community 查询 | [EN](wiki/llm-wiki/README.md) · [ZH](wiki/llm-wiki/README.zh.md) · [JA](wiki/llm-wiki/README.ja.md) · [KO](wiki/llm-wiki/README.ko.md) |
+| **GraphRAG 路径查询** | 显式多跳路径检索：2-3 跳的 BFS、embedding 引导的 beam 兜底，以及在纯稠密 LightRAG 引擎上调优的召回阈值 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
+| **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
 | **Cron 服务** | 定时/周期性 Agent 任务执行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
 | **Heartbeat 服务** | 周期性唤醒任务检查 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
-| **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
-| **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
-| **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
-| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
-| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
-| **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
-| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
-| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
+| **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
+| **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM 重试预算** | 模型重试预算与计数：物理/预算尝试、`Retry-After` 退避、每回合 fallback 切换上限与超时熔断范围 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
+| **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
+| **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
+| **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
+| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门、三色孤儿回收与跨轮次记忆连续性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Plan Mode** | Plan-Then-Execute：只读设计、计划审批门、绑定修订的重新提交循环与修改预算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
+| **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤、message 行的 conversation-turn 身份 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
+| **流恢复** | 回合中途 WebSocket 恢复：快照 + 逐回合 `seq` 水位，不重放、不重复，工具调用保留在 trajectory ledger | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
+| **回合执行历史折叠** | 已完成的回合把工具/思考历史折叠成一条摘要，最终回答始终可见；运行中或中断的回合保持线性 | [EN](wiki/turn-fold/README.md) · [ZH](wiki/turn-fold/README.zh.md) · [JA](wiki/turn-fold/README.ja.md) · [KO](wiki/turn-fold/README.ko.md) |
+| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
+| **工具并行安全** | 批次感知 ToolNode：同文件读写有序、不同路径并发、进程/会话资源锁 | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 
@@ -342,7 +350,7 @@ EMA_AI_agent/
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 ```
 
@@ -364,9 +372,12 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 | `TAVILY_API_KEY` | 使用联网搜索时必填 | 启用联网搜索工具 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 自托管 SearXNG，作为联网搜索的后端（或 Tavily 的替代）；未配 `TAVILY_API_KEY` 时它是唯一后端。在「模型联网」面板中配置；Tavily 失效时自动降级到它 |
 | `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
+| `MODEL_PRICING_TABLE` | — | 会话预算估算用的 USD/1M token 价格表（用户可编辑的 JSON 对象，存储为 JSON 字符串；provider 直返 cost 与本地 litellm 缓存是回退） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 安全扫描开关（默认开启） |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 可选的浏览器代理（默认关闭）；改动后需重启才会注册工具 |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 仅存储设置（默认 5）——没有任何工具执行路径消费它；日志级别（INFO） |
@@ -478,10 +489,16 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
 | `coding_capability` | 真实主 agent 在一小批自设计编码任务上的表现，每道题由该任务仓库自己的 pytest 运行判定——是基线，不是外部基准 |
 | `swebench` | 外部 SWE-bench_Lite 实例，走同一套 harness（钉住 base commit + 每实例独立 venv + 该实例自己的 FAIL_TO_PASS / PASS_TO_PASS 判定；agent 只看到问题描述） |
+| `deepswe` | 外部 DeepSWE 任务，在基准自己的 Docker 镜像中运行：agent 编辑绑定挂载的 checkout，`terminal` 在容器内执行，任务独立的 verifier 镜像对 agent 的 diff 判分（先跑 gold patch 自检） |
+| `terminal_bench` | 外部 Terminal-Bench 任务：构建任务镜像，agent 在容器内工作，由任务自己的 `run-tests.sh` pytest 判定（先跑 oracle 自检；多服务任务会明确标为不支持） |
+| `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench 测试集：固定 commit 的官方问题与表格，materialize 到 SQLite，用 AgentBench 自己的比对规则判定（INSERT/DELETE/UPDATE 行明确标为不支持；MySQL→SQLite 方言差异已记录） |
+| `toolbench` | 外部 [ToolBench](https://github.com/OpenBMB/ToolBench) 测试指令：官方 `test_query_ids`，工具调用走官方 RapidAPI 代理，输出官方 answer 格式，判定用固定 commit 仓库里的官方 ToolEval（数据镜像：[Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)） |
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
 
-`coding_capability` 与 `swebench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
+`deepswe` 与 `terminal_bench` 依赖可用的 Docker daemon；`toolbench` 需要 `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY` 与 OpenAI 兼容的 ToolEval judge key；`agentbench` 需要 `MAIN_LLM_API_KEY`。缺少前置条件时它们会**显式 SKIP 并以非零码退出**（跳过的套件不算通过）。任务树与基准数据克隆/下载到 `~/.cache/sherry_evals`（可用 `DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` 覆盖），不放进仓库；`--dry-run` 可在没有 Docker、模型或 ToolBench 大文件下载时校验任务选择。
+
+`coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench` 与 `toolbench` 各自保存一份受版本管理的基线（在各自套件目录内），并用 `SHERRY_WORKSPACE_DIR` 把 workspace 指向一次性目录，使运行绝不触碰活人格；低于基线阈值或任务报错时以非零码退出，服务商侧故障记为 invalid run 并排除在通过率之外。
 
 ---
 

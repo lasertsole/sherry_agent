@@ -16,6 +16,16 @@
   // Context window; drives the summarization trigger threshold.
   // MUST be >= 131072 (128K) — the server refuses to start below this.
   "MAIN_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap (NOT the context window). Empty = do not send the
+  // field; the provider applies its own default (OpenAI-compatible APIs: 4096).
+  // When set it must be >= 8192 (8K): thinking-mode reasoning and the visible
+  // answer share this budget, so a smaller value truncates the reply.
+  "MAIN_LLM_MAX_OUTPUT_TOKEN": "",
+  // Sampling-time repetition penalty in [-2.0, 2.0]; empty = global default.
+  // OpenAI-compatible / Google only; Anthropic and OpenAI reasoning models
+  // (o-series / gpt-5) reject the parameter and are skipped.
+  "MAIN_LLM_FREQUENCY_PENALTY": "",
+  "MAIN_LLM_PRESENCE_PENALTY": "",
   // Universal reasoning/thinking switch (maps to the right payload per provider).
   "MAIN_LLM_ENABLE_THINKING": false,
   // Optional reasoning effort for OpenAI-family models (low / medium / high).
@@ -31,6 +41,47 @@
   // MUST be >= 131072 (128K): an unset value falls back to 121072 (<128K),
   // which blocks startup too (the floor applies in local mode as well).
   "AUXILIARY_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap (same rule as MAIN_LLM_MAX_OUTPUT_TOKEN: empty =
+  // provider default, set = >= 8192/8K).
+  "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "AUXILIARY_LLM_FREQUENCY_PENALTY": "",
+  "AUXILIARY_LLM_PRESENCE_PENALTY": "",
+
+  // ── TaskFlow 决策模型 TaskFlow decision model ────────────────────────────
+  // Used by: taskflow_plan / taskflow_replan / step_judge / taskflow_finish.
+  // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
+  // true = local GGUF: reuses the auxiliary model's weights (no second download).
+  // MUST be >= 131072 (128K): a replan prompt carries every done step's result.
+  "TASKFLOW_LLM_MODEL_LOCAL": false,
+  "TASKFLOW_LLM_PROVIDER": "",
+  "TASKFLOW_LLM_API_NAME": "",
+  "TASKFLOW_LLM_API_BASE": "",
+  "TASKFLOW_LLM_API_KEY": "",
+  "TASKFLOW_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "TASKFLOW_LLM_FREQUENCY_PENALTY": "",
+  "TASKFLOW_LLM_PRESENCE_PENALTY": "",
+
+  // ── 压缩模型 Compression model ──────────────────────────────────────────
+  // Used by: SummarizationMiddleware (LLM summary).
+  // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
+  // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
+  // true = local GGUF: reuses the auxiliary model's weights (no second download).
+  // MUST be >= 131072 (128K): the prompt carries the discarded slice verbatim.
+  "COMPRESSION_LLM_MODEL_LOCAL": false,
+  "COMPRESSION_LLM_PROVIDER": "",
+  "COMPRESSION_LLM_API_NAME": "",
+  "COMPRESSION_LLM_API_BASE": "",
+  "COMPRESSION_LLM_API_KEY": "",
+  "COMPRESSION_LLM_MAX_TOKEN": 131072,
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
+  "COMPRESSION_LLM_PRESENCE_PENALTY": "",
 
   // ── 推理模型 Reasoner model ──────────────────────────────────────────────
   "REASONER_LLM_PROVIDER": "",
@@ -38,6 +89,11 @@
   "REASONER_LLM_API_BASE": "",
   "REASONER_LLM_API_KEY": "",
   "REASONER_LLM_MAX_TOKEN": "",
+  // Per-request output cap; empty = provider default, set = >= 8192 (8K).
+  "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
+  // Repetition penalty in [-2.0, 2.0]; empty = global default.
+  "REASONER_LLM_FREQUENCY_PENALTY": "",
+  "REASONER_LLM_PRESENCE_PENALTY": "",
 
   // ── 图生文 Image-to-Text model ───────────────────────────────────────────
   "ITTT_MODEL_LOCAL": false,
@@ -78,6 +134,12 @@
   "STT_API_NAME": "",
   "STT_API_BASE": "",
   "STT_API_KEY": "",
+
+  // ── Token 价格表 Token pricing (USD per 1M tokens, estimates only) ───────
+  // A JSON OBJECT stored as a JSON STRING so the flat key/value editor works.
+  // Lookup: provider-returned cost → this table → litellm cache → `_default`.
+  // User-editable; no code change. Set a model to adjust budget estimates.
+  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
 
   // ── 技能安全扫描器 SkillSpector scanner (its own LLM selection) ─────────
   // SKILL_SCANNER_ENABLED: master switch (1 = scan uploaded skills).

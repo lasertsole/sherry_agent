@@ -29,12 +29,14 @@ def _numeric_ts(value: object) -> float | None:
 def _last_activity_ts(flow: dict) -> float | None:
     """Newest activity stamp persisted anywhere on the flow, or None.
 
-    The schema has no ``updated_at`` column (migration-free, mirroring
-    idle detection); activity stamps live inside ``state_json`` (step.dispatched_at,
-    result.injected_at) and ``wait_json`` (wait.set_at), so their max is the
-    closest honest proxy for "last updated".
+    ``updated_at`` is the authoritative mutation clock (bumped by every
+    ``update_flow`` and written at creation). Older rows may predate the
+    column, so the state/wait stamps remain as a fallback.
     """
     stamps: list[float] = []
+    updated = _numeric_ts(flow.get("updated_at"))
+    if updated is not None:
+        stamps.append(updated)
     wait = flow.get("wait") or {}
     wait_ts = _numeric_ts(wait.get("set_at"))
     if wait_ts is not None:

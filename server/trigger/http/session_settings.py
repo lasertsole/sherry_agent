@@ -66,6 +66,11 @@ from server.service.session_settings_service import (
     apply_search_backend_choice,
     get_search_backend_state,
 )
+from server.service.session_settings_service import (
+    apply_token_budget_choice,
+    get_token_budget_state,
+    reset_token_budget,
+)
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
 
@@ -239,3 +244,54 @@ async def put_search_backend_handler(request):
         "Search backend choice: session={} backend={} pending={}", session_id, backend, pending
     )
     return ok({"success": True, "session_id": session_id, "backend": backend, "pending": pending})
+
+
+@app.get("/sessions/budget")
+async def get_budget_handler(request):
+    """Return the session's token cap, accumulated usage/cost and latch."""
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    try:
+        state = await asyncio.to_thread(get_token_budget_state, session_id)
+    except ValueError:
+        return bad_request("invalid session_id")
+    return ok({"success": True, "session_id": session_id, **state})
+
+
+@app.put("/sessions/budget")
+async def put_budget_handler(request):
+    """Persist the session's token cap (``null`` clears it; live or parked)."""
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    session_id = body.get("session_id") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    if "cap" not in body:
+        return bad_request("'cap' is required (a non-negative integer, or null to clear)")
+    cap = body.get("cap")
+    try:
+        pending = await apply_token_budget_choice(session_id, cap)
+    except ValueError as exc:
+        return bad_request(str(exc))
+    logger.info("Token budget cap: session={} cap={} pending={}", session_id, cap, pending)
+    return ok({"success": True, "session_id": session_id, "cap": cap, "pending": pending})
+
+
+@app.post("/sessions/budget/reset")
+async def reset_budget_handler(request):
+    """Clear the usage/cost/latch counters, preserving the cap."""
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    session_id = body.get("session_id") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    try:
+        state = await asyncio.to_thread(reset_token_budget, session_id)
+    except ValueError:
+        return bad_request("invalid session_id")
+    logger.info("Token budget reset: session={} cap={}", session_id, state.get("cap"))
+    return ok({"success": True, "session_id": session_id, **state})

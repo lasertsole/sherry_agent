@@ -46,7 +46,18 @@
       </div>
       <div v-if="message.toolResult">
         <div class="text-xs font-semibold mb-1">{{ resultLabel }}</div>
+        <!-- patch_file / write_file results carry a real unified diff: render
+             it inline. Everything else (and every unparseable shape) falls
+             back to the plain <pre> — fail-open by construction. -->
+        <DiffPreview
+          v-if="toolDiff"
+          :diff="toolDiff" />
+        <DiffPreview
+          v-else-if="newFileDiff"
+          :diff="newFileDiff"
+          :new-file="true" />
         <pre
+          v-else
           class="text-xs whitespace-pre-wrap break-words bg-white dark:bg-gray-900/60 rounded p-2 border border-solid border-gray-200 dark:border-gray-600"
           >{{ message.toolResult }}</pre>
       </div>
@@ -67,6 +78,8 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue';
 import type { MessageItem } from '~/pages/home/type';
+import { allAddedDiff, parseToolDiff, writeReportedNewFile } from '~/utils/tool-diff';
+import DiffPreview from './DiffPreview.vue';
 import { formatElapsed, formatToolDuration } from '~/common/utils';
 
 interface Props {
@@ -89,6 +102,29 @@ interface Props {
 }
 const props = defineProps<Props>();
 defineEmits<{ toggle: [] }>();
+
+/**
+ * The inline diff for file-editing results: patch_file always carries a
+ * unified diff; write_file since its JSON return change. The computed
+ * re-derives whenever the streaming result frame lands, so the diff appears
+ * the moment the tool settles — and the same path serves history replay.
+ */
+const toolDiff = computed(() =>
+  props.message.toolResult ? parseToolDiff(props.message.toolName, props.message.toolResult) : null
+);
+
+/** A brand-new file has no diff — the badge plus an all-added preview instead. */
+const isNewWrite = computed(() =>
+  props.message.toolResult ? writeReportedNewFile(props.message.toolName, props.message.toolResult) : false
+);
+
+/** The new file's content: the write's own `text` argument, rendered all-green. */
+const newFileDiff = computed(() => {
+  if (!isNewWrite.value) return null;
+  const text = props.message.toolArgs?.text;
+  if (typeof text !== 'string') return null;
+  return allAddedDiff(text);
+});
 
 /**
  * The duration shown next to the status glyph.

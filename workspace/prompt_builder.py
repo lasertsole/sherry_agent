@@ -213,6 +213,38 @@ def _build_project_dir_block(session_id: str) -> str:
         return ""
 
 
+def _build_project_instructions_block(session_id: str) -> str:
+    """Read the project's AGENTS.md (fallback CLAUDE.md) as live instructions.
+
+    Only an EXPLICIT project directory contributes these files. When nothing is
+    configured the effective root falls back to the sherry checkout; injecting
+    the checkout's AGENTS.md would feed the agent its own developer guide as if
+    it were the user's project rules (``project_dir_source == "default"``).
+    A session binding or a process default (``SHERRY_PROJECT_DIR`` /
+    ``sherry.jsonc``) still counts as a chosen project root.
+
+    The file is user-owned project content, not sherry state: no directory is
+    created here. Returns "" when the root is the fallback, or neither file
+    exists / is empty.
+    """
+    try:
+        from runtime.session.project_dir import current_project_dir, project_dir_source
+
+        if project_dir_source(session_id) == "default":
+            return ""
+        root = Path(current_project_dir(session_id))
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            path = root / name
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace").strip()
+            if content:
+                return content
+    except Exception:
+        logger.debug("prompt builder: project instructions read failed", exc_info=True)
+    return ""
+
+
 def _build_boulder_block(session_id: str) -> str:
     """Render the active/paused work pointer. Returns "" on none or any failure."""
     try:
@@ -299,7 +331,9 @@ def _build_taskflow_block(session_id: str) -> str:
                 f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{next_hint}'
             )
 
-        lines.append("Use taskflow_summary to inspect a flow and continue execution.")
+        lines.append(
+            "Use taskflow_inspect(action='summary') to inspect a flow and continue execution."
+        )
         return "\n".join(lines)
     except Exception as error:  # a broken block must not break the prompt
         logger.debug("prompt builder: taskflow block failed ({}); omitting it", error)

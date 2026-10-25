@@ -78,9 +78,37 @@ async def get_history_by_turn_page(request):
         raise ValueError("turn_page_num is required")
 
     # The store read is blocking SQLite: keep it off the event loop thread.
-    return await asyncio.to_thread(
+    rows = await asyncio.to_thread(
         _get_history_by_turn_page, session_id, min_turn_num, turn_page_size, turn_page_num
     )
+    include_active = str(query_params.get("include_active_turn", "") or "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not include_active:
+        return rows
+
+    # One round trip for a reconnecting client: persisted history + the running
+    # turn's text snapshot. The snapshot carries the turn identity and the next
+    # turn number so the client can route it to the right chat row.
+    from context_engine.store.core import get_max_turn_num
+    from server.service.stream_dispatch import active_turn_snapshot
+
+    try:
+        # Read on the event loop, NOT in a worker thread: the snapshot must be
+        # a consistent cut of ai_text/_frame_seq, which the stream generator
+        # mutates on this same loop. A thread could interleave the two reads.
+        active = active_turn_snapshot(session_id)
+    except Exception:  # noqa: BLE001 — a snapshot failure must not fail history
+        logger.exception("Active-turn snapshot failed: session_id={}", session_id)
+        active = None
+    if active is not None:
+        try:
+            active["turn_num"] = await asyncio.to_thread(get_max_turn_num, session_id) + 1
+        except Exception:  # noqa: BLE001 — optional display metadata
+            logger.debug("Active-turn turn_num lookup failed: session_id={}", session_id)
+    return {"messages": rows, "active_turn": active}
 
 
 @app.get("/get_pending_interrupt")

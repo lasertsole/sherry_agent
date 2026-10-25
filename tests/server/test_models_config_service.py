@@ -108,6 +108,26 @@ class TestWriteModelsConfig:
         with pytest.raises(ValueError, match="must be an integer"):
             mc.write_models_config({"AUXILIARY_LLM_MAX_TOKEN": "lots"})
 
+    def test_a_json_dict_value_stays_a_json_string_on_disk(self, models_file):
+        """The pricing table is one scalar line, not a nested multi-line object."""
+        mc.write_models_config(
+            {
+                "MODEL_PRICING_TABLE": (
+                    '{"gpt-4o": {"input": 2.5, "output": 10.0}, '
+                    '"_default": {"input": 0.5, "output": 1.5}}'
+                )
+            }
+        )
+
+        data = json5.loads(models_file.read_text(encoding="utf-8"))
+        assert isinstance(data["MODEL_PRICING_TABLE"], str)
+        table = json5.loads(data["MODEL_PRICING_TABLE"])
+        assert table["gpt-4o"] == {"input": 2.5, "output": 10.0}
+        shown = {
+            e["key"]: e["value"] for g in mc.read_models_config()["groups"] for e in g["entries"]
+        }
+        assert shown["MODEL_PRICING_TABLE"] == data["MODEL_PRICING_TABLE"]
+
     def test_appends_a_known_key_that_has_no_line(self, models_file):
         mc.write_models_config({"STT_API_NAME": "whisper-large"})
 
@@ -115,3 +135,70 @@ class TestWriteModelsConfig:
         assert data["STT_API_NAME"] == "whisper-large"
         # The append did not disturb the existing lines.
         assert data["MAIN_LLM_PROVIDER"] == "openai"
+
+
+class TestWriteMaxOutputTokens:
+    def test_enforces_the_8k_output_floor(self, models_file):
+        with pytest.raises(ValueError, match="8K"):
+            mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "4096"})
+
+    def test_accepts_an_empty_output_cap(self, models_file):
+        mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": ""})
+
+        text = models_file.read_text(encoding="utf-8")
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": ""' in text
+
+    def test_accepts_a_valid_output_cap(self, models_file):
+        mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "32768"})
+
+        text = models_file.read_text(encoding="utf-8")
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": 32768' in text
+
+    def test_rejects_an_output_cap_not_smaller_than_the_window(self, models_file):
+        with pytest.raises(ValueError, match="smaller than MAIN_LLM_MAX_TOKEN"):
+            mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "131072"})
+
+        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN"' not in models_file.read_text(encoding="utf-8")
+
+
+class TestOptionalInternalFamilies:
+    """The TaskFlow-decision and compression families use the same guards."""
+
+    def test_groups_render_in_the_canonical_position(self, tmp_path, monkeypatch):
+        path = tmp_path / ".models"
+        path.write_text(
+            '{\n  "MAIN_LLM_PROVIDER": "openai",\n'
+            '  "TASKFLOW_LLM_PROVIDER": "",\n'
+            '  "COMPRESSION_LLM_PROVIDER": "",\n'
+            '  "REASONER_LLM_PROVIDER": ""\n}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(mc, "MODELS_CONFIG_PATH", path)
+
+        payload = mc.read_models_config()
+
+        assert [g["name"] for g in payload["groups"]] == [
+            "MAIN_LLM",
+            "TASKFLOW_LLM",
+            "COMPRESSION_LLM",
+            "REASONER_LLM",
+        ]
+        assert all(g["kind"] == "model" for g in payload["groups"])
+
+    @pytest.mark.parametrize("key", ["TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"])
+    def test_enforces_the_128k_floor(self, models_file, key):
+        with pytest.raises(ValueError, match="128K"):
+            mc.write_models_config({key: "65536"})
+
+        mc.write_models_config({key: "131072"})
+        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == 131072
+
+    @pytest.mark.parametrize(
+        "key", ["TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"]
+    )
+    def test_enforces_the_8k_output_floor(self, models_file, key):
+        with pytest.raises(ValueError, match="8K"):
+            mc.write_models_config({key: "4096"})
+
+        mc.write_models_config({key: ""})
+        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == ""

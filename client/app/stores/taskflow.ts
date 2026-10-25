@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { sessionIdFromPathname } from '~/utils/session-route';
 
 /**
- * TaskFlow progress store: the waves the floating panel renders.
+ * TaskFlow progress store: the flat step list the floating panel renders.
  *
  * Data flow (same shape as the todo store, one event pair per feature):
  * - The backend pushes `{"event":"taskflow_updated","session_id":…,"content":
@@ -15,8 +15,8 @@ import { sessionIdFromPathname } from '~/utils/session-route';
  *   `ws:send` frame carrying `event: "taskflow_refresh"`; the backend answers with
  *   the identical payload, so there is exactly one shape to render.
  *
- * The frontend never recomputes DAG state: waves, counts and `current_wave` come
- * from the backend (`agent/tools/taskflow/waves.py`).
+ * The frontend never recomputes DAG state: the step list, counts and statuses
+ * come from the backend (`agent/tools/taskflow/progress_push.py`).
  */
 
 /** One step row on the wire. */
@@ -26,17 +26,6 @@ export interface FlowStep {
   status: string;
 }
 
-/** One DAG wave: parallel-ready steps at the same dependency depth. */
-export interface FlowWave {
-  index: number;
-  total: number;
-  done: number;
-  by_status: Record<string, number>;
-  steps: FlowStep[];
-  /** Present (true) on the trailing wave that holds dependency cycles. */
-  cyclic?: boolean;
-}
-
 /** One flow's progress. */
 export interface FlowProgress {
   flow_id: string;
@@ -44,10 +33,9 @@ export interface FlowProgress {
   description: string;
   total: number;
   done: number;
-  /** First wave with unfinished work; 0 = nothing left (or no steps). */
-  current_wave: number;
   by_status: Record<string, number>;
-  waves: FlowWave[];
+  /** The flow's steps, in the plan's own order (no DAG level projection). */
+  steps: FlowStep[];
 }
 
 /** The aggregate the collapsed pill shows. */
@@ -55,11 +43,9 @@ export interface ProgressTotals {
   flows: number;
   total: number;
   done: number;
-  current_wave: number;
-  waves: number;
 }
 
-const EMPTY_TOTALS: ProgressTotals = { flows: 0, total: 0, done: 0, current_wave: 0, waves: 0 };
+const EMPTY_TOTALS: ProgressTotals = { flows: 0, total: 0, done: 0 };
 
 /**
  * Resolve the active session id from the URL path (module-level safe).
@@ -154,8 +140,8 @@ export const useTaskflowStore = defineStore('taskflow', () => {
    * Whether the plan has been started at all.
    *
    * A board can be open with nothing behind it yet (steps merely ``ready``): the
-   * panel must not report a "current wave" for work nobody began — only a
-   * finished step or a dispatched one means this plan is under way.
+   * pill must not report progress for work nobody began — only a finished step
+   * or a dispatched one means this plan is under way.
    */
   const started = computed(() => inFlight.value || totals.value.done > 0);
 

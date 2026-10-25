@@ -233,7 +233,10 @@
          the shell row, exactly like the left session sidebar, so opening it narrows the
          toolbar above the session area instead of sliding in under it — and, living
          outside the KeepAlive'd session page, its tabs survive session switches. -->
-    <RightSidebar @saved="loadCharacter" />
+    <RightSidebar
+      :session-id="openSessionId"
+      @saved="loadCharacter"
+      @close-tab="handleCloseRightTab" />
 
     <!-- Every toolbar / settings-menu entry is a right-sidebar tab (see dialogs.ts), so
          the panels mount and unmount with their tab; the notification badge keeps counting
@@ -257,6 +260,9 @@ useErrorCaptured();
 // components
 import SessionSidebar from './components/SessionSidebar.vue';
 import RightSidebar from './components/RightSidebar.vue';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { detachSideChatSession } from '~/composables/use-side-chat';
+import type { RightSidebarTab } from '~/stores/right-sidebar';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
@@ -428,6 +434,24 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
+// The 当前会话 tab group belongs to the route's session: switching sessions
+// shows that session's own tabs (or an empty group), never the previous one's.
+watch(openSessionId, sid => rightSidebarStore.setActiveSession(sid), { immediate: true });
+
+/**
+ * Close one right-sidebar tab. Closing a side-chat panel only detaches its
+ * socket: the child session, checkpoint and caches survive until the parent
+ * session is deleted.
+ * @param tab The tab being closed.
+ */
+const handleCloseRightTab = (tab: RightSidebarTab): void => {
+  if (tab.kind === 'sideChat' && tab.payload?.sessionId) {
+    detachSideChatSession(tab.payload.sessionId);
+  }
+  // Keep it in the strip's recent-tabs menu (per-session or global).
+  rightSidebarStore.rememberClosed(tab, openSessionId.value);
+  rightSidebarStore.closeTab(tab.id);
+};
 /** Mandatory new-session preset dialog state (shared with every 新建对话 entry point). */
 const newSession = useNewSessionStore();
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);

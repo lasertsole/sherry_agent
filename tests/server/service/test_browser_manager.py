@@ -228,7 +228,7 @@ def test_open_page_registers_and_the_newest_is_the_default(rig):
 
 def test_page_for_raises_without_a_page(rig):
     manager, _t, _b, _l = rig
-    with pytest.raises(KeyError, match="browser_navigate"):
+    with pytest.raises(KeyError, match="browser\\(action='navigate'\\)"):
         manager.page_for("s1")
 
 

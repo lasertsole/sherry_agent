@@ -54,6 +54,8 @@ export interface MessageItem {
   id: number;
   /** Conversation turn number */
   turn_num: number;
+  /** Server turn identity while this row is the live streaming row (never on history rows). */
+  turn_id?: string;
   /** Timestamp */
   timestamp: string;
   /** Tool name (only set when role=TOOL; identifies which tool call) */
@@ -73,6 +75,12 @@ export interface MessageItem {
   toolEndedAtMs?: number;
   /** Tool status: running=calling, done=completed, failed=rejected/failed, error=execution error (only set when role=TOOL) */
   toolStatus?: 'running' | 'done' | 'failed' | 'error';
+  /**
+   * Whether an AI row declares tool calls (history rows only). The fold
+   * classifier treats such a row as unfinished work, never as the final answer:
+   * its tool results may be missing or still running.
+   */
+  hasToolCalls?: boolean;
   /** Tool call arguments (only set when role=TOOL and a tool_result has been received) */
   toolArgs?: Record<string, unknown>;
   /** Tool execution result text (only set when role=TOOL and a tool_result has been received) */
@@ -100,6 +108,27 @@ export interface MessageItem {
    * existing user-bubble rendering.
    */
   origin?: string;
+  /**
+   * Live model-retry progress for this AI turn (from the `model_retry` WS frame).
+   * Never persisted: it decorates the in-memory streaming row, so a history reload
+   * simply drops it.
+   */
+  retryStatus?: {
+    status: 'scheduled' | 'succeeded' | 'exhausted';
+    /** Physical attempt number represented by this frame (includes extras). */
+    attempt: number;
+    /** Attempts that consumed the ordinary retry budget. */
+    budgetAttempt?: number;
+    maxAttempts: number;
+    /** How many retries had completed when this frame was emitted. */
+    retries: number;
+    /** Auth-refresh / signature-repair attempts (they do not consume budget). */
+    extraAttempts?: number;
+    /** Fallback switches already made this turn. */
+    fallbackSwitches?: number;
+    reason?: string;
+    delayMs?: number;
+  };
 }
 
 /** Role */

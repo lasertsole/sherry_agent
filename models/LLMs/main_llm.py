@@ -14,6 +14,8 @@ from models.LLMs.reasoning_payload import (
     is_zhipu_reasoning_model,
 )
 from models.env_builder import ModelEnvBuilder, clean_client_kwargs
+from models.LLMs.provider_max_output import configured_max_output, resolve_max_output_kwargs
+from models.LLMs.provider_repetition_penalty import family_repetition_penalty_kwargs
 
 #: The level a plain ON maps to (the shared declarative config).
 _DEFAULT_ON_LEVEL = THINKING_LEVEL_CONFIG["default_level"]
@@ -56,6 +58,16 @@ reasoning_effort = os.getenv("MAIN_LLM_REASONING_EFFORT")
 # so the boost sequence always starts above the configured output cap.
 OUTPUT_MAX_TOKEN = int(os.getenv("MAIN_LLM_OUTPUT_MAX_TOKEN", "8192"))
 
+# Explicit per-request output cap (distinct from the context window above).
+# Unset = do not send a field (provider default); set = validated >= 8192 (M9)
+# and sent under the provider's own kwarg name.
+MAX_OUTPUT_TOKENS = configured_max_output("MAIN_LLM_MAX_OUTPUT_TOKEN")
+
+
+def get_max_output_tokens() -> int | None:
+    """The configured main-model output cap, or None when unset (M3 seam)."""
+    return MAX_OUTPUT_TOKENS
+
 
 def apply_thinking_budget(
     model_config: dict[str, Any],
@@ -74,7 +86,8 @@ def apply_thinking_budget(
     """
     budget = get_thinking_budget(provider, model_name, enabled, level=level)
     if budget > 0:
-        model_config["max_tokens"] = OUTPUT_MAX_TOKEN + budget
+        base = MAX_OUTPUT_TOKENS or OUTPUT_MAX_TOKEN
+        model_config["max_tokens"] = base + budget
     return model_config
 
 
@@ -95,6 +108,8 @@ model_config: dict[str, Any] = ModelEnvBuilder(
         # Max idle gap between streamed chunks before aborting.
         "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
         "profile": {"max_input_tokens": max_tokens},  # Set model context window size
+        **resolve_max_output_kwargs(model_provider, api_name, MAX_OUTPUT_TOKENS),
+        **family_repetition_penalty_kwargs("MAIN_LLM", model_provider, api_name),
     }
 )
 # Pristine snapshot of the client config BEFORE the reasoning payload and the
@@ -312,6 +327,7 @@ def _profile_client_config(
     model: str,
     api_key: str | None = None,
     base_url: str | None = None,
+    context_window: int | None = None,
     custom_mapping: dict[str, Any] | None = None,
     thinking: bool | None = None,
     thinking_level: str | None = None,
@@ -335,7 +351,9 @@ def _profile_client_config(
             "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
-            "profile": {"max_input_tokens": max_tokens},
+            "profile": {"max_input_tokens": context_window if context_window else max_tokens},
+            **resolve_max_output_kwargs(effective_provider, model, MAX_OUTPUT_TOKENS),
+            **family_repetition_penalty_kwargs("MAIN_LLM", effective_provider, model),
         }
     )
     reasoning, budget_enabled, level_used = _reasoning_for_state(
@@ -357,6 +375,7 @@ def build_main_llm_for_profile(
     model: str,
     api_key: str | None = None,
     base_url: str | None = None,
+    context_window: int | None = None,
     temperature: float | None = None,
     thinking: bool | None = None,
     thinking_level: str | None = None,
@@ -385,6 +404,7 @@ def build_main_llm_for_profile(
         model=model,
         api_key=api_key,
         base_url=base_url,
+        context_window=context_window,
         custom_mapping=custom_mapping,
         thinking=thinking,
         thinking_level=thinking_level,

@@ -304,7 +304,7 @@ describe('SessionPresetButton', () => {
       tools: [
         { name: 'read_file', group: 'files', required: true },
         { name: 'terminal', group: 'terminal' },
-        { name: 'taskflow_create', group: 'tasks' }
+        { name: 'taskflow_flow', group: 'tasks' }
       ],
       groups: [
         {
@@ -317,7 +317,7 @@ describe('SessionPresetButton', () => {
         },
         {
           group: 'tasks',
-          tools: [{ name: 'taskflow_create', group: 'tasks', description: 'Create a flow.' }]
+          tools: [{ name: 'taskflow_flow', group: 'tasks', description: 'Create a flow.' }]
         }
       ]
     }).store;
@@ -334,8 +334,8 @@ describe('SessionPresetButton', () => {
     // A fully required group says so instead of offering any control.
     expect(panel.find('[data-test="session-preset-tool-group-locked-files"]').exists()).toBe(true);
     // A bulk-only group has no per-tool switch: a chip, struck through when off.
-    expect(panel.find('[data-test="session-preset-tool-taskflow_create"]').exists()).toBe(false);
-    expect(panel.get('[data-test="session-preset-tool-bulk-taskflow_create"]').classes()).toContain('line-through');
+    expect(panel.find('[data-test="session-preset-tool-taskflow_flow"]').exists()).toBe(false);
+    expect(panel.get('[data-test="session-preset-tool-bulk-taskflow_flow"]').classes()).toContain('line-through');
   });
 
   it('shows the session skills READ-ONLY with the two sub-tabs', async () => {

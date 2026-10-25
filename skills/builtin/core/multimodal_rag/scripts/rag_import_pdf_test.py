@@ -29,8 +29,8 @@ logger.add(sys.stderr, level="INFO")
 from graph_rag import get_rag_anything
 
 DOCS = [
-    r"C:\app\code\project\EMA_AI_agent\src\rag\graph_rag\multiformat_test\output\01_company.pdf",
-    r"C:\app\code\project\EMA_AI_agent\src\rag\graph_rag\multiformat_test\output\02_market.pdf",
+    r"C:\app\code\project\sherry_agent\src\rag\graph_rag\multiformat_test\output\01_company.pdf",
+    r"C:\app\code\project\sherry_agent\src\rag\graph_rag\multiformat_test\output\02_market.pdf",
 ]
 CLASSIFY = "multiformat_test"
 

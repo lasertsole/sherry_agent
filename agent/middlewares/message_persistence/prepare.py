@@ -116,6 +116,10 @@ def _is_persistable(message: Any) -> bool:
     if is_message_persisted(message):
         return False
     additional_kwargs = getattr(message, "additional_kwargs", None) or {}
+    # Side-chat inherited context is model-only: it lives in the checkpoint so
+    # the model can read it, but must never appear in the visible history.
+    if additional_kwargs.get("side_chat_context"):
+        return False
     # Compression artifacts (the summary pair and any previously chained
     # summary) never belong in the raw store — the row builder filters the
     # human half for the same reason; the AI half is filtered here.

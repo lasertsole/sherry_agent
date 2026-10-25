@@ -48,6 +48,7 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     monkeypatch.setattr(agent_core, "build_async_sqlite_checkpointer", _fake_checkpointer)
     monkeypatch.setattr(agent_core, "build_main_llm", lambda: _FakeMainLLM())
     monkeypatch.setattr(agent_core, "build_auxiliary_llm", lambda: object())
+    monkeypatch.setattr(agent_core, "build_compression_llm", lambda: object())
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", lambda **_: fake_compiled_graph)

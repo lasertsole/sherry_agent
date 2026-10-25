@@ -106,9 +106,14 @@ const localState = (overrides: Record<string, unknown> = {}) => ({
   ...overrides
 });
 
-const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
+const mountPanel = (
+  group = 'MAIN_LLM',
+  keys: string[] = KEYS,
+  values: Record<string, string> = ENV_VALUES,
+  downloadGroup?: string
+) =>
   mount(LlmModelManager, {
-    props: { group, keys, values, groupTitle: group },
+    props: { group, keys, values, groupTitle: group, ...(downloadGroup ? { downloadGroup } : {}) },
     global: { stubs }
   });
 
@@ -562,14 +567,10 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     // One guarded key in this panel → exactly one hint, and the free
     // REASONER_LLM_MAX_TOKEN (deliberately below 128K) must not carry it.
     expect(countHints(wrapper)).toBe(1);
-    const tokenBlock = wrapper
-      .findAll('div')
-      .find(d => d.find('span').exists() && d.find('span').text() === 'MAIN_LLM_MAX_TOKEN');
-    expect(tokenBlock?.text()).toContain('必须 >= 131072 (128K)');
-    const freeBlock = wrapper
-      .findAll('div')
-      .find(d => d.find('span').exists() && d.find('span').text() === 'REASONER_LLM_MAX_TOKEN');
-    expect(freeBlock?.text()).not.toContain('131072 (128K)');
+    const tokenSpan = wrapper.get('span[title="MAIN_LLM_MAX_TOKEN"]');
+    expect(tokenSpan.element.parentElement?.textContent ?? '').toContain('必须 >= 131072 (128K)');
+    const freeSpan = wrapper.get('span[title="REASONER_LLM_MAX_TOKEN"]');
+    expect(freeSpan.element.parentElement?.textContent ?? '').not.toContain('131072 (128K)');
   });
 
   it('hides the 128K warning for the built-in local entry (its budget is unused)', async () => {
@@ -697,6 +698,158 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     });
     await flushPromises();
     expect(card.text()).toContain('20%');
+    wrapper.unmount();
+  });
+
+  it('badges an unconfigured internal family as following the auxiliary model', async () => {
+    const keys = [
+      'TASKFLOW_LLM_MODEL_LOCAL',
+      'TASKFLOW_LLM_PROVIDER',
+      'TASKFLOW_LLM_API_NAME',
+      'TASKFLOW_LLM_API_BASE',
+      'TASKFLOW_LLM_API_KEY',
+      'TASKFLOW_LLM_MAX_TOKEN'
+    ];
+    const values = Object.fromEntries(keys.map(key => [key, key === 'TASKFLOW_LLM_MAX_TOKEN' ? '131072' : '']));
+    makeStore([], null, 'TASKFLOW_LLM');
+    const wrapper = mountPanel('TASKFLOW_LLM', keys, values);
+    await expand(wrapper);
+    await buttonFor(wrapper, '添加模型')!.trigger('click');
+
+    expect(wrapper.find('[data-test="follows-auxiliary"]').exists()).toBe(true);
+
+    // A provider turns the family into its own configuration: badge gone.
+    const providerInput = wrapper.findAll('input.inp')[0]!;
+    await providerInput.setValue('openai');
+    expect(wrapper.find('[data-test="follows-auxiliary"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('reads the auxiliary download family for an internal family', async () => {
+    const keys = ['TASKFLOW_LLM_MODEL_LOCAL', 'TASKFLOW_LLM_MAX_TOKEN'];
+    const values: Record<string, string> = {
+      TASKFLOW_LLM_MODEL_LOCAL: 'false',
+      TASKFLOW_LLM_MAX_TOKEN: '131072'
+    };
+    makeStore([{ id: 't1', label: 'tf', params: { ...values } }], 't1', 'TASKFLOW_LLM');
+    downloadsApi.fetchModelDownloadsStatus.mockResolvedValue({
+      models: {
+        AUXILIARY_LLM: localState({
+          state: 'ready',
+          ready: true,
+          downloaded_bytes: 641_517_466,
+          total_bytes: 641_517_466,
+          percent: 100,
+          files_done: 1,
+          files: [{ name: 'Qwen3.5-9B-Q4_K_M.gguf', exists: true, fallback_ready: false }]
+        })
+      }
+    });
+    const wrapper = mountPanel('TASKFLOW_LLM', keys, values, 'AUXILIARY_LLM');
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await flushPromises();
+
+    expect(downloadsApi.fetchModelDownloadsStatus).toHaveBeenCalled();
+    expect(wrapper.get('[data-test="local-model-download"]').text()).toContain('本地模型已下载');
+    wrapper.unmount();
+  });
+
+  it('renders the per-model penalty fields as range-constrained number inputs', async () => {
+    const keys = [...KEYS, 'MAIN_LLM_FREQUENCY_PENALTY', 'MAIN_LLM_PRESENCE_PENALTY'];
+    const values = {
+      ...ENV_VALUES,
+      MAIN_LLM_FREQUENCY_PENALTY: '0.3',
+      MAIN_LLM_PRESENCE_PENALTY: '0.2'
+    };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const inputs = wrapper.findAll('[data-test="model-penalty-input"]');
+    expect(inputs).toHaveLength(2);
+    for (const input of inputs) {
+      expect(input.attributes('type')).toBe('number');
+      expect(input.attributes('min')).toBe('-2');
+      expect(input.attributes('max')).toBe('2');
+      expect(input.attributes('step')).toBe('0.1');
+    }
+    expect((inputs[0]!.element as HTMLInputElement).value).toBe('0.3');
+    expect((inputs[1]!.element as HTMLInputElement).value).toBe('0.2');
+    wrapper.unmount();
+  });
+
+  it('clamps a typed penalty into [-2, 2] and rounds on change', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_FREQUENCY_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_FREQUENCY_PENALTY: '0.3' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const input = wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_FREQUENCY_PENALTY"]');
+    await input.setValue('5');
+    expect((input.element as HTMLInputElement).value).toBe('2');
+
+    await input.setValue('-9');
+    expect((input.element as HTMLInputElement).value).toBe('-2');
+
+    await input.setValue('0.333');
+    await input.trigger('change');
+    expect((input.element as HTMLInputElement).value).toBe('0.33');
+    wrapper.unmount();
+  });
+
+  it('blocks e/E/+ keystrokes so only a decimal number can be entered', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_PRESENCE_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_PRESENCE_PENALTY: '' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const input = wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_PRESENCE_PENALTY"]')
+      .element as HTMLInputElement;
+    for (const key of ['e', 'E', '+', 'a']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+    for (const key of ['5', '.', '-', 'Backspace']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      input.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    wrapper.unmount();
+  });
+
+  it('sends an empty penalty as "use the global default" on apply', async () => {
+    const keys = ['MAIN_LLM_NAME', 'MAIN_LLM_FREQUENCY_PENALTY'];
+    const values = { MAIN_LLM_NAME: 'glm-5.3-flash', MAIN_LLM_FREQUENCY_PENALTY: '0.3' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    await wrapper.get('[data-test="model-penalty-input"][data-key="MAIN_LLM_FREQUENCY_PENALTY"]').setValue('');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect(payload.params.MAIN_LLM_FREQUENCY_PENALTY).toBe('');
+    wrapper.unmount();
+  });
+
+  it('labels the token budgets and opens a four-language category help', async () => {
+    const keys = [...KEYS, 'MAIN_LLM_MAX_OUTPUT_TOKEN'];
+    const values = { ...ENV_VALUES, MAIN_LLM_MAX_OUTPUT_TOKEN: '' };
+    makeStore([{ id: 'p1', label: 'm', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    expect(wrapper.find('span[title="MAIN_LLM_MAX_TOKEN"]').text()).toContain('上下文窗口');
+    expect(wrapper.find('span[title="MAIN_LLM_MAX_OUTPUT_TOKEN"]').text()).toContain('最大输出窗口');
+
+    const help = wrapper.get('[data-test="model-group-help"]');
+    expect(wrapper.find('[data-test="model-group-help-text"]').exists()).toBe(false);
+    await help.trigger('click');
+    expect(wrapper.get('[data-test="model-group-help-text"]').text()).toContain('主对话模型');
     wrapper.unmount();
   });
 });

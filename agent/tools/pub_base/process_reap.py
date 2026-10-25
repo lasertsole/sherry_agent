@@ -20,8 +20,11 @@ uninterruptible case is the reason the second wait is bounded too.
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import subprocess
 import threading
+import time
 from types import TracebackType
 from typing import Any, Literal, Protocol
 
@@ -31,7 +34,9 @@ __all__ = [
     "DEFAULT_GRACE_SECONDS",
     "DEFAULT_KILL_GRACE_SECONDS",
     "ProcessWatchdog",
+    "akill_process_tree",
     "areap_process",
+    "kill_process_tree",
     "reap_process",
 ]
 
@@ -132,6 +137,171 @@ async def areap_process(
         "process did not exit after SIGKILL; abandoning handle (pid={})",
         getattr(proc, "pid", "?"),
     )
+    return "abandoned"
+
+
+def _reap_direct(proc: Any, budget: float) -> None:
+    """Reap the direct child so its zombie cannot keep the group "alive"."""
+    wait = getattr(proc, "wait", None)
+    if wait is None:
+        return
+    try:
+        wait(timeout=max(0.0, budget))
+    except Exception:  # noqa: BLE001, S110 - timeout / already reaped
+        pass
+
+
+def _group_alive(pgid: int) -> bool:
+    """Whether a POSIX process group still has at least one member."""
+    if os.name == "nt":
+        return False
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+async def _areap_direct(proc: Any, budget: float) -> None:
+    wait = getattr(proc, "wait", None)
+    if wait is None:
+        return
+    try:
+        await asyncio.wait_for(wait(), timeout=max(0.0, budget))
+    except (TimeoutError, asyncio.CancelledError):
+        pass
+    except Exception:  # noqa: BLE001, S110 - already reaped
+        pass
+
+
+def _wait_group_gone(pgid: int, budget: float) -> bool:
+    deadline = time.monotonic() + max(0.0, budget)
+    while time.monotonic() < deadline:
+        if not _group_alive(pgid):
+            return True
+        time.sleep(0.05)
+    return not _group_alive(pgid)
+
+
+def _kill_windows_tree(proc: Any, timeout: float) -> ReapOutcome:
+    """``taskkill /T /F`` is the only reliable tree kill on Windows."""
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+        return "exited"
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        return "killed"
+    except Exception:  # noqa: BLE001 - fall back to the direct handle
+        return reap_process(proc)
+
+
+def kill_process_tree(
+    proc: _SyncProcess,
+    *,
+    pgid: int | None = None,
+    grace: float = DEFAULT_GRACE_SECONDS,
+    kill_grace: float = DEFAULT_KILL_GRACE_SECONDS,
+) -> ReapOutcome:
+    """Terminate/kill ``proc`` AND its process group, bounded at every step.
+
+    ``pgid`` is the group recorded at spawn time (with ``start_new_session=True``
+    it is the child PID). Never signals our own group: a child that was not
+    isolated is cleaned up with the direct-only :func:`reap_process` instead.
+    """
+    if os.name == "nt":
+        return _kill_windows_tree(proc, grace + kill_grace)
+    target = pgid if pgid is not None else getattr(proc, "pid", None)
+    if not target:
+        return reap_process(proc)
+    try:
+        own = os.getpgid(0)
+    except OSError:
+        own = -1
+    if target == own:
+        return reap_process(proc)
+
+    _close_streams(proc)
+    try:
+        os.killpg(target, signal.SIGTERM)
+    except ProcessLookupError:
+        return "exited"
+    except OSError:
+        return reap_process(proc)
+    _reap_direct(proc, grace)
+    if _wait_group_gone(target, grace):
+        return "terminated"
+
+    try:
+        os.killpg(target, signal.SIGKILL)
+    except ProcessLookupError:
+        return "terminated"
+    except OSError:
+        return reap_process(proc)
+    _reap_direct(proc, kill_grace)
+    if _wait_group_gone(target, kill_grace):
+        return "killed"
+    logger.warning("process group {} did not exit after SIGKILL; abandoning", target)
+    return "abandoned"
+
+
+async def akill_process_tree(
+    proc: Any,
+    *,
+    pgid: int | None = None,
+    grace: float = DEFAULT_GRACE_SECONDS,
+    kill_grace: float = DEFAULT_KILL_GRACE_SECONDS,
+) -> ReapOutcome:
+    """Async counterpart of :func:`kill_process_tree` (asyncio subprocess)."""
+    if os.name == "nt":
+        return await asyncio.to_thread(_kill_windows_tree, proc, grace + kill_grace)
+    target = pgid if pgid is not None else getattr(proc, "pid", None)
+    if not target:
+        return await areap_process(proc)
+    try:
+        own = os.getpgid(0)
+    except OSError:
+        own = -1
+    if target == own:
+        return await areap_process(proc)
+
+    _close_streams(proc)
+    try:
+        os.killpg(target, signal.SIGTERM)
+    except ProcessLookupError:
+        return "exited"
+    except OSError:
+        return await areap_process(proc)
+    await _areap_direct(proc, grace)
+    deadline = time.monotonic() + max(0.0, grace)
+    while time.monotonic() < deadline:
+        if not _group_alive(target):
+            return "terminated"
+        await asyncio.sleep(0.05)
+    if not _group_alive(target):
+        return "terminated"
+
+    try:
+        os.killpg(target, signal.SIGKILL)
+    except ProcessLookupError:
+        return "terminated"
+    except OSError:
+        return await areap_process(proc)
+    await _areap_direct(proc, kill_grace)
+    deadline = time.monotonic() + max(0.0, kill_grace)
+    while time.monotonic() < deadline:
+        if not _group_alive(target):
+            return "killed"
+        await asyncio.sleep(0.05)
+    if not _group_alive(target):
+        return "killed"
+    logger.warning("process group {} did not exit after SIGKILL; abandoning", target)
     return "abandoned"
 
 

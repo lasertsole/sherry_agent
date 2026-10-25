@@ -72,6 +72,72 @@ export async function clearSession(sessionId: string): Promise<void> {
   }
 }
 
+/** Server-created side chat (child of one main session). */
+export interface CreatedSideChat {
+  sessionId: string;
+  parentSessionId: string;
+  /** Whether the child carries a parent transcript snapshot. */
+  inherited: boolean;
+}
+
+/**
+ * Create a side-chat session and its parent link.
+ *
+ * The server forks the parent's checkpoint transcript for model-only
+ * inheritance; the UI history still starts empty.
+ * @param parentSessionId The main session the selection came from.
+ */
+export async function createSideChat(parentSessionId: string): Promise<CreatedSideChat> {
+  const res = await fetchApiPayload<{
+    success?: boolean;
+    session_id?: string;
+    parent_session_id?: string;
+    inherited?: boolean;
+  }>({
+    url: '/sessions/side_chat',
+    method: 'post',
+    opts: { parent_session_id: parentSessionId }
+  });
+  if (!res.session_id) throw new Error('side chat creation returned no session_id');
+  return {
+    sessionId: res.session_id,
+    parentSessionId: res.parent_session_id ?? parentSessionId,
+    inherited: res.inherited === true
+  };
+}
+
+/**
+ * List the side-chat children of one parent (used to clear their local caches
+ * when the parent is deleted).
+ * @param parentSessionId Parent session id.
+ * @returns Child session ids (empty on an unreachable server).
+ */
+export async function listSideChatChildren(parentSessionId: string): Promise<string[]> {
+  const res = await fetchApiPayload<{ children?: string[] }>({
+    url: `/sessions/side_chat?parent_session_id=${encodeURIComponent(parentSessionId)}`,
+    method: 'get'
+  });
+  return Array.isArray(res.children) ? res.children : [];
+}
+
+/**
+ * Explicitly purge one side chat on the server. Closing the right-sidebar tab
+ * does NOT call this; it exists for an explicit discard and is kept separate
+ * from the parent-deletion cascade (which the server runs itself).
+ * @param sessionId Child session id.
+ * @param parentSessionId Parent session id (guards against deleting a normal session).
+ */
+export async function deleteSideChat(sessionId: string, parentSessionId?: string): Promise<void> {
+  await fetchApi({
+    url: '/sessions/side_chat',
+    method: 'delete',
+    opts: {
+      session_id: sessionId,
+      ...(parentSessionId ? { parent_session_id: parentSessionId } : {})
+    }
+  });
+}
+
 /**
  * Fetch the list of sub-agent runs spawned under a session (background tasks).
  *
@@ -389,7 +455,11 @@ export interface ContextUsage {
   messages: number;
   /** Session-wide cached-prompt share (cached / prompt tokens), null when unknown. */
   cache_hit_ratio: number | null;
-  /** Pressure at which summarization compacts the session (share of the window). */
+  /** Configured main-model output cap, null when unset. */
+  max_output: number | null;
+  /** Absolute token line at which summarization compacts. */
+  compress_tokens: number;
+  /** compress_tokens / window (kept for clients that only know the ratio). */
   compress_ratio: number;
 }
 
@@ -412,6 +482,8 @@ export async function fetchContextUsage(sessionId: string): Promise<ContextUsage
     tools: Number(res.tools ?? 0),
     messages: Number(res.messages ?? 0),
     cache_hit_ratio: typeof res.cache_hit_ratio === 'number' ? res.cache_hit_ratio : null,
+    max_output: typeof res.max_output === 'number' ? res.max_output : null,
+    compress_tokens: Number(res.compress_tokens ?? 0),
     compress_ratio: Number(res.compress_ratio ?? 0)
   };
 }
@@ -709,6 +781,8 @@ export interface SessionModelProfile {
   base_url?: string;
   /** Gateway credential; absent = keep the env one. */
   api_key?: string;
+  /** The model's context window (decimal string); absent = the env window. */
+  context_window?: string;
 }
 
 /** A stored override as returned by the backend (credential masked). */

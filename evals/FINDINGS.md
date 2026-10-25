@@ -13,7 +13,8 @@ Rules for entries:
   still travel with any number we quote;
 - a HARNESS problem is fixed in the suite, never filed against the model: the
   split between "the model failed" and "the harness failed" is the whole point
-  of the two suites (`coding_capability` = self-designed, `swebench` = external).
+  of the external suites (`coding_capability` = self-designed; `swebench`,
+  `deepswe`, `terminal_bench`, `agentbench`, `toolbench` = external).
 
 | # | Finding | Found by | Status |
 | --- | --- | --- | --- |
@@ -50,7 +51,7 @@ in the report (`model.thinking_enabled`).
 
 **Status.** TODO (product). The harness side is already handled: provider
 failures are classified `invalid_run`, retried once in a fresh session and
-excluded from the pass rate (plan §4.4).
+excluded from the pass rate (the invalid-run rule).
 
 ## F2 — The orchestrator steering fights a coding task (config)
 
@@ -216,11 +217,10 @@ commands run **unsandboxed**; the evidence ledger marks those runs
 `sandboxed: false`.
 
 **Evidence.** The `isolation` block of every eval report ("commands run
-UNSANDBOXED here…"), and the plan's §3.2 requirement for a one-shot container.
+UNSANDBOXED here…"), and the measurement protocol's one-shot-container requirement.
 
 **Improvement.** Run the suites in a container/VM when one is available. Until
 then the limitation travels with the numbers: task repositories are throwaway
-directories and the prompts are ours, but the mitigation the plan asks for is
-not met.
+directories and the prompts are ours, but that mitigation is absent.
 
 **Status.** WONTFIX-ENV (documented, not silent).

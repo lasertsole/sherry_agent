@@ -48,15 +48,21 @@ __all__ = [
 #: ``TavilySearch`` whose name is pinned to ``web_search``). ``tavily_search`` is
 #: kept listed because it is the name that tool carried before the rename: tool
 #: results persisted in older transcripts still replay through the fence, and a
-#: deployment that pins an older build keeps its protection.
-UNTRUSTED_TOOL_NAMES: frozenset[str] = frozenset({"web_search", "tavily_search", "message_search"})
+#: deployment that pins an older build keeps its protection. ``browser`` is the
+#: merged agent-browser tool; every verb returns text the visited page authored,
+#: so it is exact-listed here (the legacy ``browser_*`` names stay prefix-fenced).
+UNTRUSTED_TOOL_NAMES: frozenset[str] = frozenset(
+    {"web_search", "tavily_search", "message_search", "browser"}
+)
 
 #: Prefix rule for tool families that are attacker-facing by construction. ``mcp_``
 #: covers servers this process does not own (no MCP tool ships with the repository
 #: today — the rule exists so a server added later is covered without a code change
-#: here). ``browser_`` covers the agent-controllable browser: every verb returns
-#: text the visited page authored (``browser_snapshot`` most of all), which is the
-#: same channel ``web_search`` fetches through.
+#: here). ``browser_`` covers the legacy per-verb browser names; the merged
+#: ``browser`` tool is listed in :data:`UNTRUSTED_TOOL_NAMES` exactly (a prefix
+#: would be broader than the family). Every browser verb returns text the visited
+#: page authored (snapshot most of all), the same channel ``web_search`` fetches
+#: through.
 UNTRUSTED_TOOL_PREFIXES: tuple[str, ...] = ("mcp_", "browser_")
 
 #: The delimiter tag. Underscores keep it a valid XML-ish tag while leaving room

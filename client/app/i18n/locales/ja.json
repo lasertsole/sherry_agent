@@ -27,7 +27,14 @@
     "sendNow": "今すぐ",
     "editQueued": "待機中のメッセージを編集",
     "cancelQueued": "待機中のメッセージを取り消す",
-    "waitingApproval": "承認待ち..."
+    "waitingApproval": "承認待ち...",
+    "voiceRecord": "音声入力",
+    "voiceStop": "録音を停止",
+    "voiceUnavailable": "音声認識モデルが未設定です。先にモデル設定で STT モデルを配置してください",
+    "voicePermissionDenied": "マイクの権限が拒否されました",
+    "voiceTooShort": "録音が短すぎます。もう一度お話しください",
+    "voiceWarming": "音声認識モデルを初回ロード中です。しばらくしてから再試行してください",
+    "voiceFailed": "音声認識に失敗しました。もう一度お試しください"
   },
   "sessionModelPicker": {
     "pending": "次のターンで反映",
@@ -43,6 +50,9 @@
     "defaultUserName": "わたし",
     "imageLoadFailed": "画像の読み込みに失敗しました",
     "modelMeta": "入力 {input} · 出力 {output} tokens",
+    "modelRetryScheduled": "モデルを再試行中 · {attempt}/{max} 回目 · {reason} · {delay} 秒後",
+    "modelRetrySucceeded": "モデルは {count} 回の再試行後に成功しました",
+    "modelRetryExhausted": "モデルは {max} 回の再試行後も失敗しました",
     "userInputMeta": "≈ {n} トークン",
     "contextTip": "エージェントのコンテキスト全体を表示（システム プロンプト / ツール / メッセージ）",
     "scrollBottom": "最下部へ戻る",
@@ -55,9 +65,17 @@
     "toolNoOutput": "出力なし",
     "toolResult": "実行結果",
     "toolRunning": "実行中…",
+    "turnHistoryTools": "実行したツール: {n}",
+    "turnHistoryThinking": "思考プロセス",
+    "turnHistoryWork": "実行プロセス",
+    "turnHistoryExpand": "実行履歴を展開",
+    "turnHistoryCollapse": "実行履歴を折りたたむ",
     "removeImage": "画像を削除",
     "removeAudio": "音声を削除",
-    "removeVideo": "動画を削除"
+    "removeVideo": "動画を削除",
+    "diffNewFile": "新規ファイル",
+    "codeWrap": "折り返し",
+    "codeZoom": "拡大"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",
@@ -67,6 +85,19 @@
     "originProjectDir": "作業ディレクトリ",
     "originGitHead": "Git ブランチ切替",
     "originSystem": "システム メッセージ",
+    "selection": {
+      "addToChat": "現在のセッションに追加",
+      "askInSideChat": "補助セッションで質問",
+      "limitWarning": "1回の引用は最大8,000文字まで",
+      "quoteTooltip": "選択テキストの引用（引用ブロックとして送信）",
+      "sourceUser": "ユーザーメッセージ",
+      "sourceAi": "アシスタントの返信",
+      "sourceTool": "ツール出力",
+      "sideChatTitle": "補助セッション",
+      "sideChatMissing": "補助セッションを利用できません",
+      "sideChatFailed": "補助セッションの作成に失敗しました",
+      "sideChatInherited": "メインセッションのコンテキストを継承しました（完全な fork、モデルのみ表示）"
+    },
     "tokenGuard": {
       "title": "モデル設定が最小値未満",
       "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → モデル設定で修正してください。"
@@ -455,12 +486,36 @@
       "localFiles": "ファイル",
       "maxModels": "1グループにつき最大 {max} モデル",
       "requiredMissing": "プロバイダーとモデル API 名は必須です",
+      "frequencyPenalty": "頻度ペナルティ",
+      "presencePenalty": "存在ペナルティ",
+      "penaltyHint": "範囲 -2.0 ~ 2.0。空欄はグローバル既定値",
+      "penaltyRange": "-2.0 ~ 2.0 の数値を入力してください",
+      "maxContextLabel": "コンテキストウィンドウ (MAX_TOKEN)",
+      "maxOutputLabel": "最大出力ウィンドウ (MAX_OUTPUT_TOKEN)",
+      "groupHelpLabel": "{group} の用途と利用シーンを表示",
+      "modelHelp": {
+        "main": "メインチャットモデル：会話、ツール呼び出し、タスク計画、最終回答を担当。ツール使用が安定し、長いコンテキストを持つ最強の汎用モデル向け。",
+        "auxiliary": "補助モデル：JSON 生成、判定、計画抽出などの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
+        "taskflow": "TaskFlow 意思決定モデル：計画、再計画、ステップ判定、完了チェック（temperature 0）に使用。JSON を安定して守るモデル向け。",
+        "compression": "圧縮モデル：長い会話の要約を担当します。長コンテキストで低コストなモデル向け。",
+        "reasoner": "推論モデル：複雑な分析、数学・論理推論、難問解決に使用。日常会話はメインモデルのままでよい。",
+        "ittt": "画像→テキストモデル：画像を読み取りテキスト化。スクリーンショット理解、OCR、視覚 Q&A に使用。",
+        "vttt": "動画→テキストモデル：動画内容を抽出・説明。動画要約やシーン理解に使用。",
+        "tti": "テキスト→画像モデル：プロンプトから画像を生成。イラスト、ビジュアル草案、素材作成に使用。",
+        "reranker": "リランカーモデル：検索結果を関連度で並べ替え。RAG/検索品質の向上に使用。",
+        "embedding": "埋め込みモデル：テキストをベクトル化し、記憶・知識検索に使用。セマンティック検索と RAG 向け。",
+        "stt": "音声→テキストモデル：音声を文字起こし。音声入力、会議・録音の文字起こしに使用。"
+      },
       "test": "接続テスト",
       "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
       "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
       "testOk": "接続 OK（{ms} ms）",
       "testFailed": "接続失敗（{ms} ms）",
-      "testRequestFailed": "リクエスト失敗: バックエンドが応答しません"
+      "testRequestFailed": "リクエスト失敗: バックエンドが応答しません",
+      "groupTaskflow": "TaskFlow 決定モデル",
+      "groupCompression": "圧縮モデル",
+      "followsAuxiliary": "Provider と API Base が空のため、このグループは補助モデル（AUXILIARY_LLM_*）に従います。",
+      "compressionScope": "LLM 要約に使用します。メモリレビューはメインモデル、計画抽出は補助モデルを使用します。"
     },
     "memory": {
       "addEntry": "項目を追加",
@@ -503,11 +558,14 @@
     "contextViewer": "エージェント コンテキスト",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
+    "sideChat": "補助セッション",
     "scopes": {
       "session": "現在のセッション",
       "global": "グローバル"
     },
-    "scopeEmpty": "このグループにタブはありません"
+    "scopeEmpty": "このグループにタブはありません",
+    "recentClosed": "最近閉じたタブ",
+    "recentClosedEmpty": "最近閉じたタブはありません"
   },
   "progressFloat": {
     "status": {
@@ -524,15 +582,11 @@
     },
     "collapse": "計画の進捗を隠す",
     "counts": "{done}/{total}",
-    "current": "進行中",
-    "cyclic": "循環依存",
+    "doneSummary": "{done} / {total} 完了",
     "empty": "実行中のタスクはありません",
     "expand": "計画の進捗を表示",
-    "needsClosing": "クローズ待ち",
     "notStarted": "未着手",
-    "summary": "計画 {done}/{total}",
-    "waveLabel": "第 {index} ウェーブ",
-    "waveSummary": "ウェーブ {current}/{total}"
+    "summary": "計画 {done}/{total}"
   },
   "projectFiles": {
     "title": "ファイルツリー",
@@ -554,7 +608,13 @@
     "copied": "コピーしました",
     "copyFailed": "コピーに失敗しました",
     "revealFailed": "ファイルマネージャーを開けませんでした",
-    "openInBrowserFailed": "ブラウザーでファイルを開けませんでした"
+    "openInBrowserFailed": "ブラウザーでファイルを開けませんでした",
+    "viewerPdfPage": "{n} / {total} ページ",
+    "viewerPdfPrev": "前のページ",
+    "viewerPdfNext": "次のページ",
+    "viewerPdfFit": "幅に合わせる",
+    "viewerPdfTooMany": "{n} ページを超えているため、先頭の {n} ページのみ表示します",
+    "viewerDocxFailed": "docx の解析に失敗しました。ファイルが壊れている可能性があります"
   },
   "gitGraph": {
     "title": "Git Graph",

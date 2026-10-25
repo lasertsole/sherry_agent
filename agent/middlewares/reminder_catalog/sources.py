@@ -21,6 +21,7 @@ from workspace.prompt_builder import (
     _build_knowledge_block,
     _build_plan_mode_block,
     _build_project_dir_block,
+    _build_project_instructions_block,
     _build_taskflow_block,
     _build_todo_block,
 )
@@ -105,6 +106,16 @@ def register_default_sources() -> None:
             builder=_as_builder(_build_project_dir_block),
             budget_chars=500,
             priority=60,
+            only_if_changed=True,
+        )
+    )
+    register(
+        ReminderSource(
+            source_id="project_instructions",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=_as_builder(_build_project_instructions_block),
+            budget_chars=8000,
+            priority=62,
             only_if_changed=True,
         )
     )

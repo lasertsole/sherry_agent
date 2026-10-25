@@ -174,6 +174,26 @@ class TestPublicBuilder:
         assert seen["client"] == "init_chat_model"
         assert seen["kwargs"]["model"] == "kimi-k2"
 
+    def test_context_window_override_sets_profile_max_input_tokens(self, monkeypatch):
+        seen: dict = {}
+
+        class _RecordingClient:
+            def __init__(self, **kwargs):
+                seen["kwargs"] = kwargs
+
+        class _FakeNormalizer:
+            def __init__(self, inner):
+                self.inner = inner
+
+        monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
+
+        main_llm_module.build_main_llm_for_profile(
+            provider="deepseek", model="small-model", context_window=32768
+        )
+
+        assert seen["kwargs"]["profile"]["max_input_tokens"] == 32768
+
     def test_thinking_budget_is_inflated_in_the_built_config(self, monkeypatch):
         """glm-* goes through ReasoningChatOpenAI, so spy on both client paths."""
         seen: dict = {}

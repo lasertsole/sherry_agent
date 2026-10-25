@@ -1,6 +1,6 @@
 """Tests for the ``facts`` target of ``MemoryStore`` (the third memory file).
 
-FACTS.md holds broad, module-independent pitfalls and conventions. It uses the
+FACTS.md holds SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; it is always the one global file. It uses the
 same machinery as MEMORY.md / USER.md (single file, ``§``-delimited entries,
 per-file char cap, atomic rename writes, frozen prompt snapshot) with one
 FACTS-specific rule: an over-limit ``add`` rolls the oldest entries off instead
@@ -37,7 +37,7 @@ def _read(mem_dir, name: str) -> str:
 
 
 def test_path_for_facts(tmp_memory_dir):
-    assert MemoryStore._path_for("facts") == tmp_memory_dir / "FACTS.md"
+    assert MemoryStore()._path_for("facts") == tmp_memory_dir / "FACTS.md"
 
 
 def test_facts_add_replace_remove_roundtrip(tmp_memory_dir):

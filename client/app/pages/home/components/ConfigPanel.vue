@@ -201,7 +201,8 @@
                   :group="group.name"
                   :keys="group.entries.map(e => e.key)"
                   :values="groupValues[group.name] ?? {}"
-                  :group-title="group.name"
+                  :group-title="groupTitle(group.name)"
+                  :download-group="downloadGroupFor(group.name)"
                   @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
                   v-else
@@ -371,6 +372,24 @@ const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
 const setBackground = chatBackgroundStore.setBackground;
 
 const { t } = useI18n({ useScope: 'local' });
+
+/** Localized headings for the two optional internal model families. */
+const GROUP_TITLE_KEYS: Record<string, string> = {
+  TASKFLOW_LLM: 'config.llm.groupTaskflow',
+  COMPRESSION_LLM: 'config.llm.groupCompression'
+};
+const groupTitle = (name: string): string => (GROUP_TITLE_KEYS[name] ? t(GROUP_TITLE_KEYS[name]!) : name);
+
+/**
+ * Local-model prefetch family behind a group's built-in local entry. The two
+ * internal families reuse the auxiliary GGUF (no second download), so their
+ * download box reports / downloads the auxiliary family.
+ */
+const LOCAL_DOWNLOAD_GROUP: Record<string, string> = {
+  TASKFLOW_LLM: 'AUXILIARY_LLM',
+  COMPRESSION_LLM: 'AUXILIARY_LLM'
+};
+const downloadGroupFor = (name: string): string => LOCAL_DOWNLOAD_GROUP[name] ?? name;
 
 const emits = defineEmits<{ saved: [] }>();
 
@@ -1185,6 +1204,26 @@ onBeforeUnmount(onHide);
         "localUnused": "本地模式不使用",
         "maxModels": "每个分组最多 {max} 个模型",
         "requiredMissing": "提供商与模型 API 名为必填项",
+        "frequencyPenalty": "频率惩罚（frequency_penalty）",
+        "presencePenalty": "存在惩罚（presence_penalty）",
+        "penaltyHint": "范围 -2.0 ~ 2.0；留空使用全局默认",
+        "penaltyRange": "请输入 -2.0 ~ 2.0 之间的数字",
+        "maxContextLabel": "上下文窗口（MAX_TOKEN）",
+        "maxOutputLabel": "最大输出窗口（MAX_OUTPUT_TOKEN）",
+        "groupHelpLabel": "查看 {group} 的用途与适用场景",
+        "modelHelp": {
+          "main": "主对话模型：负责日常对话、工具调用、任务规划和最终回答。适合作为能力最强、工具调用可靠、上下文较长的默认模型。",
+          "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
+          "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
+          "compression": "压缩模型：为长会话生成摘要并整理记忆。适合长上下文、低成本模型。",
+          "reasoner": "推理模型：用于复杂分析、数学/逻辑推理和难题求解。日常对话可继续使用主模型。",
+          "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
+          "vttt": "视频生文模型：提取并描述视频内容。用于视频摘要和画面理解。",
+          "tti": "文生图模型：根据提示词生成图片。用于插画、配图和视觉草稿。",
+          "reranker": "重排序模型：按相关性重新排序检索结果。用于提升 RAG/搜索质量。",
+          "embedding": "向量模型：把文本转成向量，供记忆和知识库检索。用于语义搜索与 RAG。",
+          "stt": "语音转文字模型：转写音频内容。用于语音输入、会议和录音转写。"
+        },
         "test": "测试连通性",
         "testHint": "用当前填写的参数试调一次，不写入 .env",
         "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
@@ -1495,6 +1534,26 @@ onBeforeUnmount(onHide);
         "localUnused": "Unused in local mode",
         "maxModels": "Up to {max} models per group",
         "requiredMissing": "Provider and model API name are required",
+        "frequencyPenalty": "Frequency penalty",
+        "presencePenalty": "Presence penalty",
+        "penaltyHint": "Range -2.0 to 2.0; leave empty for the global default",
+        "penaltyRange": "Enter a number between -2.0 and 2.0",
+        "maxContextLabel": "Context window (MAX_TOKEN)",
+        "maxOutputLabel": "Max output window (MAX_OUTPUT_TOKEN)",
+        "groupHelpLabel": "Show what {group} is for and when to use it",
+        "modelHelp": {
+          "main": "Main chat model — drives conversation, tool calls, task planning, and the final answer. Best for your strongest general model with reliable tool use and a long context.",
+          "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
+          "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
+          "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
+          "reasoner": "Reasoner model — deep analysis, math/logic reasoning, and complex problem solving. Best for hard tasks; everyday chat can stay on the main model.",
+          "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
+          "vttt": "Video-to-text model — extracts and describes video content. Use for video summaries and scene understanding.",
+          "tti": "Text-to-image model — generates images from prompts. Use for illustrations, visual drafts, and assets.",
+          "reranker": "Reranker — reorders retrieved results by relevance. Use to improve RAG/search quality.",
+          "embedding": "Embedding model — converts text to vectors for memory and knowledge retrieval. Use for semantic search and RAG.",
+          "stt": "Speech-to-text model — transcribes audio. Use for voice input and meeting/recording transcripts."
+        },
         "test": "Test connection",
         "testHint": "Probe once with the parameters on screen — nothing is written to .env",
         "testUnsupported": "This group needs an image / audio payload, so it cannot be probed",
@@ -1805,6 +1864,26 @@ onBeforeUnmount(onHide);
         "localUnused": "ローカルでは未使用",
         "maxModels": "1グループにつき最大 {max} モデル",
         "requiredMissing": "プロバイダーとモデル API 名は必須です",
+        "frequencyPenalty": "頻度ペナルティ",
+        "presencePenalty": "存在ペナルティ",
+        "penaltyHint": "範囲 -2.0 ~ 2.0。空欄はグローバル既定値",
+        "penaltyRange": "-2.0 ~ 2.0 の数値を入力してください",
+        "maxContextLabel": "コンテキストウィンドウ (MAX_TOKEN)",
+        "maxOutputLabel": "最大出力ウィンドウ (MAX_OUTPUT_TOKEN)",
+        "groupHelpLabel": "{group} の用途と利用シーンを表示",
+        "modelHelp": {
+          "main": "メインチャットモデル：会話、ツール呼び出し、タスク計画、最終回答を担当。ツール使用が安定し、長いコンテキストを持つ最強の汎用モデル向け。",
+          "auxiliary": "補助モデル：JSON 生成、判定、計画抽出などの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
+          "taskflow": "TaskFlow 意思決定モデル：計画、再計画、ステップ判定、完了チェック（temperature 0）に使用。JSON を安定して守るモデル向け。",
+          "compression": "圧縮モデル：長い会話の要約とメモリ整理を担当。長コンテキストで低コストなモデル向け。",
+          "reasoner": "推論モデル：複雑な分析、数学・論理推論、難問解決に使用。日常会話はメインモデルのままでよい。",
+          "ittt": "画像→テキストモデル：画像を読み取りテキスト化。スクリーンショット理解、OCR、視覚 Q&A に使用。",
+          "vttt": "動画→テキストモデル：動画内容を抽出・説明。動画要約やシーン理解に使用。",
+          "tti": "テキスト→画像モデル：プロンプトから画像を生成。イラスト、ビジュアル草案、素材作成に使用。",
+          "reranker": "リランカーモデル：検索結果を関連度で並べ替え。RAG/検索品質の向上に使用。",
+          "embedding": "埋め込みモデル：テキストをベクトル化し、記憶・知識検索に使用。セマンティック検索と RAG 向け。",
+          "stt": "音声→テキストモデル：音声を文字起こし。音声入力、会議・録音の文字起こしに使用。"
+        },
         "test": "接続テスト",
         "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
         "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
@@ -2115,6 +2194,26 @@ onBeforeUnmount(onHide);
         "localUnused": "로컬 모드에서 미사용",
         "maxModels": "그룹당 최대 {max}개 모델",
         "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
+        "frequencyPenalty": "빈도 페널티",
+        "presencePenalty": "존재 페널티",
+        "penaltyHint": "범위 -2.0 ~ 2.0; 비우면 전역 기본값",
+        "penaltyRange": "-2.0 ~ 2.0 사이의 숫자를 입력하세요",
+        "maxContextLabel": "컨텍스트 창 (MAX_TOKEN)",
+        "maxOutputLabel": "최대 출력 창 (MAX_OUTPUT_TOKEN)",
+        "groupHelpLabel": "{group}의 용도와 사용 사례 보기",
+        "modelHelp": {
+          "main": "메인 채팅 모델 — 대화, 도구 호출, 작업 계획, 최종 답변을 담당합니다. 도구 사용이 안정적이고 긴 컨텍스트를 가진 가장 강한 범용 모델에 적합합니다.",
+          "auxiliary": "보조 모델 — JSON 생성, 판정, 계획 추출 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
+          "taskflow": "TaskFlow 의사결정 모델 — 계획, 재계획, 단계 판정, 마무리 검사(temperature 0)에 사용합니다. JSON을 안정적으로 따르는 모델에 적합합니다.",
+          "compression": "압축 모델 — 긴 대화 요약과 메모리 정리를 담당합니다. 긴 컨텍스트와 낮은 비용의 모델에 적합합니다.",
+          "reasoner": "추론 모델 — 복잡한 분석, 수학/논리 추론, 어려운 문제 해결에 사용합니다. 일상 대화는 메인 모델을 그대로 사용해도 됩니다.",
+          "ittt": "이미지→텍스트 모델 — 이미지를 읽어 텍스트로 변환합니다. 스크린샷 이해, OCR, 시각 Q&A에 사용합니다.",
+          "vttt": "비디오→텍스트 모델 — 비디오 내용을 추출·설명합니다. 비디오 요약과 장면 이해에 사용합니다.",
+          "tti": "텍스트→이미지 모델 — 프롬프트로 이미지를 생성합니다. 일러스트, 시각 초안, 소재 제작에 사용합니다.",
+          "reranker": "리랭커 모델 — 검색 결과를 관련도 순으로 재정렬합니다. RAG/검색 품질 향상에 사용합니다.",
+          "embedding": "임베딩 모델 — 텍스트를 벡터로 변환해 기억과 지식 검색에 사용합니다. 의미 검색과 RAG에 적합합니다.",
+          "stt": "음성→텍스트 모델 — 오디오를 전사합니다. 음성 입력, 회의/녹음 전사에 사용합니다."
+        },
         "test": "연결 테스트",
         "testHint": "화면의 파라미터로 한 번 호출합니다(.env에 쓰지 않습니다)",
         "testUnsupported": "이 그룹은 이미지 / 오디오 입력이 필요해 연결 테스트를 할 수 없습니다",

@@ -266,6 +266,11 @@ import type { SessionRecord } from '../type.ts';
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
+import { useRightSidebarStore } from '@/stores/right-sidebar';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { discardSideChatSession } from '~/composables/use-side-chat';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { listSideChatChildren } from '~/composables/bridge/session';
 
 const { t } = useI18n();
 
@@ -532,13 +537,46 @@ const handleDeleteSession = async (id: string) => {
   if (deletingSessionIds.value.has(id)) return;
   deletingSessionIds.value.add(id);
   try {
+    // Side chats survive their panels, so collect every child of this parent
+    // (closed ones included) before the server cascade removes the links.
+    const sideChatChildren = new Set<string>();
+    try {
+      for (const childSid of await listSideChatChildren(id)) {
+        sideChatChildren.add(childSid);
+      }
+    } catch (error) {
+      logUtil.w('[handleDeleteSession] side-chat child lookup failed:', error);
+    }
+    const rightSidebar = useRightSidebarStore();
+    for (const tab of rightSidebar.tabs) {
+      if (tab.kind !== 'sideChat' || tab.payload?.parentSessionId !== id) continue;
+      if (tab.payload?.sessionId) sideChatChildren.add(tab.payload.sessionId);
+    }
+
     const ok = await clearSession(id);
     if (!ok) {
       logUtil.w('[handleDeleteSession] Failed to delete session, keeping list item:', id);
       return;
     }
-    historyList.value = historyList.value.filter(s => s.id !== id);
-    selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id);
+    // The server cascaded the parent deletion into its side chats; drop their
+    // local caches and close their open tabs (the server data is already gone).
+    for (const childSid of sideChatChildren) {
+      try {
+        await discardSideChatSession(childSid, id, { serverAlreadyPurged: true });
+      } catch (error) {
+        logUtil.w('[handleDeleteSession] side-chat cache cleanup failed:', error);
+      }
+      emit(SESSION_ABORT_STREAM_EVENT, childSid);
+      rightSidebar.forgetSession(childSid);
+      for (const tab of rightSidebar.tabs) {
+        if (tab.kind === 'sideChat' && tab.payload?.sessionId === childSid) {
+          rightSidebar.closeTab(tab.id);
+        }
+      }
+    }
+    rightSidebar.forgetSession(id);
+    historyList.value = historyList.value.filter(s => s.id !== id && !sideChatChildren.has(s.id));
+    selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id && !sideChatChildren.has(sid));
     // Synchronously clear this session's character snapshot cache
     clearCachedCharacter(id);
     // …and its persona preset binding
@@ -550,7 +588,7 @@ const handleDeleteSession = async (id: string) => {
     // This session may still be streaming (especially inactive sessions, their [sid].vue still KeepAlive cached and stream not aborted).
     // Broadcast abort event, let corresponding [sid].vue instance abort its AbortController, avoid stream still pushing chunks in background after deletion, contaminating chat state.
     emit(SESSION_ABORT_STREAM_EVENT, id);
-    if (currentSessionId.value === id) {
+    if (currentSessionId.value === id || (currentSessionId.value && sideChatChildren.has(currentSessionId.value))) {
       currentSessionId.value = undefined;
       router.push(localePath('/home'));
     }
@@ -621,6 +659,9 @@ const doBatchDeleteSessions = async () => {
 
     const deleted = ids.filter(id => !remain.includes(id));
     if (deleted.length > 0) {
+      // A destroyed session's recent-tabs history dies with it.
+      const rightSidebar = useRightSidebarStore();
+      for (const id of deleted) rightSidebar.forgetSession(id);
       historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
       // Synchronously clear deleted sessions' character snapshot cache
       for (const id of deleted) clearCachedCharacter(id);

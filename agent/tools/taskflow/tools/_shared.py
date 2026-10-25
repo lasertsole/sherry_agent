@@ -17,6 +17,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from loguru import logger
+
 from config.features import TASKFLOW_INFRA
 from ..config import TERMINAL_STATUSES, StepStatus
 from ..registry import store_sqlite
@@ -37,6 +39,46 @@ def result_hash(child_session_key: str, result: str) -> str:
     """Fingerprint a (child_session_key, result) pair for resume idempotency."""
     payload = f"{child_session_key}\x1f{result}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+async def bind_flow_todo(
+    session_id: str,
+    flow_id: str,
+    content: str,
+    *,
+    category: str = "quick",
+) -> None:
+    """Create the flow-level GC root for a newly created flow.
+
+    The todo links ``flow_id`` WITHOUT ``step_id``: it represents the whole
+    flow, so it stays active until the flow is terminal. Linking the first step
+    would let an early step's completion release the root while later steps are
+    still running. The insert is a single append, not a full replacement.
+    """
+    from agent.tools.todolist.service import TodoService  # lazy: cross-tool import
+
+    await TodoService.add_todo(
+        session_id,
+        content=content,
+        flow_id=flow_id,
+        category=category,
+    )
+
+
+async def compensate_flow_without_todo(flow: dict, reason: str = "todo_bind_failed") -> None:
+    """Best-effort failure for a flow whose GC root could not be created.
+
+    Fail-open: if the compensating write also fails, the tri-color sweep sees a
+    flow with no active reference and collects it after the grace window.
+    """
+    try:
+        await store_sqlite.fail_flow_for_gc(flow, reason=reason)
+    except Exception as exc:  # noqa: BLE001 - the sweep is the backstop
+        logger.warning(
+            "TaskFlow '{}' created without a todo and could not be failed: {}",
+            flow.get("flow_id"),
+            exc,
+        )
 
 
 def default_state(
@@ -97,6 +139,7 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "input_bindings",  # upstream structured fields bound as inputs
     "retry_policy",  # existing: failure retry policy
     "skills",  # skill names whose SKILL.md is prepended at dispatch (see _skill_prepend)
+    "file_deps",  # project-relative files this step's verification depends on
 )
 
 
@@ -227,6 +270,29 @@ def mark_step_done(steps: list[dict], child_session_key: str) -> str | None:
             step["status"] = str(StepStatus.DONE)
             return step.get("step_id")
     return None
+
+
+def detached_child_keys(steps: list[dict]) -> list[str]:
+    """Child keys still attached to unresolved steps, in step order.
+
+    Used when a flow is forced terminal: those children may still be running,
+    so the flow RECORDS them as detached instead of killing them.
+    """
+    keys: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step_status(step) in (
+            StepStatus.DONE.value,
+            StepStatus.FAILED.value,
+            StepStatus.SKIPPED.value,
+            StepStatus.CANCELLED.value,
+        ):
+            continue
+        key = str(step.get("child_session_key") or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
 
 
 def unlock_dependents(steps: list[dict]) -> list[str]:
@@ -519,6 +585,13 @@ def validate_steps_list(steps: list) -> str | None:
                 return f"Error: step '{step_id}' has an invalid depends_on entry"
             if dep.strip() == step_id:
                 return f"Error: step '{step_id}' cannot depend on itself"
+        if "file_deps" in step:
+            file_deps = step["file_deps"]
+            if not isinstance(file_deps, list):
+                return f"Error: step '{step_id}' file_deps must be a list"
+            for dep in file_deps:
+                if not isinstance(dep, str) or not dep.strip():
+                    return f"Error: step '{step_id}' has an invalid file_deps entry"
     for step in steps:
         step_id = str(step["step_id"]).strip()
         for dep in step.get("depends_on") or []:

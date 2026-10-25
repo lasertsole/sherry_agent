@@ -4,14 +4,16 @@ The live views (todo list, TaskFlow board, plan mode, boulder, continuity,
 working directory, knowledge index) moved OUT of the cached system prompt into
 ``<system-reminder>`` messages injected once per turn. Pinned here: the
 delivery (turn-first call only), the per-source cooldown, the change check, the
-total budget (lowest priority dropped first), the tag escaping and the
-consumer-facing metadata contract.
+total budget (lowest priority dropped first), the message ordering (reminders
+before the user message, high priority last inside the block), the tag escaping
+and the consumer-facing metadata contract.
 """
 
 from __future__ import annotations
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from agent.middlewares.reminder_catalog import (
     DynamicReminderMiddleware,
@@ -162,8 +164,17 @@ class TestRegistration:
             "boulder_status",
             "continuity_context",
             "project_dir_notice",
+            "project_instructions",
             "knowledge_index",
         } <= set(_isolated_catalog["real"])
+
+    def test_the_project_instructions_source_is_change_gated(self, _isolated_catalog):
+        source = _isolated_catalog["real"]["project_instructions"]
+
+        assert source.priority == 62, "between continuity (65) and the dir notice (60)"
+        assert source.budget_chars == 8_000
+        assert source.only_if_changed is True
+        assert source.channel is ReminderChannel.CURRENT_TURN
 
     def test_an_unconsumed_channel_is_refused(self):
         with pytest.raises(ValueError, match="no consumer yet"):
@@ -215,10 +226,19 @@ class TestMiddleware:
         out = await mw.abefore_model({**state, "alpha_text": "A", "beta_text": "B"})
 
         assert out is not None
-        origins = [m.metadata["origin"] for m in out["messages"]]
-        assert origins == ["alpha", "beta"], "priority order"
-        assert all(m.metadata["provenance"] == "reminder_catalog" for m in out["messages"])
-        assert out["messages"][0].content.startswith('<system-reminder source="alpha">')
+        messages = out["messages"]
+        # Whole-list rewrite: the reducer only appends, and the reminders must
+        # land BEFORE the user's message.
+        assert isinstance(messages[0], RemoveMessage)
+        assert messages[0].id == REMOVE_ALL_MESSAGES
+
+        delivered = messages[1:]
+        assert delivered[-1].content == "hi", "the user's input stays last"
+        reminders = delivered[:-1]
+        origins = [m.metadata["origin"] for m in reminders]
+        assert origins == ["beta", "alpha"], "low priority first, high priority last in the block"
+        assert all(m.metadata["provenance"] == "reminder_catalog" for m in reminders)
+        assert reminders[-1].content.startswith('<system-reminder source="alpha">')
 
     @pytest.mark.asyncio
     async def test_a_mid_turn_call_injects_nothing(self):
@@ -245,6 +265,40 @@ class TestMiddleware:
         )
 
         assert await mw.abefore_model(state) is None, "the user message is no longer last"
+
+    @pytest.mark.asyncio
+    async def test_a_resumed_turn_does_not_reinject_the_reminder_block(self):
+        """The block sits BEFORE the user, so a crash-resume must detect it."""
+        mw = DynamicReminderMiddleware()
+        state = self._state(
+            HumanMessage(
+                content='<system-reminder source="x">…</system-reminder>',
+                metadata=system_reminder_metadata("x"),
+            ),
+            HumanMessage(content="hi"),
+        )
+
+        assert await mw.abefore_model({**state, "alpha_text": "A"}) is None, (
+            "this turn's block is already present"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_new_turn_after_an_assistant_reply_injects_again(self):
+        mw = DynamicReminderMiddleware()
+        state = self._state(
+            HumanMessage(
+                content='<system-reminder source="x">…</system-reminder>',
+                metadata=system_reminder_metadata("x"),
+            ),
+            HumanMessage(content="first"),
+            AIMessage(content="answer"),
+            HumanMessage(content="second"),
+        )
+
+        out = await mw.abefore_model({**state, "alpha_text": "A"})
+
+        assert out is not None
+        assert out["messages"][-1].content == "second"
 
     @pytest.mark.asyncio
     async def test_no_session_id_injects_nothing(self):

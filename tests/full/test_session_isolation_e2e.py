@@ -58,7 +58,7 @@ import pytest
 from loguru import logger
 
 from agent.middlewares.summarization.core import _get_taskflow_context_sync
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.todolist.knowledge import build_knowledge_tools
 from agent.tools.todolist.knowledge import knowledge_store as knowledge_store_mod
 from agent.tools.todolist.knowledge import ownership as ownership_mod
@@ -82,7 +82,7 @@ def _new_sid(tag: str) -> str:
 
 
 def _flow_tool(name: str):
-    return {t.name: t for t in build_taskflow_tools()}[name]
+    return {t.name: t for t in build_legacy_taskflow_tools()}[name]
 
 
 def _knowledge_tool():
@@ -136,6 +136,16 @@ def flow_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(flow_store, "_init_loop", None)
     monkeypatch.setattr(flow_store, "_init_lock", asyncio.Lock())
     monkeypatch.setattr(flow_store, "_sync_tables_ready", False)
+
+    # taskflow_create binds a flow-level todo as its GC root; isolate the todo
+    # store too or this e2e would write into the repository's real todos.db.
+    todos_dir = tmp_path / "todos"
+    monkeypatch.setattr(todo_store, "_DB_DIR", todos_dir)
+    monkeypatch.setattr(todo_store, "_DB_PATH", todos_dir / "todos.db")
+    monkeypatch.setattr(todo_store, "_initialized", False)
+    monkeypatch.setattr(todo_store, "_init_loop", None)
+    monkeypatch.setattr(todo_store, "_init_lock", asyncio.Lock())
+    monkeypatch.setattr(todo_store, "_sync_tables_ready", False)
     return db_dir
 
 
@@ -454,7 +464,13 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
         "todoread",
         "knowledge",
     }
-    assert {"taskflow_summary", "todowrite", "knowledge"} <= planners
+    assert {
+        "taskflow_flow",
+        "taskflow_step",
+        "taskflow_inspect",
+        "todowrite",
+        "knowledge",
+    } <= planners
 
     captured: list[list[str]] = []
     real_policy = spawn_core.apply_tool_policy

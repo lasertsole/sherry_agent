@@ -7,10 +7,10 @@
  * sanitization), so it cannot be used to verify real browser (WebView2/Chromium) security
  * behavior. The project's other test suites remain on happy-dom, unaffected.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { createVNode } from 'vue';
 import type { ComponentPublicInstance, DirectiveBinding, VNode } from 'vue';
-import { vSafeHtml, safeMarkdownHtml } from '../safeHtml';
+import { vSafeHtml, safeMarkdownHtml, safeHtmlOnly } from '../safeHtml';
 
 /**
  * Constructs a minimal usable DirectiveBinding (for tests)
@@ -159,6 +159,14 @@ describe('vSafeHtml 指令', () => {
     expect(el.innerHTML).not.toContain('first');
   });
 
+  it('updated 相同值不重写 DOM（虚拟列表滚动不再闪动）', () => {
+    const el = document.createElement('div');
+    vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);
+    const strong = el.querySelector('strong');
+    vSafeHtml.updated!(el, makeBinding('**bold**'), vnode, vnode);
+    expect(el.querySelector('strong')).toBe(strong);
+  });
+
   it('updated 传入空值时清空内容', () => {
     const el = document.createElement('div');
     vSafeHtml.mounted!(el, makeBinding('**bold**'), vnode, null);
@@ -171,5 +179,108 @@ describe('vSafeHtml 指令', () => {
     vSafeHtml.mounted!(el, makeBinding('<script>alert(1)</script>hi'), vnode, null);
     expect(el.querySelector('script')).toBeNull();
     expect(el.textContent).toContain('hi');
+  });
+});
+
+describe('safeHtmlOnly / v-safe-html.fragment — the HTML-direct path (docx)', () => {
+  const makeFragmentBinding = (value: string | null | undefined): DirectiveBinding<string | null | undefined> => ({
+    instance: {} as ComponentPublicInstance,
+    value,
+    oldValue: null,
+    arg: undefined,
+    modifiers: { fragment: true },
+    dir: vSafeHtml
+  });
+
+  it('passes mammoth-shaped HTML through WITHOUT the markdown pass re-arranging blocks', () => {
+    const html = '<p><strong>bold</strong></p><table><tr><td>cell</td></tr></table>';
+    const out = safeHtmlOnly(html);
+    expect(out).toContain('<table>');
+    expect(out).toContain('<td>cell</td>');
+    expect(out).toContain('<strong>bold</strong>');
+  });
+
+  it('keeps embedded data:-URI images (DOMPurify allows data: on img by default)', () => {
+    const html = '<p><img src="data:image/png;base64,iVBORw0KGgo=" alt="inline"></p>';
+    const out = safeHtmlOnly(html);
+    expect(out).toContain('data:image/png;base64,iVBORw0KGgo=');
+    expect(out).toContain('alt="inline"');
+  });
+
+  it('strips script injection from a docx-shaped payload', () => {
+    const html = '<p>safe</p><script>alert(1)</script><img src="x" onerror="alert(2)">';
+    const out = safeHtmlOnly(html);
+    expect(out).not.toContain('<script');
+    expect(out).not.toContain('onerror');
+    expect(out).toContain('safe');
+  });
+
+  it('the .fragment modifier routes the directive through safeHtmlOnly', () => {
+    const el = document.createElement('div');
+    const html = '<table><tr><td>t</td></tr></table>';
+    // markdown-it would wrap/mangle a bare <table> fragment; the fragment path
+    // must leave the structure intact.
+    vSafeHtml.mounted!(el, makeFragmentBinding(html), vnode, null as never);
+    expect(el.querySelector('table')).not.toBeNull();
+    expect(el.querySelector('td')?.textContent).toBe('t');
+  });
+
+  it('the default (modifier-less) path still renders markdown', () => {
+    const el = document.createElement('div');
+    vSafeHtml.mounted!(el, makeBinding('# Title'), vnode, null as never);
+    expect(el.querySelector('h1')?.textContent).toBe('Title');
+  });
+
+  it('fail-safe: an exception sanitizing yields an empty string', () => {
+    expect(safeHtmlOnly(null)).toBe('');
+    expect(safeHtmlOnly(undefined)).toBe('');
+  });
+});
+
+describe('styleValueAllowed — 作用域信任（Shiki/KaTeX/Mermaid 根内样式）', () => {
+  const shikiPre = document.createElement('pre');
+  shikiPre.className = 'shiki';
+  const spanInRoot = document.createElement('span');
+  shikiPre.appendChild(spanInRoot);
+  document.body.appendChild(shikiPre);
+  afterAll(() => shikiPre.remove());
+
+  it('信任根内的 color 存活（经完整 sanitize 链）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><span style="color:#c678dd">const</span></pre>');
+    expect(out).toContain('color:#c678dd');
+  });
+
+  it('信任根内 url() 无条件被剔，同串兄弟声明保留（逐声明过滤）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><span style="color:#fff;background:url(evil)">x</span></pre>');
+    expect(out).not.toContain('url(evil)');
+    expect(out).toContain('color:#fff');
+  });
+
+  it('根外的 color 仍被剔、text-align 现状回归', () => {
+    const out = safeHtmlOnly('<span style="color:#123456">x</span><span style="text-align:center">y</span>');
+    expect(out).not.toContain('color:#123456');
+    expect(out).toContain('text-align:center');
+  });
+
+  it('--shiki-dark 自定义属性在根内存活，--x:url 被剔', () => {
+    const out = safeHtmlOnly(
+      '<pre class="shiki"><span style="--shiki-dark:#abc">x</span><span style="--x:url(evil)">y</span></pre>'
+    );
+    expect(out).toContain('--shiki-dark:#abc');
+    expect(out).not.toContain('url(evil)');
+  });
+
+  it('根内 <script> 一如既往被剥（作用域不豁免标签门）', () => {
+    const out = safeHtmlOnly('<pre class="shiki"><script>alert(1)</script><span style="color:#111">x</span></pre>');
+    expect(out).not.toContain('<script');
+    expect(out).toContain('color:#111');
+  });
+
+  it('mermaid/katex 根同享信任', () => {
+    const out = safeHtmlOnly(
+      '<figure class="mermaid-figure"><span style="color:#123456">x</span></figure><span class="katex"><span style="height:0.8em">y</span></span>'
+    );
+    expect(out).toContain('color:#123456');
+    expect(out).toContain('height:0.8em');
   });
 });

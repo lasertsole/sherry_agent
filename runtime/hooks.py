@@ -67,6 +67,14 @@ Hook contracts (registration sites must provide these signatures; the
     agent-side producers (Summarization's compaction, the subagent lifecycle)
     call it instead of importing the server module. Missing hook -> the event
     is dropped (no ledger in this process, e.g. a bare unit test).
+
+``GET_CURRENT_TURN_ID`` (``"get_current_turn_id"``)
+    ``() -> str``: the active conversation turn's uuid (the
+    ``current_turn_id`` contextvar set by ``turn_scope``). The message store
+    reads it while persisting a batch and stamps the rows, so
+    ``messages.turn_id`` joins the trajectory ledger without ``context_engine``
+    importing ``server``. Missing hook or no active scope -> ``""`` (a legacy /
+    non-server message row).
 """
 
 from __future__ import annotations
@@ -79,6 +87,7 @@ __all__ = [
     "BROWSER_MANAGER",
     "BUILD_BACKGROUND_AGENT_TOOLS",
     "BUILD_REJECT_MESSAGE",
+    "GET_CURRENT_TURN_ID",
     "MAYBE_TRIGGER_AUTO_TURN",
     "RECORD_TRAJECTORY_EVENT",
     "SCAN_SKILL",
@@ -90,6 +99,7 @@ __all__ = [
 ]
 
 RECORD_TRAJECTORY_EVENT = "record_trajectory_event"
+GET_CURRENT_TURN_ID = "get_current_turn_id"
 MAYBE_TRIGGER_AUTO_TURN = "maybe_trigger_auto_turn"
 AUTO_TURN_MODULE = "auto_turn_module"
 WS_ACTIVE_TASKS = "ws_active_tasks"

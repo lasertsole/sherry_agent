@@ -37,7 +37,7 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store."""
 
-    def format_for_system_prompt(self, target: str):
+    def format_for_system_prompt(self, target: str, session_id: str | None = None):
         return "MEMORY-LIVE" if target == "memory" else None
 
 

@@ -61,6 +61,42 @@ _SCHEMA: tuple[str, ...] = (
         error TEXT
     )
     """,
+    # Parallel edge tables (SHERRY-PATCH). ``call_edges`` is left untouched so an
+    # older index keeps working; each new table is created on first open.
+    """
+    CREATE TABLE IF NOT EXISTS import_edges (
+        id INTEGER PRIMARY KEY,
+        importer_id INTEGER NOT NULL,   -- 0 = module scope
+        imported_name TEXT NOT NULL,
+        imported_id INTEGER,
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        resolved INTEGER DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS inherit_edges (
+        id INTEGER PRIMARY KEY,
+        child_id INTEGER NOT NULL,
+        parent_name TEXT NOT NULL,
+        parent_id INTEGER,
+        inherit_type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        resolved INTEGER DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS mixin_edges (
+        id INTEGER PRIMARY KEY,
+        host_id INTEGER NOT NULL,
+        mixin_name TEXT NOT NULL,
+        mixin_id INTEGER,
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        resolved INTEGER DEFAULT 0
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)",
     "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path)",
     "CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)",
@@ -68,6 +104,15 @@ _SCHEMA: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_edges_callee ON call_edges(callee_id)",
     "CREATE INDEX IF NOT EXISTS idx_edges_callee_name ON call_edges(callee_name)",
     "CREATE INDEX IF NOT EXISTS idx_edges_resolved ON call_edges(resolved)",
+    "CREATE INDEX IF NOT EXISTS idx_imports_importer ON import_edges(importer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_imports_imported ON import_edges(imported_id)",
+    "CREATE INDEX IF NOT EXISTS idx_imports_name ON import_edges(imported_name)",
+    "CREATE INDEX IF NOT EXISTS idx_inherits_child ON inherit_edges(child_id)",
+    "CREATE INDEX IF NOT EXISTS idx_inherits_parent ON inherit_edges(parent_id)",
+    "CREATE INDEX IF NOT EXISTS idx_inherits_name ON inherit_edges(parent_name)",
+    "CREATE INDEX IF NOT EXISTS idx_mixins_host ON mixin_edges(host_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mixins_mixin ON mixin_edges(mixin_id)",
+    "CREATE INDEX IF NOT EXISTS idx_mixins_name ON mixin_edges(mixin_name)",
 )
 
 _KIND_PRIORITY_SQL = (
@@ -86,6 +131,9 @@ class IndexResult:
     resolved_edges: int = 0
     total_symbols: int = 0
     total_calls: int = 0
+    total_imports: int = 0
+    total_inherits: int = 0
+    total_mixins: int = 0
     truncated: bool = False
     elapsed_s: float = 0.0
     errors: list[str] = field(default_factory=list)
@@ -208,11 +256,19 @@ class CodeIndexer:
                 result.deleted_files = len(removed)
 
             if result.changed:
-                result.resolved_edges = self._resolve_call_edges(conn)
+                result.resolved_edges = (
+                    self._resolve_call_edges(conn)
+                    + self._resolve_import_edges(conn)
+                    + self._resolve_inherit_edges(conn)
+                    + self._resolve_mixin_edges(conn)
+                )
                 conn.commit()
 
             result.total_symbols = self._count(conn, "symbols")
             result.total_calls = self._count(conn, "call_edges")
+            result.total_imports = self._count(conn, "import_edges")
+            result.total_inherits = self._count(conn, "inherit_edges")
+            result.total_mixins = self._count(conn, "mixin_edges")
         except Exception as exc:  # noqa: BLE001 - index build must never crash a tool call
             logger.warning("code_intel: index_directory failed for {}: {}", root, exc)
             result.errors.append(str(exc))
@@ -263,6 +319,9 @@ class CodeIndexer:
         error: str | None = None
         symbols: list[SymbolDef] = []
         calls: list[CallSite] = []
+        imports: list = []
+        inherits: list = []
+        mixins: list = []
         lines: list[str] = []
 
         if size > max_bytes:
@@ -272,7 +331,12 @@ class CodeIndexer:
                 data = path.read_bytes()
                 lines = data.decode("utf-8", errors="replace").splitlines()
                 extraction = extract_symbols(data, language)
-                symbols, calls, error = extraction.symbols, extraction.calls, extraction.error
+                symbols = extraction.symbols
+                calls = extraction.calls
+                imports = extraction.imports
+                inherits = extraction.inherits
+                mixins = extraction.mixins
+                error = extraction.error
             except Exception as exc:  # noqa: BLE001 - a bad file must not fail the batch
                 error = f"index failed: {exc}"
 
@@ -317,6 +381,37 @@ class CodeIndexer:
                     (id_by_index[call.caller_index], call.callee_name, rel, call.line),
                 )
 
+        # Module-scope imports have importer_index=-1 → id 0 (see the schema).
+        for imp in imports:
+            importer_id = (
+                id_by_index[imp.importer_index] if 0 <= imp.importer_index < len(id_by_index) else 0
+            )
+            conn.execute(
+                "INSERT INTO import_edges(importer_id, imported_name, imported_id, file_path, "
+                "line, resolved) VALUES (?, ?, NULL, ?, ?, 0)",
+                (importer_id, imp.imported_name, rel, imp.line),
+            )
+        for inherit in inherits:
+            if 0 <= inherit.child_index < len(id_by_index):
+                conn.execute(
+                    "INSERT INTO inherit_edges(child_id, parent_name, parent_id, inherit_type, "
+                    "file_path, line, resolved) VALUES (?, ?, NULL, ?, ?, ?, 0)",
+                    (
+                        id_by_index[inherit.child_index],
+                        inherit.parent_name,
+                        inherit.inherit_type,
+                        rel,
+                        inherit.line,
+                    ),
+                )
+        for mixin in mixins:
+            if 0 <= mixin.host_index < len(id_by_index):
+                conn.execute(
+                    "INSERT INTO mixin_edges(host_id, mixin_name, mixin_id, file_path, line, "
+                    "resolved) VALUES (?, ?, NULL, ?, ?, 0)",
+                    (id_by_index[mixin.host_index], mixin.mixin_name, rel, mixin.line),
+                )
+
         self._write_meta(conn, rel, mtime, size, language, len(symbols), None)
         result.indexed_files += 1
 
@@ -354,6 +449,28 @@ class CodeIndexer:
                     old_ids,
                 )
                 conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+            # The parallel edge tables key their rows by the owning file, so a
+            # file replacement removes its own rows and detaches inbound ones.
+            conn.execute("DELETE FROM import_edges WHERE file_path = ?", (rel,))
+            conn.execute("DELETE FROM inherit_edges WHERE file_path = ?", (rel,))
+            conn.execute("DELETE FROM mixin_edges WHERE file_path = ?", (rel,))
+            if old_ids:
+                placeholders = ",".join("?" * len(old_ids))
+                conn.execute(
+                    f"UPDATE import_edges SET imported_id = NULL, resolved = 0 "
+                    f"WHERE imported_id IN ({placeholders})",
+                    old_ids,
+                )
+                conn.execute(
+                    f"UPDATE inherit_edges SET parent_id = NULL, resolved = 0 "
+                    f"WHERE parent_id IN ({placeholders})",
+                    old_ids,
+                )
+                conn.execute(
+                    f"UPDATE mixin_edges SET mixin_id = NULL, resolved = 0 "
+                    f"WHERE mixin_id IN ({placeholders})",
+                    old_ids,
+                )
             conn.execute("DELETE FROM index_meta WHERE file_path = ?", (rel,))
 
     def _resolve_call_edges(self, conn: sqlite3.Connection) -> int:
@@ -379,6 +496,130 @@ class CodeIndexer:
             )
             resolved += len(edge_ids)
         return resolved
+
+    def _resolve_import_edges(self, conn: sqlite3.Connection) -> int:
+        """Second pass: resolve an imported name/module path to a symbol id."""
+        rows = conn.execute(
+            "SELECT id, imported_name, file_path FROM import_edges WHERE resolved = 0"
+        ).fetchall()
+        return self._resolve_named_edges(
+            conn,
+            rows,
+            table="import_edges",
+            target_column="imported_id",
+            name_column="imported_name",
+        )
+
+    def _resolve_inherit_edges(self, conn: sqlite3.Connection) -> int:
+        """Second pass: resolve an inheritance parent name to a symbol id."""
+        rows = conn.execute(
+            "SELECT id, parent_name, file_path FROM inherit_edges WHERE resolved = 0"
+        ).fetchall()
+        return self._resolve_named_edges(
+            conn,
+            rows,
+            table="inherit_edges",
+            target_column="parent_id",
+            name_column="parent_name",
+        )
+
+    def _resolve_mixin_edges(self, conn: sqlite3.Connection) -> int:
+        """Second pass: resolve a mixin/trait/interface name to a symbol id."""
+        rows = conn.execute(
+            "SELECT id, mixin_name, file_path FROM mixin_edges WHERE resolved = 0"
+        ).fetchall()
+        return self._resolve_named_edges(
+            conn,
+            rows,
+            table="mixin_edges",
+            target_column="mixin_id",
+            name_column="mixin_name",
+        )
+
+    def _resolve_named_edges(
+        self,
+        conn: sqlite3.Connection,
+        rows: list[sqlite3.Row],
+        *,
+        table: str,
+        target_column: str,
+        name_column: str,
+    ) -> int:
+        """Shared resolver for the three named-edge tables (no SQL interpolation of names)."""
+        if not rows:
+            return 0
+        grouped: dict[tuple[str, str], list[int]] = {}
+        for row in rows:
+            grouped.setdefault((row[name_column], row["file_path"]), []).append(int(row["id"]))
+
+        resolved = 0
+        for (name, file_path), edge_ids in grouped.items():
+            target = self._match_symbol_named(conn, name, file_path)
+            if target is None:
+                continue
+            placeholders = ",".join("?" * len(edge_ids))
+            conn.execute(
+                f"UPDATE {table} SET {target_column} = ?, resolved = 1 "  # noqa: S608 - fixed identifiers
+                f"WHERE id IN ({placeholders})",
+                [target, *edge_ids],
+            )
+            resolved += len(edge_ids)
+        return resolved
+
+    def _match_symbol_named(
+        self, conn: sqlite3.Connection, name: str, file_path: str
+    ) -> int | None:
+        """Resolve a raw path/name within the SAME language, falling back to its last segment.
+
+        The call-graph resolver deliberately keeps its original cross-language
+        order (C2); these three additive tables prefer the file's own language so
+        a TypeScript ``Base`` never links to a Python ``Base``.
+        """
+        target = self._match_named_in_language(conn, name, file_path)
+        if target is not None:
+            return target
+        if "/" in name or "::" in name or "." in name:
+            from .extract import clean_type_name
+
+            cleaned = clean_type_name(name)
+            if cleaned and cleaned != name:
+                return self._match_named_in_language(conn, cleaned, file_path)
+        return None
+
+    def _match_named_in_language(
+        self, conn: sqlite3.Connection, name: str, file_path: str
+    ) -> int | None:
+        language = self._config["code_intel_language_map"].get(
+            Path(file_path).suffix.lower(), "unknown"
+        )
+        candidates = conn.execute(
+            "SELECT id, file_path FROM symbols WHERE name = ? AND language = ? LIMIT 500",
+            (name, language),
+        ).fetchall()
+        if candidates:
+            for row in candidates:
+                if row["file_path"] == file_path:
+                    return int(row["id"])
+            directory = os.path.dirname(file_path)
+            prefix = f"{directory}/" if directory else ""
+            if prefix:
+                for row in candidates:
+                    if row["file_path"].startswith(prefix):
+                        return int(row["id"])
+            return int(candidates[0]["id"])
+
+        local = conn.execute(
+            "SELECT id, name FROM symbols WHERE file_path = ? AND language = ?",
+            (file_path, language),
+        ).fetchall()
+        best_id: int | None = None
+        best_distance = 3
+        for row in local:
+            distance = levenshtein(name.lower(), row["name"].lower())
+            if distance < best_distance:
+                best_distance = distance
+                best_id = int(row["id"])
+        return best_id if best_distance <= 2 else None
 
     @staticmethod
     def _match_symbol(conn: sqlite3.Connection, name: str, file_path: str) -> int | None:

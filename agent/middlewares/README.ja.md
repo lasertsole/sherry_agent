@@ -238,7 +238,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 通知は注入キャリアの役割である `HumanMessage` で、`metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` を伴う（ブランチ通知の origin は `git_head`）。永続化層はその origin を人間行に保持するため、チャットはユーザーの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ** / **Git ブランチ**、フォルダーとブランチのアイコン）として描画する — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は非 `user` origin を USER 行でも AI 行でも（AI 行は通知がまだ `AIMessage` だった旧形態）キャリアとして扱う。
 
-通知は役割としては人間メッセージだがユーザーが書いたものではないため、人間メッセージを走査するすべてのスキャナーは `pub.func.message.workspace_notice.is_workspace_notice` でこれを飛ばす: `split_into_turns`（通知はターン境界ではないので圧縮のターン予算に影響しない）、HITL の `_is_headless_turn`（末尾の通知でターンが無人になってはいけない）、そして要約 / メモリ フラッシュのシリアライザ（`[System notice]` / `system` とラベル付けし、`[User]` にはしない）。
+通知は役割としては人間メッセージだがユーザーが書いたものではないため、人間メッセージを走査するすべてのスキャナーは `pub.func.message.workspace_notice.is_workspace_notice` でこれを飛ばす: `split_into_turns`（通知はターン境界ではないので圧縮のターン予算に影響しない）、HITL の `_is_headless_turn`（末尾の通知でターンが無人になってはいけない）、そして要約のシリアライザ（`[System notice]` / `system` とラベル付けし、`[User]` にはしない）。
 
 本来の `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
@@ -254,7 +254,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` は有効集合に合流されます（ツール タブでは該当行がロック表示）: 必須項目を欠いた新しいペイロードはすでにサービスが拒否しますが、ツールが必須になる前に書かれたレジスタ値でも外せないようにする第二のガードです。
 
-**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`docs/plan-mode/` を参照。
+**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`wiki/plan-mode/` を参照。
 
 未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
 
@@ -327,7 +327,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **無進捗とは停滞（stagnation、`is_stagnant`）のこと**：成功した冪等呼び出しは、**同一ツール**がそのターン内で既に同じ `result_hash` を返していた場合にのみ無進捗と判定されます。結果が変われば進捗です。**ピンポンペア**は隣接する 2 つの呼び出しのツール名をハッシュし、*連続する 2 つ*の呼び出しが両方とも無進捗である間だけ累積します。エラーが一度でも出たり、結果が変化（非停滞）したり、成功した非冪等（変異）呼び出しが一度でもあると、累積済みのすべてのペア連続記録がゼロに戻ります。冪等ツールの結果変化も同様に引数改変として数えられなくなり、非冪等ツールの成功は引数改変状態を完全にクリアします。
 - `ToolCallGuardrailConfig` の既定値：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1` — `hard_stop_enabled=True` にするとすべての _ブロック_ しきい値が HALT に変わり（旧来の厳格な壁）、`recovery_mode_enabled=False` にすると即時ブロックの挙動に戻ります。
 
-▶️ 詳細：[docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ 詳細：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -358,7 +358,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` の外に解決される値は、ハード拒否フロア（YOLO 拒否リスト / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`）に当たらない限り通します；
 - それ以外の外部パスはツール自身の `resolve_external_path()` HITL フローに委ねます——ミドルウェアは承認・引数書き換え・インタラプトのいずれも行いません。ツールは実行時に同じゲートを再実行するため、ここで介入すると決定が二重になります。
 
-拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[docs/sandbox/isolation/README.ja.md §5](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[wiki/sandbox/isolation/README.ja.md §5](../../wiki/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -389,7 +389,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/todo_continuation/core.py` · **クラス：** `PlanContinuationEnforcer(AgentMiddleware)`
 **フック：** `aafter_agent` のみ（非同期ターン終了フック）
 
-メインエージェントのリストで**最初**に登録されるため、`after_agent` は**最後**に実行されます — `after_agent` フックはリスト逆順に走り、enforcer は本当に終わったターンを観測する必要があるためです。ゲートの対象は**計画全体**です。セッションの todo リスト（`pending` / `in_progress`）**と**未終了の TaskFlow フロー（`ready` / `blocked` / `dispatched` のステップ、および全ステップが決着したのに未クローズのフロー）——どちらかが残ればターンは続き、残りのウェーブ/ステップと収束に必要なボード呼び出しを指示に明記します。注入はサーバー側の自動ターンフック（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`、呼び出し時に解決。未登録なら no-op に劣化しセッションは再試行可能なまま）を通じて fire-and-forget で行います。
+メインエージェントのリストで**最初**に登録されるため、`after_agent` は**最後**に実行されます — `after_agent` フックはリスト逆順に走り、enforcer は本当に終わったターンを観測する必要があるためです。ゲートの対象は**計画全体**です。セッションの todo リスト（`pending` / `in_progress`）**と**未終了の TaskFlow フロー（`ready` / `blocked` / `dispatched` のステップ、および全ステップが決着したのに未クローズのフロー）——どちらかが残ればターンは続き、残りのステップと収束に必要なボード呼び出しを指示に明記します。注入はサーバー側の自動ターンフック（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`、呼び出し時に解決。未登録なら no-op に劣化しセッションは再試行可能なまま）を通じて fire-and-forget で行います。
 
 - 中断クラスのターンエラー（ユーザーキャンセル / タイムアウト、`stagnation_tracker.is_abort_error`）では決して継続しません。空または全完了のリストは停滞トラッカーをリセットします。
 - 停滞処理（`agent/tools/todolist/stagnation_tracker.py`）：複数回の試行後もリストが変わらない場合は復帰モードに入り `_RECOVERY_PROMPT` を注入します。`is_in_cooldown` が繰り返し注入を抑制し、配信成功後にのみ `mark_injected` で記録します。
@@ -405,7 +405,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `TaskIntentMiddleware` の直後に登録されます（そのターン内重複排除は、実行時にユーザーメッセージが最後のままである必要があります）。ターンの**最初のモデル呼び出し**で、**ライブビュー**を `<system-reminder source="…">` HumanMessage として注入します: プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引。システムプロンプト自体は安定した内容（persona + memory + スキル索引）だけを載せます——最初のトークンが毎ターン変わるプロンプトは、以降すべての prefix キャッシュを無効化します; 設定変更 / 圧縮でしか再構築されないプロンプトは、その間**古い** todo リストを見せ続けます。
 
 - **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
-- **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約 / memory_flush のラベル。
+- **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約のラベル。
 - **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
 - 他のオプション項目と同様に**スイッチで門控**され（`middleware_enabled`）、全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません。
 
@@ -435,7 +435,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. ハードライン / 危険コマンド検知（`detection.py`：`detect_hardline_command`、`detect_dangerous_command`、基盤は `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`）を `ApprovalPipeline.check_command`（`approval.py`）経由で実施。
 2. スマート承認（`ApprovalMode.SMART`、任意の `smart_approval_llm`）— 明らかに安全な呼び出しを自動承認。
 3. `interrupt()` — 既定の決定タイムアウトは 60 秒。
-4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [docs/sandbox/isolation/README.ja.md](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
+4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [wiki/sandbox/isolation/README.ja.md](../../wiki/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
 5. `wrap_tool_call` は承認が拒否またはタイムアウトした呼び出しの実行を拒否します（ターン単位のフラグは `before_agent` でリセット）。
 
 サブゲート（`gates.py` / `approval.py`）：`ApprovalPipeline`、`WriteApprovalGate`、`InterruptManager`、`MCPElicitationConsent`、`KanbanTriage`、`PairingStore`、`SlashConfirm`。状態は `state_register_mem` に `hitl:` 接頭辞キーで格納されます。
@@ -625,7 +625,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **プラン抽出の重複排除：** `_detect_todo_all_complete` は、全 todo が `completed`/`cancelled` で、かつプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）が最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と異なるときに発火します——完了済み todo のその場編集は再抽出し、変化のないプランはスキップし、失敗したパスは次の完了ターンで再試行します。手前のゲート：セッション単位の `Summarization → nudge` スイッチ、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、実行中のイベントループ。
 - **圧縮後の TODO 更新：** `compression_todo_update_enabled`（既定で有効）がオンで、かつ今回の圧縮が実際にメッセージを破棄した場合、非同期パスは専用 nudge エージェントを fire-and-forget で起動します（`_COMPRESSION_TODO_PROMPT`）。そのグラフは派生セッションキー（`<id>::compression-todo`。`IterationBudget` / `ToolGuardrails` の状態がメインセッションに触れることはありません）で動作し、ツールセットはメタデータ付き `todowrite` シム 1 つだけ（`todo_update: True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")` が許可）で、メインセッションに束縛されます。破棄された会話スライスに基づいて TODO リストを突き合わせ、実際に完了した項目を `completed` / `cancelled` に、根拠のある新規作業を `pending` として追加し、`todowrite` で**完全な**リストを書き戻します。圧縮をブロックすることも失敗させることもなく、セッション単位の `compression_todo_update_lock` が重複起動を防ぎ、同期パスはイベントループが動作している場合のみスケジュールします。
 
-▶️ 詳細：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ 詳細：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 > 予算ミドルウェアのクラス既定値 `max_iterations` は 50 です。_登録されている_ 値は 90（メイン）と 60（ワーカー）。本ドキュメントの旧版は予算 10 と主張していました — 誤りです。
 
@@ -1090,7 +1090,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避
-│   ├── memory_flush.py          # 圧縮前メモリフラッシュ
 │   ├── nudges.py                # 圧縮時 nudge のスケジューリング + プロンプト
 │   ├── plan_context.py          # プラン抽出 nudge のアクティブプラン検出
 │   └── summary_doc.py           # SummaryDoc スキーマ + 決定論的 Markdown レンダラー

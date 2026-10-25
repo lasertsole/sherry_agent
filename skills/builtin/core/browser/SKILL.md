@@ -13,16 +13,16 @@ The session's browser is a real Chromium page, shown in the right sidebar's
 moment** — your clicks and theirs land on the same tab. Treat it like a pair
 programming session: act in small, verifiable steps.
 
-The tool family: `browser_navigate` · `browser_snapshot` · `browser_click` ·
-`browser_type` · `browser_press` · `browser_scroll` · `browser_screenshot`
-(+ `browser_evaluate`, present only when the escape hatch is enabled).
+The tool family: `browser(action="navigate"|"snapshot"|"click"|"type"|"press"|"scroll"|"screenshot")`
+(+ `browser_evaluate`, a separate tool present only when the escape hatch is enabled).
 
 ## The loop that works: snapshot → act → verify
 
-1. `browser_navigate(url)` — opens the page (the first call creates it).
-2. `browser_snapshot()` — read the page: its text, plus interactive elements
+1. `browser(action="navigate", url=...)` — opens the page (the first call creates it).
+2. `browser(action="snapshot")` — read the page: its text, plus interactive elements
    numbered `[e1] [e2] …`. **This is how you see the page.**
-3. Act on a ref: `browser_click(ref="e5")`, `browser_type(text=…, ref="e3")`.
+3. Act on a ref: `browser(action="click", ref="e5")`,
+   `browser(action="type", text=…, ref="e3")`.
 4. After any page-changing action, snapshot again before deciding the next
    step — do not act twice on one snapshot.
 
@@ -33,16 +33,16 @@ The tool family: `browser_navigate` · `browser_snapshot` · `browser_click` ·
 - **Text beats screenshots.** The snapshot's text is the readable page content
   and its element list gives you the handles; screenshots cost far more tokens
   and are for layout/visual questions only ("does it overlap", "what does the
-  icon look like"). When you do need to look at one, `browser_screenshot()`
+  icon look like"). When you do need to look at one, `browser(action="screenshot")`
   returns the image ITSELF when the serving model reads images natively — look
   at it directly, never route that through a skill; when the result is the
   saved PNG path instead (a model without native vision), view it with the
   `image_to_text` skill (run its script via the `terminal` tool).
 - **Scroll, don't demand.** Long pages are truncated in the snapshot; scroll
-  (`browser_scroll(delta_y=600)`) and snapshot again rather than retrying with
-  a huge `max_elements`.
-- **Search boxes**: `browser_type(text="…", ref="e2", submit=True)` presses
-  Enter for you.
+  (`browser(action="scroll", delta_y=600)`) and snapshot again rather than
+  retrying with a huge `max_elements`.
+- **Search boxes**: `browser(action="type", text="…", ref="e2", submit=True)`
+  presses Enter for you.
 - **Forms**: type into refs in order, then click the submit ref and snapshot to
   confirm what happened (a validation error is a normal outcome).
 - **Cookies/login walls are the user's calls.** When a page demands credentials

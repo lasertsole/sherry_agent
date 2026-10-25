@@ -9,6 +9,7 @@
 Built with **Tauri 2 + Nuxt 4 (Vue 3 + TypeScript)**:
 
 - **Streaming chat** — agent responses stream over WebSockets (`/sessions/agent/ws`) with typed chunks (`text` / `reasoning` / `tool_start` / `tool_end` / `tool_result`) and HITL (human-in-the-loop) approval cards
+- **Collapsible turn history** — a settled turn with tool/reasoning work shows one execution summary plus the final answer; expanding it restores the tool cards, intermediate messages and reasoning
 - **Offline-first history** — Dexie.js (IndexedDB) caches conversation history, subagent run records, character profiles, and the chat background image; history requests are cache-first and fetch only missing turns
 - **Rich tooling UI** — skill manager, cron jobs, heartbeat editor, channel settings, log viewer (server + client logs), statistics charts, subagent flow graph, knowledge-graph viewer
 - **Dark/Light mode + i18n** — `@nuxtjs/color-mode` theming and 4 locales (`zh` / `en` / `ja` / `ko`)
@@ -91,6 +92,7 @@ client/
 │   ├── common/utils.ts            # Shared utilities (dayjs setup, formatCompactTimeString, ...)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # Chat input box component (i18n-aware)
+│   │   ├── chat/DiffPreview.vue   # Inline colored unified diff for patch_file / write_file results (tool card)
 │   │   └── ImagePreviewOverlay.vue# Full-screen image preview overlay (Teleport to body)
 │   ├── composables/               # Vue 3 composable logic (+ unit tests under __tests__/)
 │   │   ├── bridge.ts              # Unified Tauri/Browser bridge — chat streaming, sessions, prompts,
@@ -123,10 +125,11 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 49 page components:
-│   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
+│   │       └── components/        # 50 page components:
+│   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media; right-click quotes a selection)
+│   │           ├── SideChatPanel.vue          # Side-session tab: a quoted selection opens an ordinary child session with its own stream + HITL
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
-│   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
+│   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow step lists, collapsed to a pill and always on screen, live via taskflow_updated)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch, or the model-declared level picker incl. off, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
@@ -165,7 +168,9 @@ client/
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
 │   │           ├── AccountSettingsPanel.vue   # Account tab: set the password / replace it / disable login protection (the current password is required)
 │   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
-│   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file, text + image preview)
+│   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file: text + markdown, images via GET /project/file/blob)
+│   │           ├── PdfViewer.vue             # PDF preview inside the file viewer (pdf.js, page nav + fit-width, GET /project/file/blob)
+│   │           ├── DocxViewer.vue            # docx preview inside the file viewer (mammoth → HTML → DOMPurify, GET /project/file/blob)
 │   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
@@ -195,7 +200,7 @@ client/
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
 │   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
-│   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
+│   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + flat steps, refreshed by taskflow_updated)
 │   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins
@@ -207,7 +212,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API response type definitions
 │       └── backend/               # ts-rs generated backend types (ChatRequest, HealthStatus, ...)
-├── docs/                          # VitePress documentation site (guide/commands/events/types/zh)
+├── wiki/                          # VitePress documentation site (guide/commands/events/types/zh)
 ├── public/                        # Static assets (favicon.svg, robots.txt, avatar/)
 ├── repros/                        # Playwright repro tests (run via playwright.config.ts)
 ├── src-tauri/                     # Tauri 2 native shell
@@ -308,7 +313,7 @@ Browser-mode chat streaming details:
 - Base64 media is uploaded first via `POST /images/upload`, `/audio/upload`, `/video/upload` and referenced by URL
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt
-- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`). The same card also renders the Plan-Then-Execute approval (`exit_plan_mode`): the plan text, a feedback field, **Request changes** (reject + the feedback) and **Approve** — `/proj`-free, see `../docs/plan-mode/`
+- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`). The same card also renders the Plan-Then-Execute approval (`exit_plan_mode`): the plan text, a feedback field, **Request changes** (reject + the feedback) and **Approve** — `/proj`-free, see `../wiki/plan-mode/`
 - A turn this page never sent (the plan-continuation auto-turn, a subagent-completion injection, a cron run) arrives with **no `turn_started`** — the auto-turn passes no turn identity — so its chunks cannot be streamed into a local row; the `done` handler refetches the newest turn page, which renders the finished answer without a reload
 
 ### WebSocket Singletons (ws.ts)
@@ -376,6 +381,12 @@ Every tool card shows how long the call took, on the same contract the backend m
 - unknown stays blank — a card from before this feature, or a call the human denied, shows NO duration rather than a fake `0ms`.
 
 The number comes from two sources that always agree: the live `tool_result` frame carries `duration_ms`, and history rows carry `messages.tool_duration_ms` (the middleware's authoritative measurement, which the frame prefers when present). Approval waits and queue time are outside the window by construction.
+
+### Inline edit diffs (`ChatToolCard.vue` / `DiffPreview.vue`)
+
+`patch_file` and `write_file` results render as a colored unified diff instead of a raw JSON blob: the client parses the backend's `difflib` output (`app/utils/tool-diff.ts`, pure prefix classification — added green / removed red / context plain / `@@` hunk headers blue, with old/new line-number gutters and a `+N −M` header). `write_file` answers JSON with `diff` / `isNew` since 2026-10-24 (a creation shows a 新建文件 badge and an all-added preview built from the write's own `text` argument); every unparseable shape falls back to the plain `<pre>` — fail-open by construction.
+
+The chat and the file viewer's markdown render through the v-safe-html pipeline, which also carries the 2026-10-24 render enhancements: Shiki v4 highlights fenced code after the stream settles (dual light/dark theme, copy/wrap toolbar, zero streaming cost), ` ```mermaid ` fences render to sanitized SVG figures with click-to-zoom, KaTeX renders `$…$`/`$$…$$` formulas, and the file viewer highlights code files ≤256 KB — all through the DOMPurify allowlist with trusted-root-scoped inline styles (`security.ts`), never a bare HTML channel.
 
 ### State & Events
 

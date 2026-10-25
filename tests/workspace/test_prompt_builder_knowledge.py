@@ -44,7 +44,7 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store (no memory content)."""
 
-    def format_for_system_prompt(self, target: str) -> None:
+    def format_for_system_prompt(self, target: str, session_id: str | None = None) -> None:
         return None
 
 

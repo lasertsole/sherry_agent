@@ -26,7 +26,7 @@ import pytest
 
 from agent.tools.subagent.registry import clear as clear_registry
 from agent.tools.subagent.spawn import core as spawn_core
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
@@ -55,7 +55,7 @@ def _captured_lane(monkeypatch: pytest.MonkeyPatch):
 
 
 def _tools() -> dict:
-    return {tool.name: tool for tool in build_taskflow_tools()}
+    return {tool.name: tool for tool in build_legacy_taskflow_tools()}
 
 
 async def _run_task(**kwargs) -> str:

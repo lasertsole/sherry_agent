@@ -8,6 +8,7 @@ T3 post-response re-check and the T4/T5 forced-recovery ring.
 # share the route tables and token estimators; splitting the triggers from the
 # dispatch they drive would scatter one cohesive routing unit across modules.
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, NamedTuple, cast
 
@@ -23,6 +24,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.typing import ContextT
 from loguru import logger
 
+from agent.trajectory_events import record_trajectory_event
 from config.features import SUMMARIZATION
 from pub.func.estimate_tokens import estimate_text_tokens
 from pub.func.message.estimate_msg_tokens import estimate_messages_tokens
@@ -45,6 +47,7 @@ from pub.func.message.tool_args_truncate import truncate_tool_args
 from pub.func.message.tool_result_ttl import truncate_to_budget
 from runtime import StateKey, state_register_mem
 
+from .phase import CompactReason, derive_phase_reason
 from .state_aliases import (
     _COOLDOWN_ROUNDS_KEY,
     _OVERFLOW_RETRIES_KEY,
@@ -120,6 +123,7 @@ class _ForcedRecoveryState(NamedTuple):
     retry_key: str
     attempt: int
     old_tokens: int
+    messages_before: int
 
 
 class OverflowMixin:
@@ -149,22 +153,23 @@ class OverflowMixin:
 
         Returns None / 'truncate_only' / 'compact'.
         """
-        ctx_window = self._main_llm_context_window
+        ctx_window = self._effective_context_window(session_id)
         if not ctx_window or ctx_window <= 0:
             return None
 
         local_est = self._estimate_tokens(messages)
         reported = self._get_reported_tokens(messages)
         effective = max(local_est, reported) if reported > 0 else local_est
-        pressure = effective / ctx_window
-
-        if pressure >= COMPRESSION_TRIGGER_RATIO:
+        threshold = self._compression_threshold(session_id)
+        if threshold <= 0:
+            return None
+        if effective >= threshold:
             return "compact"
-        if pressure >= PREEMPTIVE_TRUNCATE_RATIO:
+        if effective >= self._truncate_threshold(session_id):
             return "truncate_only"
         return None
 
-    def _usable_budget(self) -> int:
+    def _usable_budget(self, session_id: str = "") -> int:
         """usable_budget = dynamic context window − COMPRESSION_RESERVE_TOKENS.
 
         The dynamic window is the constructor-injected ``main_llm_context_window``
@@ -172,7 +177,7 @@ class OverflowMixin:
         hardcoded value; langchain 1.3.9 ``ModelRequest`` has no model_profile
         field.
         """
-        ctx = self._main_llm_context_window or 0
+        ctx = self._effective_context_window(session_id)
         return max(int(ctx) - COMPRESSION_RESERVE_TOKENS, 0)
 
     def _estimate_system_prompt_tokens(self, session_id: str) -> int:
@@ -193,7 +198,7 @@ class OverflowMixin:
         if not ctx_window or ctx_window <= 0:
             return None
 
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         # Pure local estimate (reported_tokens=0 skips the Tier-1 auto-extract):
         # an AIMessage's usage_metadata describes the prompt that produced it, so
         # once newer messages follow it that value is stale and must not drive
@@ -202,7 +207,18 @@ class OverflowMixin:
         system_est = self._estimate_system_prompt_tokens(session_id)
         pressure = compute_pressure(est, None, system_est)
         truncatable = find_truncatable_tool_results(list(messages))
-        route = decide_route(pressure, int(ctx_window), usable, truncatable)
+        if self._has_output_cap():
+            route = decide_route(
+                pressure,
+                int(ctx_window),
+                usable,
+                truncatable,
+                compression_threshold=self._compression_threshold(session_id),
+                truncate_threshold=self._truncate_threshold(session_id),
+            )
+        else:
+            # No output cap: keep the historical budget-relative 80% band.
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
         logger.debug(
             "Overflow route decision: est={} system_est={} usable={} "
             "candidates={} route={} session={}",
@@ -247,6 +263,7 @@ class OverflowMixin:
         usable: int,
         threshold_ratio: float,
         trigger: str,
+        threshold_tokens: int | None = None,
     ) -> list[AnyMessage] | None:
         """P1-2 no-LLM tail clip: the first move on every overflow path.
 
@@ -265,12 +282,15 @@ class OverflowMixin:
         existing route keeps operating on the exact original list.
         """
         est = estimate_messages_tokens(list(messages), reported_tokens=0)
-        target = est - int(usable * threshold_ratio)
+        budget = (
+            int(threshold_tokens) if threshold_tokens is not None else int(usable * threshold_ratio)
+        )
+        target = est - budget
         clipped = clip_overflow_tail(cast("list[BaseMessage]", list(messages)), max(target, 0))
         if clipped is None:
             return None
         new_est = estimate_messages_tokens(list(clipped), reported_tokens=0)
-        if new_est >= usable * threshold_ratio:
+        if new_est >= budget:
             logger.debug(
                 "Overflow tail clip insufficient: trigger={}, old_tokens={}, "
                 "new_tokens={}, target_tokens={} (degrading to the existing route)",
@@ -287,14 +307,17 @@ class OverflowMixin:
         self, trigger: str, route: str, old_tokens: int, new_tokens: int, usable: int
     ) -> None:
         ratio = round(new_tokens / usable, 4) if usable > 0 else 0.0
+        phase, reason = derive_phase_reason(trigger)
         logger.info(
             "Context compression: trigger={}, route={}, old_tokens={}, "
-            "new_tokens={}, pressure_ratio={}",
+            "new_tokens={}, pressure_ratio={}, phase={}, reason={}",
             trigger,
             route,
             old_tokens,
             new_tokens,
             ratio,
+            phase.value,
+            reason.value,
         )
 
     def _finish_compact(
@@ -305,6 +328,7 @@ class OverflowMixin:
         trigger: str,
         old_tokens: int,
         usable: int,
+        messages_before: int,
     ) -> ModelRequest[ContextT]:
         """Shared compaction tail: bookkeeping, optional truncation, route log.
 
@@ -320,6 +344,25 @@ class OverflowMixin:
             request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(request.messages))
         self._log_route(trigger, route, old_tokens, new_tokens, usable)
+        phase, reason = derive_phase_reason(trigger)
+        # A per-session model profile with a smaller window makes the normal
+        # pre-request compaction a model downshift (ZCode CompactReason).
+        if reason is CompactReason.CONTEXT_LIMIT and (
+            self._session_context_window(session_id) < int(self._main_llm_context_window or 0)
+        ):
+            reason = CompactReason.MODEL_DOWNSHIFT
+        record_trajectory_event(
+            session_id,
+            "compact",
+            {
+                "messages_before": messages_before,
+                "messages_after": len(request.messages),
+                "phase": phase.value,
+                "reason": reason.value,
+                "trigger": trigger,
+                "route": route,
+            },
+        )
         return request
 
     def _execute_compact(
@@ -332,13 +375,15 @@ class OverflowMixin:
         """compact_only / compact_then_truncate execution (sync)."""
         messages: list[AnyMessage] = request.state.get("messages", [])
         old_tokens = self._estimate_tokens(list(messages))
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         try:
             request = self._apply_compression(request, session_id)
         except Exception as e:
             logger.exception("Compression failed: {}", e)
             return request
-        return self._finish_compact(request, route, session_id, trigger, old_tokens, usable)
+        return self._finish_compact(
+            request, route, session_id, trigger, old_tokens, usable, len(messages)
+        )
 
     async def _aexecute_compact(
         self,
@@ -350,19 +395,22 @@ class OverflowMixin:
         """compact_only / compact_then_truncate execution (async)."""
         messages: list[AnyMessage] = request.state.get("messages", [])
         old_tokens = self._estimate_tokens(list(messages))
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         try:
             request = await self._aapply_compression(request, session_id)
         except Exception as e:
             logger.exception("Compression failed: {}", e)
             return request
-        return self._finish_compact(request, route, session_id, trigger, old_tokens, usable)
+        return self._finish_compact(
+            request, route, session_id, trigger, old_tokens, usable, len(messages)
+        )
 
     def _prepare_overflow_dispatch(
         self,
         request: ModelRequest[ContextT],
         route: str,
         trigger: str,
+        session_id: str,
     ) -> tuple[ModelRequest[ContextT], str | None]:
         """Run the no-LLM tail clip and the truncate-only track.
 
@@ -371,7 +419,7 @@ class OverflowMixin:
         ``ROUTE_COMPACT_THEN_TRUNCATE``), or ``None`` when the request is final.
         Shared by the sync and async dispatchers.
         """
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         messages: list[AnyMessage] = request.state.get("messages", [])
 
         if route != ROUTE_FITS:
@@ -379,6 +427,9 @@ class OverflowMixin:
                 messages,
                 usable=usable,
                 threshold_ratio=COMPRESSION_TRIGGER_RATIO,
+                threshold_tokens=(
+                    self._compression_threshold(session_id) if self._has_output_cap() else None
+                ),
                 trigger=trigger,
             )
             if clipped is not None:
@@ -395,7 +446,11 @@ class OverflowMixin:
             # Recheck: truncation freed less than estimated and pressure is
             # still at/above threshold_compact → compact backstop; otherwise
             # pass through WITHOUT compression.
-            if usable > 0 and new_tokens >= usable * COMPRESSION_TRIGGER_RATIO:
+            if usable > 0 and new_tokens >= (
+                self._compression_threshold(session_id)
+                if self._has_output_cap()
+                else int(usable * COMPRESSION_TRIGGER_RATIO)
+            ):
                 return request, ROUTE_COMPACT_THEN_TRUNCATE
             return request, None
 
@@ -421,7 +476,9 @@ class OverflowMixin:
         When the clip alone recovers the budget the request is returned
         immediately and the route below never executes.
         """
-        request, compact_route = self._prepare_overflow_dispatch(request, route, trigger)
+        request, compact_route = self._prepare_overflow_dispatch(
+            request, route, trigger, session_id
+        )
         if compact_route is None:
             return request
         return self._execute_compact(request, compact_route, session_id, trigger)
@@ -434,7 +491,9 @@ class OverflowMixin:
         trigger: str = "T2",
     ) -> ModelRequest[ContextT]:
         """Async twin of :meth:`_dispatch_overflow_route` (parity by shape)."""
-        request, compact_route = self._prepare_overflow_dispatch(request, route, trigger)
+        request, compact_route = self._prepare_overflow_dispatch(
+            request, route, trigger, session_id
+        )
         if compact_route is None:
             return request
         return await self._aexecute_compact(request, compact_route, session_id, trigger)
@@ -467,10 +526,10 @@ class OverflowMixin:
         if cooldown > 0:
             # Anti-thrash gate respected: T3 reads the post-tick value.
             return None
-        ctx_window = self._main_llm_context_window
+        ctx_window = self._session_context_window(session_id)
         if not ctx_window or ctx_window <= 0:
             return None
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         if usable <= 0:
             return None
         messages = list(request.messages)
@@ -479,10 +538,26 @@ class OverflowMixin:
         # reported wins (compute_pressure takes the max) — T3 is
         # real-token driven, NOT estimate-driven like T1/T2.
         pressure = compute_pressure(est, reported, system_est)
-        if pressure < usable * COMPRESSION_TRIGGER_RATIO:
+        compression_threshold = (
+            self._compression_threshold(session_id)
+            if self._has_output_cap()
+            else int(usable * COMPRESSION_TRIGGER_RATIO)
+        )
+        if pressure < compression_threshold:
             return None
         truncatable = find_truncatable_tool_results(list(messages))
-        route = decide_route(pressure, int(ctx_window), usable, truncatable)
+        if self._has_output_cap():
+            route = decide_route(
+                pressure,
+                int(ctx_window),
+                usable,
+                truncatable,
+                compression_threshold=self._compression_threshold(session_id),
+                truncate_threshold=self._truncate_threshold(session_id),
+            )
+        else:
+            # No output cap: keep the historical budget-relative 80% band.
+            route = decide_route(pressure, int(ctx_window), usable, truncatable)
         if route == ROUTE_FITS:
             return None
         return reported, route, est, usable, pressure
@@ -581,7 +656,7 @@ class OverflowMixin:
         attempt = retries + 1
         old_tokens = self._estimate_tokens(list(request.messages))
 
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         clipped = self._fast_tail_clip(
             list(request.messages),
             usable=usable,
@@ -591,7 +666,9 @@ class OverflowMixin:
         if clipped is not None:
             state_register_mem.set_state(session_id, retry_key, attempt)
             return request.override(messages=cast("list[AnyMessage]", clipped)), None
-        return request, _ForcedRecoveryState(trigger, retry_key, attempt, old_tokens)
+        return request, _ForcedRecoveryState(
+            trigger, retry_key, attempt, old_tokens, len(request.messages)
+        )
 
     def _finish_forced_recovery(
         self,
@@ -601,7 +678,7 @@ class OverflowMixin:
         state: _ForcedRecoveryState,
     ) -> ModelRequest[ContextT]:
         """Truncate after the compression step, bump the counter, log."""
-        usable = self._usable_budget()
+        usable = self._usable_budget(session_id)
         final_messages = list(request.messages)
         final_messages, _ = self._run_budget_truncation(
             cast("list[BaseMessage]", final_messages), usable
@@ -609,15 +686,30 @@ class OverflowMixin:
         request = request.override(messages=cast("list[AnyMessage]", final_messages))
         new_tokens = self._estimate_tokens(list(final_messages))
         state_register_mem.set_state(session_id, state.retry_key, state.attempt)
+        phase, reason = derive_phase_reason(state.trigger)
         logger.warning(
             "Context compression: trigger={}, attempt={}/{}, error_class={}, "
-            "old_tokens={}, new_tokens={}",
+            "old_tokens={}, new_tokens={}, phase={}, reason={}",
             state.trigger,
             state.attempt,
             MAX_OVERFLOW_RETRIES,
             error_class,
             state.old_tokens,
             new_tokens,
+            phase.value,
+            reason.value,
+        )
+        record_trajectory_event(
+            session_id,
+            "compact",
+            {
+                "messages_before": state.messages_before,
+                "messages_after": len(final_messages),
+                "phase": phase.value,
+                "reason": reason.value,
+                "trigger": state.trigger,
+                "route": "reactive_recovery",
+            },
         )
         return request
 
@@ -699,7 +791,9 @@ class OverflowMixin:
         """
         while True:
             try:
-                return handler(request)
+                response = handler(request)
+                self._mark_assistant_completed(session_id)
+                return response
             except Exception as exc:  # noqa: BLE001 - classify, then re-raise
                 # NOT BaseException: CancelledError must propagate untouched
                 # (classifying it would swallow a cancellation).
@@ -741,7 +835,9 @@ class OverflowMixin:
         """Async twin of :meth:`_execute_with_recovery` (parity by shape)."""
         while True:
             try:
-                return await handler(request)
+                response = await handler(request)
+                self._mark_assistant_completed(session_id)
+                return response
             except Exception as exc:  # noqa: BLE001 - classify, then re-raise
                 # NOT BaseException: CancelledError must propagate untouched
                 # (classifying it would swallow a cancellation).
@@ -772,6 +868,15 @@ class OverflowMixin:
                         compression_exc,
                     )
                     raise exc from compression_exc
+
+    def _mark_assistant_completed(self, session_id: str) -> None:
+        """Record the wall clock of the last successful model response.
+
+        Microcompact's idle trigger compares against this process-local stamp;
+        a fresh process starts empty, so the time trigger simply stays off until
+        the first completed call.
+        """
+        self._last_assistant_completed_ms[session_id] = time.monotonic() * 1000
 
     def _t1_state_update(self, request: ModelRequest[ContextT]) -> dict[str, Any]:
         """Translate a T1-dispatched request into a before_agent state update.

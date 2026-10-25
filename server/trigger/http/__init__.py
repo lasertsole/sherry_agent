@@ -27,6 +27,7 @@ import server.trigger.http.subagent  # noqa: F401  (side-effect route registrati
 import server.trigger.http.model_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.lane  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_settings  # noqa: F401  (side-effect route registration)
+import server.trigger.http.side_chat  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_project  # noqa: F401  (side-effect route registration)
 import server.trigger.http.agent_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.project_files  # noqa: F401  (side-effect route registration)
@@ -38,5 +39,7 @@ import server.trigger.http.trajectory  # noqa: F401  (side-effect route registra
 # The per-turn trajectory ledger is reached by agent-side producers through the
 # process-level hook registry (agent/** must not import server/**).
 from server.service.trajectory_store import install_trajectory_hooks as _install_trajectory_hooks
+from server.service.trajectory_store import install_turn_id_hook as _install_turn_id_hook
 
 _install_trajectory_hooks()
+_install_turn_id_hook()

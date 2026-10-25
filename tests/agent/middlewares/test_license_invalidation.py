@@ -94,14 +94,14 @@ def _read_result(call_id: str, text: str) -> ToolMessage:
 def _compress_sync(messages: list, session_id: str, cutoff: int, monkeypatch):
     _disable_nudges(monkeypatch)
     middleware = _make_middleware()
-    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs: cutoff)
+    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs, session_id="": cutoff)
     return middleware._apply_compression_under_lock(_request(messages, session_id), session_id)
 
 
 async def _compress_async(messages: list, session_id: str, cutoff: int, monkeypatch):
     _disable_nudges(monkeypatch)
     middleware = _make_middleware()
-    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs: cutoff)
+    monkeypatch.setattr(middleware, "_determine_cutoff", lambda msgs, session_id="": cutoff)
     return await middleware._aapply_compression_under_lock(
         _request(messages, session_id), session_id
     )
@@ -185,7 +185,7 @@ def test_preserved_read_license_stays_valid(project, sid, monkeypatch):
     _compress_sync(messages, sid, cutoff=2, monkeypatch=monkeypatch)
 
     assert _license(sid, project, "notes.txt") is not None
-    assert "successfully" in _write(sid, "notes.txt", "replaced\n")
+    assert json.loads(_write(sid, "notes.txt", "replaced\n"))["success"] is True
     assert target.read_text(encoding="utf-8") == "replaced\n"
 
 
@@ -208,7 +208,7 @@ def test_multiple_reads_same_file_latest_in_preserved(project, sid, monkeypatch)
     _compress_sync(messages, sid, cutoff=3, monkeypatch=monkeypatch)
 
     assert _license(sid, project, "notes.txt") is not None
-    assert "successfully" in _write(sid, "notes.txt", "replaced\n")
+    assert json.loads(_write(sid, "notes.txt", "replaced\n"))["success"] is True
 
 
 def test_multiple_reads_same_file_latest_in_summarized(project, sid, monkeypatch):
@@ -255,7 +255,7 @@ def test_multiple_files_partial_overlap(project, sid, monkeypatch):
     assert _license(sid, project, "a.txt") is None
     assert _license(sid, project, "b.txt") is not None
     assert "has not been read" in json.loads(_write(sid, "a.txt", "A2\n"))["error"]
-    assert "successfully" in _write(sid, "b.txt", "B2\n")
+    assert json.loads(_write(sid, "b.txt", "B2\n"))["success"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +293,7 @@ def test_append_unaffected(project, sid, monkeypatch):
     ]
     _compress_sync(messages, sid, cutoff=2, monkeypatch=monkeypatch)
 
-    assert "successfully" in _write(sid, "log.txt", "second\n", append=True)
+    assert json.loads(_write(sid, "log.txt", "second\n", append=True))["success"] is True
     assert target.read_text(encoding="utf-8") == "first\nsecond\n"
     # An append must not invent a license for the now-unread file.
     assert _license(sid, project, "log.txt") is None
@@ -315,7 +315,7 @@ def test_re_read_re_establishes_license(project, sid, monkeypatch):
     assert "has not been read" in json.loads(_write(sid, "notes.txt", "replaced\n"))["error"]
 
     _read(sid, "notes.txt")
-    assert "successfully" in _write(sid, "notes.txt", "replaced\n")
+    assert json.loads(_write(sid, "notes.txt", "replaced\n"))["success"] is True
     assert target.read_text(encoding="utf-8") == "replaced\n"
 
 

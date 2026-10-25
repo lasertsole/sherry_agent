@@ -14,16 +14,15 @@ from collections.abc import Callable
 from .mcp_plugin import build_mcp_tools
 from .browser import build_browser_tools
 from .terminal import build_terminal_tool
-from .terminal_bg_tools import (
-    build_terminal_bg_list_tool,
-    build_terminal_bg_output_tool,
-)
+from .terminal_bg_tools import build_terminal_bg_tool
 from .subagent import build_subagent_runtime_tools
 from .web_fetch import build_web_fetch_tool
 from .web_search import build_web_search_tool
 from .python_repl import build_python_repl_tool
 from .question import build_question_tool
+from .compact_now import build_compact_now_tool
 from .plan_mode import build_plan_mode_tools
+from .checkpoint_tools import build_checkpoint_tool
 from .memory import build_memory_tool, memory_store as memory_store
 from .message_search import build_message_search_tool
 from .taskflow import build_taskflow_tools
@@ -55,8 +54,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_web_search_tool,
     build_web_fetch_tool,
     build_terminal_tool,
-    build_terminal_bg_list_tool,
-    build_terminal_bg_output_tool,
+    build_terminal_bg_tool,
     build_mcp_tools,
     build_browser_tools,
     build_skill_manage_tool,
@@ -69,6 +67,8 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_knowledge_tools,
     build_question_tool,
     build_plan_mode_tools,
+    build_checkpoint_tool,
+    build_compact_now_tool,
 ]
 
 

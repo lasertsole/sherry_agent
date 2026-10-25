@@ -47,6 +47,14 @@ from .repetition_guard import (
     RepetitionGuardConfig as RepetitionGuardConfig,
     REPETITION_GUARD as REPETITION_GUARD,
 )
+from .repetition_penalty import (
+    RepetitionPenaltyConfig as RepetitionPenaltyConfig,
+    REPETITION_PENALTY as REPETITION_PENALTY,
+)
+from .shadow_git import (
+    ShadowGitConfig as ShadowGitConfig,
+    SHADOW_GIT as SHADOW_GIT,
+)
 from .llm_retry import (
     LlmRetryConfig as LlmRetryConfig,
     LLM_RETRY as LLM_RETRY,
@@ -125,10 +133,6 @@ from .model_backend import (
     ModelBackendConfig as ModelBackendConfig,
     MODEL_BACKEND as MODEL_BACKEND,
 )
-from .memory_flush import (
-    MemoryFlushConfig as MemoryFlushConfig,
-    MEMORY_FLUSH as MEMORY_FLUSH,
-)
 from .memory_tool import (
     MemoryToolConfig as MemoryToolConfig,
     MEMORY_TOOL as MEMORY_TOOL,
@@ -136,6 +140,12 @@ from .memory_tool import (
 from .evidence_ledger import (
     EvidenceLedgerConfig as EvidenceLedgerConfig,
     EVIDENCE_LEDGER as EVIDENCE_LEDGER,
+)
+from .evidence_cross_session import (
+    EvidenceCrossSessionConfig as EvidenceCrossSessionConfig,
+    EvidenceRegressionGateConfig as EvidenceRegressionGateConfig,
+    EVIDENCE_CROSS_SESSION_STALENESS as EVIDENCE_CROSS_SESSION_STALENESS,
+    EVIDENCE_REGRESSION_GATE as EVIDENCE_REGRESSION_GATE,
 )
 from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,
@@ -148,6 +158,7 @@ from .completion_judge import (
 from .token_guard import (
     MIN_REQUIRED_MAX_TOKEN as MIN_REQUIRED_MAX_TOKEN,
     TokenGuardError as TokenGuardError,
+    assert_max_output_valid as assert_max_output_valid,
     assert_max_token_valid as assert_max_token_valid,
 )
 from .code_intel import (
@@ -187,4 +198,8 @@ from .plan_mode import (
 from .tool_parallel import (
     TOOL_PARALLEL as TOOL_PARALLEL,
     ToolParallelConfig as ToolParallelConfig,
+)
+from .graph_rag_path import (
+    GRAPH_RAG_PATH as GRAPH_RAG_PATH,
+    GraphRagPathConfig as GraphRagPathConfig,
 )

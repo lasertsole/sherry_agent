@@ -94,7 +94,7 @@ class TestReadFileRecoverableSlice:
         # Head 600 chars of this payload retain exactly lines 1..13 (line 14
         # is cut mid-way), so the notice must resume at line 14, never 0.
         content = _read_file_json(1, 60)
-        path = "docs/example.md"
+        path = "wiki/example.md"
         result, reduced = _clip(_messages("read_file", "r1", {"file_path": path}, content))
 
         clipped = result[1].content

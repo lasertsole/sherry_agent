@@ -104,7 +104,7 @@ class _StubTool:
 def test_child_agent_drops_main_only_planning_tools(_wiring):
     """taskflow / todolist / knowledge can never reach a child agent."""
     candidates = [
-        _StubTool("taskflow_create", {"scope": "main_only"}),
+        _StubTool("taskflow_flow", {"scope": "main_only"}),
         _StubTool("todowrite", {"scope": "main_only"}),
         _StubTool("knowledge", {"scope": "main_only"}),
         _StubTool("read_file"),

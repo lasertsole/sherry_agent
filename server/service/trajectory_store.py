@@ -33,6 +33,7 @@ __all__ = [
     "current_turn_id",
     "get_trajectory_store",
     "install_trajectory_hooks",
+    "install_turn_id_hook",
     "project_frame",
     "record_event",
     "turn_scope",
@@ -103,6 +104,11 @@ def _event_id(session_id: str, turn_id: str, kind: str, frame: dict[str, Any]) -
     if kind in ("tool_start", "tool_end"):
         call_id = frame.get("tool_id") or frame.get("content") or "unknown"
         return f"{session_id}:{turn_id}:tool:{call_id}"
+    if kind == "model_retry":
+        # Retry progress is a SEQUENCE of transitions (scheduled → succeeded /
+        # exhausted), not one event that gets refined: the attempt + status key
+        # keeps each transition readable instead of the last one overwriting it.
+        return f"{session_id}:{turn_id}:model_retry:{frame.get('attempt')}:{frame.get('status')}"
     return f"{session_id}:{turn_id}:{kind}"
 
 
@@ -242,6 +248,22 @@ class TrajectoryStore:
             logger.debug("trajectory pruning failed (fail-open)", exc_info=True)
             return 0
 
+    async def delete_session(self, session_id: str) -> int:
+        """Delete every trajectory event of a purged session."""
+        try:
+            await self._ensure()
+            import aiosqlite
+
+            async with self._lock, aiosqlite.connect(self._db_path) as db:
+                cursor = await db.execute(
+                    "DELETE FROM trajectory_events WHERE session_id = ?", (session_id,)
+                )
+                await db.commit()
+                return int(cursor.rowcount)
+        except Exception:
+            logger.debug("trajectory purge failed (fail-open)", exc_info=True)
+            return 0
+
     # -- reads ------------------------------------------------------------
 
     async def read(
@@ -343,6 +365,23 @@ def install_trajectory_hooks() -> None:
     from runtime import hooks
 
     hooks.register(hooks.RECORD_TRAJECTORY_EVENT, record_event)
+
+
+def install_turn_id_hook() -> None:
+    """Expose the active conversation-turn uuid to the message store.
+
+    ``context_engine`` cannot import ``server``; it resolves this hook while
+    persisting a batch and stamps ``messages.turn_id``. The contextvar is read
+    at call time (inside ``asyncio.to_thread`` it is inherited from the turn's
+    context), so a persisted row always carries the turn that produced it.
+    Idempotent; an unassembled process resolves no hook and stamps ``""``.
+    """
+    from runtime import hooks
+
+    def _current_turn_id() -> str:
+        return current_turn_id.get()
+
+    hooks.register(hooks.GET_CURRENT_TURN_ID, _current_turn_id)
 
 
 def project_frame(

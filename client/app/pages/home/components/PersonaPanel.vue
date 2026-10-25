@@ -704,10 +704,6 @@ import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
 import { ENV_MODEL_ID } from '~/stores/session-model';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { DEFAULT_PLACEHOLDER_AVATAR } from '~/composables/defaultCharacter';
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { BUILTIN_PRESETS } from '~/composables/persona-catalog';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n({ useScope: 'local' });

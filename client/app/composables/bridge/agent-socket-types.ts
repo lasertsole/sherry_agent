@@ -72,6 +72,25 @@ export interface AgentSocket {
   stop(): Promise<void>;
   /** Send a HITL decision on the SAME socket (never opens a new connection). */
   sendHitlResponse(response: HitlResponse): void;
+  /**
+   * Hold inbound frames (the HTTP history+snapshot request is in flight).
+   * Frames queue locally instead of reaching the page; release them once the
+   * snapshot has been applied so a stale delta cannot land before the
+   * authoritative text.
+   */
+  holdFrames(): void;
+  /** Apply the snapshot watermark, then flush every held frame in order. */
+  releaseFrames(): void;
+  /** Highest frame seq covered by the snapshot, scoped to the snapshot's turn. */
+  setSnapshotWatermark(seq: number, turnId?: string): void;
+  /** Whether any send is still awaiting its terminal frame. */
+  hasPendingSends(): boolean;
+  /** Whether any pending send already received a chunk (a running turn, not a resend). */
+  hasPendingMidStreamSends(): boolean;
+  /** Resolve every pending send without a terminal frame (snapshot said idle). */
+  settlePendingSends(): void;
+  /** Resolve only the mid-stream sends (a pre-chunk send is resumable). */
+  settlePendingMidStreamSends(): void;
   /** Void a queued (not yet delivered) message. */
   sendCancelQueued(msgId: string): void;
   /** Replace the text of a queued message. */

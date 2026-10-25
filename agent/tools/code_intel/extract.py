@@ -47,12 +47,43 @@ class CallSite:
     line: int
 
 
+@dataclass(frozen=True, slots=True)
+class ImportSite:
+    """One import occurrence in a file (module scope uses ``importer_index=-1``)."""
+
+    importer_index: int
+    imported_name: str
+    line: int
+
+
+@dataclass(frozen=True, slots=True)
+class InheritSite:
+    """One class/interface/trait inheritance edge."""
+
+    child_index: int
+    parent_name: str
+    inherit_type: str
+    line: int
+
+
+@dataclass(frozen=True, slots=True)
+class MixinSite:
+    """One trait/interface/mixin composition edge (``implements`` / embedding)."""
+
+    host_index: int
+    mixin_name: str
+    line: int
+
+
 @dataclass(slots=True)
 class ExtractionResult:
     """Everything one parsed file yielded."""
 
     symbols: list[SymbolDef] = field(default_factory=list)
     calls: list[CallSite] = field(default_factory=list)
+    imports: list[ImportSite] = field(default_factory=list)
+    inherits: list[InheritSite] = field(default_factory=list)
+    mixins: list[MixinSite] = field(default_factory=list)
     error: str | None = None
 
 
@@ -118,11 +149,24 @@ def _text(node: Node) -> str:
 class _Ctx:
     """Mutable extraction state shared across one file's recursive walk."""
 
-    __slots__ = ("symbols", "calls", "sym_stack", "class_stack", "impl_stack", "class_by_name")
+    __slots__ = (
+        "symbols",
+        "calls",
+        "imports",
+        "inherits",
+        "mixins",
+        "sym_stack",
+        "class_stack",
+        "impl_stack",
+        "class_by_name",
+    )
 
     def __init__(self) -> None:
         self.symbols: list[SymbolDef] = []
         self.calls: list[CallSite] = []
+        self.imports: list[ImportSite] = []
+        self.inherits: list[InheritSite] = []
+        self.mixins: list[MixinSite] = []
         self.sym_stack: list[int] = []
         self.class_stack: list[int | None] = []
         self.impl_stack: list[int | None] = []
@@ -146,6 +190,42 @@ def _add_symbol(
 def _record_call(ctx: _Ctx, callee_name: str | None, line: int) -> None:
     if callee_name and ctx.sym_stack:
         ctx.calls.append(CallSite(ctx.sym_stack[-1], callee_name, line))
+
+
+def _record_import(ctx: _Ctx, imported_name: str | None, line: int) -> None:
+    name = (imported_name or "").strip()
+    if name:
+        importer = ctx.sym_stack[-1] if ctx.sym_stack else -1
+        ctx.imports.append(ImportSite(importer, name, line))
+
+
+def _record_inherit(
+    ctx: _Ctx, child_index: int, parent_name: str | None, inherit_type: str, line: int
+) -> None:
+    name = clean_type_name(parent_name)
+    if name:
+        ctx.inherits.append(InheritSite(child_index, name, inherit_type, line))
+
+
+def _record_mixin(ctx: _Ctx, host_index: int, mixin_name: str | None, line: int) -> None:
+    name = clean_type_name(mixin_name)
+    if name:
+        ctx.mixins.append(MixinSite(host_index, name, line))
+
+
+def clean_type_name(text: str | None) -> str:
+    """Reduce a type expression to its final identifier (generics/paths stripped)."""
+    value = (text or "").strip()
+    if not value:
+        return ""
+    value = value.split("<", 1)[0].split("[", 1)[0]
+    value = value.lstrip("&*")
+    value = value.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+    return value.strip()
+
+
+def _strip_quotes(text: str) -> str:
+    return text.strip().strip("`\"'").strip()
 
 
 def _field_text(node: Node, field_name: str) -> str:
@@ -181,6 +261,41 @@ def _python_call_name(fn: Node | None) -> str | None:
 
 
 def _python_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
+    if node_type == "import_statement":
+        for child in node.named_children:
+            if child.type == "aliased_import":
+                name_node = child.child_by_field_name("name")
+                _record_import(
+                    ctx,
+                    _text(name_node) if name_node is not None else _text(child),
+                    node.start_point[0] + 1,
+                )
+            else:
+                _record_import(ctx, _text(child), node.start_point[0] + 1)
+        return True
+    if node_type == "import_from_statement":
+        module_name = _field_text(node, "module_name")
+        recorded = False
+        skipped_module = False
+        for child in node.named_children:
+            if not skipped_module and module_name and _text(child) == module_name:
+                skipped_module = True
+                continue
+            if child.type == "aliased_import":
+                name_node = child.child_by_field_name("name")
+                _record_import(
+                    ctx,
+                    _text(name_node) if name_node is not None else _text(child),
+                    node.start_point[0] + 1,
+                )
+                recorded = True
+            elif child.type in ("dotted_name", "identifier"):
+                _record_import(ctx, _text(child), node.start_point[0] + 1)
+                recorded = True
+        if not recorded and module_name:
+            # ``from a.b import *`` keeps the module as the graph target.
+            _record_import(ctx, module_name, node.start_point[0] + 1)
+        return True
     if node_type == "function_definition":
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -218,6 +333,11 @@ def _python_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
             None,
             _python_doc(node),
         )
+        superclasses = node.child_by_field_name("superclasses")
+        if superclasses is not None:
+            for base in superclasses.named_children:
+                if base.type in ("identifier", "attribute"):
+                    _record_inherit(ctx, idx, _text(base), "class", node.start_point[0] + 1)
         ctx.class_by_name[_text(name_node)] = idx
         ctx.class_stack.append(idx)
         for child in node.children:
@@ -242,7 +362,56 @@ def _ts_call_name(fn: Node | None) -> str | None:
     return None
 
 
+def _ts_record_heritage(node: Node, ctx: _Ctx, child_index: int) -> None:
+    """Record ``extends`` (inherit) and ``implements`` (mixin) clauses of a class."""
+    line = node.start_point[0] + 1
+    heritage = next(
+        (child for child in node.named_children if child.type == "class_heritage"), None
+    )
+    if heritage is None:
+        return
+    for clause in heritage.named_children:
+        if clause.type == "extends_clause":
+            for parent in clause.named_children:
+                if parent.type in ("identifier", "type_identifier", "generic_type"):
+                    _record_inherit(ctx, child_index, _text(parent), "class", line)
+        elif clause.type == "implements_clause":
+            for mixin in clause.named_children:
+                if mixin.type in ("type_identifier", "generic_type"):
+                    _record_mixin(ctx, child_index, _text(mixin), line)
+
+
 def _ts_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
+    if node_type == "import_statement":
+        module = _strip_quotes(_field_text(node, "source"))
+        recorded = False
+        clause = next(
+            (child for child in node.named_children if child.type == "import_clause"), None
+        )
+        if clause is not None:
+            for child in clause.named_children:
+                if child.type == "identifier":
+                    _record_import(ctx, _text(child), node.start_point[0] + 1)
+                    recorded = True
+                elif child.type == "named_imports":
+                    for spec in child.named_children:
+                        if spec.type != "import_specifier":
+                            continue
+                        name_node = spec.child_by_field_name("name")
+                        _record_import(
+                            ctx,
+                            _text(name_node) if name_node is not None else _text(spec),
+                            node.start_point[0] + 1,
+                        )
+                        recorded = True
+                elif child.type == "namespace_import":
+                    for inner in child.named_children:
+                        if inner.type == "identifier":
+                            _record_import(ctx, _text(inner), node.start_point[0] + 1)
+                            recorded = True
+        if not recorded and module:
+            _record_import(ctx, module, node.start_point[0] + 1)
+        return True
     if node_type == "function_declaration":
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -262,6 +431,26 @@ def _ts_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
         idx = _add_symbol(
             ctx, _text(name_node), "class", node.start_point[0] + 1, node.end_point[0] + 1, None
         )
+        _ts_record_heritage(node, ctx, idx)
+        ctx.class_by_name[_text(name_node)] = idx
+        ctx.class_stack.append(idx)
+        for child in node.children:
+            _walk(child, ctx, "typescript")
+        ctx.class_stack.pop()
+        return True
+    if node_type == "interface_declaration":
+        name_node = node.child_by_field_name("name")
+        if name_node is None:
+            return False
+        idx = _add_symbol(
+            ctx, _text(name_node), "interface", node.start_point[0] + 1, node.end_point[0] + 1, None
+        )
+        for child in node.named_children:
+            if child.type != "extends_type_clause":
+                continue
+            for parent in child.named_children:
+                if parent.type in ("type_identifier", "generic_type"):
+                    _record_inherit(ctx, idx, _text(parent), "interface", node.start_point[0] + 1)
         ctx.class_by_name[_text(name_node)] = idx
         ctx.class_stack.append(idx)
         for child in node.children:
@@ -326,7 +515,42 @@ def _rust_call_name(fn: Node | None) -> str | None:
     return None
 
 
+def _rust_use_targets(node: Node | None) -> list[str]:
+    """Collect the imported path(s) from a Rust ``use`` argument."""
+    if node is None:
+        return []
+    if node.type == "use_as_clause":
+        # Keep the original path, not the local alias.
+        for child in node.named_children:
+            if child.type in ("scoped_identifier", "identifier"):
+                return [_text(child)]
+        return []
+    if node.type == "scoped_use_list":
+        targets: list[str] = []
+        for child in node.named_children:
+            if child.type == "use_list":
+                targets.extend(
+                    _text(item)
+                    for item in child.named_children
+                    if item.type in ("identifier", "scoped_identifier")
+                )
+        return targets
+    if node.type in ("use_list", "scoped_identifier", "identifier"):
+        if node.type == "use_list":
+            return [
+                _text(item)
+                for item in node.named_children
+                if item.type in ("identifier", "scoped_identifier")
+            ]
+        return [_text(node)]
+    return [_text(node)]
+
+
 def _rust_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
+    if node_type == "use_declaration":
+        for target in _rust_use_targets(node.child_by_field_name("argument")):
+            _record_import(ctx, target, node.start_point[0] + 1)
+        return True
     if node_type == "function_item":
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -348,6 +572,14 @@ def _rust_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
         idx = _add_symbol(
             ctx, _text(name_node), "class", node.start_point[0] + 1, node.end_point[0] + 1, None
         )
+        if node_type == "trait_item":
+            bounds = next(
+                (child for child in node.named_children if child.type == "trait_bounds"), None
+            )
+            if bounds is not None:
+                for bound in bounds.named_children:
+                    if bound.type == "type_identifier":
+                        _record_inherit(ctx, idx, _text(bound), "trait", node.start_point[0] + 1)
         ctx.class_by_name[_text(name_node)] = idx
         ctx.class_stack.append(idx)
         for child in node.children:
@@ -355,9 +587,13 @@ def _rust_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
         ctx.class_stack.pop()
         return True
     if node_type == "impl_item":
-        type_name = _field_text(node, "type")
-        ctx.class_stack.append(ctx.class_by_name.get(type_name))
-        ctx.impl_stack.append(ctx.class_by_name.get(type_name))
+        type_name = clean_type_name(_field_text(node, "type"))
+        trait_name = _field_text(node, "trait")
+        host_index = ctx.class_by_name.get(type_name)
+        if host_index is not None and trait_name:
+            _record_mixin(ctx, host_index, trait_name, node.start_point[0] + 1)
+        ctx.class_stack.append(host_index)
+        ctx.impl_stack.append(host_index)
         for child in node.children:
             _walk(child, ctx, "rust")
         ctx.impl_stack.pop()
@@ -398,7 +634,34 @@ def _go_call_name(fn: Node | None) -> str | None:
     return None
 
 
+def _go_import_targets(node: Node) -> list[str]:
+    """Collect import paths from an ``import`` declaration (single or grouped)."""
+    targets: list[str] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "import_spec":
+            literal = next(
+                (
+                    child
+                    for child in current.named_children
+                    if child.type == "interpreted_string_literal"
+                ),
+                None,
+            )
+            if literal is not None:
+                targets.append(_strip_quotes(_text(literal)))
+            continue
+        stack.extend(current.named_children)
+    targets.reverse()
+    return targets
+
+
 def _go_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
+    if node_type == "import_declaration":
+        for target in _go_import_targets(node):
+            _record_import(ctx, target, node.start_point[0] + 1)
+        return True
     if node_type == "function_declaration":
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -437,6 +700,38 @@ def _go_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
                     node.end_point[0] + 1,
                     None,
                 )
+                line = node.start_point[0] + 1
+                if type_node.type == "struct_type":
+                    # An embedded field has a type but no field name; Go
+                    # composes behaviour through these embeddings.
+                    fields = next(
+                        (
+                            child
+                            for child in type_node.named_children
+                            if child.type == "field_declaration_list"
+                        ),
+                        None,
+                    )
+                    if fields is not None:
+                        for field in fields.named_children:
+                            if field.type != "field_declaration":
+                                continue
+                            if field.child_by_field_name("name") is not None:
+                                continue
+                            embedded = field.child_by_field_name("type")
+                            _record_mixin(
+                                ctx,
+                                idx,
+                                _text(embedded) if embedded is not None else _text(field),
+                                line,
+                            )
+                else:
+                    for elem in type_node.named_children:
+                        if elem.type != "type_elem":
+                            continue
+                        for parent in elem.named_children:
+                            if parent.type in ("type_identifier", "qualified_type", "generic_type"):
+                                _record_inherit(ctx, idx, _text(parent), "interface", line)
                 ctx.class_by_name[_text(name_node)] = idx
                 return True
         return False
@@ -477,4 +772,10 @@ def extract_symbols(source: bytes, language: str) -> ExtractionResult:
         return ExtractionResult(error="syntax errors in file")
     ctx = _Ctx()
     _walk(tree.root_node, ctx, canonical)
-    return ExtractionResult(symbols=ctx.symbols, calls=ctx.calls)
+    return ExtractionResult(
+        symbols=ctx.symbols,
+        calls=ctx.calls,
+        imports=ctx.imports,
+        inherits=ctx.inherits,
+        mixins=ctx.mixins,
+    )

@@ -57,7 +57,7 @@ from loguru import logger
 import agent.core as agent_core
 import agent.tools.taskflow.tools._dispatch as dispatch_mod
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
 from config import SESSIONS_DIR
 from context_engine import delete_messages_by_session
@@ -219,8 +219,9 @@ def _update_prompt(fid: str, steps: list[dict]) -> str:
     """An explicit, low-ambiguity instruction to call the tool once."""
     payload = json.dumps(steps, ensure_ascii=False, separators=(",", ":"))
     return (
-        "You must call the tool `taskflow_update_steps` exactly once with these exact "
-        "arguments and nothing else:\n"
+        "You must call the tool `taskflow_step` with action='update_steps' exactly once "
+        "with these exact arguments and nothing else:\n"
+        "  action = 'update_steps'\n"
         f"  flow_id = {fid!r}\n"
         f"  steps = {payload}\n"
         "Use ONLY the values above; do not invent different step ids and do not call any "
@@ -241,7 +242,7 @@ async def _drive_llm_update(
     Returns ``(sid, fid, out)`` on success. On final failure reports exactly what
     the model did — no fake success, no skip.
     """
-    last_note = "model never called taskflow_update_steps"
+    last_note = "model never called taskflow_step (action=update_steps)"
     for attempt in range(1, attempts + 1):
         sid = _new_sid(f"{tag}-{attempt}")
         fid = f"flow-{tag}-{attempt}"
@@ -254,14 +255,14 @@ async def _drive_llm_update(
             },
             build_agent_config(sid),
         )
-        tool_messages = _tool_messages(out, "taskflow_update_steps")
+        tool_messages = _tool_messages(out, "taskflow_step")
         if tool_messages and "TaskFlow steps updated" in str(tool_messages[-1].content):
             return sid, fid, out
-        last_note = _describe(out, "taskflow_update_steps", tool_messages)
+        last_note = _describe(out, "taskflow_step", tool_messages)
         logger.warning("[{}] attempt {}/{}: {}", tag, attempt, attempts, last_note)
         await _purge_session(sid)
     pytest.fail(
-        f"[{tag}] live model did not call taskflow_update_steps successfully after "
+        f"[{tag}] live model did not call taskflow_step (update_steps) successfully after "
         f"{attempts} attempts: {last_note}"
     )
 
@@ -299,7 +300,7 @@ async def test_llm_rewrite_unrun_step_then_real_dispatch(
         assert steps[0]["status"] == "ready", steps[0]
         logger.info("[upd e2e] LLM rewrote step-1 in {:.1f}s", time.perf_counter() - t0)
 
-        tools = {t.name: t for t in build_taskflow_tools()}
+        tools = {t.name: t for t in build_legacy_taskflow_tools()}
         dispatched = await tools["taskflow_dispatch"].coroutine(
             flow_id=fid, step_ids=["step-1"], session_id=sid
         )
@@ -349,7 +350,7 @@ async def test_add_remove_reorder_then_dispatch_new_structure(
             _step("step-c", "task-c"),
         ],
     )
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     new_steps = [
         _step("step-c", "task-c"),
@@ -414,7 +415,7 @@ async def test_safety_rules_real_chain(flow_env: Path, clean_subagent_registry) 
             _step("s-ready", "ready task"),
         ],
     )
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     update = tools["taskflow_update_steps"]
 
     # (a) A dispatched step may have its task rewritten, but keeps its child key.
@@ -497,7 +498,7 @@ async def test_rejection_is_visible_to_live_model(flow_env: Path) -> None:
         _step("s-done", "attempted edit", status="done", child="child-done"),
         _step("s-ready", "ready task"),
     ]
-    last_note = "model never called taskflow_update_steps"
+    last_note = "model never called taskflow_step (action=update_steps)"
     for attempt in range(1, 3):
         if attempt > 1:
             fid = f"flow-reject-{attempt}"
@@ -519,7 +520,7 @@ async def test_rejection_is_visible_to_live_model(flow_env: Path) -> None:
             },
             build_agent_config(sid),
         )
-        tool_messages = _tool_messages(out, "taskflow_update_steps")
+        tool_messages = _tool_messages(out, "taskflow_step")
         if tool_messages:
             text = str(tool_messages[-1].content)
             logger.info("[upd e2e] model-visible rejection: {!r}", text[:200])
@@ -528,10 +529,10 @@ async def test_rejection_is_visible_to_live_model(flow_env: Path) -> None:
             assert next(s for s in steps if s["step_id"] == "s-done")["task"] == "finished task"
             await _purge_session(sid)
             return
-        last_note = _describe(out, "taskflow_update_steps", tool_messages)
+        last_note = _describe(out, "taskflow_step", tool_messages)
         logger.warning("[reject] attempt {}/2: {}", attempt, last_note)
     await _purge_session(sid)
-    pytest.fail(f"[reject] live model never called taskflow_update_steps: {last_note}")
+    pytest.fail(f"[reject] live model never called taskflow_step (update_steps): {last_note}")
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +545,7 @@ async def test_cas_real_chain(flow_env: Path) -> None:
     sid = _new_sid("cas")
     fid = "flow-cas"
     await _seed(sid, fid, [_step("s1", "task one"), _step("s2", "task two")])
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     update = tools["taskflow_update_steps"]
 
     assert await _stored_revision(sid, fid) == 1  # INITIAL_REVISION
@@ -584,7 +585,7 @@ async def test_cross_session_isolation_real_chain(flow_env: Path) -> None:
     sid_b = _new_sid("iso-b")
     fid = "flow-iso"
     await _seed(sid_a, fid, [_step("s1", "A's task")])
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     rejected = await tools["taskflow_update_steps"].coroutine(
         flow_id=fid,

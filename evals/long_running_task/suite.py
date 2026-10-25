@@ -64,10 +64,10 @@ def _extract(text: str, key: str) -> str:
 
 
 def _tool_map() -> dict:
-    """Name-indexed taskflow tools, mirroring the project test's _tool_map()."""
-    from agent.tools.taskflow import build_taskflow_tools
+    """Name-indexed module-level taskflow tools (the eval drives them directly)."""
+    from agent.tools.taskflow import build_legacy_taskflow_tools
 
-    return {tool.name: tool for tool in build_taskflow_tools()}
+    return {tool.name: tool for tool in build_legacy_taskflow_tools()}
 
 
 async def _wait_children_settled(child_keys: list[str], timeout_s: float) -> set[str]:

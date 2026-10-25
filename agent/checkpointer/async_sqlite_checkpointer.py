@@ -38,3 +38,23 @@ async def delete_thread_history(session_id: str) -> None:
         await _conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
         await _conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
         await _conn.commit()
+
+
+async def prune_session_checkpoints(session_id: str) -> dict[str, int]:
+    """Keep only the latest top-level checkpoint for one session's thread.
+
+    Thin module-level seam for the turn-end cleanup: callers (server turn_runner)
+    do not own a graph/checkpointer instance and must not import the saver's
+    internals. Opens a short-lived connection; a missing DB is a no-op.
+    """
+    checkpoints_dir: Path = (SRC_DIR / "checkpoints").resolve()
+    sqlite_file_path: Path = checkpoints_dir / "sqlite.db"
+    if not sqlite_file_path.exists():
+        return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
+
+    conn = await aiosqlite.connect(sqlite_file_path, check_same_thread=False)
+    try:
+        saver = ThreadSafeAsyncSqliteSaver(conn)
+        return await saver.aclean_thread_checkpoints(str(rand_str_to_int(session_id)))
+    finally:
+        await conn.close()

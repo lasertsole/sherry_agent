@@ -3,7 +3,7 @@
 PTC exposes an ``execute_code`` tool to a single functional role — the
 EXECUTOR subagent — so it can run a Python script in an isolated child
 process and call Sherry tools synchronously over a localhost TCP RPC bridge.
-See ``agent/tools/ptc/`` and ``docs/subagent/README.md`` for the design.
+See ``agent/tools/ptc/`` and ``wiki/subagent/README.md`` for the design.
 
 Tool names in ``ptc_allowed_tools`` are the *real* names emitted by the tool
 registry (``patch_file``, not ``patch``). The effective set at runtime is the

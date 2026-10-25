@@ -75,6 +75,9 @@ class EvalSandbox:
         self._set(pending, "_DB_PATH", pending_db)
 
     def _restrict_child_tools(self) -> None:
+        # NOTE: this patches the SHARED builder, so a suite must import
+        # agent.core BEFORE apply() — that binds the real builder at module
+        # load, while the lazy imports in the spawn/steer paths see this patch.
         agent_tools = importlib.import_module("agent.tools")
         original = agent_tools.build_main_tools
         cache: list | None = None

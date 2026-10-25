@@ -27,6 +27,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from pub.func.retry_policy import extract_retry_after_seconds
+
 from loguru import logger
 
 
@@ -87,6 +89,8 @@ class ClassifiedError:
     retryable: bool = True
     should_compress: bool = False
     should_fallback: bool = False
+    #: Provider ``Retry-After`` (seconds), when the exception carried one.
+    retry_after_s: float | None = None
 
     @property
     def is_auth(self) -> bool:
@@ -100,7 +104,7 @@ _STATUS_CODE_TOO_LARGE = 413
 _STATUS_CODE_BAD_REQUEST = 400
 _PAYLOAD_TEXT_HINTS = ("payload", "too large")
 
-_CONTEXT_OVERFLOW_PATTERNS = (
+_CONTEXT_OVERFLOW_SUBSTRINGS = (
     "context_length_exceeded",
     "maximum context length",
     "context length",
@@ -108,6 +112,74 @@ _CONTEXT_OVERFLOW_PATTERNS = (
     "input length exceeds",
     "reduce the length",
     "too many tokens",
+)
+
+# PI-parity provider patterns (packages/ai/src/utils/overflow.ts OVERFLOW_PATTERNS).
+# Compiled once at import; a compile failure degrades to the substring table above
+# (P6 — the classifier must stay fail-open).
+_CONTEXT_OVERFLOW_REGEX_SOURCES = (
+    r"prompt (?:is )?too long",  # Anthropic / z.ai
+    r"prompt exceeds max length",  # z.ai CN
+    r"request_too_large",  # Anthropic 413
+    r"input is too long for requested model",  # Amazon Bedrock
+    r"exceeds the context window",  # OpenAI
+    r"exceeds (?:the )?(?:model'?s )?maximum context length(?: of [\d,]+ tokens?|\s*\([\d,]+\))",  # OpenAI / LiteLLM
+    r"input token count.*exceeds the maximum",  # Google Gemini
+    r"maximum prompt length is \d+",  # xAI Grok
+    r"reduce the length of the messages",  # Groq
+    r"maximum context length is \d+ tokens",  # OpenRouter
+    r"exceeds (?:the )?maximum allowed input length of [\d,]+ tokens?",  # OpenRouter / Poolside
+    r"input \(\d+ tokens\) is longer than the model'?s context length \(\d+ tokens\)",  # Together AI
+    r"exceeds the limit of \d+",  # GitHub Copilot
+    r"exceeds the available context size",  # llama.cpp
+    r"greater than the context length",  # LM Studio
+    r"context window exceeds limit",  # MiniMax
+    r"exceeded model token limit",  # Kimi For Coding
+    r"too large for model with \d+ maximum context length",  # Mistral
+    r"prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?",  # DS4
+    r"model_context_window_exceeded",  # z.ai non-standard finish_reason
+    r"prompt too long; exceeded (?:max )?context length",  # Ollama
+    r"range of input length should be",  # DashScope / Qwen
+    r"context[_ ]length[_ ]exceeded",  # Generic
+    r"too many tokens",  # Generic (duplicate of a substring; harmless)
+    r"token limit exceeded",  # Generic
+)
+
+# Non-overflow errors that merely look like overflow (PI NON_OVERFLOW_PATTERNS).
+_NON_OVERFLOW_REGEX_SOURCES = (
+    r"^(?:Throttling(?: error|Exception)?|Service unavailable):",  # AWS Bedrock non-overflow
+    r"rate limit",  # generic throttling
+    r"too many requests",  # HTTP 429 wording
+)
+
+# Cerebras answers 400/413 with no body for an oversized prompt.
+_CEREBRAS_BODYLESS_OVERFLOW_SOURCE = r"^4(?:00|13)\s*(?:status code)?\s*\(no body\)"
+
+
+def _compile_ignore_case(sources: tuple[str, ...], label: str) -> tuple[re.Pattern[str], ...]:
+    """Compile a pattern table once; a bad entry degrades the whole table (fail-open)."""
+    try:
+        return tuple(re.compile(source, re.IGNORECASE) for source in sources)
+    except re.error as exc:  # pragma: no cover - a literal table should compile
+        logger.warning("llm_error_classifier: {} patterns failed to compile: {}", label, exc)
+        return ()
+
+
+def _matches(patterns: tuple[re.Pattern[str], ...], text: str) -> bool:
+    """Regex search over a table; any matcher failure means "no match" (P6)."""
+    try:
+        return any(pattern.search(text) for pattern in patterns)
+    except Exception:  # noqa: BLE001 - classifier must never raise
+        logger.debug("llm_error_classifier: regex matching failed; treating as no match")
+        return False
+
+
+_CONTEXT_OVERFLOW_REGEXES = _compile_ignore_case(
+    _CONTEXT_OVERFLOW_REGEX_SOURCES, "context-overflow"
+)
+_NON_OVERFLOW_REGEXES = _compile_ignore_case(_NON_OVERFLOW_REGEX_SOURCES, "non-overflow")
+_CEREBRAS_BODYLESS_OVERFLOW_PATTERN = _compile_ignore_case(
+    (_CEREBRAS_BODYLESS_OVERFLOW_SOURCE,), "cerebras-bodyless"
 )
 
 _CAUSE_CHAIN_MAX_DEPTH = 3
@@ -348,16 +420,22 @@ def classify_api_error(
         status_code = None
     text = "\n".join(_exception_chain_texts(exc))
     lowered = text.lower()
+    # A throttling/unavailable error may contain overflow-looking words
+    # ("Too many tokens"); the exclusion only suppresses the overflow family,
+    # never the other classification steps (P5).
+    non_overflow = _matches(_NON_OVERFLOW_REGEXES, lowered)
     error_context: dict[str, Any] = {
         "exception_type": type(exc).__name__,
         "num_messages": num_messages,
     }
 
     reason = (
-        _match_special_cases(status_code, lowered, approx_tokens, context_length)
+        _match_special_cases(
+            status_code, lowered, approx_tokens, context_length, non_overflow=non_overflow
+        )
         or _match_status_map(status_code, lowered)
         or _match_exception_type(exc)
-        or _match_message_patterns(lowered)
+        or _match_message_patterns(lowered, skip_context_overflow=non_overflow)
         or _match_ssl_patterns(lowered)
         or _match_server_disconnect(lowered)
         or _match_transport_heuristics(exc)
@@ -383,6 +461,7 @@ def classify_api_error(
         retryable=recovery["retryable"],
         should_compress=recovery["should_compress"],
         should_fallback=recovery["should_fallback"],
+        retry_after_s=extract_retry_after_seconds(exc),
     )
 
 
@@ -427,12 +506,34 @@ def _exception_chain_texts(exc: BaseException, depth: int = 0) -> Iterator[str]:
 
 
 def _match_special_cases(
-    status_code: int | None, lowered: str, approx_tokens: int, context_length: int
+    status_code: int | None,
+    lowered: str,
+    approx_tokens: int,
+    context_length: int,
+    *,
+    non_overflow: bool = False,
 ) -> FailoverReason | None:
-    """Step 1: patterns that outrank the generic maps."""
+    """Step 1: patterns that outrank the generic maps.
+
+    ``non_overflow`` (a PI NON_OVERFLOW match) skips the payload/overflow
+    family but still lets the content-filter and multimodal checks run — the
+    pipeline then continues with the status/type/message steps, so a
+    throttling error classifies as rate_limit rather than context_overflow.
+    """
+    if non_overflow:
+        if any(kw in lowered for kw in ("content_filter", "content_policy")):
+            return FailoverReason.content_policy_blocked
+        if status_code == _STATUS_CODE_BAD_REQUEST and _match_multimodal_patterns(lowered):
+            return FailoverReason.multimodal_not_supported
+        return None
     if _match_payload_too_large(status_code, lowered):
         return FailoverReason.payload_too_large
-    if any(pattern in lowered for pattern in _CONTEXT_OVERFLOW_PATTERNS):
+    # P1: the original seven substring patterns stay first and unchanged.
+    if any(pattern in lowered for pattern in _CONTEXT_OVERFLOW_SUBSTRINGS):
+        return FailoverReason.context_overflow
+    if _matches(_CONTEXT_OVERFLOW_REGEXES, lowered):
+        return FailoverReason.context_overflow
+    if _matches(_CEREBRAS_BODYLESS_OVERFLOW_PATTERN, lowered):
         return FailoverReason.context_overflow
     if approx_tokens > 0 and context_length > 0 and approx_tokens >= context_length:
         return FailoverReason.context_overflow
@@ -484,9 +585,18 @@ def _match_exception_type(exc: BaseException) -> FailoverReason | None:
     return None
 
 
-def _match_message_patterns(lowered: str) -> FailoverReason | None:
-    """Step 4: fixed message-pattern table (dict order = priority)."""
+def _match_message_patterns(
+    lowered: str, *, skip_context_overflow: bool = False
+) -> FailoverReason | None:
+    """Step 4: fixed message-pattern table (dict order = priority).
+
+    The overflow entry is skipped when the NON_OVERFLOW table matched, because
+    its generic substrings ("too many tokens") would otherwise re-classify a
+    throttling error as overflow (P5).
+    """
     for reason, patterns in _MESSAGE_PATTERNS_COMPILED.items():
+        if skip_context_overflow and reason is FailoverReason.context_overflow:
+            continue
         if any(pattern.search(lowered) for pattern in patterns):
             return reason
     return None

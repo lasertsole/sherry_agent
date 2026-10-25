@@ -256,20 +256,25 @@ class ApprovalPipeline:
                 self._fire_hooks(session_id, result)
                 return result
 
-        # Layer 6: Session allowlist
-        session_list: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
-        for pattern_str in session_list:
-            if fnmatch.fnmatch(command, pattern_str):
-                result = ApprovalResult(
-                    approved=True,
-                    decision=ApprovalDecision.SESSION,
-                    reason="Session allowlist match",
-                )
-                self._fire_hooks(session_id, result)
-                return result
-
-        # Layer 7: Dangerous pattern detection
+        # Dangerous detection moves ahead of Layer 6: a dangerous command must
+        # never be auto-approved by the session cache, even if its two-word
+        # prefix was stored earlier (defence in depth with the write path).
         dangerous = detect_dangerous_command(command)
+
+        # Layer 6: Session allowlist — SKIPPED for dangerous commands.
+        if not dangerous:
+            session_list: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
+            for pattern_str in session_list:
+                if fnmatch.fnmatch(command, pattern_str):
+                    result = ApprovalResult(
+                        approved=True,
+                        decision=ApprovalDecision.SESSION,
+                        reason="Session allowlist match",
+                    )
+                    self._fire_hooks(session_id, result)
+                    return result
+
+        # Layer 7: Dangerous pattern detection (already computed above).
         if not dangerous:
             result = ApprovalResult(
                 approved=True,

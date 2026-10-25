@@ -10,6 +10,7 @@ import type { AgentChunkType, AgentSocket } from './bridge';
 import type { MessageItem, HitlRequestData } from '../pages/home/type';
 import type { ChatController } from './messages';
 import type { StreamChunkMeta } from './use-stream-chunks';
+import type { LoadSessionHistory } from './use-session-lifecycle';
 
 /** Chunk-rendering surface required by the HITL resume flow. */
 export interface HitlChunkSurface {
@@ -48,7 +49,7 @@ export interface HitlApprovalDeps {
   /** Turn number currently receiving streamed chunks (send or HITL resume). */
   streamingTurn: Ref<number | null>;
   /** Rebuild the history list after a resume stream completes. */
-  loadSessionHistory: (sid: string) => Promise<void>;
+  loadSessionHistory: LoadSessionHistory;
   /** Draft persistence slice. */
   drafts: HitlDraftSurface;
   /** Streamed-chunk rendering slice. */
@@ -97,7 +98,10 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
    * @param decision
    * @param message
    */
-  const handleHitlDecision = (decision: 'approve' | 'approve_dir' | 'reject' | 'yolo', message: string = '') => {
+  const handleHitlDecision = (
+    decision: 'approve' | 'approve_dir' | 'reject' | 'session' | 'yolo',
+    message: string = ''
+  ) => {
     const sid = sessionId.value;
     if (!sid) {
       hitlRequest.value = null;

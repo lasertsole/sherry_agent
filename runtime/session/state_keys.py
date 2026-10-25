@@ -17,11 +17,24 @@ class StateKey(StrEnum):
 
     ITERATION_BUDGET = "iteration_budget"
     ITERATION_BUDGET_USED = "iteration_budget_used"
+
+    # Session-level token budget (client UI → /sessions/budget). The cap is
+    # optional (absent/0 = unlimited); USED/COST accumulate across turns and
+    # are never reset by the per-turn iteration budget. The pending twin parks
+    # a mid-turn cap change exactly like the other per-session controls.
+    TOKEN_BUDGET_CAP = "token_budget_cap"
+    TOKEN_BUDGET_CAP_PENDING = "token_budget_cap_pending"
+    TOKEN_BUDGET_USED = "token_budget_used"
+    TOKEN_BUDGET_COST = "token_budget_cost"
+    TOKEN_BUDGET_LIMITED = "token_budget_limited"
+
     TOOL_GUARDRAIL_STATE = "tool_guardrail_state"
     IS_STREAM_TURN = "is_stream_turn"
 
     LLM_STALE_STREAK = "llm_stale_streak"
     LLM_FALLBACK_INDEX = "llm_fallback_index"
+    # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.
+    LLM_FALLBACK_SWITCHES = "llm_fallback_switches"
     LLM_CONTENT_FILTER_BLOCKED = "llm_content_filter_blocked"
     LLM_CONTENT_FILTER_TERMINATED = "llm_content_filter_terminated"
     LLM_PARTIAL_STREAM_STUB = "llm_partial_stream_stub"
@@ -123,6 +136,7 @@ class StateKey(StrEnum):
     SUMMARIZATION_LAST_STRATEGY = "summarization_last_strategy"
     SUMMARIZATION_SKIP_LLM = "summarization_skip_llm"
     SUMMARIZATION_FORCE_RECOVERY = "summarization_force_recovery"
+    SUMMARIZATION_COMPACT_REQUESTED = "summarization_compact_requested"
 
     NUDGE_PLAN_EXTRACTION_LOCK = "nudge_plan_extraction_lock"
     NUDGE_PLAN_EXTRACTION_FIRED = "nudge_plan_extraction_fired"

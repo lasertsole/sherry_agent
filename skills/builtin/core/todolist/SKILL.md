@@ -43,14 +43,14 @@ The session-scoped lightweight planning/checklist layer. It is responsible for "
 - Marking many items complete in one batch hides the real progress; mark them one by one.
 - Once a completed status is written, the continuation system in later turns uses it to decide whether to proceed.
 
-## DAG / dependencies / waves are not here
+## DAG / dependencies are not here
 
-The todolist layer does **not** track `depends_on`, does **not** store waves, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
+The todolist layer does **not** track `depends_on`, does **not** store a DAG/wave projection, does **not** cache step status, and does **not** recompute the frontier. All of that belongs to TaskFlow:
 
-- Declare dependencies: `taskflow_run_task(flow_id, task, depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
-- Dispatch ready steps in parallel: `taskflow_dispatch(flow_id, step_ids)`.
-- Wait for the child sessions dispatched by this flow to settle: `taskflow_wait_all(flow_id, ...)`.
-- Inject results and unlock successors: `taskflow_resume(flow_id, child_session_key, result)`. Resume only unlocks; it does not dispatch automatically.
-- Read back DAG state: `taskflow_summary(flow_id)` renders each step's `status` (`blocked | ready | dispatched | done`) and `depends_on`.
+- Declare dependencies: `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
+- Dispatch ready steps in parallel: `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`.
+- Wait for the child sessions dispatched by this flow to settle: `taskflow_step(action="wait_all", flow_id=...)`.
+- Inject results and unlock successors: `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`. Resume only unlocks; it does not dispatch automatically.
+- Read back DAG state: `taskflow_inspect(action="summary", flow_id=...)` renders each step's `status` (`blocked | ready | dispatched | done`) and `depends_on`.
 
-A todo points at the corresponding flow step only through the optional `flow_id` / `step_id`; when DAG state is needed, read it back with `taskflow_summary` — do not rebuild a scheduler at the todo layer. The dependency graph, unlocking, and parallel dispatch have exactly one authoritative source: TaskFlow.
+A todo points at the corresponding flow step only through the optional `flow_id` / `step_id`; when DAG state is needed, read it back with `taskflow_inspect(action="summary")` — do not rebuild a scheduler at the todo layer. The dependency graph, unlocking, and parallel dispatch have exactly one authoritative source: TaskFlow.

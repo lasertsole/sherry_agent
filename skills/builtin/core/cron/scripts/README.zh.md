@@ -277,6 +277,13 @@ curl -X POST http://127.0.0.1:8080/cron -H "Content-Type: application/json" \
 curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/json" -d '{"id": "a1b2c3d4", "force": true}'
 ```
 
+## 执行认领与投递幂等
+
+- 进程内一把 `threading.RLock` + 内存 `_running_jobs` 集合完成执行认领。定时 tick（cron loop）与 `run_job`（server loop）共享它，并发的 tick/手动 Run 会跳过，而不是再启动一个 agent turn。running 不持久化，进程重启即清空。
+- `_execute_job` 在 agent 执行**之前**预推进 `next_run_at_ms`（消费当前 slot）并保存。因此结果投递后崩溃不会在重启时重 fire 该 slot；执行后的收尾不能再给周期任务推进一次（只有一次性 `at` 任务会 disable/delete）。
+- 投递携带 `metadata["message_id"]="cron:<job>:<slot>"`，复用 input queue 的 `client_msg_id` 去重。该查询只匹配 ACTIVE 行，所以它只是活跃期补强，不是崩溃保障；真正堵住崩溃双发的是预推进。
+- `run_job` 在 disabled 或 already running 时返回 False；`force` 只绕过 disabled，绝不绕过 running 认领。
+
 ## 调度语义
 
 | 类型 | 行为 |
@@ -304,4 +311,4 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - 服务运行在 `cron-service` 守护线程的独立事件循环上，与主服务器循环相互独立；`run_job()` 和 `start()` 必须在运行中的事件循环内 await。
 - WebSocket 通知目标是会话 `"default"`（浏览器客户端会话），因此仅在客户端连接期间才能收到桌面通知。
 
-▶️ 完整文档：[docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)
+▶️ 完整文档：[wiki/loop-prevention/README.md](../../../../../wiki/loop-prevention/README.md) · [中文](../../../../../wiki/loop-prevention/README.zh.md) · [한국어](../../../../../wiki/loop-prevention/README.ko.md) · [日本語](../../../../../wiki/loop-prevention/README.ja.md)

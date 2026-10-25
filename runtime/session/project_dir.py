@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from loguru import logger
+
 from config.path import resolve_default_project_dir
 from pub.func.message.workspace_notice import (
     PROJECT_DIR_NOTICE_ORIGIN,
@@ -39,6 +41,7 @@ __all__ = [
     "PROJECT_DIR_NOTICE_ORIGIN",
     "announced_project_dir",
     "current_project_dir",
+    "maybe_create_sherry_dir",
     "project_dir_notice_text",
     "project_dir_source",
     "read_project_dir",
@@ -268,3 +271,28 @@ def _as_dir(raw: object) -> Path | None:
     if isinstance(raw, str) and raw.strip():
         return Path(raw.strip())
     return None
+
+
+def maybe_create_sherry_dir(session_id: str) -> bool:
+    """Create ``<project>/.sherry`` once a user-bound project is actually used.
+
+    Only a SESSION binding counts (the process default is not an explicit
+    choice), and the caller owns the "first message / directory changed" timing
+    (``WorkspaceNoticeMiddleware`` before_agent). An existing directory is left
+    alone; FACTS.md stays in the global memory directory, so this creates only
+    the shell. Fail-open: any I/O error returns False.
+    """
+    if not session_id or project_dir_source(session_id) != _SESSION:
+        return False
+    root = current_project_dir(session_id)
+    if not root.is_dir():
+        return False
+    sherry = root / ".sherry"
+    try:
+        if sherry.exists():
+            return False
+        sherry.mkdir(parents=True, exist_ok=False)
+        return True
+    except OSError:
+        logger.debug("project_dir: could not create .sherry for {}", session_id, exc_info=True)
+        return False

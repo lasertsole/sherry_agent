@@ -2,19 +2,37 @@
   <div
     class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800"
     :data-test="`model-profile-${group}`">
-    <!-- Group header doubles as the collapse toggle; panels start collapsed
-         so a long model list does not push the other groups off screen. -->
-    <button
-      type="button"
-      class="flex w-full cursor-pointer items-center gap-2 text-left"
-      :aria-expanded="!collapsed"
-      :aria-label="collapsed ? t('config.llm.expand') : t('config.llm.collapse')"
-      @click="collapsed = !collapsed">
-      <i
-        :class="['pi text-xs text-gray-400', collapsed ? 'pi-chevron-right' : 'pi-chevron-down']"
-        aria-hidden="true"></i>
-      <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ groupTitle }}</span>
-    </button>
+    <!-- Group header: the chevron + title toggle the panel; the help mark is a
+         SEPARATE button beside it (a button inside a button is invalid HTML). -->
+    <div class="flex w-full items-center gap-1.5">
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        :aria-expanded="!collapsed"
+        :aria-label="collapsed ? t('config.llm.expand') : t('config.llm.collapse')"
+        @click="collapsed = !collapsed">
+        <i
+          :class="['pi text-xs text-gray-400', collapsed ? 'pi-chevron-right' : 'pi-chevron-down']"
+          aria-hidden="true"></i>
+        <span class="truncate text-xs font-semibold text-gray-500 dark:text-gray-400">{{ groupTitle }}</span>
+      </button>
+      <button
+        v-if="groupHelpKey"
+        type="button"
+        class="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border border-solid border-gray-300 !p-0 text-[10px] leading-none text-gray-400 transition-colors hover:border-theme-main hover:text-theme-main dark:border-gray-600"
+        data-test="model-group-help"
+        :aria-label="t('config.llm.groupHelpLabel', { group: groupTitle })"
+        :aria-expanded="helpOpen"
+        @click.stop="helpOpen = !helpOpen">
+        ?
+      </button>
+    </div>
+    <p
+      v-if="helpOpen && groupHelpKey"
+      class="m-0 whitespace-pre-line rounded bg-sky-50 px-2 py-1 text-[11px] leading-relaxed text-sky-700 dark:bg-sky-900/30 dark:text-sky-300"
+      data-test="model-group-help-text">
+      {{ t(groupHelpKey) }}
+    </p>
 
     <div
       v-if="!collapsed"
@@ -70,11 +88,28 @@
       <div
         v-if="selected"
         class="flex flex-col gap-2">
+        <!-- Optional internal families: say what the card serves and that an
+             empty Provider + API Base means "follow the auxiliary model". -->
+        <p
+          v-if="props.group === 'COMPRESSION_LLM' && !isLocalEntrySelected"
+          class="m-0 rounded bg-sky-50 px-2 py-1 text-[11px] text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+          {{ t('config.llm.compressionScope') }}
+        </p>
+        <p
+          v-if="isInternalFamily && followsAuxiliary && !isLocalEntrySelected"
+          class="m-0 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+          data-test="follows-auxiliary">
+          {{ t('config.llm.followsAuxiliary') }}
+        </p>
         <div
           v-for="key in paramKeys"
           :key="key"
           class="flex flex-col gap-1">
-          <span class="text-xs text-gray-500 dark:text-gray-400">{{ key }}</span>
+          <span
+            class="text-xs text-gray-500 dark:text-gray-400"
+            :title="key"
+            >{{ paramLabel(key) }}</span
+          >
           <!-- 128K floor, shown on the input it constrains instead of once at the
                top of the tab; hidden for the built-in local entry, whose budget the
                backend never reads. -->
@@ -83,7 +118,35 @@
             class="m-0 text-xs text-amber-600 dark:text-amber-400">
             {{ t('config.env.maxTokenHint') }}
           </p>
+          <p
+            v-if="isPenaltyKey(key) && !isLocalEntrySelected"
+            class="m-0 text-xs text-gray-400 dark:text-gray-500">
+            {{ t('config.llm.penaltyHint', { min: PENALTY_MIN, max: PENALTY_MAX }) }}
+          </p>
+          <!-- Penalty keys use a native number input: type/min/max constrain the
+               spinner, and save/apply/test refuse a typed out-of-range value. -->
+          <input
+            v-if="isPenaltyKey(key)"
+            type="number"
+            :min="PENALTY_MIN"
+            :max="PENALTY_MAX"
+            :step="PENALTY_STEP"
+            :value="draft[key] ?? ''"
+            :disabled="isLocalEntrySelected"
+            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
+            :aria-label="penaltyLabel(key)"
+            :class="[
+              'w-full rounded-md border border-solid bg-white px-2 py-1.5 font-mono text-xs text-gray-900 focus:border-theme-main focus:outline-none disabled:opacity-60 dark:bg-gray-900 dark:text-gray-100',
+              isInvalidPenalty(key) ? 'border-red-400' : 'border-gray-200 dark:border-gray-700'
+            ]"
+            data-test="model-penalty-input"
+            :data-key="key"
+            inputmode="decimal"
+            @keydown="onPenaltyKeydown"
+            @input="onPenaltyInput(key, $event)"
+            @change="clampPenalty(key)" />
           <InputText
+            v-else
             v-model="draft[key]"
             :disabled="isLocalEntrySelected"
             :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
@@ -248,6 +311,11 @@ const props = defineProps<{
   values: Record<string, string>;
   /** Group heading shown above the panel. */
   groupTitle?: string;
+  /**
+   * Model-download family behind the built-in local entry. Defaults to the
+   * group itself; the optional internal families reuse the auxiliary GGUF.
+   */
+  downloadGroup?: string;
 }>();
 
 const emit = defineEmits<{
@@ -264,8 +332,36 @@ const store = useLlmProfilesStore();
 /** Collapsed by default; the header toggles it. */
 const collapsed = ref(true);
 
+/** Help popover for this category; closed by default (same click-to-read shape
+ * as the nudge hint: hover tooltips are unreachable inside the model panel). */
+const helpOpen = ref(false);
+
+/** Group name → the four-language help message key. Every model category that
+ * renders this manager has one; plain env groups never reach this component. */
+const GROUP_HELP_KEYS: Record<string, string> = {
+  MAIN_LLM: 'config.llm.modelHelp.main',
+  AUXILIARY_LLM: 'config.llm.modelHelp.auxiliary',
+  TASKFLOW_LLM: 'config.llm.modelHelp.taskflow',
+  COMPRESSION_LLM: 'config.llm.modelHelp.compression',
+  REASONER_LLM: 'config.llm.modelHelp.reasoner',
+  ITTT: 'config.llm.modelHelp.ittt',
+  VTTT: 'config.llm.modelHelp.vttt',
+  TTI: 'config.llm.modelHelp.tti',
+  RERANKER: 'config.llm.modelHelp.reranker',
+  EMBEDDING: 'config.llm.modelHelp.embedding',
+  STT: 'config.llm.modelHelp.stt'
+};
+const groupHelpKey = computed(() => GROUP_HELP_KEYS[props.group] ?? '');
+
 /** Profiles of this group (reactive). */
 const profiles = computed(() => store.listFor(props.group));
+
+/**
+ * The model-download family behind this panel's built-in local entry. The
+ * optional internal families (TaskFlow decisions / compression) reuse the
+ * auxiliary GGUF, so their download box reports that family.
+ */
+const downloadFamily = computed(() => props.downloadGroup || props.group);
 
 // Stored data may exceed the cap (older payloads / hand-edited storage):
 // trim once on panel setup, by creation time, keeping the oldest entries.
@@ -309,6 +405,117 @@ const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value
  * @param key
  */
 const guardedTokenKey = (key: string): boolean => (MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key);
+
+/** Sampling penalty range shared by the input attributes and the save guard. */
+const PENALTY_MIN = -2;
+const PENALTY_MAX = 2;
+const PENALTY_STEP = 0.1;
+
+/**
+ * Whether a parameter is a per-model repetition-penalty override.
+ * @param key
+ */
+const isPenaltyKey = (key: string): boolean => key.endsWith('_FREQUENCY_PENALTY') || key.endsWith('_PRESENCE_PENALTY');
+
+/**
+ * Localized label for a penalty field; other parameters keep their raw env key.
+ * @param key
+ */
+const penaltyLabel = (key: string): string =>
+  key.endsWith('_FREQUENCY_PENALTY') ? t('config.llm.frequencyPenalty') : t('config.llm.presencePenalty');
+
+/**
+ * Localized label for the two token-budget fields; every other parameter keeps
+ * its raw env key (the key stays available as the label's tooltip).
+ * @param key
+ */
+const paramLabel = (key: string): string => {
+  if (isPenaltyKey(key)) return penaltyLabel(key);
+  if (key.endsWith('_MAX_OUTPUT_TOKEN')) return t('config.llm.maxOutputLabel');
+  if (key.endsWith('_MAX_TOKEN')) return t('config.llm.maxContextLabel');
+  return key;
+};
+
+/**
+ * Whether the draft's penalty value is non-empty and outside the valid range.
+ * Empty is valid (it means "use the global default").
+ * @param key
+ */
+const isInvalidPenalty = (key: string): boolean => {
+  const raw = (draft.value[key] ?? '').trim();
+  if (!raw) return false;
+  const value = Number(raw);
+  return !Number.isFinite(value) || value < PENALTY_MIN || value > PENALTY_MAX;
+};
+
+/** Penalty fields currently blocking save/apply/test. */
+const invalidPenaltyKeys = computed(() => props.keys.filter(key => isPenaltyKey(key) && isInvalidPenalty(key)));
+
+/**
+ * Reject a non-numeric keystroke BEFORE it reaches the input. `type=number`
+ * still admits `e`/`E`/`+` (scientific notation), which parse as a number but
+ * are not what a penalty field means; modifiers stay untouched so copy/paste
+ * and select-all keep working.
+ * @param event Keydown event.
+ */
+const onPenaltyKeydown = (event: KeyboardEvent): void => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.key.length > 1) return; // Backspace / Arrow / Tab / Enter / …
+  if (!/^[0-9.-]$/.test(event.key)) event.preventDefault();
+};
+
+/**
+ * Accept only digits / one dot / a leading minus, and clamp a complete
+ * out-of-range number as it is typed. A lone "-" stays in the draft so a
+ * negative value can be completed; save/apply/test still treat it as invalid
+ * until it parses.
+ * @param key
+ * @param event Native input event.
+ */
+const onPenaltyInput = (key: string, event: Event): void => {
+  const input = event.target as HTMLInputElement;
+  const raw = input.value;
+  if (raw === '' || raw === '-') {
+    draft.value[key] = raw;
+    return;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    // The browser hands back "" for an unparseable number, but a pasted
+    // multi-dot / multi-sign string can still slip through in some engines.
+    draft.value[key] = '';
+    input.value = '';
+    return;
+  }
+  if (value < PENALTY_MIN || value > PENALTY_MAX) {
+    const clamped = Math.min(PENALTY_MAX, Math.max(PENALTY_MIN, value));
+    const text = String(Number(clamped.toFixed(2)));
+    draft.value[key] = text;
+    input.value = text;
+    return;
+  }
+  draft.value[key] = raw;
+};
+
+/**
+ * Clamp a penalty to the allowed range (and two decimals) on blur/change.
+ * Empty and non-numeric input become empty, i.e. "unset".
+ * @param key
+ */
+const clampPenalty = (key: string): void => {
+  const raw = (draft.value[key] ?? '').trim();
+  if (!raw || raw === '-' || raw === '.') {
+    draft.value[key] = '';
+    return;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    draft.value[key] = '';
+    return;
+  }
+  const clamped = Math.min(PENALTY_MAX, Math.max(PENALTY_MIN, value));
+  draft.value[key] = String(Number(clamped.toFixed(2)));
+};
 
 /**
  * The built-in "local model" entry: the group's live `.env` parameters with the
@@ -377,7 +584,7 @@ async function refreshLocalDownload(): Promise<void> {
     const payload = await fetchModelDownloadsStatus();
     // A frame that arrived while the request was in flight is newer.
     if (seqAtRequest !== localFrameSeq) return;
-    localDownload.value = payload?.models?.[props.group] ?? null;
+    localDownload.value = payload?.models?.[downloadFamily.value] ?? null;
     localDownloadError.value = '';
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
@@ -386,7 +593,7 @@ async function refreshLocalDownload(): Promise<void> {
 
 function applyLocalDownloadFrame(payload: unknown): void {
   const content = (payload as ModelDownloadUpdate | null)?.content;
-  if (content?.kind !== 'local' || content.family !== props.group || !content.status) return;
+  if (content?.kind !== 'local' || content.family !== downloadFamily.value || !content.status) return;
   localFrameSeq += 1;
   localDownload.value = content.status;
   localDownloadError.value = '';
@@ -401,7 +608,7 @@ async function downloadLocalModel(): Promise<void> {
   localDownloadError.value = '';
   const seqAtRequest = localFrameSeq;
   try {
-    const state = await startModelDownload(props.group);
+    const state = await startModelDownload(downloadFamily.value);
     if (state && seqAtRequest === localFrameSeq) localDownload.value = state;
   } catch {
     localDownloadError.value = t('config.llm.localDownloadError');
@@ -435,6 +642,23 @@ const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER'))
 const nameKey = computed(
   () => props.keys.find(k => k.endsWith('_API_NAME')) ?? props.keys.find(k => k.endsWith('_NAME')) ?? ''
 );
+
+/** The two optional internal families the backend can follow the auxiliary model with. */
+const INTERNAL_FAMILIES = ['TASKFLOW_LLM', 'COMPRESSION_LLM'] as const;
+const isInternalFamily = computed(() => (INTERNAL_FAMILIES as readonly string[]).includes(props.group));
+
+/**
+ * True when this internal family is UNCONFIGURED, i.e. its provider and API
+ * base are both empty and the backend factory falls back to the auxiliary
+ * model. Shown as a badge so the empty form is not mistaken for "broken".
+ */
+const followsAuxiliary = computed(() => {
+  if (!isInternalFamily.value) return false;
+  const baseKey = props.keys.find(k => k.endsWith('_API_BASE'));
+  const provider = (draft.value[providerKey.value] ?? '').trim();
+  const base = baseKey ? (draft.value[baseKey] ?? '').trim() : '';
+  return !provider && !base;
+});
 
 /**
  * True when the profile is the one applied to `.env` for this group.
@@ -506,7 +730,15 @@ const showFlash = (text: string, isError = false) => {
  * chat families, embeddings and the cloud reranker. The media groups need a real
  * image / audio payload, so their button stays disabled with a reason.
  */
-const TESTABLE_GROUPS = ['MAIN_LLM', 'AUXILIARY_LLM', 'REASONER_LLM', 'EMBEDDING', 'RERANKER'] as const;
+const TESTABLE_GROUPS = [
+  'MAIN_LLM',
+  'AUXILIARY_LLM',
+  'TASKFLOW_LLM',
+  'COMPRESSION_LLM',
+  'REASONER_LLM',
+  'EMBEDDING',
+  'RERANKER'
+] as const;
 
 /** Whether the 测试 button can run for the current group / selection. */
 const canTest = computed(
@@ -530,6 +762,10 @@ const runTest = async () => {
   if (!canTest.value || testing.value) return;
   if (missingRequired.value) {
     showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
     return;
   }
   testing.value = true;
@@ -577,6 +813,10 @@ const saveProfile = () => {
   if (!selected.value || isLocalEntrySelected.value) return; // built-in entry is not saveable
   if (missingRequired.value) {
     showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
     return;
   }
   const params: Record<string, string> = { ...draft.value };
@@ -649,6 +889,10 @@ const applyProfile = () => {
   if (!selected.value) return;
   if (missingRequired.value) {
     showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  if (invalidPenaltyKeys.value.length) {
+    showFlash(t('config.llm.penaltyRange'), true);
     return;
   }
   const flagKey = localFlagKey.value;

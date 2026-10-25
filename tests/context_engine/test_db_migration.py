@@ -55,6 +55,7 @@ EXPECTED_MESSAGE_COLUMNS = frozenset(
         "id",
         "turn_num",
         "session_id",
+        "turn_id",
         "role",
         "content",
         "tool_call_id",
@@ -88,6 +89,7 @@ EXPECTED_INDEXES = frozenset(
     {
         "idx_messages_timestamp",
         "idx_messages_turn_num",
+        "idx_messages_turn_id",
         "idx_messages_session_role",
         "idx_messages_parent",
         "idx_messages_idempotency",

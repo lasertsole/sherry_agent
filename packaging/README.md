@@ -77,7 +77,7 @@ cd client && pnpm tauri build
 Both halves are audited before they are uploaded. `packaging/check_release.py`
 fails the build when a shipped tree contains:
 
-- a `tests/`, `evals/`, `docs/`, `wiki/` or `__tests__/` directory (any depth
+- a `tests/`, `evals/`, `wiki/`, `wiki/` or `__tests__/` directory (any depth
   outside PyInstaller's `_internal` dependency payload);
 - a `test_*.py` file, or a colocated `*.test.*` / `*.spec.*` frontend test file;
 - a Markdown file in the SPA (`client/.output/public`), whose payload is code
@@ -133,9 +133,11 @@ unpack → spawn path runs against a local server:
 
 ```bash
 # a stand-in archive: the executable + a matching VERSION, at the archive root
+# (read the real version first — the shell compares it to this build's)
+VERSION=$(python3 -c "import json;print(json.load(open('client/src-tauri/tauri.conf.json'))['version'])")
 mkdir -p /tmp/fake/sherry-backend && cd /tmp/fake/sherry-backend
 printf '#!/bin/sh\necho spawned >> /tmp/fake/started.log\nexec sleep 600\n' > sherry-backend
-chmod 755 sherry-backend && echo "0.1.0" > VERSION
+chmod 755 sherry-backend && echo "$VERSION" > VERSION
 tar czf ../sherry-backend-linux-x86_64.tar.gz .
 cd /tmp/fake && python3 -m http.server 8000 &
 

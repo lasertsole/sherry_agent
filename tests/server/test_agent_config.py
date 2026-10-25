@@ -21,6 +21,13 @@ from pathlib import Path
 
 import pytest
 
+# The subagent conftest installs a minimal ``skills.loader`` stub when the real
+# module has not been imported yet. This suite needs the real catalogue, so
+# replace a stub left behind by an earlier-collected test.
+if "skills.loader" in sys.modules and not hasattr(sys.modules["skills.loader"], "skills_catalog"):
+    sys.modules.pop("skills.loader", None)
+import skills.loader  # noqa: E402,F401
+
 _ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 _real_tools_module = None
 
@@ -192,8 +199,7 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
     # may switch them off).
     assert tool_required("terminal") is True
     assert tool_required("python_repl") is True
-    assert tool_required("terminal_bg_list") is False
-    assert tool_required("terminal_bg_output") is False
+    assert tool_required("terminal_bg") is False
 
     # 记忆与检索: `message_search` is locked, `memory` stays switchable.
     assert tool_required("message_search") is True
@@ -297,6 +303,66 @@ def test_sanitize_accepts_a_partial_payload_and_dedups_tools(real_tool_names, mo
     assert service.sanitize_agent_config({}) == {}
 
 
+def test_sanitize_maps_legacy_taskflow_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the 16→3 merge still applies instead of 400ing."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection(
+        "taskflow_create",
+        "taskflow_summary",
+        "taskflow_run_task",
+    )
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-3:] == ["taskflow_flow", "taskflow_inspect", "taskflow_step"]
+    assert not any(
+        name.startswith("taskflow_")
+        and name
+        not in {
+            "taskflow_flow",
+            "taskflow_step",
+            "taskflow_inspect",
+        }
+        for name in cleaned["tools"]
+    )
+
+
+def test_sanitize_maps_legacy_browser_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the browser 8→2 merge still applies instead of 400ing."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection(
+        "browser_navigate",
+        "browser_click",
+        "browser_evaluate",
+    )
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-2:] == ["browser", "browser_evaluate"]
+    assert not any(
+        name
+        in {
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_press",
+            "browser_scroll",
+            "browser_screenshot",
+        }
+        for name in cleaned["tools"]
+    )
+
+
+def test_sanitize_maps_legacy_terminal_bg_tool_names(real_tool_names, monkeypatch):
+    """A preset saved before the terminal_bg 2→1 merge still applies."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = _tool_selection("terminal_bg_list", "terminal_bg_output")
+    cleaned = service.sanitize_agent_config({"tools": payload})
+
+    assert cleaned["tools"][-1:] == ["terminal_bg"]
+    assert "terminal_bg_list" not in cleaned["tools"]
+    assert "terminal_bg_output" not in cleaned["tools"]
+
+
 def test_sanitize_rejects_unknown_names(real_tool_names, monkeypatch):
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
     with pytest.raises(service.AgentConfigError) as exc:
@@ -395,6 +461,20 @@ async def test_a_busy_session_parks_the_choice_until_promotion(registers, monkey
 
 def test_get_agent_config_state_is_empty_for_an_unset_session(registers):
     assert service.get_agent_config_state("sess-none") == {"config": {}, "pending": False}
+
+
+def test_get_agent_config_state_canonicalizes_legacy_tool_names(registers):
+    """The UI catalogue only knows current names; a stored payload must match it."""
+    mem, _db = registers
+    mem.set_state(
+        "sess-legacy-tools",
+        StateKey.AGENT_CONFIG,
+        {"tools": ["taskflow_create", "taskflow_summary", "taskflow_create", "web_search"]},
+    )
+
+    state = service.get_agent_config_state("sess-legacy-tools")
+
+    assert state["config"]["tools"] == ["taskflow_flow", "taskflow_inspect", "web_search"]
 
 
 def test_sanitize_accepts_a_skill_selection_and_an_empty_one(real_skill_names, monkeypatch):

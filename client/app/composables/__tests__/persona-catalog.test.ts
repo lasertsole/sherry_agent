@@ -105,7 +105,7 @@ const FACTS = {
     { name: 'message_search', group: 'memory', required: true },
     { name: 'memory', group: 'memory' },
     { name: 'web_search', group: 'web' },
-    { name: 'taskflow_create', group: 'tasks' },
+    { name: 'taskflow_flow', group: 'tasks' },
     { name: 'todoread', group: 'tasks' },
     { name: 'sessions_spawn', group: 'subagents' }
   ],
@@ -214,7 +214,7 @@ describe('persona catalogue', () => {
       'terminal',
       'message_search',
       'web_search',
-      'taskflow_create',
+      'taskflow_flow',
       'todoread',
       'sessions_spawn'
     ]);
@@ -268,7 +268,7 @@ describe('persona catalogue', () => {
     // Every tool EXCEPT the 任务与计划 / 子代理 groups keeps moving together.
     expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search', 'memory', 'web_search']);
     expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
-    for (const name of ['taskflow_create', 'todoread', 'sessions_spawn']) {
+    for (const name of ['taskflow_flow', 'todoread', 'sessions_spawn']) {
       expect(payload.agent!.tools).not.toContain(name);
     }
     // The disabled groups are the orchestration surfaces, and its nudge is off.

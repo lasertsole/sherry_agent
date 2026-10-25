@@ -65,6 +65,13 @@ function makeHarness() {
     send: vi.fn(() => ({ controller: { closed: false, abort: vi.fn() }, promise: Promise.resolve() })),
     stop: vi.fn(() => Promise.resolve()),
     sendHitlResponse: vi.fn(),
+    holdFrames: vi.fn(),
+    releaseFrames: vi.fn(),
+    setSnapshotWatermark: vi.fn(),
+    hasPendingSends: vi.fn(() => false),
+    hasPendingMidStreamSends: vi.fn(() => false),
+    settlePendingSends: vi.fn(),
+    settlePendingMidStreamSends: vi.fn(),
     dispose: vi.fn()
   };
 
@@ -81,7 +88,7 @@ function makeHarness() {
     getPendingMedia: () => ({ images: [], audios: [], videos: [] }),
     clearMediaSelection: vi.fn(),
     setTasksTabActive: vi.fn(),
-    loadSessionHistory: vi.fn(async () => {}),
+    loadSessionHistory: vi.fn(async () => null),
     drafts: {
       allocateTempId: () => -1,
       activeTurns: () => [],

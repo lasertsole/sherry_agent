@@ -11,6 +11,7 @@
     <NuxtPage />
   </NuxtLayout>
   <ImagePreviewOverlay />
+  <FormulaPreviewOverlay />
   <!-- First run of a packaged desktop app: the shell downloads the Python backend
        (see composables/use-backend-download.ts) and this card reports it. -->
   <BackendDownloadOverlay />

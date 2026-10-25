@@ -107,6 +107,8 @@ SERVER_HTTP: ServerHttpConfig = {
     "env_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
+        "TASKFLOW_LLM_",
+        "COMPRESSION_LLM_",
         "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
@@ -124,6 +126,8 @@ SERVER_HTTP: ServerHttpConfig = {
     "env_model_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
+        "TASKFLOW_LLM_",
+        "COMPRESSION_LLM_",
         "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
@@ -149,7 +153,7 @@ SERVER_HTTP: ServerHttpConfig = {
             "WORKSPACE_TEMPLATE_LANG",
         }
     ),
-    "memory_system_file_names": ["MEMORY.md", "USER.md"],
+    "memory_system_file_names": ["MEMORY.md", "USER.md", "FACTS.md"],
     "memory_max_content_length": 8000,
     "system_prompt_max_content_length": 12000,
 }

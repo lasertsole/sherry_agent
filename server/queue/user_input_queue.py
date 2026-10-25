@@ -209,6 +209,23 @@ ORDER BY created_at ASC, id ASC
 LIMIT 1;
 """
 
+# helper: recently COMPLETED row lookup by the same key. A late reconnect
+# resend can arrive after the original turn finished and its row left the
+# ACTIVE set; without this check it would start a second turn (duplicate user
+# bubble + duplicate reminder block). Only DELIVERED dedupes — FAILED/VOIDED
+# rows are retryable.
+_FIND_DELIVERED_BY_CLIENT_MSG_SQL = (
+    """
+SELECT """
+    + _ROW_COLUMNS
+    + """
+FROM user_input_queue
+WHERE client_msg_id = ? AND status = 'DELIVERED' AND updated_at >= ?
+ORDER BY updated_at DESC, id DESC
+LIMIT 1;
+"""
+)
+
 # idle-branch placeholder: a row that starts life CLAIMED ("turn in
 # progress" fact), inserted in the same critical section as the idle check.
 _INSERT_CLAIMED_SQL = """
@@ -403,6 +420,15 @@ class QueueRepository:
         return _row_from_db(existing) if existing is not None else None
 
     @staticmethod
+    async def find_delivered_by_client_msg(
+        db: aiosqlite.Connection, client_msg_id: str, since: float
+    ) -> UserInputQueueRow | None:
+        """Recently completed row for a late retry of the same client message."""
+        async with db.execute(_FIND_DELIVERED_BY_CLIENT_MSG_SQL, (client_msg_id, since)) as cursor:
+            existing = await cursor.fetchone()
+        return _row_from_db(existing) if existing is not None else None
+
+    @staticmethod
     async def count_active(db: aiosqlite.Connection, session_id: str) -> int:
         async with db.execute(
             f"SELECT COUNT(*) FROM user_input_queue WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL}",
@@ -527,6 +553,14 @@ class QueueRepository:
     @staticmethod
     async def recover(db: aiosqlite.Connection, session_id: str, now: float) -> int:
         cursor = await db.execute(_RECOVER_SQL, (now, session_id, now))
+        return int(cursor.rowcount)
+
+    @staticmethod
+    async def delete_session(db: aiosqlite.Connection, session_id: str) -> int:
+        """Delete every queue row of a session (ephemeral-session purge)."""
+        cursor = await db.execute(
+            "DELETE FROM user_input_queue WHERE session_id = ?", (session_id,)
+        )
         return int(cursor.rowcount)
 
     @staticmethod
@@ -726,6 +760,19 @@ class UserInputQueue:
         async with self._conn.connect() as db:
             return await QueueRepository.list_active(db, session_id)
 
+    async def delete_session(self, session_id: str) -> int:
+        """Delete every queue row of a session (ephemeral-session purge)."""
+        await self._ensure_db()
+        async with self._conn.write_transaction() as db:
+            removed = await QueueRepository.delete_session(db, session_id)
+        if removed > 0:
+            logger.info(
+                "user_input_queue delete_session: removed {} row(s) for session {}",
+                removed,
+                session_id,
+            )
+        return removed
+
     async def recover(self, session_id: str) -> int:
         """Void expired QUEUED/CLAIMED rows (24h crash-recovery expiry); return the count.
 
@@ -756,6 +803,21 @@ class UserInputQueue:
         await self._ensure_db()
         async with self._conn.connect() as db:
             return await QueueRepository.find_active_by_client_msg(db, client_msg_id)
+
+    async def find_delivered_by_client_msg_id(
+        self, client_msg_id: str, *, within_seconds: float = _EXPIRY_SECONDS
+    ) -> UserInputQueueRow | None:
+        """A recently DELIVERED row carrying ``client_msg_id``, or None.
+
+        Covers the late-resend race: the original turn finished and its row
+        became terminal, but the client lost the completion frames and replays
+        the same (id-only) request after reconnecting. FAILED/VOIDED rows are
+        deliberately not matched so a genuine retry still works.
+        """
+        await self._ensure_db()
+        since = time.time() - max(0.0, within_seconds)
+        async with self._conn.connect() as db:
+            return await QueueRepository.find_delivered_by_client_msg(db, client_msg_id, since)
 
     async def insert_claimed(
         self,

@@ -23,7 +23,7 @@ SAMPLE_NETWORK = """// 网络服务配置
   "SHERRY_BROWSER_HEADLESS": "",
   // 追踪
   "LANGSMITH_TRACING_V2": false,
-  "LANGSMITH_PROJECT": "EMA_AI_agent"
+  "LANGSMITH_PROJECT": "sherry_agent"
 }
 """
 
@@ -68,7 +68,7 @@ class TestNetworkFileValues:
         assert values["SEARXNG_URL"] == "http://localhost:8888"
         assert values["SEARXNG_VERIFY_TLS"] == "true"
         assert values["TAVILY_API_KEY"] == ""
-        assert values["LANGSMITH_PROJECT"] == "EMA_AI_agent"
+        assert values["LANGSMITH_PROJECT"] == "sherry_agent"
 
     def test_missing_file_yields_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr(nc, "NETWORK_CONFIG_PATH", tmp_path / "missing")

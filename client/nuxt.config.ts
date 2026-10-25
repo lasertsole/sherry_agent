@@ -127,7 +127,7 @@ export default defineNuxtConfig({
   // the release bundle is audited by packaging/check_release.py. docs/ is the
   // VitePress site, not an app source tree.
   ignore: ['**/src-tauri/**', 'docs/**', '**/__tests__/**', '**/*.test.*', '**/*.spec.*'],
-  css: ['~/assets/css/main.css', '~/assets/css/main.scss'],
+  css: ['katex/dist/katex.min.css', '~/assets/css/main.css', '~/assets/css/main.scss'],
 
   // Global directives
   vue: {

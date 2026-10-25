@@ -39,13 +39,13 @@
 - delegation="self"：琐碎任务（少于 10 行、单文件），自己做
 - delegation="subagent"：复杂任务（多文件、超过 100 行、逻辑复杂），通过 task 工具委派给子代理，然后填写 subagent_id 字段
 - 代码编辑、测试编写与修复都是适合委派的工作
-- 用 taskflow_run_task(depends_on=[...]) 声明依赖；用 taskflow_dispatch 一并派发就绪步骤，然后等待它们
+- 用 taskflow_step(action="run_task", depends_on=[...]) 声明依赖；用 taskflow_step(action="dispatch") 一并派发就绪步骤，然后等待它们
 
 ### 转换屏障（CRITICAL）
 
 - 当子代理仍在运行时，不要把 todo 标记为 completed
 - 当 TaskFlow 关联的 todo 对应的 TaskFlow step 不是 `done` 时，不要标记为 completed（step 状态为 `blocked`/`ready`/`dispatched` 都表示"未完成"）
-- 必须等待子代理返回并通过 taskflow_resume 注入结果后，才能更新 todo 状态；只有 resume 注入结果后 step 才会变成 `done`
+- 必须等待子代理返回并通过 taskflow_step(action="resume") 注入结果后，才能更新 todo 状态；只有 resume 注入结果后 step 才会变成 `done`
 - 如果子代理失败，把 todo 标记为 cancelled 并重新规划
 
 ### 完成契约（Sisyphus）

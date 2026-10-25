@@ -82,7 +82,7 @@ class _FakeManager:
             return page
         candidates = [p for p in self.pages.values() if p.session_id == session_id]
         if not candidates:
-            raise KeyError("session has no browser page — call browser_navigate first")
+            raise KeyError("session has no browser page — call browser(action='navigate') first")
         ordinary = [p for p in candidates if p.kind == "page"]
         return max(ordinary or candidates, key=lambda p: p.last_used)
 

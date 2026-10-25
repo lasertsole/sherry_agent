@@ -20,7 +20,7 @@ DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
 def index_db_for_root(root: Path | None, configured: str, default_dir: Path) -> str:
     """The index DB for one call's root: explicit/env > per-project > shared.
 
-    A project gets its OWN ``<root>/.codeintel/index.db`` so switching between
+    A project gets its OWN ``<root>/.sherry/codeintel/index.db`` so switching between
     projects no longer rebuilds one shared index (the relative paths in
     ``index_meta`` collide across roots). The shared ``CODE_INTEL_DIR`` remains
     the fallback for a call with no project root — and for an existing shared
@@ -32,7 +32,7 @@ def index_db_for_root(root: Path | None, configured: str, default_dir: Path) -> 
     if configured:
         return configured
     if root is not None and root.is_dir():
-        return str(Path(root) / ".codeintel" / "index.db")
+        return str(Path(root) / ".sherry" / "codeintel" / "index.db")
     return str(default_dir / "index.db")
 
 

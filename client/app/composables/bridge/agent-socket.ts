@@ -83,6 +83,12 @@ class SessionAgentSocket implements AgentSocket {
   private activeTurn: { turnId: string; msgIds: string[] } | null = null;
   /** Highest frame seq covered by the last resume snapshot (see ctx wiring). */
   private snapshotSeq = 0;
+  /** Turn the snapshot seq belongs to (the watermark is per-turn). */
+  private snapshotTurnId = '';
+  /** Frames held while an HTTP history+snapshot request is in flight. */
+  private framesHeld = false;
+  private heldFrames: MessageEvent[] = [];
+  private static readonly MAX_HELD_FRAMES = 1000;
   private stopResolvers: Array<() => void> = [];
   private attempt = 0;
   private reconnectScheduled = false;
@@ -155,8 +161,43 @@ class SessionAgentSocket implements AgentSocket {
     );
   }
 
+  holdFrames(): void {
+    this.framesHeld = true;
+  }
+
+  releaseFrames(): void {
+    this.framesHeld = false;
+    const held = this.heldFrames.splice(0);
+    for (const event of held) this.routeFrame(event);
+  }
+
+  setSnapshotWatermark(seq: number, turnId = ''): void {
+    this.snapshotSeq = seq;
+    this.snapshotTurnId = turnId;
+  }
+
+  hasPendingSends(): boolean {
+    return this.sends.keys().length > 0;
+  }
+
+  hasPendingMidStreamSends(): boolean {
+    return this.sends.hasReceivedChunk();
+  }
+
+  settlePendingSends(): void {
+    this.sends.resolveAll();
+    this.activeTurn = null;
+  }
+
+  settlePendingMidStreamSends(): void {
+    this.sends.resolveMidStream();
+    this.activeTurn = null;
+  }
+
   dispose(): void {
     this.disposed = true;
+    this.framesHeld = false;
+    this.heldFrames.length = 0;
     this.reconnectTimer.clear();
     // Settle (resolve) rather than reject: teardown must not surface an error.
     this.sends.resolveAll();
@@ -272,19 +313,6 @@ class SessionAgentSocket implements AgentSocket {
         return;
       }
       if (this.attempt > 0) emit('stream:reconnected', { sessionId: this.sessionId });
-      let hasMidStreamSend = false;
-      for (const pending of this.sends.values()) {
-        if (pending.receivedChunk) {
-          hasMidStreamSend = true;
-          break;
-        }
-      }
-      if (this.attempt > 0 && hasMidStreamSend) {
-        // Mid-stream turn survived the disconnect: ask for its text snapshot.
-        // The reply is a targeted response on THIS socket (never broadcast),
-        // and live frames keep arriving by broadcast — nothing is replayed.
-        ws.send(JSON.stringify({ type: 'resume_stream', session_id: this.sessionId, content: {} }));
-      }
       this.attempt = 0;
       this.reconnectScheduled = false;
       // (Re)send every pending send that has not received a chunk yet; the
@@ -320,9 +348,9 @@ class SessionAgentSocket implements AgentSocket {
     const inFlight = this.sends.all();
 
     // A send that already produced chunks is NOT rejected here any more: the
-    // server keeps the turn running, and after the reconnect the client asks
-    // for a text snapshot (resume_stream) instead of resending the payload —
-    // so nothing is replayed and the content is never duplicated.
+    // server keeps the turn running, and after the reconnect the page fetches
+    // history + the active-turn snapshot instead of resending the payload — so
+    // nothing is replayed and the content is never duplicated.
     const midStream = inFlight.filter(p => p.receivedChunk);
     // Sends that never produced a chunk can be re-sent after a reconnect; the
     // backend dedupes on the client msg_id, so a turn it already started is
@@ -372,6 +400,17 @@ class SessionAgentSocket implements AgentSocket {
   // ── inbound ──────────────────────────────────────────────
 
   private handleFrame(event: MessageEvent): void {
+    if (this.framesHeld) {
+      if (this.heldFrames.length >= SessionAgentSocket.MAX_HELD_FRAMES) {
+        this.heldFrames.shift();
+      }
+      this.heldFrames.push(event);
+      return;
+    }
+    this.routeFrame(event);
+  }
+
+  private routeFrame(event: MessageEvent): void {
     routeAgentFrame(event, {
       sessionId: this.sessionId,
       handlers: this.handlers,
@@ -391,6 +430,10 @@ class SessionAgentSocket implements AgentSocket {
       getSnapshotSeq: () => this.snapshotSeq,
       setSnapshotSeq: seq => {
         this.snapshotSeq = seq;
+      },
+      getSnapshotTurnId: () => this.snapshotTurnId,
+      setSnapshotTurnId: turnId => {
+        this.snapshotTurnId = turnId;
       }
     });
   }

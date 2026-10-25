@@ -51,9 +51,17 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
             deps_text = "[" + ", ".join(str(dep) for dep in depends_on) + "]"
             criteria = str(step.get("validation_criteria") or "").strip()
             criteria_text = f" validation_criteria={criteria}" if criteria else ""
+            raw_file_deps = step.get("file_deps")
+            file_deps = (
+                [str(dep) for dep in raw_file_deps if str(dep).strip()]
+                if isinstance(raw_file_deps, list)
+                else []
+            )
+            file_deps_text = f" file_deps={file_deps}" if file_deps else ""
             lines.append(
                 f"  - [{step.get('step_id')}] {step_status(step)} {step.get('task')} "
-                f"-> {step.get('child_session_key')} depends_on={deps_text}{criteria_text}"
+                f"-> {step.get('child_session_key')} depends_on={deps_text}"
+                f"{file_deps_text}{criteria_text}"
             )
             lines.extend(_expectation_lines(step))
     counts = steps_summary(steps)
@@ -88,7 +96,7 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
                 waiting_h = waiting_secs / 3600
                 lines.append(
                     f"wait_status: STALE (waiting {waiting_h:.1f}h, timeout={timeout_hours}h) "
-                    f"— child session may have crashed; consider taskflow_resume with a "
+                    f"— child session may have crashed; consider taskflow_step(action='resume') with a "
                     f"failure result or re-dispatch"
                 )
             else:
@@ -105,6 +113,15 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
         lines.append(f"failure_reason: {state['failure_reason']}")
     if state.get("cancel_reason"):
         lines.append(f"cancel_reason: {state['cancel_reason']}")
+    if flow.get("terminal_reason"):
+        lines.append(f"terminal_reason: {flow['terminal_reason']}")
+    detached = state.get("detached_child_session_keys")
+    if detached:
+        lines.append(
+            "detached children: "
+            + ", ".join(str(key) for key in detached)
+            + " (flow is terminal; their results will not resume it)"
+        )
     return "\n".join(lines)
 
 

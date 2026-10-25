@@ -162,7 +162,8 @@ export const useLlmProfilesStore = defineStore(
         provider: pick('MAIN_LLM_PROVIDER', 'PROVIDER'),
         model: pick('MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profile.label,
         base_url: pick('MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
-        api_key: pick('MAIN_LLM_API_KEY', 'API_KEY')
+        api_key: pick('MAIN_LLM_API_KEY', 'API_KEY'),
+        context_window: pick('MAIN_LLM_MAX_TOKEN', 'MAX_TOKEN', 'CONTEXT_WINDOW')
       };
     };
 

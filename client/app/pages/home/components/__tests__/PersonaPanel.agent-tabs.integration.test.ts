@@ -325,7 +325,7 @@ describe('PersonaPanel agent-config tabs', () => {
       tools: [
         { name: 'read_file', group: 'files', required: true },
         { name: 'terminal', group: 'terminal' },
-        { name: 'taskflow_create', group: 'tasks' },
+        { name: 'taskflow_flow', group: 'tasks' },
         { name: 'todowrite', group: 'tasks' }
       ],
       groups: [
@@ -340,7 +340,7 @@ describe('PersonaPanel agent-config tabs', () => {
         {
           group: 'tasks',
           tools: [
-            { name: 'taskflow_create', group: 'tasks', description: 'Create a flow.' },
+            { name: 'taskflow_flow', group: 'tasks', description: 'Create a flow.' },
             { name: 'todowrite', group: 'tasks', description: 'Write todos.' }
           ]
         }
@@ -358,8 +358,8 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(panel.find('[data-test="agent-tool-group-files"]').exists()).toBe(false);
     expect(panel.find('[data-test="agent-tool-group-locked-files"]').exists()).toBe(true);
     // A bulk-only group carries NO per-tool switch, only chips + the group toggle.
-    expect(panel.find('[data-test="agent-tool-taskflow_create"]').exists()).toBe(false);
-    expect(panel.find('[data-test="agent-tool-bulk-taskflow_create"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-tool-taskflow_flow"]').exists()).toBe(false);
+    expect(panel.find('[data-test="agent-tool-bulk-taskflow_flow"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-tool-group-tasks"]').exists()).toBe(true);
 
     // 全部禁用 keeps the required tool on and leaves the rest off.
@@ -367,7 +367,7 @@ describe('PersonaPanel agent-config tabs', () => {
     await flushPromises();
     expect(panel.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');
     expect(panel.get('[data-test="agent-tool-terminal"]').attributes('data-checked')).toBe('false');
-    const chip = () => panel.get('[data-test="agent-tool-bulk-taskflow_create"]').classes();
+    const chip = () => panel.get('[data-test="agent-tool-bulk-taskflow_flow"]').classes();
     expect(chip()).toContain('line-through');
 
     // The group toggle selects / clears the whole membership (chips mirror it).

@@ -18,9 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
+from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_REGRESSION_GATE
 
 pytestmark = [pytest.mark.unit]
 
@@ -29,7 +31,7 @@ FLOW = "flow-finish-gate"
 
 
 def _finish_tool():
-    return {t.name: t for t in build_taskflow_tools()}["taskflow_finish"]
+    return {t.name: t for t in build_legacy_taskflow_tools()}["taskflow_finish"]
 
 
 @pytest.fixture()
@@ -37,6 +39,12 @@ def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
     """Redirect the shared evidence ledger into a per-test file."""
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.jsonl"))
     return EvidenceLedger
+
+
+@pytest.fixture(autouse=True)
+def _keep_the_regression_gate_out_of_gate_c_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin Gate C's stale/failing branches; the replay is its own suite."""
+    monkeypatch.setitem(EVIDENCE_REGRESSION_GATE, "enabled", False)
 
 
 async def _seed_flow(steps: list[dict]) -> None:
@@ -83,7 +91,8 @@ async def test_finish_rejected_when_step_not_done(isolated_db: Path, ledger: Evi
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert out.startswith("Error: Cannot finish")
-    assert "not done/blocked" in out and "s2" in out
+    assert "have not started" in out and "s2" in out
+    assert "protocol violation" in out
 
 
 @pytest.mark.asyncio
@@ -149,6 +158,34 @@ async def test_finish_rejected_when_evidence_stale(isolated_db: Path, ledger: Ev
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert "stale evidence" in out
+
+
+@pytest.mark.asyncio
+async def test_finish_rejected_when_a_sibling_write_invalidated_a_steps_evidence(
+    isolated_db: Path,
+    ledger: EvidenceLedger,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A passes F; sibling B later writes F. A's evidence must reach Gate C as stale."""
+    monkeypatch.setitem(EVIDENCE_CROSS_SESSION_STALENESS, "enabled", True)
+    await _seed_flow(
+        [
+            _step("s1", "done", child_session_key=CHILD_A),
+            _step("s2", "done", child_session_key=CHILD_B),
+        ]
+    )
+    ledger.for_session(CHILD_A).append(
+        kind="test",
+        command="pytest tests/test_feature.py",
+        status="passed",
+    )
+
+    mark_evidence_stale("tests/test_feature.py", CHILD_B)
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "stale evidence" in out
+    assert "tests/test_feature.py" in out
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from .max_tokens_boost import MaxTokensBoostMiddleware as MaxTokensBoostMiddlewa
 from .tool_guardrails import ToolGuardrails as ToolGuardrails
 from .context_eviction import ContextEvictionMiddleware as ContextEvictionMiddleware
 from .iteration_budget import IterationBudget as IterationBudget
+from .token_budget import TokenBudget as TokenBudget
 from .system_prompt import system_prompt_injection as system_prompt_injection
 from .message_persistence import MessagePersistenceMiddleware as MessagePersistenceMiddleware
 from .tool_call_normalize import ToolCallNormalize as ToolCallNormalize

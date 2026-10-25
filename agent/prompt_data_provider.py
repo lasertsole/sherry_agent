@@ -53,7 +53,7 @@ class AgentPromptDataProvider:
         return steps_summary(steps)
 
     def format_memory_for_system_prompt(self, target: str) -> str | None:
-        """Return the frozen memory snapshot block for ``memory`` / ``user``."""
+        """Return the frozen memory block for ``memory`` / ``user`` / ``facts``."""
         from agent.tools.memory import memory_store
 
         return memory_store.format_for_system_prompt(target)

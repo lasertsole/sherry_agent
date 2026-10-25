@@ -165,9 +165,9 @@ def test_the_projects_own_files_are_clean():
         "agent/middlewares/README.md",
         "agent/tools/terminal.py",
         "agent/tools/web_search.py",
-        "docs/sandbox/README.md",
-        "docs/summarization/README.md",
-        "docs/token-guard/README.md",
+        "wiki/sandbox/README.md",
+        "wiki/summarization/README.md",
+        "wiki/token-guard/README.md",
         "pub/func/message/turn_utils.py",
     ]
     offenders: list[tuple[str, list[str]]] = []

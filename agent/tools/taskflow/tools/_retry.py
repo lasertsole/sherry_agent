@@ -249,7 +249,7 @@ def exhausted_note(step: dict, *, retry_count: int, max_retries: int) -> str:
     return (
         f"retry budget exhausted: step {step.get('step_id')} child "
         f"{child_key or '<none>'} settled without a result after {retry_count} "
-        f"retry/retries (max_retries={max_retries}); marked done by taskflow_wait_all"
+        f"retry/retries (max_retries={max_retries}); marked done by taskflow_step(action='wait_all')"
     )
 
 

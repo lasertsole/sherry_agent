@@ -9,7 +9,13 @@ from config.features import TASKFLOW_INFRA
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowExistsError
-from ._shared import default_state, requester_session_key
+from ._shared import (
+    bind_flow_todo,
+    compensate_flow_without_todo,
+    default_state,
+    is_terminal,
+    requester_session_key,
+)
 from agent.tools.pub_base import SessionId
 
 
@@ -21,6 +27,8 @@ async def taskflow_create(
     session_id: SessionId = "",
     deadline_hours: float | None = None,
     resumed_from: str | None = None,
+    todo_content: str = "",
+    todo_category: str = "quick",
 ) -> str:
     """Create a durable task flow and return its initial revision.
 
@@ -35,6 +43,12 @@ async def taskflow_create(
     one (e.g. the old flow went stale): the new flow records the lineage and the
     predecessor is stamped superseded — it drops out of the active-flow reads
     while remaining visible in the session board's history.
+
+    A pending todo is created with the flow (``todo_content``, falling back to
+    the description). That todo is the flow's GC root: it keeps the flow alive
+    until the flow itself is terminal, and ``todowrite`` should carry it
+    forward. Without ``todo_content`` the description (or flow id) is used, so
+    a flow can never exist without a root.
     """
     flow_id = (flow_id or "").strip()
     if not flow_id:
@@ -64,7 +78,7 @@ async def taskflow_create(
     if step_count > TASKFLOW_INFRA["max_steps_per_flow"]:
         return (
             f"Error: flow has {step_count} steps, max is "
-            f"{TASKFLOW_INFRA['max_steps_per_flow']}. Use taskflow_plan to decompose "
+            f"{TASKFLOW_INFRA['max_steps_per_flow']}. Use taskflow_flow(action='plan') to decompose "
             "the goal into fewer steps."
         )
     active_flows = store_sqlite.get_active_flows_sync(session_id)
@@ -91,11 +105,38 @@ async def taskflow_create(
         existing = await store_sqlite.get_flow(flow_id, session_id)
         if existing is None:
             return f"Error: TaskFlow '{flow_id}' already exists; choose a different flow_id."
-        revision = existing["expected_revision"]
+        if is_terminal(existing["status"]):
+            return (
+                f"Error: TaskFlow '{flow_id}' already exists and is terminal "
+                f"(status={existing['status']}); pass a different flow_id, or create "
+                f"the successor with resumed_from='{flow_id}'."
+            )
         return (
-            f"Error: TaskFlow '{flow_id}' already exists (revision={revision}). "
-            "Re-read it with taskflow_summary."
+            f"TaskFlow already exists (idempotent): flow_id={flow_id}, "
+            f"revision={existing['expected_revision']}, status={existing['status']}; "
+            "nothing new was created. Re-read it with taskflow_inspect(action='summary'), or continue "
+            "it with taskflow_step(action='resume')."
         )
+
+    # Entry defense: the flow's GC root. The flow and todo live in separate
+    # SQLite files, so this is a compensating write, not a shared transaction;
+    # a failed bind fails the flow rather than leaving an unreferenced orphan.
+    todo_text = (todo_content or description or f"TaskFlow {flow_id}").strip()
+    try:
+        await bind_flow_todo(
+            session_id,
+            flow_id,
+            todo_text,
+            category=todo_category,
+        )
+    except Exception as exc:  # noqa: BLE001 - report the compensated outcome
+        await compensate_flow_without_todo(flow)
+        return (
+            f"Error: TaskFlow '{flow_id}' was created but its todo could not be "
+            f"bound ({type(exc).__name__}: {exc}); the flow was failed so it cannot "
+            "outlive its root. Retry the create."
+        )
+
     lineage_text = ""
     if resumed_from is not None:
         marked = await store_sqlite.mark_flow_superseded(
@@ -114,5 +155,6 @@ async def taskflow_create(
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow created: flow_id={flow['flow_id']}, status={flow['status']}, "
-        f"revision={flow['expected_revision']}{deadline_text}{lineage_text}"
+        f"revision={flow['expected_revision']}{deadline_text}{lineage_text}; "
+        f"todo bound: {todo_text}"
     )

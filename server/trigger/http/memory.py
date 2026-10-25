@@ -6,7 +6,7 @@ from server.service import read_memory_files, write_memory_files
 @app.get("/memory")
 async def read_memory_handler(request) -> dict[str, str]:
     """
-    Read long-term memory files (workspace/memory/*).
+    Read the global long-term memory files (workspace/memory/*).
     """
     logger.debug("Reading memory files")
 
@@ -17,7 +17,7 @@ async def read_memory_handler(request) -> dict[str, str]:
 async def write_memory_handler(request):
     """
     Write long-term memory files (workspace/memory/*).
-    Body: {"file_to_content": {"MEMORY.md": "...", "USER.md": "..."}}
+    Body: {"file_to_content": {"MEMORY.md": "...", "USER.md": "...", "FACTS.md": "..."}}
     Only provided files are overwritten; others are left unchanged.
     """
     request_json = request.json()

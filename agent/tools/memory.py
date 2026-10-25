@@ -7,8 +7,8 @@ Provides bounded, file-backed memory that persists across sessions. Three stores
     conventions, tool quirks, things learned)
   - USER.md: what the agent knows about the user (preferences, communication style,
     expectations, workflow habits)
-  - FACTS.md: broad, module-independent pitfalls and conventions that recur across
-    plans (always injected into the system prompt; oldest entries roll off at the cap)
+  - FACTS.md: SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions (true in ANY
+    project; always injected into the system prompt; oldest entries roll off at the cap)
 
 All three are injected into the system prompt as a frozen snapshot at session start.
 Mid-session writes update files on disk immediately (durable) but do NOT change
@@ -194,12 +194,12 @@ class MemoryStore:
 
     @staticmethod
     def _path_for(target: str) -> Path:
-        mem_dir = MEMORY_DIR
+        """The global file for one memory target (MEMORY / USER / FACTS)."""
         if target == "user":
-            return mem_dir / "USER.md"
+            return MEMORY_DIR / "USER.md"
         if target == "facts":
-            return mem_dir / "FACTS.md"
-        return mem_dir / "MEMORY.md"
+            return MEMORY_DIR / "FACTS.md"
+        return MEMORY_DIR / "MEMORY.md"
 
     def _reload_target(self, target: str):
         """Re-read entries from disk into in-memory state.
@@ -211,7 +211,7 @@ class MemoryStore:
         self._set_entries(target, fresh)
 
     def save_to_disk(self, target: str):
-        """Persist entries to the appropriate file. Called after every mutation."""
+        """Persist entries to the global file. Called after every mutation."""
         MEMORY_DIR.mkdir(parents=True, exist_ok=True)
         self._write_file(self._path_for(target), self._entries_for(target))
 
@@ -359,7 +359,7 @@ class MemoryStore:
         }
 
     def append_entries(self, new_entries: str) -> dict[str, Any]:
-        """Append multiple §-delimited entries, routed by category (Memory Flush).
+        """Append multiple §-delimited entries, routed by category.
 
         ``User:``-prefixed entries go to USER.md; all others go to MEMORY.md.
         Unlike ``add()`` (one entry, reject on overflow), this batch method skips
@@ -379,7 +379,7 @@ class MemoryStore:
         for entry in parsed:
             scan_error = _scan_memory_content(entry)
             if scan_error:
-                logger.warning(f"Memory Flush: rejected entry -- {scan_error}")
+                logger.warning(f"Memory append: rejected entry -- {scan_error}")
                 continue
             candidates.append(entry)
         if not candidates:
@@ -512,14 +512,11 @@ class MemoryStore:
         return self._success_response(target, "Entry removed.")
 
     def format_for_system_prompt(self, target: str) -> str | None:
-        """
-        Return the frozen snapshot for system prompt injection.
+        """Return the frozen memory block for prompt injection.
 
-        This returns the state captured at load_from_disk() time, NOT the live
-        state. Mid-session writes do not affect this. This keeps the system
-        prompt stable across all turns, preserving the prefix cache.
-
-        Returns None if the snapshot is empty (no entries at load time).
+        This is the state captured at ``load_from_disk()`` time, NOT live state;
+        mid-session writes stay on disk and do not disturb the prompt cache.
+        Returns None for an empty block.
         """
         block = self._system_prompt_snapshot.get(target, "")
         return block if block else None
@@ -568,9 +565,7 @@ class MemoryStore:
         if target == "user":
             header = f"USER PROFILE (who the user is) [{pct}% — {current:,}/{limit:,} chars]"
         elif target == "facts":
-            header = (
-                f"FACTS (broad pitfalls and conventions) [{pct}% — {current:,}/{limit:,} chars]"
-            )
+            header = f"FACTS (system-level pitfalls and conventions) [{pct}% — {current:,}/{limit:,} chars]"
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 
@@ -750,12 +745,12 @@ class MemoryTool(BaseTool):
         "THREE TARGETS:\n"
         "- 'user': who the user is -- name, role, preferences, communication style, pet peeves\n"
         "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n"
-        "- 'facts': broad, module-independent pitfalls and conventions that recur across tasks "
-        "(always injected into the system prompt; oldest entries roll off at the cap)\n\n"
+        "- 'facts': SYSTEM-LEVEL / CROSS-PROJECT pitfalls that are true in ANY project "
+        "(not project-specific; always injected into the system prompt; oldest entries roll off)\n\n"
         "ROUTING: a lesson bound to a specific file/module/test belongs in a "
         "'<module>-notes' skill (skill_manage), not in memory; user preferences belong "
-        "in 'user'; broad cross-plan pitfalls belong in 'facts'; general agent-side "
-        "notes belong in 'memory'.\n\n"
+        "in 'user'; SYSTEM-LEVEL / CROSS-PROJECT pitfalls belong in 'facts' (only if true "
+        "in ANY project); project-specific notes and conventions belong in 'memory'.\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.\n\n"

@@ -25,16 +25,9 @@ tools_module = sys.modules["agent.tools.todolist.tools"]
 todoread_module = sys.modules["agent.tools.todolist.tools.todoread"]
 
 _TASKFLOW_NAMES = [
-    "taskflow_create",
-    "taskflow_run_task",
-    "taskflow_set_waiting",
-    "taskflow_resume",
-    "taskflow_finish",
-    "taskflow_fail",
-    "taskflow_cancel",
-    "taskflow_summary",
-    "taskflow_dispatch",
-    "taskflow_wait_all",
+    "taskflow_flow",
+    "taskflow_step",
+    "taskflow_inspect",
 ]
 
 pytestmark = [pytest.mark.unit]

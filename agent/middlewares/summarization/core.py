@@ -39,7 +39,9 @@ from workspace.prompt_builder import build_system_prompt
 from .compression import CompressionMixin
 from .overflow import OverflowMixin, extract_reported_input_tokens as extract_reported_input_tokens
 from .plan_context import render_plan_context, resolve_active_plan
+from .phase import derive_phase_reason
 from .state_aliases import (
+    _COMPACT_REQUESTED_KEY,
     _COMPRESSION_COUNT_KEY as _COMPRESSION_COUNT_KEY,
     _COMPRESSION_INEFFECTIVE_KEY as _COMPRESSION_INEFFECTIVE_KEY,
     _COMPRESSION_LAST_TOKENS_KEY as _COMPRESSION_LAST_TOKENS_KEY,
@@ -83,7 +85,6 @@ from .summary_generation import (
     _serialize_for_summary as _serialize_for_summary,
 )
 from .thrash import ThrashMixin
-from agent.trajectory_events import record_trajectory_event
 
 # Constants used by the hooks and the cooldown mirror, bound at module level
 # so the mixins and the tests read one source.
@@ -274,8 +275,6 @@ class Summarization(
         trigger: list | None = None,
         main_llm_context_window: int | None = None,
         need_update_system_prompt: bool = False,
-        memory_store: Any = None,
-        llm_factory: Any = None,
         **kwargs,
     ):
         self._model = model
@@ -284,8 +283,8 @@ class Summarization(
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False
         self._compaction_just_happened: bool = False
-        self._memory_store = memory_store
-        self._llm_factory = llm_factory
+        # Process-local completion clock for microcompact's idle trigger.
+        self._last_assistant_completed_ms: dict[str, float] = {}
 
         self._effectiveness_tracker = CompressionEffectivenessTracker(self._estimate_tokens)
         self._truncator = MessageTruncator()
@@ -499,7 +498,11 @@ class Summarization(
     def _before_call_dispatch(
         self, request: ModelRequest[ContextT], session_id: str
     ) -> ModelRequest[ContextT]:
-        """T2's dispatch: the 4-route overflow decision, else the trigger clause."""
+        """T2's dispatch: user-requested compact, the 4-route decision, else the trigger."""
+        if state_register_mem.get_state(session_id, _COMPACT_REQUESTED_KEY, False):
+            state_register_mem.set_state(session_id, _COMPACT_REQUESTED_KEY, False)
+            logger.info("User-requested compaction, session={}", session_id)
+            return self._execute_compact(request, ROUTE_COMPACT_ONLY, session_id, trigger="USER")
         messages: list[AnyMessage] = request.state.get("messages", [])
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
@@ -516,6 +519,12 @@ class Summarization(
         self, request: ModelRequest[ContextT], session_id: str
     ) -> ModelRequest[ContextT]:
         """Async twin of :meth:`_before_call_dispatch`."""
+        if state_register_mem.get_state(session_id, _COMPACT_REQUESTED_KEY, False):
+            state_register_mem.set_state(session_id, _COMPACT_REQUESTED_KEY, False)
+            logger.info("User-requested compaction, session={}", session_id)
+            return await self._aexecute_compact(
+                request, ROUTE_COMPACT_ONLY, session_id, trigger="USER"
+            )
         messages: list[AnyMessage] = request.state.get("messages", [])
         route = self._decide_overflow_route(messages, session_id)
         if route is not None and route != ROUTE_FITS:
@@ -566,16 +575,15 @@ class Summarization(
             # NOTE: no "trigger=" token here — the sync/async parity harness
             # parses captured lines on that token to compare compression facts.
             messages_after = len(request.state.get("messages", []) or [])
+            phase, reason = derive_phase_reason("T2")
             logger.info(
-                "Summarization: compacted (path=T2, messages {} -> {}, session={})",
+                "Summarization: compacted (path=T2, phase={}, reason={}, "
+                "messages {} -> {}, session={})",
+                phase.value,
+                reason.value,
                 messages_before,
                 messages_after,
                 session_id,
-            )
-            record_trajectory_event(
-                session_id,
-                "compact",
-                {"messages_before": messages_before, "messages_after": messages_after},
             )
 
         response = self._execute_with_recovery(request, handler, session_id)

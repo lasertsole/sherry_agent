@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.config import INITIAL_REVISION, StepStatus, TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
 
@@ -527,7 +527,7 @@ async def test_update_then_dispatch_schedules_ready_step(
     )
     assert "added=[step-2]" in out
 
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     dispatched = await tools["taskflow_dispatch"].coroutine(
         flow_id=FLOW, step_ids=["step-2"], session_id=_SESSION
     )
@@ -540,7 +540,7 @@ async def test_update_then_dispatch_schedules_ready_step(
 
 
 def test_update_steps_registered_with_main_only_metadata():
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     assert "taskflow_update_steps" in tools
     assert tools["taskflow_update_steps"].metadata == {
@@ -553,4 +553,4 @@ def test_update_steps_registered_with_main_only_metadata():
 def test_update_steps_in_main_toolset(build_main_tools_real):
     names = [t.name for t in build_main_tools_real()]
 
-    assert "taskflow_update_steps" in names
+    assert "taskflow_step" in names

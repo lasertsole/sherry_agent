@@ -9,7 +9,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
 from loguru import logger
-from models import build_main_llm, build_auxiliary_llm
+from models import build_main_llm, build_auxiliary_llm, build_compression_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
@@ -17,6 +17,7 @@ from config.features import (
     ITERATION_BUDGET,
     LLM_CLIENT_DEFAULTS,
     SUMMARIZATION,
+    assert_max_output_valid,
     assert_max_token_valid,
 )
 from agent.tools import memory_store, build_main_tools
@@ -31,6 +32,7 @@ from .middlewares import (
     ToolResourceLockMiddleware,
     ContextEvictionMiddleware,
     IterationBudget,
+    TokenBudget,
     HeartbeatStaleness,
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
@@ -48,12 +50,21 @@ from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddle
 from .middlewares.reminder_catalog import DynamicReminderMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.thinking_control import ThinkingControlMiddleware
+from .middlewares.summarization.thresholds import resolve_compression_threshold
 from .middlewares.todo_continuation import PlanContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.skill_write_provider import register_skill_write_provider
 from .wrapper.context_limit import ContextLimitGuardWrapper
 from .safe_tool_node import install_safe_tool_node
+
+
+def _main_max_output() -> int | None:
+    """The configured main output cap, resolved lazily (model import is heavy)."""
+    from models.LLMs.main_llm import get_max_output_tokens
+
+    return get_max_output_tokens()
+
 
 # One process-level patch, before any create_agent() call. It is a no-op when
 # TOOL_PARALLEL["enabled"] is false.
@@ -241,23 +252,42 @@ def _agent_holder_count(graph: Any) -> int:
 def _assert_max_token() -> None:
     """MAX_TOKEN guard, runtime second line of defense.
 
-    Even if the server booted with a valid .env, a mid-run edit that drops
-    either value below 128K still refuses to build the graph. TokenGuardError
-    propagates to the caller (server/service/messages.py surfaces it as a WS
-    error chunk).
+    Even if the server booted with a valid .env, a mid-run edit that drops a
+    configured value below its floor still refuses to build the graph.
+    TokenGuardError propagates to the caller (server/service/messages.py
+    surfaces it as a WS error chunk).
     """
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
+    _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
     assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
     assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+    assert_max_output_valid(
+        "MAIN_LLM_MAX_OUTPUT_TOKEN", int(_main_out_raw) if _main_out_raw else None
+    )
+    assert_max_output_valid(
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN", int(_aux_out_raw) if _aux_out_raw else None
+    )
+    # The two optional families are validated only when set: an unset family
+    # follows the auxiliary model, whose own check already ran above.
+    for _key in ("TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"):
+        _raw = os.getenv(_key, "").strip()
+        if _raw:
+            assert_max_token_valid(_key, int(_raw))
+    for _key in ("TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"):
+        _raw = os.getenv(_key, "").strip()
+        if _raw:
+            assert_max_output_valid(_key, int(_raw))
 
 
 def _build_middlewares(
     *,
     fallback_chain: Any,
     auxiliary_llm: Any,
+    compression_llm: Any = None,
     main_llm_context_window: int,
     compression_trigger_ratio: float,
     temperature: float | None = None,
@@ -294,6 +324,11 @@ def _build_middlewares(
         ToolSelectionMiddleware(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+        # Session-level token cap (optional; absent = pass-through) and usage
+        # accumulation. Inside IterationBudget's wrapping so the per-turn
+        # iteration cap is decided first, and outside the model call so the
+        # terminal message short-circuits before any provider request.
+        TokenBudget(),
         ToolGuardrails(),
         # Process-wide shell/code and per-session HITL resource locks. Registered
         # after ToolGuardrails (inner to it), so a blocked call never waits on a
@@ -352,9 +387,21 @@ def _build_middlewares(
         LLMRetryMiddleware(fallback_chain=fallback_chain),
         Summarization(
             need_update_system_prompt=True,
-            model=auxiliary_llm,
+            # COMPRESSION_LLM_* when configured, else the auxiliary instance
+            # (the fallback lives in the factory; a bare `_build_middlewares`
+            # call in tests can still pass None and keep the old wiring).
+            model=compression_llm or auxiliary_llm,
             main_llm_context_window=main_llm_context_window,
-            trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
+            trigger=[
+                (
+                    "tokens",
+                    resolve_compression_threshold(
+                        main_llm_context_window,
+                        _main_max_output(),
+                        fallback_ratio=compression_trigger_ratio,
+                    )[0],
+                )
+            ],
         ),
         # Registered LAST = the innermost wrap_model_call layer, closest to the
         # raw model call: a tool call whose arguments fail JSON parsing
@@ -385,6 +432,10 @@ async def _build_graph(
 
     main_llm = build_main_llm()
     auxiliary_llm = build_auxiliary_llm()
+    # COMPRESSION_LLM_* when configured, else an auxiliary instance (the
+    # factory's fallback) — the auxiliary build above stays for the other
+    # consumers, notably the summary's memory-review nudges.
+    compression_llm = build_compression_llm()
     fallback_chain = build_fallback_chain()
 
     # Assemble the pipeline, then fail fast BEFORE the expensive create_agent()
@@ -392,6 +443,7 @@ async def _build_graph(
     agent_middleware = _build_middlewares(
         fallback_chain=fallback_chain,
         auxiliary_llm=auxiliary_llm,
+        compression_llm=compression_llm,
         main_llm_context_window=main_llm_context_window,
         compression_trigger_ratio=compression_trigger_ratio,
         temperature=temperature,

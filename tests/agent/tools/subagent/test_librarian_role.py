@@ -26,7 +26,7 @@ from config.features.agent_side import CODE_INTEL_SEMANTIC
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
-CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact", "semantic_code_search"}
+CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact", "path", "semantic_code_search"}
 LSP_NAMES = {
     "lsp_goto_definition",
     "lsp_find_references",

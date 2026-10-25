@@ -45,7 +45,7 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store."""
 
-    def format_for_system_prompt(self, target: str):
+    def format_for_system_prompt(self, target: str, session_id: str | None = None):
         return "MEMORY-LIVE" if target == "memory" else None
 
 
@@ -144,7 +144,10 @@ class TestTaskflowBlockInjection:
 
         assert "## Pending TaskFlows" in prompt
         assert "deploy-v2" in prompt
-        assert "Use taskflow_summary to inspect a flow and continue execution." in prompt
+        assert (
+            "Use taskflow_inspect(action='summary') to inspect a flow and continue execution."
+            in prompt
+        )
 
     def test_taskflow_block_absent_when_no_flows(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt

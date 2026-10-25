@@ -48,12 +48,15 @@ from agent.middlewares.llm_capability_cache import set_capability
 from agent.middlewares.media_pipeline.degradation import detect_media_blindness
 from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
-from pub.func.retry_utils import jittered_backoff
+from pub.func.retry_policy import compute_retry_delay
 from pub.types.llm import FallbackCandidate
 from runtime import StateKey, state_register_mem
 
+from .retry_events import publish_model_retry
+
 _STALE_STREAK_KEY = StateKey.LLM_STALE_STREAK
 _FALLBACK_INDEX_KEY = StateKey.LLM_FALLBACK_INDEX
+_FALLBACK_SWITCHES_KEY = StateKey.LLM_FALLBACK_SWITCHES
 _CONTENT_FILTER_KEY = StateKey.LLM_CONTENT_FILTER_BLOCKED
 # Mid-stream safety-cut flag set by the stream layer (same contract as
 # ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
@@ -76,8 +79,16 @@ class ContentFilterError(Exception):
 class LLMRetryConfig:
     max_retries: int = LLM_RETRY["max_retries"]
     base_delay: float = LLM_RETRY["base_delay"]
+    backoff_factor: float = LLM_RETRY["backoff_factor"]
     max_delay: float = LLM_RETRY["max_delay"]
+    jitter_mode: str = LLM_RETRY["jitter_mode"]
     jitter: float = LLM_RETRY["jitter"]
+    respect_retry_after: bool = LLM_RETRY["respect_retry_after"]
+    retry_after_cap_s: float = LLM_RETRY["retry_after_cap_s"]
+    empty_completion_retries: int = LLM_RETRY["empty_completion_retries"]
+    emit_retry_events: bool = LLM_RETRY["emit_retry_events"]
+    max_fallback_switches: int = LLM_RETRY["max_fallback_switches"]
+    stale_giveup_scope: str = LLM_RETRY["stale_giveup_scope"]
     stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
 
 
@@ -99,12 +110,35 @@ class LLMRetryMiddleware(AgentMiddleware):
 
     # ---- hooks ----------------------------------------------------------
 
+    def before_agent(self, state: Any, runtime: Any = None) -> None:
+        """Reset the per-turn retry counters at the start of a main-agent turn.
+
+        The retry budget itself is local to each model call; the two session
+        counters this clears are the fallback-switch cap and (in ``turn``
+        scope) the consecutive-timeout streak, so a tripped breaker cannot
+        wedge every later turn of the session.
+        """
+        session_id = self._session_id_from_state(state)
+        if session_id is None:
+            return None
+        state_register_mem.set_state(session_id, _FALLBACK_SWITCHES_KEY, 0)
+        if self.config.stale_giveup_scope == "turn":
+            self._reset_stale_streak(session_id)
+        return None
+
+    async def abefore_agent(self, state: Any, runtime: Any = None) -> None:
+        """Async twin of :meth:`before_agent` (the server runs async turns)."""
+        self.before_agent(state, runtime)
+        return None
+
     def wrap_model_call(self, request: ModelRequest, handler: Callable) -> Any:
         session_id = self._get_session_id(request)
         if session_id is None:
             return handler(request)
         request = self._apply_sticky_fallback(request, session_id)
         retry_count = 0
+        empty_retries = 0
+        last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
             try:
@@ -119,11 +153,15 @@ class LLMRetryMiddleware(AgentMiddleware):
                         raise
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 if not classified.retryable:
                     rebound = None
@@ -132,14 +170,32 @@ class LLMRetryMiddleware(AgentMiddleware):
                     if rebound is not None:
                         request = rebound
                         retry_count = 0
+                        empty_retries = 0
+                        last_reason = ""
                         continue
                     raise
                 retry_count += 1
+                last_reason = classified.reason.value
                 if retry_count > self.config.max_retries:
+                    self._emit_retry(
+                        session_id,
+                        "exhausted",
+                        retry_count,
+                        last_reason,
+                        physical_attempt=retry_count,
+                    )
                     raise
                 if classified.reason == FailoverReason.timeout:
                     self._bump_stale_streak(session_id)
-                delay = self._backoff(retry_count)
+                delay = self._backoff(retry_count, classified.retry_after_s)
+                self._emit_retry(
+                    session_id,
+                    "scheduled",
+                    retry_count,
+                    last_reason,
+                    delay,
+                    physical_attempt=retry_count + 1,
+                )
                 logger.warning(
                     "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
                     retry_count,
@@ -155,20 +211,75 @@ class LLMRetryMiddleware(AgentMiddleware):
             if rebound is not None:
                 request = rebound
                 retry_count = 0
+                empty_retries = 0
+                last_reason = ""
                 continue
             self._evaluate_silent_degradation(request, session_id, result)
+            if self._is_empty_completion(result):
+                if (
+                    empty_retries < self.config.empty_completion_retries
+                    and retry_count < self.config.max_retries
+                ):
+                    retry_count += 1
+                    empty_retries += 1
+                    last_reason = "empty_completion"
+                    delay = self._backoff(retry_count)
+                    self._emit_retry(
+                        session_id,
+                        "scheduled",
+                        retry_count,
+                        last_reason,
+                        delay,
+                        physical_attempt=retry_count + 1,
+                    )
+                    logger.warning(
+                        "Model returned an empty completion; retrying in {:.2f}s "
+                        "(empty retry {}/{})",
+                        delay,
+                        empty_retries,
+                        self.config.empty_completion_retries,
+                    )
+                    time.sleep(delay)
+                    continue
+                if empty_retries > 0:
+                    self._emit_retry(
+                        session_id,
+                        "exhausted",
+                        retry_count,
+                        "empty_completion",
+                        physical_attempt=retry_count + 1,
+                    )
+                return result
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
+                self._emit_retry_success(session_id, retry_count, last_reason)
                 return result
             retry_count += 1
+            last_reason = stub_reason.value
             if retry_count > self.config.max_retries:
                 logger.warning(
                     "Partial-stream stub retry budget exhausted; keeping the current result"
                 )
+                self._emit_retry(
+                    session_id,
+                    "exhausted",
+                    retry_count,
+                    last_reason,
+                    physical_attempt=retry_count,
+                )
                 return result
-            return self._recall_after_stub_sync(
-                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            delay = self._backoff(retry_count)
+            self._emit_retry(
+                session_id,
+                "scheduled",
+                retry_count,
+                last_reason,
+                delay,
+                physical_attempt=retry_count + 1,
             )
+            result = self._recall_after_stub_sync(request, handler, session_id, stub_reason, delay)
+            self._emit_retry_success(session_id, retry_count, last_reason)
+            return result
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[Any]]
@@ -178,6 +289,8 @@ class LLMRetryMiddleware(AgentMiddleware):
             return await handler(request)
         request = self._apply_sticky_fallback(request, session_id)
         retry_count = 0
+        empty_retries = 0
+        last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
             try:
@@ -192,11 +305,15 @@ class LLMRetryMiddleware(AgentMiddleware):
                         raise
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 if not classified.retryable:
                     rebound = None
@@ -205,14 +322,32 @@ class LLMRetryMiddleware(AgentMiddleware):
                     if rebound is not None:
                         request = rebound
                         retry_count = 0
+                        empty_retries = 0
+                        last_reason = ""
                         continue
                     raise
                 retry_count += 1
+                last_reason = classified.reason.value
                 if retry_count > self.config.max_retries:
+                    self._emit_retry(
+                        session_id,
+                        "exhausted",
+                        retry_count,
+                        last_reason,
+                        physical_attempt=retry_count,
+                    )
                     raise
                 if classified.reason == FailoverReason.timeout:
                     self._bump_stale_streak(session_id)
-                delay = self._backoff(retry_count)
+                delay = self._backoff(retry_count, classified.retry_after_s)
+                self._emit_retry(
+                    session_id,
+                    "scheduled",
+                    retry_count,
+                    last_reason,
+                    delay,
+                    physical_attempt=retry_count + 1,
+                )
                 logger.warning(
                     "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
                     retry_count,
@@ -228,25 +363,87 @@ class LLMRetryMiddleware(AgentMiddleware):
             if rebound is not None:
                 request = rebound
                 retry_count = 0
+                empty_retries = 0
+                last_reason = ""
                 continue
             self._evaluate_silent_degradation(request, session_id, result)
+            if self._is_empty_completion(result):
+                if (
+                    empty_retries < self.config.empty_completion_retries
+                    and retry_count < self.config.max_retries
+                ):
+                    retry_count += 1
+                    empty_retries += 1
+                    last_reason = "empty_completion"
+                    delay = self._backoff(retry_count)
+                    self._emit_retry(
+                        session_id,
+                        "scheduled",
+                        retry_count,
+                        last_reason,
+                        delay,
+                        physical_attempt=retry_count + 1,
+                    )
+                    logger.warning(
+                        "Model returned an empty completion; retrying in {:.2f}s "
+                        "(empty retry {}/{})",
+                        delay,
+                        empty_retries,
+                        self.config.empty_completion_retries,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                if empty_retries > 0:
+                    self._emit_retry(
+                        session_id,
+                        "exhausted",
+                        retry_count,
+                        "empty_completion",
+                        physical_attempt=retry_count + 1,
+                    )
+                return result
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
+                self._emit_retry_success(session_id, retry_count, last_reason)
                 return result
             retry_count += 1
+            last_reason = stub_reason.value
             if retry_count > self.config.max_retries:
                 logger.warning(
                     "Partial-stream stub retry budget exhausted; keeping the current result"
                 )
+                self._emit_retry(
+                    session_id,
+                    "exhausted",
+                    retry_count,
+                    last_reason,
+                    physical_attempt=retry_count,
+                )
                 return result
-            return await self._recall_after_stub_async(
-                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            delay = self._backoff(retry_count)
+            self._emit_retry(
+                session_id,
+                "scheduled",
+                retry_count,
+                last_reason,
+                delay,
+                physical_attempt=retry_count + 1,
             )
+            result = await self._recall_after_stub_async(
+                request, handler, session_id, stub_reason, delay
+            )
+            self._emit_retry_success(session_id, retry_count, last_reason)
+            return result
 
     # ---- session-scoped state -------------------------------------------
 
     def _get_session_id(self, request: ModelRequest) -> str | None:
         state = getattr(request, "state", None) or {}
+        session_id = state.get("session_id") if hasattr(state, "get") else None
+        return session_id or None
+
+    @staticmethod
+    def _session_id_from_state(state: Any) -> str | None:
         session_id = state.get("session_id") if hasattr(state, "get") else None
         return session_id or None
 
@@ -267,13 +464,90 @@ class LLMRetryMiddleware(AgentMiddleware):
     def _reset_stale_streak(self, session_id: str) -> None:
         state_register_mem.set_state(session_id, _STALE_STREAK_KEY, 0)
 
-    def _backoff(self, retry_count: int) -> float:
-        return jittered_backoff(
+    def _fallback_switches(self, session_id: str) -> int:
+        return int(state_register_mem.get_state(session_id, _FALLBACK_SWITCHES_KEY, 0) or 0)
+
+    def _backoff(self, retry_count: int, retry_after_s: float | None = None) -> float:
+        return compute_retry_delay(
             retry_count,
             base_delay=self.config.base_delay,
+            backoff_factor=self.config.backoff_factor,
             max_delay=self.config.max_delay,
+            jitter_mode=self.config.jitter_mode,
             jitter=self.config.jitter,
+            retry_after_s=retry_after_s,
+            retry_after_cap_s=self.config.retry_after_cap_s,
+            respect_retry_after=self.config.respect_retry_after,
         )
+
+    def _emit_retry(
+        self,
+        session_id: str,
+        status: str,
+        retry_count: int,
+        reason: str,
+        delay: float = 0.0,
+        *,
+        physical_attempt: int | None = None,
+        extra_attempts: int = 0,
+    ) -> None:
+        """Push one retry progress frame (scheduled / succeeded / exhausted).
+
+        ``attempt`` is the PHYSICAL request number (it includes extra attempts
+        such as auth refresh / signature repair); ``budget_attempt`` subtracts
+        those, and ``retries`` is the number of budget-consuming retries. This
+        mirrors ZCode's ``attempt`` / ``retryBudgetAttempt`` split, so a
+        denominator change is visible instead of being conflated with the
+        retry budget.
+        """
+        if not self.config.emit_retry_events:
+            return
+        attempt = max(1, int(physical_attempt if physical_attempt is not None else retry_count + 1))
+        extra = max(0, int(extra_attempts))
+        budget_attempt = max(1, attempt - extra)
+        max_attempts = self.config.max_retries + 1 + extra
+        publish_model_retry(
+            session_id,
+            status=status,
+            attempt=attempt,
+            budget_attempt=budget_attempt,
+            max_attempts=max_attempts,
+            retries=max(0, budget_attempt - 1),
+            extra_attempts=extra,
+            fallback_switches=self._fallback_switches(session_id),
+            reason=reason,
+            delay_ms=delay * 1000.0,
+        )
+
+    def _emit_retry_success(self, session_id: str, retry_count: int, reason: str) -> None:
+        if retry_count > 0:
+            self._emit_retry(
+                session_id,
+                "succeeded",
+                retry_count,
+                reason,
+                physical_attempt=retry_count + 1,
+            )
+
+    @staticmethod
+    def _is_empty_completion(result: Any) -> bool:
+        """A call with no text, no tool calls and no usage (ZCode's empty turn)."""
+        if not isinstance(result, AIMessage):
+            return False
+        content = result.content
+        if isinstance(content, list):
+            text = "".join(
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            text = content if isinstance(content, str) else ""
+        if text.strip():
+            return False
+        if getattr(result, "tool_calls", None):
+            return False
+        return not bool(getattr(result, "usage_metadata", None))
 
     # ---- content-filter flag (set by the stream layer) -------------------
 
@@ -519,7 +793,7 @@ class LLMRetryMiddleware(AgentMiddleware):
 
     def _apply_sticky_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest:
         """Begin attempts on the already-activated fallback candidate, if any."""
-        if not self.fallback_chain:
+        if not self.fallback_chain or self.config.max_fallback_switches <= 0:
             return request
         idx = state_register_mem.get_state(session_id, _FALLBACK_INDEX_KEY, 0) or 0
         if not 0 < idx <= len(self.fallback_chain):
@@ -532,8 +806,16 @@ class LLMRetryMiddleware(AgentMiddleware):
         return rebound
 
     def _try_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest | None:
-        """Activate the next fallback candidate; None when the chain is exhausted."""
-        if not self.fallback_chain:
+        """Activate the next fallback candidate; None when the chain or cap is exhausted."""
+        if not self.fallback_chain or self.config.max_fallback_switches <= 0:
+            return None
+        switches = self._fallback_switches(session_id)
+        if switches >= self.config.max_fallback_switches:
+            logger.warning(
+                "Fallback switch cap reached ({} of {} this turn); not switching again",
+                switches,
+                self.config.max_fallback_switches,
+            )
             return None
         idx = state_register_mem.get_state(session_id, _FALLBACK_INDEX_KEY, 0) or 0
         if idx >= len(self.fallback_chain):
@@ -544,12 +826,15 @@ class LLMRetryMiddleware(AgentMiddleware):
         if rebound is None:
             return None
         self._refresh_native_model_key(session_id, candidate)
+        state_register_mem.set_state(session_id, _FALLBACK_SWITCHES_KEY, switches + 1)
         logger.warning(
-            "Switching to fallback model {}/{} (candidate {} of {})",
+            "Switching to fallback model {}/{} (candidate {} of {}, switch {} of {})",
             candidate.provider,
             candidate.model_name,
             idx + 1,
             len(self.fallback_chain),
+            switches + 1,
+            self.config.max_fallback_switches,
         )
         return rebound
 

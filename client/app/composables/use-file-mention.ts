@@ -130,6 +130,12 @@ export function extractTextForSend(inputEl: HTMLElement | null): string {
       result += el.dataset.filePath ?? el.textContent ?? '';
       continue;
     }
+    if (el.classList.contains(QUOTE_CHIP_CLASS)) {
+      // A quoted selection is sent as a markdown blockquote, never as the
+      // chip's preview label.
+      result += buildQuoteBlock(el.getAttribute(QUOTE_ATTR) ?? el.textContent ?? '');
+      continue;
+    }
     if (el.tagName === 'BR') {
       result += '\n';
       continue;

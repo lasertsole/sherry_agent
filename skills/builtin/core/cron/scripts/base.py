@@ -234,7 +234,7 @@ class CronService:
 
     _MAX_RUN_HISTORY = 20
 
-    # Cron breaker thresholds (see docs/loop-prevention/README.md): after
+    # Cron breaker thresholds (see wiki/loop-prevention/README.md): after
     # DEGRADED_THRESHOLD consecutive failures a job degrades into an
     # exponential-backoff mode; at DISABLED_THRESHOLD it is auto-disabled
     # and a notification is published.
@@ -250,6 +250,11 @@ class CronService:
         self._last_mtime: float = 0.0
         self._timer_task: asyncio.Task | None = None
         self._running = False
+        # One process-wide claim for executions. The cron tick lives on the
+        # cron loop and run_job on the server loop: a plain bool check-then-set
+        # would race, so the lock covers claim + pre-advance + save.
+        self._execution_lock = threading.RLock()
+        self._running_jobs: set[str] = set()
         # Per-job failure tracking for the breaker. Memory-only by design:
         # never persisted, never passed to _save_store's serialization.
         self._failure_states: dict[str, CronJobFailureState] = {}
@@ -314,7 +319,12 @@ class CronService:
         return self._store
 
     def _save_store(self) -> None:
-        """Save jobs to disk."""
+        """Save jobs under the execution lock (cross-loop callers share it)."""
+        with self._execution_lock:
+            self._save_store_locked()
+
+    def _save_store_locked(self) -> None:
+        """Save jobs to disk; caller holds ``_execution_lock``."""
         if not self._store:
             return
 
@@ -356,7 +366,16 @@ class CronService:
             ],
         }
 
-        self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path = self.store_path.with_name(self.store_path.name + ".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_path, self.store_path)
+            self._last_mtime = self.store_path.stat().st_mtime
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     async def start(self) -> None:
         """Start the cron service."""
@@ -447,47 +466,92 @@ class CronService:
         self._save_store()
         self._arm_timer()
 
-    async def _execute_job(self, job: CronJob) -> None:
-        """Execute a single job."""
+    async def _execute_job(self, job: CronJob, *, manual: bool = False) -> bool:
+        """Execute a single job once; return False when the claim is refused.
+
+        The claim, pre-advance and save happen under ``_execution_lock`` before
+        any agent work. A second caller (another loop's tick, a manual Run)
+        therefore sees ``_running_jobs`` and skips instead of starting a
+        concurrent turn. Pre-advancing the slot means a crash after the result
+        was delivered can never refire that slot on restart.
+        """
+        job_id = job.id
+        with self._execution_lock:
+            if job_id in self._running_jobs:
+                logger.info("Cron: job %s is already running, skipping", job_id)
+                return False
+            store = self._load_store()
+            current = next((j for j in store.jobs if j.id == job_id), None)
+            if current is None:
+                return False
+            if (
+                not manual
+                and current.state.next_run_at_ms is not None
+                and current.state.next_run_at_ms > _now_ms()
+            ):
+                # A stale tick from another loop: this slot was already consumed.
+                logger.debug("Cron: job %s slot already consumed, skipping", job_id)
+                return False
+
+            slot_ms = current.state.next_run_at_ms or _now_ms()
+            if current is not job:
+                # Keep callers/tests holding the job object in sync with the
+                # authoritative store row (state is the object they inspect).
+                job.state = current.state
+                job.schedule = current.schedule
+                job.payload = current.payload
+                job.enabled = current.enabled
+                job.delete_after_run = current.delete_after_run
+            job._run_id = f"cron:{job_id}:{slot_ms}"
+            # Consume the slot BEFORE the agent runs. ``anchor_ms`` keeps the
+            # fixed-phase grid; the post-run block must not advance again.
+            current.state.next_run_at_ms = _compute_next_run(
+                current.schedule, slot_ms, anchor_ms=slot_ms
+            )
+            self._running_jobs.add(job_id)
+            self._save_store_locked()
+
         start_ms = _now_ms()
         logger.info("Cron: executing job %s (%s)", job.name, job.id)
 
         try:
-            if self.on_job:
-                await self.on_job(job)
+            try:
+                if self.on_job:
+                    await self.on_job(job)
 
-            job.state.last_status = "ok"
-            job.state.last_error = None
-            logger.info("Cron: job %s completed", job.name)
+                job.state.last_status = "ok"
+                job.state.last_error = None
+                logger.info("Cron: job %s completed", job.name)
 
-        except Exception as e:
-            job.state.last_status = "error"
-            job.state.last_error = str(e)
-            logger.exception("Cron: job %s failed: %s", job.name, e)
+            except Exception as e:
+                job.state.last_status = "error"
+                job.state.last_error = str(e)
+                logger.exception("Cron: job %s failed: %s", job.name, e)
 
-        # Notify the bell: a cron job just completed (ok or error).
-        await _push_cron_notification(job)
+            # Notify the bell: a cron job just completed (ok or error).
+            await _push_cron_notification(job)
 
-        end_ms = _now_ms()
-        job.state.last_run_at_ms = start_ms
-        job.updated_at_ms = end_ms
+            end_ms = _now_ms()
+            job.state.last_run_at_ms = start_ms
+            job.updated_at_ms = end_ms
 
-        # Write execution log to logs/output/cron/ instead of run_history
-        self._write_execution_log(job, start_ms, end_ms)
+            # Write execution log to logs/output/cron/ instead of run_history
+            self._write_execution_log(job, start_ms, end_ms)
 
-        # Handle one-shot jobs
-        if job.schedule.kind == "at":
-            if job.delete_after_run:
-                self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
-            else:
-                job.enabled = False
-                job.state.next_run_at_ms = None
-        else:
-            # Re-anchor to the slot just consumed: the grid phase
-            # survives job duration; manual runs consume the pending slot.
-            job.state.next_run_at_ms = _compute_next_run(
-                job.schedule, _now_ms(), anchor_ms=job.state.next_run_at_ms
-            )
+            with self._execution_lock:
+                # One-shot jobs are finalized here; recurring jobs were already
+                # advanced before execution and must NOT be advanced twice.
+                if job.schedule.kind == "at":
+                    if job.delete_after_run:
+                        self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
+                    else:
+                        job.enabled = False
+                        job.state.next_run_at_ms = None
+                self._save_store_locked()
+        finally:
+            with self._execution_lock:
+                self._running_jobs.discard(job_id)
+        return True
 
     def _write_execution_log(self, job: CronJob, start_ms: int, end_ms: int) -> None:
         """Write job execution log to logs/output/cron/ instead of in-memory run_history."""
@@ -520,7 +584,7 @@ class CronService:
 
         logger.info("Cron: execution log written to %s", log_file)
 
-    # ========== Failure breaker (see docs/loop-prevention/README.md) ==========
+    # ========== Failure breaker (see wiki/loop-prevention/README.md) ==========
 
     async def _on_cron_job(self, cron_job: CronJob) -> None:
         """Agent callback executed by ``_execute_job``, wrapped with the breaker.
@@ -602,11 +666,13 @@ class CronService:
 
             bus: MessageBus = channel_manager.get_bus()
 
+            run_id = getattr(cron_job, "_run_id", None)
             msg: InboundMessage = InboundMessage(
                 channel=channel,
                 sender_id="cron tool",
                 chat_id=to,
                 content=res,
+                metadata={"message_id": run_id} if run_id else {},
             )
             await bus.publish_inbound(msg)
 
@@ -903,16 +969,20 @@ class CronService:
         return None
 
     async def run_job(self, job_id: str, force: bool = False) -> bool:
-        """Manually run a job."""
+        """Manually run a job; False when disabled or already running.
+
+        ``force`` bypasses the disabled check only. It never bypasses the
+        running claim: concurrent execution is the duplicate this service
+        exists to prevent.
+        """
         store = self._load_store()
         for job in store.jobs:
             if job.id == job_id:
                 if not force and not job.enabled:
                     return False
-                await self._execute_job(job)
-                self._save_store()
+                executed = await self._execute_job(job, manual=True)
                 self._arm_timer()
-                return True
+                return executed
         return False
 
     def get_job(self, job_id: str) -> CronJob | None:

@@ -104,15 +104,13 @@ def _git(root, *args: str) -> None:
 
 @pytest.fixture
 def git_repo(tmp_path):
-    """A real repository on ``main`` with one commit (the git notice's subject)."""
+    """A project with one shadow checkpoint (the git notice's subject)."""
+    from agent.tools.pub_base import shadow_git
+
     root = tmp_path / "repo"
     root.mkdir()
-    _git(root, "init", "-q", "-b", "main")
-    _git(root, "config", "user.email", "tester@example.com")
-    _git(root, "config", "user.name", "Tester")
     (root / "note.txt").write_text("one\n", encoding="utf-8")
-    _git(root, "add", ".")
-    _git(root, "commit", "-q", "-m", "base")
+    shadow_git.take_snapshot(root, "manual:base")
     return root
 
 
@@ -303,13 +301,16 @@ class TestGitHeadNotice:
 
         assert _run(middleware, [HumanMessage("开始")]) is None
         assert announced_git_head(SESSION) == read_git_head(git_repo)
-        assert announced_git_head(SESSION).startswith("main@")
+        assert announced_git_head(SESSION).startswith("checkpoint@")
 
     def test_a_branch_switch_is_announced_before_the_human_message(self, git_repo):
         _bind(str(git_repo))
         middleware = WorkspaceNoticeMiddleware()
         _run(middleware, [HumanMessage("开始")])
-        _git(git_repo, "checkout", "-q", "-b", "feature")
+        (git_repo / "note.txt").write_text("feature\n", encoding="utf-8")
+        from agent.tools.pub_base import shadow_git
+
+        shadow_git.take_snapshot(git_repo, "manual:feature")
         request = HumanMessage("接着做")
 
         update = _run(middleware, [AIMessage("好的"), request])
@@ -321,9 +322,9 @@ class TestGitHeadNotice:
         assert isinstance(notice, HumanMessage)
         assert notice.metadata["origin"] == "git_head"
         assert notice.metadata["provenance"] == "workspace_notice"
-        assert "main@" in notice.content and "feature@" in notice.content
+        assert "checkpoint@" in notice.content
         assert str(git_repo) in notice.content, "the notice names the repository it is about"
-        assert announced_git_head(SESSION).startswith("feature@")
+        assert announced_git_head(SESSION).startswith("checkpoint@")
 
     def test_a_new_commit_on_the_same_branch_is_a_change(self, git_repo):
         """Same branch, different HEAD — exactly the "not the same branch head" case."""
@@ -332,8 +333,9 @@ class TestGitHeadNotice:
         _run(middleware, [HumanMessage("开始")])
         before = announced_git_head(SESSION)
         (git_repo / "note.txt").write_text("two\n", encoding="utf-8")
-        _git(git_repo, "add", ".")
-        _git(git_repo, "commit", "-q", "-m", "another")
+        from agent.tools.pub_base import shadow_git
+
+        shadow_git.take_snapshot(git_repo, "manual:another")
 
         update = _run(middleware, [HumanMessage("继续")])
 
@@ -354,7 +356,7 @@ class TestGitHeadNotice:
         """The new root is another repository: both facts changed, both are named."""
         _bind(_ROOT_A)
         record_announced_project_dir(SESSION, _ROOT_A)
-        record_announced_git_head(SESSION, "main@deadbee1")
+        record_announced_git_head(SESSION, "checkpoint@deadbee1")
         _bind(str(git_repo))
         middleware = WorkspaceNoticeMiddleware()
         request = HumanMessage("在新项目里继续")
@@ -399,3 +401,23 @@ class TestGitHeadNotice:
         assert announced_git_head(SESSION) is None
         assert prime_git_head_from_store() == 1
         assert announced_git_head(SESSION) == token
+
+    def test_the_first_turn_creates_dot_sherry_for_a_bound_project(self, tmp_path):
+        """Condition ④: binding alone creates nothing; the first message does."""
+        root = tmp_path / "project"
+        root.mkdir()
+        _bind(str(root))
+
+        assert _run(WorkspaceNoticeMiddleware(), [HumanMessage("开始")]) is None
+
+        assert (root / ".sherry").is_dir()
+        assert not (root / ".sherry" / "memory").exists()
+
+    def test_an_unbound_default_directory_never_gets_a_dot_sherry(self, tmp_path, monkeypatch):
+        default = tmp_path / "default"
+        default.mkdir()
+        monkeypatch.setattr(notice_core, "current_project_dir", lambda _sid: default)
+
+        assert _run(WorkspaceNoticeMiddleware(), [HumanMessage("开始")]) is None
+
+        assert not (default / ".sherry").exists()

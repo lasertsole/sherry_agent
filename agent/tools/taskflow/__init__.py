@@ -7,6 +7,7 @@ managedFlows API surface. Usage:
 """
 
 from .tools import (
+    build_legacy_taskflow_tools,
     build_taskflow_tools,
     taskflow_budget,
     taskflow_cancel,
@@ -22,6 +23,7 @@ from .tools import (
 )
 
 __all__ = [
+    "build_legacy_taskflow_tools",
     "build_taskflow_tools",
     "taskflow_budget",
     "taskflow_cancel",

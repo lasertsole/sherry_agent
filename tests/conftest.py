@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the EMA_AI_agent test suite.
+"""Shared pytest fixtures for the sherry_agent test suite.
 
 Consolidates the former per-type-directory conftests (the pre-mirror ``unit`` and
 ``integration`` trees) after the mirror-structure migration: their autouse safety nets now apply

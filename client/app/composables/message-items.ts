@@ -56,6 +56,8 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
    *  - From local Dexie cache: might still be JSON string, so do safe parsing.
    */
   const toolCallById = new Map<string, { name?: string; args?: Record<string, unknown> }>();
+  /** AI row ids that declare tool calls (fold classification: unfinished work). */
+  const aiRowsWithToolCalls = new Set<number>();
   for (const row of rows) {
     if (row.role !== CHAT_ROLE.AI) continue;
     let calls: unknown = row.tool_calls;
@@ -67,6 +69,7 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       }
     }
     if (!Array.isArray(calls)) continue;
+    if (calls.length > 0) aiRowsWithToolCalls.add(row.id);
     for (const call of calls) {
       if (typeof call !== 'object' || call === null) continue;
       const c = call as { id?: unknown; name?: unknown; args?: unknown };
@@ -121,6 +124,9 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
       // Pass through tool fields (role=tool rows in history messages will have values)
       toolName: row.tool_name ?? undefined,
       toolStatus: (row.tool_status as 'running' | 'done') ?? undefined,
+      // A tool-call-bearing AI row is work, not the turn's final answer; the
+      // fold classifier uses this to fail open on interrupted turns.
+      hasToolCalls: aiRowsWithToolCalls.has(row.id),
       // Pass through model thinking/reasoning process (reasoning field of backend messages table, only on AI rows)
       reasoning: row.reasoning ?? null,
       // Pass through model metadata (model_name/input_tokens/output_tokens of backend messages table, only on AI rows)

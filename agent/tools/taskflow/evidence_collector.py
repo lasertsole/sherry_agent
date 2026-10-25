@@ -1,24 +1,17 @@
 """Collect a verification-evidence summary for judge prompts.
 
 The ledger is append-only, so staleness is DERIVED, not stored: an evidence
-row is stale iff a later ``{"event": "stale"}`` row in the same session scope
-names a ``file_path`` contained in the row's ``command``.
+row is stale iff a later stale event in the same session scope names a
+``file_path`` contained in the row's ``command``. A later ``broken`` event (a
+finish-time re-verification that now fails) is the stronger signal and renders
+as ``[broken]``; an ``unmark`` event clears either flag for its command.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
-
-
-def _is_stale(index: int, row: dict, stale_events: list[tuple[int, dict]]) -> bool:
-    """True when a later stale event's path appears in this row's command."""
-    command = str(row.get("command") or "")
-    return any(
-        stale_index > index and str(event.get("file_path") or "") in command
-        for stale_index, event in stale_events
-    )
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger, derive_evidence_state
 
 
 def collect_evidence_summary(
@@ -35,8 +28,8 @@ def collect_evidence_summary(
 
     Rows are grouped per session in ONE pass over the ledger and each group
     keeps its own order: the staleness derivation compares a row with LATER
-    stale events of the SAME session, so groups are rendered side by side,
-    never interleaved. Returns None when no key has any evidence row.
+    events of the SAME session, so groups are rendered side by side, never
+    interleaved. Returns None when no key has any evidence row.
     """
     keys = [key for key in [session_key, *(session_keys or [])] if str(key or "").strip()]
     ordered = list(dict.fromkeys(str(key) for key in keys))
@@ -49,13 +42,14 @@ def collect_evidence_summary(
         records = grouped.get(key)
         if not records:
             continue
-        evidence_rows = [(i, r) for i, r in enumerate(records) if r.get("event") != "stale"]
-        stale_events = [(i, r) for i, r in enumerate(records) if r.get("event") == "stale"]
-        for index, row in evidence_rows:
+        for index, row in enumerate(records):
+            if row.get("event"):
+                continue  # event rows (stale/broken/unmark) are not evidence
             status = row.get("status", "unknown")
             icon = "pass" if status == "passed" else "FAIL" if status == "failed" else "?"
-            stale_tag = " [stale]" if _is_stale(index, row, stale_events) else ""
+            broken, stale = derive_evidence_state(records, index)
+            tag = " [broken]" if broken else " [stale]" if stale else ""
             lines.append(
-                f"  [{icon}] {row.get('kind', 'unknown')}: `{row.get('command', '')}`{stale_tag}"
+                f"  [{icon}] {row.get('kind', 'unknown')}: `{row.get('command', '')}`{tag}"
             )
     return "\n".join(lines) or None

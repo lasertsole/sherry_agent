@@ -16,7 +16,7 @@ Design points:
 * every operation is bounded (timeouts, element/text caps, screenshot size
   cap) and reports ``truncated`` instead of hanging.
 * Refs — a snapshot assigns ``eN`` handles and stores ``ref -> xpath`` on the
-  SERVER (cleared on navigation). ``browser_click(ref=...)`` resolves through
+  SERVER (cleared on navigation). ``browser(action='click', ref=...)`` resolves through
   that map, so a click is a plain typed call, not an opaque script.
 """
 
@@ -318,7 +318,7 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
         candidates = [page for page in self._pages.values() if page.session_id == session_id]
         if not candidates:
             raise KeyError(
-                f"session {session_id!r} has no browser page — call browser_navigate first"
+                f"session {session_id!r} has no browser page — call browser(action='navigate') first"
             )
         ordinary = [page for page in candidates if page.kind == "page"]
         return max(ordinary or candidates, key=lambda page: page.last_used)
@@ -641,7 +641,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
             page.last_used = time.monotonic()
             return {"page": page.page_id, "clicked": str(ref), **outcome}
         if x is None or y is None:
-            raise ValueError("browser_click needs a ref, or an x/y pair")
+            raise ValueError("browser(action='click') needs a ref, or an x/y pair")
         transport = self._require_transport()
         clicks = 2 if double else 1
         for kind in ("mousePressed", "mouseReleased"):

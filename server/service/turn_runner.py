@@ -175,6 +175,34 @@ def _get_active_tasks() -> dict[str, asyncio.Task]:
     return provider()
 
 
+async def cancel_session_turn(session_id: str) -> None:
+    """Cancel a session's live turn (used before purging an ephemeral session).
+
+    Mirrors the WS stop path: cancel the registered task, wait briefly for its
+    cleanup frame, and clear the ANSWERING flag. Never raises — a purge must
+    not be blocked by an already-finished or wedged turn.
+    """
+    from runtime import StateKey, state_register_mem
+
+    task = _get_active_tasks().get(session_id)
+    try:
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as exc:  # noqa: BLE001 - cancellation cleanup is best-effort
+                logger.warning(
+                    "cancel_session_turn: cancelled task raised for {}: {}",
+                    session_id,
+                    exc,
+                )
+        state_register_mem.set_state(session_id, StateKey.ANSWERING, False)
+    except Exception:  # noqa: BLE001 - purge proceeds even if cancellation fails
+        logger.exception("cancel_session_turn failed for {}", session_id)
+
+
 def register_outbound_router(route: str, router: Any) -> None:
     """Register an error-frame router for non-ws routes (e.g. ``channel``)."""
     _OUTBOUND_ROUTERS[route] = router
@@ -253,6 +281,22 @@ async def on_turn_finished(
     completion instead.
     """
     if not is_hitl_pending(session_id):
+        # Keep the finished main thread to one top-level checkpoint before the
+        # drain can start the next turn. Scoped to THIS session: a global scan
+        # would race other live sessions.
+        try:
+            from agent.checkpointer.async_sqlite_checkpointer import prune_session_checkpoints
+
+            pruned = await prune_session_checkpoints(session_id)
+            if pruned.get("deleted_checkpoints") or pruned.get("deleted_writes"):
+                logger.debug(
+                    "TurnRunner: pruned checkpoint history for {}: {}",
+                    session_id,
+                    pruned,
+                )
+        except Exception as e:  # pragma: no cover - cleanup must never break a turn
+            logger.warning(f"TurnRunner: checkpoint prune failed for {session_id}: {e}")
+
         try:
             promoted = await promote_pending_settings(session_id)
         except Exception as e:  # pragma: no cover - promotion must never break the turn
@@ -313,11 +357,6 @@ async def on_turn_finished(
     # not block a fresh drain from starting during the unwind.
     task = asyncio.create_task(_drain_loop(session_id))
     _DRAIN_TASKS[session_id] = task
-
-
-def _row_group_key(row: Any) -> str:
-    """Frozen grouping key: the row's reply_target, or ``"ws"`` when unset."""
-    return row.reply_target or "ws"
 
 
 def _row_route(row: Any) -> str:

@@ -105,3 +105,26 @@ def count_all_active_runs() -> int:
         for run in memory.values()
         if run.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.PENDING)
     )
+
+
+def has_live_run_for_session(session_key: str) -> bool:
+    """Whether a live (PENDING/RUNNING/INTERRUPTED) run names this session.
+
+    A session can be a run's requester (a parent) or its child; both directions
+    count as liveness evidence. Used by the TaskFlow session-level liveness
+    check so a subagent-owned flow is never collected while its child runs.
+    """
+    from .helpers import is_live_unended_run
+    from .session_keys import normalize_session_key
+
+    bare = normalize_session_key(session_key)
+    if not bare:
+        return False
+    for run in memory.values():
+        if not is_live_unended_run(run):
+            continue
+        if normalize_session_key(run.requester_session_key) == bare:
+            return True
+        if normalize_session_key(run.child_session_key) == bare:
+            return True
+    return False

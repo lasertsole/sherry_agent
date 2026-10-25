@@ -6,7 +6,7 @@ wait_json TEXT, expected_revision INTEGER NOT NULL, status TEXT NOT NULL,
 child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
 total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0,
 deadline_ts REAL, session_id TEXT NOT NULL DEFAULT '',
-resumed_from TEXT, superseded_by TEXT)
+resumed_from TEXT, superseded_by TEXT, updated_at REAL, terminal_reason TEXT)
 
 Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
 (``BaseSQLiteRepository``, the shared skeleton also used by the todolist and
@@ -35,6 +35,7 @@ import asyncio
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import aiosqlite
@@ -42,7 +43,7 @@ from loguru import logger
 
 from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
 from config.features import TASKFLOW_INFRA
-from ..config import INITIAL_REVISION, TABLE_NAME, TERMINAL_STATUSES, TaskFlowStatus
+from ..config import INITIAL_REVISION, TABLE_NAME, TERMINAL_STATUSES, StepStatus, TaskFlowStatus
 
 _DB_DIR = Path(__file__).resolve().parent.parent / "data"
 _DB_PATH = _DB_DIR / "taskflow_registry.db"
@@ -71,14 +72,16 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     deadline_ts REAL,
     session_id TEXT NOT NULL DEFAULT '',
     resumed_from TEXT,
-    superseded_by TEXT
+    superseded_by TEXT,
+    updated_at REAL,
+    terminal_reason TEXT
 );
 """
 
 _SELECT_COLUMNS_SQL = (
     f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
     f"total_tokens, total_cost, token_budget, deadline_ts, session_id, "
-    f"resumed_from, superseded_by "
+    f"resumed_from, superseded_by, updated_at, terminal_reason "
     f"FROM {TABLE_NAME}"
 )
 
@@ -119,6 +122,17 @@ _SESSION_ID_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN session_id TEXT N
 _LINEAGE_COLUMN_DDL: tuple[str, ...] = (
     f"ALTER TABLE {TABLE_NAME} ADD COLUMN resumed_from TEXT",
     f"ALTER TABLE {TABLE_NAME} ADD COLUMN superseded_by TEXT",
+)
+
+# Additive migration DDL for the tri-color GC. ``updated_at`` is the inactivity
+# clock (epoch seconds, bumped by every mutation); ``terminal_reason`` records
+# why a flow became terminal. The backfill gives pre-migration rows a fresh
+# grace window instead of making every old row look stale on the first sweep.
+_GC_COLUMN_DDL: tuple[str, ...] = (
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN updated_at REAL",
+    f"ALTER TABLE {TABLE_NAME} ADD COLUMN terminal_reason TEXT",
+    f"UPDATE {TABLE_NAME} SET updated_at = CAST(strftime('%s','now') AS REAL) "
+    "WHERE updated_at IS NULL",
 )
 
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
@@ -190,7 +204,7 @@ class FlowConflictError(TaskFlowStoreError):
         self.latest_revision = latest_revision
         super().__init__(
             f"TaskFlow '{flow_id}' revision conflict: expected_revision={expected_revision} "
-            f"but latest revision={latest_revision}; re-read with taskflow_summary and "
+            f"but latest revision={latest_revision}; re-read with taskflow_inspect(action='summary') and "
             f"retry with expected_revision={latest_revision}"
         )
 
@@ -226,6 +240,8 @@ def _row_to_flow(row: tuple) -> dict:
         session_id,
         resumed_from,
         superseded_by,
+        updated_at,
+        terminal_reason,
     ) = row
     return {
         "flow_id": flow_id,
@@ -241,6 +257,8 @@ def _row_to_flow(row: tuple) -> dict:
         "session_id": session_id or "",
         "resumed_from": resumed_from or None,
         "superseded_by": superseded_by or None,
+        "updated_at": float(updated_at) if updated_at is not None else None,
+        "terminal_reason": terminal_reason or None,
     }
 
 
@@ -258,6 +276,7 @@ class _TaskFlowRepository(BaseSQLiteRepository):
             _DEADLINE_COLUMN_DDL,
             _SESSION_ID_COLUMN_DDL,
             *_LINEAGE_COLUMN_DDL,
+            *_GC_COLUMN_DDL,
         )
 
     def _index_ddls(self) -> tuple[str, ...]:
@@ -306,8 +325,9 @@ async def create_flow(
         "status",
         "child_session_key",
         "session_id",
+        "updated_at",
     ]
-    placeholders = ["?", "?", "NULL", "?", "?", "?", "?"]
+    placeholders = ["?", "?", "NULL", "?", "?", "?", "?", "?"]
     params: list[object] = [
         flow_id,
         _dump_json(state),
@@ -315,6 +335,7 @@ async def create_flow(
         status,
         child_session_key,
         session_id,
+        time.time(),
     ]
     if deadline_ts is not None:
         columns.append("deadline_ts")
@@ -357,18 +378,33 @@ async def get_flow(flow_id: str, session_id: str) -> dict | None:
 async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: str) -> bool:
     """Stamp a predecessor flow's ``superseded_by`` back-pointer.
 
-    Lineage metadata, not flow state: the write is a plain session-scoped UPDATE
-    that deliberately does NOT bump ``expected_revision`` (a superseded predecessor
-    keeps its content, so a caller holding its revision is not invalidated — and
-    bumping would make the successor's create path able to lose a race it should
-    not have to run). Returns True when one row matched, False when the flow is
-    absent FOR THIS SESSION.
+    The back-pointer is lineage metadata and deliberately does NOT bump
+    ``expected_revision`` (a caller holding the predecessor's revision is not
+    invalidated). It DOES make an active predecessor terminal: a superseded flow
+    must leave every active read, including the tri-color sweep's white set.
+    Returns True when one row matched, False when the flow is absent FOR THIS
+    SESSION.
     """
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
     await ensure_db()
     async with _connect() as db:
         cursor = await db.execute(
-            f"UPDATE {TABLE_NAME} SET superseded_by = ? WHERE flow_id = ? AND session_id = ?",
-            (superseded_by, flow_id, session_id),
+            f"UPDATE {TABLE_NAME} SET superseded_by = ?, updated_at = ?, "
+            f"status = CASE WHEN status IN ({placeholders}) THEN status ELSE ? END, "
+            f"terminal_reason = CASE WHEN status IN ({placeholders}) "
+            f"THEN terminal_reason ELSE ? END "
+            "WHERE flow_id = ? AND session_id = ?",
+            (
+                superseded_by,
+                time.time(),
+                *terminal,
+                TaskFlowStatus.CANCELLED.value,
+                *terminal,
+                "superseded",
+                flow_id,
+                session_id,
+            ),
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -387,6 +423,7 @@ async def update_flow(
     total_cost: float | None = None,
     token_budget: int | None = None,
     deadline_ts: float | None | _Unset = UNSET,
+    terminal_reason: str | None | _Unset = UNSET,
 ) -> dict:
     """Optimistic-locking mutation of one flow row owned by ``session_id``.
 
@@ -399,6 +436,10 @@ async def update_flow(
     * ``child_session_key``: replace when not UNSET.
     * ``total_tokens``/``total_cost``/``token_budget``: replace when not None.
     * ``deadline_ts``: replace when not UNSET and not None.
+    * ``terminal_reason``: replace when not UNSET (None clears).
+
+    Every successful call also stamps ``updated_at`` — the inactivity clock the
+    liveness sweep reads.
 
     Returns the updated flow dict. Raises FlowNotFoundError when no flow with
     that id exists FOR THIS SESSION (a flow owned by another session is
@@ -431,10 +472,15 @@ async def update_flow(
     if not isinstance(deadline_ts, _Unset) and deadline_ts is not None:
         assignments.append("deadline_ts = ?")
         params.append(float(deadline_ts))
+    if not isinstance(terminal_reason, _Unset):
+        assignments.append("terminal_reason = ?")
+        params.append(terminal_reason)
     if not assignments:
         raise ValueError("update_flow called with nothing to update")
 
     new_revision = int(expected_revision) + 1
+    assignments.append("updated_at = ?")
+    params.append(time.time())
     assignments.append("expected_revision = ?")
     params.append(new_revision)
     params.extend([flow_id, int(expected_revision), session_id])
@@ -478,6 +524,176 @@ async def get_overdue_flows(now_ts: float) -> list[dict]:
         ) as cursor:
             rows = await cursor.fetchall()
     return [_row_to_flow(row) for row in rows]
+
+
+async def get_non_terminal_flows(session_id: str | None = None) -> list[dict]:
+    """Non-terminal, non-superseded flow rows (all sessions when ``session_id`` is None)."""
+    await ensure_db()
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
+    sql = _SELECT_COLUMNS_SQL + f" WHERE status NOT IN ({placeholders}) AND superseded_by IS NULL"
+    params: tuple[object, ...] = terminal
+    if session_id:
+        sql += " AND session_id = ?"
+        params = (*terminal, session_id)
+    async with _connect() as db:
+        async with db.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+    return [_row_to_flow(row) for row in rows]
+
+
+async def get_non_terminal_session_ids() -> list[str]:
+    """Sessions that still own at least one non-terminal, non-superseded flow."""
+    await ensure_db()
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT DISTINCT session_id FROM {TABLE_NAME} "
+            f"WHERE status NOT IN ({placeholders}) AND superseded_by IS NULL",
+            terminal,
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [str(row[0]) for row in rows if str(row[0] or "").strip()]
+
+
+async def _finalize_gc_flow(flow: dict, reason: str) -> bool:
+    """Fail one collected flow and settle its unresolved steps.
+
+    Used by the tri-color and liveness sweeps. A revision conflict means a
+    concurrent tool call advanced the flow after the scan — that is progress,
+    so this write is abandoned and the next tick re-evaluates the flow from
+    fresh state instead of clobbering it with the stale snapshot.
+    """
+    flow_id = str(flow.get("flow_id") or "")
+    session_id = str(flow.get("session_id") or "")
+    if not flow_id or not session_id:
+        return False
+
+    state = dict(flow.get("state") or {})
+    state["failure_reason"] = reason
+    steps = list(state.get("steps") or [])
+    terminal_steps = {
+        StepStatus.DONE.value,
+        StepStatus.FAILED.value,
+        StepStatus.SKIPPED.value,
+        StepStatus.CANCELLED.value,
+    }
+    detached: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("status") or "") in terminal_steps:
+            continue
+        key = str(step.get("child_session_key") or "").strip()
+        if key and key not in detached:
+            detached.append(key)
+        step["status"] = StepStatus.FAILED.value
+        step["fail_reason"] = reason
+    state["steps"] = steps
+    if detached:
+        state["detached_child_session_keys"] = detached
+
+    revision = int(flow.get("expected_revision") or 0)
+    try:
+        await update_flow(
+            flow_id,
+            revision,
+            session_id=session_id,
+            state=state,
+            wait=None,
+            status=TaskFlowStatus.FAILED.value,
+            terminal_reason=reason,
+        )
+    except FlowConflictError as exc:
+        logger.debug("TaskFlow '{}' GC skipped (concurrent progress): {}", flow_id, exc)
+        return False
+    except FlowNotFoundError:
+        return False
+    logger.warning("TaskFlow '{}' collected ({}); marked failed", flow_id, reason)
+    return True
+
+
+async def fail_flow_for_gc(flow: dict, *, reason: str) -> bool:
+    """Fail one flow and settle its unresolved steps (tri-color/liveness/entry)."""
+    return await _finalize_gc_flow(flow, reason)
+
+
+async def fail_stale_flow(flow: dict, *, reason: str = "stale_swept") -> bool:
+    """Liveness sweep: fail one flow already proven stale by the caller."""
+    return await _finalize_gc_flow(flow, reason)
+
+
+async def get_zombie_flow_ids(session_id: str) -> list[str]:
+    """Flow ids that are failed OR cancelled (a pending todo on them is a zombie).
+
+    Done flows are deliberately excluded: their todo may still be a legitimate
+    review item, and marking it completed is the user's call.
+    """
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT flow_id FROM {TABLE_NAME} WHERE session_id = ? AND status IN (?, ?)",
+            (
+                session_id,
+                TaskFlowStatus.FAILED.value,
+                TaskFlowStatus.CANCELLED.value,
+            ),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [str(row[0]) for row in rows]
+
+
+async def get_failed_flow_session_ids() -> list[str]:
+    """Sessions owning a failed/cancelled flow (the zombie-todo sweep scope)."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT DISTINCT session_id FROM {TABLE_NAME} WHERE status IN (?, ?)",
+            (TaskFlowStatus.FAILED.value, TaskFlowStatus.CANCELLED.value),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [str(row[0]) for row in rows if str(row[0] or "").strip()]
+
+
+async def count_total_flows_for_session(session_id: str) -> int:
+    """Number of flow rows owned by a session (all statuses)."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE session_id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def prune_session_flows(session_id: str) -> int:
+    """Delete the oldest terminal/superseded rows past the per-session cap.
+
+    Active rows are never deleted. ``max_total_flows_per_session <= 0`` disables
+    pruning. Returns the number of deleted rows.
+    """
+    keep = int(TASKFLOW_INFRA["max_total_flows_per_session"])
+    if keep <= 0:
+        return 0
+    total = await count_total_flows_for_session(session_id)
+    excess = total - keep
+    if excess <= 0:
+        return 0
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"DELETE FROM {TABLE_NAME} WHERE rowid IN ("
+            f"  SELECT rowid FROM {TABLE_NAME} WHERE session_id = ? "
+            f"  AND (status IN ({placeholders}) OR superseded_by IS NOT NULL) "
+            f"  ORDER BY COALESCE(updated_at, 0) ASC LIMIT ?"
+            f")",
+            (session_id, *terminal, excess),
+        )
+        await db.commit()
+        return int(cursor.rowcount or 0)
 
 
 async def get_flow_for_child_session(child_session_key: str) -> dict | None:

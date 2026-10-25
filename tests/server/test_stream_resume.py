@@ -153,7 +153,7 @@ def _install_engine(monkeypatch, text: str) -> None:
     monkeypatch.setitem(
         stream_dispatch._ACTIVE_TURNS,
         SESSION,
-        SimpleNamespace(ai_text=text, _has_reasoning=False, _frame_seq=7),
+        SimpleNamespace(ai_text=text, _has_reasoning=False, _frame_seq=7, turn_id="turn-7"),
     )
 
 
@@ -175,6 +175,7 @@ def test_resume_snapshot_reaches_only_the_requesting_socket(monkeypatch):
     # The snapshot carries the frame seq it was read at: a resumed viewer drops
     # frames at or below it, so an in-flight duplicate can never be appended.
     assert content["seq"] == 7
+    assert content["turn_id"] == "turn-7"
     # The snapshot is a TEXT value, not a frame log the client could replay.
     assert "frames" not in content
 

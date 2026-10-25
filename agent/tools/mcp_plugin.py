@@ -7,7 +7,7 @@ from pub.func import run_async
 from langchain_core.tools import BaseTool
 
 _HERE_DIR = Path(__file__).resolve().parent  # tools/
-_PROJECT_ROOT = _HERE_DIR.parent  # EMA_AI_agent/
+_PROJECT_ROOT = _HERE_DIR.parent  # sherry_agent/
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

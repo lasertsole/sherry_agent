@@ -12,7 +12,8 @@
     <div
       ref="scrollContainerRef"
       class="flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
-      @scroll="onScroll">
+      @scroll="onScroll"
+      @contextmenu="onMessageContextMenu">
       <!-- Virtualized window: positioned rows inside a spacer of the measured
            total height. `measureElement` re-measures on resize, so expandable
            tool cards / thinking blocks keep the scroll geometry correct. -->
@@ -69,9 +70,23 @@
                 {{ carrier.content }}
               </div>
             </div>
+            <!-- Settled turn with work behind it: the execution history folds
+                 behind this summary row, while the final assistant answer stays
+                 visible below. An ineligible group (running, interrupted, or a
+                 lone answer) renders linearly exactly as before. -->
+            <ChatTurnHistoryStatus
+              v-if="groupFold(vRow.index).eligible"
+              :label="foldLabel(groupFold(vRow.index))"
+              :expanded="expandedTurnHistory.has(groupFold(vRow.index).key)"
+              :expand-label="t('chatBox.turnHistoryExpand')"
+              :collapse-label="t('chatBox.turnHistoryCollapse')"
+              class="ml-[52px]"
+              @toggle="toggleTurnHistory(groupFold(vRow.index).key)" />
             <div
-              v-for="message in regularMessages(rowGroup(vRow.index))"
+              v-for="message in groupMessages(rowGroup(vRow.index))"
               :key="message.id"
+              :data-message-id="String(message.id)"
+              :data-message-role="message.role"
               :class="[
                 'flex justify-start gap-3 min-w-0',
                 { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
@@ -80,7 +95,10 @@
               <ChatMessageAvatar
                 :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
                 :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName"
-                :hidden="isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL" />
+                :hidden="
+                  (isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))) ||
+                  message.role === CHAT_ROLE.TOOL
+                " />
               <!-- Message body -->
               <div
                 :class="[
@@ -102,9 +120,28 @@
                     formatCompactTimeString(message.timestamp)
                   }}</span>
                 </div>
+                <!-- Live model-retry progress: the assistant row itself carries the
+                     attempt counter, so the retry is part of the history queue rather
+                     than a detached toast. Settled rows keep the final count. -->
+                <div
+                  v-if="message.role === CHAT_ROLE.AI && message.retryStatus"
+                  class="mb-1 flex items-center gap-1.5 rounded-md border border-solid border-amber-200/80 bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
+                  <i
+                    :class="[
+                      message.retryStatus.status === 'scheduled'
+                        ? 'pi pi-spin pi-spinner'
+                        : message.retryStatus.status === 'succeeded'
+                          ? 'pi pi-replay'
+                          : 'pi pi-exclamation-triangle'
+                    ]"
+                    class="text-[10px]"></i>
+                  <span>{{ retryStatusLabel(message.retryStatus) }}</span>
+                </div>
                 <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
                 <ChatThinkingBlock
-                  v-if="message.role === CHAT_ROLE.AI && message.reasoning"
+                  v-if="
+                    message.role === CHAT_ROLE.AI && message.reasoning && !isFoldedFinal(message, rowGroup(vRow.index))
+                  "
                   :reasoning="message.reasoning ?? ''"
                   :expanded="expandedThinking.has(message.id)"
                   :consecutive="isConsecutive(message.id)"
@@ -132,7 +169,9 @@
                     message.role === CHAT_ROLE.USER
                       ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
                       : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
-                    { 'rounded-xl': isConsecutive(message.id) }
+                    {
+                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))
+                    }
                   ]">
                   <ChatCopyButton
                     v-if="canCopyMessage(message)"
@@ -151,8 +190,12 @@
                     {{ t('chatBox.streamingTail') }}
                   </div>
                   <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
-                   sanitization internally (app/directives/safeHtml.ts) -->
-                  <div v-safe-html="bubbleView(message).text"></div>
+                   sanitization internally (app/directives/safeHtml.ts); the data-streaming
+                   attribute tells its enhancement pass (Shiki/Mermaid/KaTeX) to wait until
+                   the stream settles — a streaming row pays zero enhancement cost. -->
+                  <div
+                    v-safe-html="bubbleView(message).text"
+                    :data-streaming="message.streaming ? 'true' : undefined"></div>
                   <!-- Settled long answer: the body above is a preview; this toggles
                        the full text (see bubbleView for the measured starvation). -->
                   <button
@@ -244,6 +287,13 @@
         <i class="pi pi-arrow-down text-sm"></i>
       </button>
     </Transition>
+    <!-- One menu for the whole list: a right-click on a valid text selection
+         opens it anchored at the pointer. A right-click with no selection (or
+         on a control) is left alone so the native copy menu still works. -->
+    <ContextMenu
+      ref="selectionMenuRef"
+      :model="selectionMenuItems"
+      data-test="chat-selection-menu" />
   </div>
 </template>
 
@@ -251,8 +301,14 @@
 // Methods/types
 import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
-import { formatCompactTimeString } from '@/common/utils';
+import { formatCompactTimeString, formatToolDuration } from '@/common/utils';
+// Value is auto-imported by Nuxt; only the type needs an explicit import.
+import type { TurnFoldView } from '@/composables/use-chat-turn-fold';
+import type { SelectionPayload } from '@/composables/use-chat-selection';
 import { useI18n } from 'vue-i18n';
+// PrimeVue's ContextMenu is registered globally by the app plugin; an explicit
+// import keeps the transcript mountable in bare Vitest mounts too.
+import ContextMenu from 'primevue/contextmenu';
 // Render subcomponents (explicit imports: bare Vitest mounts have no Nuxt
 // component auto-registration, and the page-level convention is explicit
 // component imports)
@@ -262,6 +318,7 @@ import ChatToolCard from '@/components/chat/ChatToolCard.vue';
 import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
+import ChatTurnHistoryStatus from '@/components/chat/ChatTurnHistoryStatus.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
 import ProgressFloat from './ProgressFloat.vue';
 
@@ -279,6 +336,10 @@ interface Props {
   userName?: string;
   /** AI display name (returned by the server) */
   aiName?: string;
+  /** Whether a text selection opens the quote menu (false while an approval card owns the input). */
+  selectionEnabled?: boolean;
+  /** Whether the menu offers "ask in side session" (the side panel itself only re-quotes). */
+  allowSideChat?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -286,7 +347,9 @@ const props = withDefaults(defineProps<Props>(), {
   aiAvatar: '',
   userName: '',
   aiName: '',
-  loadingOlder: false
+  loadingOlder: false,
+  selectionEnabled: true,
+  allowSideChat: true
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -310,10 +373,63 @@ const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName')
  */
 const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(message.content);
 
+/**
+ * One-line label for the live/settled model-retry indicator.
+ * @param retry The row's retry progress payload.
+ */
+const retryStatusLabel = (retry: NonNullable<MessageItem['retryStatus']>): string => {
+  if (retry.status === 'scheduled') {
+    return t('chatBox.modelRetryScheduled', {
+      attempt: retry.attempt,
+      max: retry.maxAttempts,
+      reason: retry.reason || 'unknown',
+      delay: ((retry.delayMs ?? 0) / 1000).toFixed(1)
+    });
+  }
+  if (retry.status === 'succeeded') {
+    return t('chatBox.modelRetrySucceeded', { count: retry.retries });
+  }
+  return t('chatBox.modelRetryExhausted', { max: retry.retries });
+};
+
 const emit = defineEmits<{
   (e: 'reach-top'): void;
   (e: 'release-head', messageIds: number[]): void;
+  (e: 'selection-add', payload: SelectionPayload): void;
+  (e: 'selection-side-chat', payload: SelectionPayload): void;
 }>();
+
+/** The one selection menu instance (a per-row popup would mount one per message). */
+const selectionMenuRef = useTemplateRef<{ show: (event: Event) => void }>('selectionMenuRef');
+const selectionMenuItems = ref<Array<{ label: string; icon: string; command: () => void }>>([]);
+
+/**
+ * Right-click on the transcript: quote the selected text when the selection is
+ * valid, otherwise leave the native menu alone (copy/paste still work).
+ * @param event
+ */
+function onMessageContextMenu(event: MouseEvent): void {
+  if (!props.selectionEnabled) return;
+  const payload = inspectSelection(scrollContainerRef.value);
+  if (!payload) return;
+
+  event.preventDefault();
+  selectionMenuItems.value = [
+    {
+      label: t('chat.selection.addToChat'),
+      icon: 'pi pi-comment',
+      command: () => emit('selection-add', payload)
+    }
+  ];
+  if (props.allowSideChat) {
+    selectionMenuItems.value.push({
+      label: t('chat.selection.askInSideChat'),
+      icon: 'pi pi-comments',
+      command: () => emit('selection-side-chat', payload)
+    });
+  }
+  selectionMenuRef.value?.show(event);
+}
 
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(
@@ -349,11 +465,58 @@ const {
   expandedThinking,
   expandedCarriers,
   expandedLongMessages,
+  expandedTurnHistory,
   toggleToolCard,
   toggleThinking,
   toggleCarrier,
+  toggleTurnHistory,
   toggleLongMessage
 } = useChatCardExpansion();
+
+/**
+ * Fold classification for one virtual row's assistant work group.
+ * @param rowIndex Virtual row index (the group is `rowGroup(rowIndex)`).
+ */
+const groupFold = (rowIndex: number): TurnFoldView => classifyTurnFold(regularMessages(rowGroup(rowIndex)));
+
+/**
+ * Rows rendered for one group: everything when the group is not foldable or is
+ * expanded, otherwise only the settled final answer.
+ * @param group Turn group in render order.
+ */
+const groupMessages = (group: MessageItem[]): MessageItem[] => {
+  const rows = regularMessages(group);
+  const fold = classifyTurnFold(rows);
+  if (!fold.eligible || expandedTurnHistory.has(fold.key)) return rows;
+  return fold.finalMessage ? [fold.finalMessage] : rows;
+};
+
+/**
+ * Whether a row is the final answer of a COLLAPSED fold. Its reasoning moves
+ * into the hidden history, so the visible answer renders without the thinking
+ * block (expanding the fold brings it back).
+ * @param message Row being rendered.
+ * @param group Its turn group.
+ */
+const isFoldedFinal = (message: MessageItem, group: MessageItem[]): boolean => {
+  const fold = classifyTurnFold(regularMessages(group));
+  return fold.eligible && !expandedTurnHistory.has(fold.key) && fold.finalMessage?.id === message.id;
+};
+
+/**
+ * Summary shown on the fold trigger: what happened, plus the measured tool time
+ * when the backend reported one.
+ * @param fold Classified turn.
+ */
+const foldLabel = (fold: TurnFoldView): string => {
+  const parts: string[] = [];
+  if (fold.toolCount > 0) parts.push(t('chatBox.turnHistoryTools', { n: fold.toolCount }));
+  else if (fold.hasReasoning) parts.push(t('chatBox.turnHistoryThinking'));
+  else parts.push(t('chatBox.turnHistoryWork'));
+  const duration = formatToolDuration(fold.durationMs);
+  if (duration) parts.push(duration);
+  return parts.join(' · ');
+};
 
 /**
  * Header label of a neutral (injector-origin) card, by the row's `origin`.

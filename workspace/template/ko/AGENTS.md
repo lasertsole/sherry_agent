@@ -39,13 +39,13 @@
 - delegation="self": 사소한 작업(10줄 미만, 단일 파일)은 직접 수행
 - delegation="subagent": 복잡한 작업(다중 파일, 100줄 초과, 복잡한 로직)은 task 도구로 서브에이전트에게 위임한 후 subagent_id 필드를 설정
 - 코드 편집, 테스트 작성 및 수정은 위임에 적합한 작업
-- taskflow_run_task(depends_on=[...])로 의존성을 선언하고, taskflow_dispatch로 준비된 단계를 한 번에 디스패치한 뒤 완료를 기다립니다
+- taskflow_step(action="run_task", depends_on=[...])로 의존성을 선언하고, taskflow_step(action="dispatch")로 준비된 단계를 한 번에 디스패치한 뒤 완료를 기다립니다
 
 ### 전이 장벽 (CRITICAL)
 
 - 서브에이전트가 아직 실행 중일 때는 todo를 completed로 표시하지 않습니다
 - TaskFlow 연동 todo에 해당하는 TaskFlow step이 `done`이 아닐 때는 completed로 표시하지 않습니다(step 상태가 `blocked`/`ready`/`dispatched`인 경우 모두 "미완료"를 의미)
-- 서브에이전트가 돌아오고 taskflow_resume으로 결과가 주입될 때까지 기다린 후에만 todo 상태를 갱신할 수 있습니다. resume이 결과를 주입해야만 step이 `done`이 됩니다
+- 서브에이전트가 돌아오고 taskflow_step(action="resume")으로 결과가 주입될 때까지 기다린 후에만 todo 상태를 갱신할 수 있습니다. resume이 결과를 주입해야만 step이 `done`이 됩니다
 - 서브에이전트가 실패하면 todo를 cancelled로 표시하고 다시 계획합니다
 
 ### 완료 계약 (Sisyphus)

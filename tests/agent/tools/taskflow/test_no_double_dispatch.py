@@ -133,3 +133,42 @@ async def test_a_second_dispatch_of_a_running_step_is_refused(isolated_db: Path,
     assert second.startswith("Error:"), second
     assert "not dispatchable" in second
     assert len(spawned) == 2
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_manual_dispatches_spawn_once(isolated_db: Path, monkeypatch):
+    """The flow-local lock serializes two manual dispatchers on the same step."""
+    from agent.tools.taskflow.tools.taskflow_dispatch import taskflow_dispatch
+
+    out = await taskflow_create.coroutine(
+        session_id=_SESSION,
+        flow_id="flow-nd3",
+        description="concurrent manual dispatch probe",
+        initial_state={"steps": [_step("step-a", "ready")]},
+    )
+    assert "Error" not in out, out
+    spawned: list[str] = []
+
+    async def _fake(task: str, requester_session_key: str, label=None, **_kwargs) -> str:
+        # The delay widens the pre-spawn window: without the lock both callers
+        # would pass the ready check and spawn twice.
+        await asyncio.sleep(0.05)
+        spawned.append(task)
+        return "agent:auto:subagent:manual-once"
+
+    monkeypatch.setattr(_dispatch, "dispatch_child", _fake)
+
+    first, second = await asyncio.gather(
+        taskflow_dispatch.coroutine(flow_id="flow-nd3", step_ids=["step-a"], session_id=_SESSION),
+        taskflow_dispatch.coroutine(flow_id="flow-nd3", step_ids=["step-a"], session_id=_SESSION),
+    )
+
+    outcomes = (first, second)
+    assert sum(out.startswith("TaskFlow steps dispatched") for out in outcomes) == 1, outcomes
+    assert sum(out.startswith("Error:") for out in outcomes) == 1, outcomes
+    assert len(spawned) == 1, spawned
+    flow = await store_sqlite.get_flow("flow-nd3", _SESSION)
+    assert flow is not None
+    step = next(s for s in flow["state"]["steps"] if s["step_id"] == "step-a")
+    assert step["status"] == "dispatched"
+    assert step["child_session_key"] == "agent:auto:subagent:manual-once"

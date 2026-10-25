@@ -477,9 +477,11 @@ class TestGrandchildDoesNotHang:
                 return None
 
         monkeypatch.setattr(repl_mod.subprocess, "Popen", lambda *a, **kw: _HangingProc())
-        monkeypatch.setattr(repl_mod, "reap_process", lambda proc, **kw: calls.append("reap"))
+        monkeypatch.setattr(
+            repl_mod, "kill_process_tree", lambda proc, **kw: calls.append("kill_tree")
+        )
 
         result, _ = repl_mod._run_with_timeout("1", timeout=1, sandbox=False)
 
         assert "timed out" in result
-        assert "reap" in calls and "communicate" not in calls
+        assert "kill_tree" in calls and "communicate" not in calls

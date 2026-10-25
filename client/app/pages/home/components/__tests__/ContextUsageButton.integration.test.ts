@@ -275,6 +275,26 @@ describe('ContextUsageButton.vue (integration, store mocked)', () => {
     expect(wrapper.findAll('circle').every(c => c.attributes('transform') === 'rotate(-90 12 12)')).toBe(true);
   });
 
+  it('uses the backend absolute compression line for the percentage', async () => {
+    usageApi.usage = usage({
+      window: 100_000,
+      total: 90_000,
+      skills: 0,
+      max_output: 10_000,
+      compress_tokens: 90_000,
+      compress_ratio: 0.9
+    });
+    const wrapper = mountButton(0);
+
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[role="separator"]').attributes('style')).toContain('left: 90%');
+    const label = wrapper.findAll('span').find(s => s.text().startsWith('压缩阈值'));
+    expect(label!.text()).toBe('压缩阈值 90%');
+    expect(wrapper.find('line').attributes('transform')).toBe('rotate(324 12 12)');
+  });
+
   it('reports the average cache hit rate, or a dash when unknown', async () => {
     usageApi.usage = usage({ window: 100_000, total: 10_000, skills: 0, cache_hit_ratio: 0.623 });
     const wrapper = mountButton(0);

@@ -34,8 +34,10 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
       // bubble containing only a name + an empty box, so "Sherry" does not look glued to a white box.
       // But empty-body messages carrying reasoning must pass through: the thinking bubble uses them
       // as its host, otherwise the model thinking block would be filtered out together with the
-      // empty placeholder and the thinking bubble could never render.
-      if (item.role === CHAT_ROLE.AI && !item.content.trim() && !item.reasoning) {
+      // empty placeholder and the thinking bubble could never render. A live retry notice is the
+      // same kind of host: the provider may be backing off before the FIRST token, so the row must
+      // render for the attempt counter to be visible.
+      if (item.role === CHAT_ROLE.AI && !item.content.trim() && !item.reasoning && !item.retryStatus) {
         return false;
       }
       return true;

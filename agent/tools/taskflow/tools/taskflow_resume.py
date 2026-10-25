@@ -43,6 +43,7 @@ from ._shared import (
     not_found_error,
     requester_session_key,
     result_hash,
+    step_status,
     steps_summary,
     terminal_error,
     unlock_dependents,
@@ -123,7 +124,7 @@ async def taskflow_resume(
     if not flow_id:
         return "Error: flow_id is required"
     if not child_session_key and not result:
-        return "Error: taskflow_resume requires child_session_key or result"
+        return "Error: taskflow_step(action='resume') requires child_session_key or result"
 
     flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
@@ -374,6 +375,9 @@ async def taskflow_resume(
                     target["judge_feedback"] = step["judge_feedback"]
             fresh_state["results"] = fresh_results
             fresh_state["steps"] = fresh_steps
+            # This resume is progress: give the finish loop fresh budgets.
+            fresh_state["finish_nudge_count"] = 0
+            fresh_state["consecutive_failures"] = 0
             return fresh_state
 
         updated, error = await update_flow_with_conflict_retry(
@@ -433,6 +437,12 @@ async def taskflow_resume(
             unlocked_from_persisted["ids"] = unlock_dependents(fresh_steps)
             fresh_state["steps"] = fresh_steps
             fresh_state["results"] = fresh_results
+            # A resume is progress: reset the nudge and real-failure budgets.
+            # The protocol streak only clears when a step actually reached done.
+            fresh_state["finish_nudge_count"] = 0
+            fresh_state["consecutive_failures"] = 0
+            if decided_fields.get("status") == StepStatus.DONE.value:
+                fresh_state["protocol_violation_streak"] = 0
             return fresh_state
 
         updated, error = await update_flow_with_conflict_retry(
@@ -487,6 +497,16 @@ async def taskflow_resume(
 async def _auto_dispatch_ready(
     flow_id: str, newly_ready: list[str], session_id: str
 ) -> tuple[list[str], list[str]]:
+    """Serialize the auto-dispatch wave on the flow-local dispatch lock."""
+    from . import _dispatch
+
+    async with _dispatch.flow_dispatch_lock(flow_id):
+        return await _auto_dispatch_ready_locked(flow_id, newly_ready, session_id)
+
+
+async def _auto_dispatch_ready_locked(
+    flow_id: str, newly_ready: list[str], session_id: str
+) -> tuple[list[str], list[str]]:
     """Dispatch the steps a resume just unlocked; returns ``(dispatched, failures)``.
 
     The loop is what makes a flow advance without an AI turn per step: a resume
@@ -496,6 +516,11 @@ async def _auto_dispatch_ready(
     feedback), and every failure is reported, never raised — a step that could
     not spawn is left ``ready`` for the caller to retry, and the resume's own
     answer names it.
+
+    The caller holds ``flow_dispatch_lock``, so ``newly_ready`` is re-checked
+    against the freshly-read state: a manual dispatch (or another wave) that won
+    the lock first has already moved a step to ``dispatched``; that step is
+    skipped instead of spawned a second time.
     """
     from . import _dispatch
 
@@ -508,6 +533,12 @@ async def _auto_dispatch_ready(
     steps = list(state.get("steps") or [])
     results = list(state.get("results") or [])
     by_id = {step.get("step_id"): step for step in steps}
+    # A step unknown here stays in the list so _spawn_one reports it by id.
+    newly_ready = [
+        sid
+        for sid in newly_ready
+        if (step := by_id.get(sid)) is None or step_status(step) == StepStatus.READY
+    ]
     requester_key = requester_session_key(session_id)
 
     async def _spawn_one(sid: str) -> tuple[str, str | None, str | None, str]:

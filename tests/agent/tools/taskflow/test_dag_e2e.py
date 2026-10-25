@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.step_judge import JudgeResult, StepVerdict
 
@@ -196,7 +196,7 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
     dispatched: list = []
     queried: list = []
     _wire(monkeypatch, dispatched, queried)
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def phase1() -> dict[str, str]:
         # Given a fresh flow
@@ -345,7 +345,7 @@ def test_dag_e2e_budget_set_resume_and_query(isolated_db: Path, monkeypatch: pyt
     # Given the real tool family and a recording dispatch seam
     fake = _RecordingDispatch("agent:main:subagent:budget-a")
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake)
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def scenario() -> None:
         # Given a fresh flow with a 50k token budget
@@ -401,7 +401,7 @@ def test_dag_e2e_deadline_not_overdue(isolated_db: Path, monkeypatch: pytest.Mon
     frozen_now = 1_800_000_000.0
     monkeypatch.setattr(create_mod, "time", _FrozenTime(frozen_now))
     monkeypatch.setattr(summary_mod, "time", _FrozenTime(frozen_now))
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def scenario() -> None:
         # When a flow is created with a 24h deadline
@@ -439,7 +439,7 @@ def test_dag_e2e_progress_report_tracks_unlock(isolated_db: Path, monkeypatch: p
     # Given the real tool family and a recording dispatch seam
     fake = _RecordingDispatch(CHILD_A)
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake)
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def scenario() -> None:
         # Given step-1 dispatched and step-2 blocked on it
@@ -503,7 +503,7 @@ def test_dag_e2e_validation_criteria_echo_and_summary(
 
     monkeypatch.setattr(resume_mod, "judge_step_result", _judge_pass)
     monkeypatch.setattr(resume_mod, "collect_evidence_summary", lambda **_: None)
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def scenario() -> None:
         # Given a step dispatched with validation criteria
@@ -558,7 +558,7 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
     fake = _RecordingDispatch("agent:main:subagent:retry-1", "agent:main:subagent:retry-2")
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake)
     _patch_registry(monkeypatch)  # every seeded key is unknown -> settled (dead)
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
 
     async def scenario() -> None:
         # Given a dispatched step carrying the retry policy
@@ -617,7 +617,7 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
 
 def test_dag_e2e_session_board_and_status_filter(isolated_db: Path):
     """The board is session-scoped: each session sees only its own flows."""
-    tools = {t.name: t for t in build_taskflow_tools()}
+    tools = {t.name: t for t in build_legacy_taskflow_tools()}
     other = "sess-board-b"
 
     async def scenario() -> None:

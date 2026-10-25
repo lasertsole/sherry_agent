@@ -16,6 +16,7 @@ import json
 import re
 
 from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from config.models_settings import (
     MODELS_CONFIG_PATH,
     MODEL_SETTING_DEFAULTS,
@@ -29,7 +30,26 @@ MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
 OTHER_GROUP = "other"
 
 # MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
-TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+TOKEN_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_TOKEN",
+        "AUXILIARY_LLM_MAX_TOKEN",
+        "TASKFLOW_LLM_MAX_TOKEN",
+        "COMPRESSION_LLM_MAX_TOKEN",
+    }
+)
+
+# MAX_OUTPUT keys: empty is valid (provider default), a set value must satisfy
+# the 8K business floor (M9) — otherwise the next boot would abort.
+MAX_OUTPUT_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_OUTPUT_TOKEN",
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+        "REASONER_LLM_MAX_OUTPUT_TOKEN",
+    }
+)
 
 # ``"KEY": value,`` — the line shape of the template and of every write.
 _ASSIGN_RE = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(.+?)\s*,?\s*$')
@@ -51,6 +71,9 @@ def _display_value(raw: str) -> str:
         return raw
     if isinstance(typed, bool):
         return "true" if typed else "false"
+    if isinstance(typed, dict):
+        # A one-line JSON object (the pricing table) edits as its JSON text.
+        return json.dumps(typed, ensure_ascii=False)
     return typed if isinstance(typed, str) else str(typed)
 
 
@@ -133,10 +156,66 @@ def write_models_config(changes: dict[str, str]) -> None:
                 f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
             )
 
+    # OUTPUT cap guard: empty means "provider default"; a set value below 8K is
+    # refused so the save cannot create a boot-aborting file.
+    for key, value in changes.items():
+        if key not in MAX_OUTPUT_KEYS:
+            continue
+        raw = str(value).strip()
+        if not raw:
+            continue
+        try:
+            num = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be an integer, got: {value}") from None
+        if num < MIN_MAX_OUTPUT_TOKEN:
+            raise ValueError(
+                f"{key} must be empty or >= {MIN_MAX_OUTPUT_TOKEN} (8K); got {num}. "
+                "Refusing to save."
+            )
+
+    # The main output cap must fit INSIDE the main context window: a cap equal
+    # to or larger than the window leaves no input budget and would make the
+    # compression line collapse to 0. Compare the post-save values, taking the
+    # current file into account when only one side is being changed.
+    file_values: dict[str, str] = {}
+    try:
+        for line in MODELS_CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+            match = None if _COMMENT_RE.match(line) else _ASSIGN_RE.match(line)
+            if match is not None:
+                file_values[match.group(1)] = _display_value(match.group(2))
+    except OSError:
+        file_values = {}
+    effective_max_token = str(
+        changes.get("MAIN_LLM_MAX_TOKEN", file_values.get("MAIN_LLM_MAX_TOKEN", ""))
+    ).strip()
+    effective_max_output = str(
+        changes.get("MAIN_LLM_MAX_OUTPUT_TOKEN", file_values.get("MAIN_LLM_MAX_OUTPUT_TOKEN", ""))
+    ).strip()
+    if effective_max_token and effective_max_output:
+        try:
+            token_num = int(effective_max_token)
+            output_num = int(effective_max_output)
+        except (TypeError, ValueError):
+            token_num = output_num = 0
+        if token_num > 0 and output_num >= token_num:
+            raise ValueError(
+                "MAIN_LLM_MAX_OUTPUT_TOKEN must be smaller than MAIN_LLM_MAX_TOKEN; "
+                f"got output={output_num} >= window={token_num}. Refusing to save."
+            )
+
     # Coerce BEFORE touching the file so a bad value aborts without a backup churn.
     typed_changes: dict[str, str] = {}
     for key, raw in changes.items():
-        typed_changes[key] = json.dumps(parse_model_value(key, raw), ensure_ascii=False)
+        parsed = parse_model_value(key, raw)
+        if isinstance(parsed, dict):
+            # Dict-valued keys (the pricing table) stay a JSON STRING on disk,
+            # so the line-based reader sees one scalar value per line.
+            typed_changes[key] = json.dumps(
+                json.dumps(parsed, ensure_ascii=False), ensure_ascii=False
+            )
+        else:
+            typed_changes[key] = json.dumps(parsed, ensure_ascii=False)
 
     text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
     backup_path = MODELS_CONFIG_PATH.with_name(MODELS_CONFIG_PATH.name + ".bak")

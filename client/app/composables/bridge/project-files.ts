@@ -90,6 +90,42 @@ export async function fetchProjectFile(sessionId: string, path: string): Promise
   return { path, content: res.content ?? '', size: res.size ?? 0 };
 }
 
+/** A binary file's raw bytes plus the backend's mime guess. */
+export interface ProjectFileBlob {
+  bytes: ArrayBuffer;
+  mime: string;
+}
+
+/**
+ * Read one file as raw bytes for binary rendering (PDF / docx / image).
+ *
+ * Goes through the raw transport (`fetchApiRaw`) because the answer is bytes,
+ * not the JSON envelope `fetchApiPayload` parses. Refusals carry the backend's
+ * `reason` (the same escape / missing / too-large contract as the text
+ * endpoint, with the wider blob cap) — the caller shows it verbatim.
+ *
+ * @param sessionId Session whose project root should be read.
+ * @param path Relative file path.
+ * @returns The raw bytes plus the backend's mime guess.
+ * @throws Error carrying the backend's refusal reason (or the HTTP status).
+ */
+export async function fetchProjectFileBlob(sessionId: string, path: string): Promise<ProjectFileBlob> {
+  const query = new URLSearchParams({ session_id: sessionId, path });
+  const resp = await fetchApiRaw({ url: `/project/file/blob?${query.toString()}` });
+  if (!resp.ok) {
+    let reason = `HTTP ${resp.status}`;
+    try {
+      const body = (await resp.json()) as { reason?: string; message?: string };
+      reason = body.reason ?? body.message ?? reason;
+    } catch {
+      // Non-JSON refusal body: the HTTP status is the message.
+    }
+    throw new Error(`project file request failed: ${reason}`);
+  }
+  const mime = resp.headers.get('Content-Type')?.split(';')[0]?.trim() || 'application/octet-stream';
+  return { bytes: await resp.arrayBuffer(), mime };
+}
+
 /** One subdirectory of a system folder level. */
 export interface SystemDirEntry {
   name: string;

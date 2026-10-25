@@ -23,10 +23,11 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools
 from agent.tools.taskflow import step_judge
 from agent.tools.taskflow.registry import store_sqlite
-from agent.tools.todolist.evidence_ledger import EvidenceLedger
+from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+from config.features import TASKFLOW_INFRA
 
 pytestmark = [pytest.mark.unit]
 
@@ -75,7 +76,7 @@ class _ScriptedLLMFactory:
 
 
 def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
+    return {t.name: t for t in build_legacy_taskflow_tools()}
 
 
 def _key_dispatch(keys: list[str], calls: list[str]):
@@ -96,12 +97,14 @@ def _key_dispatch(keys: list[str], calls: list[str]):
 @pytest.fixture()
 def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceLedger:
     """Redirect the shared evidence ledger into a per-test file."""
-    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.jsonl"))
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
     return EvidenceLedger
 
 
 def _reset_ledger() -> None:
-    Path(EvidenceLedger.LEDGER_PATH).unlink(missing_ok=True)
+    base = str(EvidenceLedger.LEDGER_PATH)
+    for suffix in ("", "-wal", "-shm"):
+        Path(base + suffix).unlink(missing_ok=True)
 
 
 @pytest.mark.asyncio
@@ -110,6 +113,10 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
 ):
     # Given the real tool family, a recording dispatch seam, and a stub LLM that
     # answers the step judge with RETRY first and PASS second.
+    # This smoke deliberately walks several rejected finishes (evidence, stale
+    # evidence) before the successful one; raise the real-failure budget so the
+    # independent finish loop cannot auto-fail it mid-script.
+    monkeypatch.setitem(TASKFLOW_INFRA, "finish_failure_limit", 10)
     dispatches: list[str] = []
     monkeypatch.setattr(
         dispatch_mod,
@@ -122,7 +129,7 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
             '{"verdict": "pass", "reason": "criteria met"}',
         ]
     )
-    monkeypatch.setattr(step_judge, "build_auxiliary_llm", judge_llm)
+    monkeypatch.setattr(step_judge, "build_taskflow_llm", judge_llm)
 
     criteria = "output must contain PASS"
     tools = _tools()

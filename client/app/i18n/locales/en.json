@@ -27,7 +27,14 @@
     "sendNow": "Now",
     "editQueued": "Edit queued message",
     "cancelQueued": "Cancel queued message",
-    "waitingApproval": "Waiting for approval..."
+    "waitingApproval": "Waiting for approval...",
+    "voiceRecord": "Voice input",
+    "voiceStop": "Stop recording",
+    "voiceUnavailable": "Speech recognition is not configured — place the STT model in the model settings first",
+    "voicePermissionDenied": "Microphone permission was denied",
+    "voiceTooShort": "Recording too short — hold and speak",
+    "voiceWarming": "The speech model is loading for the first time — try again shortly",
+    "voiceFailed": "Speech recognition failed — please retry"
   },
   "sessionModelPicker": {
     "pending": "Applies next turn",
@@ -43,6 +50,9 @@
     "defaultUserName": "Me",
     "imageLoadFailed": "Image load failed",
     "modelMeta": "{input} in · {output} out tokens",
+    "modelRetryScheduled": "Retrying model · attempt {attempt}/{max} · {reason} · in {delay}s",
+    "modelRetrySucceeded": "Model succeeded after {count} retries",
+    "modelRetryExhausted": "Model failed after {max} retries",
     "userInputMeta": "≈ {n} tokens",
     "contextTip": "View the agent's full context (system prompt / tools / messages)",
     "scrollBottom": "Scroll to bottom",
@@ -55,9 +65,17 @@
     "toolNoOutput": "No output",
     "toolResult": "Result",
     "toolRunning": "Running…",
+    "turnHistoryTools": "Tools executed: {n}",
+    "turnHistoryThinking": "Thinking process",
+    "turnHistoryWork": "Execution process",
+    "turnHistoryExpand": "Expand execution history",
+    "turnHistoryCollapse": "Collapse execution history",
     "removeImage": "Remove image",
     "removeAudio": "Remove audio",
-    "removeVideo": "Remove video"
+    "removeVideo": "Remove video",
+    "diffNewFile": "New file",
+    "codeWrap": "Wrap",
+    "codeZoom": "Zoom"
   },
   "chat": {
     "backgroundMessage": "Background task",
@@ -67,6 +85,19 @@
     "originProjectDir": "Working directory",
     "originGitHead": "Git branch switch",
     "originSystem": "System message",
+    "selection": {
+      "addToChat": "Add to Current Session",
+      "askInSideChat": "Ask in Side Session",
+      "limitWarning": "A single quote may not exceed 8,000 characters",
+      "quoteTooltip": "Quoted selection (sent as a blockquote)",
+      "sourceUser": "User message",
+      "sourceAi": "Assistant reply",
+      "sourceTool": "Tool output",
+      "sideChatTitle": "Side session",
+      "sideChatMissing": "Side session unavailable",
+      "sideChatFailed": "Failed to create the side session",
+      "sideChatInherited": "Main-session context inherited (complete fork, model-only)"
+    },
     "tokenGuard": {
       "title": "Model Config Below Minimum",
       "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Model Config."
@@ -455,12 +486,36 @@
       "localFiles": "files",
       "maxModels": "Up to {max} models per group",
       "requiredMissing": "Provider and model API name are required",
+      "frequencyPenalty": "Frequency penalty",
+      "presencePenalty": "Presence penalty",
+      "penaltyHint": "Range -2.0 to 2.0; leave empty for the global default",
+      "penaltyRange": "Enter a number between -2.0 and 2.0",
+      "maxContextLabel": "Context window (MAX_TOKEN)",
+      "maxOutputLabel": "Max output window (MAX_OUTPUT_TOKEN)",
+      "groupHelpLabel": "Show what {group} is for and when to use it",
+      "modelHelp": {
+        "main": "Main chat model — drives conversation, tool calls, task planning, and the final answer. Best for your strongest general model with reliable tool use and a long context.",
+        "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
+        "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
+        "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
+        "reasoner": "Reasoner model — deep analysis, math/logic reasoning, and complex problem solving. Best for hard tasks; everyday chat can stay on the main model.",
+        "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
+        "vttt": "Video-to-text model — extracts and describes video content. Use for video summaries and scene understanding.",
+        "tti": "Text-to-image model — generates images from prompts. Use for illustrations, visual drafts, and assets.",
+        "reranker": "Reranker — reorders retrieved results by relevance. Use to improve RAG/search quality.",
+        "embedding": "Embedding model — converts text to vectors for memory and knowledge retrieval. Use for semantic search and RAG.",
+        "stt": "Speech-to-text model — transcribes audio. Use for voice input and meeting/recording transcripts."
+      },
       "test": "Test connection",
       "testHint": "Probe once with the parameters on screen — nothing is written to .env",
       "testUnsupported": "This group needs an image / audio payload, so it cannot be probed",
       "testOk": "Reachable ({ms} ms)",
       "testFailed": "Unreachable ({ms} ms)",
-      "testRequestFailed": "request failed: the backend did not answer"
+      "testRequestFailed": "request failed: the backend did not answer",
+      "groupTaskflow": "TaskFlow decision model",
+      "groupCompression": "Compression model",
+      "followsAuxiliary": "Provider and API Base are empty — this family follows the auxiliary model (AUXILIARY_LLM_*).",
+      "compressionScope": "Used for the LLM summary. Memory review uses the main model; plan extraction uses the auxiliary model."
     },
     "memory": {
       "addEntry": "Add entry",
@@ -503,11 +558,14 @@
     "contextViewer": "Agent context",
     "browser": "Browser",
     "terminal": "Terminal",
+    "sideChat": "Side session",
     "scopes": {
       "session": "This session",
       "global": "Global"
     },
-    "scopeEmpty": "No tabs in this group"
+    "scopeEmpty": "No tabs in this group",
+    "recentClosed": "Recently closed tabs",
+    "recentClosedEmpty": "No recently closed tabs"
   },
   "progressFloat": {
     "status": {
@@ -524,15 +582,11 @@
     },
     "collapse": "Hide plan progress",
     "counts": "{done}/{total}",
-    "current": "current",
-    "cyclic": "cyclic deps",
+    "doneSummary": "{done} / {total} done",
     "empty": "No tasks in progress",
     "expand": "Show plan progress",
-    "needsClosing": "Needs closing",
     "notStarted": "Not started",
-    "summary": "Plan {done}/{total}",
-    "waveLabel": "Wave {index}",
-    "waveSummary": "Wave {current}/{total}"
+    "summary": "Plan {done}/{total}"
   },
   "projectFiles": {
     "title": "Files",
@@ -554,7 +608,13 @@
     "copied": "Copied",
     "copyFailed": "Copy failed",
     "revealFailed": "Could not open the file manager",
-    "openInBrowserFailed": "Could not open the file in the browser"
+    "openInBrowserFailed": "Could not open the file in the browser",
+    "viewerPdfPage": "Page {n} / {total}",
+    "viewerPdfPrev": "Previous page",
+    "viewerPdfNext": "Next page",
+    "viewerPdfFit": "Fit width",
+    "viewerPdfTooMany": "The file exceeds {n} pages — only the first {n} are rendered",
+    "viewerDocxFailed": "Failed to parse the docx — the file may be corrupted"
   },
   "gitGraph": {
     "title": "Git Graph",

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { watch } from 'vue';
 
 /**
  * Panel kinds the right sidebar can host as tabs: the three viewers plus every
@@ -30,7 +31,9 @@ export type RightSidebarPanelKind =
   /** The toolbox's browser: a URL bar over an embedded page. */
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
-  | 'terminal';
+  | 'terminal'
+  /** A helper session opened from a quoted chat selection (an ordinary session). */
+  | 'sideChat';
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
@@ -75,7 +78,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // The browser and the terminal work on the session's own project (the
   // terminal's cwd IS that directory), so both live in its group.
   browser: 'session',
-  terminal: 'session'
+  terminal: 'session',
+  // The side session was created from this session's transcript.
+  sideChat: 'session'
 };
 
 /**
@@ -124,6 +129,30 @@ export function clampSidebarWidth(
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
 
+/** Per-instance data carried by a right-sidebar tab. */
+export interface RightSidebarTabPayload {
+  path?: string;
+  hash?: string;
+  instance?: string;
+  url?: string;
+  /** The side session this tab talks to (one tab per session). */
+  sessionId?: string;
+  /** The main session this ephemeral side chat belongs to. */
+  parentSessionId?: string;
+  /** Whether the server inherited a parent-transcript snapshot. */
+  inherited?: boolean;
+  /** The quoted text the side session's composer starts with. */
+  quote?: string;
+  /** The quote's localized source label (the chip's tooltip). */
+  source?: string;
+  /**
+   * Whether a `sideChat` panel prefills the quote chip on mount. Initial opens
+   * default to true; reopening a closed side chat from the recent list sets
+   * false, so its retained history is shown without re-inserting the quote.
+   */
+  prefillQuote?: boolean;
+}
+
 /** One open tab of the right sidebar. */
 export interface RightSidebarTab {
   /**
@@ -136,6 +165,12 @@ export interface RightSidebarTab {
   /** Which group tab the tab sits under (当前会话 / 全局). */
   scope: RightSidebarScope;
   /**
+   * Owning session for a SESSION-scoped tab (undefined for global tabs). The
+   * strip shows only the active session's tabs; a tab from another session is
+   * kept but never rendered or auto-activated.
+   */
+  sessionId?: string;
+  /**
    * Per-instance data for kinds that need it (the file viewer's relative path).
    * The tab id is already the instance key, so the payload rides the tab itself
    * rather than a parallel path-by-tab map.
@@ -145,7 +180,50 @@ export interface RightSidebarTab {
    * instance key, while the settings entries keep deduping on their empty
    * payload. The panel reads it back to key its own state.
    */
-  payload?: { path?: string; hash?: string; instance?: string; url?: string };
+  payload?: RightSidebarTabPayload;
+}
+
+/**
+ * A tab the user closed, kept so the strip's recent-tabs menu can restore it.
+ * ``sessionId`` is the session it belongs to (the side chat's PARENT id for a
+ * side chat); global entries use an empty id and are listed for every session.
+ */
+export interface RecentClosedTab {
+  /** Stable identity (kind + scope + payload, minus the prefill flag). */
+  key: string;
+  kind: RightSidebarPanelKind;
+  scope: RightSidebarScope;
+  payload?: RightSidebarTabPayload;
+  sessionId: string;
+  closedAt: number;
+}
+
+/** Newest entries kept per recent group (per session for the session group). */
+export const RECENT_CLOSED_LIMIT = 10;
+
+/**
+ * Keep the newest entries of each group and drop everything older. The session
+ * group is capped PER SESSION (one session's history can never crowd out or be
+ * seen by another); the global group is capped once for every session.
+ * @param entries Newest-first recent entries.
+ * @returns The trimmed list, newest-first.
+ */
+function trimRecentClosed(entries: RecentClosedTab[]): RecentClosedTab[] {
+  const sessionCounts = new Map<string, number>();
+  let globalCount = 0;
+  const kept: RecentClosedTab[] = [];
+  for (const entry of entries) {
+    if (entry.scope === 'global') {
+      if (globalCount >= RECENT_CLOSED_LIMIT) continue;
+      globalCount += 1;
+    } else {
+      const count = sessionCounts.get(entry.sessionId) ?? 0;
+      if (count >= RECENT_CLOSED_LIMIT) continue;
+      sessionCounts.set(entry.sessionId, count + 1);
+    }
+    kept.push(entry);
+  }
+  return kept;
 }
 
 let tabSeq = 0;
@@ -155,8 +233,11 @@ let tabSeq = 0;
  * sidebar) plus the open tab list and the active tab (in-memory — a refresh
  * starts with an empty strip).
  *
- * The sidebar lives in the home shell, so its tabs survive session switches;
- * panels are lazily imported by the component and mounted only while active.
+ * The sidebar lives in the home shell. GLOBAL tabs survive every session
+ * switch and are shared; SESSION tabs are kept per owning session and only the
+ * active session's are rendered (switching to a new session never re-displays
+ * another session's tab). Panels are lazily imported by the component and
+ * mounted only while active.
  */
 export const useRightSidebarStore = defineStore(
   'rightSidebar',
@@ -165,8 +246,23 @@ export const useRightSidebarStore = defineStore(
     const collapsed = ref(true);
     /** Open tabs in strip order. */
     const tabs = ref<RightSidebarTab[]>([]);
+    /** Recently closed tabs (newest first), capped; persisted across reloads. */
+    const recentClosed = ref<RecentClosedTab[]>([]);
+    // Also trims a persisted list written by an older build with a larger cap.
+    watch(
+      () => recentClosed.value,
+      entries => {
+        const trimmed = trimRecentClosed(entries);
+        if (trimmed.length !== entries.length) recentClosed.value = trimmed;
+      },
+      { immediate: true }
+    );
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
+    /** The session whose 当前会话 tab group is on screen ('' when on home). */
+    const activeSessionId = ref('');
+    /** Last active session-scoped tab per session (in-memory, restored on switch). */
+    const lastActiveSessionTab = ref<Record<string, string | null>>({});
     /**
      * Which group tab is shown. 全局 by default: every pre-existing panel is a
      * global tool, so an untouched sidebar keeps exactly its old behaviour.
@@ -234,36 +330,59 @@ export const useRightSidebarStore = defineStore(
      * @param payload.hash
      * @param payload.instance
      * @param payload.url
+     * @param payload.sessionId The side session a `sideChat` tab talks to (one
+     *   tab per session; `quote`/`source` are initial content, not identity).
+     * @param payload.parentSessionId The main session an ephemeral side chat
+     *   belongs to (its lifecycle parent).
+     * @param payload.inherited Whether the server captured the parent transcript.
+     * @param payload.quote
+     * @param payload.source
+     * @param payload.prefillQuote
      * @returns The tab id (the existing tab's id when it was reused).
      */
-    function openTab(
-      kind: RightSidebarPanelKind,
-      payload?: { path?: string; hash?: string; instance?: string; url?: string }
-    ): string {
+    function openTab(kind: RightSidebarPanelKind, payload?: RightSidebarTabPayload): string {
       const path = payload?.path ?? null;
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
       const url = payload?.url ?? null;
+      const sessionId = payload?.sessionId ?? null;
       const scope = SCOPE_BY_KIND[kind];
+      // A side-chat tab belongs to its PARENT session; every other session tab
+      // belongs to the session on screen when it was opened.
+      const ownerSessionId =
+        scope === 'session' ? String(payload?.parentSessionId || activeSessionId.value || '') : undefined;
       const existing = tabs.value.find(
         tab =>
           tab.kind === kind &&
+          (tab.sessionId ?? null) === (ownerSessionId ?? null) &&
           (tab.payload?.path ?? null) === path &&
           (tab.payload?.hash ?? null) === hash &&
           (tab.payload?.instance ?? null) === instance &&
-          (tab.payload?.url ?? null) === url
+          (tab.payload?.url ?? null) === url &&
+          (tab.payload?.sessionId ?? null) === sessionId
       );
       if (existing) {
         activeTabId.value = existing.id;
         activeScope.value = existing.scope;
+        if (existing.scope === 'session' && existing.sessionId !== undefined) {
+          lastActiveSessionTab.value[existing.sessionId] = existing.id;
+        }
         expand();
         if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
         return existing.id;
       }
       const id = `${kind}-${++tabSeq}`;
-      tabs.value = [...tabs.value, payload ? { id, kind, scope, payload } : { id, kind, scope }];
+      const tab: RightSidebarTab = {
+        id,
+        kind,
+        scope,
+        ...(ownerSessionId !== undefined ? { sessionId: ownerSessionId } : {}),
+        ...(payload ? { payload } : {})
+      };
+      tabs.value = [...tabs.value, tab];
       activeTabId.value = id;
       activeScope.value = scope;
+      if (ownerSessionId !== undefined) lastActiveSessionTab.value[ownerSessionId] = id;
       expand();
       if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
       return id;
@@ -271,11 +390,39 @@ export const useRightSidebarStore = defineStore(
 
     /**
      * Tabs of one group (the strip renders the active group's list).
+     *
+     * The session group is filtered to the ACTIVE session: a tab opened in
+     * another session stays in the store but is never shown or activated here.
      * @param scope Group to list.
-     * @returns The tabs of that scope, in strip order.
+     * @returns The visible tabs of that scope, in strip order.
      */
     function tabsInScope(scope: RightSidebarScope): RightSidebarTab[] {
-      return tabs.value.filter(tab => tab.scope === scope);
+      return tabs.value.filter(
+        tab => tab.scope === scope && (scope === 'global' || tab.sessionId === activeSessionId.value)
+      );
+    }
+
+    /**
+     * Switch the session whose 当前会话 tab group is shown.
+     *
+     * GLOBAL tabs are shared and stay active. When the group on screen is the
+     * session group, it switches to that session's last active tab (or clears
+     * the body when the session has no session tabs) — another session's tab is
+     * never carried over.
+     * @param sessionId New active session id ('' on home).
+     */
+    function setActiveSession(sessionId: string): void {
+      const next = sessionId || '';
+      if (activeSessionId.value === next) return;
+      activeSessionId.value = next;
+      if (activeScope.value === 'global') return;
+      const remembered = lastActiveSessionTab.value[next] ?? null;
+      const tab = remembered
+        ? tabs.value.find(
+            candidate => candidate.id === remembered && candidate.scope === 'session' && candidate.sessionId === next
+          )
+        : undefined;
+      activeTabId.value = tab?.id ?? null;
     }
 
     /**
@@ -286,10 +433,12 @@ export const useRightSidebarStore = defineStore(
      */
     function setActiveScope(scope: RightSidebarScope): void {
       activeScope.value = scope;
-      const active = tabs.value.find(tab => tab.id === activeTabId.value);
-      if (active && active.scope === scope) return;
-      const first = tabs.value.find(tab => tab.scope === scope);
-      if (first) activeTabId.value = first.id;
+      const visible = tabsInScope(scope);
+      const active = visible.find(tab => tab.id === activeTabId.value);
+      if (active) return;
+      const remembered = scope === 'session' ? (lastActiveSessionTab.value[activeSessionId.value] ?? null) : null;
+      const next = (remembered ? visible.find(tab => tab.id === remembered) : undefined) ?? visible[0];
+      activeTabId.value = next?.id ?? null;
     }
 
     /**
@@ -301,6 +450,9 @@ export const useRightSidebarStore = defineStore(
       if (!tab) return;
       activeTabId.value = id;
       activeScope.value = tab.scope;
+      if (tab.scope === 'session' && tab.sessionId !== undefined) {
+        lastActiveSessionTab.value[tab.sessionId] = id;
+      }
     }
 
     /**
@@ -311,20 +463,137 @@ export const useRightSidebarStore = defineStore(
     function closeTab(id: string): void {
       const index = tabs.value.findIndex(tab => tab.id === id);
       if (index === -1) return;
+      const closing = tabs.value[index];
+      if (!closing) return;
+      // The neighbour must come from the SAME visible group: a session tab's
+      // sibling is another tab of that session, never a hidden tab of another
+      // session or a global one.
+      const group = tabs.value.filter(
+        tab => tab.scope === closing.scope && (tab.scope === 'global' || tab.sessionId === closing.sessionId)
+      );
+      const groupIndex = group.findIndex(tab => tab.id === id);
+      const remainingGroup = group.filter(tab => tab.id !== id);
+      const sameGroupNeighbour = remainingGroup[groupIndex] ?? remainingGroup[groupIndex - 1] ?? null;
       const remaining = [...tabs.value];
       remaining.splice(index, 1);
       tabs.value = remaining;
-      if (activeTabId.value === id) {
-        const neighbour = remaining[index] ?? remaining[index - 1] ?? null;
-        activeTabId.value = neighbour?.id ?? null;
-        if (neighbour) activeScope.value = neighbour.scope;
+      // With no sibling left, fall back to the other group's first visible tab
+      // (closing the last session tab shows a global one, as before) — never to
+      // a hidden tab of another session.
+      const fallback =
+        sameGroupNeighbour ??
+        (closing.scope === 'session'
+          ? remaining.find(tab => tab.scope === 'global')
+          : remaining.find(tab => tab.scope === 'session' && tab.sessionId === activeSessionId.value)) ??
+        null;
+      if (closing.scope === 'session' && closing.sessionId !== undefined) {
+        if (lastActiveSessionTab.value[closing.sessionId] === id) {
+          lastActiveSessionTab.value[closing.sessionId] = sameGroupNeighbour?.id ?? null;
+        }
       }
+      if (activeTabId.value === id) {
+        activeTabId.value = fallback?.id ?? null;
+        if (fallback) activeScope.value = fallback.scope;
+      }
+    }
+
+    /**
+     * Remember a tab the user just closed, for the strip's recent-tabs menu.
+     *
+     * The entry keeps the tab's kind/scope/payload (so reopening restores the
+     * same panel) and the session it belongs to: a side chat uses its PARENT
+     * session id, other session-scoped tabs use the session that was active at
+     * close. Re-closing the same tab moves it to the front instead of stacking a
+     * duplicate; each group keeps only its newest {@link RECENT_CLOSED_LIMIT}
+     * pages (older entries are dropped). The list is persisted.
+     * @param tab The tab being closed.
+     * @param activeSessionId The session shown when it was closed.
+     */
+    function rememberClosed(tab: RightSidebarTab, activeSessionId?: string): void {
+      const payload = tab.payload ? { ...tab.payload } : undefined;
+      const identity = payload
+        ? Object.fromEntries(
+            Object.entries(payload)
+              .filter(([key]) => key !== 'prefillQuote')
+              .sort(([left], [right]) => left.localeCompare(right))
+          )
+        : null;
+      const key = `${tab.kind}|${tab.scope}|${JSON.stringify(identity)}`;
+      const sessionId = tab.scope === 'session' ? String(tab.sessionId || activeSessionId || '') : '';
+      const entry: RecentClosedTab = {
+        key,
+        kind: tab.kind,
+        scope: tab.scope,
+        payload,
+        sessionId,
+        closedAt: Date.now()
+      };
+      recentClosed.value = trimRecentClosed([entry, ...recentClosed.value.filter(candidate => candidate.key !== key)]);
+    }
+
+    /**
+     * Closed tabs belonging to one group, newest first. The session group only
+     * returns entries of the CURRENT session; the global group returns all.
+     * @param scope Group to list.
+     * @param sessionId Current session id.
+     */
+    function recentClosedFor(scope: RightSidebarScope, sessionId: string): RecentClosedTab[] {
+      const entries =
+        scope === 'global'
+          ? recentClosed.value.filter(entry => entry.scope === 'global')
+          : recentClosed.value.filter(entry => entry.scope === 'session' && entry.sessionId === sessionId);
+      return entries.slice(0, RECENT_CLOSED_LIMIT);
+    }
+
+    /**
+     * Reopen a recently closed tab and remove it from the recent list. A side
+     * chat is restored with ``prefillQuote: false``: its retained history is
+     * the point, so the original quote chip is not inserted again.
+     * @param entry The recent entry to restore.
+     * @returns The new tab id.
+     */
+    function reopenClosed(entry: RecentClosedTab): string {
+      const payload =
+        entry.kind === 'sideChat' && entry.payload ? { ...entry.payload, prefillQuote: false } : entry.payload;
+      const id = openTab(entry.kind, payload);
+      recentClosed.value = recentClosed.value.filter(candidate => candidate.key !== entry.key);
+      return id;
+    }
+
+    /**
+     * Drop everything a deleted session owned: its recent-tabs entries, its
+     * session-scoped open tabs (including a side-chat panel pointing at it) and
+     * its remembered active tab.
+     * @param sessionId Deleted session id.
+     */
+    function forgetSession(sessionId: string): void {
+      if (!sessionId) return;
+      recentClosed.value = recentClosed.value.filter(
+        entry => entry.sessionId !== sessionId && entry.payload?.sessionId !== sessionId
+      );
+      const removedIds = new Set(
+        tabs.value
+          .filter(
+            tab => tab.sessionId === sessionId || (tab.scope === 'session' && tab.payload?.sessionId === sessionId)
+          )
+          .map(tab => tab.id)
+      );
+      if (removedIds.size > 0) {
+        tabs.value = tabs.value.filter(tab => !removedIds.has(tab.id));
+        if (activeTabId.value && removedIds.has(activeTabId.value)) {
+          activeTabId.value = null;
+        }
+      }
+      delete lastActiveSessionTab.value[sessionId];
+      if (activeSessionId.value === sessionId) activeSessionId.value = '';
     }
 
     return {
       collapsed,
       tabs,
+      recentClosed,
       activeTabId,
+      activeSessionId,
       activeScope,
       width,
       maximized,
@@ -335,14 +604,19 @@ export const useRightSidebarStore = defineStore(
       fitToViewport,
       openTab,
       tabsInScope,
+      setActiveSession,
       setActiveScope,
       activateTab,
-      closeTab
+      closeTab,
+      rememberClosed,
+      recentClosedFor,
+      reopenClosed,
+      forgetSession
     };
   },
   {
     persist: {
-      pick: ['collapsed', 'width', 'maximized']
+      pick: ['collapsed', 'width', 'maximized', 'recentClosed']
     }
   }
 );

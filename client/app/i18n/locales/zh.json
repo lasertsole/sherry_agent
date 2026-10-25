@@ -27,7 +27,14 @@
     "sendNow": "立刻",
     "editQueued": "编辑排队消息",
     "cancelQueued": "取消排队消息",
-    "waitingApproval": "等待审批..."
+    "waitingApproval": "等待审批...",
+    "voiceRecord": "语音输入",
+    "voiceStop": "停止录音",
+    "voiceUnavailable": "语音识别模型未配置，请先在模型配置中放置 STT 模型",
+    "voicePermissionDenied": "麦克风权限被拒绝",
+    "voiceTooShort": "录音太短，请按住再说",
+    "voiceWarming": "语音识别模型首次加载中，请稍候重试",
+    "voiceFailed": "语音识别失败，请重试"
   },
   "sessionModelPicker": {
     "pending": "下一轮生效",
@@ -43,6 +50,9 @@
     "defaultUserName": "我",
     "imageLoadFailed": "图片加载失败",
     "modelMeta": "输入 {input} · 输出 {output} tokens",
+    "modelRetryScheduled": "模型重试中 · 第 {attempt}/{max} 次 · {reason} · {delay}s 后",
+    "modelRetrySucceeded": "模型重试 {count} 次后成功",
+    "modelRetryExhausted": "模型重试 {max} 次后仍失败",
     "userInputMeta": "≈ {n} tokens",
     "contextTip": "查看 Agent 的完整上下文（系统提示词 / 工具 / 消息）",
     "scrollBottom": "回到最底部",
@@ -55,9 +65,17 @@
     "toolNoOutput": "无输出",
     "toolResult": "执行结果",
     "toolRunning": "执行中…",
+    "turnHistoryTools": "已执行工具 {n} 个",
+    "turnHistoryThinking": "思考过程",
+    "turnHistoryWork": "执行过程",
+    "turnHistoryExpand": "展开执行过程",
+    "turnHistoryCollapse": "收起执行过程",
     "removeImage": "移除图片",
     "removeAudio": "移除音频",
-    "removeVideo": "移除视频"
+    "removeVideo": "移除视频",
+    "diffNewFile": "新建文件",
+    "codeWrap": "换行",
+    "codeZoom": "放大"
   },
   "chat": {
     "backgroundMessage": "后台任务",
@@ -67,6 +85,19 @@
     "originProjectDir": "项目目录切换",
     "originGitHead": "Git 分支切换",
     "originSystem": "系统消息",
+    "selection": {
+      "addToChat": "添加到当前会话",
+      "askInSideChat": "在辅助会话中提问",
+      "limitWarning": "单条引用最多 8,000 个字符",
+      "quoteTooltip": "选中文本引用（发送时作为引用块）",
+      "sourceUser": "用户消息",
+      "sourceAi": "助手回复",
+      "sourceTool": "工具输出",
+      "sideChatTitle": "辅助会话",
+      "sideChatMissing": "辅助会话不可用",
+      "sideChatFailed": "创建辅助会话失败",
+      "sideChatInherited": "已继承主会话上下文（完整 fork，仅模型可见）"
+    },
     "tokenGuard": {
       "title": "模型配置不达标",
       "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
@@ -455,12 +486,36 @@
       "localFiles": "文件",
       "maxModels": "每个分组最多 {max} 个模型",
       "requiredMissing": "提供商与模型 API 名为必填项",
+      "frequencyPenalty": "频率惩罚（frequency_penalty）",
+      "presencePenalty": "存在惩罚（presence_penalty）",
+      "penaltyHint": "范围 -2.0 ~ 2.0；留空使用全局默认",
+      "penaltyRange": "请输入 -2.0 ~ 2.0 之间的数字",
+      "maxContextLabel": "上下文窗口（MAX_TOKEN）",
+      "maxOutputLabel": "最大输出窗口（MAX_OUTPUT_TOKEN）",
+      "groupHelpLabel": "查看 {group} 的用途与适用场景",
+      "modelHelp": {
+        "main": "主对话模型：负责日常对话、工具调用、任务规划和最终回答。适合作为能力最强、工具调用可靠、上下文较长的默认模型。",
+        "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
+        "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
+        "compression": "压缩模型：为长会话生成摘要。适合长上下文、低成本模型。",
+        "reasoner": "推理模型：用于复杂分析、数学/逻辑推理和难题求解。日常对话可继续使用主模型。",
+        "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
+        "vttt": "视频生文模型：提取并描述视频内容。用于视频摘要和画面理解。",
+        "tti": "文生图模型：根据提示词生成图片。用于插画、配图和视觉草稿。",
+        "reranker": "重排序模型：按相关性重新排序检索结果。用于提升 RAG/搜索质量。",
+        "embedding": "向量模型：把文本转成向量，供记忆和知识库检索。用于语义搜索与 RAG。",
+        "stt": "语音转文字模型：转写音频内容。用于语音输入、会议和录音转写。"
+      },
       "test": "测试连通性",
       "testHint": "用当前填写的参数试调一次，不写入 .env",
       "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
       "testOk": "连通正常（{ms} ms）",
       "testFailed": "连通失败（{ms} ms）",
-      "testRequestFailed": "请求失败：后端未响应"
+      "testRequestFailed": "请求失败：后端未响应",
+      "groupTaskflow": "TaskFlow 决策模型",
+      "groupCompression": "压缩模型",
+      "followsAuxiliary": "Provider 与 API Base 均为空 —— 该组跟随辅助模型（AUXILIARY_LLM_*）。",
+      "compressionScope": "用于 LLM 摘要；记忆回顾走主模型，计划提炼走辅助模型。"
     },
     "memory": {
       "addEntry": "添加条目",
@@ -503,11 +558,14 @@
     "contextViewer": "Agent 上下文",
     "browser": "浏览器",
     "terminal": "终端",
+    "sideChat": "辅助会话",
     "scopes": {
       "session": "当前会话",
       "global": "全局"
     },
-    "scopeEmpty": "该分组暂无标签页"
+    "scopeEmpty": "该分组暂无标签页",
+    "recentClosed": "最近关闭的标签页",
+    "recentClosedEmpty": "最近没有关闭的标签页"
   },
   "progressFloat": {
     "status": {
@@ -524,15 +582,11 @@
     },
     "collapse": "收起计划进度",
     "counts": "{done}/{total}",
-    "current": "当前",
-    "cyclic": "循环依赖",
+    "doneSummary": "已完成 {done}/{total}",
     "empty": "暂无进行中的任务",
     "expand": "展开计划进度",
-    "needsClosing": "待收口",
     "notStarted": "未开始",
-    "summary": "计划 {done}/{total}",
-    "waveLabel": "第 {index} 波",
-    "waveSummary": "波次 {current}/{total}"
+    "summary": "计划 {done}/{total}"
   },
   "projectFiles": {
     "title": "文件树",
@@ -554,7 +608,13 @@
     "copied": "已复制",
     "copyFailed": "复制失败",
     "revealFailed": "无法打开文件管理器",
-    "openInBrowserFailed": "无法在浏览器中打开该文件"
+    "openInBrowserFailed": "无法在浏览器中打开该文件",
+    "viewerPdfPage": "第 {n} / {total} 页",
+    "viewerPdfPrev": "上一页",
+    "viewerPdfNext": "下一页",
+    "viewerPdfFit": "适应宽度",
+    "viewerPdfTooMany": "文件超过 {n} 页，仅渲染前 {n} 页",
+    "viewerDocxFailed": "docx 解析失败，文件可能已损坏"
   },
   "gitGraph": {
     "title": "Git Graph",

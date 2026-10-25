@@ -199,7 +199,7 @@ The access-mode switch does NOT lift this gate: only `yolo` on this card (a
 persistent global flag, `external_path_yolo`) or an allowlist entry does. A
 session in `full_access` still gets this card for an outside-root path.
 
-▶️ Full details: [docs/sandbox/isolation/README.md](../../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
+▶️ Full details: [wiki/sandbox/isolation/README.md](../../../wiki/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ---
 

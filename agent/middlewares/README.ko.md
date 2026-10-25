@@ -237,7 +237,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 알림은 주입 캐리어의 역할인 `HumanMessage`이며 `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}`를 가진다(브랜치 알림의 origin은 `git_head`). 영속화 계층이 그 origin을 인간 행에 유지하므로 채팅은 사용자 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리** / **Git 브랜치**, 폴더·브랜치 글리프)로 렌더링한다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 비 `user` origin을 USER 행과 AI 행(알림이 아직 `AIMessage`였던 시절의 옛 형태) 모두 캐리어로 취급한다.
 
-알림은 역할상 인간 메시지지만 사용자가 쓴 것이 아니므로, 인간 메시지를 순회하는 모든 스캐너가 `pub.func.message.workspace_notice.is_workspace_notice`로 이를 건너뛴다: `split_into_turns`(알림은 턴 경계가 아니므로 압축의 턴 예산에 영향이 없다), HITL의 `_is_headless_turn`(끝의 알림이 턴을 무인으로 만들면 안 된다), 그리고 요약 / 메모리 플러시 직렬화기(`[System notice]` / `system`으로 표시하고 `[User]`로는 절대 표시하지 않는다).
+알림은 역할상 인간 메시지지만 사용자가 쓴 것이 아니므로, 인간 메시지를 순회하는 모든 스캐너가 `pub.func.message.workspace_notice.is_workspace_notice`로 이를 건너뛴다: `split_into_turns`(알림은 턴 경계가 아니므로 압축의 턴 예산에 영향이 없다), HITL의 `_is_headless_turn`(끝의 알림이 턴을 무인으로 만들면 안 된다), 그리고 요약 직렬화기(`[System notice]` / `system`으로 표시하고 `[User]`로는 절대 표시하지 않는다).
 
 실제 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
@@ -253,7 +253,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS`는 활성 집합에 다시 합쳐집니다(도구 탭은 해당 행을 잠금 표시): 필수 항목을 빠뜨린 새 페이로드는 이미 서비스가 거부하지만, 도구가 필수가 되기 전에 기록된 레지스터 값으로도 벗겨낼 수 없게 하는 두 번째 가드입니다.
 
-**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `docs/plan-mode/` 참조.
+**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `wiki/plan-mode/` 참조.
 
 미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
 
@@ -326,7 +326,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, _연속된 두_ 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
 - `ToolCallGuardrailConfig` 기본값: `warnings_enabled=True`, `hard_stop_enabled=False`, `recovery_mode_enabled=True`, `recovery_max_violations=1` — `hard_stop_enabled=True`이면 모든 _차단_ 임계값이 HALT로 변환되고(이전의 엄격한 벽), `recovery_mode_enabled=False`이면 즉시 차단 동작으로 돌아갑니다.
 
-▶️ 전체 문서: [docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ 전체 문서: [wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -357,7 +357,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` 밖으로 해석되는 값은 하드 거부 바닥(YOLO 거부 목록 / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`)에 걸리지 않는 한 통과합니다;
 - 그 밖의 외부 경로는 도구 자체의 `resolve_external_path()` HITL 흐름에 맡깁니다 —— 미들웨어는 승인도, 인자 재작성도, 인터럽트도 하지 않습니다. 도구가 실행 시 같은 게이트를 다시 돌기 때문에 여기서 개입하면 결정이 두 번 내려집니다.
 
-거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [docs/sandbox/isolation/README.ko.md §5](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구).
+거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [wiki/sandbox/isolation/README.ko.md §5](../../wiki/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -388,7 +388,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/todo_continuation/core.py` · **클래스:** `PlanContinuationEnforcer(AgentMiddleware)`
 **후크:** `aafter_agent` 전용(비동기 턴 종료 후크)
 
-메인 에이전트 리스트에서 **가장 먼저** 등록되므로 `after_agent`는 **가장 마지막**에 실행됩니다 — `after_agent` 후크는 리스트 역순으로 실행되며, enforcer는 진짜 끝난 턴을 관측해야 합니다. 게이트 대상은 **계획 전체**입니다. 세션 todo 목록(`pending` / `in_progress`)과 **미종료 TaskFlow 플로**(`ready` / `blocked` / `dispatched` 단계, 그리고 모든 단계가 정리됐지만 닫히지 않은 플로) — 어느 하나라도 남으면 턴이 이어지고, 지시문이 남은 웨이브/단계와 마무리에 필요한 보드 호출을 함께 명시합니다. 주입은 서버 소유 자동 턴 후크(`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, 호출 시점 해석; 미등록이면 세션을 재시도 가능한 상태로 두는 no-op으로 열화)를 통해 fire-and-forget으로 수행됩니다.
+메인 에이전트 리스트에서 **가장 먼저** 등록되므로 `after_agent`는 **가장 마지막**에 실행됩니다 — `after_agent` 후크는 리스트 역순으로 실행되며, enforcer는 진짜 끝난 턴을 관측해야 합니다. 게이트 대상은 **계획 전체**입니다. 세션 todo 목록(`pending` / `in_progress`)과 **미종료 TaskFlow 플로**(`ready` / `blocked` / `dispatched` 단계, 그리고 모든 단계가 정리됐지만 닫히지 않은 플로) — 어느 하나라도 남으면 턴이 이어지고, 지시문이 남은 단계와 마무리에 필요한 보드 호출을 함께 명시합니다. 주입은 서버 소유 자동 턴 후크(`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, 호출 시점 해석; 미등록이면 세션을 재시도 가능한 상태로 두는 no-op으로 열화)를 통해 fire-and-forget으로 수행됩니다.
 
 - 중단류 턴 오류(사용자 취소 / 타임아웃, `stagnation_tracker.is_abort_error`)는 절대 연속하지 않으며, 비어 있거나 전부 완료된 목록은 정체 추적기를 리셋합니다.
 - 정체 처리(`agent/tools/todolist/stagnation_tracker.py`): 여러 시도 후에도 목록이 변하지 않으면 복구 모드에 들어가 `_RECOVERY_PROMPT`를 주입합니다. `is_in_cooldown`이 반복 주입을 제한하고, 전달 성공 후에만 `mark_injected`로 기록합니다.
@@ -404,7 +404,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 `TaskIntentMiddleware` 바로 뒤에 등록됩니다(그 턴 내 중복 제거는 실행 시 사용자 메시지가 마지막이어야 합니다). 턴의 **첫 모델 호출**에 **라이브 뷰**를 `<system-reminder source="…">` HumanMessage로 주입합니다: 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스. 시스템 프롬프트 자체는 이제 안정적 내용(persona + memory + 스킬 인덱스)만 담습니다 — 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것의 prefix 캐시를 무효화합니다; 설정 변경/압축 때만 재구성되는 프롬프트는 그 사이 **오래된** todo 목록을 보여줍니다.
 
 - **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
-- **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 / memory_flush 라벨.
+- **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 라벨.
 - **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
 - 다른 선택 항목과 같이 **스위치로 게이트**되며(`middleware_enabled`), 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다.
 
@@ -434,7 +434,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. 하드라인 / 위험 명령 감지(`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, 기반은 `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`)를 `ApprovalPipeline.check_command`(`approval.py`)로 수행.
 2. 스마트 승인(`ApprovalMode.SMART`, 선택적 `smart_approval_llm`) — 명백히 안전한 호출을 자동 승인.
 3. `interrupt()` — 기본 결정 타임아웃 60초.
-4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [docs/sandbox/isolation/README.ko.md](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
+4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [wiki/sandbox/isolation/README.ko.md](../../wiki/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
 5. `wrap_tool_call`은 승인이 거부되었거나 타임아웃된 호출의 실행을 거부합니다(턴 단위 플래그는 `before_agent`에서 리셋).
 
 서브게이트(`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. 상태는 `state_register_mem`에 `hitl:` 접두사 키로 저장됩니다.
@@ -624,7 +624,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **플랜 추출 중복 제거:** `_detect_todo_all_complete`는 모든 todo가 `completed`/`cancelled`이고 플랜의 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)이 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 다를 때 발화합니다——완료된 todo의 제자리 수정은 재추출하고, 변하지 않은 플랜은 건너뛰며, 실패한 패스는 다음 완료 턴에 재시도합니다. 앞단 게이트: 세션별 `Summarization → nudge` 스위치, `NUDGE["plan_extraction_enabled"]`, `nudge_plan_extraction_lock`, 실행 중인 이벤트 루프.
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
-▶️ 전체 문서: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ 전체 문서: [wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 > 예산 미들웨어의 클래스 기본값 `max_iterations`는 50입니다. _실제 등록된_ 값은 90(메인)과 60(워커). 이 문서의 이전 버전은 예산 10이라고 주장했습니다 — 잘못된 정보였습니다.
 
@@ -1084,7 +1084,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드
-│   ├── memory_flush.py          # 압축 전 메모리 플러시
 │   ├── nudges.py                # 압축 시점 nudge 스케줄링 + 프롬프트
 │   ├── plan_context.py          # 플랜 추출 nudge의 활성 플랜 감지
 │   └── summary_doc.py           # SummaryDoc 스키마 + 결정적 Markdown 렌더러

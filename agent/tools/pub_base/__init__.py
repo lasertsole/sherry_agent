@@ -13,7 +13,6 @@ from .path_utils import (
     _open_no_follow,
     PathOutOfBoundsError,
 )
-from .git_ensure import clear_git_ready, ensure_git_for_writes
 from .file_utils import (
     SKIP_DIR_NAMES,
     decode_text,
@@ -66,8 +65,6 @@ from .skill_utils import (
 )
 
 __all__ = [
-    "clear_git_ready",
-    "ensure_git_for_writes",
     "resolve_path",
     "resolve_project_path",
     "resolve_workspace_path",

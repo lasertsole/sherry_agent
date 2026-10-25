@@ -24,6 +24,7 @@ persistence door), loguru-only logging.
 
 import asyncio
 import threading
+import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -33,6 +34,7 @@ from loguru import logger
 
 from server.utils.ws_helpers import send_ws_json
 from server.service.stream_driver import StreamDriver
+from server.service.trajectory_store import turn_scope
 from agent.tools.subagent.announce.steering_queue import enqueue_steering
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.subagent.registry.session_state import (
@@ -237,9 +239,14 @@ async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     text = raw_text if isinstance(raw_text, str) else str(getattr(injection, "content", injection))
     message = MultiModalMessage(text=text)
     websocket = get_websocket_by_session_id(bare)
-    await _AutoTurnStreamDriver(bare, websocket).drive(
-        async_generate(bare, message, is_stream=True, origin=inj_meta)
-    )
+    # The auto-turn has no queue row to carry a turn identity, but every frame
+    # and the active snapshot still need one: open the same turn scope the
+    # queue/resume paths use and pass the id to the driver.
+    turn_id = uuid.uuid4().hex
+    with turn_scope(turn_id, bare):
+        await _AutoTurnStreamDriver(bare, websocket, turn_id=turn_id).drive(
+            async_generate(bare, message, is_stream=True, origin=inj_meta)
+        )
 
 
 class _AutoTurnStreamDriver(StreamDriver):

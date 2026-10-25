@@ -266,8 +266,9 @@ describe('sendChatMessage (browser WebSocket)', () => {
 
   it('resumes a mid-stream turn instead of resending it (no duplicate content)', async () => {
     // Stream-resume contract: the server keeps the turn running after the
-    // socket dies, so the client reconnects and asks for a TEXT SNAPSHOT. The
-    // generation payload is never re-sent (that would replay the turn).
+    // socket dies. On reconnect the PAGE fetches history + the active-turn
+    // snapshot over HTTP; the socket itself sends NOTHING, and the generation
+    // payload is never re-sent (that would replay the turn).
     vi.useFakeTimers();
     try {
       const promise = bridge.sendChatMessage({ session_id: 's1', text: 'hi' }, () => {});
@@ -293,12 +294,14 @@ describe('sendChatMessage (browser WebSocket)', () => {
       const resumed = FakeWebSocket.instances[1]!;
       resumed.open();
       const frames = resumed.sent.map(raw => JSON.parse(raw));
-      // Snapshot request only — the generation payload appears exactly once, on
-      // the ORIGINAL socket.
-      expect(frames).toEqual([{ type: 'resume_stream', session_id: 's1', content: {} }]);
+      // No outbound frame on reconnect: the page's HTTP snapshot request is
+      // outside this module, and the generation payload appears exactly once,
+      // on the ORIGINAL socket.
+      expect(frames).toEqual([]);
       expect(ws.sent).toHaveLength(1);
 
-      // The snapshot reply ends the reconnect flow; the turn finishes normally.
+      // A legacy snapshot reply still ends the reconnect flow; the turn
+      // finishes normally.
       resumed.frame({ event: 'stream_resume', session_id: 's1', content: { status: 'ok', text: 'partial+more' } });
       resumed.frame({ event: 'done', session_id: 's1', message_ids: [] });
       await expect(promise).resolves.toBeUndefined();

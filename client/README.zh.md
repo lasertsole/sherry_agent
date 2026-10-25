@@ -9,6 +9,7 @@
 基于 **Tauri 2 + Nuxt 4（Vue 3 + TypeScript）** 构建：
 
 - **流式聊天** — 智能体响应通过 WebSocket（`/sessions/agent/ws`）以带类型的分块（`text` / `reasoning` / `tool_start` / `tool_end` / `tool_result`）流式传输，并支持 HITL（人机协同）审批卡片
+- **可折叠的回合执行历史** — 已完成的回合只显示执行摘要与最终回答；展开后恢复全部工具卡片、中间消息与思考过程
 - **离线优先的历史记录** — Dexie.js（IndexedDB）缓存会话历史、子智能体运行记录、角色档案和聊天背景图片；历史请求缓存优先，只拉取缺失的轮次
 - **丰富的工具 UI** — 技能管理器、定时任务、心跳编辑器、通道设置、日志查看器（服务端 + 客户端日志）、统计图表、子智能体流程图、知识图谱查看器
 - **深色/浅色模式 + 国际化** — `@nuxtjs/color-mode` 主题与 4 种语言（`zh` / `en` / `ja` / `ko`）
@@ -92,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共享工具函数（dayjs 配置、formatCompactTimeString、……）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 聊天输入框组件（支持 i18n）
+│   │   ├── chat/DiffPreview.vue   # 工具卡片内 patch_file / write_file 结果的彩色内联 diff
 │   │   └── ImagePreviewOverlay.vue# 全屏图片预览浮层（Teleport 到 body）
 │   ├── composables/               # Vue 3 组合式逻辑（单元测试位于 __tests__/）
 │   │   ├── bridge.ts              # 统一的 Tauri/Browser 桥接 —— 聊天流、会话、系统提示词、
@@ -124,10 +126,11 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 49 个页面组件：
-│   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
+│   │       └── components/        # 50 个页面组件：
+│   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media；选中文字右键可引用）
+│   │           ├── SideChatPanel.vue          # 辅助会话标签页：右键引用新建普通子会话，独立消息流 + HITL 审批
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
-│   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
+│   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow 扁平步骤列表，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关，或按模型声明档位（含关闭）的选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
@@ -166,7 +169,9 @@ client/
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 更换密码 / 关闭登录保护（需当前密码）
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
-│   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file，文本 + 图片预览）
+│   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file：文本 + markdown，图片/PDF/docx 经 GET /project/file/blob）
+│   │           ├── PdfViewer.vue             # 文件查看器内的 PDF 预览（pdf.js，翻页 + 适应宽度，GET /project/file/blob）
+│   │           ├── DocxViewer.vue            # 文件查看器内的 docx 预览（mammoth → HTML → DOMPurify，GET /project/file/blob）
 │   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
@@ -196,7 +201,7 @@ client/
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
 │   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 代理模型 / 技能）按会话镜像；必需工具与必需技能锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
-│   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
+│   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + 扁平步骤，由 taskflow_updated 刷新）
 │   │   ├── web-search.ts       # 每会话的搜索后端 + Tavily→SearXNG 降级通知
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件
@@ -208,7 +213,7 @@ client/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、……
 │       ├── response.d.ts          # API 响应类型定义
 │       └── backend/               # ts-rs 生成的后端类型（ChatRequest、HealthStatus、……）
-├── docs/                          # VitePress 文档站点（guide/commands/events/types/zh）
+├── wiki/                          # VitePress 文档站点（guide/commands/events/types/zh）
 ├── public/                        # 静态资源（favicon.svg、robots.txt、avatar/）
 ├── repros/                        # Playwright repro 测试（经 playwright.config.ts 运行）
 ├── src-tauri/                     # Tauri 2 原生外壳
@@ -308,7 +313,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 - Base64 媒体先经 `POST /images/upload`、`/audio/upload`、`/video/upload` 上传并以 URL 引用
 - 服务端帧：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；chunk 携带 `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）与工具元数据
 - 流中断后按指数退避重连（1s/2s/4s，经 `WS_RECONNECT_MAX_ATTEMPTS` 最多 3 次）；流中丢失会抛出 `StreamInterruptedError`，并经 mitt 发出 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed`
-- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）。同一张卡片也渲染 Plan-Then-Execute 审批（`exit_plan_mode`）：计划正文、反馈输入、**退回修改**（reject + 反馈）与 **批准** —— 详见 `../docs/plan-mode/`
+- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）。同一张卡片也渲染 Plan-Then-Execute 审批（`exit_plan_mode`）：计划正文、反馈输入、**退回修改**（reject + 反馈）与 **批准** —— 详见 `../wiki/plan-mode/`
 - 本页从未发起过的轮次（计划续写的 auto-turn、子代理完成注入、cron 运行）**不带 `turn_started`**——auto-turn 不携带轮次身份——因此它的 chunk 无法流进本地行；`done` 处理器会重取最新一页历史，让最终回答无需刷新即可显示
 
 ### WebSocket 单例（ws.ts）
@@ -376,6 +381,12 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 - 未知则留空——本功能之前的历史卡片、或被人工拒绝的调用，**不显示**耗时，而不是显示假的 `0ms`。
 
 数字来自两个永远一致的来源：流式 `tool_result` 帧携带 `duration_ms`，历史行携带 `messages.tool_duration_ms`（中间件的权威测量，帧在有戳记时优先采用）。审批等待与排队时间天然不在窗口内。
+
+### 内联编辑 diff（`ChatToolCard.vue` / `DiffPreview.vue`）
+
+`patch_file` 与 `write_file` 的结果渲染为彩色 unified diff 而非裸 JSON：客户端解析后端的 `difflib` 输出（`app/utils/tool-diff.ts`，纯前缀分类——增行绿、删行红、上下文原样、`@@` hunk 头蓝色，带新旧双列行号与 `+N −M` 头部统计）。`write_file` 自 2026-10-24 起返回带 `diff` / `isNew` 的 JSON（新建文件显示「新建文件」徽标并以写入的 `text` 构建全绿预览）；任何解析不了的形状退回原 `<pre>`——构造上即 fail-open。
+
+聊天与文件查看器的 markdown 经 v-safe-html 管线渲染，其中包含 2026-10-24 的渲染增强：Shiki v4 在流式结束后为代码围栏着色（明暗双主题、复制/换行工具栏、流式零开销）、` ```mermaid ` 围栏渲染为经消毒的 SVG 图（点击放大）、KaTeX 渲染 `$…$`/`$$…$$` 公式、文件查看器对 ≤256 KB 的代码文件高亮——全部经 DOMPurify 白名单与受信任根作用域的内联样式（`security.ts`），绝无裸 HTML 通道。
 
 ### 状态与事件
 

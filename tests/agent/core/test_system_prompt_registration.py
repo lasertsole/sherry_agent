@@ -66,6 +66,7 @@ async def test_system_prompt_injection_is_outermost_wrap_layer(
     monkeypatch.setattr(agent_core, "build_async_sqlite_checkpointer", _checkpointer)
     monkeypatch.setattr(agent_core, "build_main_llm", lambda: _MainLLM())
     monkeypatch.setattr(agent_core, "build_auxiliary_llm", lambda: object())
+    monkeypatch.setattr(agent_core, "build_compression_llm", lambda: object())
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)

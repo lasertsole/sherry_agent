@@ -1,0 +1,20 @@
+{
+  "captured_run": null,
+  "threshold_resolve_rate": 0.0,
+  "model": {},
+  "aggregate": {
+    "note": "no measured run yet; AgentBench DBBench needs a configured MAIN_LLM"
+  },
+  "tasks": [
+    "dbbench-000",
+    "dbbench-001",
+    "dbbench-002",
+    "dbbench-003",
+    "dbbench-004",
+    "dbbench-005",
+    "dbbench-006",
+    "dbbench-007",
+    "dbbench-008",
+    "dbbench-009"
+  ]
+}

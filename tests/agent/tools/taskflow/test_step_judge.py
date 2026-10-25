@@ -35,7 +35,7 @@ def _install_llm(monkeypatch: pytest.MonkeyPatch, content: str, recorder: list) 
         recorder.append(llm)
         return llm
 
-    monkeypatch.setattr(step_judge, "build_auxiliary_llm", _build)
+    monkeypatch.setattr(step_judge, "build_taskflow_llm", _build)
 
 
 def _user_prompt(recorder: list) -> str:
@@ -97,7 +97,7 @@ async def test_judge_fails_open_when_llm_unavailable(monkeypatch: pytest.MonkeyP
     def _build(temperature: float | None = None):
         raise RuntimeError("aux llm offline")
 
-    monkeypatch.setattr(step_judge, "build_auxiliary_llm", _build)
+    monkeypatch.setattr(step_judge, "build_taskflow_llm", _build)
 
     result = await judge_step_result("task", "criteria", "result")
 

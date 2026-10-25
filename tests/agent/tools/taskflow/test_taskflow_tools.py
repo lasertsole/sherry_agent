@@ -1,7 +1,7 @@
 """Behavior tests for the taskflow tool family, its skill file, and wiring.
 
 Covers the six acceptance checks:
-1. build_main_tools() exposes all 16 taskflow_* tools
+1. build_main_tools() exposes the three merged taskflow surfaces
 2. create -> run_task -> resume -> finish full chain, readable back across a
    simulated restart (fresh connections / new event loop)
 3. concurrent double-write on one flow: exactly one expectedRevision conflict
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow import build_taskflow_tools
+from agent.tools.taskflow import build_legacy_taskflow_tools, build_taskflow_tools
 from agent.tools.taskflow.config import INITIAL_REVISION
 from agent.tools.taskflow.registry import store_sqlite
 
@@ -36,33 +36,17 @@ taskflow_run_task_module = sys.modules["agent.tools.taskflow.tools.taskflow_run_
 taskflow_dispatch_module = sys.modules["agent.tools.taskflow.tools._dispatch"]
 
 EXPECTED_TOOL_NAMES = [
-    "taskflow_create",
-    "taskflow_run_task",
-    "taskflow_set_waiting",
-    "taskflow_resume",
-    "taskflow_finish",
-    "taskflow_fail",
-    "taskflow_cancel",
-    "taskflow_summary",
-    "taskflow_progress",
-    "taskflow_budget",
-    "taskflow_dispatch",
-    "taskflow_update_steps",
-    "taskflow_wait_all",
-    "taskflow_list",
-    "taskflow_replan",
-    "taskflow_plan",
+    "taskflow_flow",
+    "taskflow_step",
+    "taskflow_inspect",
 ]
 
-READ_ONLY_TASKFLOW_TOOLS = {
-    "taskflow_summary",
-    "taskflow_progress",
-    "taskflow_list",
-}
+READ_ONLY_TASKFLOW_TOOLS = {"taskflow_inspect"}
 
 
 def _tool_map() -> dict:
-    tools = build_taskflow_tools()
+    """The original 16 module tools; behavior tests use their direct entry points."""
+    tools = build_legacy_taskflow_tools()
     assert len(tools) == 16
     return {t.name: t for t in tools}
 
@@ -98,22 +82,9 @@ def test_builder_returns_full_family():
 def test_builder_returns_tools_in_pinned_order():
     tools = build_taskflow_tools()
     assert [t.name for t in tools] == [
-        "taskflow_create",
-        "taskflow_run_task",
-        "taskflow_set_waiting",
-        "taskflow_resume",
-        "taskflow_finish",
-        "taskflow_fail",
-        "taskflow_cancel",
-        "taskflow_summary",
-        "taskflow_progress",
-        "taskflow_budget",
-        "taskflow_dispatch",
-        "taskflow_update_steps",
-        "taskflow_wait_all",
-        "taskflow_list",
-        "taskflow_replan",
-        "taskflow_plan",
+        "taskflow_flow",
+        "taskflow_step",
+        "taskflow_inspect",
     ]
     assert all(t.metadata.get("scope") == "main_only" for t in tools)
 
@@ -377,7 +348,7 @@ def test_family_loads_without_p0_1_wiring():
     server runtime, no spawn-pipeline import at module scope (the dispatch
     entry is a lazy module-level injectable reference)."""
     tools = build_taskflow_tools()
-    assert len(tools) == 16
+    assert len(tools) == 3
     assert all(t.name.startswith("taskflow_") for t in tools)
     # The injection seam exists and can be replaced (used by every dispatch test).
     assert hasattr(taskflow_dispatch_module, "dispatch_child")
@@ -389,15 +360,34 @@ def test_family_loads_without_p0_1_wiring():
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_duplicate(isolated_db: Path):
+async def test_create_returns_an_existing_non_terminal_flow_idempotently(isolated_db: Path):
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(
+    first = await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="first"
     )
     out = await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="second"
     )
-    assert "already exists" in out
+    assert first.startswith("TaskFlow created"), first
+    assert out.startswith("TaskFlow already exists (idempotent)"), out
+    assert "flow_id=flow-1" in out
+    assert "nothing new was created" in out
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_terminal_flow_still_errors(isolated_db: Path):
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-done", description="first"
+    )
+    await store_sqlite.update_flow("flow-done", 1, session_id=_SESSION, status="done")
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-done", description="second"
+    )
+
+    assert out.startswith("Error: TaskFlow 'flow-done' already exists and is terminal"), out
+    assert "resumed_from" in out
 
 
 @pytest.mark.asyncio
@@ -564,7 +554,14 @@ def test_subagent_policy_drops_main_only_planning_families(build_main_tools_real
 
     tools = build_main_tools_real()
     main_names = {t.name for t in tools}
-    assert {"taskflow_create", "todowrite", "todoread", "knowledge"} <= main_names
+    assert {
+        "taskflow_flow",
+        "taskflow_step",
+        "taskflow_inspect",
+        "todowrite",
+        "todoread",
+        "knowledge",
+    } <= main_names
 
     kept = {t.name for t in apply_tool_policy(tools, None, None)}
 
@@ -654,7 +651,7 @@ async def test_create_refuses_past_the_step_ceiling(
 
     assert out.startswith("Error:")
     assert "4 steps" in out and "max is 3" in out
-    assert "taskflow_plan" in out
+    assert "taskflow_flow(action='plan')" in out
     assert await store_sqlite.get_flow("flow-big", _SESSION) is None, "nothing was created"
 
 

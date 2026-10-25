@@ -82,7 +82,7 @@ def test_a_complete_read_licenses_the_overwrite(project):
     _read(SESSION, "config.json")
     out = _write(SESSION, "config.json", '{"replaced": true}')
 
-    assert "successfully" in out
+    assert json.loads(out)["success"] is True
     assert target.read_text(encoding="utf-8") == '{"replaced": true}'
 
 
@@ -119,9 +119,9 @@ def test_a_change_between_read_and_write_is_refused(project):
 
 
 def test_creating_a_file_licenses_the_next_overwrite(project):
-    assert "successfully" in _write(SESSION, "fresh.txt", "v1")
+    assert json.loads(_write(SESSION, "fresh.txt", "v1"))["success"] is True
     # No read in between: this session authored v1, so it may replace it.
-    assert "successfully" in _write(SESSION, "fresh.txt", "v2")
+    assert json.loads(_write(SESSION, "fresh.txt", "v2"))["success"] is True
 
     assert (project / "fresh.txt").read_text(encoding="utf-8") == "v2"
 
@@ -161,7 +161,7 @@ def test_patch_advances_a_license_but_never_invents_one(project):
     # making it stale: the overwrite is allowed.
     _read(SESSION, "patchable.txt")
     assert _patch(SESSION, "patchable.txt", "gamma", "delta")["success"] is True
-    assert "successfully" in _write(SESSION, "patchable.txt", "replaced")
+    assert json.loads(_write(SESSION, "patchable.txt", "replaced"))["success"] is True
     assert target.read_text(encoding="utf-8") == "replaced"
 
 
@@ -170,9 +170,9 @@ def test_append_advances_an_existing_license(project):
     target.write_text("first\n", encoding="utf-8")
 
     _read(SESSION, "log.txt")
-    assert "successfully" in _write(SESSION, "log.txt", "second\n", append=True)
+    assert json.loads(_write(SESSION, "log.txt", "second\n", append=True))["success"] is True
     # The session knows the file it appended to: the overwrite is licensed.
-    assert "successfully" in _write(SESSION, "log.txt", "replaced\n")
+    assert json.loads(_write(SESSION, "log.txt", "replaced\n"))["success"] is True
 
     assert target.read_text(encoding="utf-8") == "replaced\n"
 
@@ -181,7 +181,7 @@ def test_append_alone_licenses_nothing(project):
     target = project / "unseen.txt"
     target.write_text("content\n", encoding="utf-8")
 
-    assert "successfully" in _write(SESSION, "unseen.txt", "more\n", append=True)
+    assert json.loads(_write(SESSION, "unseen.txt", "more\n", append=True))["success"] is True
 
     out = json.loads(_write(SESSION, "unseen.txt", "replaced\n"))
     assert "has not been read" in out["error"]
@@ -198,7 +198,7 @@ def test_licenses_are_per_session(project):
     assert target.read_text(encoding="utf-8") == "content\n"
 
     # …and the reading session still holds its license.
-    assert "successfully" in _write(SESSION, "shared.txt", "replaced")
+    assert json.loads(_write(SESSION, "shared.txt", "replaced"))["success"] is True
 
 
 def test_a_read_licenses_only_the_file_it_read(project):
@@ -207,7 +207,7 @@ def test_a_read_licenses_only_the_file_it_read(project):
 
     _read(SESSION, "a.txt")
 
-    assert "successfully" in _write(SESSION, "a.txt", "A2")
+    assert json.loads(_write(SESSION, "a.txt", "A2"))["success"] is True
     out = json.loads(_write(SESSION, "b.txt", "B2"))
     assert "has not been read" in out["error"]
 

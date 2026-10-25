@@ -249,7 +249,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设角色-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
 
-**计划模式复用同两个钩子。** 当 `StateKey.PLAN_STATUS` 为 `planning`/`needs_replan` 时（Plan-Then-Execute，`agent/tools/plan_mode/`），工具面收窄到 `PLAN_MODE["allowed_tools"]` —— 只读白名单，仍受会话自身选择约束，唯独 `enter_plan_mode`/`exit_plan_mode` 永远可达 —— 仍被调用的写工具会以 “Plan mode is active” 被拒绝。计划模式优先于会话选择；见 `docs/plan-mode/`。
+**计划模式复用同两个钩子。** 当 `StateKey.PLAN_STATUS` 为 `planning`/`needs_replan` 时（Plan-Then-Execute，`agent/tools/plan_mode/`），工具面收窄到 `PLAN_MODE["allowed_tools"]` —— 只读白名单，仍受会话自身选择约束，唯独 `enter_plan_mode`/`exit_plan_mode` 永远可达 —— 仍被调用的写工具会以 “Plan mode is active” 被拒绝。计划模式优先于会话选择；见 `wiki/plan-mode/`。
 
 未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
 
@@ -322,7 +322,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
 - `ToolCallGuardrailConfig` 默认值：`warnings_enabled=True`、`hard_stop_enabled=False`、`recovery_mode_enabled=True`、`recovery_max_violations=1`——当 `hard_stop_enabled=True` 时，每个*阻止*阈值都会变成 HALT（旧的严格之墙）；`recovery_mode_enabled=False` 则恢复立即阻止的行为。
 
-▶️ 完整文档：[docs/loop-prevention/README.md](../../docs/loop-prevention/README.md) · [中文](../../docs/loop-prevention/README.zh.md) · [한국어](../../docs/loop-prevention/README.ko.md) · [日本語](../../docs/loop-prevention/README.ja.md)
+▶️ 完整文档：[wiki/loop-prevention/README.md](../../wiki/loop-prevention/README.md) · [中文](../../wiki/loop-prevention/README.zh.md) · [한국어](../../wiki/loop-prevention/README.ko.md) · [日本語](../../wiki/loop-prevention/README.ja.md)
 
 ### ToolCallNormalize
 
@@ -353,7 +353,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 解析到 `ROOT_DIR` 之外的值**除非**命中硬拒绝下限（YOLO 排除列表 / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`），否则放行；
 - 其余外部路径交给工具自身的 `resolve_external_path()` HITL 流程——中间件从不批准、不改写参数、不触发中断，因为工具在执行时还会再跑同一道门（在这里拦截等于做两次决定）。
 
-拒绝时中间件返回结构化错误 `ToolMessage`（`status="error"`，保留原 `tool_call_id` / 工具名），不执行工具。外部路径的细节见 [docs/sandbox/isolation/README.zh.md §5](../../docs/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
+拒绝时中间件返回结构化错误 `ToolMessage`（`status="error"`，保留原 `tool_call_id` / 工具名），不执行工具。外部路径的细节见 [wiki/sandbox/isolation/README.zh.md §5](../../wiki/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -384,7 +384,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/todo_continuation/core.py` · **类：** `PlanContinuationEnforcer(AgentMiddleware)`
 **钩子：** 仅 `aafter_agent`（异步回合结束钩子）
 
-在主 Agent 列表中注册在**第一位**，因此其 `after_agent` **最后**运行——`after_agent` 钩子按列表逆序执行，enforcer 必须观察真正结束的回合。它门控的是整个**计划**：会话的 todo 列表（`pending` / `in_progress`）**以及**未终结的 TaskFlow 流程（`ready` / `blocked` / `dispatched` 步骤，以及步骤都已落定却从未关闭的流程）——任一存在都会让回合继续，指令会列出剩余波次/步骤以及收口所需的看板调用。注入通过服务器侧的自动回合钩子（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`，调用时解析；钩子未注册时降级为 no-op，会话保持可重试）以 fire-and-forget 方式完成。
+在主 Agent 列表中注册在**第一位**，因此其 `after_agent` **最后**运行——`after_agent` 钩子按列表逆序执行，enforcer 必须观察真正结束的回合。它门控的是整个**计划**：会话的 todo 列表（`pending` / `in_progress`）**以及**未终结的 TaskFlow 流程（`ready` / `blocked` / `dispatched` 步骤，以及步骤都已落定却从未关闭的流程）——任一存在都会让回合继续，指令会列出剩余步骤以及收口所需的看板调用。注入通过服务器侧的自动回合钩子（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`，调用时解析；钩子未注册时降级为 no-op，会话保持可重试）以 fire-and-forget 方式完成。
 
 - 中止类回合错误（用户取消 / 超时，`stagnation_tracker.is_abort_error`）绝不续作；空列表或全部完成的列表会重置停滞追踪器。
 - 停滞处理（`agent/tools/todolist/stagnation_tracker.py`）：列表在多次尝试后仍未变化则进入恢复模式并注入 `_RECOVERY_PROMPT`；`is_in_cooldown` 限制重复注入；只有成功投递后才通过 `mark_injected` 记录触发。
@@ -400,7 +400,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 紧跟在 `TaskIntentMiddleware` 之后注册（后者的轮内去重需要它运行时用户消息仍在最后）。在每轮**首次模型调用**时把**实时视图**以 `<system-reminder source="…">` HumanMessage 注入：计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引。系统提示词本身现在只承载稳定内容（persona + memory + 技能索引）——首 token 每轮变化的提示词会让提供方的前缀缓存从那里起全部失效；而只在配置变更/压缩时重建的提示词，其间展示的是**过期**的 todo 列表。
 
 - **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（TaskFlow 看板 / boulder：每 5 轮最多一次）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
-- **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要 / memory_flush 标签。
+- **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要标签。
 - **压缩之后**目录被重置，因此下一轮会从 live state 重新推导每个来源——这一层从不依赖旧提醒是否幸存。
 - 与其他可选项一样**受开关门控**（`middleware_enabled`），且全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合。
 
@@ -430,7 +430,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. 硬红线 / 危险命令检测（`detection.py`：`detect_hardline_command`、`detect_dangerous_command`，底层为 `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`），经由 `ApprovalPipeline.check_command`（`approval.py`）。
 2. 智能审批（`ApprovalMode.SMART`，可选 `smart_approval_llm`）——自动放行明显安全的调用。
 3. `interrupt()` ——默认决策超时 60 秒。
-4. 当 `write_approval_memory=True` 时，记忆工具写入经过 `WriteApprovalGate`；列入 `interrupted_tools` 的工具总是中断，决策为 `approve` / `edit` / `reject`（`edit` 会改写工具调用的参数/名称）。另外，外部路径网关会发起自己的中断，决策集为 `approve` / `approve_dir` / `yolo` / `reject`（详见 [docs/sandbox/isolation/README.zh.md](../../docs/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)）。
+4. 当 `write_approval_memory=True` 时，记忆工具写入经过 `WriteApprovalGate`；列入 `interrupted_tools` 的工具总是中断，决策为 `approve` / `edit` / `reject`（`edit` 会改写工具调用的参数/名称）。另外，外部路径网关会发起自己的中断，决策集为 `approve` / `approve_dir` / `yolo` / `reject`（详见 [wiki/sandbox/isolation/README.zh.md](../../wiki/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)）。
 5. `wrap_tool_call` 拒绝执行审批被拒或超时的调用（回合级标志在 `before_agent` 中重置）。
 
 子门控（`gates.py` / `approval.py`）：`ApprovalPipeline`、`WriteApprovalGate`、`InterruptManager`、`MCPElicitationConsent`、`KanbanTriage`、`PairingStore`、`SlashConfirm`。状态以 `hitl:` 前缀键存放在 `state_register_mem`。
@@ -620,7 +620,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **计划提取去重：** `_detect_todo_all_complete` 在全部 todo 为 `completed`/`cancelled` 且计划的**快照指纹**（`_plan_snapshot_hash`：id + content + status + plan_ref）与上次**成功**抽取后存于 `nudge_plan_snapshot_hash` 的指纹不同时触发——因此就地修改已完成的 todo 会重抽、计划未变则跳过、失败的一轮会在下次完成轮重试。前置门控：每会话 `Summarization → nudge` 开关、`NUDGE["plan_extraction_enabled"]`、`nudge_plan_extraction_lock`、以及必须有运行中的事件循环。
 - **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用 nudge agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_NudgeLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
-▶️ 完整文档：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
+▶️ 完整文档：[wiki/summarization/README.md](../../wiki/summarization/README.md) · [中文](../../wiki/summarization/README.zh.md) · [한국어](../../wiki/summarization/README.ko.md) · [日本語](../../wiki/summarization/README.ja.md)
 
 > 预算中间件的类默认值 `max_iterations` 为 50；*实际注册*值是 90（主）与 60（worker）。本文档旧版本声称预算为 10——那是错的。
 
@@ -1065,7 +1065,6 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── media_offload.py         # 压缩时内联媒体归档
-│   ├── memory_flush.py          # 压缩前记忆落盘
 │   ├── nudges.py                # 压缩时 nudge 调度 + 提示词
 │   ├── plan_context.py          # 计划提取 nudge 的活跃计划检测
 │   └── summary_doc.py           # SummaryDoc 模式 + 确定性 Markdown 渲染

@@ -43,7 +43,7 @@ pytestmark = [pytest.mark.perf, pytest.mark.regression]
 # Prose with the CJK + ASCII mix real transcripts have.
 _PROSE_UNIT = "上下文治理 concurrency lane 512 tokens の推定 " * 40
 _TOOL_SCHEMA = {
-    "name": "taskflow_run_task",
+    "name": "taskflow_step",
     "description": "Register and dispatch one DAG step " * 12,
     "parameters": {
         "type": "object",

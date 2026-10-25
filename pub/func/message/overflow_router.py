@@ -105,12 +105,16 @@ def decide_route(
     context_window: int,
     usable_budget: int,
     truncatable: list[tuple[int, int]],
+    *,
+    compression_threshold: int | None = None,
+    truncate_threshold: int | None = None,
 ) -> str:
     """4-route dual-track decision (pure — execution happens in middleware).
 
-    thresholds derive from ``usable_budget`` (context_window minus reserve):
-      threshold_truncate = usable_budget * PREEMPTIVE_TRUNCATE_RATIO (0.70)
-      threshold_compact  = usable_budget * COMPRESSION_TRIGGER_RATIO (0.80)
+    ``compression_threshold`` / ``truncate_threshold`` are the absolute token
+    lines computed by the summarization threshold helper (window - max_output,
+    else 80% / proportional 70%). When omitted, the legacy
+    ``usable_budget * ratio`` math is kept for standalone callers.
 
     decision table:
       pressure < threshold_truncate
@@ -130,8 +134,16 @@ def decide_route(
     between usable_budget and context_window is already accounted for by the
     caller.
     """
-    threshold_truncate = usable_budget * PREEMPTIVE_TRUNCATE_RATIO
-    threshold_compact = usable_budget * COMPRESSION_TRIGGER_RATIO
+    threshold_truncate = (
+        int(truncate_threshold)
+        if truncate_threshold is not None
+        else int(usable_budget * PREEMPTIVE_TRUNCATE_RATIO)
+    )
+    threshold_compact = (
+        int(compression_threshold)
+        if compression_threshold is not None
+        else int(usable_budget * COMPRESSION_TRIGGER_RATIO)
+    )
 
     if pressure_tokens < threshold_truncate:
         return ROUTE_FITS

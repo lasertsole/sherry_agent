@@ -197,7 +197,7 @@ LLM 出力 → after_model
 
 アクセスモードの切り替えではこのゲートは解除されません: このカードで `yolo` を選ぶ（永続グローバルフラグ `external_path_yolo`）か、許可リストに追加した場合だけです。`full_access` のセッションでも、ルート外のパスではこのカードが出ます。
 
-▶️ 詳細: [docs/sandbox/isolation/README.ja.md](../../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+▶️ 詳細: [wiki/sandbox/isolation/README.ja.md](../../../wiki/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ---
 

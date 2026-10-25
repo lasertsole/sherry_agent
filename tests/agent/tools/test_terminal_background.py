@@ -117,8 +117,15 @@ class TestRegistry:
 
     def test_kill_session_tasks_signals_and_marks(self, sessions_root: Path, monkeypatch):
         registry = BackgroundTaskRegistry()
-        killed: list[int] = []
-        monkeypatch.setattr("os.kill", lambda pid, sig: killed.append(pid), raising=True)
+        killed: list[tuple[int, int | None]] = []
+
+        def _kill_tree(proc, **kwargs):
+            killed.append((proc.pid, kwargs.get("pgid")))
+            return "terminated"
+
+        monkeypatch.setattr(
+            "agent.tools.pub_base.process_reap.kill_process_tree", _kill_tree, raising=True
+        )
         registry.register(
             BackgroundTask(
                 task_id="bg-live",
@@ -142,7 +149,7 @@ class TestRegistry:
         )
 
         assert registry.kill_session_tasks(SESSION) == 1
-        assert killed == [4242]
+        assert killed == [(4242, 4242)]
         assert registry.get("bg-live").status == "killed"
         assert registry.get("bg-done").status == "completed", "a finished task is left alone"
 

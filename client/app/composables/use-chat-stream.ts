@@ -13,6 +13,8 @@ import type { ChatController } from './messages';
 import type { AgentChunkType, AgentSocket, QueuedAckInfo, QueuedInfo, TurnStartedInfo } from './bridge';
 import type { StreamChunkMeta } from './use-stream-chunks';
 import type { DraftPersistence } from './use-draft-persistence';
+import type { ActiveTurnSnapshot } from './messages';
+import type { LoadSessionHistory } from './use-session-lifecycle';
 // Explicit import (not an auto-import): the busy watchdog's probe must be
 // mockable from tests via vi.mock on a stable specifier.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -69,7 +71,7 @@ export interface ChatStreamDeps {
   /** Clear the pending media selections (called after a send takes them). */
   clearMediaSelection: () => void;
   /** Rebuild the history list after the stream completes. */
-  loadSessionHistory: (sid: string) => Promise<void>;
+  loadSessionHistory: LoadSessionHistory;
   /** Draft persistence slice. */
   drafts: Pick<
     DraftPersistence,
@@ -158,16 +160,72 @@ export function useChatStream(deps: ChatStreamDeps) {
   };
   const onStreamReconnected = () => {
     reconnectState.value = null;
+    // The socket no longer sends `resume_stream`: one history request brings
+    // both the missed messages and the running turn's snapshot (with its
+    // turn_id watermark). Frames produced while that request is in flight are
+    // held by the socket and flushed after the snapshot is applied.
+    void syncHistory(mySid);
   };
+  /** Server turn id -> this page's UI turn number (learned from turn_started/snapshot). */
+  const turnIdToTurnNum = new Map<string, number>();
+
+  /** The next free UI turn number (max existing + 1). */
+  function nextTurnNum(): number {
+    return chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;
+  }
+
   /**
-   * Stream-resume snapshot (`resume_stream` reply, emitted by the socket).
+   * Apply the authoritative snapshot of a running turn to its chat row.
    *
-   * `ok` carries the running turn's authoritative accumulated text: REPLACE
-   * the turn's tail AI text with it — never append. Buffered deltas are
-   * flushed first because the snapshot already contains them; frames are never
-   * replayed, so nothing can be duplicated. A non-ok status means there is no
-   * running turn: refetch the persisted transcript for `ended`/`unknown`;
-   * `gone` (deleted / never persisted) stays quiet.
+   * REPLACES the row's text — never appends. The turn's identity decides the
+   * row: `turn_num` from the server, else the turn_id mapping learned from
+   * `turn_started`, else the current streaming turn. A HITL resume re-uses the
+   * original turn's row even though the server assigned a fresh turn id.
+   * @param snapshot
+   * @param options
+   * @param options.startWatchdog
+   */
+  function applyActiveTurnSnapshot(snapshot: ActiveTurnSnapshot, options: { startWatchdog?: boolean } = {}): void {
+    chunks.flushPendingText?.();
+    const current = streamingTurn.value;
+    const preferCurrent = current !== null && hitl.isResumeTurn(current);
+    const mapped = snapshot.turn_id ? turnIdToTurnNum.get(snapshot.turn_id) : undefined;
+    const turnNum = preferCurrent ? current : (snapshot.turn_num ?? mapped ?? current ?? nextTurnNum());
+    if (snapshot.turn_id) turnIdToTurnNum.set(snapshot.turn_id, turnNum);
+
+    let row = snapshot.turn_id
+      ? chatMessages.value.find(r => r.role === CHAT_ROLE.AI && r.turn_id === snapshot.turn_id)
+      : undefined;
+    if (!row) row = turnTailAi(turnNum);
+    if (row) {
+      row.content = snapshot.text;
+      if (snapshot.turn_id) row.turn_id = snapshot.turn_id;
+      row.turn_num = turnNum;
+    } else {
+      chatMessages.value = [
+        ...chatMessages.value,
+        {
+          session_id: mySid,
+          role: CHAT_ROLE.AI,
+          content: snapshot.text,
+          reasoning: '',
+          id: drafts.allocateTempId(),
+          turn_num: turnNum,
+          turn_id: snapshot.turn_id || undefined,
+          timestamp: new Date().toISOString()
+        }
+      ];
+    }
+    chatMessages.value = [...chatMessages.value];
+    streamingTurn.value = turnNum;
+    isSending.value = true;
+    socket.setSnapshotWatermark(snapshot.seq, snapshot.turn_id);
+    if (options.startWatchdog !== false) startBusyWatchdog();
+  }
+
+  /**
+   * Fallback resume snapshot (the backend's ``stream_resume`` reply, kept for
+   * older servers): apply it as a replacement value, never as a frame replay.
    * @param event
    */
   const onStreamResumed = (event: unknown) => {
@@ -175,19 +233,24 @@ export function useChatStream(deps: ChatStreamDeps) {
       sessionId?: string;
       status?: string;
       text?: string;
+      hasReasoning?: boolean;
+      seq?: number;
+      turnId?: string;
+      turnNum?: number;
     };
     if (payload.sessionId && payload.sessionId !== mySid) return;
     if (payload.status === 'ok') {
-      chunks.flushPendingText?.();
-      const turn = streamingTurn.value;
-      const rows = chatMessages.value;
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const row = rows[i];
-        if (row && row.role === CHAT_ROLE.AI && row.turn_num === turn) {
-          row.content = payload.text ?? '';
-          break;
-        }
-      }
+      // The legacy reply path already has the send's watchdog running.
+      applyActiveTurnSnapshot(
+        {
+          text: payload.text ?? '',
+          has_reasoning: payload.hasReasoning === true,
+          seq: payload.seq ?? 0,
+          turn_id: payload.turnId ?? '',
+          turn_num: payload.turnNum
+        },
+        { startWatchdog: false }
+      );
       return;
     }
     if (payload.status !== 'gone') {
@@ -335,7 +398,11 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param meta
    */
   const handleSocketChunk = (content: string, type: AgentChunkType, _sessionId: string, meta?: StreamChunkMeta) => {
-    const turn = streamingTurn.value;
+    // Route by the frame's own turn when known: a late chunk of the previous
+    // turn must never land in the row of a turn that started meanwhile.
+    const frameTurnId = meta?.turn_id ?? '';
+    const mapped = frameTurnId ? turnIdToTurnNum.get(frameTurnId) : undefined;
+    const turn = mapped ?? streamingTurn.value;
     if (turn === null) return;
     chunks.appendStreamChunk(mySid, content, type, turn, meta);
   };
@@ -361,7 +428,13 @@ export function useChatStream(deps: ChatStreamDeps) {
 
     clearQueueBadgesFor(info.messageIds);
     // The turn now receiving frames is the LAST member's (the drain started it).
-    streamingTurn.value = members[members.length - 1]!.turnNum;
+    const turnNum = members[members.length - 1]!.turnNum;
+    streamingTurn.value = turnNum;
+    if (info.turnId) {
+      turnIdToTurnNum.set(info.turnId, turnNum);
+      const ai = turnTailAi(turnNum);
+      if (ai) ai.turn_id = info.turnId;
+    }
     chatMessages.value = [...chatMessages.value];
   };
 
@@ -421,9 +494,17 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param meta.modelName
    * @param meta.inputTokens
    * @param meta.outputTokens
+   * @param meta.turnId
    */
-  const handleSocketDone = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
-    const turn = streamingTurn.value;
+  const handleSocketDone = (meta?: {
+    modelName?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    turnId?: string;
+  }) => {
+    const mappedTurn = meta?.turnId ? turnIdToTurnNum.get(meta.turnId) : undefined;
+    const turn = mappedTurn ?? streamingTurn.value;
+    if (meta?.turnId) turnIdToTurnNum.delete(meta.turnId);
     if (turn === null) {
       // A terminal frame for a turn this page no longer tracks. While the page
       // still believes it is streaming, that belief is the stale one: the
@@ -443,6 +524,22 @@ export function useChatStream(deps: ChatStreamDeps) {
       void loadSessionHistory(mySid);
       return;
     }
+    // A late done for a turn that is no longer the streaming one settles that
+    // turn's bookkeeping without clearing the current turn.
+    if (turn !== streamingTurn.value) {
+      chunks.flushPendingText?.();
+      chunks.markStreamingFinished?.(turn);
+      attachDoneMeta(turn, meta);
+      settleRetryStatus(turn, 'succeeded');
+      clearQueueBadgeForTurn(turn);
+      void drafts
+        .commitDraftTurn(mySid, turn)
+        .then(() => drafts.untrackDraftTurn(mySid, turn))
+        .catch(e => logUtil.e('[use-chat-stream] commitDraftTurn failed:', e))
+        .finally(() => dropSendEntries(turn));
+      return;
+    }
+
     // The graph stopped streaming, so every tool card still spinning never got
     // its result: close them out (the same marking the abort/error paths use).
     // A paused-for-approval turn sends `hitl_request` INSTEAD of `done`, so its
@@ -456,6 +553,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       return;
     }
     attachDoneMeta(turn, meta);
+    settleRetryStatus(turn, 'succeeded');
     clearQueueBadgeForTurn(turn);
     // Release the composer SYNCHRONOUSLY: the busy state must not depend on the
     // draft write, whose failure would otherwise leave the stop button on.
@@ -590,6 +688,62 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
   };
   const onSocketConnected = () => reconcileBusyNow('websocket (re)connected');
+
+  /**
+   * Model-call retry progress (the `model_retry` push). It decorates the live
+   * AI row so the turn shows "retrying 2/11" while the provider backs off; the
+   * history row is updated in place instead of creating a separate message.
+   * @param event Raw `model_retry` frame.
+   */
+  const onModelRetry = (event: unknown) => {
+    const data = (typeof event === 'object' && event !== null ? event : {}) as {
+      session_id?: string;
+      content?: {
+        status?: string;
+        attempt?: number;
+        budget_attempt?: number;
+        max_attempts?: number;
+        retries?: number;
+        extra_attempts?: number;
+        fallback_switches?: number;
+        reason?: string;
+        delay_ms?: number;
+      };
+    };
+    if (data.session_id && data.session_id !== (sessionId.value || 'default')) return;
+    const content = data.content;
+    if (!content || !['scheduled', 'succeeded', 'exhausted'].includes(String(content.status))) return;
+    const turn = streamingTurn.value;
+    const aiMsg = turn !== null ? turnTailAi(turn) : undefined;
+    if (!aiMsg) return;
+    aiMsg.retryStatus = {
+      status: content.status as 'scheduled' | 'succeeded' | 'exhausted',
+      attempt: Number(content.attempt ?? 1),
+      budgetAttempt: Number(content.budget_attempt ?? content.attempt ?? 1),
+      maxAttempts: Number(content.max_attempts ?? 1),
+      retries: Number(content.retries ?? 0),
+      extraAttempts: Number(content.extra_attempts ?? 0),
+      fallbackSwitches: Number(content.fallback_switches ?? 0),
+      reason: content.reason ? String(content.reason) : undefined,
+      delayMs: Number(content.delay_ms ?? 0)
+    };
+    chatMessages.value = [...chatMessages.value];
+  };
+  on('ws:model_retry', onModelRetry);
+
+  /**
+   * Mark the live AI row's retry indicator as settled when no explicit event arrived.
+   * @param turn
+   * @param status
+   */
+  const settleRetryStatus = (turn: number | null, status: 'succeeded' | 'exhausted') => {
+    if (turn === null) return;
+    const aiMsg = turnTailAi(turn);
+    if (!aiMsg?.retryStatus || aiMsg.retryStatus.status !== 'scheduled') return;
+    aiMsg.retryStatus = { ...aiMsg.retryStatus, status };
+    chatMessages.value = [...chatMessages.value];
+  };
+
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
@@ -608,6 +762,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     clearQueueBadgeForTurn(turn);
     const aiMsg = turn === null ? undefined : turnTailAi(turn);
     const isResume = hitl.isResumeTurn(turn);
+    settleRetryStatus(turn, 'exhausted');
     if (err instanceof StreamInterruptedError) {
       // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
       // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
@@ -669,7 +824,90 @@ export function useChatStream(deps: ChatStreamDeps) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }
     off('ws:connected', onSocketConnected);
+    off('ws:model_retry', onModelRetry);
   });
+
+  /** Clear the busy state when a reconnect snapshot proves the turn ended. */
+  const settleNoActiveTurn = () => {
+    chunks.flushPendingText?.();
+    if (streamingTurn.value !== null) chunks.markStreamingFinished?.(streamingTurn.value);
+    chunks.markRunningToolsFailed();
+    activeAgentController.value = null;
+    isSending.value = false;
+    streamingTurn.value = null;
+    stopBusyWatchdog();
+  };
+
+  /**
+   * One round trip for a (re)connect: persisted history + the active turn's
+   * snapshot. Frames arriving meanwhile are held by the socket and flushed only
+   * after the snapshot's text/watermark are applied, so no stale delta can land
+   * ahead of the authoritative text. The request is bounded at 10 s; a timed-out
+   * response may still cache rows but is gated out of the chat list.
+   * @param sid
+   */
+  let snapshotSyncInFlight = false;
+
+  async function syncHistory(sid: string = mySid): Promise<void> {
+    if (snapshotSyncInFlight) return;
+    snapshotSyncInFlight = true;
+    socket.holdFrames();
+    let apply = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active: ActiveTurnSnapshot | null;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      socket.releaseFrames();
+    };
+    try {
+      try {
+        active = await Promise.race([
+          loadSessionHistory(sid, { includeActiveTurn: true, shouldApply: () => apply }),
+          new Promise<null>(resolve => {
+            timer = setTimeout(() => {
+              apply = false;
+              resolve(null);
+            }, 10_000);
+          })
+        ]);
+      } catch (e) {
+        logUtil.w('[use-chat-stream] history snapshot failed:', e);
+        active = null;
+      } finally {
+        if (timer !== null) clearTimeout(timer);
+      }
+
+      const turnBefore = streamingTurn.value;
+      if (active) {
+        applyActiveTurnSnapshot(active);
+        release();
+        return;
+      }
+
+      socket.setSnapshotWatermark(0, '');
+      release();
+      // No running turn. A held `done` may have settled the send already; only
+      // when nothing did, clear the stale busy state. A held `turn_started` for
+      // a NEW turn changes streamingTurn, so it must not be settled.
+      if (
+        isSending.value &&
+        socket.hasPendingMidStreamSends() &&
+        (streamingTurn.value === turnBefore || streamingTurn.value === null)
+      ) {
+        // Only a mid-stream turn can have ended while disconnected; a pre-chunk
+        // send is resumable and must stay pending until its turn starts. Keep
+        // the composer busy while such a send remains — clearing it here would
+        // show idle just before the resent turn starts streaming.
+        socket.settlePendingMidStreamSends();
+        if (!socket.hasPendingSends()) settleNoActiveTurn();
+      }
+    } finally {
+      release();
+      snapshotSyncInFlight = false;
+    }
+  }
 
   /**
    * Handle input box send: add the user message to the list, and obtain the AI reply via a streaming request (Tauri IPC or browser WebSocket).
@@ -834,6 +1072,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     onStreamReconnecting,
     onStreamReconnected,
     onStreamReconnectFailed,
-    onStreamResumed
+    onStreamResumed,
+    syncHistory
   };
 }

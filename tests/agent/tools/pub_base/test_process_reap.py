@@ -9,6 +9,7 @@ real process can show whether the bound holds.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 import time
@@ -18,6 +19,7 @@ import pytest
 from agent.tools.pub_base.process_reap import (
     ProcessWatchdog,
     areap_process,
+    kill_process_tree,
     reap_process,
 )
 
@@ -138,3 +140,41 @@ def test_a_failing_watchdog_callback_does_not_escape_its_thread():
         time.sleep(0.2)
 
     assert dog.fired
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+def test_kill_process_tree_reaps_the_shell_and_its_child():
+    """The direct shell is NOT enough: its sleep child must die with the group."""
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, sys, time; "
+            "p=subprocess.Popen(['sleep','30']); "
+            "print(p.pid, flush=True); time.sleep(60)",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        start_new_session=True,
+    )
+    assert proc.stdout is not None
+    child_pid = int(proc.stdout.readline().strip())
+    assert os.getpgid(proc.pid) == proc.pid  # new session leader
+    assert _alive(child_pid)
+
+    outcome = kill_process_tree(proc, pgid=proc.pid, grace=0.5, kill_grace=2.0)
+
+    assert outcome in ("terminated", "killed")
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and _alive(child_pid):
+        time.sleep(0.05)
+    assert not _alive(child_pid), "the shell's child survived the group kill"

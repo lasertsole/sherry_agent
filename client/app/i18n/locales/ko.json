@@ -27,7 +27,14 @@
     "sendNow": "즉시",
     "editQueued": "대기 중인 메시지 편집",
     "cancelQueued": "대기 중인 메시지 취소",
-    "waitingApproval": "승인 대기 중..."
+    "waitingApproval": "승인 대기 중...",
+    "voiceRecord": "음성 입력",
+    "voiceStop": "녹음 중지",
+    "voiceUnavailable": "음성 인식 모델이 설정되지 않았습니다. 모델 설정에서 STT 모델을 먼저 배치하세요",
+    "voicePermissionDenied": "마이크 권한이 거부되었습니다",
+    "voiceTooShort": "녹음이 너무 짧습니다. 다시 말해 주세요",
+    "voiceWarming": "음성 인식 모델을 처음 로드하는 중입니다. 잠시 후 다시 시도하세요",
+    "voiceFailed": "음성 인식에 실패했습니다. 다시 시도하세요"
   },
   "sessionModelPicker": {
     "pending": "다음 턴에 적용",
@@ -43,6 +50,9 @@
     "defaultUserName": "나",
     "imageLoadFailed": "이미지 로드 실패",
     "modelMeta": "입력 {input} · 출력 {output} tokens",
+    "modelRetryScheduled": "모델 재시도 중 · {attempt}/{max}회 · {reason} · {delay}초 후",
+    "modelRetrySucceeded": "모델이 {count}회 재시도 후 성공했습니다",
+    "modelRetryExhausted": "모델이 {max}회 재시도 후에도 실패했습니다",
     "userInputMeta": "≈ {n} 토큰",
     "contextTip": "에이전트의 전체 컨텍스트 보기(시스템 프롬프트 / 도구 / 메시지)",
     "scrollBottom": "맨 아래로",
@@ -55,9 +65,17 @@
     "toolNoOutput": "출력 없음",
     "toolResult": "실행 결과",
     "toolRunning": "실행 중…",
+    "turnHistoryTools": "실행한 도구: {n}",
+    "turnHistoryThinking": "사고 과정",
+    "turnHistoryWork": "실행 과정",
+    "turnHistoryExpand": "실행 내역 펼치기",
+    "turnHistoryCollapse": "실행 내역 접기",
     "removeImage": "이미지 제거",
     "removeAudio": "오디오 제거",
-    "removeVideo": "비디오 제거"
+    "removeVideo": "비디오 제거",
+    "diffNewFile": "새 파일",
+    "codeWrap": "줄바꿈",
+    "codeZoom": "확대"
   },
   "chat": {
     "backgroundMessage": "백그라운드 작업",
@@ -67,6 +85,19 @@
     "originProjectDir": "작업 디렉터리",
     "originGitHead": "Git 브랜치 전환",
     "originSystem": "시스템 메시지",
+    "selection": {
+      "addToChat": "현재 세션에 추가",
+      "askInSideChat": "보조 세션에서 질문",
+      "limitWarning": "단일 인용은 최대 8,000자까지",
+      "quoteTooltip": "선택 텍스트 인용 (인용 블록으로 전송)",
+      "sourceUser": "사용자 메시지",
+      "sourceAi": "어시스턴트 응답",
+      "sourceTool": "도구 출력",
+      "sideChatTitle": "보조 세션",
+      "sideChatMissing": "보조 세션을 사용할 수 없습니다",
+      "sideChatFailed": "보조 세션 생성에 실패했습니다",
+      "sideChatInherited": "메인 세션 컨텍스트를 상속했습니다 (완전한 fork, 모델 전용)"
+    },
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",
       "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 모델 설정에서 수정하세요."
@@ -455,12 +486,36 @@
       "localFiles": "파일",
       "maxModels": "그룹당 최대 {max}개 모델",
       "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
+      "frequencyPenalty": "빈도 페널티",
+      "presencePenalty": "존재 페널티",
+      "penaltyHint": "범위 -2.0 ~ 2.0; 비우면 전역 기본값",
+      "penaltyRange": "-2.0 ~ 2.0 사이의 숫자를 입력하세요",
+      "maxContextLabel": "컨텍스트 창 (MAX_TOKEN)",
+      "maxOutputLabel": "최대 출력 창 (MAX_OUTPUT_TOKEN)",
+      "groupHelpLabel": "{group}의 용도와 사용 사례 보기",
+      "modelHelp": {
+        "main": "메인 채팅 모델 — 대화, 도구 호출, 작업 계획, 최종 답변을 담당합니다. 도구 사용이 안정적이고 긴 컨텍스트를 가진 가장 강한 범용 모델에 적합합니다.",
+        "auxiliary": "보조 모델 — JSON 생성, 판정, 계획 추출 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
+        "taskflow": "TaskFlow 의사결정 모델 — 계획, 재계획, 단계 판정, 마무리 검사(temperature 0)에 사용합니다. JSON을 안정적으로 따르는 모델에 적합합니다.",
+        "compression": "압축 모델 — 긴 대화 요약을 담당합니다. 긴 컨텍스트와 낮은 비용의 모델에 적합합니다.",
+        "reasoner": "추론 모델 — 복잡한 분석, 수학/논리 추론, 어려운 문제 해결에 사용합니다. 일상 대화는 메인 모델을 그대로 사용해도 됩니다.",
+        "ittt": "이미지→텍스트 모델 — 이미지를 읽어 텍스트로 변환합니다. 스크린샷 이해, OCR, 시각 Q&A에 사용합니다.",
+        "vttt": "비디오→텍스트 모델 — 비디오 내용을 추출·설명합니다. 비디오 요약과 장면 이해에 사용합니다.",
+        "tti": "텍스트→이미지 모델 — 프롬프트로 이미지를 생성합니다. 일러스트, 시각 초안, 소재 제작에 사용합니다.",
+        "reranker": "리랭커 모델 — 검색 결과를 관련도 순으로 재정렬합니다. RAG/검색 품질 향상에 사용합니다.",
+        "embedding": "임베딩 모델 — 텍스트를 벡터로 변환해 기억과 지식 검색에 사용합니다. 의미 검색과 RAG에 적합합니다.",
+        "stt": "음성→텍스트 모델 — 오디오를 전사합니다. 음성 입력, 회의/녹음 전사에 사용합니다."
+      },
       "test": "연결 테스트",
       "testHint": "화면의 파라미터로 한 번 호출합니다(.env에 쓰지 않습니다)",
       "testUnsupported": "이 그룹은 이미지 / 오디오 입력이 필요해 연결 테스트를 할 수 없습니다",
       "testOk": "연결 정상({ms} ms)",
       "testFailed": "연결 실패({ms} ms)",
-      "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음"
+      "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음",
+      "groupTaskflow": "TaskFlow 결정 모델",
+      "groupCompression": "압축 모델",
+      "followsAuxiliary": "Provider와 API Base가 비어 있어 이 그룹은 보조 모델(AUXILIARY_LLM_*)을 따릅니다.",
+      "compressionScope": "LLM 요약에 사용됩니다. 메모리 리뷰는 메인 모델, 계획 추출은 보조 모델을 사용합니다."
     },
     "memory": {
       "addEntry": "항목 추가",
@@ -503,11 +558,14 @@
     "contextViewer": "에이전트 컨텍스트",
     "browser": "브라우저",
     "terminal": "터미널",
+    "sideChat": "보조 세션",
     "scopes": {
       "session": "현재 세션",
       "global": "전역"
     },
-    "scopeEmpty": "이 그룹에 탭이 없습니다"
+    "scopeEmpty": "이 그룹에 탭이 없습니다",
+    "recentClosed": "최근 닫은 탭",
+    "recentClosedEmpty": "최근에 닫은 탭이 없습니다"
   },
   "progressFloat": {
     "status": {
@@ -524,15 +582,11 @@
     },
     "collapse": "계획 진행률 숨기기",
     "counts": "{done}/{total}",
-    "current": "진행 중",
-    "cyclic": "순환 의존",
+    "doneSummary": "{done} / {total} 완료",
     "empty": "진행 중인 작업이 없습니다",
     "expand": "계획 진행률 보기",
-    "needsClosing": "마무리 필요",
     "notStarted": "시작 전",
-    "summary": "계획 {done}/{total}",
-    "waveLabel": "{index}번째 웨이브",
-    "waveSummary": "웨이브 {current}/{total}"
+    "summary": "계획 {done}/{total}"
   },
   "projectFiles": {
     "title": "파일 트리",
@@ -554,7 +608,13 @@
     "copied": "복사됨",
     "copyFailed": "복사 실패",
     "revealFailed": "파일 관리자를 열 수 없습니다",
-    "openInBrowserFailed": "브라우저에서 파일을 열 수 없습니다"
+    "openInBrowserFailed": "브라우저에서 파일을 열 수 없습니다",
+    "viewerPdfPage": "{n} / {total} 페이지",
+    "viewerPdfPrev": "이전 페이지",
+    "viewerPdfNext": "다음 페이지",
+    "viewerPdfFit": "너비에 맞추기",
+    "viewerPdfTooMany": "{n} 페이지를 초과하여 처음 {n} 페이지만 렌더링합니다",
+    "viewerDocxFailed": "docx 파싱에 실패했습니다. 파일이 손상되었을 수 있습니다"
   },
   "gitGraph": {
     "title": "Git Graph",

@@ -115,13 +115,13 @@ def test_a_utf16_file_round_trips_in_utf16(project):
     assert "值" in read["content"]
 
     # Read → overwrite keeps UTF-16 (BOM + codec), not UTF-8.
-    assert "successfully" in _write(SESSION, "app.config", "setting=新值\n")
+    assert json.loads(_write(SESSION, "app.config", "setting=新值\n"))["success"] is True
     data = config.read_bytes()
     assert data.startswith(codecs.BOM_UTF16_LE)
     assert data.decode("utf-16") == "setting=新值\n"
 
     # …and the second overwrite still knows the codec (license carried it).
-    assert "successfully" in _write(SESSION, "app.config", "setting=再改\n")
+    assert json.loads(_write(SESSION, "app.config", "setting=再改\n"))["success"] is True
     assert config.read_bytes().decode("utf-16") == "setting=再改\n"
 
 
@@ -145,7 +145,7 @@ def test_a_big_endian_utf16_file_stays_big_endian(project):
     read = _read(SESSION, "be.config")
     assert "ключ" in read["content"]
 
-    assert "successfully" in _write(SESSION, "be.config", "ключ=новое\n")
+    assert json.loads(_write(SESSION, "be.config", "ключ=новое\n"))["success"] is True
     data = cfg.read_bytes()
     assert data.startswith(codecs.BOM_UTF16_BE)
     assert data.decode("utf-16-be")[1:] == "ключ=новое\n"
@@ -156,7 +156,7 @@ def test_a_utf8_bom_file_keeps_its_bom(project):
     script.write_bytes(codecs.BOM_UTF8 + b"echo hi\n")
 
     _read(SESSION, "run.sh")
-    assert "successfully" in _write(SESSION, "run.sh", "echo hello\n")
+    assert json.loads(_write(SESSION, "run.sh", "echo hello\n"))["success"] is True
 
     assert script.read_bytes() == codecs.BOM_UTF8 + b"echo hello\n"
 
@@ -197,7 +197,7 @@ def test_appending_into_a_binary_file_is_refused(project):
 
 
 def test_a_new_file_is_utf8_and_a_binary_sibling_is_untouched(project):
-    assert "successfully" in _write(SESSION, "fresh.txt", "plain\n")
+    assert json.loads(_write(SESSION, "fresh.txt", "plain\n"))["success"] is True
     assert (project / "fresh.txt").read_bytes() == b"plain\n"
 
     image = project / "keep.png"

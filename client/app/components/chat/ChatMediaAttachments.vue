@@ -56,15 +56,6 @@
 
 <script setup lang="ts">
 import type { MessageItem } from '~/pages/home/type';
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import {
-  messageAudios,
-  messageImages,
-  messageVideos,
-  resolveAudioSrc,
-  resolveImageSrc,
-  resolveVideoSrc
-} from '~/composables/use-chat-media';
 
 const { openPreview } = useImagePreview();
 

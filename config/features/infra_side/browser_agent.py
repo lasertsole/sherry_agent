@@ -1,6 +1,6 @@
 """Agent-controllable browser: a loopback Chromium driven over CDP.
 
-The feature is OPT-IN and off by default: with ``enabled`` false no ``browser_*``
+The feature is OPT-IN and off by default: with ``enabled`` false no browser
 tool is registered and the ``/browser/*`` routes answer 404, so a default
 install carries neither the schemas nor the routes (and no Chromium process is
 ever spawned).

@@ -40,9 +40,14 @@ const rightSidebarState = reactive({
   },
   openTab: vi.fn((kind: string) => `tab-${kind}`),
   tabsInScope: () => [],
+  setActiveSession: vi.fn(),
   setActiveScope: () => {},
   activateTab: () => {},
-  closeTab: () => {}
+  closeTab: () => {},
+  rememberClosed: vi.fn(),
+  recentClosedFor: () => [],
+  reopenClosed: vi.fn(() => 'tab-reopened'),
+  forgetSession: vi.fn()
 });
 vi.stubGlobal('useRightSidebarStore', () => rightSidebarState);
 

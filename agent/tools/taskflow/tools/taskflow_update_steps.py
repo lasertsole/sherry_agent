@@ -108,7 +108,7 @@ def _merge_steps(
             if new["status"] not in _STRUCTURAL_STATUSES:
                 return None, (
                     f"Error: new step '{sid}' must be ready or blocked "
-                    f"(got status={new['status']}); dispatch through taskflow_dispatch"
+                    f"(got status={new['status']}); dispatch through taskflow_step(action='dispatch')"
                 )
             merged.append(new)
             continue
@@ -134,7 +134,7 @@ def _merge_steps(
         elif new_status not in _STRUCTURAL_STATUSES:
             return None, (
                 f"Error: step '{sid}' (status={old_status}) cannot become status={new_status}; "
-                "use taskflow_dispatch or taskflow_resume"
+                "use taskflow_step(action='dispatch') or taskflow_step(action='resume')"
             )
         if old_status in (StepStatus.DISPATCHED.value, StepStatus.DONE.value):
             old_key = str(old.get("child_session_key") or "").strip()
@@ -182,7 +182,7 @@ def _orphan_warnings(removed_dispatched: list[dict]) -> list[str]:
             warnings.append(
                 f"Warning: removed step_id={step_id} still has a running child "
                 f"(child_session_key={child_key}); the child was NOT stopped - call "
-                "sessions_kill, or settle it with taskflow_wait_all/taskflow_resume"
+                "sessions_kill, or settle it with taskflow_step(action='wait_all')/taskflow_step(action='resume')"
             )
     return warnings
 

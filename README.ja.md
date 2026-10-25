@@ -4,7 +4,7 @@
 ![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
 ![License](https://img.shields.io/badge/License-MIT-orange)
 
-[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md) · [**Wiki**](https://github.com/lasertsole/sherry_agent/wiki)
 
 > **LangChain/LangGraph とマルチモーダル技術で構築されたディープ・ロールプレイング AI エージェント。**
 
@@ -25,16 +25,16 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
 - **コンテキスト統治**：過大なツール結果と人間メッセージは回収可能なディスクコピーを残してプロンプトから退避され、`read_file` 結果はスライスされ、あらゆる圧縮の前に LLM なしのテールクリップが走り、チェーン要約は会話ペイロードから除外されます
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
-- **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
+- **経験抽出（Experience Extraction）**：3 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
-- ▶️ _4 本の抽出経路とスキルキュレーションは [Experience README](docs/experience/README.ja.md) を参照_
+- ▶️ _3 本の抽出経路とスキルキュレーションは [Experience README](wiki/experience/README.ja.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
 - **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
 - **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
-- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](docs/experience/README.ja.md)
+- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](wiki/experience/README.ja.md)
 - **ツールタイムアウト**：実際のツール別制限は `TOOLS_TIMEOUTS` レジストリ（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）から取得されます。`TOOL_CALL_TIMEOUT_MINUTES` は保存設定にすぎず、**どの実行パスも消費しません**
 - ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 
@@ -47,7 +47,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
 - **検証された完了**：すべての spawn が子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、設定された `COMPLETION_JUDGE["goal_max_turns"]` 予算（既定 5）で上限が決まります
 - **機能ロール（オプトイン）**：`sessions_spawn(functional_role=...)` でワーカーを特化（general / researcher / executor / reviewer / librarian）。ロールが LLM 層、ツール allow-list、子のシステムプロンプトセクションを決定します
-- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](docs/file-safety/README.md)
+- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](wiki/file-safety/README.md)
 - ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 
 ### 4. 🌐 マルチチャンネルアクセス
@@ -68,14 +68,15 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **Heartbeat サービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：定期的なウェイクアップ（デフォルト 30 分）で `HEARTBEAT.md` の未完了タスクを確認し、LLM が skip/run を判断、結果は通知ゲートを通過
 
 ### 7. ⚙️ ランタイム・並行性・セッション制御
-- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される
+- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される。ルートの `AGENTS.md`（フォールバック `CLAUDE.md`）は内容が変わるたびに `project_instructions` リマインダーとして注入され、明示的にバインドされたプロジェクトは最初のメッセージ時に統一された `.sherry/` ディレクトリ——コードインデックスと shadow git——を得る（バインド時には作らない）
 - **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く。行の右クリックメニューは 開く / 別のアプリで開く / 内蔵ブラウザーで開く（HTML）/ ファイルマネージャーで表示 / 絶対・相対パスのコピー / チャットに追加 を提供し、行（またはファイルビューアのタブ）はコンポーザーへドラッグできる — どちらの経路もメッセージに載るのは `@./path` メンション chip だけで、ファイル内容は決して載らない（ファイルはエージェント自身が読む）
-- **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は `browser_*` ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは 8 個のメイン専用ツール（navigate / snapshot / click / type / press / scroll / screenshot / evaluate、最後の 1 つは `SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
+- **選択テキストの引用と補助セッション**: 1 つのチャットメッセージ内でテキストを選択して右クリックすると小さなメニューが開く——「現在のセッションに追加」はアトミックな引用 chip をコンポーザーへ挿入し（送信時は markdown 引用ブロック）、「補助セッションで質問」は親セッションの**完全な fork** である通常の子セッションを作成する。最初のターンには親の checkpoint 履歴全体がモデル専用で注入され（補助セッションの表示履歴は空のまま）、親のプリセット・agent 設定・セッション単位のモデル設定・プロジェクトディレクトリを継承する。fork は親の最後に完了した回答で区切られるため、未完了のツール呼び出しが再生されることはない。セッションスコープの右サイドバータブで開いて引用をプリフィルし、そのタブを閉じるのはパネルを閉じるだけ——子セッションとその状態はすべて保持され、セッション一覧に残るので後から開き直せ、親セッションを削除したときにだけ消去される。タブ列の最も左にある下向き矢印メニューは、最近閉じたタブを「現在のセッション / グローバル」ごとに最新 10 件まで一覧し（現在のセッションの履歴はそのセッションだけに属し、セッション削除で消える）、閉じた補助セッションを履歴ごと復元する。「現在のセッション」タブ群はセッションごとに分離され（セッションを切り替えるとそのセッション自身のタブ、または空の状態だけを表示し、前のセッションのページは出ない）、「グローバル」タブは全セッションで共有される。行をまたぐ選択、コントロール/承認カードから始まる選択、8,000 文字を超える選択ではネイティブのコンテキストメニューをそのまま残す
+- **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は browser ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは統合されたメイン専用 `browser` ツール（navigate / snapshot / click / type / press / scroll / screenshot）と、`browser_evaluate`（`SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
 - **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
-- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_create(resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の追加列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
-- **TaskFlow の進捗ウェーブ** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): フローのステップは最長経路の DAG レベルにまとめられ、フローティング進捗パネルに表示される（表示専用 — スケジューラは依然として各ステップの `depends_on` ごとに解錠する。未知の依存は無視され、閉路は `cyclic` と表示された末尾のウェーブに置かれる）。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
-- **ストリーム復元アンカー** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): ターン途中で切断したビューアが再接続すると `resume_stream` を送り、サーバーはその socket だけに実行中ターンの `ai_text` スナップショットと現在の `seq` を返します。クライアントはバッファ済み delta を flush し、そのターンのテキストをスナップショットで置き換え、`seq` 以下のフレームを破棄します。したがってフレームの再送も重複もなく、コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できます。
+- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の追加列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
+- **TaskFlow の進捗** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 各フローのフラットなステップ一覧（id・タスク・状態）と状態別集計がフローティング進捗パネルに表示される。スケジューラは依然として各ステップの `depends_on` ごとに解錠する。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
+- **ストリーム復元** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): ターン途中で切断したビューアは再接続時に 1 回の履歴リクエスト（`include_active_turn=1`）を送り、離席中に完了したターンと実行中ターンのスナップショット（`turn_id`、`seq`、テキスト）を同時に受け取ります。リクエスト中 socket は受信フレームを保持し、クライアントは履歴をマージしてスナップショットを適用し、同じターンの `seq` 以下のフレームだけを破棄します——再生も重複もありません。コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できます。
 - **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
 - **セッションごとのモデルと思考**: `PUT /sessions/thinking` と `PUT /sessions/model` は単一セッションの思考トグルとメインモデルを上書きする（ログインが有効な場合、クライアントは単回限りの `GET /auth/ws-ticket` を先取りする）。思考制御ミドルウェアはそれに基づいてリクエストモデルを `build_main_llm(thinking=...)` のバリアントに差し替え、セッションに明示的な選択がなければ環境変数の既定値へフォールバックする
 
@@ -112,7 +113,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 ## 📂 プロジェクト構成
 
 ```text
-EMA_AI_agent/
+sherry_agent/
 ├── agent/                  # エージェントコアロジック
 │   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
 │   ├── security/           # 秘匿化、PII、脅威パターン、信頼できない出力のラッピング
@@ -169,23 +170,26 @@ EMA_AI_agent/
 │   ├── embeddings/         # ベクトルセマンティック検索（indexer / search）
 │   └── curator/            # 自動スキルキュレーション
 │
-├── docs/                   # サブシステム設計ドキュメント（言語別 README）
+├── wiki/                   # サブシステム設計ドキュメント（言語別 README）
 │   ├── experience/         # 経験抽出経路 + スキルキュレーション
 │   ├── session_memory/     # セッションメモリのケイパビリティ
 │   ├── summarization/      # 圧縮トリガーとクールダウン
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
+│   ├── llm-retry/         # リトライ予算、fallback 上限、遮断範囲
 │   ├── sandbox/            # 評価サンドボックスとツール分離
 │   ├── token-guard/        # 128K コンテキストウィンドウ下限
 │   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
 │   ├── long-running-tasks/ # TaskFlow オーケストレーション
 │   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
 │   ├── code-intel/         # コード検索レイヤー
+│   ├── graph-rag/          # マルチホップ検索と召回調整
+│   ├── llm-wiki/          # markdown KB + 派生グラフクエリ
 │   ├── ptc/                # プログラム的ツール呼び出し
 │   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
-├── evals/                  # 評価フレームワーク（dispatcher + 7 スイート）
+├── evals/                  # 評価フレームワーク（dispatcher + 11 スイート）
 │   ├── evals.py            # スイートランナー: uv run python evals/evals.py [suite]
 │   ├── sandbox.py          # 実行中のリポジトリ書き込みをリダイレクトするサンドボックス
 │   ├── graph_rag/          # グラフ RAG パイプラインの RAGAS 指標
@@ -310,29 +314,33 @@ EMA_AI_agent/
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
-| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 4 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
-| **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 3 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](wiki/experience/README.md) · [ZH](wiki/experience/README.zh.md) · [JA](wiki/experience/README.ja.md) · [KO](wiki/experience/README.ko.md) |
+| **セッションメモリ** | SESSION 計画のケイパビリティ: memory review、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](wiki/session_memory/README.md) · [ZH](wiki/session_memory/README.zh.md) · [JA](wiki/session_memory/README.ja.md) · [KO](wiki/session_memory/README.ko.md) |
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
-| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
-| **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
-| **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](wiki/subagent/README.md) · [ZH](wiki/subagent/README.zh.md) · [JA](wiki/subagent/README.ja.md) · [KO](wiki/subagent/README.ko.md) |
+| **Code Intel** | コード検索：全エージェントが使える ripgrep キーワード検索に加え、ロール限定の 4 層——tree-sitter シンボル索引、ast-grep 構造検索、LSP 精密検索、セマンティック検索——さらに imports/継承/mixin 辺と双方向 `path` ツール | [EN](wiki/code-intel/README.md) · [ZH](wiki/code-intel/README.zh.md) · [JA](wiki/code-intel/README.ja.md) · [KO](wiki/code-intel/README.ko.md) |
+| **LLM Wiki グラフ** | markdown 優先のナレッジベース + 明示的な派生グラフ：EXTRACTED/INFERRED confidence 付き wikilink/mention 辺、マルチモーダル ingest、path/god-node/community クエリ | [EN](wiki/llm-wiki/README.md) · [ZH](wiki/llm-wiki/README.zh.md) · [JA](wiki/llm-wiki/README.ja.md) · [KO](wiki/llm-wiki/README.ko.md) |
+| **GraphRAG パスクエリ** | 明示的マルチホップ検索：2-3 ホップの BFS、embedding 誘導 beam フォールバック、純稠密 LightRAG エンジン向けに調整した召回しきい値 | [EN](wiki/graph-rag/README.md) · [ZH](wiki/graph-rag/README.zh.md) · [JA](wiki/graph-rag/README.ja.md) · [KO](wiki/graph-rag/README.ko.md) |
+| **プログラム的ツール呼び出し** | EXECUTOR 専用の `execute_code`：1 本の Python スクリプトを別子プロセスで実行し、loopback TCP RPC ブリッジで実ツールを呼び出す。制限付き builtins とスクリプト単位の予算を併用 | [EN](wiki/ptc/README.md) · [ZH](wiki/ptc/README.zh.md) · [JA](wiki/ptc/README.ja.md) · [KO](wiki/ptc/README.ko.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
 | **Cron サービス** | 定時/周期的エージェントタスク実行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
 | **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
-| **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
-| **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
-| **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
-| **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
-| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、ターンをまたぐメモリ継続性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
-| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
-| **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](docs/plan-mode/README.md) · [ZH](docs/plan-mode/README.zh.md) · [JA](docs/plan-mode/README.ja.md) · [KO](docs/plan-mode/README.ko.md) |
-| **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](docs/stream-recovery/README.md) · [ZH](docs/stream-recovery/README.zh.md) · [JA](docs/stream-recovery/README.ja.md) · [KO](docs/stream-recovery/README.ko.md) |
-| **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
-| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](docs/tool-parallel-safety/README.md) · [ZH](docs/tool-parallel-safety/README.zh.md) · [JA](docs/tool-parallel-safety/README.ja.md) · [KO](docs/tool-parallel-safety/README.ko.md) |
+| **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
+| **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM リトライ予算** | プロバイダーリトライの予算とカウント：物理/予算試行、`Retry-After` バックオフ、ターンごとの fallback 上限、タイムアウト遮断の範囲 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
+| **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
+| **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
+| **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
+| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、三色孤児 GC、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
+| **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング、message 行のターン識別子 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
+| **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
+| **ターン実行履歴の折りたたみ** | 完了したターンはツール/推論履歴を 1 行の要約に折りたたみ、最終回答は常に表示。実行中/中断ターンは線形のまま | [EN](wiki/turn-fold/README.md) · [ZH](wiki/turn-fold/README.zh.md) · [JA](wiki/turn-fold/README.ja.md) · [KO](wiki/turn-fold/README.ko.md) |
+| **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
+| **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
 ## ⚡ クイックスタート
 
@@ -342,7 +350,7 @@ EMA_AI_agent/
 
 ```bash
 git clone <your-repo-url>
-cd EMA_AI_agent
+cd sherry_agent
 uv sync   # .venv を作成し、uv.lock の依存関係を正確にインストール
 ```
 
@@ -364,9 +372,12 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 | `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
 | `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
 | `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
+| `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
 | `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | オプトインのブラウザエージェント（既定は無効）。変更後は再起動でツールが登録されます |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 保存設定のみ（デフォルト 5）— ツール実行パスは消費しません。ログレベル（INFO） |
@@ -478,10 +489,16 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
 | `coding_capability` | 実メイン agent を小規模な自作コーディングタスク集で評価し、各タスクはそのリポジトリ自身の pytest 実行で判定——ベースラインであり外部ベンチマークではない |
 | `swebench` | 外部 SWE-bench_Lite インスタンスを同じ harness で実行（pinned base commit + インスタンス毎の venv + そのインスタンス自身の FAIL_TO_PASS / PASS_TO_PASS 判定。agent が見るのは問題文のみ） |
+| `deepswe` | 外部 DeepSWE タスクをベンチマーク自身の Docker イメージで実行：agent は bind mount された checkout を編集し、`terminal` はコンテナ内で実行され、タスク専用の verifier イメージが diff を採点（先に gold patch を自己検査） |
+| `terminal_bench` | 外部 Terminal-Bench タスク：タスクイメージをビルドし、agent がコンテナ内で作業し、タスク自身の `run-tests.sh` の pytest 判定で評価（先に oracle を自己検査。マルチサービス構成のタスクは非対応と明示） |
+| `agentbench` | 外部 [AgentBench](https://github.com/THUDM/AgentBench) DBBench テストセット：固定 commit の公式問題とテーブルを SQLite に materialize し、AgentBench 自身の比較ルールで判定（INSERT/DELETE/UPDATE 行は非対応と明示。MySQL→SQLite の方言差は記録） |
+| `toolbench` | 外部 [ToolBench](https://github.com/OpenBMB/ToolBench) テスト命令：公式 `test_query_ids`、ツール呼び出しは公式 RapidAPI プロキシ経由、公式 answer 形式に変換し、固定 commit のリポジトリから読み込んだ公式 ToolEval で判定（データミラー：[Adorg/ToolBench](https://huggingface.co/datasets/Adorg/ToolBench)） |
 
-すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。
+各スイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスへリダイレクト）、レポートは `evals/results/<suite>/<run_id>/` に書き出されます。このディレクトリは **gitignore** 済みで、実行ごとのレポートはコミットしません。
 
-`coding_capability` と `swebench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
+`deepswe` と `terminal_bench` はコンテナベースで、動作する Docker daemon が必要です。`toolbench` は `TOOLBENCH_KEY`、`MAIN_LLM_API_KEY`、OpenAI 互換の ToolEval judge key が必要です。`agentbench` は `MAIN_LLM_API_KEY` が必要です。前提条件が無い場合は**明示的に SKIP し非ゼロで終了**します（スキップは合格ではありません）。タスクツリーとベンチマークデータは `~/.cache/sherry_evals` に clone / ダウンロードし（`DEEPSWE_TASKS_DIR` / `TERMINAL_BENCH_DIR` / `SHERRY_AGENTBENCH_REPO` / `SHERRY_TOOLBENCH_DATA` / `SHERRY_EVAL_CACHE` で上書き可能）、リポジトリ内には置きません。`--dry-run` は Docker・モデル・ToolBench の大容量ダウンロード無しで選択を検証できます。
+
+`coding_capability`、`swebench`、`deepswe`、`terminal_bench`、`agentbench`、`toolbench` はそれぞれバージョン管理されたベースライン（各スイートのディレクトリ内）を保持し、`SHERRY_WORKSPACE_DIR` で workspace を使い捨てディレクトリに向けて実行が実人格に触れないようにし、ベースライン閾値を下回るかタスクがエラーになると非ゼロで終了します。プロバイダ側の障害は invalid run として報告され、通過率から除外されます。
 
 ---
 

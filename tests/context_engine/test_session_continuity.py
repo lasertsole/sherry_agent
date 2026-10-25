@@ -16,6 +16,14 @@ import pytest
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_evidence_ledger(tmp_path, monkeypatch):
+    """Never let a purge test open/migrate the real repo evidence ledger."""
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
+
+
 # ---------------------------------------------------------------------------
 # Isolation fixtures
 # ---------------------------------------------------------------------------
@@ -48,7 +56,7 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store."""
 
-    def format_for_system_prompt(self, target: str):
+    def format_for_system_prompt(self, target: str, session_id: str | None = None):
         return "MEMORY-LIVE" if target == "memory" else None
 
 

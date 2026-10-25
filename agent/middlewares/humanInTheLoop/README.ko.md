@@ -197,7 +197,7 @@ LLM 출력 → after_model
 
 접근 모드 전환으로는 이 게이트가 풀리지 않습니다: 이 카드에서 `yolo`를 고르거나(영속 전역 플래그 `external_path_yolo`) 허용 목록에 추가했을 때만 풀립니다. `full_access` 세션도 루트 밖 경로에서는 이 카드를 봅니다.
 
-▶️ 자세히: [docs/sandbox/isolation/README.ko.md](../../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
+▶️ 자세히: [wiki/sandbox/isolation/README.ko.md](../../../wiki/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
 
 ---
 

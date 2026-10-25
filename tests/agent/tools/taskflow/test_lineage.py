@@ -86,8 +86,10 @@ async def test_replacing_a_flow_stamps_both_pointers(isolated_db: Path):
     assert predecessor["superseded_by"] == "flow-new"
     assert predecessor["resumed_from"] is None
     # Lineage is metadata: the predecessor's content and revision are untouched.
+    # The active predecessor becomes terminal so no active read can surface it.
     assert predecessor["expected_revision"] == 1
-    assert predecessor["status"] == TaskFlowStatus.RUNNING.value
+    assert predecessor["status"] == TaskFlowStatus.CANCELLED.value
+    assert predecessor["terminal_reason"] == "superseded"
 
 
 @pytest.mark.asyncio

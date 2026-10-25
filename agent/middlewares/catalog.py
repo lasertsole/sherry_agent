@@ -35,6 +35,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "ToolSelectionMiddleware",
     "MultimodalProcessor",
     "IterationBudget",
+    "TokenBudget",
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "UserHooksMiddleware",
@@ -73,7 +74,12 @@ GATEABLE_MIDDLEWARES: frozenset[str] = frozenset(
 #: ``ToolSelectionMiddleware`` belongs here too: it has no switch of its own, it
 #: is the thing that APPLIES the session's tool selection.
 ALWAYS_ON_MIDDLEWARES: frozenset[str] = frozenset(
-    {"system_prompt_injection", "ThinkingControlMiddleware", "ToolSelectionMiddleware"}
+    {
+        "system_prompt_injection",
+        "ThinkingControlMiddleware",
+        "ToolSelectionMiddleware",
+        "TokenBudget",
+    }
 )
 
 

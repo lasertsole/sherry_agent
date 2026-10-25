@@ -101,6 +101,21 @@ export class PendingSendRegistry {
     for (const id of ids) this.byId.get(id)?.reject(err);
   }
 
+  /** Whether any in-flight send already received a chunk (its turn is under way). */
+  hasReceivedChunk(): boolean {
+    for (const pending of this.byId.values()) {
+      if (pending.receivedChunk) return true;
+    }
+    return false;
+  }
+
+  /** Resolve only sends that already received a chunk (pre-chunk sends are resumable). */
+  resolveMidStream(): void {
+    for (const pending of this.all()) {
+      if (pending.receivedChunk) pending.resolve();
+    }
+  }
+
   /** Resolve every registered send (teardown must not surface an error). */
   resolveAll(): void {
     for (const pending of this.all()) pending.resolve();

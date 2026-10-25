@@ -36,6 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 from config.features import CONTEXT_GUARD, SUMMARIZATION
 from runtime import state_register_mem
 from agent.middlewares.summarization.summarization_components import _FORCE_RECOVERY_KEY
+from agent.middlewares.summarization.thresholds import resolve_compression_threshold
 from pub.func.estimate_tokens import estimate_text_tokens
 from .repetition_guard import RepetitionGuardWrapper
 
@@ -85,7 +86,13 @@ class ContextLimitGuardWrapper:
         (``input_tokens`` alone) and the predictive check (``input + output``,
         since the output becomes next call's input) share the same threshold.
         """
-        threshold = int(self._context_window * COMPRESSION_TRIGGER_RATIO)
+        from models.LLMs.main_llm import get_max_output_tokens
+
+        threshold = resolve_compression_threshold(
+            self._context_window,
+            get_max_output_tokens(),
+            fallback_ratio=COMPRESSION_TRIGGER_RATIO,
+        )[0]
         if input_tokens < threshold and input_tokens + output_tokens < threshold:
             return False
         logger.warning(

@@ -61,7 +61,15 @@ _VALID_LEVELS = _valid_levels()
 
 #: Descriptor fields accepted by ``PUT /sessions/model`` (unknown keys are
 #: rejected so a typo in the client cannot silently store junk).
-_OVERRIDE_FIELDS = ("id", "label", "provider", "model", "base_url", "api_key")
+_OVERRIDE_FIELDS = (
+    "id",
+    "label",
+    "provider",
+    "model",
+    "base_url",
+    "api_key",
+    "context_window",
+)
 #: Upper bound per string field (credentials/urls stay far below this).
 _MAX_FIELD_LEN = 512
 
@@ -72,6 +80,7 @@ _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.AGENT_CONFIG, StateKey.AGENT_CONFIG_PENDING),
     (StateKey.SEARCH_BACKEND, StateKey.SEARCH_BACKEND_PENDING),
     (StateKey.CUSTOM_THINKING_MAPPING, StateKey.CUSTOM_THINKING_MAPPING_PENDING),
+    (StateKey.TOKEN_BUDGET_CAP, StateKey.TOKEN_BUDGET_CAP_PENDING),
 )
 
 
@@ -348,6 +357,14 @@ def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
             continue
         if len(value) > _MAX_FIELD_LEN:
             raise ValueError(f"'profile.{field}' exceeds {_MAX_FIELD_LEN} characters")
+        if field == "context_window":
+            try:
+                window = int(value)
+            except ValueError:
+                raise ValueError("'profile.context_window' must be an integer") from None
+            if window <= 0:
+                raise ValueError("'profile.context_window' must be positive")
+            value = str(window)
         cleaned[field] = value
     return cleaned
 
@@ -432,6 +449,14 @@ def promote_pending_settings_sync(session_id: str) -> list[str]:
             _write_value(session_id, live_key, value)
         _delete_value(session_id, pending_key)
         promoted.append(str(live_key))
+        if live_key == StateKey.TOKEN_BUDGET_CAP:
+            # A promoted cap starts a fresh latch, exactly like a live write:
+            # otherwise a session that was raised into headroom would keep
+            # reporting ``limited: true`` (and never warn again).
+            _delete_value(session_id, StateKey.TOKEN_BUDGET_LIMITED)
+            from agent.middlewares.token_budget import reset_budget_notice
+
+            reset_budget_notice(session_id)
         if live_key == StateKey.AGENT_CONFIG:
             # The promoted payload carries the skills selection, which lives
             # inside the cached system prompt — drop it so the next turn rebuilds
@@ -679,6 +704,79 @@ async def apply_search_backend_choice(session_id: str, backend: str | None) -> b
         value=backend,
         write_live=lambda: _write_value(session_id, StateKey.SEARCH_BACKEND, backend),
     )
+
+
+def get_token_budget_state(session_id: str) -> dict[str, Any]:
+    """Return ``{cap, used, cost, limited, pending}`` for the session.
+
+    ``cap`` is the EFFECTIVE next-turn cap (a parked mid-turn choice included),
+    ``None`` when unlimited. ``used`` / ``cost`` accumulate across turns;
+    ``cost`` is an estimate. ``pending`` reports that a cap change is parked.
+    """
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    if not _session_turn_active(session_id):
+        promote_pending_settings_sync(session_id)
+    parked, parked_value = _pending_value(session_id, StateKey.TOKEN_BUDGET_CAP_PENDING)
+    live_cap = _read_value(session_id, StateKey.TOKEN_BUDGET_CAP)
+    cap = parked_value if parked else live_cap
+    used = _read_value(session_id, StateKey.TOKEN_BUDGET_USED) or 0
+    cost = _read_value(session_id, StateKey.TOKEN_BUDGET_COST) or 0.0
+    limited = bool(_read_value(session_id, StateKey.TOKEN_BUDGET_LIMITED) or False)
+    return {
+        "cap": int(cap) if cap is not None else None,
+        "used": int(used),
+        "cost": round(float(cost), 6),
+        "limited": limited,
+        "pending": parked,
+    }
+
+
+def _write_budget_cap(session_id: str, cap: int | None) -> None:
+    """Live write of the cap; a new cap starts a fresh 'limited' latch."""
+    if cap is None:
+        _delete_value(session_id, StateKey.TOKEN_BUDGET_CAP)
+    else:
+        _write_value(session_id, StateKey.TOKEN_BUDGET_CAP, int(cap))
+    # A raised/cleared cap must not leave the exhausted latch on.
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_LIMITED)
+    from agent.middlewares.token_budget import reset_budget_notice
+
+    reset_budget_notice(session_id)
+
+
+async def apply_token_budget_choice(session_id: str, cap: int | None) -> bool:
+    """HTTP entry for ``PUT /sessions/budget``; returns ``pending``.
+
+    ``None`` clears the cap (unlimited). A positive integer caps the session's
+    accumulated token usage. The same park/promote rule as the other controls:
+    a change made mid-turn lands on the next turn.
+    """
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    if cap is not None:
+        if isinstance(cap, bool) or not isinstance(cap, int) or cap < 0:
+            raise ValueError("'cap' must be a non-negative integer or null")
+    return await _apply_session_choice(
+        session_id,
+        live_key=StateKey.TOKEN_BUDGET_CAP,
+        pending_key=StateKey.TOKEN_BUDGET_CAP_PENDING,
+        value=cap,
+        write_live=lambda: _write_budget_cap(session_id, cap),
+    )
+
+
+def reset_token_budget(session_id: str) -> dict[str, Any]:
+    """Clear USED / COST / LIMITED (the cap is preserved)."""
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_USED)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_COST)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_LIMITED)
+    from agent.middlewares.token_budget import reset_budget_notice
+
+    reset_budget_notice(session_id)
+    return get_token_budget_state(session_id)
 
 
 def _search_env_view() -> dict[str, Any]:

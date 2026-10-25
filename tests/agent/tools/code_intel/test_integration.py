@@ -12,7 +12,7 @@ from config.features.agent_side import CODE_INTEL_SEMANTIC
 
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
-CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact"}
+CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact", "path"}
 SEMANTIC_NAMES = {"semantic_code_search"}
 
 

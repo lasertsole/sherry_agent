@@ -48,6 +48,7 @@ async def taskflow_fail(
             state=state,
             wait=None,
             status=TaskFlowStatus.FAILED.value,
+            terminal_reason="failed",
         )
     except FlowConflictError as exc:
         return conflict_error(exc)

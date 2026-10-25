@@ -277,6 +277,13 @@ curl -X POST http://127.0.0.1:8080/cron -H "Content-Type: application/json" \
 curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/json" -d '{"id": "a1b2c3d4", "force": true}'
 ```
 
+## 実行クレームと配信の冪等性
+
+- プロセス全体の `threading.RLock` とインメモリの `_running_jobs` 集合で実行をクレームします。cron tick（cron loop）と `run_job`（server loop）が共有するため、同時 tick / 手動 Run は 2 つ目の agent turn を開始せずスキップします。running は永続化せず、プロセス再起動で消えます。
+- `_execute_job` は agent 実行の**前**に `next_run_at_ms` を進めて（slot を消費して）保存します。結果配信後のクラッシュでも再起動時に同じ slot を再 fire しません。実行後の処理で周期ジョブをもう一度進めてはいけません（one-shot `at` のみ disable/delete）。
+- 配信は `metadata["message_id"]="cron:<job>:<slot>"` を持ち、input queue の `client_msg_id` 重複排除を再利用します。この検索は ACTIVE 行だけなので、アクティブ期間の補強でありクラッシュ保証ではありません。クラッシュ二重配信を閉じるのは事前の next_run 前進です。
+- `run_job` は disabled または already running で False を返します。`force` は disabled のみバイパスし、running クレームはバイパスしません。
+
 ## スケジューリングの意味論
 
 | 種類 | 動作 |
@@ -304,4 +311,4 @@ curl -X POST http://127.0.0.1:8080/cron/trigger -H "Content-Type: application/js
 - サービスは `cron-service` デーモンスレッド上の独立したイベントループで動作し、メインサーバーのループとは独立しています。`run_job()` と `start()` は実行中のイベントループから await する必要があります。
 - WebSocket 通知はセッション `"default"`（ブラウザクライアントのセッション）宛てのため、クライアント接続中のみデスクトップ通知が届きます。
 
-▶️ 詳細：[docs/loop-prevention/README.md](../../../../../docs/loop-prevention/README.md) · [中文](../../../../../docs/loop-prevention/README.zh.md) · [한국어](../../../../../docs/loop-prevention/README.ko.md) · [日本語](../../../../../docs/loop-prevention/README.ja.md)
+▶️ 詳細：[wiki/loop-prevention/README.md](../../../../../wiki/loop-prevention/README.md) · [中文](../../../../../wiki/loop-prevention/README.zh.md) · [한국어](../../../../../wiki/loop-prevention/README.ko.md) · [日本語](../../../../../wiki/loop-prevention/README.ja.md)

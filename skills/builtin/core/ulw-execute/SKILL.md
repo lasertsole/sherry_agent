@@ -35,11 +35,11 @@ Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
   -> Read the plan, find the first unchecked column-0 checkbox
   -> Split it into atomic sub-tasks (completable in one worker run)
   -> Register checkboxes with dependencies as TaskFlow steps:
-       taskflow_run_task(flow_id, task, depends_on=[...])
+       taskflow_step(action="run_task", flow_id=..., task=..., depends_on=[...])
   -> Steps with unmet dependencies are recorded as blocked by TaskFlow and not dispatched
-  -> Call taskflow_dispatch(flow_id, step_ids) to dispatch ready steps in parallel
-  -> taskflow_wait_all(flow_id) waits for the child sessions dispatched by this flow to settle
-  -> taskflow_resume(flow_id, child_session_key, result) injects the result and unlocks successors
+  -> Call taskflow_step(action="dispatch", flow_id=..., step_ids=[...]) to dispatch ready steps in parallel
+  -> taskflow_step(action="wait_all", flow_id=...) waits for the child sessions dispatched by this flow to settle
+  -> taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...) injects the result and unlocks successors
   -> DELEGATE EVERYTHING, routing each sub-task through the routing table below
 
 Phase 4: Verify and record evidence
@@ -71,8 +71,8 @@ The routing decision is written into the todo's `category` field; when `delegati
 
 ## Parallel topology
 
-- **Independent lanes -> parallel workers**: tasks with separate files and no shared contract are dispatched in parallel in one batch (`taskflow_dispatch` batch dispatch).
-- **Ordered dependency lanes -> serial waves**: when C depends on A and B finishing first, wait for the prerequisite steps to be unlocked via `done` (`depends_on` + the unlock from `taskflow_resume`), then dispatch.
+- **Independent lanes -> parallel workers**: tasks with separate files and no shared contract are dispatched in parallel in one batch (`taskflow_step(action="dispatch")` batch dispatch).
+- **Ordered dependency lanes -> serial batches**: when C depends on A and B finishing first, wait for the prerequisite steps to be unlocked via `done` (`depends_on` + the unlock from `taskflow_step(action="resume")`), then dispatch.
 - **Overlapping lanes -> serial or manual coordination**: when concurrent changes to the same module or contract are more likely to break, run them serially.
 
 Principle: parallelize when possible, never race ahead of dependencies, never force concurrency on overlapping work. The basis for judgment is always TaskFlow's `depends_on` and step `status` — do not recompute them at the todo layer.
@@ -101,13 +101,13 @@ If verification fails, the task is not complete: re-dispatch, or fix and restart
 
 The orchestration layer only calls TaskFlow; it never rebuilds it:
 
-- `taskflow_run_task(flow_id, task, depends_on=[...])`: register a step and decide whether to dispatch based on dependencies.
-- `taskflow_dispatch(flow_id, step_ids)`: batch-dispatch ready steps.
-- `taskflow_wait_all(flow_id, ...)`: wait for the child sessions dispatched by this flow to settle.
-- `taskflow_resume(flow_id, child_session_key, result)`: inject the result, mark done, unlock successors (idempotent).
-- `taskflow_summary(flow_id)`: read-only readback of each step's `status` / `depends_on` and the per-status counts.
+- `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=[...])`: register a step and decide whether to dispatch based on dependencies.
+- `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`: batch-dispatch ready steps.
+- `taskflow_step(action="wait_all", flow_id=...)`: wait for the child sessions dispatched by this flow to settle.
+- `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`: inject the result, mark done, unlock successors (idempotent).
+- `taskflow_inspect(action="summary", flow_id=...)`: read-only readback of each step's `status` / `depends_on` and the per-status counts.
 
-The full step state machine (`blocked -> ready -> dispatched -> done`) and the optimistic-lock retry rules are in the `taskflow` skill. Do not implement `depends_on`, waves, or frontier scheduling at the todolist layer.
+The full step state machine (`blocked -> ready -> dispatched -> done`) and the optimistic-lock retry rules are in the `taskflow` skill. Do not implement `depends_on`, wave/DAG projections, or frontier scheduling at the todolist layer.
 
 ## Porting notes
 

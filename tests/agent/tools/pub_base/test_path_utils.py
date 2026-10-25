@@ -706,7 +706,7 @@ class TestSessionAllowlist:
     def test_approve_adds_exact_path_to_allowlist(self, tmp_path, clean_state, mock_interrupt):
         from runtime import state_register_mem
 
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={"decisions": [{"type": "approve"}]})
 
         resolved = resolve_external_path(target, session_id="s1")
@@ -717,7 +717,7 @@ class TestSessionAllowlist:
     def test_second_access_after_approve_skips_interrupt(
         self, tmp_path, clean_state, mock_interrupt
     ):
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={"decisions": [{"type": "approve"}]})
         resolve_external_path(target, session_id="s1")
 
@@ -889,7 +889,7 @@ class TestHitlInterrupt:
     def test_main_agent_approve(self, tmp_path, clean_state, mock_interrupt):
         from runtime import state_register_mem
 
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={"decisions": [{"type": "approve"}]})
 
         resolved = resolve_external_path(target, session_id="s1")
@@ -898,7 +898,7 @@ class TestHitlInterrupt:
         assert state_register_mem.get_state("s1", "external_path_allowlist") == [target]
 
     def test_main_agent_yolo(self, tmp_path, clean_state, mock_interrupt):
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={"decisions": [{"type": "yolo"}]})
 
         resolved = resolve_external_path(target, session_id="s1")
@@ -907,14 +907,14 @@ class TestHitlInterrupt:
         assert clean_state.store[("__global__", "external_path_yolo")] is True
 
     def test_main_agent_reject(self, tmp_path, clean_state, mock_interrupt):
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={"decisions": [{"type": "reject"}]})
 
         with pytest.raises(PathOutOfBoundsError, match="denied"):
             resolve_external_path(target, session_id="s1")
 
     def test_empty_resume_payload_denied(self, tmp_path, clean_state, mock_interrupt):
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
         mock_interrupt(response={})
 
         with pytest.raises(PathOutOfBoundsError, match="no decision"):
@@ -925,7 +925,7 @@ class TestHitlInterrupt:
             raise RuntimeError("interrupt unavailable")
 
         monkeypatch.setattr("langgraph.types.interrupt", _broken_interrupt)
-        target = _external(tmp_path, "docs/report.md")
+        target = _external(tmp_path, "wiki/report.md")
 
         with pytest.raises(RuntimeError):
             resolve_external_path(target, session_id="s1")
@@ -948,7 +948,7 @@ class TestHelpers:
         assert _extract_session_id(run_manager) == ""
 
     def test_add_to_allowlist_is_idempotent(self, clean_state):
-        target = Path("/home/u/docs/report.md")
+        target = Path("/home/u/wiki/report.md")
         _add_to_allowlist(target, "s1")
         _add_to_allowlist(target, "s1")
 

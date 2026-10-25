@@ -16,6 +16,17 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_evidence_ledger(tmp_path, monkeypatch):
+    """Never let a purge test open/migrate the real repo evidence ledger."""
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+    from server.DAO import side_chat_store
+
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
+    # purge_session_data also drops a purged session's own side-chat link.
+    monkeypatch.setattr(side_chat_store, "_DB_PATH", tmp_path / "side_chats.db")
+
+
 def _isolate_store(monkeypatch: pytest.MonkeyPatch, module, db_name: str, tmp_path: Path) -> None:
     """Point a store module at a per-test tmp SQLite file, resetting init state."""
     monkeypatch.setattr(module, "_DB_DIR", tmp_path)
@@ -160,3 +171,38 @@ async def test_clear_session_offloads_the_store_delete(
     await dao.purge_session("sess-1")
 
     assert observed == {"off_loop": True, "session_id": "sess-1"}
+
+
+@pytest.mark.asyncio
+async def test_clear_session_purges_only_that_sessions_evidence_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+    from server.service import session_cleanup_service as dao
+
+    _isolate_dao(monkeypatch, tmp_path)
+    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))
+    EvidenceLedger.for_session("sess-1").append(kind="test", command="pytest -q", status="passed")
+    EvidenceLedger.for_session("sess-2").append(kind="test", command="pytest -q", status="passed")
+
+    await dao.purge_session("sess-1")
+
+    assert EvidenceLedger.read_for_session("sess-1") == []
+    assert len(EvidenceLedger.read_for_session("sess-2")) == 1
+
+
+@pytest.mark.asyncio
+async def test_evidence_purge_failure_does_not_block_session_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from agent.tools.pub_base.evidence_ledger import EvidenceLedger
+    from server.service import session_cleanup_service as dao
+
+    _isolate_dao(monkeypatch, tmp_path)
+
+    def _boom(_session_id: str) -> int:
+        raise OSError("ledger unavailable")
+
+    monkeypatch.setattr(EvidenceLedger, "purge_session", _boom)
+
+    await dao.purge_session("sess-1")  # must not raise

@@ -98,6 +98,37 @@ def test_a_required_tool_missing_from_the_stored_subset_is_still_enabled():
     assert enabled == REQUIRED_TOOLS | {"web_search"}
 
 
+def test_legacy_taskflow_names_in_a_stored_config_map_to_the_merged_tools():
+    """A session config written before the merge keeps TaskFlow enabled."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["taskflow_create", "taskflow_summary", "web_search"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {
+        "taskflow_flow",
+        "taskflow_inspect",
+        "web_search",
+    }
+
+
+def test_legacy_browser_names_in_a_stored_config_map_to_the_merged_tool():
+    """A session config written before the browser 8→2 merge keeps the family on."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["browser_navigate", "browser_click", "browser_evaluate"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"browser", "browser_evaluate"}
+
+
+def test_legacy_terminal_bg_names_in_a_stored_config_map_to_the_merged_tool():
+    """A session config written before the terminal_bg 2→1 merge keeps it on."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    _set_config({"tools": ["terminal_bg_list", "terminal_bg_output"]})
+
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"terminal_bg"}
+
+
 def test_a_broken_register_read_is_fail_open(monkeypatch):
     import runtime
 

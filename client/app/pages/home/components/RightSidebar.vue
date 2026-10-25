@@ -46,6 +46,10 @@
            settings menu. -->
       <div
         class="shrink-0 flex items-center gap-2 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
+        <!-- Recently closed tabs: the down arrow is the LEFTMOST control in the
+             strip; its menu offers the same two groups (当前会话 / 全局). A closed
+             side chat restores in place with its retained history. -->
+        <RecentClosedTabsMenu :session-id="sessionId" />
         <!-- Maximize / restore, LEFT of the group pills: the panel fills the whole
              viewport so a wide editor (模型配置, 预设, 技能) does not have to be read
              through its narrow column; the same button restores the previous
@@ -99,7 +103,7 @@
             <i
               class="pi pi-times text-[10px] opacity-60 hover:opacity-100"
               :aria-label="t('rightSidebar.closeTab')"
-              @click.stop="store.closeTab(tab.id)"></i>
+              @click.stop="emit('close-tab', tab)"></i>
           </button>
           <span
             v-if="store.tabsInScope(store.activeScope).length === 0"
@@ -148,6 +152,10 @@ import {
   type RightSidebarTab
 } from '~/stores/right-sidebar';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
+
+/** The session the main area shows (the recent-tabs menu filters by it). */
+defineProps<{ sessionId?: string }>();
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -161,8 +169,10 @@ const store = useRightSidebarStore();
  * @param tab.id
  * @param tab.kind
  */
-const tabLabel = (tab: { id: string; kind: RightSidebarPanelKind }): string => {
-  const sameKind = store.tabs.filter(candidate => candidate.kind === tab.kind);
+const tabLabel = (tab: RightSidebarTab): string => {
+  // Count only the SAME visible group: twins in another session must not shift
+  // this session's numbering.
+  const sameKind = store.tabsInScope(tab.scope).filter(candidate => candidate.kind === tab.kind);
   const base = t(`rightSidebar.${tab.kind}`);
   if (sameKind.length <= 1) return base;
   return `${base} ${sameKind.findIndex(candidate => candidate.id === tab.id) + 1}`;
@@ -192,7 +202,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
   contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
-  terminal: defineAsyncComponent(() => import('./TerminalPanel.vue'))
+  terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
+  sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
 };
 
 /**
@@ -200,14 +211,20 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
  * heartbeat) report it so the shell can re-read the session's character
  * snapshot — the shell used to listen on the dialogs directly.
  */
-const emit = defineEmits<{ saved: [] }>();
+const emit = defineEmits<{ saved: []; 'close-tab': [tab: RightSidebarTab] }>();
 
 /** Laying-out floor of a mounted panel (the body scrolls below it). */
 const PANEL_MIN_WIDTH = RIGHT_SIDEBAR_PANEL_MIN_WIDTH;
 const PANEL_MIN_HEIGHT = RIGHT_SIDEBAR_PANEL_MIN_HEIGHT;
 
-/** The active tab, or null (no tabs / stale id). */
-const activeTab = computed(() => store.tabs.find(tab => tab.id === store.activeTabId) ?? null);
+/** The active tab, or null (no tabs / stale id / a tab of another session). */
+const activeTab = computed(() => {
+  const tab = store.tabs.find(candidate => candidate.id === store.activeTabId) ?? null;
+  if (tab && tab.scope === 'session' && tab.sessionId !== undefined && tab.sessionId !== store.activeSessionId) {
+    return null;
+  }
+  return tab;
+});
 
 /**
  * The active tab's kind, or null. Null also when the active tab belongs to the
@@ -222,9 +239,21 @@ const activeKind = computed<RightSidebarPanelKind | null>(() =>
 const activePanel = computed<Component | null>(() => (activeKind.value ? PANELS[activeKind.value] : null));
 /** The active tab's own data (the file viewer's path, a toolbox panel's
  *  instance key…); undefined for the kinds that carry none. */
-const activeTabPayload = computed<{ path?: string; hash?: string; instance?: string; url?: string } | undefined>(
-  () => store.tabs.find(tab => tab.id === store.activeTabId)?.payload
-);
+const activeTabPayload = computed<
+  | {
+      path?: string;
+      hash?: string;
+      instance?: string;
+      url?: string;
+      sessionId?: string;
+      parentSessionId?: string;
+      inherited?: boolean;
+      quote?: string;
+      source?: string;
+      prefillQuote?: boolean;
+    }
+  | undefined
+>(() => activeTab.value?.payload);
 
 /**
  * Whether a tab can be dragged into the composer as a file mention. Only the

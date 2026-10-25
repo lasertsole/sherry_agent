@@ -86,7 +86,8 @@ const toDescriptor = (profile: LlmProfile): SessionModelProfile | null => {
     model,
     provider: paramBySuffix(profile.params, ['_PROVIDER']),
     base_url: paramBySuffix(profile.params, ['_API_BASE', '_BASE_URL']),
-    api_key: paramBySuffix(profile.params, ['_API_KEY'])
+    api_key: paramBySuffix(profile.params, ['_API_KEY']),
+    context_window: paramBySuffix(profile.params, ['_MAX_TOKEN', '_CONTEXT_WINDOW'])
   };
 };
 
