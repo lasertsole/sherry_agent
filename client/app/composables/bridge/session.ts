@@ -934,15 +934,18 @@ export interface TrajectoryEvent {
  * Read the session's trajectory ledger, newest events first on the wire (the
  * store orders by seq; the panel re-sorts by `(ts, seq, event_id)`).
  *
- * A failed request returns an empty list so the panel renders its fail-open
- * empty state instead of throwing.
+ * A failed request returns `null` so the panel can distinguish a read failure
+ * from a session that genuinely has no events; an empty ledger is `[]`.
  * @param sessionId Session whose ledger to read.
  * @param opts turn filter / pagination.
+ * @param opts.turnId
+ * @param opts.limit
+ * @param opts.offset
  */
 export async function fetchTrajectory(
   sessionId: string,
   opts: { turnId?: string; limit?: number; offset?: number } = {}
-): Promise<TrajectoryEvent[]> {
+): Promise<TrajectoryEvent[] | null> {
   const params = new URLSearchParams();
   if (opts.turnId) params.set('turn_id', opts.turnId);
   params.set('limit', String(opts.limit ?? 500));
@@ -951,5 +954,6 @@ export async function fetchTrajectory(
     url: `/sessions/${encodeURIComponent(sessionId)}/trajectory?${params.toString()}`,
     method: 'get'
   });
-  return Array.isArray(res?.events) ? res.events : [];
+  if (res === null) return null;
+  return Array.isArray(res.events) ? res.events : [];
 }

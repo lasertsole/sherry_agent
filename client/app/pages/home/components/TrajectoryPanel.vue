@@ -444,9 +444,19 @@ const load = async () => {
   truncated.value = false;
   try {
     const first = await fetchTrajectory(sessionId, { limit: 500 });
+    if (first === null) {
+      error.value = t('trajectoryPanel.error');
+      events.value = [];
+      return;
+    }
     let all = first;
     if (first.length >= 500) {
       const second = await fetchTrajectory(sessionId, { limit: 500, offset: 500 });
+      if (second === null) {
+        error.value = t('trajectoryPanel.error');
+        events.value = [];
+        return;
+      }
       all = [...first, ...second];
       truncated.value = second.length >= 500;
     }

@@ -4,17 +4,19 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import TrajectoryPanel from '@/pages/home/components/TrajectoryPanel.vue';
 import type { TrajectoryEvent } from '@/composables/bridge/session';
 
 const bridge = vi.hoisted(() => ({
   fetchTrajectory: vi.fn()
 }));
+const routeState = vi.hoisted(() => ({ sid: 's1' }));
 
 vi.mock('~/composables/bridge/session', () => bridge);
 vi.mock('vue-router', async importOriginal => ({
   ...(await importOriginal<typeof import('vue-router')>()),
-  useRoute: () => ({ params: { sid: 's1' } })
+  useRoute: () => ({ params: { sid: routeState.sid } })
 }));
 
 const events: TrajectoryEvent[] = [
@@ -88,6 +90,8 @@ interface PanelVm {
   lifecycleCollapsed: boolean;
   turnFilter: string;
   toggleSearch: () => void;
+  expandAll: () => void;
+  collapseAll: () => void;
 }
 
 async function mountPanel() {
@@ -99,6 +103,7 @@ async function mountPanel() {
 }
 
 beforeEach(() => {
+  routeState.sid = 's1';
   bridge.fetchTrajectory.mockReset().mockResolvedValue(events);
 });
 
@@ -152,5 +157,75 @@ describe('TrajectoryPanel', () => {
     await flushPromises();
 
     expect(wrapper.findAll('[data-turn-id]')).toHaveLength(0);
+  });
+
+  it('shows the read-failure state when the ledger request returns null', async () => {
+    bridge.fetchTrajectory.mockResolvedValue(null);
+
+    const wrapper = await mountPanel();
+
+    expect(wrapper.text()).toMatch(/读取轨迹失败|Failed to read the trajectory/);
+    expect(wrapper.findAll('[data-turn-id]')).toHaveLength(0);
+  });
+
+  it('shows the read-failure state when the transport throws', async () => {
+    bridge.fetchTrajectory.mockRejectedValue(new Error('offline'));
+
+    const wrapper = await mountPanel();
+
+    expect(wrapper.text()).toMatch(/读取轨迹失败|Failed to read the trajectory/);
+  });
+
+  it('reports a failure on the second page instead of rendering half a ledger', async () => {
+    const page = Array.from({ length: 500 }, (_, index) => ({
+      ...events[0]!,
+      event_id: `page-${index}`,
+      turn_id: `turn-${index}`
+    }));
+    bridge.fetchTrajectory.mockReset().mockResolvedValueOnce(page).mockResolvedValueOnce(null);
+
+    const wrapper = await mountPanel();
+
+    expect(bridge.fetchTrajectory).toHaveBeenNthCalledWith(2, 's1', { limit: 500, offset: 500 });
+    expect(wrapper.text()).toMatch(/读取轨迹失败|Failed to read the trajectory/);
+  });
+
+  it('shows the truncation notice after two full pages', async () => {
+    const page = Array.from({ length: 500 }, (_, index) => ({
+      ...events[0]!,
+      event_id: `page-${index}`,
+      turn_id: `turn-${index}`
+    }));
+    bridge.fetchTrajectory.mockReset().mockResolvedValueOnce(page).mockResolvedValueOnce(page);
+
+    const wrapper = await mountPanel();
+
+    expect(wrapper.text()).toMatch(/仅显示最近 1000 条事件|Showing the most recent 1000 events/);
+  });
+
+  it('expands and collapses all rows', async () => {
+    const wrapper = await mountPanel();
+    const vm = wrapper.vm as unknown as PanelVm;
+
+    vm.expandAll();
+    await nextTick();
+    expect(vm.toolsCollapsed).toBe(false);
+    expect(vm.lifecycleCollapsed).toBe(false);
+    expect(wrapper.text()).toContain('"path": "README.md"');
+
+    vm.collapseAll();
+    await nextTick();
+    expect(vm.toolsCollapsed).toBe(true);
+    expect(vm.lifecycleCollapsed).toBe(true);
+    expect(wrapper.text()).not.toContain('"path": "README.md"');
+  });
+
+  it('shows the no-session state without a sid and does not fetch', async () => {
+    routeState.sid = '';
+
+    const wrapper = await mountPanel();
+
+    expect(bridge.fetchTrajectory).not.toHaveBeenCalled();
+    expect(wrapper.text()).toMatch(/请先打开一个会话|Open a session first/);
   });
 });
