@@ -175,6 +175,7 @@ sherry_agent/
 │   ├── session_memory/     # 세션 메모리 역량
 │   ├── summarization/      # 압축 트리거 및 쿨다운
 │   ├── loop-prevention/    # 폭주 루프 방지 하네스
+│   ├── llm-retry/         # 재시도 예산, fallback 상한, 차단 범위
 │   ├── sandbox/            # 평가 샌드박스 및 도구 격리
 │   ├── token-guard/        # 128K 컨텍스트 윈도우 하한
 │   ├── context-governance/ # 영속화, 축출, 테일 클립, 요약 필터링
@@ -328,6 +329,7 @@ sherry_agent/
 | **Heartbeat 서비스** | 주기적 웨이크업 작업 확인 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
 | **요약 압축** | 컨텍스트 압축 미들웨어: 5개 트리거 지점, 4경로 오버플로 라우터, 스래싱 방지 가드 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
 | **루프 방지** | 폭주 루프 가드, 지수 백오프 브레이커, 프로세스 크래시 게이팅 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM 재시도 예산** | 제공자 재시도 예산과 카운트: 물리/예산 시도, `Retry-After` 백오프, 턴당 fallback 상한, 타임아웃 차단 범위 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
 | **샌드박스** | 터미널 및 Python REPL 격리: 환경 변수 스크러빙, OS 네이티브 격리, 승인 게이트 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **위협 모델** | 신뢰 경계, 데이터 분류, 위협별 방어 현황, 그리고 prompt 주입 스캐너 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **사용자 로그인** | 선택형 계정 보호: loopback 클라이언트는 면제되며, 원격 접근은 scrypt 비밀번호와 HttpOnly JWT 세션 쿠키로 제어됩니다 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |

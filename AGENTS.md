@@ -866,10 +866,28 @@ budget. `config/features/agent_side/llm_retry.py::LLM_RETRY` defaults:
 `max_retries=10` (11 total attempts), `base_delay=2.0`, `backoff_factor=2.0`,
 `max_delay=60.0`, `jitter_mode="full"` (0.5–1.0×), `respect_retry_after=True`,
 `retry_after_cap_s=300`, `empty_completion_retries=1`, `emit_retry_events=True`,
+`max_fallback_switches=1`, `stale_giveup_scope="turn"`,
 `stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
 `Retry-After` parsing (`retry-after-ms`, seconds, HTTP-date; read off the SDK
 exception's `headers`/`response.headers` and carried by
 `ClassifiedError.retry_after_s`).
+
+**Counting model (ZCode parity).** Every `wrap_model_call` / `awrap_model_call`
+starts a fresh local budget (`retry_count = 0`), so a new model call is a new
+11-attempt request budget. The event distinguishes `attempt` (PHYSICAL request
+number, would include extra attempts), `budget_attempt` (`attempt` minus
+`extra_attempts`), `retries` (`budget_attempt - 1`) and
+`max_attempts = 1 + max_retries + extra_attempts`. Only a new request path
+resets the budget: fallback activation, multimodal skill degradation and a
+content-filter rebind. Empty completion CONSUMES one ordinary retry (and is
+separately capped by `empty_completion_retries`); auth-refresh / signature-repair
+extra attempts (not implemented — no provider seam) would use subtraction, not a
+reset. `before_agent` resets the per-turn `llm_fallback_switches` counter and,
+when `stale_giveup_scope="turn"`, the cross-call `llm_stale_streak`; the breaker
+still aborts the current turn at 5 consecutive timeouts, but a later turn gets a
+fresh chance instead of being wedged forever. `max_fallback_switches` caps model
+switches per turn (0 disables fallback, including a sticky candidate); the
+session-level sticky `llm_fallback_index` is unchanged.
 
 The loop re-calls on classified retryable failures, emits one
 `model_retry` event per scheduled/succeeded/exhausted transition, and keeps the
@@ -884,9 +902,14 @@ to the session's sockets (`retry_events.py` → `broadcast_to_session`) as:
 ```text
 {"event":"model_retry","session_id":…,"content":{
   "status":"scheduled"|"succeeded"|"exhausted",
-  "attempt":2,"max_attempts":11,"retries":1,
+  "attempt":2,"budget_attempt":2,"max_attempts":11,"retries":1,
+  "extra_attempts":0,"fallback_switches":0,
   "reason":"rate_limit","delay_ms":1000}}
 ```
+
+`attempt` is physical; `budget_attempt` / `retries` exclude the extra attempts;
+`fallback_switches` is the per-turn count. An exhausted empty completion reports
+its own attempt (e.g. `2/11` after one retry), not the 11th attempt.
 
 The client maps both WS stacks (`composables/ws.ts` and
 `agent-socket-frames.ts`) to `ws:model_retry`; `use-chat-stream` decorates the

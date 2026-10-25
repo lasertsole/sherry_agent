@@ -576,8 +576,11 @@ describe('useChatStream busy reconcile triggers', () => {
       content: {
         status: 'scheduled',
         attempt: 2,
+        budget_attempt: 2,
         max_attempts: 11,
         retries: 1,
+        extra_attempts: 0,
+        fallback_switches: 1,
         reason: 'rate_limit',
         delay_ms: 2000
       }
@@ -586,8 +589,11 @@ describe('useChatStream busy reconcile triggers', () => {
     expect(ai?.retryStatus).toMatchObject({
       status: 'scheduled',
       attempt: 2,
+      budgetAttempt: 2,
       maxAttempts: 11,
       retries: 1,
+      extraAttempts: 0,
+      fallbackSwitches: 1,
       reason: 'rate_limit',
       delayMs: 2000
     });

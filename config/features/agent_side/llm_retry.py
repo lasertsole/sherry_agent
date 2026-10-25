@@ -21,6 +21,12 @@ class LlmRetryConfig(TypedDict):
     empty_completion_retries: int
     #: Push a `model_retry` WS frame + trajectory event per retry.
     emit_retry_events: bool
+    #: Maximum fallback-model switches per user turn (ZCode allows one); 0
+    #: disables fallback for the turn, including a sticky candidate.
+    max_fallback_switches: int
+    #: "turn" resets the timeout streak at every main-agent turn; "session"
+    #: keeps the old cross-turn breaker.
+    stale_giveup_scope: Literal["turn", "session"]
     stale_giveup_threshold: int
 
 
@@ -35,5 +41,7 @@ LLM_RETRY: LlmRetryConfig = {
     "retry_after_cap_s": 300.0,
     "empty_completion_retries": 1,
     "emit_retry_events": True,
+    "max_fallback_switches": 1,
+    "stale_giveup_scope": "turn",
     "stale_giveup_threshold": 5,
 }

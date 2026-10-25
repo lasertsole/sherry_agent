@@ -701,8 +701,11 @@ export function useChatStream(deps: ChatStreamDeps) {
       content?: {
         status?: string;
         attempt?: number;
+        budget_attempt?: number;
         max_attempts?: number;
         retries?: number;
+        extra_attempts?: number;
+        fallback_switches?: number;
         reason?: string;
         delay_ms?: number;
       };
@@ -716,8 +719,11 @@ export function useChatStream(deps: ChatStreamDeps) {
     aiMsg.retryStatus = {
       status: content.status as 'scheduled' | 'succeeded' | 'exhausted',
       attempt: Number(content.attempt ?? 1),
+      budgetAttempt: Number(content.budget_attempt ?? content.attempt ?? 1),
       maxAttempts: Number(content.max_attempts ?? 1),
       retries: Number(content.retries ?? 0),
+      extraAttempts: Number(content.extra_attempts ?? 0),
+      fallbackSwitches: Number(content.fallback_switches ?? 0),
       reason: content.reason ? String(content.reason) : undefined,
       delayMs: Number(content.delay_ms ?? 0)
     };

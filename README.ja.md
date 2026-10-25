@@ -175,6 +175,7 @@ sherry_agent/
 │   ├── session_memory/     # セッションメモリのケイパビリティ
 │   ├── summarization/      # 圧縮トリガーとクールダウン
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
+│   ├── llm-retry/         # リトライ予算、fallback 上限、遮断範囲
 │   ├── sandbox/            # 評価サンドボックスとツール分離
 │   ├── token-guard/        # 128K コンテキストウィンドウ下限
 │   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
@@ -328,6 +329,7 @@ sherry_agent/
 | **Heartbeat サービス** | 定期ウェイクアップタスクチェック | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
 | **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
 | **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM リトライ予算** | プロバイダーリトライの予算とカウント：物理/予算試行、`Retry-After` バックオフ、ターンごとの fallback 上限、タイムアウト遮断の範囲 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
 | **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |

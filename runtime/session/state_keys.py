@@ -33,6 +33,8 @@ class StateKey(StrEnum):
 
     LLM_STALE_STREAK = "llm_stale_streak"
     LLM_FALLBACK_INDEX = "llm_fallback_index"
+    # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.
+    LLM_FALLBACK_SWITCHES = "llm_fallback_switches"
     LLM_CONTENT_FILTER_BLOCKED = "llm_content_filter_blocked"
     LLM_CONTENT_FILTER_TERMINATED = "llm_content_filter_terminated"
     LLM_PARTIAL_STREAM_STUB = "llm_partial_stream_stub"

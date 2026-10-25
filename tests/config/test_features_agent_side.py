@@ -154,6 +154,8 @@ SPOT_DEFAULTS = [
     (LLM_RETRY, "jitter_mode", "full"),
     (LLM_RETRY, "respect_retry_after", True),
     (LLM_RETRY, "empty_completion_retries", 1),
+    (LLM_RETRY, "max_fallback_switches", 1),
+    (LLM_RETRY, "stale_giveup_scope", "turn"),
     (LLM_RETRY, "stale_giveup_threshold", 5),
     (MAX_TOKENS_BOOST, "default_max_tokens", 8192),
     (MAX_TOKENS_BOOST, "max_cap", 32_768),

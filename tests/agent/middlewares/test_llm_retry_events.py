@@ -42,8 +42,11 @@ async def test_publish_records_and_pushes_the_retry_frame(monkeypatch):
             {
                 "status": "scheduled",
                 "attempt": 2,
+                "budget_attempt": 2,
                 "max_attempts": 11,
                 "retries": 1,
+                "extra_attempts": 0,
+                "fallback_switches": 0,
                 "reason": "rate_limit",
                 "delay_ms": 2000,
             },

@@ -175,6 +175,7 @@ sherry_agent/
 │   ├── session_memory/     # 会话记忆能力
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
+│   ├── llm-retry/         # 重试预算、fallback 上限与熔断范围
 │   ├── sandbox/            # 评估沙箱与工具隔离
 │   ├── token-guard/        # 128K 上下文窗口下限
 │   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
@@ -328,6 +329,7 @@ sherry_agent/
 | **Heartbeat 服务** | 周期性唤醒任务检查 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
 | **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
 | **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM 重试预算** | 模型重试预算与计数：物理/预算尝试、`Retry-After` 退避、每回合 fallback 切换上限与超时熔断范围 | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
 | **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |

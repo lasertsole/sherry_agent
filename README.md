@@ -176,6 +176,7 @@ sherry_agent/
 │   ├── session_memory/     # Session-memory capabilities
 │   ├── summarization/      # Compression triggers & cooldown
 │   ├── loop-prevention/    # Runaway-loop prevention harness
+│   ├── llm-retry/         # Retry budget, fallback cap, stale-streak scope
 │   ├── sandbox/            # Eval sandbox & tool isolation
 │   ├── token-guard/        # 128K context-window floor
 │   ├── context-governance/ # Persistence, eviction, tail clip, summary filtering
@@ -329,6 +330,7 @@ Each major subsystem has its own detailed README:
 | **Heartbeat Service** | Periodic wake-up task check | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
 | **Summarization** | Context compaction middleware: five trigger points, a 4-route overflow router, anti-thrash guards | [EN](wiki/summarization/README.md) · [ZH](wiki/summarization/README.zh.md) · [JA](wiki/summarization/README.ja.md) · [KO](wiki/summarization/README.ko.md) |
 | **Loop Prevention** | Runaway-loop guards, exponential-backoff breakers, and process crash gating | [EN](wiki/loop-prevention/README.md) · [ZH](wiki/loop-prevention/README.zh.md) · [JA](wiki/loop-prevention/README.ja.md) · [KO](wiki/loop-prevention/README.ko.md) |
+| **LLM Retry Budget** | Provider retry budget & counting: physical vs budget attempts, `Retry-After` backoff, a per-turn fallback switch cap, and the timeout-breaker reset scope | [EN](wiki/llm-retry/README.md) · [ZH](wiki/llm-retry/README.zh.md) · [JA](wiki/llm-retry/README.ja.md) · [KO](wiki/llm-retry/README.ko.md) |
 | **Sandbox** | Terminal & Python REPL confinement: env scrubbing, OS-native isolation, approval gate | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **Threat Model** | Trust boundaries, data classification, per-threat protection status, and the prompt-injection scanner | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **User Login** | Opt-in account protection: loopback clients stay exempt, remote access is gated by a scrypt password and HttpOnly JWT session cookies | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |

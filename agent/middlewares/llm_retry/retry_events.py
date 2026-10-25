@@ -35,6 +35,9 @@ def publish_model_retry(
     attempt: int,
     max_attempts: int,
     retries: int,
+    budget_attempt: int | None = None,
+    extra_attempts: int = 0,
+    fallback_switches: int = 0,
     reason: str = "",
     delay_ms: float = 0.0,
 ) -> None:
@@ -42,11 +45,16 @@ def publish_model_retry(
     session_id = (session_id or "").strip()
     if not session_id:
         return
+    physical = max(1, int(attempt))
+    extra = max(0, int(extra_attempts))
     content: dict[str, Any] = {
         "status": status,
-        "attempt": max(1, int(attempt)),
+        "attempt": physical,
+        "budget_attempt": max(1, int(budget_attempt if budget_attempt is not None else physical)),
         "max_attempts": max(1, int(max_attempts)),
         "retries": max(0, int(retries)),
+        "extra_attempts": extra,
+        "fallback_switches": max(0, int(fallback_switches)),
         "reason": str(reason or ""),
         "delay_ms": max(0, round(float(delay_ms or 0.0))),
     }

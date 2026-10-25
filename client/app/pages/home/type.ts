@@ -115,11 +115,17 @@ export interface MessageItem {
    */
   retryStatus?: {
     status: 'scheduled' | 'succeeded' | 'exhausted';
-    /** Total attempt number represented by this frame (2 = first retry). */
+    /** Physical attempt number represented by this frame (includes extras). */
     attempt: number;
+    /** Attempts that consumed the ordinary retry budget. */
+    budgetAttempt?: number;
     maxAttempts: number;
     /** How many retries had completed when this frame was emitted. */
     retries: number;
+    /** Auth-refresh / signature-repair attempts (they do not consume budget). */
+    extraAttempts?: number;
+    /** Fallback switches already made this turn. */
+    fallbackSwitches?: number;
     reason?: string;
     delayMs?: number;
   };
