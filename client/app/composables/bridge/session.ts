@@ -783,6 +783,11 @@ export interface SessionModelProfile {
   api_key?: string;
   /** The model's context window (decimal string); absent = the env window. */
   context_window?: string;
+  /**
+   * Subagent-only output cap (decimal string, min 8192). Absent = 8192; the
+   * backend also applies the default for legacy role profiles.
+   */
+  max_output_tokens?: string;
 }
 
 /** A stored override as returned by the backend (credential masked). */

@@ -194,6 +194,50 @@ class TestPublicBuilder:
 
         assert seen["kwargs"]["profile"]["max_input_tokens"] == 32768
 
+    def test_a_role_profile_output_cap_overrides_the_env_budget(self, monkeypatch):
+        seen: dict = {}
+
+        class _RecordingClient:
+            def __init__(self, **kwargs):
+                seen["kwargs"] = kwargs
+
+        class _FakeNormalizer:
+            def __init__(self, inner):
+                self.inner = inner
+
+        monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
+
+        main_llm_module.build_main_llm_for_profile(
+            provider="deepseek", model="role-model", max_output_tokens=16384, thinking=False
+        )
+
+        assert seen["kwargs"]["max_tokens"] == 16384
+
+    def test_role_profile_output_cap_also_bases_the_thinking_headroom(self, monkeypatch):
+        seen: dict = {}
+
+        class _RecordingClient:
+            def __init__(self, **kwargs):
+                seen["kwargs"] = kwargs
+
+        class _FakeNormalizer:
+            def __init__(self, inner):
+                self.inner = inner
+
+        monkeypatch.setattr(main_llm_module, "init_chat_model", _RecordingClient)
+        monkeypatch.setattr(main_llm_module, "NormalizingChatModel", _FakeNormalizer)
+
+        main_llm_module.build_main_llm_for_profile(
+            provider="deepseek",
+            model="role-model",
+            max_output_tokens=16384,
+            thinking=True,
+        )
+
+        budget = REASONING_BUDGET["non_anthropic_default_thinking_budget"]
+        assert seen["kwargs"]["max_tokens"] == 16384 + budget
+
     def test_thinking_budget_is_inflated_in_the_built_config(self, monkeypatch):
         """glm-* goes through ReasoningChatOpenAI, so spy on both client paths."""
         seen: dict = {}

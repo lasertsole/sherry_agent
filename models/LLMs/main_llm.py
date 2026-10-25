@@ -76,17 +76,23 @@ def apply_thinking_budget(
     enabled: bool,
     *,
     level: str | None = None,
+    base_output_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Inflate ``max_tokens`` by the provider's thinking budget when thinking is on.
 
     Thinking tokens share the output budget, so the config gets headroom equal
     to :func:`get_thinking_budget`'s value. When thinking is off (or the model
     accepts no reasoning payload) the key stays ABSENT so providers keep
-    applying their own default output cap.
+    applying their own default output cap. ``base_output_tokens`` lets a
+    per-role profile keep its own cap instead of the MAIN env value.
     """
     budget = get_thinking_budget(provider, model_name, enabled, level=level)
     if budget > 0:
-        base = MAX_OUTPUT_TOKENS or OUTPUT_MAX_TOKEN
+        base = (
+            base_output_tokens
+            if base_output_tokens is not None
+            else (MAX_OUTPUT_TOKENS or OUTPUT_MAX_TOKEN)
+        )
         model_config["max_tokens"] = base + budget
     return model_config
 
@@ -328,6 +334,7 @@ def _profile_client_config(
     api_key: str | None = None,
     base_url: str | None = None,
     context_window: int | None = None,
+    max_output_tokens: int | None = None,
     custom_mapping: dict[str, Any] | None = None,
     thinking: bool | None = None,
     thinking_level: str | None = None,
@@ -338,9 +345,12 @@ def _profile_client_config(
     Provider/model replace the env identity; a missing provider or credential
     falls back to the ``MAIN_LLM_*`` env value, so an override that only names
     a different model keeps the configured gateway and key. Thinking handling
-    mirrors the env path via :func:`_reasoning_for_state`.
+    mirrors the env path via :func:`_reasoning_for_state`. ``max_output_tokens``
+    lets a subagent's per-role profile carry its own output cap; ``None`` keeps
+    the env family's ``MAX_OUTPUT_TOKENS``.
     """
     effective_provider = provider or model_provider
+    output_tokens = max_output_tokens if max_output_tokens is not None else MAX_OUTPUT_TOKENS
     config: dict[str, Any] = clean_client_kwargs(
         {
             "model_provider": effective_provider,
@@ -352,7 +362,7 @@ def _profile_client_config(
             "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
             "profile": {"max_input_tokens": context_window if context_window else max_tokens},
-            **resolve_max_output_kwargs(effective_provider, model, MAX_OUTPUT_TOKENS),
+            **resolve_max_output_kwargs(effective_provider, model, output_tokens),
             **family_repetition_penalty_kwargs("MAIN_LLM", effective_provider, model),
         }
     )
@@ -365,7 +375,14 @@ def _profile_client_config(
         custom_mapping=custom_mapping,
     )
     config.update(reasoning)
-    apply_thinking_budget(config, effective_provider, model, budget_enabled, level=level_used)
+    apply_thinking_budget(
+        config,
+        effective_provider,
+        model,
+        budget_enabled,
+        level=level_used,
+        base_output_tokens=output_tokens,
+    )
     return config
 
 
@@ -376,6 +393,7 @@ def build_main_llm_for_profile(
     api_key: str | None = None,
     base_url: str | None = None,
     context_window: int | None = None,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
     thinking: bool | None = None,
     thinking_level: str | None = None,
@@ -397,6 +415,8 @@ def build_main_llm_for_profile(
     ``MAIN_LLM_ENABLE_THINKING`` default. The context window
     (``profile.max_input_tokens``) stays the env's ``MAIN_LLM_MAX_TOKEN``: the
     token guard reads that process-wide value, it is not a per-profile knob.
+    ``max_output_tokens`` is the subagent role profile's own cap; ``None`` keeps
+    the env family's output budget.
     """
     effective_provider = provider or model_provider
     config = _profile_client_config(
@@ -405,6 +425,7 @@ def build_main_llm_for_profile(
         api_key=api_key,
         base_url=base_url,
         context_window=context_window,
+        max_output_tokens=max_output_tokens,
         custom_mapping=custom_mapping,
         thinking=thinking,
         thinking_level=thinking_level,

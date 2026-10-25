@@ -456,14 +456,31 @@
                           }}
                         </div>
                       </div>
-                      <Select
-                        :model-value="agentRoleModelId(role.role)"
-                        :options="agentRoleModelOptions"
-                        option-label="label"
-                        option-value="value"
-                        class="w-56"
-                        :data-test="`agent-role-model-${role.role}`"
-                        @update:model-value="value => setRoleModel(role.role, value)" />
+                      <div class="flex shrink-0 flex-col items-stretch gap-1">
+                        <Select
+                          :model-value="agentRoleModelId(role.role)"
+                          :options="agentRoleModelOptions"
+                          option-label="label"
+                          option-value="value"
+                          class="w-56"
+                          :data-test="`agent-role-model-${role.role}`"
+                          @update:model-value="value => setRoleModel(role.role, value)" />
+                        <label
+                          v-if="agentRoleModelId(role.role) !== FOLLOW_TIER_ID"
+                          class="flex items-center justify-between gap-1 text-[11px] text-gray-400">
+                          <span>{{ t('config.agent.subagents.maxOutput') }}</span>
+                          <input
+                            type="number"
+                            min="8192"
+                            step="1024"
+                            class="w-24 rounded border border-solid border-gray-light bg-transparent px-1.5 py-0.5 text-right text-xs text-gray-600 outline-none focus:border-theme-main dark:border-[#555] dark:text-gray-300"
+                            :value="agentRoleMaxOutput(role.role)"
+                            :title="t('config.agent.subagents.maxOutputHint')"
+                            :aria-label="t('config.agent.subagents.maxOutput')"
+                            :data-test="`agent-role-max-output-${role.role}`"
+                            @change="event => setRoleModelMaxOutput(role.role, event)" />
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -785,6 +802,8 @@ const agentTools = ref<string[]>([]);
 const agentDisabledMiddlewares = ref<string[]>([]);
 /** role → chosen env-config profile id (`''` = follow the role tier). */
 const agentRoleModels = ref<Record<string, string>>({});
+/** role → the role profile's own output cap (decimal string, min 8192). */
+const agentRoleMaxOutputs = ref<Record<string, string>>({});
 /** Skill names whose index entries enter the prompt (`null` = every skill). */
 const agentSkills = ref<string[] | null>(null);
 /** Main-agent model for this preset (`ENV_MODEL_ID` = follow the env config). */
@@ -1050,6 +1069,9 @@ const toggleMiddleware = (name: string): void => {
     : [...agentDisabledMiddlewares.value, name];
 };
 
+/** The 8K business floor for a role profile's output cap. */
+const MIN_ROLE_MAX_OUTPUT_TOKENS = 8192;
+
 /**
  * The profile id a role's picker shows (`''` = follow the tier).
  * @param role
@@ -1057,15 +1079,48 @@ const toggleMiddleware = (name: string): void => {
 const agentRoleModelId = (role: string): string => agentRoleModels.value[role] || FOLLOW_TIER_ID;
 
 /**
- * Point one role at an env-config profile (or back at its tier).
+ * A role's output cap, defaulting to the 8K floor when the draft is empty.
+ * @param role Functional role.
+ */
+const agentRoleMaxOutput = (role: string): number => {
+  const parsed = Number(agentRoleMaxOutputs.value[role]);
+  return Number.isFinite(parsed) && parsed >= MIN_ROLE_MAX_OUTPUT_TOKENS ? parsed : MIN_ROLE_MAX_OUTPUT_TOKENS;
+};
+
+/**
+ * Point one role at an env-config profile (or back at its tier). Selecting a
+ * profile seeds the output cap from that profile (default 8192).
  * @param role Functional role.
  * @param profileId Chosen profile id (`''` = follow the tier).
  */
 const setRoleModel = (role: string, profileId: string): void => {
   const chosen = String(profileId ?? '');
+  const profile = chosen && chosen !== FOLLOW_TIER_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
   agentRoleModels.value = {
     ...agentRoleModels.value,
     [role]: chosen === FOLLOW_TIER_ID ? '' : chosen
+  };
+  agentRoleMaxOutputs.value = {
+    ...agentRoleMaxOutputs.value,
+    [role]: profile
+      ? (llmProfiles.toSubagentProfile(profile).max_output_tokens ?? String(MIN_ROLE_MAX_OUTPUT_TOKENS))
+      : ''
+  };
+};
+
+/**
+ * Update a role's output cap in the draft, clamped to the 8K floor.
+ * @param role Functional role.
+ * @param event Change event from the numeric input.
+ */
+const setRoleModelMaxOutput = (role: string, event: Event): void => {
+  const parsed = Number((event.target as HTMLInputElement).value);
+  const next = Number.isFinite(parsed)
+    ? Math.max(MIN_ROLE_MAX_OUTPUT_TOKENS, Math.trunc(parsed))
+    : MIN_ROLE_MAX_OUTPUT_TOKENS;
+  agentRoleMaxOutputs.value = {
+    ...agentRoleMaxOutputs.value,
+    [role]: String(next)
   };
 };
 
@@ -1084,7 +1139,8 @@ const buildAgentDraft = (): AgentConfig => {
       continue;
     }
     const profile = llmProfiles.byId('MAIN_LLM', profileId);
-    models[role.role] = profile ? llmProfiles.toSessionProfile(profile) : null;
+    const base = profile ? llmProfiles.toSubagentProfile(profile) : null;
+    models[role.role] = base ? { ...base, max_output_tokens: String(agentRoleMaxOutput(role.role)) } : null;
   }
   const anyModel = Object.values(models).some(value => value !== null);
   const block: AgentConfig = {};
@@ -1118,10 +1174,13 @@ const fillAgentDraft = (block: AgentConfig | undefined): void => {
   agentTools.value = configured ? allTools.filter(name => configured.includes(name)) : [...allTools];
   agentDisabledMiddlewares.value = [...(block?.middlewares_disabled ?? [])];
   const models: Record<string, string> = {};
+  const outputs: Record<string, string> = {};
   for (const [role, profile] of Object.entries(block?.subagent_models ?? {})) {
     models[role] = profile?.id ?? '';
+    outputs[role] = profile?.max_output_tokens ?? String(MIN_ROLE_MAX_OUTPUT_TOKENS);
   }
   agentRoleModels.value = models;
+  agentRoleMaxOutputs.value = outputs;
   agentSkills.value = Array.isArray(block?.skills) ? [...block.skills] : null;
   agentNudge.value = block?.middleware_options?.Summarization?.nudge !== false;
 };
@@ -1701,6 +1760,8 @@ const handleApply = async () => {
           "followTier": "跟随角色默认",
           "tier": "角色默认：{tier}",
           "tierDepth": "无角色定义：按深度默认",
+          "maxOutput": "最大输出",
+          "maxOutputHint": "该角色模型自己的最大输出 token（默认 8192）；它决定子代理结果存储、投递、摘要、判别器和回读上限的缩放。",
           "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
           "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
         },
@@ -1997,6 +2058,8 @@ const handleApply = async () => {
           "followTier": "Follow the role default",
           "tier": "Role default: {tier}",
           "tierDepth": "No role definition: depth default",
+          "maxOutput": "Max output",
+          "maxOutputHint": "This role model's own max-output tokens (default 8192); it scales the subagent result storage, delivery, summary, judge and transcript caps.",
           "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
           "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
         },
@@ -2293,6 +2356,8 @@ const handleApply = async () => {
           "followTier": "ロール既定に従う",
           "tier": "ロール既定: {tier}",
           "tierDepth": "ロール定義なし: 深度の既定",
+          "maxOutput": "最大出力",
+          "maxOutputHint": "このロールモデル自身の最大出力トークン（既定 8192）。子エージェントの結果保存・配信・要約・判定・読み戻し上限の拡大縮小に使われます。",
           "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
           "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
         },
@@ -2589,6 +2654,8 @@ const handleApply = async () => {
           "followTier": "역할 기본값 따르기",
           "tier": "역할 기본값: {tier}",
           "tierDepth": "역할 정의 없음: 깊이 기본값",
+          "maxOutput": "최대 출력",
+          "maxOutputHint": "이 역할 모델 자체의 최대 출력 토큰(기본 8192)입니다. 하위 에이전트 결과 저장·전달·요약·판정·읽기 상한의 확대/축소에 사용됩니다.",
           "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
           "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
         },

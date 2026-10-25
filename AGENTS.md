@@ -198,10 +198,14 @@ User message → Robyn WS → agent.core.built_agent() graph
      delivery (4000 chars), summary (2000), judge view (8000) and transcript
      read (4000/500 tokens) are calibrated at an 8000-token output window. A
      configured `*_MAX_OUTPUT_TOKEN=W` multiplies each by `W/8000` (8192 →
-     ×1.024), while an unset value keeps the legacy numbers exactly. The
-     effective limit is resolved at spawn (role profile / tier / depth role)
-     and frozen on the run's `max_output_tokens`; completion, delivery,
-     announcement, the completion judge and `sessions_messages` all read it.
+     ×1.024), while an unset value keeps the legacy numbers exactly. A
+     per-role model profile carries its OWN `max_output_tokens` (decimal
+     string, default 8192, min 8K) and that value is used both for the child's
+     request and for these result caps — it no longer follows the MAIN env
+     budget. Tier and depth-role children read the MAIN/AUXILIARY env cap. The
+     effective limit is resolved at spawn and frozen on the run's
+     `max_output_tokens`; completion, delivery, announcement, the completion
+     judge and `sessions_messages` all read it.
 
      Checkpoint retention is latest-only per thread: a child's
      `_release_child_resources` prunes its thread to the newest top-level

@@ -142,30 +142,40 @@ export const useLlmProfilesStore = defineStore(
     const byId = (group: string, id: string | null): LlmProfile | undefined =>
       id === null ? undefined : listFor(group).find(p => p.id === id);
 
+    /** First non-empty env-config parameter among *keys*. */
+    const pickParam = (profile: LlmProfile, ...keys: string[]): string | undefined => {
+      for (const key of keys) {
+        const value = profile.params[key];
+        if (value) return value;
+      }
+      return undefined;
+    };
+
     /**
-     * The bridge descriptor for one profile — the shape `PUT /sessions/model` and
-     * `AGENT_CONFIG.subagent_models` accept (env-config parameter keys mapped to
-     * their transport fields).
+     * The bridge descriptor for one profile — the shape `PUT /sessions/model`
+     * accepts (env-config parameter keys mapped to their transport fields).
      * @param profile Env-config profile row.
      */
-    const toSessionProfile = (profile: LlmProfile): SessionModelProfile => {
-      const pick = (...keys: string[]): string | undefined => {
-        for (const key of keys) {
-          const value = profile.params[key];
-          if (value) return value;
-        }
-        return undefined;
-      };
-      return {
-        id: profile.id,
-        label: profile.label,
-        provider: pick('MAIN_LLM_PROVIDER', 'PROVIDER'),
-        model: pick('MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profile.label,
-        base_url: pick('MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
-        api_key: pick('MAIN_LLM_API_KEY', 'API_KEY'),
-        context_window: pick('MAIN_LLM_MAX_TOKEN', 'MAX_TOKEN', 'CONTEXT_WINDOW')
-      };
-    };
+    const toSessionProfile = (profile: LlmProfile): SessionModelProfile => ({
+      id: profile.id,
+      label: profile.label,
+      provider: pickParam(profile, 'MAIN_LLM_PROVIDER', 'PROVIDER'),
+      model: pickParam(profile, 'MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profile.label,
+      base_url: pickParam(profile, 'MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
+      api_key: pickParam(profile, 'MAIN_LLM_API_KEY', 'API_KEY'),
+      context_window: pickParam(profile, 'MAIN_LLM_MAX_TOKEN', 'MAX_TOKEN', 'CONTEXT_WINDOW')
+    });
+
+    /**
+     * The role-profile variant (`AGENT_CONFIG.subagent_models`): the same
+     * descriptor plus the role's own output cap. It starts at the 8192 default
+     * and is edited per role; it deliberately does NOT inherit the MAIN env cap.
+     * @param profile Env-config profile row.
+     */
+    const toSubagentProfile = (profile: LlmProfile): SessionModelProfile => ({
+      ...toSessionProfile(profile),
+      max_output_tokens: '8192'
+    });
 
     /** Test seam: drop all client-side profiles and active markers. */
     const _resetForTest = (): void => {
@@ -185,6 +195,7 @@ export const useLlmProfilesStore = defineStore(
       setActive,
       byId,
       toSessionProfile,
+      toSubagentProfile,
       _resetForTest
     };
   },

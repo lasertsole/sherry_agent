@@ -810,3 +810,8 @@ def test_service_model_override_rejects_a_bad_context_window(registers):
     for bad in ("abc", "0", "-1", "1.5"):
         with pytest.raises(ValueError):
             service.set_main_model_override("m6", {**_DESCRIPTOR, "context_window": bad})
+
+
+def test_the_main_model_override_does_not_accept_the_subagent_output_cap(registers):
+    with pytest.raises(ValueError, match="unknown profile field"):
+        service.set_main_model_override("m6", {**_DESCRIPTOR, "max_output_tokens": "16384"})

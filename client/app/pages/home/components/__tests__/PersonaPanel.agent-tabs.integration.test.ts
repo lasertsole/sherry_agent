@@ -56,6 +56,35 @@ const agentStore = vi.hoisted(() => ({
 
 vi.stubGlobal('useAgentConfigStore', () => agentStore.state);
 
+/** One env-config MAIN_LLM profile, enough to exercise the role-model drafts. */
+const llmProfilesStub = vi.hoisted(() => {
+  const profile = {
+    id: 'p1',
+    label: '测试档案',
+    params: { MAIN_LLM_NAME: 'glm-4.6', MAIN_LLM_PROVIDER: 'zhipu', MAIN_LLM_API_KEY: 'k' }
+  };
+  return {
+    listFor: () => [profile],
+    byId: (_group: string, id: string | null) => (id === 'p1' ? profile : undefined),
+    toSessionProfile: () => ({
+      id: 'p1',
+      label: '测试档案',
+      provider: 'zhipu',
+      model: 'glm-4.6',
+      api_key: 'k'
+    }),
+    toSubagentProfile: () => ({
+      id: 'p1',
+      label: '测试档案',
+      provider: 'zhipu',
+      model: 'glm-4.6',
+      api_key: 'k',
+      max_output_tokens: '8192'
+    })
+  };
+});
+vi.stubGlobal('useLlmProfilesStore', () => llmProfilesStub);
+
 const AGENTS = '# AGENTS.md\nbody';
 const SOUL = '# SOUL.md\nbody';
 const USER = '# USER.md\nbody';
@@ -248,6 +277,41 @@ describe('PersonaPanel agent-config tabs', () => {
     await flushPromises();
     expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(false);
+  });
+
+  it('stores a role profile output cap with the picked model', async () => {
+    const panel = await mountPanel();
+    await panel.get('[data-test="agent-models-scope-subagent"]').trigger('click');
+    await flushPromises();
+
+    await panel.get('[data-test="agent-role-model-researcher"]').setValue('p1');
+    await flushPromises();
+    const input = panel.get('[data-test="agent-role-max-output-researcher"]');
+    expect((input.element as HTMLInputElement).value).toBe('8192');
+
+    (input.element as HTMLInputElement).value = '16384';
+    await input.trigger('change');
+
+    const saveButton = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存预设');
+    await saveButton!.trigger('click');
+    await flushPromises();
+    await panel.find('.dlg .it').setValue('角色输出预设');
+    const confirm = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存');
+    await confirm!.trigger('click');
+    await flushPromises();
+
+    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({
+      subagent_models: {
+        researcher: {
+          id: 'p1',
+          label: '测试档案',
+          provider: 'zhipu',
+          model: 'glm-4.6',
+          api_key: 'k',
+          max_output_tokens: '16384'
+        }
+      }
+    });
   });
 
   it('stores the draft in a saved preset and collapses "all on" to an empty block', async () => {

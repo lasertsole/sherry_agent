@@ -114,14 +114,31 @@
                     }}
                   </div>
                 </div>
-                <Select
-                  :model-value="roleModelId(role.role)"
-                  :options="roleModelOptions"
-                  option-label="label"
-                  option-value="value"
-                  class="w-52"
-                  :data-test="`session-preset-role-model-${role.role}`"
-                  @update:model-value="value => setRoleModel(role.role, value)" />
+                <div class="flex shrink-0 flex-col items-stretch gap-1">
+                  <Select
+                    :model-value="roleModelId(role.role)"
+                    :options="roleModelOptions"
+                    option-label="label"
+                    option-value="value"
+                    class="w-52"
+                    :data-test="`session-preset-role-model-${role.role}`"
+                    @update:model-value="value => setRoleModel(role.role, value)" />
+                  <label
+                    v-if="roleModelId(role.role) !== FOLLOW_TIER_ID"
+                    class="flex items-center justify-between gap-1 text-[11px] text-gray-400">
+                    <span>{{ t('config.agent.subagents.maxOutput') }}</span>
+                    <input
+                      type="number"
+                      min="8192"
+                      step="1024"
+                      class="w-24 rounded border border-solid border-gray-light bg-transparent px-1.5 py-0.5 text-right text-xs text-gray-600 outline-none focus:border-theme-main dark:border-[#555] dark:text-gray-300"
+                      :value="roleMaxOutput(role.role)"
+                      :title="t('config.agent.subagents.maxOutputHint')"
+                      :aria-label="t('config.agent.subagents.maxOutput')"
+                      :data-test="`session-preset-role-max-output-${role.role}`"
+                      @change="event => onRoleMaxOutputChange(role.role, event)" />
+                  </label>
+                </div>
               </div>
             </template>
             <!-- Advanced: the per-session custom thinking wire mapping
@@ -546,7 +563,40 @@ const setRoleModel = async (role: string, profileId: string): Promise<void> => {
   const profile = chosen && chosen !== FOLLOW_TIER_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
   const current = agentStore.configOf(sid);
   const models = { ...(current.subagent_models ?? {}) };
-  models[role] = profile ? llmProfiles.toSessionProfile(profile) : null;
+  models[role] = profile ? llmProfiles.toSubagentProfile(profile) : null;
+  await agentStore.save(sid, { ...current, subagent_models: models });
+};
+
+/** The 8K business floor for a role profile's output cap. */
+const MIN_ROLE_MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * One role's output cap, defaulting to the 8K floor for legacy profiles.
+ * @param role Functional role.
+ */
+const roleMaxOutput = (role: string): number => {
+  const raw = agentStore.configOf(sessionId.value).subagent_models?.[role]?.max_output_tokens;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= MIN_ROLE_MAX_OUTPUT_TOKENS ? parsed : MIN_ROLE_MAX_OUTPUT_TOKENS;
+};
+
+/**
+ * Persist one role profile's output cap (the selected profile is preserved).
+ * @param role Functional role.
+ * @param event Change event from the numeric input.
+ */
+const onRoleMaxOutputChange = async (role: string, event: Event): Promise<void> => {
+  const sid = sessionId.value;
+  if (!sid) return;
+  const current = agentStore.configOf(sid);
+  const profile = current.subagent_models?.[role];
+  if (!profile) return;
+  const parsed = Number((event.target as HTMLInputElement).value);
+  const next = Number.isFinite(parsed)
+    ? Math.max(MIN_ROLE_MAX_OUTPUT_TOKENS, Math.trunc(parsed))
+    : MIN_ROLE_MAX_OUTPUT_TOKENS;
+  const models = { ...(current.subagent_models ?? {}) };
+  models[role] = { ...profile, max_output_tokens: String(next) };
   await agentStore.save(sid, { ...current, subagent_models: models });
 };
 

@@ -77,12 +77,13 @@
 
 ### ⚙️ 角色驱动什么
 
-**LLM 选择。** 显式 `model_override` 优先；否则由非 `general` 角色的 `model_tier` 生效；否则由深度角色决定（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）。
+**LLM 选择。** 角色模型 profile 优先（它还携带该子代理自己的 `max_output_tokens`，默认 8192）；否则显式 `model_override` 优先；否则由非 `general` 角色的 `model_tier` 生效；否则由深度角色决定（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）。
 
 ```text
-显式 model_override
-  └─► 功能角色 model_tier（"main" | "auxiliary"）
-        └─► 深度角色（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）
+角色模型 profile（自带 max_output_tokens，默认 8192）
+  └─► 显式 model_override
+        └─► 功能角色 model_tier（"main" | "auxiliary"）
+              └─► 深度角色（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）
 ```
 
 **系统提示词。** 非 `general` 角色（或任何非空角色描述/正文）会在 `## Your Role` 中加入 `{ROLE}` 特化行，并追加携带定义正文的 `## Role Instructions` 段落。
@@ -162,6 +163,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | `max_spawn_depth` | `SubagentConfig` | `2` | 角色翻转为 `LEAF` 的深度（硬上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 命令族 | 自动记入验证证据的命令 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 原值 | 已配置的 serving model 输出预算 `W` 会把存储/投递/摘要/判别器/回读上限按 `W/8000` 缩放；未设置保持原值 |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 角色模型 profile 自己的输出上限（十进制字符串，最低 8K）；同时驱动子代理请求和结果文本上限，与 MAIN 环境预算无关 |
 
 ## 🗺️ 测试地图
 

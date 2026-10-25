@@ -77,12 +77,13 @@
 
 ### ⚙️ 역할이 결정하는 것
 
-**LLM 선택.** 명시적 `model_override`가 최우선이고, 그다음 `general`이 아닌 역할의 `model_tier`가 적용되며, 그마저 없으면 깊이 역할이 결정합니다(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM).
+**LLM 선택.** 역할 모델 프로필이 최우선이며(자식 에이전트 자체의 `max_output_tokens`도 보유, 기본 8192), 그다음 명시적 `model_override`, 그다음 `general`이 아닌 역할의 `model_tier`가 적용되고, 그마저 없으면 깊이 역할이 결정합니다(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM).
 
 ```text
-명시적 model_override
-  └─► 기능 역할 model_tier("main" | "auxiliary")
-        └─► 깊이 역할(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM)
+역할 모델 프로필(자체 max_output_tokens, 기본 8192)
+  └─► 명시적 model_override
+        └─► 기능 역할 model_tier("main" | "auxiliary")
+              └─► 깊이 역할(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM)
 ```
 
 **시스템 프롬프트.** `general`이 아닌 역할(또는 비어 있지 않은 역할 설명/본문)은 `## Your Role`에 `{ROLE}` 특수화 줄을 더하고 정의 본문을 담은 `## Role Instructions` 절을 덧붙입니다.
@@ -162,6 +163,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | `max_spawn_depth` | `SubagentConfig` | `2` | 역할이 `LEAF`로 뒤집히는 깊이(하드 상한 `2`) |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 명령군 | 검증 증거로 자동 기록되는 명령 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 기존 값 | 설정된 serving model 출력 예산 `W`에 따라 저장/전달/요약/판정/읽기 상한을 `W/8000`으로 조정합니다. 미설정 시 기존 값 유지 |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 역할 모델 프로필 자체의 출력 상한(10진 문자열, 최소 8K)입니다. 자식 요청과 결과 텍스트 상한 모두에 사용되며 MAIN 환경 예산과 무관합니다 |
 
 ## 🗺️ 테스트 맵
 

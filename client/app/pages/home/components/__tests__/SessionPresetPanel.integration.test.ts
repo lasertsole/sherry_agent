@@ -157,6 +157,14 @@ function makeProfilesStore() {
       provider: 'zhipu',
       model: 'glm-4.6',
       api_key: 'k'
+    }),
+    toSubagentProfile: (p: typeof profile) => ({
+      id: p.id,
+      label: p.label,
+      provider: 'zhipu',
+      model: 'glm-4.6',
+      api_key: 'k',
+      max_output_tokens: '8192'
     })
   });
 }
@@ -455,7 +463,52 @@ describe('SessionPresetButton', () => {
     // The tool selection survives (the payload is merged, not replaced).
     expect(payload.tools).toEqual(['terminal']);
     expect(payload.subagent_models).toEqual({
-      researcher: { id: 'p1', label: '测试档案', provider: 'zhipu', model: 'glm-4.6', api_key: 'k' }
+      researcher: {
+        id: 'p1',
+        label: '测试档案',
+        provider: 'zhipu',
+        model: 'glm-4.6',
+        api_key: 'k',
+        max_output_tokens: '8192'
+      }
+    });
+  });
+
+  it('edits the role profile output cap and keeps the selected profile', async () => {
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    agentStoreState.current = makeAgentStore({
+      subagent_models: {
+        researcher: {
+          id: 'p1',
+          label: '测试档案',
+          provider: 'zhipu',
+          model: 'glm-4.6',
+          api_key: 'k',
+          max_output_tokens: '8192'
+        }
+      }
+    }).store;
+
+    const store = agentStoreState.current as { save: ReturnType<typeof vi.fn> };
+    const wrapper = await mountPanel();
+    await wrapper.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
+    await flushPromises();
+
+    const input = wrapper.get('[data-test="session-preset-role-max-output-researcher"]');
+    (input.element as HTMLInputElement).value = '16384';
+    await input.trigger('change');
+    await flushPromises();
+
+    const [, payload] = store.save.mock.calls[0] as [string, Record<string, unknown>];
+    expect(payload.subagent_models).toEqual({
+      researcher: {
+        id: 'p1',
+        label: '测试档案',
+        provider: 'zhipu',
+        model: 'glm-4.6',
+        api_key: 'k',
+        max_output_tokens: '16384'
+      }
     });
   });
 

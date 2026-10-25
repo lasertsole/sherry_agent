@@ -77,12 +77,13 @@
 
 ### ⚙️ ロールが駆動するもの
 
-**LLM 選択。** 明示的な `model_override` が最優先。次に `general` 以外のロールの `model_tier` が適用され、それも無ければ深度ロールが決めます（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）。
+**LLM 選択。** ロール モデル プロファイルが最優先です（子エージェント自身の `max_output_tokens` も保持し、既定は 8192）。次に明示的な `model_override`、次に `general` 以外のロールの `model_tier`、それも無ければ深度ロールが決めます（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）。
 
 ```text
-明示的な model_override
-  └─► 機能ロールの model_tier（"main" | "auxiliary"）
-        └─► 深度ロール（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）
+ロール モデル プロファイル（独自の max_output_tokens、既定 8192）
+  └─► 明示的な model_override
+        └─► 機能ロールの model_tier（"main" | "auxiliary"）
+              └─► 深度ロール（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）
 ```
 
 **システムプロンプト。** `general` 以外のロール（または非空のロール説明/本文）は `## Your Role` に `{ROLE}` 特化行を加え、定義本文を運ぶ `## Role Instructions` 節を追記します。
@@ -162,6 +163,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | `max_spawn_depth` | `SubagentConfig` | `2` | ロールが `LEAF` に反転する深度（ハード上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format のコマンド群 | 検証証跡として自動記録されるコマンド |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 旧値 | 設定された serving model の出力予算 `W` により、保存/配信/要約/判定/読み戻しの上限を `W/8000` で拡大縮小します。未設定なら旧値のままです |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | ロール モデル プロファイル自身の出力上限（10 進文字列、最低 8K）。子エージェントのリクエストと結果テキスト上限の両方に使われ、MAIN 環境予算とは独立です |
 
 ## 🗺️ テストマップ
 

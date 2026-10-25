@@ -44,7 +44,11 @@ from .plan import (
     resolve_role_model_profile,
     resolve_run_timeout_seconds,
 )
-from ..output_caps import resolve_child_max_output_tokens, resolve_subagent_output_caps
+from ..output_caps import (
+    resolve_child_max_output_tokens,
+    resolve_profile_max_output_tokens,
+    resolve_subagent_output_caps,
+)
 from .task_name import normalize_subagent_task_name
 from .system_prompt import build_subagent_system_prompt
 from .initial_message import build_subagent_initial_user_message
@@ -1519,6 +1523,7 @@ def _select_child_llm(
                 model=model_profile["model"],
                 api_key=model_profile.get("api_key"),
                 base_url=model_profile.get("base_url"),
+                max_output_tokens=resolve_profile_max_output_tokens(model_profile),
             )
             logger.info(
                 "Subagent role model: functional_role={} model={} provider={}",

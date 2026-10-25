@@ -42,6 +42,7 @@ from collections.abc import Callable
 from typing import Any
 
 from agent.tools.subagent.registry.session_state import is_session_busy
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from runtime import StateKey, state_register_db, state_register_mem
 from pub.func.validator import is_safe_session_id
 
@@ -327,17 +328,27 @@ def set_thinking_enabled(session_id: str, enabled: bool) -> None:
     set_thinking_value(session_id, enabled)
 
 
-def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
+def sanitize_main_model_override(
+    descriptor: object, *, allow_max_output: bool = False
+) -> dict[str, str]:
     """Validate/normalize a profile descriptor (``ValueError`` on junk).
 
     Only the whitelisted string fields survive; ``model`` is mandatory, blank
     optional fields are dropped (so the builder falls back to the env value)
     and over-long values are rejected instead of being truncated into a
     different credential.
+
+    ``allow_max_output`` opens the subagent-only ``max_output_tokens`` field
+    (a decimal string). It defaults to the 8192 output floor when omitted; the
+    main-model override deliberately does NOT accept it (its output budget is
+    the env family's).
     """
+    allowed: set[str] = set(_OVERRIDE_FIELDS)
+    if allow_max_output:
+        allowed.add("max_output_tokens")
     if not isinstance(descriptor, dict):
         raise ValueError("'profile' must be an object or null")
-    unknown = sorted(set(descriptor) - set(_OVERRIDE_FIELDS))
+    unknown = sorted(set(descriptor) - allowed)
     if unknown:
         raise ValueError(f"unknown profile field(s): {', '.join(unknown)}")
     model = descriptor.get("model")
@@ -366,6 +377,22 @@ def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
                 raise ValueError("'profile.context_window' must be positive")
             value = str(window)
         cleaned[field] = value
+    if allow_max_output:
+        raw_output = descriptor.get("max_output_tokens")
+        if raw_output is None or (isinstance(raw_output, str) and not raw_output.strip()):
+            output_tokens = MIN_MAX_OUTPUT_TOKEN
+        else:
+            if isinstance(raw_output, bool) or not isinstance(raw_output, (int, str)):
+                raise ValueError("'profile.max_output_tokens' must be an integer")
+            try:
+                output_tokens = int(str(raw_output).strip())
+            except ValueError:
+                raise ValueError("'profile.max_output_tokens' must be an integer") from None
+            if output_tokens < MIN_MAX_OUTPUT_TOKEN:
+                raise ValueError(
+                    f"'profile.max_output_tokens' must be >= {MIN_MAX_OUTPUT_TOKEN} (8K)"
+                )
+        cleaned["max_output_tokens"] = str(output_tokens)
     return cleaned
 
 

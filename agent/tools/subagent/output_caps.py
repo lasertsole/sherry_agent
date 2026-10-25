@@ -16,14 +16,20 @@ from dataclasses import dataclass
 from typing import Any
 
 from config.features import SUBAGENT_INFRA, TOOLS_TIMEOUTS
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
 
 __all__ = [
     "LEGACY_OUTPUT_WINDOW",
+    "MIN_PROFILE_MAX_OUTPUT_TOKENS",
     "SubagentOutputCaps",
     "resolve_child_max_output_tokens",
+    "resolve_profile_max_output_tokens",
     "resolve_subagent_output_caps",
 ]
+
+#: A per-role model profile's output cap defaults to the 8K business floor.
+MIN_PROFILE_MAX_OUTPUT_TOKENS = MIN_MAX_OUTPUT_TOKEN
 
 #: The output window the original hardcoded caps were calibrated against.
 LEGACY_OUTPUT_WINDOW = 8000
@@ -73,6 +79,27 @@ def resolve_subagent_output_caps(max_output_tokens: int | None) -> SubagentOutpu
     )
 
 
+def resolve_profile_max_output_tokens(model_profile: dict[str, Any] | None) -> int:
+    """The role profile's own output cap, defaulting to 8192.
+
+    The profile field is a decimal string (the writer normalizes it); legacy
+    profile rows without it use the 8K floor. A malformed or below-floor value
+    also falls back to the floor instead of failing the spawn.
+    """
+    if not isinstance(model_profile, dict):
+        return MIN_PROFILE_MAX_OUTPUT_TOKENS
+    raw = model_profile.get("max_output_tokens")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return MIN_PROFILE_MAX_OUTPUT_TOKENS
+    if isinstance(raw, bool):
+        return MIN_PROFILE_MAX_OUTPUT_TOKENS
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return MIN_PROFILE_MAX_OUTPUT_TOKENS
+    return value if value >= MIN_PROFILE_MAX_OUTPUT_TOKENS else MIN_PROFILE_MAX_OUTPUT_TOKENS
+
+
 def resolve_child_max_output_tokens(
     *,
     model_profile: dict[str, Any] | None,
@@ -85,15 +112,15 @@ def resolve_child_max_output_tokens(
 
     Mirrors ``spawn/core.py::_build_child_llm`` precedence:
 
-    1. a per-role model profile (built via ``build_main_llm_for_profile``, which
-       uses the MAIN family's output cap);
+    1. a per-role model profile — its OWN ``max_output_tokens`` field, default
+       8192 (the profile builder uses the same value for the request);
     2. a named ``model_override`` — its budget is unknown, so ``None``;
     3. a specialized role's ``model_tier`` (main / auxiliary);
     4. the depth role: ORCHESTRATOR → main, LEAF → auxiliary.
 
-    A missing/blank setting returns ``None`` (legacy caps). Invalid values are
-    treated the same way: the guard already blocks them at boot, and a failed
-    telemetry read must not break a spawn.
+    A missing/blank env setting for the tier branches returns ``None`` (legacy
+    caps). Invalid values are treated the same way: the guard already blocks
+    them at boot, and a failed telemetry read must not break a spawn.
     """
     from models.LLMs.provider_max_output import configured_max_output
 
@@ -101,8 +128,8 @@ def resolve_child_max_output_tokens(
     from .types.functional_role import FunctionalRole
 
     if model_profile and model_profile.get("model"):
-        key = "MAIN_LLM_MAX_OUTPUT_TOKEN"
-    elif model_override:
+        return resolve_profile_max_output_tokens(model_profile)
+    if model_override:
         return None
     elif functional_role != FunctionalRole.GENERAL and model_tier == "main":
         key = "MAIN_LLM_MAX_OUTPUT_TOKEN"

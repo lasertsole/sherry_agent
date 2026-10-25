@@ -144,7 +144,7 @@ def _clean_profile(role: str, profile: object) -> dict[str, str] | None:
     from server.service.session_settings_service import sanitize_main_model_override
 
     try:
-        return sanitize_main_model_override(profile)
+        return sanitize_main_model_override(profile, allow_max_output=True)
     except ValueError as exc:
         raise AgentConfigError(f"subagent_models.{role}: {exc}") from exc
 

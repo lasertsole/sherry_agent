@@ -529,6 +529,14 @@ describe('PersonaPanel role tab', () => {
           provider: 'zhipu',
           model: 'glm-4.6',
           api_key: 'k'
+        }),
+        toSubagentProfile: () => ({
+          id: 'p1',
+          label: '测试档案',
+          provider: 'zhipu',
+          model: 'glm-4.6',
+          api_key: 'k',
+          max_output_tokens: '8192'
         })
       })
     );

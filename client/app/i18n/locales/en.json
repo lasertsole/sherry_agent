@@ -298,6 +298,8 @@
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
         "tierDepth": "No role definition: depth default",
+        "maxOutput": "Max output",
+        "maxOutputHint": "This role model's own max-output tokens (default 8192); it scales the subagent result storage, delivery, summary, judge and transcript caps.",
         "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
         "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
       },

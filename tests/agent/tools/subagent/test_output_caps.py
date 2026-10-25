@@ -69,7 +69,6 @@ def test_every_scaled_cap_stays_at_least_one():
 @pytest.mark.parametrize(
     ("kwargs", "expected_key"),
     [
-        ({"model_profile": {"model": "m"}}, "MAIN_LLM_MAX_OUTPUT_TOKEN"),
         (
             {"functional_role": "researcher", "model_tier": "auxiliary"},
             "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
@@ -107,6 +106,73 @@ def test_model_selection_mirrors_the_child_builder(monkeypatch, kwargs, expected
 
     assert resolve_child_max_output_tokens(**values) == 16384
     assert seen == [expected_key]
+
+
+def test_a_role_profile_uses_its_own_output_cap(monkeypatch):
+    called = False
+
+    def fake_configured(key: str) -> int | None:
+        nonlocal called
+        called = True
+        return 16384
+
+    monkeypatch.setattr("models.LLMs.provider_max_output.configured_max_output", fake_configured)
+
+    value = resolve_child_max_output_tokens(
+        model_profile={"model": "m", "max_output_tokens": "32768"},
+        model_override=None,
+        functional_role="researcher",
+        model_tier="main",
+        role="leaf",
+    )
+
+    assert value == 32768
+    assert called is False, "the profile's own cap must not read the MAIN env value"
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "abc", "4096", "0", "1.5", True])
+def test_a_role_profile_defaults_to_the_8192_floor(raw, monkeypatch):
+    called = False
+
+    def fake_configured(key: str) -> int | None:
+        nonlocal called
+        called = True
+        return 16384
+
+    monkeypatch.setattr("models.LLMs.provider_max_output.configured_max_output", fake_configured)
+
+    value = resolve_child_max_output_tokens(
+        model_profile={"model": "m", "max_output_tokens": raw},
+        model_override=None,
+        functional_role="general",
+        model_tier=None,
+        role="leaf",
+    )
+
+    assert value == 8192
+    assert called is False
+
+
+def test_a_legacy_role_profile_without_the_field_gets_8192(monkeypatch):
+    called = False
+
+    def fake_configured(key: str) -> int | None:
+        nonlocal called
+        called = True
+        return 16384
+
+    monkeypatch.setattr("models.LLMs.provider_max_output.configured_max_output", fake_configured)
+
+    value = resolve_child_max_output_tokens(
+        model_profile={"model": "m"},
+        model_override=None,
+        functional_role="general",
+        model_tier=None,
+        role="leaf",
+    )
+
+    assert value == 8192
+    assert called is False
 
 
 def test_a_named_model_override_has_no_known_budget(monkeypatch):
