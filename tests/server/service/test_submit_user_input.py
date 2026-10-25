@@ -345,6 +345,58 @@ async def test_duplicate_client_msg_id_inflight_claimed_returns_deduped_no_doubl
     assert len(_ws_executor(registry).calls) == 1, "no double dispatch"
 
 
+@pytest.mark.asyncio
+async def test_late_retry_after_delivery_is_deduped(
+    store: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
+):
+    """A reconnect replay that arrives after the turn completed starts no second turn.
+
+    The original row is terminal by then, so the ACTIVE-only dedup missed it;
+    without the DELIVERED check the same user message would run twice and its
+    turn would inject another system-reminder block.
+    """
+    first = await submit_user_input(
+        "s1", "hello", "user", client_msg_id="m-1", queue=store, executor_registry=registry
+    )
+    assert first.status is SubmitStatus.STARTED
+    await _settle()
+    row = await store.find_active_by_client_msg_id("m-1")
+    assert row is not None
+    await store.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
+
+    retry = await submit_user_input(
+        "s1", "hello", "user", client_msg_id="m-1", queue=store, executor_registry=registry
+    )
+
+    assert retry.status is SubmitStatus.DEDUPED
+    assert await store.count_active("s1") == 0, "no new placeholder / queued row"
+    await _settle()
+    assert len(_ws_executor(registry).calls) == 1, "the completed turn is not replayed"
+
+
+@pytest.mark.asyncio
+async def test_failed_row_stays_retryable_with_the_same_client_msg_id(
+    store: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
+):
+    """Only DELIVERED is final for dedup; a failed attempt can be retried."""
+    first = await submit_user_input(
+        "s1", "hello", "user", client_msg_id="m-1", queue=store, executor_registry=registry
+    )
+    assert first.status is SubmitStatus.STARTED
+    await _settle()
+    row = await store.find_active_by_client_msg_id("m-1")
+    assert row is not None
+    await store.mark_terminal(row.id, UserInputQueueStatus.FAILED)
+
+    retry = await submit_user_input(
+        "s1", "hello", "user", client_msg_id="m-1", queue=store, executor_registry=registry
+    )
+
+    assert retry.status is SubmitStatus.STARTED
+    await _settle()
+    assert len(_ws_executor(registry).calls) == 2
+
+
 # ---------------------------------------------------------------------------
 # Concurrency: atomic window (lock + CLAIMED placeholder in same critical section)
 # ---------------------------------------------------------------------------

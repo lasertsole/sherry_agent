@@ -403,15 +403,26 @@ async def submit_user_input(
     async with lock:
         # 1. Idempotency first: an ACTIVE row with this client_msg_id (any
         #    session) means the submission already lives in the queue or an
-        #    in-flight turn -- no second row, no second dispatch.
-        if (
-            client_msg_id is not None
-            and await store.find_active_by_client_msg_id(client_msg_id) is not None
-        ):
-            logger.debug(
-                "submit_user_input: dedup hit for client_msg_id {} ({})", client_msg_id, bare
-            )
-            return DEDUPED
+        #    in-flight turn -- no second row, no second dispatch. A recently
+        #    DELIVERED row covers the late-resend race (the turn finished but
+        #    the client lost the completion frames and replayed the same id):
+        #    without this it would start a duplicate turn and inject another
+        #    reminder block. FAILED/VOIDED rows stay retryable.
+        if client_msg_id is not None:
+            if await store.find_active_by_client_msg_id(client_msg_id) is not None:
+                logger.debug(
+                    "submit_user_input: active dedup hit for client_msg_id {} ({})",
+                    client_msg_id,
+                    bare,
+                )
+                return DEDUPED
+            if await store.find_delivered_by_client_msg_id(client_msg_id) is not None:
+                logger.debug(
+                    "submit_user_input: delivered dedup hit for client_msg_id {} ({})",
+                    client_msg_id,
+                    bare,
+                )
+                return DEDUPED
 
         # 2. Busy decision, inside the lock: detect_state OR a live CLAIMED
         #    placeholder (a turn was dispatched but has not raised any
