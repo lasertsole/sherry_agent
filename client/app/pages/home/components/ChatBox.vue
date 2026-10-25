@@ -120,6 +120,23 @@
                     formatCompactTimeString(message.timestamp)
                   }}</span>
                 </div>
+                <!-- Live model-retry progress: the assistant row itself carries the
+                     attempt counter, so the retry is part of the history queue rather
+                     than a detached toast. Settled rows keep the final count. -->
+                <div
+                  v-if="message.role === CHAT_ROLE.AI && message.retryStatus"
+                  class="mb-1 flex items-center gap-1.5 rounded-md border border-solid border-amber-200/80 bg-amber-50 px-2 py-1 text-[11px] text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
+                  <i
+                    :class="[
+                      message.retryStatus.status === 'scheduled'
+                        ? 'pi pi-spin pi-spinner'
+                        : message.retryStatus.status === 'succeeded'
+                          ? 'pi pi-replay'
+                          : 'pi pi-exclamation-triangle'
+                    ]"
+                    class="text-[10px]"></i>
+                  <span>{{ retryStatusLabel(message.retryStatus) }}</span>
+                </div>
                 <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
                 <ChatThinkingBlock
                   v-if="
@@ -355,6 +372,25 @@ const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName')
  * @param message
  */
 const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(message.content);
+
+/**
+ * One-line label for the live/settled model-retry indicator.
+ * @param retry The row's retry progress payload.
+ */
+const retryStatusLabel = (retry: NonNullable<MessageItem['retryStatus']>): string => {
+  if (retry.status === 'scheduled') {
+    return t('chatBox.modelRetryScheduled', {
+      attempt: retry.attempt,
+      max: retry.maxAttempts,
+      reason: retry.reason || 'unknown',
+      delay: ((retry.delayMs ?? 0) / 1000).toFixed(1)
+    });
+  }
+  if (retry.status === 'succeeded') {
+    return t('chatBox.modelRetrySucceeded', { count: retry.retries });
+  }
+  return t('chatBox.modelRetryExhausted', { max: retry.retries });
+};
 
 const emit = defineEmits<{
   (e: 'reach-top'): void;

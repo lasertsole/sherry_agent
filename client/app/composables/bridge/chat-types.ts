@@ -66,7 +66,12 @@ export type AgentWsEventType =
    * over). Best-effort: the search itself already succeeded by the time it is
    * sent, so the frame only feeds the non-blocking banner.
    */
-  | 'search_backend_fallback';
+  | 'search_backend_fallback'
+  /**
+   * The model-call retry loop scheduled / completed / exhausted a retry. The
+   * chat row renders the attempt counter while the turn streams.
+   */
+  | 'model_retry';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';

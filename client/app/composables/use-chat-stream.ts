@@ -530,6 +530,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       chunks.flushPendingText?.();
       chunks.markStreamingFinished?.(turn);
       attachDoneMeta(turn, meta);
+      settleRetryStatus(turn, 'succeeded');
       clearQueueBadgeForTurn(turn);
       void drafts
         .commitDraftTurn(mySid, turn)
@@ -552,6 +553,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       return;
     }
     attachDoneMeta(turn, meta);
+    settleRetryStatus(turn, 'succeeded');
     clearQueueBadgeForTurn(turn);
     // Release the composer SYNCHRONOUSLY: the busy state must not depend on the
     // draft write, whose failure would otherwise leave the stop button on.
@@ -686,6 +688,56 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
   };
   const onSocketConnected = () => reconcileBusyNow('websocket (re)connected');
+
+  /**
+   * Model-call retry progress (the `model_retry` push). It decorates the live
+   * AI row so the turn shows "retrying 2/11" while the provider backs off; the
+   * history row is updated in place instead of creating a separate message.
+   * @param event Raw `model_retry` frame.
+   */
+  const onModelRetry = (event: unknown) => {
+    const data = (typeof event === 'object' && event !== null ? event : {}) as {
+      session_id?: string;
+      content?: {
+        status?: string;
+        attempt?: number;
+        max_attempts?: number;
+        retries?: number;
+        reason?: string;
+        delay_ms?: number;
+      };
+    };
+    if (data.session_id && data.session_id !== (sessionId.value || 'default')) return;
+    const content = data.content;
+    if (!content || !['scheduled', 'succeeded', 'exhausted'].includes(String(content.status))) return;
+    const turn = streamingTurn.value;
+    const aiMsg = turn !== null ? turnTailAi(turn) : undefined;
+    if (!aiMsg) return;
+    aiMsg.retryStatus = {
+      status: content.status as 'scheduled' | 'succeeded' | 'exhausted',
+      attempt: Number(content.attempt ?? 1),
+      maxAttempts: Number(content.max_attempts ?? 1),
+      retries: Number(content.retries ?? 0),
+      reason: content.reason ? String(content.reason) : undefined,
+      delayMs: Number(content.delay_ms ?? 0)
+    };
+    chatMessages.value = [...chatMessages.value];
+  };
+  on('ws:model_retry', onModelRetry);
+
+  /**
+   * Mark the live AI row's retry indicator as settled when no explicit event arrived.
+   * @param turn
+   * @param status
+   */
+  const settleRetryStatus = (turn: number | null, status: 'succeeded' | 'exhausted') => {
+    if (turn === null) return;
+    const aiMsg = turnTailAi(turn);
+    if (!aiMsg?.retryStatus || aiMsg.retryStatus.status !== 'scheduled') return;
+    aiMsg.retryStatus = { ...aiMsg.retryStatus, status };
+    chatMessages.value = [...chatMessages.value];
+  };
+
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange);
   }
@@ -704,6 +756,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     clearQueueBadgeForTurn(turn);
     const aiMsg = turn === null ? undefined : turnTailAi(turn);
     const isResume = hitl.isResumeTurn(turn);
+    settleRetryStatus(turn, 'exhausted');
     if (err instanceof StreamInterruptedError) {
       // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
       // so never overwrite existing body text with the failure message; only show the interruption hint when the AI body is empty.
@@ -765,6 +818,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     }
     off('ws:connected', onSocketConnected);
+    off('ws:model_retry', onModelRetry);
   });
 
   /** Clear the busy state when a reconnect snapshot proves the turn ended. */

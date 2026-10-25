@@ -857,6 +857,51 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   and `route`. T1/T2/T3/user compactions share `_finish_compact`; T4/T5 record
   from `_finish_forced_recovery`.
 
+## LLM Retry, Backoff & Retry Events (ZCode parity)
+
+`agent/middlewares/llm_retry/core.py::LLMRetryMiddleware` is the ONE retry layer
+for main/fallback model calls: `LLM_CLIENT_DEFAULTS["main_max_retries"]` and
+`["fallback_max_retries"]` are 0, so the provider SDK never adds a hidden second
+budget. `config/features/agent_side/llm_retry.py::LLM_RETRY` defaults:
+`max_retries=10` (11 total attempts), `base_delay=2.0`, `backoff_factor=2.0`,
+`max_delay=60.0`, `jitter_mode="full"` (0.5–1.0×), `respect_retry_after=True`,
+`retry_after_cap_s=300`, `empty_completion_retries=1`, `emit_retry_events=True`,
+`stale_giveup_threshold=5`. `pub/func/retry_policy.py` owns the delay math and
+`Retry-After` parsing (`retry-after-ms`, seconds, HTTP-date; read off the SDK
+exception's `headers`/`response.headers` and carried by
+`ClassifiedError.retry_after_s`).
+
+The loop re-calls on classified retryable failures, emits one
+`model_retry` event per scheduled/succeeded/exhausted transition, and keeps the
+existing fallback / content-filter / partial-stream-stub / stale-streak behavior.
+A completion with no text, no tool calls and no usage retries once
+(`empty_completion_retries`). The retry event is recorded in the trajectory
+ledger (`runtime.hooks.RECORD_TRAJECTORY_EVENT`, kind `model_retry`; the event
+id keys each transition by attempt + status, so `scheduled` and its
+`succeeded`/`exhausted` outcome stay readable as separate rows) and pushed
+to the session's sockets (`retry_events.py` → `broadcast_to_session`) as:
+
+```text
+{"event":"model_retry","session_id":…,"content":{
+  "status":"scheduled"|"succeeded"|"exhausted",
+  "attempt":2,"max_attempts":11,"retries":1,
+  "reason":"rate_limit","delay_ms":1000}}
+```
+
+The client maps both WS stacks (`composables/ws.ts` and
+`agent-socket-frames.ts`) to `ws:model_retry`; `use-chat-stream` decorates the
+live AI row's `retryStatus`, and `ChatBox.vue` renders a compact localized
+counter (`chatBox.modelRetryScheduled/Succeeded/Exhausted`) in the message row.
+`use-chat-turn-groups` keeps an EMPTY AI placeholder when it carries
+`retryStatus` — otherwise the pre-first-token retry row would be filtered out.
+`retryStatus` is in-memory only (a history reload drops it); the trajectory
+event remains the durable record.
+
+The session-push socket's disconnect path (`server/trigger/core.py`) clears the
+session registers only when NO socket for that session remains: closing a core
+socket while the agent-stream socket (or another viewer) is alive must not
+unregister it from broadcasts or wipe session state mid-turn.
+
 ## Tool Parallel Safety (`agent/safe_tool_node.py`)
 
 LangGraph's ToolNode gathers **every** tool call in one model batch. Sherry

@@ -564,3 +564,15 @@ class TestMultimodalNotSupported:
             classify_api_error(Exception("image_too_large")).reason
             is FailoverReason.image_too_large
         )
+
+
+def test_retry_after_header_is_carried_on_the_classification():
+    class RateLimitedError(Exception):
+        status_code = 429
+        headers = {"Retry-After": "7"}
+
+    classified = classify_api_error(RateLimitedError("rate limited"))
+
+    assert classified.reason is FailoverReason.rate_limit
+    assert classified.retryable is True
+    assert classified.retry_after_s == 7.0

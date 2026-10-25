@@ -31,6 +31,32 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(wrapper.find('.w-fit').html()).toContain('<strong>bold</strong>');
   });
 
+  it('renders an empty AI placeholder when it carries model-retry progress', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({
+            id: 2,
+            role: CHAT_ROLE.AI,
+            content: '',
+            retryStatus: {
+              status: 'scheduled',
+              attempt: 2,
+              maxAttempts: 11,
+              retries: 1,
+              reason: 'rate_limit',
+              delayMs: 1000
+            }
+          })
+        ]
+      }
+    });
+
+    expect(wrapper.text()).toContain('模型重试中');
+    expect(wrapper.text()).toContain('第 2/11 次');
+    expect(wrapper.text()).toContain('rate_limit');
+  });
+
   it('credits human messages as 我', () => {
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] }

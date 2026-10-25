@@ -30,10 +30,12 @@ class LlmClientDefaultsConfig(TypedDict):
 
 
 LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
-    "main_max_retries": 2,
+    # The main/fallback clients are wrapped by LLMRetryMiddleware; keep the SDK
+    # retry layer OFF so one budget owns every attempt (ZCode parity).
+    "main_max_retries": 0,
     "main_timeout": 120,
     "main_stream_chunk_timeout": 60,
-    "fallback_max_retries": 2,
+    "fallback_max_retries": 0,
     "fallback_timeout": 120,
     "aux_max_retries": 2,
     # Per-request timeout for the auxiliary remote client (seconds) — aligned

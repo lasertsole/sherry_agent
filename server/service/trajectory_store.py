@@ -104,6 +104,11 @@ def _event_id(session_id: str, turn_id: str, kind: str, frame: dict[str, Any]) -
     if kind in ("tool_start", "tool_end"):
         call_id = frame.get("tool_id") or frame.get("content") or "unknown"
         return f"{session_id}:{turn_id}:tool:{call_id}"
+    if kind == "model_retry":
+        # Retry progress is a SEQUENCE of transitions (scheduled → succeeded /
+        # exhausted), not one event that gets refined: the attempt + status key
+        # keeps each transition readable instead of the last one overwriting it.
+        return f"{session_id}:{turn_id}:model_retry:{frame.get('attempt')}:{frame.get('status')}"
     return f"{session_id}:{turn_id}:{kind}"
 
 

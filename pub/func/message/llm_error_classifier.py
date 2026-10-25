@@ -27,6 +27,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from pub.func.retry_policy import extract_retry_after_seconds
+
 from loguru import logger
 
 
@@ -87,6 +89,8 @@ class ClassifiedError:
     retryable: bool = True
     should_compress: bool = False
     should_fallback: bool = False
+    #: Provider ``Retry-After`` (seconds), when the exception carried one.
+    retry_after_s: float | None = None
 
     @property
     def is_auth(self) -> bool:
@@ -457,6 +461,7 @@ def classify_api_error(
         retryable=recovery["retryable"],
         should_compress=recovery["should_compress"],
         should_fallback=recovery["should_fallback"],
+        retry_after_s=extract_retry_after_seconds(exc),
     )
 
 

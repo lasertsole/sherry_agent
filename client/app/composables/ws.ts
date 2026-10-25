@@ -93,6 +93,7 @@ export function useWs(options?: { onReconnect?: () => void }): {
     notification: data => emit('ws:notification', data.content ?? ''),
     todo_updated: data => emit('ws:todo_updated', data),
     taskflow_updated: data => emit('ws:taskflow_updated', data),
+    model_retry: data => emit('ws:model_retry', data),
     model_download_updated: data => emit('ws:model_download_updated', data),
     search_backend_fallback: data => emit('ws:search_backend_fallback', data)
   });

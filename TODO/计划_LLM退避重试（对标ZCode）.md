@@ -1,7 +1,9 @@
 # 计划：LLM 退避重试机制（对标 ZCode）
 
 - 建档日期：2026-10-25
-- 状态：**待执行**
+- 状态：**部分执行（2026-10-25）**
+  - 已完成：`retry_policy.py`（指数/full-jitter/Retry-After 解析）、配置扩展、classifier 携带 `retry_after_s`、单层重试（main/fallback SDK retries=0）、空补全一次重试、`model_retry` 轨迹事件 + WS 推送、前端消息行重试计数、断线清理保护（多 socket 不互相清除）。
+  - 待做：unbounded/single-attempt 预算、鉴权刷新/签名修复的额外尝试、可见输出硬门禁的完整策略（partial-stream stub 仍是唯一例外）。off-peak 按第 3.5 节保持非目标。
 - 目标：把 ZCode 的模型调用退避重试语义移植到 Sherry：统一重试预算、Retry-After、可配置退避曲线、可中止等待、可观测的重试状态，并避免重试造成重复输出。
 - 非目标：不改 WS 断线重连的 `msg_id` 幂等（已完成）；不改用户输入的队列投递语义；不引入 ZCode 的 off-peak 排队协议。
 

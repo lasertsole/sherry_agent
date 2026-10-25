@@ -159,6 +159,20 @@ describe('routeAgentFrame', () => {
     off('ws:todo_updated', spy);
   });
 
+  it('model_retry: re-emits on the mitt bus', () => {
+    const spy = vi.fn();
+    on('ws:model_retry', spy);
+    const { ctx } = makeCtx({});
+    const frame = {
+      event: 'model_retry',
+      session_id: 's1',
+      content: { status: 'scheduled', attempt: 2, max_attempts: 11, retries: 1 }
+    };
+    fire(ctx, frame);
+    expect(spy).toHaveBeenCalledWith(frame);
+    off('ws:model_retry', spy);
+  });
+
   it('model_download_updated: re-emits on the mitt bus', () => {
     const spy = vi.fn();
     on('ws:model_download_updated', spy);

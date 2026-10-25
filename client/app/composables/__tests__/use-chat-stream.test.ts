@@ -188,6 +188,14 @@ const lastWsConnectedHandler = (): (() => void) => {
   return handler;
 };
 
+/** The `ws:model_retry` handler the most recently built harness registered. */
+const lastModelRetryHandler = (): ((payload: unknown) => void) => {
+  const handler = mittMocks.on.mock.calls.filter(c => c[0] === 'ws:model_retry').at(-1)?.[1] as
+    ((payload: unknown) => void) | undefined;
+  if (!handler) throw new Error('no ws:model_retry handler registered');
+  return handler;
+};
+
 beforeEach(() => {
   state.sends = [];
   state.markRunningToolsFailed.mockClear();
@@ -555,6 +563,41 @@ describe('useChatStream busy reconcile triggers', () => {
     lastWsConnectedHandler()();
 
     expect(state.turnState).not.toHaveBeenCalled();
+  });
+
+  it('applies model_retry frames to the live AI row and settles on done', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('retry me');
+    const ai = harness.chatMessages.value.at(-1);
+    expect(ai?.role).toBe(CHAT_ROLE.AI);
+
+    lastModelRetryHandler()({
+      session_id: 's1',
+      content: {
+        status: 'scheduled',
+        attempt: 2,
+        max_attempts: 11,
+        retries: 1,
+        reason: 'rate_limit',
+        delay_ms: 2000
+      }
+    });
+
+    expect(ai?.retryStatus).toMatchObject({
+      status: 'scheduled',
+      attempt: 2,
+      maxAttempts: 11,
+      retries: 1,
+      reason: 'rate_limit',
+      delayMs: 2000
+    });
+
+    lastModelRetryHandler()({
+      session_id: 's1',
+      content: { status: 'succeeded', attempt: 2, max_attempts: 11, retries: 1 }
+    });
+
+    expect(ai?.retryStatus?.status).toBe('succeeded');
   });
 
   it('immediately re-probes twice when a watchdog tick runs late (starved page)', async () => {

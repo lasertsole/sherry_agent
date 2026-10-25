@@ -48,9 +48,11 @@ from agent.middlewares.llm_capability_cache import set_capability
 from agent.middlewares.media_pipeline.degradation import detect_media_blindness
 from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
-from pub.func.retry_utils import jittered_backoff
+from pub.func.retry_policy import compute_retry_delay
 from pub.types.llm import FallbackCandidate
 from runtime import StateKey, state_register_mem
+
+from .retry_events import publish_model_retry
 
 _STALE_STREAK_KEY = StateKey.LLM_STALE_STREAK
 _FALLBACK_INDEX_KEY = StateKey.LLM_FALLBACK_INDEX
@@ -76,8 +78,14 @@ class ContentFilterError(Exception):
 class LLMRetryConfig:
     max_retries: int = LLM_RETRY["max_retries"]
     base_delay: float = LLM_RETRY["base_delay"]
+    backoff_factor: float = LLM_RETRY["backoff_factor"]
     max_delay: float = LLM_RETRY["max_delay"]
+    jitter_mode: str = LLM_RETRY["jitter_mode"]
     jitter: float = LLM_RETRY["jitter"]
+    respect_retry_after: bool = LLM_RETRY["respect_retry_after"]
+    retry_after_cap_s: float = LLM_RETRY["retry_after_cap_s"]
+    empty_completion_retries: int = LLM_RETRY["empty_completion_retries"]
+    emit_retry_events: bool = LLM_RETRY["emit_retry_events"]
     stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
 
 
@@ -105,6 +113,8 @@ class LLMRetryMiddleware(AgentMiddleware):
             return handler(request)
         request = self._apply_sticky_fallback(request, session_id)
         retry_count = 0
+        empty_retries = 0
+        last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
             try:
@@ -119,11 +129,15 @@ class LLMRetryMiddleware(AgentMiddleware):
                         raise
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 if not classified.retryable:
                     rebound = None
@@ -132,14 +146,19 @@ class LLMRetryMiddleware(AgentMiddleware):
                     if rebound is not None:
                         request = rebound
                         retry_count = 0
+                        empty_retries = 0
+                        last_reason = ""
                         continue
                     raise
                 retry_count += 1
+                last_reason = classified.reason.value
                 if retry_count > self.config.max_retries:
+                    self._emit_retry(session_id, "exhausted", retry_count, last_reason)
                     raise
                 if classified.reason == FailoverReason.timeout:
                     self._bump_stale_streak(session_id)
-                delay = self._backoff(retry_count)
+                delay = self._backoff(retry_count, classified.retry_after_s)
+                self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
                 logger.warning(
                     "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
                     retry_count,
@@ -155,20 +174,49 @@ class LLMRetryMiddleware(AgentMiddleware):
             if rebound is not None:
                 request = rebound
                 retry_count = 0
+                empty_retries = 0
+                last_reason = ""
                 continue
             self._evaluate_silent_degradation(request, session_id, result)
+            if self._is_empty_completion(result):
+                if (
+                    empty_retries < self.config.empty_completion_retries
+                    and retry_count < self.config.max_retries
+                ):
+                    retry_count += 1
+                    empty_retries += 1
+                    last_reason = "empty_completion"
+                    delay = self._backoff(retry_count)
+                    self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
+                    logger.warning(
+                        "Model returned an empty completion; retrying in {:.2f}s "
+                        "(empty retry {}/{})",
+                        delay,
+                        empty_retries,
+                        self.config.empty_completion_retries,
+                    )
+                    time.sleep(delay)
+                    continue
+                if empty_retries > 0:
+                    self._emit_retry(session_id, "exhausted", retry_count, "empty_completion")
+                return result
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
+                self._emit_retry_success(session_id, retry_count, last_reason)
                 return result
             retry_count += 1
+            last_reason = stub_reason.value
             if retry_count > self.config.max_retries:
                 logger.warning(
                     "Partial-stream stub retry budget exhausted; keeping the current result"
                 )
+                self._emit_retry(session_id, "exhausted", retry_count, last_reason)
                 return result
-            return self._recall_after_stub_sync(
-                request, handler, session_id, stub_reason, self._backoff(retry_count)
-            )
+            delay = self._backoff(retry_count)
+            self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
+            result = self._recall_after_stub_sync(request, handler, session_id, stub_reason, delay)
+            self._emit_retry_success(session_id, retry_count, last_reason)
+            return result
 
     async def awrap_model_call(
         self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[Any]]
@@ -178,6 +226,8 @@ class LLMRetryMiddleware(AgentMiddleware):
             return await handler(request)
         request = self._apply_sticky_fallback(request, session_id)
         retry_count = 0
+        empty_retries = 0
+        last_reason = ""
         while True:
             self._raise_if_provider_stale(session_id)
             try:
@@ -192,11 +242,15 @@ class LLMRetryMiddleware(AgentMiddleware):
                         raise
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
                     retry_count = 0
+                    empty_retries = 0
+                    last_reason = ""
                     continue
                 if not classified.retryable:
                     rebound = None
@@ -205,14 +259,19 @@ class LLMRetryMiddleware(AgentMiddleware):
                     if rebound is not None:
                         request = rebound
                         retry_count = 0
+                        empty_retries = 0
+                        last_reason = ""
                         continue
                     raise
                 retry_count += 1
+                last_reason = classified.reason.value
                 if retry_count > self.config.max_retries:
+                    self._emit_retry(session_id, "exhausted", retry_count, last_reason)
                     raise
                 if classified.reason == FailoverReason.timeout:
                     self._bump_stale_streak(session_id)
-                delay = self._backoff(retry_count)
+                delay = self._backoff(retry_count, classified.retry_after_s)
+                self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
                 logger.warning(
                     "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
                     retry_count,
@@ -228,20 +287,51 @@ class LLMRetryMiddleware(AgentMiddleware):
             if rebound is not None:
                 request = rebound
                 retry_count = 0
+                empty_retries = 0
+                last_reason = ""
                 continue
             self._evaluate_silent_degradation(request, session_id, result)
+            if self._is_empty_completion(result):
+                if (
+                    empty_retries < self.config.empty_completion_retries
+                    and retry_count < self.config.max_retries
+                ):
+                    retry_count += 1
+                    empty_retries += 1
+                    last_reason = "empty_completion"
+                    delay = self._backoff(retry_count)
+                    self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
+                    logger.warning(
+                        "Model returned an empty completion; retrying in {:.2f}s "
+                        "(empty retry {}/{})",
+                        delay,
+                        empty_retries,
+                        self.config.empty_completion_retries,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                if empty_retries > 0:
+                    self._emit_retry(session_id, "exhausted", retry_count, "empty_completion")
+                return result
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
+                self._emit_retry_success(session_id, retry_count, last_reason)
                 return result
             retry_count += 1
+            last_reason = stub_reason.value
             if retry_count > self.config.max_retries:
                 logger.warning(
                     "Partial-stream stub retry budget exhausted; keeping the current result"
                 )
+                self._emit_retry(session_id, "exhausted", retry_count, last_reason)
                 return result
-            return await self._recall_after_stub_async(
-                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            delay = self._backoff(retry_count)
+            self._emit_retry(session_id, "scheduled", retry_count, last_reason, delay)
+            result = await self._recall_after_stub_async(
+                request, handler, session_id, stub_reason, delay
             )
+            self._emit_retry_success(session_id, retry_count, last_reason)
+            return result
 
     # ---- session-scoped state -------------------------------------------
 
@@ -267,13 +357,65 @@ class LLMRetryMiddleware(AgentMiddleware):
     def _reset_stale_streak(self, session_id: str) -> None:
         state_register_mem.set_state(session_id, _STALE_STREAK_KEY, 0)
 
-    def _backoff(self, retry_count: int) -> float:
-        return jittered_backoff(
+    def _backoff(self, retry_count: int, retry_after_s: float | None = None) -> float:
+        return compute_retry_delay(
             retry_count,
             base_delay=self.config.base_delay,
+            backoff_factor=self.config.backoff_factor,
             max_delay=self.config.max_delay,
+            jitter_mode=self.config.jitter_mode,
             jitter=self.config.jitter,
+            retry_after_s=retry_after_s,
+            retry_after_cap_s=self.config.retry_after_cap_s,
+            respect_retry_after=self.config.respect_retry_after,
         )
+
+    def _emit_retry(
+        self,
+        session_id: str,
+        status: str,
+        retry_count: int,
+        reason: str,
+        delay: float = 0.0,
+    ) -> None:
+        """Push one retry progress frame (scheduled / succeeded / exhausted)."""
+        if not self.config.emit_retry_events:
+            return
+        max_attempts = self.config.max_retries + 1
+        attempt = max_attempts if status == "exhausted" else retry_count + 1
+        publish_model_retry(
+            session_id,
+            status=status,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            retries=min(retry_count, self.config.max_retries),
+            reason=reason,
+            delay_ms=delay * 1000.0,
+        )
+
+    def _emit_retry_success(self, session_id: str, retry_count: int, reason: str) -> None:
+        if retry_count > 0:
+            self._emit_retry(session_id, "succeeded", retry_count, reason)
+
+    @staticmethod
+    def _is_empty_completion(result: Any) -> bool:
+        """A call with no text, no tool calls and no usage (ZCode's empty turn)."""
+        if not isinstance(result, AIMessage):
+            return False
+        content = result.content
+        if isinstance(content, list):
+            text = "".join(
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            text = content if isinstance(content, str) else ""
+        if text.strip():
+            return False
+        if getattr(result, "tool_calls", None):
+            return False
+        return not bool(getattr(result, "usage_metadata", None))
 
     # ---- content-filter flag (set by the stream layer) -------------------
 

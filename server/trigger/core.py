@@ -326,7 +326,12 @@ async def handle_disconnect(websocket: WebSocketAdapter):
             f"WebSocket session cleanup: session_id={session_id}, websocket_id={websocket.id}"
         )
         relation_register.unregister_websocket_by_websocket_id(websocket_id=websocket.id)
-
-        clear_all_register_sessions(session_id=session_id)
+        # A page can hold several sockets for one session (the session-push
+        # socket, the agent stream socket, a side panel). One of them closing
+        # must not wipe the session registers while another is still live —
+        # that silently unregistered the remaining socket from broadcasts and
+        # cleared thinking/project state mid-turn.
+        if not relation_register.get_websockets_by_session_id(session_id):
+            clear_all_register_sessions(session_id=session_id)
     else:
         logger.debug(f"WebSocket disconnect without session: websocket_id={websocket.id}")

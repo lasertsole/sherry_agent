@@ -108,6 +108,21 @@ export interface MessageItem {
    * existing user-bubble rendering.
    */
   origin?: string;
+  /**
+   * Live model-retry progress for this AI turn (from the `model_retry` WS frame).
+   * Never persisted: it decorates the in-memory streaming row, so a history reload
+   * simply drops it.
+   */
+  retryStatus?: {
+    status: 'scheduled' | 'succeeded' | 'exhausted';
+    /** Total attempt number represented by this frame (2 = first retry). */
+    attempt: number;
+    maxAttempts: number;
+    /** How many retries had completed when this frame was emitted. */
+    retries: number;
+    reason?: string;
+    delayMs?: number;
+  };
 }
 
 /** Role */
