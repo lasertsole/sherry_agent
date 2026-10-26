@@ -51,7 +51,7 @@ terminal / python_repl 跑了一条命令
 | 范围 | 仓库级（所有会话共享） |
 | 可变性 | 行只 INSERT、不 UPDATE；保留期会删除旧行（age TTL / 每会话上限 / 全局上限） |
 | 会话隔离 | 在带索引的 `session_id` 上 `WHERE session_id = ?`；行携带 SESSION key（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`） |
-| flow 盖章 | `evidence_events.flow_id`（由 `idx_evidence_flow` 索引）。TaskFlow step 子会话在 spawn 时盖章；finish 期 creator 行由会话兜底覆盖。`NULL` = 非 TaskFlow 范围 |
+| flow 盖章 | `evidence_events.flow_id`（由 `idx_evidence_flow` 索引）。TaskFlow step 子会话在 spawn 时盖章；finish 调用期间临时给 creator 盖章并在结束时恢复；stale/broken/unmark 行继承目标 session 的活跃 flow。`NULL` = 非 TaskFlow 范围 |
 | 文件编辑记忆 | 同库的 `verification_state(session_id, changed_paths_json, last_edit_at)`；每会话上限，随 session/孤儿清理删除 |
 | 多 key 读取 | `read_for_keys(keys)` 走一次带索引的 `IN` 查询，并保留每个 key 的插入顺序；`read_for_flow(flow_id)` 走 flow 索引读取一个 flow 的全部行（陈旧性仍只在单个会话的行序列内推导） |
 | 并发 | WAL 允许读写重叠；写入通过 `busy_timeout` 重试 |
@@ -176,7 +176,7 @@ def derive_evidence_state(records, index):
 
 ## 证据摘要格式
 
-`collect_evidence_summary(session_key=None, flow_id=None)` 返回多行字符串（无 evidence 行时返回 `None`）。传 `flow_id` 时，先直接读取该 flow 盖章的行，再用会话 key 集合兜底未盖章（creator/旧行）的行：
+`collect_evidence_summary(session_key=None, flow_id=None)` 返回多行字符串（无 evidence 行时返回 `None`）。传 `flow_id` 时只读取该 flow 盖章的行；`taskflow_finish` 只传 `flow_id`。没有 flow 上下文的调用方仍可传会话 key 集合：
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -212,7 +212,7 @@ def derive_evidence_state(records, index):
 
 ### 层级 3：per-flow（taskflow_flow(action="finish") Gate C）
 
-TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据。先按 flow 的 `flow_id` 读取盖章行（即使某个 step 的 `child_session_key` 丢失也稳健）；每个已派发步的 `child_session_key` 加上 flow 的 `creator_session_key` 仍作为未盖章行的兜底，因为 creator 的 finish 期 replay 和 flow 列出现前写入的行都是 `NULL`。从未派发过步且没有盖章行的 flow 没有证据，放行：
+TaskFlow 关流为 DONE 前，Gate C 只按 `flow_id` 读取该 flow 的行。step 子会话在 spawn 时盖章，finish 调用期间给 creator 盖章（结束后恢复），stale / broken / unmark 事件按目标 session 的活跃 flow 自动盖章。这条路径没有会话 key 兜底；未盖章行不属于该 flow。没有盖章行的 flow 没有证据，放行：
 
 | 条件 | 结果 |
 |------|------|

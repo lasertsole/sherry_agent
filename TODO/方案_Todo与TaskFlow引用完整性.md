@@ -349,7 +349,7 @@ sweeper 仍跑(兜底 P4c 漏的 / 老代码路径),但 P4c 让常态 fail/cance
 | 方案 | 关系 |
 |------|------|
 | `方案_最终校验波_FinalVerificationWave.md`(todolist 校验波) | **协同** —— 校验波方案给 todo 加 `kind`/`accept_criteria`,本方案不改 todo schema,只加删除/创建 guard。两方案可并行,不冲突 |
-| `方案_证据台账_加flow_id列.md`(证据台账 flow_id) | **解耦** —— 那是证据表加列,本方案是 todo↔flow 引用完整性。两者都涉及 flow_id 但不同层 |
+| 证据台账 flow_id（已落地） | **解耦** —— 那是证据表加列,本方案是 todo↔flow 引用完整性。两者都涉及 flow_id 但不同层 |
 | `计划_打包_塞包模式_Electron式.md` / MCP 文件夹化 | 无关 —— 打包/工具层,不碰引用完整性 |
 
 本方案是 todo↔TaskFlow 引用完整性的**独立补丁集**,可单独推进。

@@ -130,6 +130,23 @@ def test_read_for_flow_isolates_flows_and_excludes_unstamped_rows(
     assert EvidenceLedger.read_for_flow("") == []
 
 
+def test_rows_stamp_the_session_flow_context(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Verification and stale rows both inherit the session's active flow id."""
+    from runtime import StateKey, state_register_mem
+
+    _redirect(tmp_path, monkeypatch)
+    state_register_mem.set_state("s1", StateKey.FLOW_ID, "f1")
+    try:
+        EvidenceLedger.for_session("s1").append(kind="test", command="pytest a.py", status="passed")
+        EvidenceLedger.for_session("s1").mark_stale_for_path("a.py")
+    finally:
+        state_register_mem.clear_session("s1")
+
+    rows = EvidenceLedger.read_for_flow("f1")
+    assert [row.get("event") for row in rows] == [None, "stale"]
+    assert all(row["flow_id"] == "f1" for row in rows)
+
+
 def test_session_ledger_append_injects_session_id(tmp_path, monkeypatch: pytest.MonkeyPatch):
     _redirect(tmp_path, monkeypatch)
 

@@ -49,8 +49,10 @@ def project(tmp_path: Path) -> Path:
     )
     for key in (SESSION, CREATOR):
         state_register_mem.set_state(key, StateKey.PROJECT_DIR, str(root))
+    for key in (CHILD_A, CHILD_B):
+        state_register_mem.set_state(key, StateKey.FLOW_ID, FLOW)
     yield root
-    for key in (SESSION, CREATOR):
+    for key in (SESSION, CREATOR, CHILD_A, CHILD_B):
         state_register_mem.clear_session(key)
 
 
@@ -145,6 +147,10 @@ async def test_s3_replays_the_command_and_detects_the_cross_file_break(
     assert "[broken]" in out
     summary = collect_evidence_summary(session_key=CHILD_A) or ""
     assert "[broken]" in summary
+    assert any(
+        row.get("event") == "broken" and row.get("flow_id") == FLOW
+        for row in EvidenceLedger.read_for_flow(FLOW)
+    )
 
 
 @pytest.mark.asyncio
@@ -164,4 +170,5 @@ async def test_s3_unmarks_a_stale_false_positive(
     assert "TaskFlow finished" in out, out
     summary = collect_evidence_summary(session_key=CHILD_A) or ""
     assert "[stale]" not in summary and "[broken]" not in summary
-    assert EvidenceLedger.read_for_session(CHILD_A)[-1]["event"] == "unmark"
+    unmarks = [row for row in EvidenceLedger.read_for_flow(FLOW) if row.get("event") == "unmark"]
+    assert unmarks and unmarks[-1]["flow_id"] == FLOW

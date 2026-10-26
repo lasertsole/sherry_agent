@@ -78,11 +78,10 @@ def test_session_scope_isolates_evidence(ledger_path):
 
 
 class TestMultiKeyScope:
-    """A flow's evidence is the AGGREGATE of the sessions that did its work.
+    """Session-key aggregation remains available for judge/diagnostic views.
 
-    Evidence rows carry a session key, never a flow id, so the flow-level
-    consumer passes the session keys of its steps (plus its creator) instead of
-    looking a flow up as if it were a session.
+    A TaskFlow finish now reads by flow_id; this multi-key API is still used by
+    step judges and callers that hold a set of sessions but no flow context.
     """
 
     def test_several_keys_are_aggregated(self, ledger_path):

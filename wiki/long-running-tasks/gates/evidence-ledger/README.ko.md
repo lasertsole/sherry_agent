@@ -51,7 +51,7 @@ terminal / python_repl 이 명령을 실행
 | 범위 | 저장소 전체(모든 세션 공유) |
 | 변경성 | 행은 INSERT만 되고 UPDATE되지 않음. 보존 기간이 오래된 행을 삭제함(age TTL / 세션별 상한 / 전체 상한) |
 | 세션 격리 | 인덱스된 `session_id`에 `WHERE session_id = ?`; 행은 SESSION key(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)를 가짐 |
-| flow 스탬프 | `evidence_events.flow_id`(`idx_evidence_flow` 인덱스). TaskFlow 스텝 자식은 spawn 시 스탬프하고, finish 시점 creator 행은 세션 폴백으로 커버됨. `NULL` = TaskFlow 범위 아님 |
+| flow 스탬프 | `evidence_events.flow_id`(`idx_evidence_flow` 인덱스). TaskFlow 스텝 자식은 spawn 시 스탬프하고, finish 호출 중에는 creator에 임시 스탬프한 뒤 복원한다. stale/broken/unmark 행은 대상 세션의 활성 flow를 상속한다. `NULL` = TaskFlow 범위 아님 |
 | 파일 편집 기억 | 같은 DB의 `verification_state(session_id, changed_paths_json, last_edit_at)`; 세션별 상한, session/고아 정리 시 삭제 |
 | 다중 키 읽기 | `read_for_keys(keys)`는 인덱스된 `IN` 쿼리 한 번으로 가져오고 각 키의 삽입 순서를 유지함. `read_for_flow(flow_id)`는 flow 인덱스로 한 플로의 행을 읽음(스테일은 여전히 한 세션의 행 순서 안에서 파생) |
 | 동시성 | WAL이 읽기/쓰기를 겹치게 하고 쓰기는 `busy_timeout`으로 재시도 |
@@ -176,7 +176,7 @@ def derive_evidence_state(records, index):
 
 ## 에비던스 요약 형식
 
-`collect_evidence_summary(session_key=None, flow_id=None)`는 여러 줄의 문자열을 반환합니다(evidence 행이 없으면 `None`). `flow_id`를 넘기면 그 플로로 스탬프된 행을 직접 읽고, 미스탬프(creator/레거시) 행은 세션 키 집합으로 폴백합니다:
+`collect_evidence_summary(session_key=None, flow_id=None)`는 여러 줄의 문자열을 반환합니다(evidence 행이 없으면 `None`). `flow_id`를 넘기면 그 플로로 스탬프된 행만 읽습니다. `taskflow_finish`는 `flow_id`만 넘깁니다. flow 컨텍스트가 없는 호출자는 세션 키 집합을 넘길 수 있습니다:
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -212,7 +212,7 @@ def derive_evidence_state(records, index):
 
 ### 레벨 3: 플로별(taskflow_flow(action="finish") Gate C)
 
-TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에비던스를 확인합니다. 먼저 플로의 `flow_id`로 스탬프된 행을 읽고(스텝의 `child_session_key`가 유실돼도 견고함), 미스탬프 행(creator의 finish 시점 replay와 flow 컬럼 이전 행은 `NULL`)은 디스패치된 각 단계의 `child_session_key`와 플로의 `creator_session_key` 합집합으로 폴백합니다. 단계를 한 번도 디스패치하지 않았고 스탬프 행도 없는 플로는 에비던스가 없으므로 통과합니다:
+TaskFlow가 DONE으로 전환되기 전, Gate C는 `flow_id`만으로 그 플로의 행을 읽습니다. 스텝 자식은 spawn 시 스탬프되고, finish 호출 중에는 creator가 스탬프되었다가 종료 시 복원되며, stale / broken / unmark 이벤트는 대상 세션의 flow 컨텍스트에서 자동 스탬프됩니다. 이 경로에는 세션 키 폴백이 없습니다. 스탬프 행이 없는 플로는 에비던스가 없으므로 통과합니다:
 
 | 조건 | 결과 |
 |------|------|

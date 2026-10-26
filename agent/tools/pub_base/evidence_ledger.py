@@ -10,6 +10,10 @@ invalidates a test whose command never names that source. ``verification_state``
 holds the per-session accumulated file list (capped; it deliberately does not
 reset per verification, so several commands share one batch).
 
+Rows whose payload omits ``flow_id`` inherit the session's
+``StateKey.FLOW_ID`` at insert time, so verification rows and the stale /
+broken / unmark events that invalidate them stay in the same flow scope.
+
 SQLite keeps the append-only trail in one place so retention can DELETE rows
 instead of rewriting a file. WAL mode keeps concurrent readers and writers
 moving; the public class API is ``append`` / ``read_all`` / ``read_for_keys`` /
@@ -72,6 +76,19 @@ _EVIDENCE_PATH_MATCH = (
     "OR EXISTS (SELECT 1 FROM json_each(COALESCE(modified_files_json, '[]')) "
     "WHERE value = ?))"
 )
+
+
+def _active_flow_id(session_id: str) -> str | None:
+    """The session's current TaskFlow context, if any (used to stamp rows)."""
+    if not session_id:
+        return None
+    try:
+        from runtime import StateKey, state_register_mem
+
+        value = state_register_mem.get_state(session_id, StateKey.FLOW_ID, "")
+        return str(value or "").strip() or None
+    except Exception:  # pragma: no cover - the register is defensive already
+        return None
 
 
 def normalize_evidence_path(file_path: object, session_key: str | None) -> str:
@@ -156,6 +173,13 @@ class EvidenceLedger:
         exit_code = payload.get("exit_code")
         if exit_code is not None and not isinstance(exit_code, int):
             exit_code = None
+        # Verification rows already carry their flow, but stale/broken/unmark
+        # events are appended by other paths. Stamp every row from the target
+        # session's active flow context so a flow-only finish read sees its own
+        # invalidation events too.
+        flow_id = payload.get("flow_id")
+        if not flow_id:
+            flow_id = _active_flow_id(str(payload.get("session_id") or ""))
         try:
             cursor = conn.execute(
                 """
@@ -175,7 +199,7 @@ class EvidenceLedger:
                     payload.get("kind"),
                     modified_files_json,
                     payload_json,
-                    payload.get("flow_id"),
+                    flow_id,
                 ),
             )
         except sqlite3.Error:

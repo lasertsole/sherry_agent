@@ -51,7 +51,7 @@ terminal / python_repl がコマンドを実行
 | 範囲 | リポジトリ全体（全セッションで共有） |
 | 可変性 | 行は INSERT のみで UPDATE されない。保持期間が古い行を削除する（age TTL / セッション上限 / 全体上限） |
 | セッション分離 | インデックス付き `session_id` に対する `WHERE session_id = ?`。行は SESSION key（メインセッション id、または子の `agent:{agent}:subagent:{uuid}`）を持つ |
-| flow スタンプ | `evidence_events.flow_id`（`idx_evidence_flow` で索引）。TaskFlow ステップの子は spawn 時にスタンプし、finish 時の creator 行はセッションのフォールバックでカバーされる。`NULL` = TaskFlow 範囲外 |
+| flow スタンプ | `evidence_events.flow_id`（`idx_evidence_flow` で索引）。TaskFlow ステップの子は spawn 時にスタンプし、finish 呼び出し中は creator に一時スタンプして復元する。stale/broken/unmark 行は対象セッションのアクティブ flow を継承する。`NULL` = TaskFlow 範囲外 |
 | ファイル編集メモリ | 同じ DB の `verification_state(session_id, changed_paths_json, last_edit_at)`。セッションごとに上限、session/孤児クリーンアップで削除 |
 | 複数キー読み取り | `read_for_keys(keys)` は 1 回のインデックス付き `IN` クエリで取得し、各キーの挿入順を保つ。`read_for_flow(flow_id)` は flow 索引で 1 フローの行を読む（古さは 1 セッションの行順序内で導出） |
 | 並行性 | WAL により読み書きが重なり、書き込みは `busy_timeout` で再試行 |
@@ -176,7 +176,7 @@ def derive_evidence_state(records, index):
 
 ## エビデンスサマリー形式
 
-`collect_evidence_summary(session_key=None, flow_id=None)` は複数行の文字列を返します（エビデンス行がない場合は `None`）。`flow_id` を渡すと、そのフローでスタンプされた行を直接読み、未スタンプ（creator/旧行）はセッションキー集合でフォールバックします:
+`collect_evidence_summary(session_key=None, flow_id=None)` は複数行の文字列を返します（エビデンス行がない場合は `None`）。`flow_id` を渡すと、そのフローでスタンプされた行だけを読みます。`taskflow_finish` は `flow_id` のみを渡します。flow コンテキストを持たない呼び出し元はセッションキー集合を渡せます:
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -212,7 +212,7 @@ def derive_evidence_state(records, index):
 
 ### レベル 3: フローごと（taskflow_flow(action="finish") Gate C）
 
-TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エビデンスをチェックします。まずフローの `flow_id` でスタンプされた行を読み（ステップの `child_session_key` が失われても頑健）、未スタンプ行（creator の finish 時 replay やフロー列以前の行は `NULL`）は、ディスパッチされた各ステップの `child_session_key` とフローの `creator_session_key` の和集合でフォールバックします。ステップを一度もディスパッチせずスタンプ行も無いフローはエビデンスが無いので通過します:
+TaskFlow が DONE に遷移する前、Gate C は `flow_id` だけでそのフローの行を読みます。ステップの子は spawn 時にスタンプされ、finish 呼び出し中は creator がスタンプされ（終了時に復元）、stale / broken / unmark イベントは対象セッションの flow コンテキストから自動スタンプされます。この経路にセッションキーのフォールバックはありません。スタンプ行の無いフローはエビデンスが無いので通過します:
 
 | 条件 | 結果 |
 |------|------|

@@ -23,6 +23,7 @@ from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
 from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_REGRESSION_GATE
+from runtime import StateKey, state_register_mem
 
 pytestmark = [pytest.mark.unit]
 
@@ -48,6 +49,10 @@ def _keep_the_regression_gate_out_of_gate_c_tests(monkeypatch: pytest.MonkeyPatc
 
 
 async def _seed_flow(steps: list[dict]) -> None:
+    for step in steps:
+        child = str(step.get("child_session_key") or "")
+        if child:
+            state_register_mem.set_state(child, StateKey.FLOW_ID, FLOW)
     await store_sqlite.create_flow(
         FLOW,
         {
@@ -228,10 +233,10 @@ async def test_finish_reads_evidence_by_flow_id_even_when_the_step_key_is_stale(
 async def test_the_creators_own_verification_counts_too(
     isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
 ):
-    """Rows under the flow's creator session are part of the flow's evidence."""
+    """A creator row stamped for this flow (e.g. finish-time replay) counts."""
     await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
     ledger.for_session(CHILD_A).append(kind="test", command="pytest a.py", status="passed")
-    ledger.for_session(SESSION).append(kind="lint", command="ruff .", status="failed")
+    ledger.for_session(SESSION).append(kind="lint", command="ruff .", status="failed", flow_id=FLOW)
 
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
@@ -242,6 +247,47 @@ async def test_the_creators_own_verification_counts_too(
 # ---------------------------------------------------------------------------
 # Fail-open — an unavailable probe never blocks a finish
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finish_stamps_and_restores_the_creator_flow_context(
+    isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
+):
+    await _seed_flow([_step("s1", "done")])
+    from agent.tools.taskflow import evidence_collector
+
+    seen: dict[str, str] = {}
+
+    def capture(**_kwargs):
+        seen["during"] = str(state_register_mem.get_state(SESSION, StateKey.FLOW_ID, "") or "")
+        return None
+
+    monkeypatch.setattr(evidence_collector, "collect_evidence_summary", capture)
+    state_register_mem.set_state(SESSION, StateKey.FLOW_ID, "before")
+    try:
+        out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+        after = str(state_register_mem.get_state(SESSION, StateKey.FLOW_ID, "") or "")
+    finally:
+        state_register_mem.clear_session(SESSION)
+
+    assert "TaskFlow finished" in out
+    assert seen["during"] == FLOW
+    assert after == "before"
+
+
+@pytest.mark.asyncio
+async def test_finish_reads_only_flow_stamped_evidence(isolated_db: Path, ledger: EvidenceLedger):
+    """An old unstamped failing row does not contaminate a flow's read."""
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    state_register_mem.clear_session(CHILD_A)
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest old.py", status="failed")
+    ledger.for_session("agent:main:subagent:flow-pass").append(
+        kind="test", command="pytest ok.py", status="passed", flow_id=FLOW
+    )
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "TaskFlow finished" in out
 
 
 @pytest.mark.asyncio

@@ -22,12 +22,12 @@ def collect_evidence_summary(
     """Build a human-readable evidence summary for the judge prompt.
 
     Scope by ONE key (``session_key`` — ``taskflow_resume`` passes the step's
-    ``child_session_key``, the completion drain passes the session), by several
-    (``session_keys`` — ``taskflow_finish`` aggregates the flow's own scope:
-    every dispatched step's child session plus the flow's creator), and/or by
-    ``flow_id`` (the TaskFlow finish path: rows stamped with the flow are read
-    directly; older rows in sessions without any flow-stamped row fall back to
-    the session keys).
+    ``child_session_key``, the completion drain passes the session) or by
+    several (``session_keys`` — judge/diagnostic views). ``taskflow_finish``
+    uses ``flow_id`` ONLY: rows stamped with the flow are read directly, and
+    the creator is stamped for the duration of the finish call. ``flow_id``
+    and session keys are separate modes; a flow-scoped read never falls back to
+    session keys.
 
     Rows are grouped per session in ONE pass over the ledger and each group
     keeps its own order: the staleness derivation compares a row with LATER
@@ -43,14 +43,10 @@ def collect_evidence_summary(
     grouped = EvidenceLedger.read_for_keys(ordered)
     if flow_id:
         by_flow = EvidenceLedger.read_for_flow(flow_id)
-        covered_sessions = {str(row.get("session_id") or "") for row in by_flow}
-        legacy_keys = [key for key in ordered if key not in covered_sessions]
-        grouped = EvidenceLedger.read_for_keys(legacy_keys) if legacy_keys else {}
+        grouped = {}
         for row in by_flow:
             grouped.setdefault(str(row.get("session_id") or ""), []).append(row)
-        ordered = list(
-            dict.fromkeys([*ordered, *(str(row.get("session_id") or "") for row in by_flow)])
-        )
+        ordered = list(dict.fromkeys(str(row.get("session_id") or "") for row in by_flow))
 
     lines: list[str] = []
     for key in ordered:

@@ -132,12 +132,11 @@ _GOAL_GATE_SYSTEM_PROMPT = (
 async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     """Return an ``Error:`` text when the flow's evidence is failing/stale/broken.
 
-    The flow's evidence is the AGGREGATE over the sessions that did its work:
-    every dispatched step's ``child_session_key`` plus the flow's creator. Rows
-    stamped with this ``flow_id`` are read directly (robust even if a step's
-    child key was lost); rows from before the flow column existed, or from the
-    creator's finish-time replay, fall back to the session keys. A flow that
-    never dispatched a step has no keys and therefore no evidence, which passes.
+    The gate reads ONE flow's rows by ``flow_id``. A step child is stamped at
+    spawn; during this finish call the creator session is temporarily stamped
+    too, so its replay rows (and any direct verification it runs) carry the
+    flow. The previous creator value is restored in ``finally``. A flow with no
+    stamped rows has no evidence and passes.
 
     Before reading the summary, the regression gate replays the flow's passed
     verification commands once (finish-time batch, not per announce): a pass
@@ -149,30 +148,48 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     passes (``None``) — an optional probe must never block a finish.
     """
     creator_key = str((flow.get("state") or {}).get("creator_session_key") or "")
+    flow_id = str(flow.get("flow_id") or "")
     keys = [str(step.get("child_session_key") or "") for step in steps]
     keys.append(creator_key)
-    try:
-        from agent.tools.pub_base.regression_gate import (
-            prioritized_sessions,
-            reverify_flow_evidence,
-        )
 
-        priority = prioritized_sessions(steps, keys, creator_session_key=creator_key)
-        await reverify_flow_evidence(
-            keys,
-            creator_session_key=creator_key,
-            priority_session_keys=priority,
-        )
-    except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
-        logger.warning("Regression gate skipped (fail-open): {}", exc)
-    try:
-        from ..evidence_collector import collect_evidence_summary
+    previous_flow_id = ""
+    if creator_key and flow_id:
+        from runtime import StateKey, state_register_mem
 
-        evidence = collect_evidence_summary(
-            session_keys=keys, flow_id=str(flow.get("flow_id") or "")
+        previous_flow_id = str(
+            state_register_mem.get_state(creator_key, StateKey.FLOW_ID, "") or ""
         )
-    except Exception:  # noqa: BLE001 - optional probe; never block a finish
-        return None
+        state_register_mem.set_state(creator_key, StateKey.FLOW_ID, flow_id)
+    try:
+        try:
+            from agent.tools.pub_base.regression_gate import (
+                prioritized_sessions,
+                reverify_flow_evidence,
+            )
+
+            priority = prioritized_sessions(steps, keys, creator_session_key=creator_key)
+            await reverify_flow_evidence(
+                keys,
+                creator_session_key=creator_key,
+                priority_session_keys=priority,
+            )
+        except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
+            logger.warning("Regression gate skipped (fail-open): {}", exc)
+        try:
+            from ..evidence_collector import collect_evidence_summary
+
+            evidence = collect_evidence_summary(flow_id=flow_id)
+        except Exception:  # noqa: BLE001 - optional probe; never block a finish
+            return None
+    finally:
+        if creator_key and flow_id:
+            from runtime import StateKey, state_register_mem
+
+            if previous_flow_id:
+                state_register_mem.set_state(creator_key, StateKey.FLOW_ID, previous_flow_id)
+            else:
+                state_register_mem.delete_state(creator_key, StateKey.FLOW_ID)
+
     if not evidence:
         return None
     if "FAIL" in evidence:

@@ -51,7 +51,7 @@ terminal / python_repl runs a command
 | Scope | Repo-wide (shared across all sessions) |
 | Mutability | Rows are INSERTed and never UPDATEd; retention deletes old rows (age TTL / per-session cap / global cap) |
 | Session isolation | `WHERE session_id = ?` on the indexed column; rows carry a SESSION key (the main session's id, or a child's `agent:{agent}:subagent:{uuid}`) |
-| Flow stamp | `evidence_events.flow_id` (indexed by `idx_evidence_flow`). A TaskFlow step child stamps it at spawn; the finish-time creator rows are covered by the session fallback. `NULL` = not TaskFlow-scoped |
+| Flow stamp | `evidence_events.flow_id` (indexed by `idx_evidence_flow`). A TaskFlow step child stamps it at spawn; the finish call temporarily stamps the creator and restores it, and stale/broken/unmark rows inherit the target session's active flow. `NULL` = not TaskFlow-scoped |
 | File-edit memory | `verification_state(session_id, changed_paths_json, last_edit_at)` in the same DB; capped per session, deleted with the session/orphan sweep |
 | Multi-key reads | `read_for_keys(keys)` runs one indexed `IN` query and preserves each key's insertion order; `read_for_flow(flow_id)` reads one flow's rows by the flow index (staleness is still derived within one session's sequence) |
 | Concurrency | WAL lets readers and writers overlap; a writer retries through `busy_timeout` |
@@ -176,7 +176,7 @@ Key subtleties:
 
 ## Evidence Summary Format
 
-`collect_evidence_summary(session_key=None, flow_id=None)` returns a multi-line string (or `None` when no evidence rows exist). With `flow_id`, rows stamped with that flow are read directly and the session-key set is the fallback for unstamped (creator/legacy) rows:
+`collect_evidence_summary(session_key=None, flow_id=None)` returns a multi-line string (or `None` when no evidence rows exist). With `flow_id`, only rows stamped with that flow are read; `taskflow_finish` passes `flow_id` alone. A caller with no flow context may still pass session keys:
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -212,7 +212,7 @@ When `taskflow_step(action="resume")` dispatches a step with acceptance criteria
 
 ### Level 3: Per-flow (taskflow_flow(action="finish") Gate C)
 
-Before a taskflow can transition to DONE, Gate C checks the flow's AGGREGATED evidence. Rows stamped with the flow's `flow_id` are read first (robust even when a step's `child_session_key` is lost); the union of every dispatched step's `child_session_key` plus the flow's `creator_session_key` remains the fallback for unstamped rows, because the creator's finish-time replay and rows written before the flow column carry `NULL`. A flow that never dispatched a step and has no stamped rows has no evidence and passes:
+Before a taskflow can transition to DONE, Gate C reads ONE flow's rows by `flow_id`. Step children are stamped at spawn, the creator is stamped for the duration of the finish call (and restored), and stale / broken / unmark events are auto-stamped from the target session's flow context. There is no session-key fallback on this path; an unstamped row is outside the flow. A flow with no stamped rows has no evidence and passes:
 
 | Condition | Result |
 |-----------|--------|
