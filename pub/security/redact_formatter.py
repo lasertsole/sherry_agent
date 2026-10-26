@@ -43,7 +43,7 @@ from pub.security.redact import redact_sensitive_text
 __all__ = ["install_log_redaction", "redact_record"]
 
 
-def redact_record(record: dict[str, Any]) -> dict[str, Any]:
+def redact_record(record: Any) -> None:
     """loguru patcher: scrub the message, the extras and the exception in place.
 
     ``force=True``: a log file outlives the session and is read by people who
@@ -67,7 +67,9 @@ def redact_record(record: dict[str, Any]) -> dict[str, Any]:
         )
         record["exception"] = None
 
-    return record
+    # loguru's PatcherFunction mutates the record and returns None; returning
+    # the dict here would not be assigned back to the record.
+    return None
 
 
 def _render_exception(exception: Any) -> str:
