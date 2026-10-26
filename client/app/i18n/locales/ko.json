@@ -674,6 +674,8 @@
   },
   "searchFallback": {
     "notice": "Tavily를 사용할 수 없어({reason}) {name}(으)로 전환했습니다",
+    "cooldown": "SearXNG가 연속으로 실패하여 약 {seconds}초 후 자동 복귀될 때까지 일시 중지합니다",
+    "recovered": "SearXNG 쿨다운이 끝나 다시 활성화되었습니다",
     "reason": {
       "tavily_auth_failed": "키가 유효하지 않거나 만료됨",
       "tavily_timeout": "요청 시간 초과",

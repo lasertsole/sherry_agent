@@ -184,4 +184,44 @@ describe('stores/web-search', () => {
       'Tavily 无法使用（tavily_quota），已切换到 SearXNG'
     );
   });
+
+  it('fallbackNoticeText() renders the breaker notices with their own copy', () => {
+    i18nRuntime.resolveRuntimeT.mockReturnValue((key: string, params?: Record<string, unknown>) =>
+      key === 'searchFallback.cooldown'
+        ? `SearXNG 连续失败，已暂停使用（约 ${params?.seconds} 秒后自动恢复）`
+        : key === 'searchFallback.recovered'
+          ? 'SearXNG 冷却结束，已恢复使用'
+          : key
+    );
+
+    expect(fallbackNoticeText('searxng', 'searxng_cooldown_opened', 'raw', 60)).toBe(
+      'SearXNG 连续失败，已暂停使用（约 60 秒后自动恢复）'
+    );
+    expect(fallbackNoticeText('searxng', 'searxng_cooldown_recovered', 'raw')).toBe('SearXNG 冷却结束，已恢复使用');
+    // The generic "Tavily 无法使用…已切换到 X" template must never wrap a
+    // breaker reason — without the dedicated keys the frame message wins.
+    i18nRuntime.resolveRuntimeT.mockReturnValue((key: string) => key);
+    expect(fallbackNoticeText('searxng', 'searxng_cooldown_opened', '原始消息', 60)).toBe('原始消息');
+  });
+
+  it('handleFallbackFrame() forwards the breaker frame with its window length', () => {
+    i18nRuntime.resolveRuntimeT.mockReturnValue((key: string, params?: Record<string, unknown>) =>
+      key === 'searchFallback.cooldown' ? `暂停 ${params?.seconds} 秒` : key
+    );
+    const store = useWebSearchStore();
+    store.subscribe();
+
+    fallbackHandler()({
+      event: 'search_backend_fallback',
+      session_id: 'sid-9',
+      content: {
+        backend: 'searxng',
+        reason: 'searxng_cooldown_opened',
+        message: 'raw',
+        cooldown_seconds: 60
+      }
+    });
+
+    expect(notifications.handleNotification).toHaveBeenCalledWith('暂停 60 秒', 'web_search');
+  });
 });

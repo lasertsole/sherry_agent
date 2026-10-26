@@ -674,6 +674,8 @@
   },
   "searchFallback": {
     "notice": "Tavily 无法使用（{reason}），已切换到 {name}",
+    "cooldown": "SearXNG 连续失败，已暂停使用（约 {seconds} 秒后自动恢复）",
+    "recovered": "SearXNG 冷却结束，已恢复使用",
     "reason": {
       "tavily_auth_failed": "密钥无效或已过期",
       "tavily_timeout": "请求超时",

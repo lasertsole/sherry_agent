@@ -263,3 +263,96 @@ def test_the_config_snapshot_is_the_fallback_when_no_env_var_is_set(
 
     assert searxng._searxng_url() == "http://from-env:9999"
     assert searxng._engines() == "from-env-engine"
+
+
+# ── the failure breaker (design concept #21) ─────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _fresh_breaker():
+    """Process-level breaker state: every test starts and ends closed."""
+    searxng.record_searxng_outcome(True)
+    yield
+    searxng.record_searxng_outcome(True)
+
+
+def test_the_streak_opens_the_window_at_the_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+
+    searxng.record_searxng_outcome(False)
+    searxng.record_searxng_outcome(False)
+    assert searxng.searxng_cooling_down() is False
+    assert searxng.searxng_failure_streak() == 2
+
+    searxng.record_searxng_outcome(False)
+    assert searxng.searxng_cooling_down() is True
+
+
+def test_a_success_resets_the_streak_and_closes_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+
+    searxng.record_searxng_outcome(False)
+    searxng.record_searxng_outcome(False)
+    searxng.record_searxng_outcome(True)
+
+    assert searxng.searxng_failure_streak() == 0
+    searxng.record_searxng_outcome(False)
+    searxng.record_searxng_outcome(False)
+    assert searxng.searxng_cooling_down() is False, "the count restarts after a success"
+
+
+def test_a_zero_threshold_disables_the_breaker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_failure_threshold", 0)
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+
+    for _ in range(10):
+        searxng.record_searxng_outcome(False)
+
+    assert searxng.searxng_cooling_down() is False
+
+
+def test_recovery_is_consumed_once_after_the_window_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_failure_threshold", 1)
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 0.0)
+
+    searxng.record_searxng_outcome(False)
+
+    # A zero-length window is expired the instant it opens: the first consumer
+    # observes the expiry (and gets a fresh streak), the second sees nothing.
+    assert searxng.consume_searxng_recovery() is True
+    assert searxng.searxng_failure_streak() == 0
+    assert searxng.consume_searxng_recovery() is False
+
+
+def test_transport_failures_are_the_only_breaker_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A status error or a bad body still REACHED the instance — no timeout tail,
+    so it must not open the window (the message already names the real fix)."""
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_failure_threshold", 2)
+    monkeypatch.setitem(searxng.WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+    monkeypatch.setenv("SEARXNG_URL", "http://localhost:8888/")
+    _FakeClient.response = _FakeResponse({"results": []}, status=403)
+
+    for _ in range(5):
+        text = searxng.searxng_search("anything")
+        assert "HTTP 403" in text
+
+    assert searxng.searxng_cooling_down() is False
+
+    _FakeClient.response = httpx.ConnectError("connection refused")
+    text = searxng.searxng_search("anything")
+    assert "could not reach" in text
+    searxng.record_searxng_outcome(False)
+    searxng.record_searxng_outcome(False)
+    assert searxng.searxng_cooling_down() is True

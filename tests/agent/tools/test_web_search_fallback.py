@@ -96,20 +96,38 @@ def tavily_branch(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTavily]:
 
 @pytest.fixture
 def searxng_stub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """SearXNG available, with its search and the WS push both recorded."""
-    calls: dict[str, Any] = {"searches": [], "pushes": []}
+    """SearXNG available, with its search and the WS pushes both recorded."""
+    calls: dict[str, Any] = {"searches": [], "pushes": [], "cooldown_pushes": []}
     monkeypatch.setattr(web_search, "searxng_available", lambda: True)
 
-    def _search(query: str, limit: int = 5) -> str:
+    def _search(query: str, limit: int = 5) -> tuple[bool, str]:
         calls["searches"].append(query)
-        return f"searxng result for {query}"
+        return True, f"searxng result for {query}"
 
     async def _push(session_id: str, backend: str, reason: str) -> None:
         calls["pushes"].append({"session_id": session_id, "backend": backend, "reason": reason})
 
-    monkeypatch.setattr(web_search, "searxng_search", _search)
+    async def _cooldown_push(
+        session_id: str, *, opened: bool, cooldown_seconds: float = 0.0
+    ) -> None:
+        calls["cooldown_pushes"].append(
+            {"session_id": session_id, "opened": opened, "cooldown_seconds": cooldown_seconds}
+        )
+
+    monkeypatch.setattr(web_search, "searxng_search_outcome", _search)
     monkeypatch.setattr(web_search, "push_search_fallback", _push)
+    monkeypatch.setattr(web_search, "push_searxng_cooldown", _cooldown_push)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _fresh_breaker():
+    """The breaker is process-level state: every test starts and ends closed."""
+    from agent.tools.web_search_searxng import record_searxng_outcome
+
+    record_searxng_outcome(True)
+    yield
+    record_searxng_outcome(True)
 
 
 # ── resolution: session choice → global default → availability ───────────────
@@ -512,3 +530,134 @@ def test_a_send_failure_never_reaches_the_search(monkeypatch: pytest.MonkeyPatch
 
     # Must not raise: the search result is already on its way back to the model.
     asyncio.run(web_search_push.push_search_fallback("sess-1", "searxng", "tavily_error"))
+
+
+# ── the SearXNG failure breaker (design concept #21) ─────────────────────────
+
+
+def _fail_outcome(query: str, limit: int = 5) -> tuple[bool, str]:
+    return False, f"SearXNG search failed (could not reach instance): {query}"
+
+
+def test_three_transport_failures_open_the_breaker(
+    searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from config.features import WEB_SEARCH_CONFIG
+    from agent.tools.web_search_searxng import searxng_cooling_down
+
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+    monkeypatch.setattr(web_search, "searxng_search_outcome", _fail_outcome)
+
+    for _ in range(3):
+        result = asyncio.run(web_search._search_via_searxng("query", "sess-1"))
+    assert "could not reach" in result
+    assert searxng_cooling_down() is True
+    assert searxng_stub["cooldown_pushes"] == [
+        {"session_id": "sess-1", "opened": True, "cooldown_seconds": 60}
+    ]
+
+
+def test_an_open_breaker_skips_the_dial_and_answers_a_stub(
+    searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from config.features import WEB_SEARCH_CONFIG
+    from agent.tools.web_search_searxng import record_searxng_outcome
+
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+    for _ in range(3):
+        record_searxng_outcome(False)
+    assert searxng_stub["searches"] == []
+
+    result = asyncio.run(web_search._search_via_searxng("query", "sess-1"))
+
+    assert "temporarily unavailable" in result
+    assert searxng_stub["searches"] == [], "a cooling instance must not be dialed"
+    assert searxng_stub["cooldown_pushes"] == [], "the stub fires no new transition"
+
+
+def test_resolution_routes_away_from_a_cooling_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """During the cooldown SearXNG reads as unconfigured, so every existing rule
+    (explicit choice, default, fallback) takes the other provider."""
+    from runtime.session.state_keys import StateKey
+    from agent.tools.web_search_searxng import record_searxng_outcome
+
+    monkeypatch.setattr(
+        "runtime.state_register_mem.get_state",
+        lambda session_id, key: "searxng" if key == StateKey.SEARCH_BACKEND else None,
+    )
+    monkeypatch.setattr(web_search, "tavily_available", lambda: True)
+    monkeypatch.setattr(web_search, "searxng_available", lambda: True)
+    for _ in range(3):
+        record_searxng_outcome(False)
+
+    assert web_search.resolve_preferred_backend("sess-1") == "tavily"
+
+
+def test_an_http_status_error_does_not_open_the_breaker(
+    searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from config.features import WEB_SEARCH_CONFIG
+    from agent.tools.web_search_searxng import searxng_cooling_down
+
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
+
+    def _status_error(query: str, limit: int = 5) -> tuple[bool, str]:
+        return True, "SearXNG search failed (HTTP 403 from instance)."
+
+    monkeypatch.setattr(web_search, "searxng_search_outcome", _status_error)
+    for _ in range(5):
+        asyncio.run(web_search._search_via_searxng("query", "sess-1"))
+
+    assert searxng_cooling_down() is False
+    assert searxng_stub["cooldown_pushes"] == []
+
+
+def test_the_window_expiring_probes_and_pushes_recovery_on_success(
+    searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from config.features import WEB_SEARCH_CONFIG
+    from agent.tools.web_search_searxng import record_searxng_outcome, searxng_cooling_down
+
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 0.05)
+    for _ in range(3):
+        record_searxng_outcome(False)
+    assert searxng_cooling_down() is True
+
+    import time
+
+    time.sleep(0.06)
+    result = asyncio.run(web_search._search_via_searxng("query", "sess-1"))
+
+    assert result == "searxng result for query", "the expiry is probed with a real dial"
+    assert searxng_stub["cooldown_pushes"] == [
+        {"session_id": "sess-1", "opened": False, "cooldown_seconds": 0.0}
+    ]
+    assert searxng_cooling_down() is False
+
+
+def test_a_failed_probe_after_expiry_reopens_only_after_fresh_failures(
+    searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from config.features import WEB_SEARCH_CONFIG
+    from agent.tools.web_search_searxng import record_searxng_outcome, searxng_cooling_down
+
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
+    monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 0.05)
+    for _ in range(3):
+        record_searxng_outcome(False)
+    import time
+
+    time.sleep(0.06)
+    monkeypatch.setattr(web_search, "searxng_search_outcome", _fail_outcome)
+
+    result = asyncio.run(web_search._search_via_searxng("query", "sess-1"))
+
+    assert "could not reach" in result
+    assert searxng_cooling_down() is False, "one failure after expiry is not three"
+    assert [p["opened"] for p in searxng_stub["cooldown_pushes"]] == []

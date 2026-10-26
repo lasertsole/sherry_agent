@@ -674,6 +674,8 @@
   },
   "searchFallback": {
     "notice": "Tavily is unavailable ({reason}); switched to {name}",
+    "cooldown": "SearXNG failed repeatedly; paused for about {seconds}s before automatic recovery",
+    "recovered": "SearXNG cooldown ended; re-enabled",
     "reason": {
       "tavily_auth_failed": "the key is invalid or expired",
       "tavily_timeout": "the request timed out",
