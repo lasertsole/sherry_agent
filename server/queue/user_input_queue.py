@@ -441,6 +441,18 @@ class QueueRepository:
         return int(count)
 
     @staticmethod
+    async def count_all_queued(db: aiosqlite.Connection) -> int:
+        """QUEUED rows across every session (the /health depth gauge)."""
+        async with db.execute(
+            "SELECT COUNT(*) FROM user_input_queue WHERE status = 'QUEUED'"
+        ) as cursor:
+            count_row = await cursor.fetchone()
+            if count_row is None:  # COUNT(*) always returns a row
+                return 0
+            (count,) = count_row
+        return int(count)
+
+    @staticmethod
     async def insert_queued(db: aiosqlite.Connection, row: UserInputQueueRow) -> None:
         await db.execute(
             _INSERT_QUEUED_SQL,
@@ -759,6 +771,12 @@ class UserInputQueue:
         await self._ensure_db()
         async with self._conn.connect() as db:
             return await QueueRepository.list_active(db, session_id)
+
+    async def total_queued(self) -> int:
+        """QUEUED rows across every session (a process-level health gauge)."""
+        await self._ensure_db()
+        async with self._conn.connect() as db:
+            return await QueueRepository.count_all_queued(db)
 
     async def delete_session(self, session_id: str) -> int:
         """Delete every queue row of a session (ephemeral-session purge)."""

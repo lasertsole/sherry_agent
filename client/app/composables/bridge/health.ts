@@ -18,9 +18,11 @@ import { invokeNative } from './transport';
 export async function checkHealth(): Promise<HealthStatus> {
   const native = await invokeNative<HealthStatus>('system_health');
   if (native !== null) return native.value;
-  // Browser fallback: try to fetch a lightweight endpoint
+  // Browser fallback: the dedicated process self-check. Public at BOTH gate
+  // layers (gateway + login), so the probe stays truthful on the login page
+  // and costs a fixed tiny payload — the old /system_prompt probe was neither.
   try {
-    const resp = await fetchApiRaw({ url: '/system_prompt' });
+    const resp = await fetchApiRaw({ url: '/health' });
     if (resp.ok) {
       return { healthy: true, message: 'Python backend reachable' };
     }

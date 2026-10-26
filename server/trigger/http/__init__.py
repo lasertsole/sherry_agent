@@ -35,6 +35,7 @@ import server.trigger.http.git  # noqa: F401  (side-effect route registration)
 import server.trigger.http.terminal  # noqa: F401  (side-effect route registration)
 import server.trigger.http.browser  # noqa: F401  (side-effect route registration)
 import server.trigger.http.trajectory  # noqa: F401  (side-effect route registration)
+import server.trigger.http.health  # noqa: F401  (side-effect route registration)
 
 # The per-turn trajectory ledger is reached by agent-side producers through the
 # process-level hook registry (agent/** must not import server/**).

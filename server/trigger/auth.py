@@ -44,6 +44,7 @@ from config.features import GATEWAY
 
 __all__ = [
     "BOOTSTRAP_PATH",
+    "HEALTH_PATH",
     "TOKEN_HEADER",
     "TOKEN_QUERY_PARAM",
     "allowed_origins",
@@ -55,6 +56,10 @@ __all__ = [
 
 #: Endpoint that hands the token to a token-less caller (even in strict mode).
 BOOTSTRAP_PATH = "/auth/token"
+#: Process self-check: exempt from the token-REQUIRED refusal (strict mode) so a
+#: liveness probe needs no secret. The Origin gate and an INVALID token still
+#: refuse it — "public" means no bootstrap needed, not unguarded.
+HEALTH_PATH = "/health"
 #: Wire names of the credential: response/request header + WS query parameter.
 TOKEN_HEADER = "token"
 TOKEN_QUERY_PARAM = "token"
@@ -97,7 +102,11 @@ def check_http(
     if presented_token and not token_matches(presented_token):
         logger.warning("gateway auth: invalid token for path={}", path)
         return 401, "Invalid token"
-    if GATEWAY["require_token"] and not token_matches(presented_token) and path != BOOTSTRAP_PATH:
+    if (
+        GATEWAY["require_token"]
+        and not token_matches(presented_token)
+        and path not in (BOOTSTRAP_PATH, HEALTH_PATH)
+    ):
         logger.warning("gateway auth: token required but missing for path={}", path)
         return 401, "Token required"
     return None
