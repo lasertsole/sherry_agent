@@ -52,20 +52,25 @@ If not, it's too big — split it.
 _TODOLIST_TOOLS: list[BaseTool] = [todowrite, todoread]
 
 _READ_ONLY_TODOLIST: set[str] = {"todoread"}
+# ``todowrite`` is a FULL replacement, so replaying the same list leaves the
+# session in the same state. The guardrail may therefore hash its result.
+_IDEMPOTENT_TODOLIST: set[str] = {"todoread", "todowrite"}
 
 
 def build_todolist_tools() -> list[BaseTool]:
     """Build and return the todowrite/todoread tools for main-agent wiring.
 
-    Each tool declares its ``idempotent`` metadata (``todoread`` is a pure read,
-    ``todowrite`` mutates the list) for the ToolGuardrails middleware.
+    Each tool declares its ``idempotent`` metadata (both are repeat-safe:
+    ``todoread`` reads, ``todowrite`` replaces the whole list) for the
+    ToolGuardrails middleware. ``side_effect_scope`` still distinguishes the
+    read from the session write.
     """
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
         t.metadata = {
             **(t.metadata or {}),
             "scope": "main_only",
-            "idempotent": t.name in _READ_ONLY_TODOLIST,
+            "idempotent": t.name in _IDEMPOTENT_TODOLIST,
             "side_effect_scope": "none" if t.name in _READ_ONLY_TODOLIST else "session",
         }
     # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo

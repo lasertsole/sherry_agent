@@ -110,12 +110,20 @@ def test_taskflow_idempotency_metadata_survives_repeated_builds():
     """Given repeated builds, When merging metadata, Then no key is dropped."""
     for _ in range(2):
         tools = {t.name: t for t in build_taskflow_tools()}
+    action_idempotency = {
+        "taskflow_flow": {"create", "plan"},
+        "taskflow_step": {"update_steps", "resume"},
+    }
     for name, tool in tools.items():
-        assert tool.metadata == {
+        expected = {
             "scope": "main_only",
             "idempotent": name in READ_ONLY_TASKFLOW_TOOLS,
             "side_effect_scope": "none" if name in READ_ONLY_TASKFLOW_TOOLS else "session",
-        }, name
+        }
+        actions = action_idempotency.get(name)
+        if actions:
+            expected["idempotent_actions"] = tuple(sorted(actions))
+        assert tool.metadata == expected, name
 
 
 def test_every_registered_tool_is_documented_in_skill():

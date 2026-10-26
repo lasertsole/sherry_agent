@@ -755,5 +755,8 @@ def _message_search_tool(
 def build_message_search_tool() -> BaseTool:
     """Return the message search tool with error handling enabled."""
     _message_search_tool.handle_tool_error = True
-    _message_search_tool.metadata = {"idempotent": False}
+    # Pure recall: replaying the same query adds no new information unless the
+    # store changed. The guardrail can hash the result; an LLM summary that
+    # varies naturally simply reads as progress.
+    _message_search_tool.metadata = {"idempotent": True}
     return _message_search_tool

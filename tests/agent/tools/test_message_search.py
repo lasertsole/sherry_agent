@@ -427,7 +427,7 @@ class TestMessageSearchTool:
 
     def test_tool_metadata(self):
         tool = build_message_search_tool()
-        assert tool.metadata == {"idempotent": False}
+        assert tool.metadata == {"idempotent": True}
 
 
 # ============================================================================

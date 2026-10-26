@@ -46,14 +46,14 @@ Active on the main agent, worker agents, and nudge sub-agents. Every tool call r
 |---|---|---|---|---|
 | Exact-failure repetition | Same tool + same (hashed) args keeps failing | 2 | 5 | HALT at 5 |
 | Same-tool failure storm | Same tool keeps failing, args may vary | 3 | 8 | HALT at 8 |
-| Idempotent no-progress | Same idempotent tool returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
+| Idempotent no-progress | Same idempotent tool (or idempotent action of a grouped tool) returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
 | Ping-pong | Unbroken A → B → A → B bouncing where both consecutive calls are stagnant | 4 | 6 | HALT at 6 |
 | Argument churn | Same idempotent tool cycling argument variants whose result stays unchanged (stagnant) | 3 variants | 5 variants | HALT at 5 |
 
 Details that matter:
 
 - **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT. In effect: a managed retry window instead of an immediate wall. Set `recovery_mode_enabled=False` for strict no-recovery behavior, or `hard_stop_enabled=True` to turn every BLOCK threshold into HALT (see table).
-- **No progress means stagnation** (`is_stagnant`): a successful idempotent call is only no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
+- **No progress means stagnation** (`is_stagnant`): a successful idempotent call is only no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. A grouped tool may declare `idempotent_actions` instead of a whole-tool flag: only a call whose `action` argument is in that allowlist is hashed (TaskFlow hashes `create`/`plan`/`update_steps`/`resume`; `checkpoint` hashes `list`/`show`; `knowledge` hashes `read`/`list`). The allowlist takes precedence over the scalar flag, and an unlisted or missing action is never treated as repeatable. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - Guard state is strictly **turn-scoped**: `before_agent` resets it, so a fresh turn starts clean.
 
 ### Turn level: `IterationBudget`

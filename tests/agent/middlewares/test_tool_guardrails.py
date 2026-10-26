@@ -62,6 +62,9 @@ def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=Tru
 
 IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": True})
 NON_IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": False})
+ACTION_SCOPED_TOOL = SimpleNamespace(
+    metadata={"idempotent": False, "idempotent_actions": ("read", "list")}
+)
 
 
 def wrap_call(mw, sess, name, args, content, call_id, status="success", tool=IDEMPOTENT_TOOL):
@@ -73,6 +76,35 @@ def wrap_call(mw, sess, name, args, content, call_id, status="success", tool=IDE
     )
     result = ToolMessage(content=content, tool_call_id=call_id, name=name, status=status)
     return mw._wrap_tool_call_impl(request, result)
+
+
+def test_action_scoped_idempotency_reads_the_call_action():
+    mw = make_mw()
+
+    assert mw._is_idempotent("T", ACTION_SCOPED_TOOL, {"action": "read"}) is True
+    assert mw._is_idempotent("T", ACTION_SCOPED_TOOL, {"action": "list"}) is True
+    assert mw._is_idempotent("T", ACTION_SCOPED_TOOL, {"action": "write"}) is False
+    assert mw._is_idempotent("T", ACTION_SCOPED_TOOL, {}) is False
+    # The allowlist wins over a scalar flag, so a grouped tool cannot be marked
+    # repeat-safe for its mutating actions by accident.
+    both = SimpleNamespace(metadata={"idempotent": True, "idempotent_actions": ("read",)})
+    assert mw._is_idempotent("T", both, {"action": "write"}) is False
+
+
+def test_action_scoped_tool_gets_no_progress_only_for_allowed_action():
+    mw = make_mw(no_progress_warn_after=2, no_progress_block_after=5)
+    sess = "sess-action-scoped-read"
+    first = wrap_call(mw, sess, "T", {"action": "read"}, "same", "r1", tool=ACTION_SCOPED_TOOL)
+    second = wrap_call(mw, sess, "T", {"action": "read"}, "same", "r2", tool=ACTION_SCOPED_TOOL)
+    assert first.content == "same"
+    assert "idempotent no-progress" in second.content
+
+    write_sess = "sess-action-scoped-write"
+    for index in range(2):
+        wrapped = wrap_call(
+            mw, write_sess, "T", {"action": "write"}, "same", f"w{index}", tool=ACTION_SCOPED_TOOL
+        )
+        assert wrapped.content == "same"
 
 
 # ------------------------------------------------------------- sanity (load contract)

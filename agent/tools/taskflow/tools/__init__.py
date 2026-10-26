@@ -53,6 +53,16 @@ _TASKFLOW_MODULE_TOOLS: list[BaseTool] = [
 # no-progress loop. The merged inspect tool keeps that property; the lifecycle
 # and step tools mutate flow state and stay unsafe barriers.
 _READ_ONLY_TASKFLOW: set[str] = {"taskflow_inspect"}
+# Grouped tools whose SOME actions are repeat-safe. The guardrail hashes the
+# result only for these actions: taskflow_create/taskflow_plan return a stable
+# duplicate answer, taskflow_update_steps is a full replacement and
+# taskflow_resume explicitly treats a duplicate delivery as a no-op. Everything
+# else (dispatch/finish/fail/cancel/replan/set_waiting/budget and run_task)
+# changes state or errors on repetition, so it stays non-idempotent.
+_IDEMPOTENT_ACTIONS_TASKFLOW: dict[str, set[str]] = {
+    "taskflow_flow": {"create", "plan"},
+    "taskflow_step": {"update_steps", "resume"},
+}
 # The legacy adapter keeps the original read/write split for the tests and
 # internal callers that still drive the module tools directly.
 _READ_ONLY_LEGACY_TASKFLOW: set[str] = {
@@ -62,15 +72,23 @@ _READ_ONLY_LEGACY_TASKFLOW: set[str] = {
 }
 
 
-def _tag_metadata(tools: list[BaseTool], read_only: set[str]) -> None:
+def _tag_metadata(
+    tools: list[BaseTool],
+    read_only: set[str],
+    idempotent_actions: dict[str, set[str]] | None = None,
+) -> None:
     for t in tools:
         t.handle_tool_error = True
-        t.metadata = {
+        metadata = {
             **(t.metadata or {}),
             "scope": "main_only",
             "idempotent": t.name in read_only,
             "side_effect_scope": "none" if t.name in read_only else "session",
         }
+        actions = (idempotent_actions or {}).get(t.name)
+        if actions:
+            metadata["idempotent_actions"] = tuple(sorted(actions))
+        t.metadata = metadata
 
 
 def build_taskflow_tools() -> list[BaseTool]:
@@ -81,9 +99,11 @@ def build_taskflow_tools() -> list[BaseTool]:
     the family is tagged ``scope=main_only``: shared flow state is managed by
     the main agent, so the subagent tool-policy drops it unconditionally.
     ``taskflow_inspect`` stays idempotent/read-only; the mutating two are
-    unsafe barriers.
+    unsafe barriers, with their repeat-safe ACTIONS declared separately in
+    ``idempotent_actions`` so a retried create/plan/update_steps/resume does
+    not look like progress.
     """
-    _tag_metadata(TASKFLOW_MERGED_TOOLS, _READ_ONLY_TASKFLOW)
+    _tag_metadata(TASKFLOW_MERGED_TOOLS, _READ_ONLY_TASKFLOW, _IDEMPOTENT_ACTIONS_TASKFLOW)
     return list(TASKFLOW_MERGED_TOOLS)
 
 
