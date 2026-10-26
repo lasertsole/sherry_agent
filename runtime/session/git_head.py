@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.tools.pub_base.shadow_git import shadow_head
+from pub.git_head import shadow_head
 from pub.func.message.workspace_notice import (
     GIT_HEAD_NOTICE_ORIGIN,
     workspace_notice_metadata,

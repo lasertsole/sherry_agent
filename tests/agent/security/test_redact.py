@@ -18,7 +18,7 @@ import pathlib
 
 import pytest
 
-from agent.security.redact import (
+from pub.security.redact import (
     REDACTED,
     redact_sensitive_text,
     truncate_for_redaction,
@@ -199,7 +199,7 @@ def test_the_projects_own_docs_are_not_rewritten():
 
 def test_the_env_switch_is_snapshotted_at_import(monkeypatch):
     """An LLM that writes ``export REDACT=false`` must not disarm a live session."""
-    import agent.security.redact as redact_module
+    import pub.security.redact as redact_module
 
     monkeypatch.setenv("SHERRY_REDACT", "false")
     try:

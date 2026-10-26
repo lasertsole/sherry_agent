@@ -38,7 +38,7 @@ from typing import Any
 
 from loguru import logger
 
-from agent.security.redact import redact_sensitive_text
+from pub.security.redact import redact_sensitive_text
 
 __all__ = ["install_log_redaction", "redact_record"]
 

@@ -276,6 +276,67 @@ source_modules = ["config"]
 forbidden_modules = ["models"]
 
 [[tool.importlinter.contracts]]
+name = "Forbidden: pub must not import project internals"
+type = "forbidden"
+source_modules = ["pub"]
+forbidden_modules = [
+    "runtime",
+    "agent",
+    "server",
+    "models",
+    "workspace",
+    "context_engine",
+    "skills",
+    "bus",
+    "channels",
+    "logs",
+]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: runtime must not import project internals"
+type = "forbidden"
+source_modules = ["runtime"]
+forbidden_modules = [
+    "agent",
+    "server",
+    "models",
+    "workspace",
+    "context_engine",
+    "skills",
+    "bus",
+    "channels",
+    "logs",
+]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: logs must not import project internals"
+type = "forbidden"
+source_modules = ["logs"]
+forbidden_modules = [
+    "runtime",
+    "agent",
+    "server",
+    "models",
+    "workspace",
+    "context_engine",
+    "skills",
+    "bus",
+    "channels",
+]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: config must not import agent"
+type = "forbidden"
+source_modules = ["config"]
+forbidden_modules = ["agent"]
+
+[[tool.importlinter.contracts]]
+name = "Forbidden: config must not import server"
+type = "forbidden"
+source_modules = ["config"]
+forbidden_modules = ["server"]
+
+[[tool.importlinter.contracts]]
 name = "Forbidden: context_engine must not import agent"
 type = "forbidden"
 source_modules = ["context_engine"]

@@ -68,11 +68,11 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 
 ## シークレットのマスキング
 
-`agent/security/redact.py` がテキスト中の資格情報をマスクし、2 か所に適用されます。スイッチは意図的に別です：
+`pub/security/redact.py` がテキスト中の資格情報をマスクし、2 か所に適用されます。スイッチは意図的に別です：
 
 | 面 | 適用するもの | スイッチ |
 |---|---|---|
-| すべてのログレコード（コンソール + 3 つのローテーションファイル） | `agent/security/redact_formatter.py`（`logs/logger.py` が導入する loguru patcher） | 常時有効——ログファイルはセッションより長生きし、読む人はその秘密を見ていない |
+| すべてのログレコード（コンソール + 3 つのローテーションファイル） | `pub/security/redact_formatter.py`（`logs/logger.py` が導入する loguru patcher） | 常時有効——ログファイルはセッションより長生きし、読む人はその秘密を見ていない |
 | 漏洩しやすいツール出力（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`、`browser`、`browser_*`） | フェンスと同じミドルウェア | `config/features/agent_side/redaction.py` の `REDACTION["tool_output_enabled"]` |
 | ファイルツール（`read_file`、`patch_file`、`write_file`） | — | 意図的にマスクしません：エージェントは自分の設定を編集し、マスクすると「読んで書き戻す」が損失的になるため |
 

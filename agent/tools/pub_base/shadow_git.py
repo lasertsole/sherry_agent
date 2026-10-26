@@ -16,6 +16,7 @@ from typing import Any
 from loguru import logger
 
 from config.features import SHADOW_GIT, SUBAGENT_ISOLATION
+from pub.git_head import SHADOW_REF, shadow_head
 
 __all__ = [
     "SHADOW_REF",
@@ -33,7 +34,6 @@ __all__ = [
     "take_snapshot",
 ]
 
-SHADOW_REF = "refs/heads/main"
 _COMMIT_MSG_PREFIX = "sherry|"
 
 #: (session, root) pairs already snapshotted in the current turn.
@@ -103,24 +103,6 @@ def run_shadow(
         text=True,
         timeout=SHADOW_GIT["git_timeout_s"] if timeout is None else timeout,
     )
-
-
-def shadow_head(project_root: Path) -> str | None:
-    """The latest snapshot hash, WITHOUT creating a store on a read path."""
-    root = project_root.resolve()
-    store = shadow_store(root)
-    if not (store / "HEAD").exists():
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "--git-dir", str(store), "rev-parse", "--short", SHADOW_REF],
-            capture_output=True,
-            text=True,
-            timeout=SHADOW_GIT["git_timeout_s"],
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
 
 
 def _current_turn(session_id: str) -> int:

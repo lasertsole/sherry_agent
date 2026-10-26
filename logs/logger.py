@@ -59,7 +59,7 @@ def init_logger(log_dir=LOG_DIR, timeout_days: int = 7):
     #     here (the single place sinks are configured) so the guarantee holds for
     #     every sink added below and any added later: a log file outlives the
     #     session and is read by people who never saw the credential.
-    from agent.security.redact_formatter import install_log_redaction
+    from pub.security.redact_formatter import install_log_redaction
 
     install_log_redaction()
 

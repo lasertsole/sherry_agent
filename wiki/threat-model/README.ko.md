@@ -70,11 +70,11 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 ## 비밀 마스킹
 
-`agent/security/redact.py` 가 텍스트의 자격 증명을 마스킹하며 두 곳에 적용됩니다. 스위치는 의도적으로 다릅니다:
+`pub/security/redact.py` 가 텍스트의 자격 증명을 마스킹하며 두 곳에 적용됩니다. 스위치는 의도적으로 다릅니다:
 
 | 면 | 적용 주체 | 스위치 |
 |---|---|---|
-| 모든 로그 레코드(콘솔 + 세 개의 로테이션 파일) | `agent/security/redact_formatter.py`(`logs/logger.py` 가 설치하는 loguru patcher) | 항상 켜짐——로그 파일은 세션보다 오래 살고, 읽는 사람은 그 비밀을 본 적이 없습니다 |
+| 모든 로그 레코드(콘솔 + 세 개의 로테이션 파일) | `pub/security/redact_formatter.py`(`logs/logger.py` 가 설치하는 loguru patcher) | 항상 켜짐——로그 파일은 세션보다 오래 살고, 읽는 사람은 그 비밀을 본 적이 없습니다 |
 | 유출되기 쉬운 도구 출력(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`, `browser`, `browser_*`) | 펜스와 같은 미들웨어 | `config/features/agent_side/redaction.py` 의 `REDACTION["tool_output_enabled"]` |
 | 파일 도구(`read_file`, `patch_file`, `write_file`) | — | 의도적으로 마스킹하지 않습니다: 에이전트가 자기 설정을 편집하는데, 마스킹하면 "읽고 되쓰기"가 손실이 됩니다 |
 

@@ -75,12 +75,12 @@ cheapest forgery (closing the block) is defanged.
 
 ## Secret redaction
 
-`agent/security/redact.py` masks credentials in text and is applied at two
+`pub/security/redact.py` masks credentials in text and is applied at two
 places, with different switches on purpose:
 
 | Surface | Applied by | Switch |
 |---|---|---|
-| Every log record (console + the three rotating files) | `agent/security/redact_formatter.py` (a loguru patcher installed by `logs/logger.py`) | always on — a log file outlives the session and is read by people who never saw the secret |
+| Every log record (console + the three rotating files) | `pub/security/redact_formatter.py` (a loguru patcher installed by `logs/logger.py`) | always on — a log file outlives the session and is read by people who never saw the secret |
 | Tool output that leaks credentials for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`, `browser`, `browser_*`) | the same middleware that fences untrusted output | `REDACTION["tool_output_enabled"]` in `config/features/agent_side/redaction.py` |
 | File tools (`read_file`, `patch_file`, `write_file`) | — | deliberately not redacted: the agent edits its own configuration, and masking a value would make a read-then-write lossy |
 

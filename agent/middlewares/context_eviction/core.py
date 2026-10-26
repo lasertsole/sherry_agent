@@ -78,7 +78,7 @@ from pub.func.message.eviction import (
     slice_read_file_result,
 )
 from agent.middlewares.base import require_session_id
-from agent.security.redact import redact_sensitive_text
+from pub.security.redact import redact_sensitive_text
 from agent.security.untrusted_wrapper import wrap_tool_message
 from agent.middlewares.message_persistence.prepare import _watermark_key
 

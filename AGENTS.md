@@ -1701,6 +1701,8 @@ split, low-confidence pages, god nodes) after its original ten checks (L7).
 - Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary. The transcript port is the third seam, in the agent's own direction: `agent/state_port.py` (`read_messages` / `read_interrupt` / `heal_interrupted_turn`) is the ONLY place the LangGraph checkpoint shape is read or rewritten — `server/` drives turns through it and never touches `snapshot.values["messages"]` or `aupdate_state` itself (a turn's INPUT messages and the auxiliary heartbeat agent stay the server's own business).
 - `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
+- `pub/**` may import `config/**` only; `runtime/**` may import `config/**` and `pub/**`. Both MUST NOT import `agent`/`server`/`models`/`workspace`/`context_engine`/`skills`/`bus`/`channels`/`logs`. The read-only shadow HEAD reader lives in `pub/git_head.py`, so `runtime.session.git_head` never reaches into `agent`.
+- `logs/**` may import `config/**` and `pub/**` only; every logic package may import `logs`, but `logs` must never import a logic package (the loguru redaction patcher lives in `pub/security/redact_formatter.py`, not under `agent/`)
 - every numeric constant lives in a `config/features/**` per-object module (e.g. `SUMMARIZATION` in `config/features/agent_side/summarization.py`), never in a shared `num.py`
 
 ## Test Structure

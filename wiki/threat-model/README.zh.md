@@ -68,11 +68,11 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 ## 密钥脱敏
 
-`agent/security/redact.py` 负责在文本里掩码凭证，落点有两处，开关刻意不同：
+`pub/security/redact.py` 负责在文本里掩码凭证，落点有两处，开关刻意不同：
 
 | 面 | 由谁施加 | 开关 |
 |---|---|---|
-| 每一条日志记录（控制台 + 三个轮转文件） | `agent/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
+| 每一条日志记录（控制台 + 三个轮转文件） | `pub/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
 | 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`、`browser`、`browser_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
 | 文件工具（`read_file`、`patch_file`、`write_file`） | — | 刻意不脱敏：agent 要编辑自己的配置，掩码会让"读回再写回"变成有损操作 |
 
