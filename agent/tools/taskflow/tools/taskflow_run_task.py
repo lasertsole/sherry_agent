@@ -194,6 +194,8 @@ async def taskflow_run_task(
         functional_role=optional_fields["functional_role"],
         step_model=optional_fields["step_model"],
         step_timeout_seconds=step_timeout_seconds,
+        flow_id=flow_id,
+        step_id=step_id,
     )
     dispatched_at = time.time()
 

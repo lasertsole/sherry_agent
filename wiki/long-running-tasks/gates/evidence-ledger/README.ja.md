@@ -50,11 +50,11 @@ terminal / python_repl がコマンドを実行
 | 形式 | SQLite テーブル `evidence_events`；WAL モード + `busy_timeout=5000` |
 | 範囲 | リポジトリ全体（全セッションで共有） |
 | 可変性 | 行は INSERT のみで UPDATE されない。保持期間が古い行を削除する（age TTL / セッション上限 / 全体上限） |
-| セッション分離 | インデックス付き `session_id` に対する `WHERE session_id = ?`。行は SESSION key（メインセッション id、または子の `agent:{agent}:subagent:{uuid}`）を持ち、plan / todo / flow id は持たない |
+| セッション分離 | インデックス付き `session_id` に対する `WHERE session_id = ?`。行は SESSION key（メインセッション id、または子の `agent:{agent}:subagent:{uuid}`）を持つ |
+| flow スタンプ | `evidence_events.flow_id`（`idx_evidence_flow` で索引）。TaskFlow ステップの子は spawn 時にスタンプし、finish 時の creator 行はセッションのフォールバックでカバーされる。`NULL` = TaskFlow 範囲外 |
 | ファイル編集メモリ | 同じ DB の `verification_state(session_id, changed_paths_json, last_edit_at)`。セッションごとに上限、session/孤児クリーンアップで削除 |
-| 複数キー読み取り | `read_for_keys(keys)` は 1 回のインデックス付き `IN` クエリで取得し、各キーの挿入順を保つ（古さは 1 セッションの行順序内で導出） |
+| 複数キー読み取り | `read_for_keys(keys)` は 1 回のインデックス付き `IN` クエリで取得し、各キーの挿入順を保つ。`read_for_flow(flow_id)` は flow 索引で 1 フローの行を読む（古さは 1 セッションの行順序内で導出） |
 | 並行性 | WAL により読み書きが重なり、書き込みは `busy_timeout` で再試行 |
-| 旧 JSONL | 初回オープン時に 1 回だけインポート（行ハッシュで重複排除）し、`.migrated` にリネーム |
 | ファイル不在 | `read_all()` は `[]` を返す。ディレクトリは初回アクセス時に作成 |
 
 DB は意図的にリポジトリ全体に置かれ、セッション単位ではない。同じ計画を検証する複数セッションで共有される監査トレイルである。
@@ -86,6 +86,7 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
 2. 結果文字列から `exit_code` を導出（"Exit code N" / 失敗プレフィックスの正規表現マッチ）。
 3. `status` = exit_code が 0 のとき `"passed"`、それ以外は `"failed"`。
 4. `output_snippet`（先頭 500 文字）と `sandboxed` フラグを含む行を追記。
+5. セッション状態レジスタから `StateKey.FLOW_ID` を読み、行の `flow_id` にスタンプする。メイン/非 TaskFlow セッションでは `NULL` のまま。
 
 **Fail-open:** すべてのレコーダーは自身のエラーを飲み込む — 台帳の書き込みがツールを壊すことはない。
 
@@ -113,6 +114,7 @@ DB は意図的にリポジトリ全体に置かれ、セッション単位で�
   "sandboxed": true,
   "modified_files": ["src/alpha.py"],
   "session_id": "agent:main:session:abc-123",
+  "flow_id": "plan-4f7c2a91d0",
   "timestamp": "2026-10-15T08:30:00.123456+00:00"
 }
 ```
@@ -174,7 +176,7 @@ def derive_evidence_state(records, index):
 
 ## エビデンスサマリー形式
 
-`collect_evidence_summary(session_key=None, flow_id=None)` は複数行の文字列を返します（エビデンス行がない場合は `None`）:
+`collect_evidence_summary(session_key=None, flow_id=None)` は複数行の文字列を返します（エビデンス行がない場合は `None`）。`flow_id` を渡すと、そのフローでスタンプされた行を直接読み、未スタンプ（creator/旧行）はセッションキー集合でフォールバックします:
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -210,7 +212,7 @@ def derive_evidence_state(records, index):
 
 ### レベル 3: フローごと（taskflow_flow(action="finish") Gate C）
 
-TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エビデンスをチェックします——ディスパッチされた各ステップの `child_session_key` とフローの `creator_session_key` の和集合です（行はセッションキーで保存され、フローは複数セッションにまたがるため。一度もステップをディスパッチしていないフローはキーが無く、エビデンスも無いので通過します）:
+TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エビデンスをチェックします。まずフローの `flow_id` でスタンプされた行を読み（ステップの `child_session_key` が失われても頑健）、未スタンプ行（creator の finish 時 replay やフロー列以前の行は `NULL`）は、ディスパッチされた各ステップの `child_session_key` とフローの `creator_session_key` の和集合でフォールバックします。ステップを一度もディスパッチせずスタンプ行も無いフローはエビデンスが無いので通過します:
 
 | 条件 | 結果 |
 |------|------|
@@ -229,3 +231,4 @@ TaskFlow が DONE に遷移する前、Gate C はそのフローの**集約**エ
 2. **不変イベント行 + 読み取り時導出。** 記録済みの行は UPDATE されない。古さは読み取り時に行情報から計算される。保持期間は古い行を DELETE することがある（age/セッション/全体上限）が、履歴を書き換えない。reader は残存する行順序から鮮度を計算する。
 3. **パス参照、コンテンツではない。** 台帳はコマンド文字列と出力スニペット（500文字）を記録し、ファイル内容は記録しない。*何を検証したか*と*通過したか*を記録し、*ファイルに何が含まれていたか*は記録しない。
 4. **自動記録は常時オン、2 つの派生層はスイッチ可能。** 分類にマッチするすべての terminal/python_repl 呼び出しが行を書き、すべてのファイル編集が書き込み側セッションをマークします（オン/オフスイッチなし）。クロスセッションのブロードキャスト（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`）と finish 時の再検証（`EVIDENCE_REGRESSION_GATE["enabled"]`）がゲートされた層で、既定は両方オンです。オフにすると台帳スキーマを変えずに従来の動作へ戻ります。
+5. **現在のスキーマのみ。** `_SCHEMA` が完全なテーブル・索引・`verification_state` を一度に作成します。増分マイグレーション、旧 JSONL インポート、スキーマバージョン表はありません。古いデータベースはその場で収束されません。

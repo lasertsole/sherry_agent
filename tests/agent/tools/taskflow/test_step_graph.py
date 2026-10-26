@@ -21,7 +21,7 @@ import asyncio
 import pytest
 
 from agent.tools.taskflow.config import StepStatus
-from agent.tools.taskflow.tools import _dispatch, _shared
+from agent.tools.taskflow.tools import _dispatch, _retry, _shared
 
 pytestmark = [pytest.mark.unit]
 
@@ -346,6 +346,63 @@ def test_dispatch_module_does_not_import_subagent_at_module_scope():
     # Given the imported dispatch module
     # Then the lazy-import contract holds: the subagent runtime is not bound
     assert not hasattr(_dispatch, "spawn_subagent_direct")
+
+
+def test_dispatch_child_forwards_taskflow_context(monkeypatch, real_child_dispatch):
+    calls: dict = {}
+
+    async def fake_spawn(**kwargs):
+        calls.update(kwargs)
+        return type("Result", (), {"status": "accepted", "child_session_key": "child-1"})()
+
+    import agent.tools.subagent as subagent_pkg
+
+    monkeypatch.setattr(subagent_pkg, "spawn_subagent_direct", fake_spawn)
+
+    child_key = asyncio.run(
+        _dispatch.dispatch_child(
+            task="do work",
+            requester_session_key="agent:main:session:sess-1",
+            flow_id="flow-1",
+            step_id="step-2",
+        )
+    )
+
+    assert child_key == "child-1"
+    assert calls["flow_id"] == "flow-1"
+    assert calls["step_id"] == "step-2"
+
+
+def test_step_spawn_kwargs_carries_taskflow_context():
+    kwargs = _retry.step_spawn_kwargs(
+        {"step_id": "step-2", "response_schema": {"type": "object"}},
+        flow_id="flow-1",
+    )
+
+    assert kwargs["flow_id"] == "flow-1"
+    assert kwargs["step_id"] == "step-2"
+    assert kwargs["output_schema"] == {"type": "object"}
+
+
+def test_stamp_taskflow_context_sets_child_state_and_noops_without_flow():
+    from agent.tools.subagent.spawn.core import _stamp_taskflow_context
+    from runtime import StateKey, state_register_mem
+
+    child = "agent:taskflow-context:test"
+    try:
+        _stamp_taskflow_context(child, "flow-1", "step-2")
+        assert state_register_mem.get_state(child, StateKey.FLOW_ID) == "flow-1"
+        assert state_register_mem.get_state(child, StateKey.STEP_ID) == "step-2"
+    finally:
+        state_register_mem.clear_session(child)
+
+    other = "agent:taskflow-context:no-flow"
+    try:
+        _stamp_taskflow_context(other, None, "step-9")
+        assert state_register_mem.get_state(other, StateKey.FLOW_ID) is None
+        assert state_register_mem.get_state(other, StateKey.STEP_ID) is None
+    finally:
+        state_register_mem.clear_session(other)
 
 
 # ---------------------------------------------------------------------------

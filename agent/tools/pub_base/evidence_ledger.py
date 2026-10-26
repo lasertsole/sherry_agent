@@ -10,22 +10,18 @@ invalidates a test whose command never names that source. ``verification_state``
 holds the per-session accumulated file list (capped; it deliberately does not
 reset per verification, so several commands share one batch).
 
-SQLite replaces the old append-only JSONL so retention can DELETE rows instead
-of rewriting the whole file. WAL mode keeps concurrent readers and writers
-moving; the public class API is unchanged (``append`` / ``read_all`` /
-``read_for_keys`` / ``read_for_session`` / ``mark_stale_for_path`` /
-``for_session``). The full original record rides in ``payload_json`` while the
+SQLite keeps the append-only trail in one place so retention can DELETE rows
+instead of rewriting a file. WAL mode keeps concurrent readers and writers
+moving; the public class API is ``append`` / ``read_all`` / ``read_for_keys`` /
+``read_for_flow`` / ``read_for_session`` / ``mark_stale_for_path`` /
+``for_session``. The full original record rides in ``payload_json`` while the
 queryable fields are mirrored into columns, so unknown future fields survive a
-round trip.
-
-The legacy ``evidence-ledger.jsonl`` beside the DB is imported once (with a
-per-line hash dedupe) and renamed to ``.migrated``. ``LEDGER_PATH`` remains a
-class attribute so tests can redirect it into ``tmp_path``.
+round trip. ``LEDGER_PATH`` remains a class attribute so tests can redirect it
+into ``tmp_path``.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import posixpath
@@ -56,12 +52,14 @@ CREATE TABLE IF NOT EXISTS evidence_events (
     kind TEXT,
     modified_files_json TEXT NOT NULL DEFAULT '[]',
     payload_json TEXT NOT NULL,
-    legacy_key TEXT UNIQUE
+    flow_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_session
     ON evidence_events(session_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_timestamp
     ON evidence_events(timestamp);
+CREATE INDEX IF NOT EXISTS idx_evidence_flow
+    ON evidence_events(flow_id, event_id);
 CREATE TABLE IF NOT EXISTS verification_state (
     session_id TEXT PRIMARY KEY,
     changed_paths_json TEXT NOT NULL DEFAULT '[]',
@@ -123,13 +121,6 @@ class EvidenceLedger:
         return Path(cls.LEDGER_PATH)
 
     @classmethod
-    def _legacy_path(cls) -> Path | None:
-        """The pre-SQLite JSONL path, or None when it would be the DB itself."""
-        db = cls._db_path()
-        legacy = db.with_suffix(".jsonl")
-        return None if legacy == db else legacy
-
-    @classmethod
     @contextmanager
     def _connection(cls) -> Iterator[sqlite3.Connection]:
         db = cls._db_path()
@@ -148,71 +139,14 @@ class EvidenceLedger:
                     if key not in cls._initialized_paths:
                         conn.execute("PRAGMA journal_mode=WAL")
                         conn.executescript(_SCHEMA)
-                        cls._ensure_evidence_columns(conn)
-                        cls._migrate_legacy(conn)
                         cls._initialized_paths.add(key)
             yield conn
         finally:
             conn.close()
 
     @classmethod
-    def _ensure_evidence_columns(cls, conn: sqlite3.Connection) -> None:
-        """Additive migration for a DB created before ``modified_files``."""
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(evidence_events)")}
-        if "modified_files_json" not in columns:
-            conn.execute(
-                "ALTER TABLE evidence_events "
-                "ADD COLUMN modified_files_json TEXT NOT NULL DEFAULT '[]'"
-            )
-            conn.commit()
-
-    @classmethod
-    def _migrate_legacy(cls, conn: sqlite3.Connection) -> None:
-        """Import an old JSONL file once; repeated runs are deduped by line hash."""
-        legacy = cls._legacy_path()
-        if legacy is None or not legacy.exists():
-            return
-        imported = 0
-        try:
-            with legacy.open(encoding="utf-8") as handle:
-                for line in handle:
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    try:
-                        record = json.loads(raw)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            "evidence ledger migration: skipped an unparsable legacy line"
-                        )
-                        continue
-                    if not isinstance(record, dict):
-                        continue
-                    key = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-                    if cls._insert(conn, record, legacy_key=key):
-                        imported += 1
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            logger.warning("evidence ledger JSONL migration failed (fail-open)", exc_info=True)
-            return
-        try:
-            legacy.rename(legacy.with_suffix(legacy.suffix + ".migrated"))
-        except FileExistsError:
-            logger.debug(
-                "evidence ledger: {} already exists",
-                legacy.with_suffix(legacy.suffix + ".migrated"),
-            )
-        except OSError:
-            logger.warning("evidence ledger: could not rename legacy JSONL", exc_info=True)
-            return
-        logger.info("evidence ledger: migrated {} legacy row(s) from {}", imported, legacy.name)
-
-    @classmethod
-    def _insert(
-        cls, conn: sqlite3.Connection, record: dict, *, legacy_key: str | None = None
-    ) -> bool:
-        """Insert one record; ``False`` when a legacy hash was already imported."""
+    def _insert(cls, conn: sqlite3.Connection, record: dict) -> bool:
+        """Insert one record; ``False`` when the write failed."""
         payload = dict(record)
         payload_json = json.dumps(payload, ensure_ascii=False)
         modified_files = payload.get("modified_files")
@@ -227,7 +161,7 @@ class EvidenceLedger:
                 """
                 INSERT OR IGNORE INTO evidence_events
                     (timestamp, session_id, event, file_path, command, status,
-                     exit_code, kind, modified_files_json, payload_json, legacy_key)
+                     exit_code, kind, modified_files_json, payload_json, flow_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -241,7 +175,7 @@ class EvidenceLedger:
                     payload.get("kind"),
                     modified_files_json,
                     payload_json,
-                    legacy_key,
+                    payload.get("flow_id"),
                 ),
             )
         except sqlite3.Error:
@@ -266,6 +200,7 @@ class EvidenceLedger:
             "status",
             "exit_code",
             "kind",
+            "flow_id",
         ):
             value = row[key]
             if value is not None:
@@ -276,7 +211,7 @@ class EvidenceLedger:
             payload["modified_files"] = []
         return payload
 
-    # ── Public API (signatures unchanged from the JSONL implementation) ───
+    # ── Public API ────────────────────────────────────────────────────────
 
     @classmethod
     def append(cls, entry: dict) -> None:
@@ -335,6 +270,23 @@ class EvidenceLedger:
     def for_session(cls, session_key: str) -> SessionEvidenceLedger:
         """Return a session-scoped view over the shared ledger."""
         return SessionEvidenceLedger(session_key)
+
+    @classmethod
+    def read_for_flow(cls, flow_id: str) -> list[dict]:
+        """Read one flow's rows in insertion order (``flow_id`` NULL never matches)."""
+        flow_id = str(flow_id or "").strip()
+        if not flow_id:
+            return []
+        try:
+            with cls._connection() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM evidence_events WHERE flow_id = ? ORDER BY event_id ASC",
+                    (flow_id,),
+                ).fetchall()
+            return [cls._record(row) for row in rows]
+        except sqlite3.Error:
+            logger.warning("evidence ledger read_for_flow failed (fail-open)", exc_info=True)
+            return []
 
     @classmethod
     def read_for_session(cls, session_key: str) -> list[dict]:

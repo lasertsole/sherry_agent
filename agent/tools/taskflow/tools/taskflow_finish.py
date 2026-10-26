@@ -133,10 +133,11 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     """Return an ``Error:`` text when the flow's evidence is failing/stale/broken.
 
     The flow's evidence is the AGGREGATE over the sessions that did its work:
-    every dispatched step's ``child_session_key`` plus the flow's creator
-    (evidence rows carry a session key, never a flow id — see
-    ``pub_base/evidence_ledger.py``). A flow that never dispatched a step has
-    no keys and therefore no evidence, which passes.
+    every dispatched step's ``child_session_key`` plus the flow's creator. Rows
+    stamped with this ``flow_id`` are read directly (robust even if a step's
+    child key was lost); rows from before the flow column existed, or from the
+    creator's finish-time replay, fall back to the session keys. A flow that
+    never dispatched a step has no keys and therefore no evidence, which passes.
 
     Before reading the summary, the regression gate replays the flow's passed
     verification commands once (finish-time batch, not per announce): a pass
@@ -167,7 +168,9 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     try:
         from ..evidence_collector import collect_evidence_summary
 
-        evidence = collect_evidence_summary(session_keys=keys)
+        evidence = collect_evidence_summary(
+            session_keys=keys, flow_id=str(flow.get("flow_id") or "")
+        )
     except Exception:  # noqa: BLE001 - optional probe; never block a finish
         return None
     if not evidence:

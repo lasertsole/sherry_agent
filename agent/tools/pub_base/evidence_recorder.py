@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from loguru import logger
 
 from config.features import EVIDENCE_CROSS_SESSION_STALENESS, EVIDENCE_LEDGER
+from runtime import StateKey, state_register_mem
 from .evidence_ledger import EvidenceLedger
 
 _EXIT_CODE_RE = re.compile(r"^(?:Exit code|Error: subprocess exited with code) (-?\d+)")
@@ -67,6 +68,7 @@ def record_verification_evidence(
         if kind is None:
             return
         exit_code = _parse_exit_code(result)
+        flow_id = str(state_register_mem.get_state(session_id, StateKey.FLOW_ID, "") or "").strip()
         fields: dict = {
             "kind": kind,
             "command": command,
@@ -77,6 +79,9 @@ def record_verification_evidence(
             # what lets a later write to a source file invalidate a test whose
             # command never names that source file.
             "modified_files": EvidenceLedger.changed_paths(session_id),
+            # NULL for main/non-TaskFlow sessions; a step child (and a finish
+            # replay, once the creator is stamped) carries its flow.
+            "flow_id": flow_id or None,
         }
         if sandboxed is not None:
             fields["sandboxed"] = sandboxed

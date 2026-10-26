@@ -180,6 +180,11 @@ class StateKey(StrEnum):
     CURRENT_TOOL_ID = "current_tool_id"
     REQUESTER_SESSION_KEY = "requester_session_key"
     CALLER_SCOPE = "caller_scope"
+    #: TaskFlow context stamped on a step's child session at spawn time. The
+    #: evidence recorder reads FLOW_ID to stamp rows, so a flow's finish gate can
+    #: query `WHERE flow_id = ?` instead of reconstructing the session set.
+    FLOW_ID = "flow_id"
+    STEP_ID = "step_id"
 
 
 def hitl_tool_approved_key(tool_name: str) -> str:

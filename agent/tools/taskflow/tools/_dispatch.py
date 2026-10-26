@@ -53,6 +53,8 @@ async def dispatch_child(
     output_schema: dict | None = None,
     step_model: str | None = None,
     step_timeout_seconds: float | None = None,
+    flow_id: str | None = None,
+    step_id: str | None = None,
 ) -> str:
     """Dispatch a detached child session and return its child_session_key.
 
@@ -62,6 +64,8 @@ async def dispatch_child(
     is handed to the child as a structured-output requirement (validated again on
     resume, Tier 1). ``step_model`` overrides the child model and
     ``step_timeout_seconds`` the child run timeout; both ``None`` = spawn defaults.
+    ``flow_id`` / ``step_id`` are the TaskFlow context stamped on the child
+    session so its verification evidence is queryable by flow.
 
     Raises RuntimeError unless the spawn is accepted with a child key.
     """
@@ -76,6 +80,8 @@ async def dispatch_child(
         output_schema=output_schema,
         model=step_model,
         run_timeout_seconds=step_timeout_seconds,
+        flow_id=flow_id,
+        step_id=step_id,
     )
     if result.status != "accepted" or not result.child_session_key:
         raise RuntimeError(f"status={result.status} error={result.error}")

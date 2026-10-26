@@ -209,6 +209,22 @@ async def test_finish_aggregates_every_steps_child_session(
 
 
 @pytest.mark.asyncio
+async def test_finish_reads_evidence_by_flow_id_even_when_the_step_key_is_stale(
+    isolated_db: Path, ledger: EvidenceLedger
+):
+    """The flow stamp survives a lost/incorrect step child_session_key."""
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    ledger.for_session("agent:main:subagent:lost-from-the-step").append(
+        kind="test", command="pytest lost.py", status="failed", flow_id=FLOW
+    )
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "failing verification evidence" in out
+    assert "pytest lost.py" in out
+
+
+@pytest.mark.asyncio
 async def test_the_creators_own_verification_counts_too(
     isolated_db: Path, ledger: EvidenceLedger, monkeypatch: pytest.MonkeyPatch
 ):

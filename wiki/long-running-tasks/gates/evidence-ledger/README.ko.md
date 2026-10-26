@@ -50,11 +50,11 @@ terminal / python_repl 이 명령을 실행
 | 형식 | SQLite 테이블 `evidence_events`; WAL 모드 + `busy_timeout=5000` |
 | 범위 | 저장소 전체(모든 세션 공유) |
 | 변경성 | 행은 INSERT만 되고 UPDATE되지 않음. 보존 기간이 오래된 행을 삭제함(age TTL / 세션별 상한 / 전체 상한) |
-| 세션 격리 | 인덱스된 `session_id`에 `WHERE session_id = ?`; 행은 SESSION key(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)를 가지며 plan / todo / flow id는 없음 |
+| 세션 격리 | 인덱스된 `session_id`에 `WHERE session_id = ?`; 행은 SESSION key(메인 세션 id 또는 자식의 `agent:{agent}:subagent:{uuid}`)를 가짐 |
+| flow 스탬프 | `evidence_events.flow_id`(`idx_evidence_flow` 인덱스). TaskFlow 스텝 자식은 spawn 시 스탬프하고, finish 시점 creator 행은 세션 폴백으로 커버됨. `NULL` = TaskFlow 범위 아님 |
 | 파일 편집 기억 | 같은 DB의 `verification_state(session_id, changed_paths_json, last_edit_at)`; 세션별 상한, session/고아 정리 시 삭제 |
-| 다중 키 읽기 | `read_for_keys(keys)`는 인덱스된 `IN` 쿼리 한 번으로 가져오고 각 키의 삽입 순서를 유지함(스테일은 한 세션의 행 순서 안에서 파생) |
+| 다중 키 읽기 | `read_for_keys(keys)`는 인덱스된 `IN` 쿼리 한 번으로 가져오고 각 키의 삽입 순서를 유지함. `read_for_flow(flow_id)`는 flow 인덱스로 한 플로의 행을 읽음(스테일은 여전히 한 세션의 행 순서 안에서 파생) |
 | 동시성 | WAL이 읽기/쓰기를 겹치게 하고 쓰기는 `busy_timeout`으로 재시도 |
-| 레거시 JSONL | 첫 오픈 시 한 번 가져오고(줄 해시로 중복 제거) `.migrated`로 이름 변경 |
 | 파일 없음 | `read_all()`은 `[]` 반환; 디렉터리는 첫 접근 시 생성 |
 
 DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 같은 계획을 검증하는 여러 세션이 공유하는 감사 추적이다.
@@ -86,6 +86,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
 2. 결과 문자열에서 `exit_code`를 도출("Exit code N" / 실패 접두사 정규식 매치).
 3. `status` = exit_code가 0이면 `"passed"`, 그렇지 않으면 `"failed"`.
 4. `output_snippet`(처음 500자)과 `sandboxed` 플래그를 포함한 행을追加.
+5. 세션 상태 레지스터에서 `StateKey.FLOW_ID`를 읽어 행의 `flow_id`에 스탬프합니다. 메인/비 TaskFlow 세션은 `NULL`로 남습니다.
 
 **Fail-open:** 모든 레코더는 자신의 에러를 삼킵니다 — 원장 쓰기가 도구를 망가뜨리지 않습니다.
 
@@ -113,6 +114,7 @@ DB는 의도적으로 저장소 전체 범위이며 세션 범위가 아니다. 
   "sandboxed": true,
   "modified_files": ["src/alpha.py"],
   "session_id": "agent:main:session:abc-123",
+  "flow_id": "plan-4f7c2a91d0",
   "timestamp": "2026-10-15T08:30:00.123456+00:00"
 }
 ```
@@ -174,7 +176,7 @@ def derive_evidence_state(records, index):
 
 ## 에비던스 요약 형식
 
-`collect_evidence_summary(session_key=None, flow_id=None)`는 여러 줄의 문자열을 반환합니다(evidence 행이 없으면 `None`):
+`collect_evidence_summary(session_key=None, flow_id=None)`는 여러 줄의 문자열을 반환합니다(evidence 행이 없으면 `None`). `flow_id`를 넘기면 그 플로로 스탬프된 행을 직접 읽고, 미스탬프(creator/레거시) 행은 세션 키 집합으로 폴백합니다:
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -210,7 +212,7 @@ def derive_evidence_state(records, index):
 
 ### 레벨 3: 플로별(taskflow_flow(action="finish") Gate C)
 
-TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에비던스를 확인합니다——디스패치된 각 단계의 `child_session_key`와 플로의 `creator_session_key`의 합집합입니다(행은 세션 키로 저장되고 플로는 여러 세션에 걸치기 때문입니다. 단계를 한 번도 디스패치하지 않은 플로는 키가 없어 에비던스도 없고 따라서 통과합니다):
+TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에비던스를 확인합니다. 먼저 플로의 `flow_id`로 스탬프된 행을 읽고(스텝의 `child_session_key`가 유실돼도 견고함), 미스탬프 행(creator의 finish 시점 replay와 flow 컬럼 이전 행은 `NULL`)은 디스패치된 각 단계의 `child_session_key`와 플로의 `creator_session_key` 합집합으로 폴백합니다. 단계를 한 번도 디스패치하지 않았고 스탬프 행도 없는 플로는 에비던스가 없으므로 통과합니다:
 
 | 조건 | 결과 |
 |------|------|
@@ -229,3 +231,4 @@ TaskFlow가 DONE으로 전환되기 전, Gate C는 그 플로의 **집계** 에�
 2. **불변 이벤트 행 + 읽기 시점 도출.** 기록된 행은 UPDATE되지 않습니다. 유효하지 않음은 읽기 시점에 행의 순서로부터 계산됩니다. 보존 기간은 오래된 행을 DELETE할 수 있지만(age/세션/전체 상한) 역사를 다시 쓰지 않습니다. reader는 남은 행 순서에서 신선도를 계산합니다.
 3. **경로 참조, 콘텐츠가 아님.** 원장은 명령 문자열과 출력 스니펫(500자)을 기록하고, 파일 콘텐츠는 기록하지 않습니다. *무엇을 검증했는지*와 *통과했는지*를 기록하며, *파일에 무엇이 있었는지*는 기록하지 않습니다.
 4. **자동 기록은 항상 켜져 있고, 두 파생 계층만 스위치 가능합니다.** 분류에 매치되는 모든 terminal/python_repl 호출이 행을 쓰고 모든 파일 편집이 writer 자신의 세션을 마크합니다(on/off 스위치 없음). 크로스 세션 브로드캐스트(`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`)와 finish 시 재검증(`EVIDENCE_REGRESSION_GATE["enabled"]`)이 게이트된 계층이며 기본은 둘 다 켜짐입니다. 끄면 원장 스키마를 바꾸지 않고 이전 동작으로 돌아갑니다.
+5. **현재 스키마만 지원합니다.** `_SCHEMA`가 완전한 테이블·인덱스·`verification_state`를 한 번에 만듭니다. 증분 마이그레이션, 레거시 JSONL 가져오기, 스키마 버전 테이블은 없습니다. 오래된 데이터베이스는 제자리에서 수렴되지 않습니다.

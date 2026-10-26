@@ -221,7 +221,7 @@ async def taskflow_resume(
                         feedback,
                     ),
                     requester_key,
-                    **step_spawn_kwargs(step),
+                    **step_spawn_kwargs(step, flow_id=flow_id),
                 )
             except Exception as exc:
                 retry_text = (
@@ -293,7 +293,7 @@ async def taskflow_resume(
                                 judge_result.feedback,
                             ),
                             requester_key,
-                            **step_spawn_kwargs(step),
+                            **step_spawn_kwargs(step, flow_id=flow_id),
                         )
                     except Exception as exc:  # tool boundary: block instead of raising
                         step["status"] = str(StepStatus.BLOCKED)
@@ -562,7 +562,7 @@ async def _auto_dispatch_ready_locked(
                 # went ready without run_task (taskflow_plan / update_steps) must
                 # still reach its child with the schema / role / model / timeout
                 # the step declares.
-                **step_spawn_kwargs(step),
+                **step_spawn_kwargs(step, flow_id=flow_id),
             )
         except Exception as exc:  # the flow advances without this step; report it
             logger.warning(

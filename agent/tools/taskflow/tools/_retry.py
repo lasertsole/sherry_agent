@@ -201,14 +201,17 @@ async def spawn_replacement(
     functional_role: str | None = None,
     step_model: str | None = None,
     step_timeout_seconds: float | None = None,
+    flow_id: str | None = None,
+    step_id: str | None = None,
 ) -> str:
     """Spawn the step's replacement child through the shared dispatch seam.
 
     The replacement must inherit EVERYTHING the original dispatch carried: the
     step's ``response_schema`` (the child's structured-output contract — without
     it a schema-failed retry cannot know the full schema, only the error), its
-    functional role, model override and run timeout. Keyword-only so a caller
-    that forgets one is refused rather than silently spawning a default child.
+    functional role, model override, run timeout and TaskFlow context. Keyword-only
+    so a caller that forgets one is refused rather than silently spawning a
+    default child.
     """
     return await _dispatch.dispatch_child(
         task=task,
@@ -218,20 +221,26 @@ async def spawn_replacement(
         output_schema=output_schema,
         step_model=step_model,
         step_timeout_seconds=step_timeout_seconds,
+        flow_id=flow_id,
+        step_id=step_id,
     )
 
 
-def step_spawn_kwargs(step: dict) -> dict:
+def step_spawn_kwargs(step: dict, *, flow_id: str | None = None) -> dict:
     """The spawn configuration a replacement child inherits from its step.
 
     One helper for both retry paths in ``taskflow_resume`` (schema-failure and
     StepJudge RETRY), so the two can never drift on what a replacement keeps.
+    The TaskFlow context rides along too: a replacement child must still stamp
+    its evidence with the flow it is executing.
     """
     return {
         "output_schema": step.get("response_schema"),
         "functional_role": step.get("functional_role"),
         "step_model": step.get("step_model"),
         "step_timeout_seconds": step.get("step_timeout_seconds"),
+        "flow_id": flow_id,
+        "step_id": step.get("step_id"),
     }
 
 

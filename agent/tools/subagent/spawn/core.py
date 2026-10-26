@@ -532,6 +532,8 @@ async def spawn_subagent_direct(
     functional_role_hint: str | None = None,
     extra_tools: list[str] | None = None,
     isolation: bool = False,
+    flow_id: str | None = None,
+    step_id: str | None = None,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
@@ -566,6 +568,9 @@ async def spawn_subagent_direct(
         isolation: Run the child in a private COPY of the project directory and
             merge its file changes back on completion (``isolation/``). Requires
             a project directory to copy.
+        flow_id: TaskFlow flow this child is executing. Stamped on the child
+            session's state so its verification evidence carries the flow id.
+        step_id: The TaskFlow step inside ``flow_id`` (optional, for diagnostics).
 
     Returns:
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
@@ -733,6 +738,13 @@ async def spawn_subagent_direct(
         expects_completion_message=expects_completion_message,
         wake_on_descendant_settle=True,  # auto-resume parent when child tree settles
     )
+
+    # TaskFlow context is a read-only marker for this child: the evidence
+    # recorder reads it when a terminal/python_repl verification runs, so a
+    # flow's finish gate can query by flow_id instead of first reconstructing
+    # the session set from its steps. Set AFTER registration (a refused spawn
+    # leaves no run and must not leave a stale marker).
+    _stamp_taskflow_context(child_session_key, flow_id, step_id)
 
     caps = resolve_subagent_output_caps(run.max_output_tokens)
     logger.info(
@@ -929,6 +941,19 @@ def _effective_child_deny(run: SubagentRunRecord) -> list[str]:
             if scope not in run.scopes and tool_name not in effective_deny:
                 effective_deny.append(tool_name)
     return effective_deny
+
+
+def _stamp_taskflow_context(
+    child_session_key: str, flow_id: str | None, step_id: str | None
+) -> None:
+    """Stamp a TaskFlow step child with the flow/step it is executing."""
+    if not flow_id:
+        return
+    from runtime import StateKey, state_register_mem
+
+    state_register_mem.set_state(child_session_key, StateKey.FLOW_ID, flow_id)
+    if step_id:
+        state_register_mem.set_state(child_session_key, StateKey.STEP_ID, step_id)
 
 
 def _bind_child_run_context(run: SubagentRunRecord) -> dict:
