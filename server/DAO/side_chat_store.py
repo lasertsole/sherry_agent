@@ -22,6 +22,7 @@ __all__ = [
     "all_side_chats",
     "create_side_chat",
     "delete_side_chat",
+    "find_by_request",
     "get_side_chat",
     "list_children",
     "side_chat_ids",
@@ -35,11 +36,22 @@ CREATE TABLE IF NOT EXISTS side_chats (
     parent_session_id TEXT NOT NULL,
     context_text      TEXT NOT NULL DEFAULT '',
     fork_mode         INTEGER NOT NULL DEFAULT 0,
-    created_at        INTEGER NOT NULL
+    created_at        INTEGER NOT NULL,
+    client_request_id TEXT
 )
 """
 
 _INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_side_chats_parent ON side_chats (parent_session_id)"
+
+# Creation idempotency (design concept #27): one client_request_id per parent
+# names at most ONE child, so a retried POST returns the existing fork instead
+# of building a second complete copy. NULLs (legacy/no-id rows) never collide —
+# SQLite unique indexes ignore them. A pre-column table (an old side_chats.db,
+# which is NOT migrated in place) keeps working without the dedupe.
+_IDEMPOTENCY_INDEX_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_side_chats_request "
+    "ON side_chats (parent_session_id, client_request_id)"
+)
 
 
 def _connect() -> sqlite3.Connection:
@@ -50,6 +62,10 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute(_DDL)
     conn.execute(_INDEX_DDL)
+    try:
+        conn.execute(_IDEMPOTENCY_INDEX_DDL)
+    except sqlite3.OperationalError:
+        pass  # a pre-column table: no dedupe, every other operation unchanged
     return conn
 
 
@@ -59,22 +75,38 @@ def create_side_chat(
     context_text: str = "",
     *,
     fork_mode: bool = False,
+    client_request_id: str | None = None,
 ) -> None:
     """Insert (or replace) one side-chat link."""
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO side_chats "
-            "(child_session_id, parent_session_id, context_text, fork_mode, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(child_session_id, parent_session_id, context_text, fork_mode, created_at, "
+            "client_request_id) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 child_session_id,
                 parent_session_id,
                 context_text,
                 1 if fork_mode else 0,
                 int(time.time()),
+                client_request_id,
             ),
         )
         conn.commit()
+
+
+def find_by_request(parent_session_id: str, client_request_id: str) -> dict[str, Any] | None:
+    """The child created for one (parent, client_request_id) pair, or None."""
+    if not client_request_id:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, created_at "
+            "FROM side_chats WHERE parent_session_id = ? AND client_request_id = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (parent_session_id, client_request_id),
+        ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def get_side_chat(child_session_id: str) -> dict[str, Any] | None:

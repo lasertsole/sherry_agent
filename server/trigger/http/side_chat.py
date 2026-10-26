@@ -28,8 +28,13 @@ async def create_side_chat_handler(request):
     parent_session_id = str(body.get("parent_session_id") or "").strip()
     if not parent_session_id:
         return bad_request("parent_session_id is required")
+    # Optional idempotency key: the same (parent, key) pair answers the same
+    # child instead of building a second fork. Bounded like any client string.
+    client_request_id = str(body.get("client_request_id") or "").strip()
+    if len(client_request_id) > 128:
+        return bad_request("client_request_id is too long")
     try:
-        result = await create_side_chat(parent_session_id)
+        result = await create_side_chat(parent_session_id, client_request_id or None)
     except ValueError as exc:
         logger.info("Side chat rejected: parent={} reason={}", parent_session_id, exc)
         return bad_request(str(exc) or "invalid parent_session_id")

@@ -24,6 +24,8 @@ import { fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { createSideChat, deleteSideChat, fetchProjectDirectory, setProjectDirectory } from './bridge/session';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { generateMsgId } from './use-chat-stream';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import {
   clearCachedCharacter,
   clearCachedSessionMeta,
@@ -35,6 +37,35 @@ import { releaseAgentSocket } from './bridge/agent-socket';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { emit } from './mitt';
 import { logUtil } from '~/utils/log';
+
+/**
+ * Creation idempotency (the client half): one (parent, client_request_id) pair
+ * names ONE child for a short window, so the re-click after a lost response —
+ * the POST may have succeeded server-side while the answer never arrived —
+ * returns the SAME fork instead of building a second complete one. A
+ * deliberate side chat opened later than the window gets a fresh key and forks
+ * normally.
+ */
+const REQUEST_ID_REUSE_MS = 30_000;
+const recentRequestIds = new Map<string, { id: string; at: number }>();
+
+/**
+ * The idempotency key for one side-chat creation on a parent: stable across
+ * immediate re-attempts, fresh for a genuinely new creation.
+ * @param parentSessionId The parent session the side chat would belong to.
+ * @returns The key to send with the POST.
+ */
+function creationRequestId(parentSessionId: string): string {
+  const now = Date.now();
+  const cached = recentRequestIds.get(parentSessionId);
+  if (cached && now - cached.at < REQUEST_ID_REUSE_MS) {
+    cached.at = now;
+    return cached.id;
+  }
+  const id = generateMsgId();
+  recentRequestIds.set(parentSessionId, { id, at: now });
+  return id;
+}
 
 /** What the caller needs to open the side-chat tab. */
 export interface SideChatSession {
@@ -76,7 +107,7 @@ function localCreateTime(date: Date): string {
  * @returns The new session id, its parent link and its placeholder meta.
  */
 export async function createSideChatSession(parentSessionId: string, title: string): Promise<SideChatSession> {
-  const created = await createSideChat(parentSessionId);
+  const created = await createSideChat(parentSessionId, creationRequestId(parentSessionId));
   const sessionId = created.sessionId;
   const meta: CachedSessionMeta = {
     id: sessionId,

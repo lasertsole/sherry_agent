@@ -75,7 +75,7 @@ describe('createSideChatSession', () => {
   it('copies the parent preset, character and agent config into the server-created child', async () => {
     const { sessionId, parentSessionId, inherited, meta } = await createSideChatSession('parent', '辅助会话');
 
-    expect(projectSession.createSideChat).toHaveBeenCalledWith('parent');
+    expect(projectSession.createSideChat).toHaveBeenCalledWith('parent', expect.any(String));
     expect(sessionId).toBe('child-1');
     expect(parentSessionId).toBe('parent');
     expect(inherited).toBe(true);
@@ -137,5 +137,23 @@ describe('createSideChatSession', () => {
 
     expect(projectSession.deleteSideChat).not.toHaveBeenCalled();
     expect(db.clearCachedCharacter).toHaveBeenCalledWith('child-1');
+  });
+
+  it('reuses the idempotency key for immediate re-creations on the same parent', async () => {
+    // A lost response followed by a re-click must name the SAME child — the
+    // server answers the first fork instead of building a second complete one.
+    await createSideChatSession('parent-idem-a', '辅助会话');
+    await createSideChatSession('parent-idem-a', '辅助会话');
+
+    const calls = projectSession.createSideChat.mock.calls.filter(c => c[0] === 'parent-idem-a');
+    expect(calls).toHaveLength(2);
+    expect(calls[0][1]).toBeTruthy();
+    expect(calls[1][1]).toBe(calls[0][1]);
+
+    // A different parent in the same window is a different, deliberate fork.
+    await createSideChatSession('parent-idem-b', '辅助会话');
+    const other = projectSession.createSideChat.mock.calls.find(c => c[0] === 'parent-idem-b');
+    expect(other?.[1]).toBeTruthy();
+    expect(other?.[1]).not.toBe(calls[0][1]);
   });
 });

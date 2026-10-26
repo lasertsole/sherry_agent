@@ -335,7 +335,11 @@ works.
   so the child's visible history holds only its own new turns. The fork is cut
   at the parent's last completed assistant answer, so a dangling tool call (a
   pending HITL approval or an interrupted run) is never replayed into the
-  child. The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
+  child. Creation is IDEMPOTENT: an optional `client_request_id` in the POST
+  body — the same (parent, key) pair answers the SAME child with
+  `deduplicated: true` instead of a second complete fork (the client reuses one
+  key per parent for 30 s, so a re-click after a lost response cannot duplicate).
+  The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
   snapshot links keep the bounded fallback) and the child appears in the normal
   session list as an ordinary session (its visible history still starts empty),
   so a closed panel is recoverable by reopening it. `createSideChatSession`

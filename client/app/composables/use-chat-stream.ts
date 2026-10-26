@@ -39,7 +39,7 @@ interface QueueBadge {
 }
 
 /** Generate a protocol `msg_id` (RFC4122 v4 UUID, with a non-crypto fallback). */
-function generateMsgId(): string {
+export function generateMsgId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }

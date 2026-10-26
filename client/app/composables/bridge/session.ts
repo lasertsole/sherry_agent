@@ -78,6 +78,8 @@ export interface CreatedSideChat {
   parentSessionId: string;
   /** Whether the child carries a parent transcript snapshot. */
   inherited: boolean;
+  /** True when the idempotency key matched an earlier creation (same child). */
+  deduplicated: boolean;
 }
 
 /**
@@ -86,23 +88,28 @@ export interface CreatedSideChat {
  * The server forks the parent's checkpoint transcript for model-only
  * inheritance; the UI history still starts empty.
  * @param parentSessionId The main session the selection came from.
+ * @param clientRequestId
  */
-export async function createSideChat(parentSessionId: string): Promise<CreatedSideChat> {
+export async function createSideChat(parentSessionId: string, clientRequestId?: string): Promise<CreatedSideChat> {
   const res = await fetchApiPayload<{
     success?: boolean;
     session_id?: string;
     parent_session_id?: string;
     inherited?: boolean;
+    deduplicated?: boolean;
   }>({
     url: '/sessions/side_chat',
     method: 'post',
-    opts: { parent_session_id: parentSessionId }
+    // The idempotency key: a retried creation answers the SAME child instead
+    // of building a second complete fork (legacy requests omit it entirely).
+    opts: { parent_session_id: parentSessionId, client_request_id: clientRequestId }
   });
   if (!res.session_id) throw new Error('side chat creation returned no session_id');
   return {
     sessionId: res.session_id,
     parentSessionId: res.parent_session_id ?? parentSessionId,
-    inherited: res.inherited === true
+    inherited: res.inherited === true,
+    deduplicated: res.deduplicated === true
   };
 }
 

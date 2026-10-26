@@ -254,18 +254,66 @@ async def get_checkpoint_fork_for_turn(session_id: str) -> list[BaseMessage] | N
     return None
 
 
-async def create_side_chat(parent_session_id: str) -> dict[str, Any]:
-    """Create a child id + parent link + checkpoint-fork inheritance."""
+async def create_side_chat(
+    parent_session_id: str, client_request_id: str | None = None
+) -> dict[str, Any]:
+    """Create a child id + parent link + checkpoint-fork inheritance.
+
+    ``client_request_id`` (design concept #27) makes the creation IDEMPOTENT:
+    a retried POST — a timed-out response, a re-click after a network blip —
+    returns the child the first attempt created instead of building a second
+    complete fork. Without one the legacy path applies (every call forks).
+    """
     if not is_safe_session_id(parent_session_id):
         raise ValueError("invalid parent_session_id")
     if side_chat_store.get_side_chat(parent_session_id) is not None:
         raise ValueError("a side chat cannot parent another side chat")
 
+    request_id = (client_request_id or "").strip() or None
+    if request_id:
+        existing = side_chat_store.find_by_request(parent_session_id, request_id)
+        if existing is not None:
+            logger.info(
+                "side chat deduplicated: child={} parent={} request_id={}",
+                existing["child_session_id"],
+                parent_session_id,
+                request_id,
+            )
+            return {
+                "session_id": str(existing["child_session_id"]),
+                "parent_session_id": parent_session_id,
+                "inherited": True,
+                "deduplicated": True,
+            }
+
     child_session_id = uuid.uuid4().hex
     context_text = await build_parent_context(parent_session_id)
-    side_chat_store.create_side_chat(
-        child_session_id, parent_session_id, context_text, fork_mode=True
-    )
+    try:
+        side_chat_store.create_side_chat(
+            child_session_id,
+            parent_session_id,
+            context_text,
+            fork_mode=True,
+            client_request_id=request_id,
+        )
+    except Exception:
+        # Two concurrent creators with the same request id: the unique index
+        # rejected the loser — answer the winner's child, never a 500.
+        if request_id and (
+            existing := side_chat_store.find_by_request(parent_session_id, request_id)
+        ):
+            logger.info(
+                "side chat deduplicated (concurrent): child={} request_id={}",
+                existing["child_session_id"],
+                request_id,
+            )
+            return {
+                "session_id": str(existing["child_session_id"]),
+                "parent_session_id": parent_session_id,
+                "inherited": True,
+                "deduplicated": True,
+            }
+        raise
     copied = _copy_parent_session_settings(parent_session_id, child_session_id)
     logger.info(
         "side chat created: child={} parent={} context_chars={} settings={}",
@@ -278,6 +326,7 @@ async def create_side_chat(parent_session_id: str) -> dict[str, Any]:
         "session_id": child_session_id,
         "parent_session_id": parent_session_id,
         "inherited": True,
+        "deduplicated": False,
     }
 
 

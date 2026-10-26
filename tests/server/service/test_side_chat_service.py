@@ -300,3 +300,87 @@ def test_session_list_includes_side_chats(monkeypatch) -> None:
 
     # A retained side chat is reachable after its panel closes.
     assert messages.get_session_list() == rows
+
+
+# ── creation idempotency (design concept #27) ────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_the_same_request_id_returns_the_same_child(monkeypatch) -> None:
+    async def fake_context(_parent: str) -> str:
+        return ""
+
+    monkeypatch.setattr(side_chat_service, "build_parent_context", fake_context)
+
+    first = await side_chat_service.create_side_chat("parent-1", "req-1")
+    second = await side_chat_service.create_side_chat("parent-1", "req-1")
+
+    assert first["deduplicated"] is False
+    assert second["session_id"] == first["session_id"], "one key, one child"
+    assert second["deduplicated"] is True
+    assert side_chat_store.list_children("parent-1") == [first["session_id"]]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_request_ids_are_scoped_to_their_parent(monkeypatch) -> None:
+    async def fake_context(_parent: str) -> str:
+        return ""
+
+    monkeypatch.setattr(side_chat_service, "build_parent_context", fake_context)
+
+    first = await side_chat_service.create_side_chat("parent-1", "req-1")
+    second = await side_chat_service.create_side_chat("parent-2", "req-1")
+
+    assert second["session_id"] != first["session_id"]
+    assert second["deduplicated"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_request_without_an_id_keeps_the_legacy_path(monkeypatch) -> None:
+    """No key: every call forks, exactly as before (compat for old clients)."""
+
+    async def fake_context(_parent: str) -> str:
+        return ""
+
+    monkeypatch.setattr(side_chat_service, "build_parent_context", fake_context)
+
+    first = await side_chat_service.create_side_chat("parent-1")
+    second = await side_chat_service.create_side_chat("parent-1")
+
+    assert first["deduplicated"] is False and second["deduplicated"] is False
+    assert second["session_id"] != first["session_id"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_concurrent_creators_with_one_key_answer_the_same_child(monkeypatch) -> None:
+    """The unique index (not the pre-check) is the race's arbiter: the loser's
+    INSERT fails and it answers the winner's child instead of 500ing."""
+    import sqlite3
+
+    state = {"visible": False}
+
+    def fake_find(parent: str, request_id: str) -> dict | None:
+        # None while the winner's transaction has not committed yet, the row after.
+        if not state["visible"]:
+            return None
+        return {"child_session_id": "winner", "parent_session_id": parent}
+
+    def racy_create(*args, **kwargs):
+        state["visible"] = True  # the winner committed, then the loser's insert bounced
+        raise sqlite3.IntegrityError("UNIQUE constraint failed")
+
+    monkeypatch.setattr(side_chat_store, "find_by_request", fake_find)
+    monkeypatch.setattr(side_chat_store, "create_side_chat", racy_create)
+
+    async def fake_context(_parent: str) -> str:
+        return ""
+
+    monkeypatch.setattr(side_chat_service, "build_parent_context", fake_context)
+    result = await side_chat_service.create_side_chat("parent-1", "req-1")
+
+    assert result["session_id"] == "winner"
+    assert result["deduplicated"] is True
