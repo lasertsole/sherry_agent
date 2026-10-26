@@ -28,7 +28,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 - [Judgement Gates](gates/README.md)
 - [Evidence Ledger](gates/evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
-- [Tri-color Orphan GC](#-tri-color-orphan-gc)
+- [Unreferenced-Flow Orphan GC](#-unreferenced-flow-orphan-gc)
 - [Dispatch Serialization & Idempotent Planning](#-dispatch-serialization--idempotent-planning)
 - [Configuration Registry](#-configuration-registry)
 - [Architecture Diagram](#-architecture-diagram)
@@ -47,26 +47,26 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | 3 | **Deadline** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
 | 5 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
-| 6 | **Tri-color orphan GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
+| 6 | **Unreferenced-flow orphan GC** | sweeper `_unreferenced_flow_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
 
 The design contract throughout is **error-as-text**: tools never raise business errors at the model; they return human-readable strings beginning with `Error:`. Every background hook is **fail-open** — an unavailable registry or crashed sweeper degrades to "no long-running-task context", never to a broken turn.
 
-## ♻️ Tri-color Orphan GC
+## ♻️ Unreferenced-Flow Orphan GC
 
-A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="create")` and `taskflow_flow(action="plan")` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. The sweeper then runs two complementary passes at boot and every tick:
+A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="create")` and `taskflow_flow(action="plan")` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. Prefer the local `patch`/`add`/`remove` actions, which preserve `todo_id` and `flow_id`; a full `replace` reissues ids and can orphan the root. The sweeper then runs two complementary passes at boot and every tick:
 
 | Pass | Condition | Action |
 | :--- | :--- | :--- |
-| Tri-color mark | todo status `pending`/`in_progress` with a `flow_id` | the flow is black (reachable) |
-| Tri-color sweep | non-terminal, non-superseded flow with no active root and `updated_at` older than `tri_color_grace_seconds` (300 s) | `failed` / `orphan_unreferenced` |
+| Unreferenced-flow mark | todo status `pending`/`in_progress` with a `flow_id` | the flow is marked reachable |
+| Unreferenced-flow sweep | non-terminal, non-superseded flow with no active root and `updated_at` older than `unreferenced_flow_grace_seconds` (300 s) | `failed` / `orphan_unreferenced` |
 | Child liveness | session key is `agent:*:subagent:*` or `agent:*:swarm:*`, no live run, older than the same grace | `failed` / `session_dead` |
 | Flow liveness | main session inactive for `stale_action_hours` (12 h), no live child | `failed` / `stale_swept` or `session_dead` |
 | Zombie todo | active todo references a failed/cancelled flow | todo `cancelled` |
 | Prune | more than `max_total_flows_per_session` (200) terminal/superseded rows | oldest deleted |
 
-A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the mark query never sees the empty window between DELETE and INSERT.
+A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the root query never sees the empty window between DELETE and INSERT.
 
-Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
+Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 

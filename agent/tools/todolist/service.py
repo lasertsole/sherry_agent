@@ -1,6 +1,6 @@
 """Service layer for the session todo list.
 
-Owns two behaviors the store does not:
+Owns three behaviors the store does not:
 
 * **Default-downgrade** — an unknown ``category`` collapses to ``quick`` and
   an unknown ``delegation`` collapses to ``self`` before persistence.
@@ -8,6 +8,11 @@ Owns two behaviors the store does not:
   work it points at is actually finished: a linked subagent run must no longer
   be live, and a linked TaskFlow step must be ``done``. Plain todos (no links)
   are never blocked.
+* **Local action semantics** — patch/remove/reattach/add resolve a stable
+  ``todo_id``, preserve reference fields, and turn a stale id into
+  ``TodoIdNotFoundError`` carrying the current valid list. Removing a flow's
+  explicit root triggers an immediate compensation attempt; the sweep is still
+  the backstop.
 
 The barrier reaches three external seams (subagent registry liveness, TaskFlow
 step status, WS push). Each is a **module-level injectable reference** — the
@@ -29,6 +34,7 @@ from runtime.session.ws_push import broadcast_to_session
 from .config import (
     DEFAULT_CATEGORY,
     DEFAULT_DELEGATION,
+    DEFAULT_PRIORITY,
     VALID_CATEGORIES,
     VALID_DELEGATIONS,
 )
@@ -52,6 +58,20 @@ _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 
 class TodoStoreError(Exception):
     """Raised when a todo mutation is rejected (transition barrier)."""
+
+
+class TodoIdNotFoundError(Exception):
+    """A local todo operation named an id that is not in this session.
+
+    Carries the current valid list so the tool layer can tell the model exactly
+    which ids exist instead of returning an opaque failure.
+    """
+
+    def __init__(self, todo_id: int, valid_todos: list[dict], *, field: str = "todo_id") -> None:
+        self.todo_id = todo_id
+        self.valid_todos = valid_todos
+        self.field = field
+        super().__init__(f"{field} {todo_id} not found")
 
 
 def _get_run_by_child_session_key(child_session_key: str):
@@ -200,6 +220,27 @@ async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
         logger.warning("Failed to push todo_updated for session {}: {}", session_id, e)
 
 
+async def _compensate_removed_flow(session_id: str, flow_id: str) -> None:
+    """Fail a flow immediately when its explicit root todo was removed.
+
+    The background sweep is the backstop; an explicit ``remove`` should not
+    wait for the grace window when no other active todo still references the
+    flow. Fail-open: a lookup/write failure leaves the sweep to collect it.
+    """
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as flow_store
+        from agent.tools.taskflow.tools._shared import is_terminal
+
+        if flow_id in await store.get_active_flow_ids(session_id):
+            return
+        flow = await flow_store.get_flow(flow_id, session_id)
+        if flow is None or is_terminal(str(flow.get("status") or "")):
+            return
+        await flow_store.fail_flow_for_gc(flow, reason="todo_removed_explicitly")
+    except Exception as exc:  # noqa: BLE001 - the unreferenced-flow sweep is the backstop
+        logger.warning("todo remove: immediate flow compensation failed for {}: {}", flow_id, exc)
+
+
 class TodoService:
     """Session-scoped todo mutations: validate, barrier, persist, push, return."""
 
@@ -243,28 +284,134 @@ class TodoService:
         flow_id: str | None = None,
         step_id: str | None = None,
         category: str | None = None,
+        after_todo_id: int | None = None,
+        plan_ref: str | None = None,
     ) -> list[dict]:
-        """Append one pending todo (used by the TaskFlow entry binding).
+        """Insert one pending todo, at the tail or after a stable todo_id.
 
         Unlike ``update_todos`` this is a single INSERT, so it cannot clobber a
         concurrent full replacement. The category vocabulary is default-
-        downgraded like every other write.
+        downgraded like every other write. ``after_todo_id`` is the stable
+        anchor for an in-list insertion; None appends at the tail.
         """
         item = _validate_todos(
             [
                 {
                     "content": content,
                     "status": "pending",
+                    "priority": DEFAULT_PRIORITY,
                     "category": category or DEFAULT_CATEGORY,
                     "flow_id": flow_id,
                     "step_id": step_id,
+                    "plan_ref": plan_ref,
                 }
             ]
         )[0]
-        await store.append_todo(session_id, item)
+        inserted = await store.add_todo(session_id, item, after_todo_id=after_todo_id)
+        if inserted is None:
+            raise TodoIdNotFoundError(
+                int(after_todo_id or 0),
+                await store.get_todos(session_id),
+                field="after_todo_id",
+            )
+        if plan_ref:
+            from runtime import state_register_db
+
+            await asyncio.to_thread(
+                state_register_db.set_state,
+                session_id,
+                _PLAN_REF_STATE_KEY,
+                plan_ref,
+            )
         latest = await store.get_todos(session_id)
         await _push_todo_update(session_id, latest)
         return latest
+
+    @staticmethod
+    async def patch_todo(
+        session_id: str,
+        todo_id: int,
+        *,
+        content: str | None = None,
+        status: str | None = None,
+        priority: str | None = None,
+        category: str | None = None,
+    ) -> dict:
+        """Patch one todo by its stable id; reference fields stay untouched."""
+        if content is not None and not str(content).strip():
+            raise TodoStoreError("Cannot patch todo: content must be a non-empty string")
+        normalized_category = category
+        if category is not None and category not in VALID_CATEGORIES:
+            normalized_category = DEFAULT_CATEGORY
+        if status == "completed":
+            todo = await store.get_todo_by_id(session_id, todo_id)
+            if todo is None:
+                raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+            await _assert_transition_allowed(todo, session_id)
+        updated = await store.patch_todo_by_id(
+            session_id,
+            todo_id,
+            content=content,
+            status=status,
+            priority=priority,
+            category=normalized_category,
+        )
+        if updated is None:
+            raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+        await _push_todo_update(session_id, await store.get_todos(session_id))
+        return updated
+
+    @staticmethod
+    async def remove_todo(session_id: str, todo_id: int) -> dict:
+        """Remove one todo by id; a removed flow root is compensated immediately."""
+        removed = await store.remove_todo_by_id(session_id, todo_id)
+        if removed is None:
+            raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+        if removed.get("flow_id"):
+            await _compensate_removed_flow(session_id, str(removed["flow_id"]))
+        await _push_todo_update(session_id, await store.get_todos(session_id))
+        return removed
+
+    @staticmethod
+    async def reattach_todo(session_id: str, todo_id: int, flow_id: str) -> dict:
+        """Bind an existing todo as the GC root of an active flow."""
+        flow = await _load_flow(flow_id, session_id)
+        if flow is None:
+            raise TodoStoreError(f"Cannot reattach: TaskFlow flow '{flow_id}' not found")
+        if str(flow.get("status") or "") in _TASKFLOW_TERMINAL:
+            raise TodoStoreError(
+                f"Cannot reattach: TaskFlow flow '{flow_id}' is terminal "
+                f"(status={flow.get('status')})"
+            )
+        updated = await store.set_todo_flow_id_by_id(session_id, todo_id, flow_id)
+        if updated is None:
+            raise TodoIdNotFoundError(todo_id, await store.get_todos(session_id))
+        await _push_todo_update(session_id, await store.get_todos(session_id))
+        return updated
+
+    @staticmethod
+    async def list_orphan_flows(session_id: str) -> list[dict]:
+        """Active flows in this session that no active todo currently references."""
+        from agent.tools.taskflow.registry import store_sqlite as flow_store
+
+        roots = await store.get_active_flow_ids(session_id)
+        flows = await flow_store.get_non_terminal_flows(session_id)
+        orphans: list[dict] = []
+        for flow in flows:
+            flow_id = str(flow.get("flow_id") or "")
+            if not flow_id or flow_id in roots:
+                continue
+            state = flow.get("state") or {}
+            orphans.append(
+                {
+                    "flow_id": flow_id,
+                    "status": flow.get("status"),
+                    "description": str(state.get("description") or ""),
+                    "child_session_key": flow.get("child_session_key") or "",
+                    "expected_revision": int(flow.get("expected_revision") or 0),
+                }
+            )
+        return orphans
 
     @staticmethod
     async def get_todos(session_id: str) -> list[dict]:
@@ -287,10 +434,12 @@ class TodoService:
 
 
 __all__ = [
+    "TodoIdNotFoundError",
     "TodoService",
     "TodoStoreError",
     "_TASKFLOW_TERMINAL",
     "_assert_transition_allowed",
+    "_compensate_removed_flow",
     "_push_todo_update",
     "_read_taskflow_step_status",
     "_validate_todos",

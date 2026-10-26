@@ -8,6 +8,10 @@ class TodoListInfraConfig(TypedDict):
 
     store_busy_timeout_ms: int
     store_init_wait_timeout_s: float
+    #: Temporary position offset used to make room for an insertion without a
+    #: PRIMARY KEY (session_id, position) collision. A single session never
+    #: reaches this many todos.
+    position_shift_offset: int
     stagnation_max_stagnation: int
     stagnation_base_cooldown_s: float
     stagnation_max_cooldown_s: float
@@ -35,6 +39,7 @@ class TodoListInfraConfig(TypedDict):
 TODOLIST_INFRA: TodoListInfraConfig = {
     "store_busy_timeout_ms": 5000,
     "store_init_wait_timeout_s": 10.0,
+    "position_shift_offset": 1_000_000,
     "stagnation_max_stagnation": 3,
     "stagnation_base_cooldown_s": 2.0,
     "stagnation_max_cooldown_s": 60.0,

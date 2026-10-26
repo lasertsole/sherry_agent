@@ -195,22 +195,18 @@ async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
 
 ## 工具层
 
-### todowrite — 全量替换，写即读
+### todowrite — 全量替换或局部修改
 
-```python
-@tool("todowrite")
-async def todowrite(todos: list[dict], session_id: Annotated[str, InjectedState("session_id")] = "") -> str:
-    """Update the todo list for the current session (full replacement).
-    Pass the COMPLETE list every time.
-    DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
-    result = await service.update_todos(session_id, todos)
-    output = json.dumps(result, ensure_ascii=False, indent=2)
-    if session_id not in _reminded_sessions:
-        _reminded_sessions.add(session_id)
-        output += _FANOUT_REMINDER  # E6a: 首次调用追加 fan-out 决策提醒
-    return output
-```
+每条 todo 都有稳定的 `todo_id`，在 system reminder 和读回 JSON 中显示为 `#N`。`position` 只决定显示顺序；局部 action 用 `todo_id` 定位，插入不会让 id 漂移。
+
+- `replace`（默认）：传完整 `todos` 列表；每一行都会获得新的 `todo_id`。
+- `patch`：`todo_id` + 任意 `content` / `status` / `priority` / `category`；`flow_id` / `step_id` / `plan_ref` 保持不变。
+- `add`：`content`；省略 `after_todo_id` 追加到队尾，传 `#N` 则插到该 todo 后面。
+- `remove`：`todo_id`。
+- `reattach`：`todo_id` + `flow_id`；把已有 todo 重绑为孤儿 flow 的 GC root。
+- `list_orphans`：列出没有活跃 todo root 的活跃 flow。
+
+工具仍以 JSON 返回更新后的单行/列表并推送 `todo_updated`；todo_id 不存在时返回当前合法列表（带 `#N`），让模型直接重试。
 
 ### todoread — 显式读取
 
@@ -229,6 +225,11 @@ def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
         t.metadata = {"scope": "main_only"}
+        if t.name == "todowrite":
+            # add/remove are not repeat-safe; the other actions are.
+            t.metadata["idempotent_actions"] = (
+                "replace", "patch", "reattach", "list_orphans",
+            )
     todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 格式规则
     return list(_TODOLIST_TOOLS)
 ```
@@ -239,10 +240,11 @@ def build_todolist_tools() -> list[BaseTool]:
 - 原子粒度：1-3 次工具调用可完成。
 - 同时只有一个 in_progress。
 - delegation="subagent" 时，subagent 返回前不得标记 completed。
+- 优先用 patch/add/remove 局部 action；replace 会重发所有 todo_id。
 
 ### SKILL.md
 
-定义何时使用 todolist（3+ 步复杂工作）、可用工具、状态/优先级/委派字段、DAG 字段（委派给 TaskFlow）以及规则。
+定义何时使用 todolist（3+ 步复杂工作）、可用工具、状态/优先级/委派字段、DAG 字段（委派给 TaskFlow）以及规则（优先局部 action；只有整体重写才用 replace；同时只有一个 in_progress；subagent 返回前不得标记 completed）。
 
 ### knowledge — 按计划身份隔离
 
@@ -348,7 +350,7 @@ def _build_todo_block(session_id: str) -> str:
         if t.get("step_id"):
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("优先用 todowrite 的 patch/add/remove 局部操作；只有整体重写时才用 replace。")
     lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")

@@ -50,7 +50,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 ### E2: ツール説明強制 — フォーマット + 委譲ルール
 
-`build_todolist_tools()` で todowrite の説明をオーバーライドし、MANDATORY フォーマットルールを注入：タイトルに WHERE/WHY/HOW/RESULT をエンコード、原子粒度、同時に1つの in_progress のみ、subagent 返却前に completed マークしない。
+`build_todolist_tools()` で todowrite の説明をオーバーライドし、MANDATORY フォーマットルールを注入：タイトルに WHERE/WHY/HOW/RESULT をエンコード、原子粒度、同時に1つの in_progress のみ、subagent 返却前に completed マークしない。ローカル action（patch/add/remove）を優先し、replace は全量書き換え時のみ使う。
 
 ### E3: 継続強制器 — 事後クロージャのコア ★★
 

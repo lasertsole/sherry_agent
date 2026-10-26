@@ -1090,10 +1090,10 @@ def _build_main_session_todowrite(main_session_id: str) -> BaseTool:
     could not see the main session at all. This shim reuses the real tool's
     ``args_schema`` and ``description`` verbatim — zero schema drift: the
     injected ``session_id`` (the DERIVED key) is dropped, every other field is
-    forwarded to the service, and a future field the service does not accept
-    fails fast instead of being silently dropped. It carries the real tool's
-    ``todo_update`` metadata marker and delegates to the real service with the
-    main session id captured.
+    forwarded to the same action dispatcher the real tool uses, and a future
+    field the dispatcher does not accept fails fast instead of being silently
+    dropped. It carries the real tool's ``todo_update`` metadata marker and
+    delegates with the main session id captured.
     """
     from agent.tools.todolist.tools import build_todolist_tools
     from langchain_core.tools import StructuredTool
@@ -1102,10 +1102,9 @@ def _build_main_session_todowrite(main_session_id: str) -> BaseTool:
 
     async def _todowrite(**kwargs: Any) -> str:
         kwargs.pop("session_id", None)
-        from agent.tools.todolist import service
+        from agent.tools.todolist.tools.todowrite import _run_todo_action
 
-        result = await service.TodoService.update_todos(main_session_id, **kwargs)
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        return await _run_todo_action(session_id=main_session_id, **kwargs)
 
     shim = StructuredTool.from_function(
         coroutine=_todowrite,

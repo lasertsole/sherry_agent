@@ -57,6 +57,7 @@ Overrides todowrite description in `build_todolist_tools()` with MANDATORY forma
 - Granularity: single atomic action completable in 1-3 tool calls.
 - One in_progress at a time.
 - No marking completed while subagent running or without verification.
+- Prefer local `patch`/`add`/`remove` actions; `replace` reissues every todo_id.
 
 ### E3: Continuation Enforcer — Post-Turn Closure Core ★★
 

@@ -1,10 +1,11 @@
 """TodoList shared constants: table name plus the four closed vocabularies.
 
 The todo store keeps only session-scoped checklist state (content/status/
-priority/position + delegation + TaskFlow pointers). DAG scheduling
-(depends_on/DAG state) is deliberately absent: dependency edges, unlock logic and
-``blocked/ready/dispatched/done`` live in TaskFlow, reached through
-``flow_id``/``step_id``.
+priority/position/todo_id + delegation + TaskFlow pointers). ``position`` is
+display order; ``todo_id`` is the stable per-session identity used by local
+mutations. DAG scheduling (depends_on/DAG state) is deliberately absent:
+dependency edges, unlock logic and ``blocked/ready/dispatched/done`` live in
+TaskFlow, reached through ``flow_id``/``step_id``.
 """
 
 from enum import StrEnum

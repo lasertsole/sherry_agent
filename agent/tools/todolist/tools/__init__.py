@@ -24,6 +24,16 @@ _TODOWRITE_FORMAT_RULES = """
 Each todo title MUST encode four elements: WHERE, WHY, HOW, and EXPECTED RESULT.
 Format: "[WHERE] [HOW] to [WHY] - expect [RESULT]"
 
+## Local Actions (PREFER THESE)
+Every todo has a stable `todo_id`, shown as `#N` in the system reminder and tool results.
+- patch: `{"action": "patch", "todo_id": N, "content": "...", "status": "..."}` changes one todo in place.
+- add: `{"action": "add", "content": "...", "after_todo_id": N}` appends when after_todo_id is omitted, or inserts after #N.
+- remove: `{"action": "remove", "todo_id": N}` deletes one todo.
+- reattach: `{"action": "reattach", "todo_id": N, "flow_id": "..."}` binds a todo as an orphan flow's GC root.
+- list_orphans: `{"action": "list_orphans"}` lists active flows with no active todo root.
+Use local actions for edits: replace rewrites the whole list and gives every row a new todo_id.
+Never identify a todo by position; positions change when an item is inserted.
+
 ## Granularity Rules
 Each todo MUST be a single atomic action completable in 1-3 tool calls.
 **Size test**: Can you complete this todo by editing one file or running one command?
@@ -52,27 +62,33 @@ If not, it's too big — split it.
 _TODOLIST_TOOLS: list[BaseTool] = [todowrite, todoread]
 
 _READ_ONLY_TODOLIST: set[str] = {"todoread"}
-# ``todowrite`` is a FULL replacement, so replaying the same list leaves the
-# session in the same state. The guardrail may therefore hash its result.
-_IDEMPOTENT_TODOLIST: set[str] = {"todoread", "todowrite"}
+# ``todowrite`` is action-based: replace/patch/reattach/list_orphans are
+# repeat-safe; add/remove are not (a replay would duplicate or fail).
+_IDEMPOTENT_TODOLIST: set[str] = {"todoread"}
+_IDEMPOTENT_ACTIONS_TODOLIST: dict[str, set[str]] = {
+    "todowrite": {"replace", "patch", "reattach", "list_orphans"},
+}
 
 
 def build_todolist_tools() -> list[BaseTool]:
     """Build and return the todowrite/todoread tools for main-agent wiring.
 
-    Each tool declares its ``idempotent`` metadata (both are repeat-safe:
-    ``todoread`` reads, ``todowrite`` replaces the whole list) for the
-    ToolGuardrails middleware. ``side_effect_scope`` still distinguishes the
-    read from the session write.
+    Each tool declares its ``idempotent`` metadata (``todoread`` is a pure read;
+    ``todowrite`` declares per-action repeat safety) for ToolGuardrails.
+    ``side_effect_scope`` still distinguishes the read from the session write.
     """
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
-        t.metadata = {
+        metadata = {
             **(t.metadata or {}),
             "scope": "main_only",
             "idempotent": t.name in _IDEMPOTENT_TODOLIST,
             "side_effect_scope": "none" if t.name in _READ_ONLY_TODOLIST else "session",
         }
+        actions = _IDEMPOTENT_ACTIONS_TODOLIST.get(t.name)
+        if actions:
+            metadata["idempotent_actions"] = tuple(sorted(actions))
+        t.metadata = metadata
     # ``todowrite`` is the only todo-MUTATING tool: the post-compression todo
     # nudge admits tools by this metadata marker, so ``todoread`` stays untagged
     # on purpose (the fork receives the current list in its prompt).

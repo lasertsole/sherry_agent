@@ -1845,6 +1845,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `wiki/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
 - the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears.
+- todo identity is `todo_id`, not `position`: each row gets a per-session monotonic id, the system reminder renders it as `#N`, and `todowrite` actions `patch` / `add(after_todo_id=…)` / `remove` / `reattach` / `list_orphans` address it. `replace` is still the default full-list rewrite and reissues every id (it reads `MAX(todo_id)` before DELETE, so an old id can never silently point at a new row); local actions preserve `flow_id` / `step_id` / `plan_ref`. A missing id raises `TodoIdNotFoundError` and the tool answers with the current valid list. The store creates only the current schema (`todo_id INTEGER NOT NULL`, unique `(session_id, todo_id)` index), with no old-table backfill; `position` is display order only and insertion shifts it via `TODOLIST_INFRA["position_shift_offset"]`.
 - a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer's serializer (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
@@ -1896,22 +1897,23 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   A new signature-based tool-loop middleware was **not** added: 204 historical
   tool calls showed zero consecutive same-name + same-args successful mutating
   runs; `ToolGuardrails` remains the detector.
-- TaskFlow orphan collection is a **tri-color GC plus liveness** (v3), replacing
-  the per-scenario fixes: every `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a
+- TaskFlow orphan collection is an **unreferenced-flow GC plus liveness** (v3),
+  replacing the per-scenario fixes: every
+  `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a
   flow-level `pending` todo (the GC root; `step_id` empty, so it stays active
   until the whole flow is terminal) — a missing `todo_content` falls back to the
   description/flow id rather than creating an unrooted flow. The sweeper marks
-  active-todo `flow_id`s as the reachable/black set and fails non-terminal,
+  active-todo `flow_id`s as the reachable set and fails non-terminal,
   non-superseded flows with no root and an `updated_at` older than
-  `TASKFLOW_INFRA["tri_color_grace_seconds"]` (300 s — the grace covers the
-  create/bind race between the two SQLite files) as `orphan_unreferenced`.
+  `TASKFLOW_INFRA["unreferenced_flow_grace_seconds"]` (300 s — the grace covers
+  the create/bind race between the two SQLite files) as `orphan_unreferenced`.
   Liveness then handles stuck-but-referenced flows: a child-session flow with
   no live run is collected after the short grace, a main-session flow is
   collected after `stale_action_hours` (12 h) of inactivity
   (`session_dead` when no socket/turn/run exists, `stale_swept` when the
   session is live), a live child vetoes, and active todos referencing a
   failed/cancelled flow are cancelled. Both passes run at boot (before the
-  first 60 s tick) and every tick; `task_flows` gains additive `updated_at`
+  first 60 s tick) and every tick; `task_flows` carries `updated_at`
   (bumped by every mutation) and `terminal_reason` columns. A superseded
   predecessor becomes `cancelled`/`superseded`; `taskflow_flow(action="finish")` has three
   independent budgets (nudge / consecutive failures / protocol violations)

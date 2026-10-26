@@ -201,29 +201,18 @@ async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
 
 ## Tool Layer
 
-### todowrite — Full Replacement, Write-Is-Read
+### todowrite — Full Replacement or Local Actions
 
-```python
-@tool("todowrite")
-async def todowrite(
-    todos: list[dict],
-    session_id: Annotated[str, InjectedState("session_id")] = "",
-) -> str:
-    """Update the todo list for the current session (full replacement).
-    Pass the COMPLETE list every time.
-    Status: pending|in_progress|completed|cancelled.
-    Priority: high|medium|low.
-    Category (optional): quick|deep|ultrabrain|visual|git|writing.
-    Delegation (optional): self|subagent.
-    DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
-    result = await service.update_todos(session_id, todos)
-    output = json.dumps(result, ensure_ascii=False, indent=2)
-    if session_id not in _reminded_sessions:
-        _reminded_sessions.add(session_id)
-        output += _FANOUT_REMINDER
-    return output
-```
+Every todo carries a stable `todo_id`, rendered as `#N` in the system reminder and in read-back JSON. `position` is only the display order; local actions address `todo_id`, so an insertion never makes an id drift.
+
+- `replace` (default): pass the COMPLETE `todos` list. Every row gets a fresh `todo_id`.
+- `patch`: `todo_id` + any of `content` / `status` / `priority` / `category`; `flow_id` / `step_id` / `plan_ref` are preserved.
+- `add`: `content`; omit `after_todo_id` to append, or pass `#N` to insert immediately after that todo.
+- `remove`: `todo_id`.
+- `reattach`: `todo_id` + `flow_id`; binds an existing todo as an orphan flow's GC root.
+- `list_orphans`: lists active flows with no active todo root.
+
+The tool returns the updated row/list as JSON and pushes `todo_updated`; a missing id returns the current valid list with `#N` markers so the model can retry.
 
 ### todoread — Explicit Read
 
@@ -244,13 +233,18 @@ def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
         t.metadata = {"scope": "main_only"}
+        if t.name == "todowrite":
+            # add/remove are not repeat-safe; the other actions are.
+            t.metadata["idempotent_actions"] = (
+                "replace", "patch", "reattach", "list_orphans",
+            )
     todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 format rules
     return list(_TODOLIST_TOOLS)
 ```
 
 ### SKILL.md
 
-The skill file defines when to use todolist (3+ step work), available tools, status/priority/delegation fields, DAG fields (delegated to TaskFlow), and rules (full replacement each call, one in_progress at a time, no marking completed before subagent returns).
+The skill file defines when to use todolist (3+ step work), available tools, status/priority/delegation fields, DAG fields (delegated to TaskFlow), and rules (prefer local actions; replace only for a full rewrite; one in_progress at a time; no marking completed before a subagent returns).
 
 ### knowledge — Plan-Identity Isolation
 
@@ -360,7 +354,7 @@ def _build_todo_block(session_id: str) -> str:
         if t.get("step_id"):
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("Prefer todowrite local actions (patch/add/remove); use replace only for a full rewrite.")
     lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")

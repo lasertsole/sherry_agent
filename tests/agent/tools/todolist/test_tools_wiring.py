@@ -52,12 +52,18 @@ def test_builder_returns_both_tools_with_metadata_and_handle_tool_error():
 
 
 def test_metadata_declares_idempotency_and_preserves_todo_update():
-    """Given the todolist family, When built, Then both tools are repeat-safe
-    (read / full replacement), and the nudge whitelist marker survives."""
+    """Given the todolist family, When built, Then read is repeat-safe and
+    todowrite declares its repeat-safe actions; the nudge marker survives."""
     tools = {t.name: t for t in build_todolist_tools()}
 
     assert tools["todoread"].metadata["idempotent"] is True
-    assert tools["todowrite"].metadata["idempotent"] is True
+    assert tools["todowrite"].metadata["idempotent"] is False
+    assert set(tools["todowrite"].metadata["idempotent_actions"]) == {
+        "replace",
+        "patch",
+        "reattach",
+        "list_orphans",
+    }
     assert tools["todowrite"].metadata["todo_update"] is True
     assert tools["todoread"].metadata == {
         "scope": "main_only",
@@ -66,9 +72,15 @@ def test_metadata_declares_idempotency_and_preserves_todo_update():
     }
     assert tools["todowrite"].metadata == {
         "scope": "main_only",
-        "idempotent": True,
+        "idempotent": False,
         "side_effect_scope": "session",
         "todo_update": True,
+        "idempotent_actions": (
+            "list_orphans",
+            "patch",
+            "reattach",
+            "replace",
+        ),
     }
 
 

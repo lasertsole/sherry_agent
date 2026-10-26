@@ -193,22 +193,18 @@ async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
 
 ## ツールレイヤー
 
-### todowrite — 全量置換、書き込み即読み
+### todowrite — 全量置換またはローカル変更
 
-```python
-@tool("todowrite")
-async def todowrite(todos: list[dict], session_id: Annotated[str, InjectedState("session_id")] = "") -> str:
-    """Update the todo list for the current session (full replacement).
-    Pass the COMPLETE list every time.
-    DAG scheduling is NOT done here. Declare dependencies with
-    taskflow_step(action="run_task", flow_id, task, depends_on=[...])."""
-    result = await service.update_todos(session_id, todos)
-    output = json.dumps(result, ensure_ascii=False, indent=2)
-    if session_id not in _reminded_sessions:
-        _reminded_sessions.add(session_id)
-        output += _FANOUT_REMINDER  # E6a: 初回呼び出し時に fan-out リマインダーを追加
-    return output
-```
+各 todo は安定した `todo_id` を持ち、system reminder と読み戻し JSON では `#N` として表示されます。`position` は表示順だけを決め、ローカル action は `todo_id` で対象を指定するため、挿入で id がずれません。
+
+- `replace`（既定）：完全な `todos` リストを渡す。各行には新しい `todo_id` が割り当てられる。
+- `patch`：`todo_id` + `content` / `status` / `priority` / `category` の任意項目。`flow_id` / `step_id` / `plan_ref` は保持される。
+- `add`：`content`。`after_todo_id` を省略すると末尾に追加し、`#N` を渡すとその todo の直後に挿入する。
+- `remove`：`todo_id`。
+- `reattach`：`todo_id` + `flow_id`。既存 todo を孤児 flow の GC root に再バインドする。
+- `list_orphans`：アクティブな todo root を持たないアクティブ flow を列挙する。
+
+ツールは更新後の行/リストを JSON で返し、`todo_updated` を push する。存在しない id は現在の有効リスト（`#N` 付き）を返すので、モデルはそのまま再試行できる。
 
 ### todoread — 明示的読み取り
 
@@ -227,6 +223,11 @@ def build_todolist_tools() -> list[BaseTool]:
     for t in _TODOLIST_TOOLS:
         t.handle_tool_error = True
         t.metadata = {"scope": "main_only"}
+        if t.name == "todowrite":
+            # add/remove are not repeat-safe; the other actions are.
+            t.metadata["idempotent_actions"] = (
+                "replace", "patch", "reattach", "list_orphans",
+            )
     todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 フォーマットルール
     return list(_TODOLIST_TOOLS)
 ```
@@ -237,10 +238,11 @@ def build_todolist_tools() -> list[BaseTool]:
 - 原子粒度（1-3 ツール呼び出しで完了）
 - 同時に1つの in_progress のみ
 - subagent 返却前に completed をマークしない
+- ローカル action（patch/add/remove）を優先し、replace は全量書き換え時のみ使う。
 
 ### SKILL.md
 
-todolist をいつ使うか（3+ ステップの複雑な作業）、利用可能ツール、ステータス/優先度/委譲フィールド、DAG フィールド（TaskFlow に委譲）、ルールを定義します。
+todolist をいつ使うか（3+ ステップの複雑な作業）、利用可能ツール、ステータス/優先度/委譲フィールド、DAG フィールド（TaskFlow に委譲）、ルール（ローカル action を優先し、全量書き換えのときだけ replace、同時に1つの in_progress、subagent 返却前に completed をマークしない）を定義します。
 
 ### knowledge — 計画アイデンティティ分離
 
@@ -346,7 +348,7 @@ def _build_todo_block(session_id: str) -> str:
         if t.get("step_id"):
             tag_parts.append(t["step_id"])
         lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
-    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("todowrite の patch/add/remove を優先し、全量書き換えのときだけ replace を使う。")
     lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_step(action='run_task').")
     lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
     lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")

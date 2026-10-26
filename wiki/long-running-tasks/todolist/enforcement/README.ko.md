@@ -50,7 +50,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 ### E2: 도구 설명 강제 — 형식 + 위임 규칙
 
-`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입: 제목에 WHERE/WHY/HOW/RESULT 인코딩, 원자 입자도, 동시에 하나의 in_progress만, subagent 반환 전 completed 마크 금지.
+`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입: 제목에 WHERE/WHY/HOW/RESULT 인코딩, 원자 입자도, 동시에 하나의 in_progress만, subagent 반환 전 completed 마크 금지. 로컬 action(patch/add/remove)을 우선하고 replace는 전체 재작성 시에만 사용.
 
 ### E3: 계속 강제기 — 사후 클로저 코어 ★★
 

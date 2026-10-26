@@ -166,7 +166,7 @@ async def aggregate_flow_evidence(flow_id, session_keys):
 | 方案 | 关系 |
 |------|------|
 | **`方案_证据台账_加flow_id列.md`** | **前置 + 细化** —— 本方案在其 M2 上加 M2b(creator 盖章),在其 M6 上删 hybrid。必须先落地该方案的 M1-M5 |
-| `方案_Todo加todo_id列.md` / 局部改 API / 引用完整性 | 无关 —— todolist 路径,不碰 evidence 表 |
+| todolist 的 todo_id / 局部 API / 引用完整性方案 | 无关 —— todolist 路径,不碰 evidence 表 |
 | `方案_最终校验波_FinalVerificationWave.md` | 无关 —— 校验波用 descendant 枚举 + read_for_keys(todolist 路径),不依赖 flow_id |
 
 本方案是 TaskFlow evidence 路径的**收尾细化**,让 finish 门从"枚举 session 链 hybrid"收敛成"flow_id 单查",前提是 creator-side 也盖章(M2b)。

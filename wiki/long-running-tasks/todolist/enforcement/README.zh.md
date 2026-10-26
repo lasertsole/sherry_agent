@@ -57,6 +57,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 - 同时只有一个 in_progress
 - 不得在 subagent 返回前标记 completed（转换屏障）
 - 不得在未验证前标记 completed（Sisyphus）
+- 优先用 patch/add/remove 局部 action；replace 会重发所有 todo_id。
 
 ### E3: 续作强制器 — 事后闭环核心 ★★
 
