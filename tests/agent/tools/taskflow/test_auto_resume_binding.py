@@ -6,7 +6,7 @@ and the resume silently failed. This test uses the real taskflow store (no
 mocked resume), so the owner-session binding is actually exercised.
 
 The auto-resume owner fix is NOT part of the reverted per-scenario orphan
-cleanup: without it the tri-color GC's live flows never advance when a child
+cleanup: without it the unreferenced-flow GC's live flows never advance when a child
 completes.
 """
 

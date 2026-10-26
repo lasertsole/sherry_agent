@@ -19,9 +19,9 @@
 | 删除 guard | **只有"标完成"guard**(`_assert_transition_allowed`),无"删 flow_id todo"guard | `service.py` `if todo.get("status") == "completed": await _assert_transition_allowed(...)` |
 | `todowrite` 暴露 flow_id? | **不暴露**(签名只有 `plan_ref`) | `todowrite.py:38` |
 | 创建时 bind 失败补偿 | `compensate_flow_without_todo` 立即 fail flow | `_shared.py:68-84` |
-| **删除时补偿** | **无即时补偿**,只靠 sweep grace window 后回收 | `compensate_flow_without_todo` 注释 "the tri-color sweep sees a flow with no active reference and collects it after the grace window" |
+| **删除时补偿** | **无即时补偿**,只靠 sweep grace window 后回收 | `compensate_flow_without_todo` 注释 "the unreferenced-flow sweep sees a flow with no active reference and collects it after the grace window" |
 | 创建 flow 去重 | **无** | `taskflow_create.py` / `taskflow_plan.py` 不查已有同目的 flow |
-| 三色 sweep | 存在,带 grace window(`updated_at` 不活跃) | `taskflow/registry/store_sqlite.py:127-613` |
+| 无引用 sweep | 存在,带 grace window(`updated_at` 不活跃) | `taskflow/registry/store_sqlite.py:127-613` |
 
 ## 任务分解
 
@@ -151,13 +151,13 @@ if TODOLIST_INFRA.get("trigger_sweep_after_replace", True):
     # 即时扫一次孤儿 flow(不等 grace window)
     # sweep 本身幂等:已 terminal 的跳过,非 terminal 无引用的 fail
     try:
-        await asyncio.to_thread(tf_store.run_tri_color_sweep, session_id)
+        await asyncio.to_thread(tf_store.run_unreferenced_flow_sweep, session_id)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("post-replace tri-color sweep failed: {}", exc)
+        logger.warning("post-replace unreferenced-flow sweep failed: {}", exc)
         # 不阻塞 todo 替换
 ```
 
-`run_tri_color_sweep(session_id)` 是 `store_sqlite.py` 已有 sweep 逻辑的 session 限定触发(原 sweep 是系统级定时跑,这里加个 session 级即时入口)。sweep 幂等,P1 已 cancel 的 flow 是 terminal,sweep 跳过 —— 不重复处理。
+`run_unreferenced_flow_sweep(session_id)` 是 `store_sqlite.py` 已有 sweep 逻辑的 session 限定触发(原 sweep 是系统级定时跑,这里加个 session 级即时入口)。sweep 幂等,P1 已 cancel 的 flow 是 terminal,sweep 跳过 —— 不重复处理。
 
 ### P4. flow terminal → todo 即时通知(对称补 success + failure)
 
@@ -304,7 +304,7 @@ sweeper 仍跑(兜底 P4c 漏的 / 老代码路径),但 P4c 让常态 fail/cance
 ## 测试清单
 
 ### 阶段 1(P3)
-- [ ] `update_todos` 全量替换后,`run_tri_color_sweep(session_id)` 被调用
+- [ ] `update_todos` 全量替换后,`run_unreferenced_flow_sweep(session_id)` 被调用
 - [ ] 替换丢掉 flow_id todo → 即时 sweep 把该 flow 标 failed(不等 grace window)
 - [ ] sweep 幂等:已 terminal 的 flow 跳过;P1 已 cancel 的不重复处理
 - [ ] sweep 失败不阻塞 todo 替换(fail-open)

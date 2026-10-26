@@ -321,7 +321,8 @@ async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: 
     The back-pointer is lineage metadata and deliberately does NOT bump
     ``expected_revision`` (a caller holding the predecessor's revision is not
     invalidated). It DOES make an active predecessor terminal: a superseded flow
-    must leave every active read, including the tri-color sweep's white set.
+    must leave every active read, including the unreferenced-flow sweep's
+    reachable set.
     Returns True when one row matched, False when the flow is absent FOR THIS
     SESSION.
     """
@@ -500,10 +501,10 @@ async def get_non_terminal_session_ids() -> list[str]:
 async def _finalize_gc_flow(flow: dict, reason: str) -> bool:
     """Fail one collected flow and settle its unresolved steps.
 
-    Used by the tri-color and liveness sweeps. A revision conflict means a
-    concurrent tool call advanced the flow after the scan — that is progress,
-    so this write is abandoned and the next tick re-evaluates the flow from
-    fresh state instead of clobbering it with the stale snapshot.
+    Used by the unreferenced-flow and liveness sweeps. A revision conflict
+    means a concurrent tool call advanced the flow after the scan — that is
+    progress, so this write is abandoned and the next tick re-evaluates the flow
+    from fresh state instead of clobbering it with the stale snapshot.
     """
     flow_id = str(flow.get("flow_id") or "")
     session_id = str(flow.get("session_id") or "")
@@ -555,7 +556,7 @@ async def _finalize_gc_flow(flow: dict, reason: str) -> bool:
 
 
 async def fail_flow_for_gc(flow: dict, *, reason: str) -> bool:
-    """Fail one flow and settle its unresolved steps (tri-color/liveness/entry)."""
+    """Fail one flow and settle its unresolved steps (unreferenced-flow/liveness/entry)."""
     return await _finalize_gc_flow(flow, reason)
 
 

@@ -113,15 +113,16 @@ async def _do_sweep() -> None:
     if expired_flows > 0:
         logger.warning("Sweeper: {} TaskFlow(s) exceeded deadline, marked as failed", expired_flows)
 
-    # Unified orphan collection: tri-color first (unreferenced), then liveness
-    # (stuck-but-referenced), then the zombie-todo pass inside liveness.
-    tri = await _tri_color_sweep()
-    if tri.get("swept"):
+    # Unified orphan collection: the unreferenced-flow sweep first (mark active
+    # todo roots, collect unmarked flows), then liveness (stuck-but-referenced),
+    # then the zombie-todo pass inside liveness.
+    unreferenced = await _unreferenced_flow_sweep()
+    if unreferenced.get("swept"):
         logger.warning(
-            "Sweeper: tri-color collected {} unreferenced TaskFlow(s) (sessions={}, roots={})",
-            tri["swept"],
-            tri["sessions"],
-            tri["marked"],
+            "Sweeper: unreferenced-flow sweep collected {} TaskFlow(s) (sessions={}, roots={})",
+            unreferenced["swept"],
+            unreferenced["sessions"],
+            unreferenced["roots"],
         )
     live = await _liveness_sweep()
     if live.get("session_dead") or live.get("stale_swept") or live.get("todo_cancelled"):
@@ -251,17 +252,19 @@ def _session_has_live_presence(session_id: str) -> bool:
     return False
 
 
-async def _tri_color_sweep(
+async def _unreferenced_flow_sweep(
     *,
     now: float | None = None,
     grace_seconds: float | None = None,
 ) -> dict[str, int]:
-    """Collect flows with no active todo reference (the white set).
+    """Collect non-terminal flows that no active todo references.
 
-    GC roots are active todos (``pending``/``in_progress``) carrying a
-    ``flow_id``. A non-terminal, non-superseded flow older than the grace
-    window and absent from that mark set is failed as ``orphan_unreferenced``.
-    The grace window covers the create/bind race across the two SQLite files.
+    This is a mark-and-sweep reachability pass. GC roots
+    are active todos (``pending``/``in_progress``) carrying a ``flow_id``; a
+    root's flow is marked reachable. A non-terminal, non-superseded flow older
+    than the grace window and absent from the marked set is failed as
+    ``orphan_unreferenced``. The grace window covers the create/bind race across
+    the two SQLite files.
     """
     from config.features import TASKFLOW_INFRA
     from agent.tools.taskflow.registry import store_sqlite as taskflow_store
@@ -269,7 +272,7 @@ async def _tri_color_sweep(
 
     current = time.time() if now is None else float(now)
     grace = (
-        float(TASKFLOW_INFRA["tri_color_grace_seconds"])
+        float(TASKFLOW_INFRA["unreferenced_flow_grace_seconds"])
         if grace_seconds is None
         else float(grace_seconds)
     )
@@ -277,17 +280,17 @@ async def _tri_color_sweep(
     try:
         sessions = await taskflow_store.get_non_terminal_session_ids()
     except Exception as exc:  # noqa: BLE001 - a sweep read failure must not stop the loop
-        logger.warning("Tri-color sweep could not read non-terminal sessions: {}", exc)
-        return {"sessions": 0, "marked": 0, "swept": 0}
+        logger.warning("Unreferenced-flow sweep could not read non-terminal sessions: {}", exc)
+        return {"sessions": 0, "roots": 0, "swept": 0}
 
-    marked_total = 0
+    roots_total = 0
     swept_total = 0
     for session_id in sessions:
         try:
-            marked = await TodoService.get_active_flow_ids(session_id)
-            marked_total += len(marked)
+            root_ids = await TodoService.get_active_flow_ids(session_id)
+            roots_total += len(root_ids)
             for flow in await taskflow_store.get_non_terminal_flows(session_id):
-                if str(flow.get("flow_id") or "") in marked:
+                if str(flow.get("flow_id") or "") in root_ids:
                     continue
                 updated_at = flow.get("updated_at")
                 if updated_at is not None and float(updated_at) >= cutoff:
@@ -295,14 +298,14 @@ async def _tri_color_sweep(
                 # A root can be deleted while its child still runs (for example
                 # a full todowrite replacement that drops it). The flow is then
                 # unreferenced but NOT dead; liveness owns it once the child
-                # settles, so the tri-color pass must not collect it here.
+                # settles, so this pass must not collect it here.
                 if _has_live_child(flow):
                     continue
                 if await taskflow_store.fail_flow_for_gc(flow, reason="orphan_unreferenced"):
                     swept_total += 1
         except Exception as exc:  # noqa: BLE001 - per-session fail-open
-            logger.warning("Tri-color sweep skipped session {}: {}", session_id, exc)
-    return {"sessions": len(sessions), "marked": marked_total, "swept": swept_total}
+            logger.warning("Unreferenced-flow sweep skipped session {}: {}", session_id, exc)
+    return {"sessions": len(sessions), "roots": roots_total, "swept": swept_total}
 
 
 async def _liveness_sweep(
@@ -329,7 +332,7 @@ async def _liveness_sweep(
         if stale_action_hours is None
         else float(stale_action_hours)
     )
-    child_grace = float(TASKFLOW_INFRA["tri_color_grace_seconds"])
+    child_grace = float(TASKFLOW_INFRA["unreferenced_flow_grace_seconds"])
     try:
         flows = await taskflow_store.get_non_terminal_flows()
         sessions = {str(flow.get("session_id") or "") for flow in flows}
@@ -356,7 +359,7 @@ async def _liveness_sweep(
         age = current - float(updated_at)
         if _is_child_session(session_id):
             # A child session has no independent life after its run ends. It
-            # gets the short tri-color grace (not the 12h inactivity window),
+            # gets the short orphan grace (not the 12h inactivity window),
             # so a killed child's flow is collected promptly — but a live run
             # still vetoes through the active set / live-run check.
             child_live = (
@@ -568,14 +571,14 @@ async def start_sweeper() -> None:
         logger.debug("boot stale-workspace sweep skipped", exc_info=True)
 
     # Boot is exactly when a crash's TaskFlow leftovers are around. Run the
-    # tri-color and liveness passes NOW instead of waiting one interval; both
-    # are conservative (grace + inactivity), so a flow from a closed-but-valid
-    # session is not collected just because no socket exists yet.
+    # unreferenced-flow and liveness passes NOW instead of waiting one interval;
+    # both are conservative (grace + inactivity), so a flow from a
+    # closed-but-valid session is not collected just because no socket exists yet.
     try:
-        tri = await _tri_color_sweep()
+        unreferenced = await _unreferenced_flow_sweep()
         live = await _liveness_sweep()
-        if tri.get("swept") or live.get("session_dead") or live.get("stale_swept"):
-            logger.warning("Boot TaskFlow GC: tri-color={} liveness={}", tri, live)
+        if unreferenced.get("swept") or live.get("session_dead") or live.get("stale_swept"):
+            logger.warning("Boot TaskFlow GC: unreferenced-flow={} liveness={}", unreferenced, live)
     except Exception:  # noqa: BLE001 - boot must not fail over a cleanup scan
         logger.debug("boot TaskFlow GC skipped", exc_info=True)
 

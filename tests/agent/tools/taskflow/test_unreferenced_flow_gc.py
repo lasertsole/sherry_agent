@@ -1,4 +1,4 @@
-"""Tri-color orphan GC + liveness + entry binding (v3).
+"""Unreferenced-flow orphan GC + liveness + entry binding (v3).
 
 The stores under test are the real SQLite implementations, pointed at tmp files
 by the taskflow conftest (which also isolates the todolist store).
@@ -110,31 +110,31 @@ async def test_superseded_active_flow_becomes_cancelled_and_terminal(isolated_db
 
 
 # ---------------------------------------------------------------------------
-# tri-color mark / sweep
+# unreferenced-flow mark / sweep
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_tri_color_keeps_a_flow_with_an_active_todo(isolated_db: Path):
+async def test_unreferenced_flow_keeps_a_referenced_flow(isolated_db: Path):
     await _create("flow-live")
     await _todo("flow-live")
 
-    result = await sweeper._tri_color_sweep(now=_now() + 10_000, grace_seconds=0)
+    result = await sweeper._unreferenced_flow_sweep(now=_now() + 10_000, grace_seconds=0)
 
-    assert result["marked"] == 1
+    assert result["roots"] == 1
     flow = await store_sqlite.get_flow("flow-live", SESSION)
     assert flow is not None and flow["status"] == TaskFlowStatus.RUNNING.value
 
 
 @pytest.mark.asyncio
-async def test_tri_color_live_child_vetoes_a_deleted_root(isolated_db: Path, monkeypatch):
+async def test_unreferenced_flow_live_child_vetoes_a_deleted_root(isolated_db: Path, monkeypatch):
     await _create("flow-live-child")
     await _todo("flow-live-child")
     await todo_store.replace_all(SESSION, [])
     _age(isolated_db, "flow-live-child", 600)
     monkeypatch.setattr(sweeper, "_has_live_child", lambda flow: True)
 
-    result = await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    result = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
 
     assert result["swept"] == 0
     flow = await store_sqlite.get_flow("flow-live-child", SESSION)
@@ -142,14 +142,14 @@ async def test_tri_color_live_child_vetoes_a_deleted_root(isolated_db: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_tri_color_collects_an_unreferenced_flow(isolated_db: Path):
+async def test_unreferenced_flow_is_collected(isolated_db: Path):
     await _create(
         "flow-orphan",
         steps=[{"step_id": "s1", "task": "work", "status": "dispatched"}],
     )
     _age(isolated_db, "flow-orphan", 600)
 
-    result = await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    result = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
 
     assert result["swept"] == 1
     flow = await store_sqlite.get_flow("flow-orphan", SESSION)
@@ -161,11 +161,11 @@ async def test_tri_color_collects_an_unreferenced_flow(isolated_db: Path):
 
 
 @pytest.mark.asyncio
-async def test_tri_color_grace_keeps_a_recent_unreferenced_flow(isolated_db: Path):
+async def test_unreferenced_flow_grace_keeps_a_recent_flow(isolated_db: Path):
     await _create("flow-fresh")
     _age(isolated_db, "flow-fresh", 10)
 
-    result = await sweeper._tri_color_sweep(now=_now(), grace_seconds=300)
+    result = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=300)
 
     assert result["swept"] == 0
     flow = await store_sqlite.get_flow("flow-fresh", SESSION)
@@ -173,12 +173,12 @@ async def test_tri_color_grace_keeps_a_recent_unreferenced_flow(isolated_db: Pat
 
 
 @pytest.mark.asyncio
-async def test_tri_color_ignores_a_terminal_todo_root(isolated_db: Path):
+async def test_unreferenced_flow_ignores_a_terminal_todo_root(isolated_db: Path):
     await _create("flow-done-root")
     await _todo("flow-done-root", status="completed")
     _age(isolated_db, "flow-done-root", 600)
 
-    result = await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    result = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
 
     assert result["swept"] == 1
     flow = await store_sqlite.get_flow("flow-done-root", SESSION)
@@ -186,7 +186,7 @@ async def test_tri_color_ignores_a_terminal_todo_root(isolated_db: Path):
 
 
 @pytest.mark.asyncio
-async def test_tri_color_skips_terminal_and_superseded_flows(isolated_db: Path):
+async def test_unreferenced_flow_skips_terminal_and_superseded_flows(isolated_db: Path):
     await _create("flow-terminal")
     await store_sqlite.update_flow(
         "flow-terminal",
@@ -207,7 +207,7 @@ async def test_tri_color_skips_terminal_and_superseded_flows(isolated_db: Path):
     _age(isolated_db, "flow-terminal", 600)
     _age(isolated_db, "flow-superseded", 600)
 
-    result = await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    result = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
 
     assert result["swept"] == 0
     terminal = await store_sqlite.get_flow("flow-terminal", SESSION)
@@ -217,14 +217,14 @@ async def test_tri_color_skips_terminal_and_superseded_flows(isolated_db: Path):
 
 
 @pytest.mark.asyncio
-async def test_tri_color_is_session_scoped(isolated_db: Path):
+async def test_unreferenced_flow_is_session_scoped(isolated_db: Path):
     await _create("flow-a")
     await _todo("flow-a")
     await _create("flow-b", session_id=OTHER)
     _age(isolated_db, "flow-a", 600)
     _age(isolated_db, "flow-b", 600)
 
-    await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
 
     alive = await store_sqlite.get_flow("flow-a", SESSION)
     dead = await store_sqlite.get_flow("flow-b", OTHER)
@@ -538,9 +538,26 @@ async def test_replace_all_is_one_commit(monkeypatch: pytest.MonkeyPatch):
     """The full-replace DELETE and INSERTs commit together (the GC race guard)."""
     recorded: list[str] = []
 
+    class _Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        async def fetchone(self):
+            return (1,)
+
+        def __await__(self):
+            async def _resolve():
+                return self
+
+            return _resolve().__await__()
+
     class _FakeDB:
-        async def execute(self, sql, _params):
+        def execute(self, sql, _params):
             recorded.append("delete" if sql.lstrip().upper().startswith("DELETE") else "other")
+            return _Cursor()
 
         async def executemany(self, _sql, _rows):
             recorded.append("insert-many")
@@ -563,8 +580,8 @@ async def test_replace_all_is_one_commit(monkeypatch: pytest.MonkeyPatch):
 
     await todo_store.replace_all(SESSION, [{"content": "atomic"}])
 
-    assert recorded[0] == "delete"
-    assert "insert-many" in recorded
+    assert "delete" in recorded
+    assert recorded.index("delete") < recorded.index("insert-many")
     assert recorded[-1] == "commit"
     assert recorded.count("commit") == 1
 
@@ -591,10 +608,10 @@ async def test_orphan_gc_end_to_end(isolated_db: Path):
     assert "TaskFlow created" in created
 
     # 2. Remove the root (simulating a full-replacement todowrite that dropped
-    #    it), age the flow, and let tri-color collect it.
+    #    it), age the flow, and let the unreferenced-flow sweep collect it.
     await todo_store.replace_all(SESSION, [])
     _age(isolated_db, "flow-e2e", 600)
-    swept = await sweeper._tri_color_sweep(now=_now(), grace_seconds=0)
+    swept = await sweeper._unreferenced_flow_sweep(now=_now(), grace_seconds=0)
     assert swept["swept"] == 1
     flow = await store_sqlite.get_flow("flow-e2e", SESSION)
     assert flow is not None and flow["status"] == TaskFlowStatus.FAILED.value

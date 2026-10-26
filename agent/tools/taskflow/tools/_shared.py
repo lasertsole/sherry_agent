@@ -68,8 +68,8 @@ async def bind_flow_todo(
 async def compensate_flow_without_todo(flow: dict, reason: str = "todo_bind_failed") -> None:
     """Best-effort failure for a flow whose GC root could not be created.
 
-    Fail-open: if the compensating write also fails, the tri-color sweep sees a
-    flow with no active reference and collects it after the grace window.
+    Fail-open: if the compensating write also fails, the unreferenced-flow sweep
+    sees a flow with no active reference and collects it after the grace window.
     """
     try:
         await store_sqlite.fail_flow_for_gc(flow, reason=reason)
