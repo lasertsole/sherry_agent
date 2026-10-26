@@ -83,6 +83,10 @@ from .crash_loop import (
     CrashLoopConfig as CrashLoopConfig,
     CRASH_LOOP as CRASH_LOOP,
 )
+from .logs import (
+    LogsConfig as LogsConfig,
+    LOGS as LOGS,
+)
 from .skills_tooling import (
     SkillsToolingConfig as SkillsToolingConfig,
     SKILLS_TOOLING as SKILLS_TOOLING,
