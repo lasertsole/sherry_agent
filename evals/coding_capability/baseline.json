@@ -7,7 +7,6 @@
     "base_url": "https://api.deepseek.com/v1",
     "max_token": "131072",
     "auxiliary_model": "glm-5.3-flash",
-    "reasoner_model": "",
     "thinking_enabled": false
   },
   "aggregate": {

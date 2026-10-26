@@ -172,6 +172,11 @@ def _run(
     run_id = time.strftime("%Y%m%d_%H%M%S")
     results_dir = REPO_ROOT / "evals" / "results" / "swebench" / run_id
     results_dir.mkdir(parents=True)
+    print(
+        f"[evals] swebench run {run_id} | slice={'hard' if hard else 'spike'} | "
+        f"instances={','.join(instance_ids)}",
+        flush=True,
+    )
     eval_workspace = results_dir / "sandbox" / "workspace"
     live_workspace = REPO_ROOT / "workspace"
     live_sessions = harness._session_names(live_workspace)
@@ -250,6 +255,8 @@ def _run(
         # artifacts — re-materialised in minutes when a run needs them.
         shutil.rmtree(results_dir / "instances", ignore_errors=True)
 
+    token_input = sum(int(r.get("tokens", {}).get("input", 0)) for r in results)
+    token_output = sum(int(r.get("tokens", {}).get("output", 0)) for r in results)
     report = {
         "run_id": run_id,
         "suite": "swebench",
@@ -283,6 +290,7 @@ def _run(
                 4,
             ),
             "resolve_rate_basis": "valid runs only (provider failures excluded)",
+            "tokens": {"input": token_input, "output": token_output},
             "duration_s": round(time.monotonic() - started, 1),
         },
         "instances": results,
@@ -307,7 +315,12 @@ def _prepare_all(selected: list[Instance], results_dir: Path) -> list[Instance]:
             f"({instance.repo}@{instance.base_commit[:10]})…",
             flush=True,
         )
+        started = time.monotonic()
         prepared.append(instances.materialize(instance, work_dir))
+        print(
+            f"[evals] materialised {instance.instance_id} in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
     return prepared
 
 
@@ -317,6 +330,7 @@ def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
     checks: dict[str, tuple[bool, str]] = {}
     for instance in prepared:
         fail_to_pass, pass_to_pass = instance.node_ids()
+        started = time.monotonic()
         try:
             if not instances.apply_patch(instance, instance.gold_patch):
                 checks[instance.instance_id] = (False, "the gold patch does not apply")
@@ -332,6 +346,12 @@ def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
             )
         finally:
             instances.revert(instance)
+            ok = checks.get(instance.instance_id, (False, ""))[0]
+            print(
+                f"[evals] gold check {instance.instance_id}: "
+                f"{'PASS' if ok else 'FAIL'} ({time.monotonic() - started:.1f}s)",
+                flush=True,
+            )
     return checks
 
 
@@ -340,6 +360,11 @@ async def _run_instances(
 ) -> list[dict[str, Any]]:
     results = []
     for instance in prepared:
+        timeout_s = _TURN_TIMEOUT_HARD_S if hard else _TURN_TIMEOUT_S
+        print(
+            f"[evals] starting {instance.instance_id} (turn_timeout={timeout_s:.0f}s)…",
+            flush=True,
+        )
         result = await _run_instance(instance, results_dir, hard=hard)
         results.append(result)
         print(
@@ -454,6 +479,15 @@ def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool
             threshold = float(baseline.get("threshold_resolve_rate") or 0.0)
             print(f"[evals] baseline: {harness._delta(baseline, aggregate)}", flush=True)
     print(f"\n[evals] swebench aggregate: {aggregate}", flush=True)
+    token_totals = aggregate.get("tokens", {})
+    print(
+        "[evals] tokens: input={} output={} total={}".format(
+            token_totals.get("input", 0),
+            token_totals.get("output", 0),
+            token_totals.get("input", 0) + token_totals.get("output", 0),
+        ),
+        flush=True,
+    )
     print(
         f"[evals] persona check: {report['persona']['forbidden_markers_found'] or 'clean'}",
         flush=True,

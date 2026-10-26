@@ -96,15 +96,6 @@ MODEL_SETTING_DEFAULTS: dict[str, Any] = {
     "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
     "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
     "COMPRESSION_LLM_PRESENCE_PENALTY": "",
-    # Reasoner model
-    "REASONER_LLM_PROVIDER": "",
-    "REASONER_LLM_NAME": "",
-    "REASONER_LLM_API_BASE": "",
-    "REASONER_LLM_API_KEY": "",
-    "REASONER_LLM_MAX_TOKEN": "",
-    "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
-    "REASONER_LLM_FREQUENCY_PENALTY": "",
-    "REASONER_LLM_PRESENCE_PENALTY": "",
     # Image-to-Text model
     "ITTT_MODEL_LOCAL": False,
     "ITTT_MODEL_PROVIDER": "",
@@ -169,7 +160,6 @@ _PENALTY_PREFIXES: tuple[str, ...] = (
     "AUXILIARY_LLM",
     "TASKFLOW_LLM",
     "COMPRESSION_LLM",
-    "REASONER_LLM",
 )
 _PENALTY_KEYS = frozenset(
     f"{prefix}_{kind}"
@@ -202,7 +192,6 @@ _MAX_OUTPUT_KEYS = frozenset(
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
         "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
         "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
-        "REASONER_LLM_MAX_OUTPUT_TOKEN",
     }
 )
 _BOOL_KEYS = frozenset(
@@ -510,10 +499,10 @@ def _ensure_optional_family_keys() -> None:
 def _ensure_output_cap_keys() -> None:
     """Add a missing per-family ``*_MAX_OUTPUT_TOKEN`` to an existing file.
 
-    The five chat families all gain the output-cap field (the reasoner shipped
-    without one). An older file may contain the family's other keys but not this
-    one, so the key is inserted after ``*_MAX_TOKEN``; a family with no keys at
-    all is left alone. Idempotent; an unparseable file is never rewritten.
+    The four chat families all gain the output-cap field. An older file may
+    contain the family's other keys but not this one, so the key is inserted
+    after ``*_MAX_TOKEN``; a family with no keys at all is left alone.
+    Idempotent; an unparseable file is never rewritten.
     """
     try:
         text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
@@ -564,11 +553,10 @@ def _ensure_penalty_keys() -> None:
     """Add the per-family penalty keys to an existing ``.models`` when absent.
 
     The keys ship beside each family's output-token cap; an older file gets
-    them inserted after that anchor (or after ``*_MAX_TOKEN`` for the reasoner,
-    which has no output cap), falling back to the family's last existing key
-    when neither anchor is present. A family with NO keys at all is left alone
-    (the panel does not render it either). Idempotent; an unparseable file is
-    never touched.
+    them inserted after that anchor, falling back to the family's last existing
+    key when it is absent. A family with NO keys at all is left alone (the
+    panel does not render it either). Idempotent; an unparseable file is never
+    touched.
     """
     try:
         text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")

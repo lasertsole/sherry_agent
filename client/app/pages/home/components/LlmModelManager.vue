@@ -123,6 +123,11 @@
             class="m-0 text-xs text-gray-400 dark:text-gray-500">
             {{ t('config.llm.penaltyHint', { min: PENALTY_MIN, max: PENALTY_MAX }) }}
           </p>
+          <p
+            v-if="isOutputCapKey(key) && !isLocalEntrySelected"
+            class="m-0 text-xs text-gray-400 dark:text-gray-500">
+            {{ t('config.llm.maxOutputHint', { min: MIN_OUTPUT_TOKENS }) }}
+          </p>
           <!-- Penalty keys use a native number input: type/min/max constrain the
                spinner, and save/apply/test refuse a typed out-of-range value. -->
           <input
@@ -145,6 +150,26 @@
             @keydown="onPenaltyKeydown"
             @input="onPenaltyInput(key, $event)"
             @change="clampPenalty(key)" />
+          <!-- Output caps get the same bounded number input: the browser min is
+               advisory, so save/apply/test also reject < 8192. Empty stays valid
+               and keeps the provider default. -->
+          <input
+            v-else-if="isOutputCapKey(key)"
+            type="number"
+            :min="MIN_OUTPUT_TOKENS"
+            step="1024"
+            :value="draft[key] ?? ''"
+            :disabled="isLocalEntrySelected"
+            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
+            :aria-label="paramLabel(key)"
+            :class="[
+              'w-full rounded-md border border-solid bg-white px-2 py-1.5 font-mono text-xs text-gray-900 focus:border-theme-main focus:outline-none disabled:opacity-60 dark:bg-gray-900 dark:text-gray-100',
+              isInvalidOutputCap(key) ? 'border-red-400' : 'border-gray-200 dark:border-gray-700'
+            ]"
+            data-test="model-output-cap-input"
+            :data-key="key"
+            inputmode="numeric"
+            @input="onOutputCapInput(key, $event)" />
           <InputText
             v-else
             v-model="draft[key]"
@@ -343,7 +368,6 @@ const GROUP_HELP_KEYS: Record<string, string> = {
   AUXILIARY_LLM: 'config.llm.modelHelp.auxiliary',
   TASKFLOW_LLM: 'config.llm.modelHelp.taskflow',
   COMPRESSION_LLM: 'config.llm.modelHelp.compression',
-  REASONER_LLM: 'config.llm.modelHelp.reasoner',
   ITTT: 'config.llm.modelHelp.ittt',
   VTTT: 'config.llm.modelHelp.vttt',
   TTI: 'config.llm.modelHelp.tti',
@@ -450,6 +474,58 @@ const isInvalidPenalty = (key: string): boolean => {
 
 /** Penalty fields currently blocking save/apply/test. */
 const invalidPenaltyKeys = computed(() => props.keys.filter(key => isPenaltyKey(key) && isInvalidPenalty(key)));
+
+/** The 8K business floor shared by every ``*_MAX_OUTPUT_TOKEN`` field. */
+const MIN_OUTPUT_TOKENS = 8192;
+
+/**
+ * Whether a parameter is a per-family output cap.
+ * @param key
+ */
+const isOutputCapKey = (key: string): boolean => key.endsWith('_MAX_OUTPUT_TOKEN');
+
+/**
+ * The draft's corresponding context window (`*_MAX_OUTPUT_TOKEN` →
+ * `*_MAX_TOKEN`), or null when the family leaves it empty.
+ * @param key Output-cap key.
+ */
+const outputCapWindow = (key: string): number | null => {
+  const windowKey = key.replace('_MAX_OUTPUT_TOKEN', '_MAX_TOKEN');
+  const raw = String(draft.value[windowKey] ?? '').trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+/**
+ * Whether the draft's output cap is non-empty, below the 8K floor, or not
+ * smaller than its model's context window. Empty is valid (provider default).
+ * @param key
+ */
+const isInvalidOutputCap = (key: string): boolean => {
+  const raw = String(draft.value[key] ?? '').trim();
+  if (!raw) return false;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < MIN_OUTPUT_TOKENS) return true;
+  const window = outputCapWindow(key);
+  return window !== null && value >= window;
+};
+
+/**
+ * Keep the output-cap draft as a STRING: `v-model` on type=number casts the
+ * value to a number, which would leak into the string-typed apply payload.
+ * @param key
+ * @param event Input event.
+ */
+const onOutputCapInput = (key: string, event: Event): void => {
+  draft.value = {
+    ...draft.value,
+    [key]: (event.target as HTMLInputElement).value
+  };
+};
+
+/** Output-cap fields currently blocking save/apply/test. */
+const invalidOutputCapKeys = computed(() => props.keys.filter(key => isOutputCapKey(key) && isInvalidOutputCap(key)));
 
 /**
  * Reject a non-numeric keystroke BEFORE it reaches the input. `type=number`
@@ -735,12 +811,11 @@ const TESTABLE_GROUPS = [
   'AUXILIARY_LLM',
   'TASKFLOW_LLM',
   'COMPRESSION_LLM',
-  'REASONER_LLM',
   'EMBEDDING',
   'RERANKER'
 ] as const;
 
-/** Whether the 测试 button can run for the current group / selection. */
+/** Whether the Test button can run for the current group / selection. */
 const canTest = computed(
   () => !isLocalEntrySelected.value && (TESTABLE_GROUPS as readonly string[]).includes(props.group)
 );
@@ -766,6 +841,10 @@ const runTest = async () => {
   }
   if (invalidPenaltyKeys.value.length) {
     showFlash(t('config.llm.penaltyRange'), true);
+    return;
+  }
+  if (invalidOutputCapKeys.value.length) {
+    showFlash(t('config.llm.outputCapRange', { min: MIN_OUTPUT_TOKENS }), true);
     return;
   }
   testing.value = true;
@@ -817,6 +896,10 @@ const saveProfile = () => {
   }
   if (invalidPenaltyKeys.value.length) {
     showFlash(t('config.llm.penaltyRange'), true);
+    return;
+  }
+  if (invalidOutputCapKeys.value.length) {
+    showFlash(t('config.llm.outputCapRange', { min: MIN_OUTPUT_TOKENS }), true);
     return;
   }
   const params: Record<string, string> = { ...draft.value };
@@ -893,6 +976,10 @@ const applyProfile = () => {
   }
   if (invalidPenaltyKeys.value.length) {
     showFlash(t('config.llm.penaltyRange'), true);
+    return;
+  }
+  if (invalidOutputCapKeys.value.length) {
+    showFlash(t('config.llm.outputCapRange', { min: MIN_OUTPUT_TOKENS }), true);
     return;
   }
   const flagKey = localFlagKey.value;

@@ -232,7 +232,7 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     await wrapper.get('[data-test="model-test"]').trigger('click');
     await flushPromises();
 
-    // The DRAFT goes out (what 应用 would write) — and nothing is written.
+    // The DRAFT goes out (what Apply would write) — and nothing is written.
     expect(envApi.testModelProfile).toHaveBeenCalledWith('MAIN_LLM', ENV_VALUES);
     const result = wrapper.get('[data-test="model-test-result"]');
     expect(result.text()).toContain('连通正常（812 ms）');
@@ -554,22 +554,22 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
   });
 
   it('warns about the 200K floor on MAIN_LLM_MAX_TOKEN, and only there', async () => {
-    const KEYS = ['MAIN_LLM_PROVIDER', 'MAIN_LLM_MAX_TOKEN', 'REASONER_LLM_MAX_TOKEN'];
+    const KEYS = ['MAIN_LLM_PROVIDER', 'MAIN_LLM_MAX_TOKEN', 'TTI_MAX_TOKEN'];
     const VALUES: Record<string, string> = {
       MAIN_LLM_PROVIDER: 'deepseek',
       MAIN_LLM_MAX_TOKEN: '200000',
-      REASONER_LLM_MAX_TOKEN: '100000'
+      TTI_MAX_TOKEN: '100000'
     };
     makeStore([{ id: 'p1', label: 'm', params: { ...VALUES } }], 'p1');
     const wrapper = mountPanel('MAIN_LLM', KEYS, VALUES);
     await expand(wrapper);
 
     // One guarded key in this panel → exactly one hint, and the free
-    // REASONER_LLM_MAX_TOKEN (deliberately below 200K) must not carry it.
+    // TTI_MAX_TOKEN (deliberately below 200K) must not carry it.
     expect(countHints(wrapper)).toBe(1);
     const tokenSpan = wrapper.get('span[title="MAIN_LLM_MAX_TOKEN"]');
     expect(tokenSpan.element.parentElement?.textContent ?? '').toContain('必须 >= 200000 (200K)');
-    const freeSpan = wrapper.get('span[title="REASONER_LLM_MAX_TOKEN"]');
+    const freeSpan = wrapper.get('span[title="TTI_MAX_TOKEN"]');
     expect(freeSpan.element.parentElement?.textContent ?? '').not.toContain('200000 (200K)');
   });
 
@@ -850,6 +850,35 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(wrapper.find('[data-test="model-group-help-text"]').exists()).toBe(false);
     await help.trigger('click');
     expect(wrapper.get('[data-test="model-group-help-text"]').text()).toContain('主对话模型');
+    wrapper.unmount();
+  });
+
+  it('bounds the output cap at 8192 and below the model context window', async () => {
+    const keys = [...KEYS, 'MAIN_LLM_MAX_OUTPUT_TOKEN'];
+    const values = { ...ENV_VALUES, MAIN_LLM_MAX_OUTPUT_TOKEN: '' };
+    makeStore([{ id: 'p1', label: 'glm-5.3-flash', params: { ...values } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', keys, values);
+    await expand(wrapper);
+
+    const input = wrapper.get('[data-test="model-output-cap-input"][data-key="MAIN_LLM_MAX_OUTPUT_TOKEN"]');
+    expect(input.attributes('type')).toBe('number');
+    expect(input.attributes('min')).toBe('8192');
+
+    await input.setValue('4096');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    expect(wrapper.emitted('apply')).toBeUndefined();
+    expect(wrapper.text()).toContain('最大输出窗口需 ≥ 8192 且小于模型上下文窗口');
+
+    // At the context window (200000) the cap leaves no input budget.
+    await input.setValue('200000');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    expect(wrapper.emitted('apply')).toBeUndefined();
+    expect(wrapper.text()).toContain('最大输出窗口需 ≥ 8192 且小于模型上下文窗口');
+
+    await input.setValue('8192');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect(payload.params.MAIN_LLM_MAX_OUTPUT_TOKEN).toBe('8192');
     wrapper.unmount();
   });
 });

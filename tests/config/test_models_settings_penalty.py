@@ -1,7 +1,7 @@
 """Per-family repetition-penalty keys in ``.models``: registry, bounds, write.
 
 The panel shows one frequency/presence pair per chat family (main / auxiliary /
-TaskFlow / compression / reasoner). Empty is the shipped value and means "use
+TaskFlow / compression). Empty is the shipped value and means "use
 the global REPETITION_PENALTY default"; a set value must be a finite number in
 [-2, 2] or the write is refused before the file is touched.
 """
@@ -16,7 +16,7 @@ from server.service import models_config as service
 
 pytestmark = [pytest.mark.unit]
 
-_PREFIXES = ("MAIN_LLM", "AUXILIARY_LLM", "TASKFLOW_LLM", "COMPRESSION_LLM", "REASONER_LLM")
+_PREFIXES = ("MAIN_LLM", "AUXILIARY_LLM", "TASKFLOW_LLM", "COMPRESSION_LLM")
 _PENALTY_KEYS = tuple(
     f"{prefix}_{kind}" for prefix in _PREFIXES for kind in ("FREQUENCY_PENALTY", "PRESENCE_PENALTY")
 )
@@ -100,8 +100,7 @@ def test_an_older_file_gains_the_keys_after_the_output_cap(tmp_path, monkeypatch
     path.write_text(
         '{\n  "MAIN_LLM_PROVIDER": "openai",\n'
         '  "MAIN_LLM_MAX_OUTPUT_TOKEN": "",\n'
-        '  "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",\n'
-        '  "REASONER_LLM_MAX_TOKEN": ""\n}\n',
+        '  "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": ""\n}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(ms, "MODELS_CONFIG_PATH", path)
@@ -118,7 +117,6 @@ def test_an_older_file_gains_the_keys_after_the_output_cap(tmp_path, monkeypatch
         < text.index('"MAIN_LLM_FREQUENCY_PENALTY"')
         < text.index('"MAIN_LLM_PRESENCE_PENALTY"')
     )
-    assert text.index('"REASONER_LLM_MAX_TOKEN"') < text.index('"REASONER_LLM_FREQUENCY_PENALTY"')
 
 
 def test_the_penalty_append_is_idempotent(tmp_path, monkeypatch):
@@ -139,7 +137,8 @@ def test_an_older_file_gains_every_chat_family_output_cap(tmp_path, monkeypatch)
     path.write_text(
         '{\n  "MAIN_LLM_MAX_TOKEN": 200000,\n'
         '  "AUXILIARY_LLM_MAX_TOKEN": 200000,\n'
-        '  "REASONER_LLM_MAX_TOKEN": ""\n}\n',
+        '  "TASKFLOW_LLM_MAX_TOKEN": 200000,\n'
+        '  "COMPRESSION_LLM_MAX_TOKEN": 200000\n}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(ms, "MODELS_CONFIG_PATH", path)
@@ -147,9 +146,10 @@ def test_an_older_file_gains_every_chat_family_output_cap(tmp_path, monkeypatch)
     ms.ensure_models_config_file()
 
     data = json5.loads(path.read_text(encoding="utf-8"))
-    assert data["MAIN_LLM_MAX_OUTPUT_TOKEN"] == ""
-    assert data["AUXILIARY_LLM_MAX_OUTPUT_TOKEN"] == ""
-    assert data["REASONER_LLM_MAX_OUTPUT_TOKEN"] == ""
-    # The new key sits before the reasoner's penalty pair (anchor is MAX_TOKEN).
-    text = path.read_text(encoding="utf-8")
-    assert text.index('"REASONER_LLM_MAX_TOKEN"') < text.index('"REASONER_LLM_MAX_OUTPUT_TOKEN"')
+    for key in (
+        "MAIN_LLM_MAX_OUTPUT_TOKEN",
+        "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+        "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+        "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+    ):
+        assert data[key] == ""

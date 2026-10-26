@@ -5,7 +5,6 @@ _MODULE_MAP = {
     "ReasoningChatOpenAI": ".reasoning_openai",
     "build_main_llm": ".main_llm",
     "build_main_llm_for_profile": ".main_llm",
-    "build_reasoner_model": ".reasoner_llm",
     "build_auxiliary_llm": ".auxiliary_llm",
     "build_taskflow_llm": ".taskflow_llm",
     "build_compression_llm": ".compression_llm",

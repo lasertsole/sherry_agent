@@ -566,7 +566,6 @@ def _model_info() -> dict[str, str]:
         "base_url": os.getenv("MAIN_LLM_API_BASE", ""),
         "max_token": os.getenv("MAIN_LLM_MAX_TOKEN", ""),
         "auxiliary_model": os.getenv("AUXILIARY_LLM_API_NAME", ""),
-        "reasoner_model": os.getenv("REASONER_LLM_API_NAME", ""),
     }
 
 

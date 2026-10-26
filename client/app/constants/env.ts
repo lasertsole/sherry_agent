@@ -18,8 +18,8 @@
  * Keys whose context window must stay at or above {@link MIN_REQUIRED_MAX_TOKEN}.
  *
  * The two REQUIRED families plus the two optional internal families
- * (TaskFlow decisions / compression) are guarded; `REASONER_LLM_MAX_TOKEN`
- * and the other media-model budgets are intentionally left free.
+ * (TaskFlow decisions / compression) are guarded; the other media-model
+ * budgets are intentionally left free.
  */
 export const MAX_TOKEN_GUARD_KEYS = [
   'MAIN_LLM_MAX_TOKEN',

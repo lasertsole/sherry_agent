@@ -101,6 +101,29 @@ def test_the_library_version_is_carried_for_shallow_clones():
     assert instance.version == "8.0"
 
 
+def test_revert_drops_the_shadow_snapshot_and_excludes_it_from_git_clean(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    snapshot = repo / ".sherry" / "shadow-git" / "objects"
+    snapshot.mkdir(parents=True)
+    (snapshot / "object").write_text("x", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, *, cwd, **kwargs):
+        calls.append(argv)
+        return ""
+
+    monkeypatch.setattr(instances, "_run", _fake_run)
+    instance = instances.to_instance(_ROW, repo_dir=repo)
+
+    instances.revert(instance)
+
+    assert not (repo / ".sherry").exists()
+    assert ["git", "checkout", "--", "."] in calls
+    clean = next(call for call in calls if call[:2] == ["git", "clean"])
+    assert "-e" in clean and ".sherry" in clean
+
+
 def test_the_spike_slice_is_sympy_only_and_non_empty():
     assert instances.SPIKE_INSTANCES, "the spike must select instances"
     assert all(i.startswith("sympy__") for i in instances.SPIKE_INSTANCES), (

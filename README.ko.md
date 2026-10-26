@@ -205,7 +205,7 @@ sherry_agent/
 │   └── output/             # 로그 출력 디렉터리
 │
 ├── models/                 # 모델 래퍼 및 가중치
-│   ├── LLMs/               # LLM 설정(main_llm.py, reasoner_llm.py, auxiliary_llm/, reasoning_* 프로바이더)
+│   ├── LLMs/               # LLM 설정(main_llm.py, auxiliary_llm/, reasoning_* 프로바이더)
 │   ├── ITTT_model/         # Image-to-Text 모델(클라우드 API 또는 로컬 GGUF)
 │   ├── VTTT_model/         # Video-Text-to-Text 모델(클라우드 API 또는 로컬 GGUF)
 │   ├── STT_model/          # Speech-to-Text 모델(FunASR)
@@ -374,7 +374,6 @@ uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 �
 | `AUXILIARY_LLM_*` | — | 요약/단순 작업용 경량 모델(기본값은 클라우드 API. `AUXILIARY_LLM_MODEL_LOCAL=true`로 로컬 GGUF 모델 사용); `AUXILIARY_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
 | `TASKFLOW_LLM_*` | — | TaskFlow 결정 모델(plan / replan / 단계 판정 / 목표 달성 판정). Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따르고, 로컬 모드는 보조 모델의 GGUF를 재사용합니다. `TASKFLOW_LLM_MAX_TOKEN`은 200000 (200K) 이상이어야 합니다 |
 | `COMPRESSION_LLM_*` | — | 압축 모델(LLM 요약). 메모리 리뷰는 `MAIN_LLM`, 계획 추출은 `AUXILIARY_LLM_*`을 사용. Provider와 API Base가 비어 있으면 `AUXILIARY_LLM_*`을 따릅니다 |
-| `REASONER_LLM_*` | — | 사고 연쇄(Chain-of-thought) 추론 모델 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
 | `MODEL_PRICING_TABLE` | — | 세션 예산 비용 추정용 USD/1M token 가격표(사용자 편집 가능한 JSON 객체를 JSON 문자열로 저장; provider 직접 반환 cost와 로컬 litellm 캐시가 폴백) |

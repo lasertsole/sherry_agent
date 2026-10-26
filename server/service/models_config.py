@@ -15,7 +15,7 @@ renders the model families with the same cards and the model-profile manager.
 import json
 import re
 
-from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
+from config.features import LLM_CLIENT_DEFAULTS, MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
 from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 from config.models_settings import (
     MODELS_CONFIG_PATH,
@@ -47,9 +47,54 @@ MAX_OUTPUT_KEYS = frozenset(
         "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
         "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
         "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
-        "REASONER_LLM_MAX_OUTPUT_TOKEN",
     }
 )
+
+# Every output cap must stay strictly below its model's effective context
+# window: input + output share that window, and output == window leaves no
+# room for the prompt.
+_OUTPUT_WINDOW_KEYS: dict[str, str] = {
+    "MAIN_LLM_MAX_OUTPUT_TOKEN": "MAIN_LLM_MAX_TOKEN",
+    "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "AUXILIARY_LLM_MAX_TOKEN",
+    "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "TASKFLOW_LLM_MAX_TOKEN",
+    "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "COMPRESSION_LLM_MAX_TOKEN",
+}
+
+# Optional families follow the auxiliary model when they are unconfigured (or
+# local); a configured remote family with its own empty window uses the same
+# default the builder uses.
+_AUX_FOLLOWING_OUTPUT_KEYS = frozenset(
+    {"TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"}
+)
+
+
+def _effective_output_window(output_key: str, values: dict[str, str]) -> int | None:
+    """The window the family's builder actually uses, or None when unknowable."""
+    window_key = _OUTPUT_WINDOW_KEYS[output_key]
+    if output_key in _AUX_FOLLOWING_OUTPUT_KEYS:
+        prefix = output_key.removesuffix("_MAX_OUTPUT_TOKEN")
+        provider = str(values.get(f"{prefix}_PROVIDER", "")).strip()
+        api_base = str(values.get(f"{prefix}_API_BASE", "")).strip()
+        local = str(values.get(f"{prefix}_MODEL_LOCAL", "")).strip().lower() == "true"
+        if local or not (provider or api_base):
+            # build_family_llm() delegates to the auxiliary model here.
+            raw_window = str(values.get("AUXILIARY_LLM_MAX_TOKEN", "")).strip()
+            if not raw_window:
+                return None
+        else:
+            raw_window = str(values.get(window_key, "")).strip()
+            if not raw_window:
+                return int(LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"])
+    else:
+        raw_window = str(values.get(window_key, "")).strip()
+        if not raw_window:
+            return None
+    try:
+        window = int(raw_window)
+    except (TypeError, ValueError):
+        return None
+    return window if window > 0 else None
+
 
 # ``"KEY": value,`` — the line shape of the template and of every write.
 _ASSIGN_RE = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*(.+?)\s*,?\s*$')
@@ -186,22 +231,21 @@ def write_models_config(changes: dict[str, str]) -> None:
                 file_values[match.group(1)] = _display_value(match.group(2))
     except OSError:
         file_values = {}
-    effective_max_token = str(
-        changes.get("MAIN_LLM_MAX_TOKEN", file_values.get("MAIN_LLM_MAX_TOKEN", ""))
-    ).strip()
-    effective_max_output = str(
-        changes.get("MAIN_LLM_MAX_OUTPUT_TOKEN", file_values.get("MAIN_LLM_MAX_OUTPUT_TOKEN", ""))
-    ).strip()
-    if effective_max_token and effective_max_output:
+    merged_values = {**file_values, **{key: str(value) for key, value in changes.items()}}
+    for output_key in sorted(MAX_OUTPUT_KEYS):
+        raw_output = str(merged_values.get(output_key, "")).strip()
+        if not raw_output:
+            continue
         try:
-            token_num = int(effective_max_token)
-            output_num = int(effective_max_output)
+            output_num = int(raw_output)
         except (TypeError, ValueError):
-            token_num = output_num = 0
-        if token_num > 0 and output_num >= token_num:
+            continue
+        window = _effective_output_window(output_key, merged_values)
+        if window is not None and output_num >= window:
             raise ValueError(
-                "MAIN_LLM_MAX_OUTPUT_TOKEN must be smaller than MAIN_LLM_MAX_TOKEN; "
-                f"got output={output_num} >= window={token_num}. Refusing to save."
+                f"{output_key} must be smaller than the model context window "
+                f"({_OUTPUT_WINDOW_KEYS[output_key]}, effective={window}); "
+                f"got output={output_num}. Refusing to save."
             )
 
     # Coerce BEFORE touching the file so a bad value aborts without a backup churn.

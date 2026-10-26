@@ -205,7 +205,7 @@ sherry_agent/
 │   └── output/             # ログ出力ディレクトリ
 │
 ├── models/                 # モデルラッパーと重み
-│   ├── LLMs/               # LLM 設定（main_llm.py、reasoner_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
+│   ├── LLMs/               # LLM 設定（main_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
 │   ├── ITTT_model/         # Image-to-Text モデル（クラウド API またはローカル GGUF）
 │   ├── VTTT_model/         # Video-Text-to-Text モデル（クラウド API またはローカル GGUF）
 │   ├── STT_model/          # Speech-to-Text モデル（FunASR）
@@ -374,7 +374,6 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 | `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
-| `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
 | `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |

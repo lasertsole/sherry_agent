@@ -4,8 +4,9 @@ import type { SessionModelProfile } from '~/composables/bridge/session';
 /**
  * Per-group model profiles for the environment-config panel.
  *
- * Every model family in `.env` (MAIN_LLM / REASONER_LLM / AUXILIARY_LLM /
- * ITTT / VTTT / TTI / RERANKER / EMBEDDING / STT) holds ONE active key set, so
+ * Every model family in `.env` (MAIN_LLM / AUXILIARY_LLM / TASKFLOW_LLM /
+ * COMPRESSION_LLM / ITTT / VTTT / TTI / RERANKER / EMBEDDING / STT) holds ONE
+ * active key set, so
  * multiple models per family are a client-side concept: each profile stores a
  * named parameter set for its group, "save" persists the edited parameters,
  * and "apply" writes the profile into `.env` (through the dialog's existing

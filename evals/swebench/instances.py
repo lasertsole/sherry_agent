@@ -36,6 +36,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -255,16 +256,28 @@ def materialize(instance: Instance, work_dir: Path) -> Instance:
     repo_dir.mkdir(parents=True)
     _run(["git", "init", "-q", "-b", "main"], cwd=repo_dir)
     _run(["git", "remote", "add", "origin", instance.repo_url], cwd=repo_dir)
+    print(
+        f"[evals]   {instance.instance_id}: fetching {instance.base_commit[:10]} from "
+        f"{instance.repo_url}…",
+        flush=True,
+    )
     _run(["git", "fetch", "-q", "--depth", "1", "origin", instance.base_commit], cwd=repo_dir)
     _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=repo_dir)
     _run(["git", "config", "user.email", "evals@sherry.local"], cwd=repo_dir)
     _run(["git", "config", "user.name", "sherry-evals"], cwd=repo_dir)
+    print(f"[evals]   {instance.instance_id}: checkout ready", flush=True)
 
     if venv_dir.exists():
         shutil.rmtree(venv_dir)
+    print(
+        f"[evals]   {instance.instance_id}: creating Python {INSTANCE_PYTHON} venv…",
+        flush=True,
+    )
     _run(["uv", "venv", "--python", INSTANCE_PYTHON, str(venv_dir)], cwd=work_dir)
     python_exe = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    print(f"[evals]   {instance.instance_id}: installing the checkout + test extras…", flush=True)
     _install(repo_dir, python_exe, work_dir, scm_version=instance.version)
+    print(f"[evals]   {instance.instance_id}: install done", flush=True)
     instance.repo_dir = repo_dir
     instance.python_exe = python_exe
     return instance
@@ -362,8 +375,19 @@ def apply_patch(instance: Instance, patch: str) -> bool:
 
 def revert(instance: Instance) -> None:
     """Drop every working-tree change, back to the pinned base."""
+    # The agent's shadow-git snapshot lives under the project's .sherry/. Its
+    # GC can still be finishing when the turn returns, and `git clean` then
+    # fails on an object it cannot lstat (EPERM). Drop the snapshot first (a
+    # few retries cover the writer race) and exclude any survivor from clean.
+    sherry_dir = instance.repo_dir / ".sherry"
+    for _attempt in range(3):
+        if not sherry_dir.exists():
+            break
+        shutil.rmtree(sherry_dir, ignore_errors=True)
+        time.sleep(0.2)
     _run(["git", "checkout", "--", "."], cwd=instance.repo_dir)
-    _run(["git", "clean", "-qfd"], cwd=instance.repo_dir)
+    _run(["git", "clean", "-qfd", "-e", ".sherry"], cwd=instance.repo_dir)
+    shutil.rmtree(sherry_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

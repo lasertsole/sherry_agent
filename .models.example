@@ -83,17 +83,8 @@
   "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
   "COMPRESSION_LLM_PRESENCE_PENALTY": "",
 
-  // ── 推理模型 Reasoner model ──────────────────────────────────────────────
-  "REASONER_LLM_PROVIDER": "",
-  "REASONER_LLM_NAME": "",
-  "REASONER_LLM_API_BASE": "",
-  "REASONER_LLM_API_KEY": "",
-  "REASONER_LLM_MAX_TOKEN": "",
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
-  "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
-  "REASONER_LLM_FREQUENCY_PENALTY": "",
-  "REASONER_LLM_PRESENCE_PENALTY": "",
 
   // ── 图生文 Image-to-Text model ───────────────────────────────────────────
   "ITTT_MODEL_LOCAL": false,

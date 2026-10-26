@@ -16,7 +16,7 @@
 | :-------- | :-------- | :--- | :--- |
 | **정확한 이름으로 보존** | 대소문자 무시 정확 일치 | 보존, 모든 거부 규칙보다 우선 | `PATH`, `HOME`, `USER`, `USERNAME`, `LANG`, `TERM`, `TMPDIR`, `TMP`, `TEMP`, `SHELL`, `LOGNAME`, `PYTHONPATH`, `PYTHONUTF8`, `VIRTUAL_ENV`, `COMPUTERNAME`, `SYSTEMROOT`, `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `PATHEXT`, `OS`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH` |
 | **접두사로 보존** | 이름이 `LC_`, `XDG_`, `CONDA`로 시작 | 보존, 모든 거부 규칙보다 우선 | `LC_ALL`, `XDG_CONFIG_HOME`, `CONDA_TOKEN` |
-| **강제 거부(프로젝트 시크릿)** | 대소문자 무시 정확 일치 | 항상 제거 | `MAIN_LLM_API_KEY`, `REASONER_LLM_API_KEY`, `AUXILIARY_LLM_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`, `ITTT_API_KEY`, `VTTT_API_KEY`, `TTI_API_KEY`, `RERANKER_API_KEY`, `EMBEDDING_API_KEY`, `STT_API_KEY` |
+| **강제 거부(프로젝트 시크릿)** | 대소문자 무시 정확 일치 | 항상 제거 | `MAIN_LLM_API_KEY`, `AUXILIARY_LLM_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`, `ITTT_API_KEY`, `VTTT_API_KEY`, `TTI_API_KEY`, `RERANKER_API_KEY`, `EMBEDDING_API_KEY`, `STT_API_KEY` |
 | **부분 문자열 차단** | 이름이 `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `PASSWD`, `AUTH`, `DSN`, `WEBHOOK`, `BEARER`, `APIKEY` 중 하나를 포함(대소문자 무시) | 제거 | `MY_CUSTOM_TOKEN`, `AWS_SECRET_ACCESS_KEY` |
 | **그대로 통과** | 어떤 규칙에도 해당 없음 | 변경 없이 보존 | `EDITOR`, `GIT_AUTHOR_NAME` |
 

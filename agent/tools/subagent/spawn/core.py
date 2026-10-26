@@ -734,6 +734,21 @@ async def spawn_subagent_direct(
         wake_on_descendant_settle=True,  # auto-resume parent when child tree settles
     )
 
+    caps = resolve_subagent_output_caps(run.max_output_tokens)
+    logger.info(
+        "Subagent run {}: functional_role={} max_output_tokens={} "
+        "result_caps(stored={}B delivery={}c summary={}c judge={}c transcript={}/{}t)",
+        run.run_id,
+        functional_role,
+        run.max_output_tokens,
+        caps.stored_bytes,
+        caps.delivery_chars,
+        caps.summary_chars,
+        caps.judge_chars,
+        caps.transcript_tokens,
+        caps.per_message_tokens,
+    )
+
     # Track the expected terminal generation so orphan detection can notice if the run stalls
     from ..registry.terminal_gen import get_terminal_gen_tracker
 
@@ -1363,6 +1378,11 @@ def _build_child_middlewares(
         ITERATION_BUDGET["executor_max_iterations"]
         if functional_role == FunctionalRole.EXECUTOR
         else ITERATION_BUDGET["worker_max_iterations"]
+    )
+    logger.info(
+        "Subagent middleware budget: functional_role={} max_iterations={}",
+        functional_role,
+        iteration_limit,
     )
 
     return [

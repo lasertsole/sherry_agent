@@ -205,7 +205,7 @@ sherry_agent/
 │   └── output/             # 日志输出目录
 │
 ├── models/                 # 模型封装与权重
-│   ├── LLMs/               # LLM 配置（main_llm.py、reasoner_llm.py、auxiliary_llm/、reasoning_* 各提供商适配）
+│   ├── LLMs/               # LLM 配置（main_llm.py、auxiliary_llm/、reasoning_* 各提供商适配）
 │   ├── ITTT_model/         # 图生文模型（云端 API 或本地 GGUF）
 │   ├── VTTT_model/         # 视频理解模型（云端 API 或本地 GGUF）
 │   ├── STT_model/          # 语音识别模型（FunASR）
@@ -374,7 +374,6 @@ uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 | `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 200000 (200K) |
 | `TASKFLOW_LLM_*` | — | TaskFlow 决策模型（plan / replan / 步骤判定 / 目标达成判定）。Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*`；本地模式复用辅助模型的 GGUF；`TASKFLOW_LLM_MAX_TOKEN` 必须 >= 200000 (200K) |
 | `COMPRESSION_LLM_*` | — | 压缩模型（LLM 摘要）。记忆回顾走 `MAIN_LLM`、计划提炼走 `AUXILIARY_LLM_*`；Provider 与 API Base 留空时跟随 `AUXILIARY_LLM_*` |
-| `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
 | `MODEL_PRICING_TABLE` | — | 会话预算估算用的 USD/1M token 价格表（用户可编辑的 JSON 对象，存储为 JSON 字符串；provider 直返 cost 与本地 litellm 缓存是回退） |

@@ -1,6 +1,5 @@
 from .LLMs import (
     build_main_llm as build_main_llm,
-    build_reasoner_model as build_reasoner_model,
     build_auxiliary_llm as build_auxiliary_llm,
     NormalizingChatModel as NormalizingChatModel,
     ReasoningChatOpenAI as ReasoningChatOpenAI,

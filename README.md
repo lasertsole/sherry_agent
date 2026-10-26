@@ -206,7 +206,7 @@ sherry_agent/
 │   └── output/             # Log output directory
 │
 ├── models/                 # Model wrappers & weights
-│   ├── LLMs/               # LLM configs (main_llm.py, reasoner_llm.py, auxiliary_llm/, reasoning_* providers)
+│   ├── LLMs/               # LLM configs (main_llm.py, auxiliary_llm/, reasoning_* providers)
 │   ├── ITTT_model/         # Image-to-Text model (cloud API or local GGUF)
 │   ├── VTTT_model/         # Video-Text-to-Text model (cloud API or local GGUF)
 │   ├── STT_model/          # Speech-to-Text model (FunASR)
@@ -375,7 +375,6 @@ Fill in at least the main chat model in `.models` and, for web search, a Tavily 
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 200000 (200K) |
 | `TASKFLOW_LLM_*` | — | TaskFlow decision model (plan / replan / step judge / goal gate). An empty provider + API base follows `AUXILIARY_LLM_*`; local mode reuses the auxiliary GGUF. `TASKFLOW_LLM_MAX_TOKEN` must be >= 200000 (200K) |
 | `COMPRESSION_LLM_*` | — | Compression model (LLM summary). Memory review uses `MAIN_LLM` and plan extraction uses `AUXILIARY_LLM_*`; an empty provider + API base follows `AUXILIARY_LLM_*` |
-| `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
 | `MODEL_PRICING_TABLE` | — | USD per 1M-token price table for session-budget cost estimates (a user-editable JSON object stored as a JSON string; provider-returned cost and the local litellm cache are fallbacks) |

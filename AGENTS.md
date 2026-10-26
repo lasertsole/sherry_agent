@@ -46,7 +46,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
-| `models/`                            | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `models/`                            | LLM/model wrappers (main, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
 | `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
 | `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
 | `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
@@ -734,8 +734,8 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
 - **`.models`** (gitignored; template `.models.example`) — the model families:
   provider / endpoint / key / local-model switch for main, auxiliary, TaskFlow
-  decisions, compression, reasoner, ITTT, VTTT, TTI, reranker, embedding and
-  STT, plus the scanner's LLM selection. Loaded by
+  decisions, compression, ITTT, VTTT, TTI, reranker, embedding and STT, plus
+  the scanner's LLM selection. Loaded by
   `config/models_settings.py`.
 - **`.network`** (gitignored; template `.network.example`) — network services:
   `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
@@ -817,11 +817,16 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
 ## Compression Thresholds, Microcompact & Output Caps (ZCode/PI parity)
 
 - **Per-model output caps** — every chat family carries its own
-  `*_MAX_OUTPUT_TOKEN` in `.models` (main / auxiliary / TaskFlow / compression /
-  reasoner) beside the context-window keys. Empty means "do not send a
-  field" (provider default); a set value must be >= 8192 (8K) and is refused at
-  boot, at `built_agent()`/spawn validation, at model build and at the
-  `/models-config` save (M9). The 模型配置 panel labels it 最大输出窗口 and every
+  `*_MAX_OUTPUT_TOKEN` in `.models` (main / auxiliary / TaskFlow / compression)
+  beside the context-window keys. Empty means "do not send a field" (provider
+  default); a set value must be >= 8192 (8K) and is refused at boot, at
+  `built_agent()`/spawn validation, at model build and at the
+  `/models-config` save (M9). Each cap must also be SMALLER than its family's
+  effective context window (an optional family with an empty own window falls
+  back to the auxiliary window or the remote default). `/models-config` rejects
+  `output >= window`, and the
+  模型配置 input blocks the same comparison against the draft's sibling
+  `*_MAX_TOKEN`. The panel labels it 最大输出窗口 and every
   model category title carries a help mark describing its purpose/use cases
   (four languages). `models/LLMs/provider_max_output.py` maps the
   provider to the kwarg `init_chat_model`'s class accepts — `max_tokens` for
@@ -831,7 +836,7 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   the legacy `MAIN_LLM_OUTPUT_MAX_TOKEN`.
 - **Sampling-time repetition penalties** — every chat family carries a
   `*_FREQUENCY_PENALTY` / `*_PRESENCE_PENALTY` pair in `.models` (main,
-  auxiliary, TaskFlow, compression, reasoner). Empty uses the global
+  auxiliary, TaskFlow, compression). Empty uses the global
   `REPETITION_PENALTY` defaults (0.3 / 0.2); a set value must be a finite number
   in [-2, 2] and is refused by `/models-config` otherwise.
   `models/LLMs/provider_repetition_penalty.py` maps it per provider:

@@ -1,10 +1,10 @@
-"""LLM client construction defaults across main/aux/reasoner/local models."""
+"""LLM client construction defaults across main/aux/local models."""
 
 from typing import TypedDict
 
 
 class LlmClientDefaultsConfig(TypedDict):
-    """LLM client construction defaults across main/aux/reasoner/local models."""
+    """LLM client construction defaults across main/aux/local models."""
 
     main_max_retries: int
     main_timeout: int
@@ -14,9 +14,6 @@ class LlmClientDefaultsConfig(TypedDict):
     aux_max_retries: int
     aux_timeout: int
     aux_remote_max_tokens: int
-    reasoner_max_retries: int
-    reasoner_timeout: int
-    reasoner_max_tokens_cap: int
     local_n_ctx: int
     local_temperature: float
     local_max_tokens: int
@@ -44,13 +41,6 @@ LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     # hang for ~30 min.
     "aux_timeout": 120,
     "aux_remote_max_tokens": 121072,
-    "reasoner_max_retries": 2,
-    # Per-request timeout for the reasoner remote client (seconds) — aligned
-    # with ``main_timeout``/``aux_timeout``. Without it the OpenAI SDK default
-    # (600 s) applies to every attempt (max_retries + 1), so one stalled
-    # reasoner call can silently hang for ~30 min.
-    "reasoner_timeout": 120,
-    "reasoner_max_tokens_cap": 65536,
     "local_n_ctx": 4096,
     "local_temperature": 0.0,
     "local_max_tokens": 4096,
