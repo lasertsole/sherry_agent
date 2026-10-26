@@ -1201,6 +1201,13 @@ cross-origin fetches are refused by the browser when the response says `*`.
 identified by nothing and login takes just the password. The JWT carries only
 `sub`/`jti`/`typ` — no personal data.
 
+**Inbound rate limits (design concept #28).** Two fail-open token buckets in
+`server/trigger/rate_limit.py` (`WS_RATE_LIMIT`): one inbound `/sessions/ws`
+frame per connection (burst 50, 10 frames/s; a starved burst is answered with
+ONE `rate_limited` frame — the transition edge, never per dropped frame), and
+`/auth/ws-ticket` mints per client address (30/minute). `enabled: false`
+restores unlimited behavior; a limiter crash allows everything.
+
 **Brute force is throttled, injection has no surface.** `_LoginThrottle`
 (`server/service/auth_service.py`) counts consecutive failures per CLIENT
 SOCKET ADDRESS and escalates: `AUTH["login_max_attempts"]` free tries, then
