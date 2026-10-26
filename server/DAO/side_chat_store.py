@@ -49,11 +49,6 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute(_DDL)
-    # Additive migration for databases created before the checkpoint-fork mode.
-    try:
-        conn.execute("ALTER TABLE side_chats ADD COLUMN fork_mode INTEGER NOT NULL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass  # duplicate column = already migrated / fresh schema
     conn.execute(_INDEX_DDL)
     return conn
 

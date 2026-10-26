@@ -15,7 +15,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate, _self_heal_schema, build_schema_v1
+from context_engine.store.db import build_schema_v1
 from runtime import hooks
 from server.service.trajectory_store import install_turn_id_hook, turn_scope
 
@@ -37,7 +37,7 @@ def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection]:
         isolation_level=None,
     )
     conn.row_factory = sqlite3.Row
-    _migrate(conn)
+    build_schema_v1(conn)
     monkeypatch.setattr(store_core, "_db", conn)
     yield conn
     conn.close()
@@ -140,29 +140,6 @@ async def test_hook_without_a_scope_degrades_to_empty_string(store_db):
     await store_core.add_messages("sess", [HumanMessage("outside scope")])
 
     assert _turn_ids(store_db, "sess") == [""]
-
-
-def test_schema_migration_adds_turn_id_and_partial_index(tmp_path):
-    conn = sqlite3.connect(tmp_path / "legacy.db")
-    try:
-        build_schema_v1(conn)
-        conn.execute("DROP INDEX IF EXISTS idx_messages_turn_id")
-        conn.execute("ALTER TABLE messages DROP COLUMN turn_id")
-        conn.commit()
-        assert "turn_id" not in {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
-
-        _self_heal_schema(conn)
-
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
-        indexes = {row[1] for row in conn.execute("PRAGMA index_list(messages)")}
-        partial = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_messages_turn_id'"
-        ).fetchone()[0]
-        assert "turn_id" in columns
-        assert "idx_messages_turn_id" in indexes
-        assert "turn_id IS NOT NULL" in partial and "turn_id != ''" in partial
-    finally:
-        conn.close()
 
 
 def test_old_rows_keep_null_turn_id(store_db):

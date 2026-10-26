@@ -838,7 +838,7 @@ The `build_state` callback receives a fresh flow and an attempt number, so it ca
 
 
 
-Two nullable columns on `task_flows` record how flows evolved (`resumed_from TEXT`, `superseded_by TEXT`, added by the same additive-migration pattern as the token columns — a pre-lineage database converges on its next open and its rows read NULL):
+Two nullable columns on `task_flows` record how flows evolved (`resumed_from TEXT`, `superseded_by TEXT`, in the current schema; rows with no lineage read NULL):
 
 
 

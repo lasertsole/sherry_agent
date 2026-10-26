@@ -243,7 +243,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 
 | Test file | Covers |
 | :--- | :--- |
-| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), additive `session_id` migration, session purge |
+| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), current-schema columns, session purge |
 | `test_step_graph.py` | `deps_satisfied`, `mark_step_done`, `unlock_dependents`, legacy status derivation, self-dependency guard |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")` DAG rendering |
 | `test_resume_dag.py` | Resume marks done, unlocks dependents, partial completion, idempotent no-op |

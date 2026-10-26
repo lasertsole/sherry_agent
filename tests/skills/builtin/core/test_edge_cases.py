@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate
+from context_engine.store.db import build_schema_v1
 from langchain_core.messages import ToolMessage
 
 pytestmark = [pytest.mark.regression, pytest.mark.timeout(120)]
@@ -23,7 +23,7 @@ def store_db(tmp_path):
 
     db = sqlite3.connect(str(tmp_path / "store.db"), check_same_thread=False)
     db.row_factory = sqlite3.Row
-    _migrate(db)
+    build_schema_v1(db)
     saved = store_core._db
     store_core._db = db
     yield db

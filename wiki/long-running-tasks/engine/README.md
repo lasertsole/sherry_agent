@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-107`). `session_id` is the isolation column (additive `_SESSION_ID_COLUMN_DDL`, indexed by `idx_taskflow_session_status`): it is stamped at creation and every read/mutation filters on it (`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). Legacy rows created before the column carry `session_id = ''`, are invisible to every session-scoped read, and stay reachable only through the system-level sweeper queries. The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`agent/tools/pub_base/sqlite_store.py:79-139`).
+The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns live in the current `_CREATE_TABLE_SQL` schema. `session_id` is the isolation column (indexed by `idx_taskflow_session_status`): it is stamped at creation and every read/mutation filters on it (`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). Legacy rows created before the column carry `session_id = ''`, are invisible to every session-scoped read, and stay reachable only through the system-level sweeper queries. The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`agent/tools/pub_base/sqlite_store.py:79-139`).
 
 ### Step status machine
 
@@ -352,7 +352,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-The schema now carries an `updated_at` REAL column (additive migration; every `update_flow` and `create_flow` stamps it). `_last_activity_ts()` reads that clock first and falls back to the maximum of the legacy activity stamps — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has neither). An empty registry returns `No task flows found`.
+The schema carries an `updated_at` REAL column (every `update_flow` and `create_flow` stamps it). `_last_activity_ts()` reads that clock first and falls back to the maximum of the legacy activity stamps — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has neither). An empty registry returns `No task flows found`.
 
 ### The three session-owned planning families
 

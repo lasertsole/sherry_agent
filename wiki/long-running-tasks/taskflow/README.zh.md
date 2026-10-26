@@ -790,7 +790,7 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 
 
-`task_flows` 上两个可空列记录流的演进（`resumed_from TEXT`、`superseded_by TEXT`，与 token 列相同的增量迁移模式——旧库在下次打开时收敛，其行读作 NULL）：
+`task_flows` 上两个可空列记录流的演进（`resumed_from TEXT`、`superseded_by TEXT`，属于当前 schema；没有 lineage 的行读作 NULL）：
 
 
 

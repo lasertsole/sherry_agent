@@ -27,7 +27,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate
+from context_engine.store.db import build_schema_v1
 
 pytestmark = pytest.mark.unit
 
@@ -43,7 +43,7 @@ def _turns(conn: sqlite3.Connection, session_id: str) -> list[int]:
 
 @pytest.fixture()
 def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection]:
-    """An isolated, fully migrated DB wired into ``store.core._db``.
+    """An isolated, current-schema DB wired into ``store.core._db``.
 
     Same pattern as ``test_store_origin.py``: mirrors ``get_db()``'s key
     settings (row_factory, autocommit) against a throwaway file so the
@@ -57,7 +57,7 @@ def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection]:
         isolation_level=None,
     )
     conn.row_factory = sqlite3.Row
-    _migrate(conn)
+    build_schema_v1(conn)
     monkeypatch.setattr(store_core, "_db", conn)
     yield conn
     conn.close()

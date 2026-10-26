@@ -18,7 +18,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 @pytest.fixture(autouse=True)
 def _isolated_evidence_ledger(tmp_path, monkeypatch):
-    """Never let a purge test open/migrate the real repo evidence ledger."""
+    """Never let a purge test open the real repo evidence ledger."""
     from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 
     monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(tmp_path / "evidence.db"))

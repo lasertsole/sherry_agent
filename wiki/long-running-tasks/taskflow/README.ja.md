@@ -790,7 +790,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 
 
-`task_flows` の 2 つの NULL 許容列がフローの進化を記録します（`resumed_from TEXT`、`superseded_by TEXT`。トークン列と同じ追加マイグレーション方式——系譜以前のデータベースは次回オープン時に収束し、その行は NULL として読まれます）：
+`task_flows` の 2 つの NULL 許容列がフローの進化を記録します（`resumed_from TEXT`、`superseded_by TEXT`。現在のスキーマにあり、系譜の無い行は NULL として読まれます）：
 
 
 

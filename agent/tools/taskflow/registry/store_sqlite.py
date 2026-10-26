@@ -28,8 +28,8 @@ back-pointer without a revision check (see its docstring).
 """
 
 # allow: SIZE_OK — single store module for the task_flows table: schema DDL,
-# additive migrations, row mapping, and every query share one connection and
-# init lifecycle and cannot be split without duplicating that plumbing.
+# row mapping, and every query share one connection and init lifecycle and
+# cannot be split without duplicating that plumbing.
 
 import asyncio
 import json
@@ -85,59 +85,8 @@ _SELECT_COLUMNS_SQL = (
     f"FROM {TABLE_NAME}"
 )
 
-# Additive migration DDL for databases created before token columns. Fresh databases
-# get these columns from _CREATE_TABLE_SQL; an existing table needs ALTER TABLE.
-# Each statement is attempted independently: the "duplicate column name"
-# OperationalError on an already-migrated column is the expected no-op.
-_TOKEN_COLUMN_DDL: list[str] = [
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN total_tokens INTEGER DEFAULT 0",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN total_cost REAL DEFAULT 0.0",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN token_budget INTEGER DEFAULT 0",
-]
-
-
-async def _ensure_token_columns(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the token columns when absent (idempotent)."""
-    for ddl in _TOKEN_COLUMN_DDL:
-        try:
-            await db.execute(ddl)
-        except aiosqlite.OperationalError:
-            # Column already exists - nothing to do.
-            pass
-
-
-# Additive migration DDL for databases created before deadline support.
-_DEADLINE_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN deadline_ts REAL"
-
-# Additive migration DDL for databases created before session isolation. Rows
-# written by pre-isolation code keep ``session_id = ''`` and are therefore
-# invisible to every session-scoped read; the system-level sweeps
-# (get_overdue_flows / get_waiting_flows) still see and finish them.
-_SESSION_ID_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
-
-# Additive migration DDL for databases created before flow lineage. ``resumed_from``
-# names the flow a row continues (set on the SUCCESSOR); ``superseded_by`` names the
-# flow that replaced a row (set on the PREDECESSOR). Rows written before the columns,
-# and rows with no lineage, keep NULL in both — every reader treats NULL as "no link".
-_LINEAGE_COLUMN_DDL: tuple[str, ...] = (
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN resumed_from TEXT",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN superseded_by TEXT",
-)
-
-# Additive migration DDL for the tri-color GC. ``updated_at`` is the inactivity
-# clock (epoch seconds, bumped by every mutation); ``terminal_reason`` records
-# why a flow became terminal. The backfill gives pre-migration rows a fresh
-# grace window instead of making every old row look stale on the first sweep.
-_GC_COLUMN_DDL: tuple[str, ...] = (
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN updated_at REAL",
-    f"ALTER TABLE {TABLE_NAME} ADD COLUMN terminal_reason TEXT",
-    f"UPDATE {TABLE_NAME} SET updated_at = CAST(strftime('%s','now') AS REAL) "
-    "WHERE updated_at IS NULL",
-)
-
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
-# ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
-# database that predates them converges on its next open, not just a fresh one.
+# ``IF NOT EXISTS`` on every schema init -- async and sync alike.
 # ``idx_taskflow_deadline`` is partial: get_overdue_flows only ever scans
 # non-NULL deadlines, so NULL rows stay out of the index entirely.
 # ``idx_taskflow_session_status`` covers the session-scoped reads
@@ -263,21 +212,12 @@ def _row_to_flow(row: tuple) -> dict:
 
 
 class _TaskFlowRepository(BaseSQLiteRepository):
-    """Base-class wiring for the task_flows store: DDL + additive migrations."""
+    """Base-class wiring for the task_flows store: DDL + indexes."""
 
     wal_label = "taskflow registry db"
 
     def _table_ddls(self) -> tuple[str, ...]:
         return (_CREATE_TABLE_SQL,)
-
-    def _migration_ddls(self) -> tuple[str, ...]:
-        return (
-            *_TOKEN_COLUMN_DDL,
-            _DEADLINE_COLUMN_DDL,
-            _SESSION_ID_COLUMN_DDL,
-            *_LINEAGE_COLUMN_DDL,
-            *_GC_COLUMN_DDL,
-        )
 
     def _index_ddls(self) -> tuple[str, ...]:
         return _INDEX_DDL

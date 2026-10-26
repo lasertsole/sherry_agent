@@ -73,53 +73,8 @@ def _now() -> float:
 
 
 # ---------------------------------------------------------------------------
-# store migration / clock / supersede
+# store clock / supersede
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_gc_columns_migrate_a_legacy_database(isolated_db: Path):
-    old_schema = f"""
-    CREATE TABLE {TABLE_NAME} (
-        flow_id TEXT PRIMARY KEY,
-        state_json TEXT NOT NULL,
-        wait_json TEXT,
-        expected_revision INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        child_session_key TEXT,
-        total_tokens INTEGER DEFAULT 0,
-        total_cost REAL DEFAULT 0.0,
-        token_budget INTEGER DEFAULT 0,
-        deadline_ts REAL,
-        session_id TEXT NOT NULL DEFAULT '',
-        resumed_from TEXT,
-        superseded_by TEXT
-    )
-    """
-    conn = sqlite3.connect(isolated_db)
-    try:
-        conn.execute(old_schema)
-        conn.execute(
-            f"INSERT INTO {TABLE_NAME} (flow_id, state_json, expected_revision, status, session_id) "
-            "VALUES ('legacy', '{}', 1, 'running', ?)",
-            (SESSION,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    await store_sqlite.ensure_db()
-
-    conn = sqlite3.connect(isolated_db)
-    try:
-        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({TABLE_NAME})")}
-        updated = conn.execute(
-            f"SELECT updated_at FROM {TABLE_NAME} WHERE flow_id = 'legacy'"
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert {"updated_at", "terminal_reason"} <= columns
-    assert updated is not None
 
 
 @pytest.mark.asyncio

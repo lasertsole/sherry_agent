@@ -266,7 +266,8 @@ User message → Robyn WS → agent.core.built_agent() graph
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
       the flow's AGGREGATED evidence (every dispatched step's child session +
-      the creator's; rows carry a session key, never a flow id) carrying no
+      the creator's; rows stamped with the flow are read by `flow_id`, with the
+      session-key set as the fallback for unstamped/creator rows) carrying no
       FAIL/[stale]/[broken], then Gate E's goal judge (only for a flow with a
       description and at least GOAL_GATE["min_steps"] = 3 steps)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
@@ -1192,9 +1193,7 @@ cross-origin fetches are refused by the browser when the response says `*`.
 
 **ONE account, password only.** There is no username anywhere: the single
 `auth_account` row (`CHECK (id = 1)` — the schema cannot hold a second) is
-identified by nothing, login takes just the password, and a username-era
-`auth_users` table is copied into it at init and dropped
-(`_MIGRATION_DDLS` in `server/DAO/auth_store.py`). The JWT carries only
+identified by nothing and login takes just the password. The JWT carries only
 `sub`/`jti`/`typ` — no personal data.
 
 **Brute force is throttled, injection has no surface.** `_LoginThrottle`
@@ -1933,7 +1932,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   actually persisted — two children completing at once both land, and the same
   step is spawned exactly once. A superseded flow releases its per-session slot.
 - two nullable `task_flows` columns record flow lineage (`resumed_from` /
-  `superseded_by`, additive migration): `taskflow_flow(action="create", resumed_from=…)` —
+  `superseded_by`): `taskflow_flow(action="create", resumed_from=…)` —
   the CREATE path, since `taskflow_flow(action="replan")` rewrites in place and never forks —
   writes the successor's forward pointer and stamps the predecessor's
   back-pointer with a plain session-scoped UPDATE that deliberately does NOT bump
@@ -1946,7 +1945,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
   (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
   negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`
-  and persisted to `messages.tool_duration_ms` (old DBs heal by ADD COLUMN; old rows read NULL). The stream's
+  and persisted to `messages.tool_duration_ms` (a row without the stamp reads NULL). The stream's
   `tool_result.duration_ms` is the same measurement for the live card (`stream_dispatch`'s `_tool_started_at`, per
   session + tool id, consumed once). Approval waits and queue time are OUTSIDE the window by construction — the clock
   starts when the tool actually executes. The client shows a live ticker while running and the measured value when

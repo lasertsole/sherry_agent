@@ -70,7 +70,7 @@ import agent.middlewares.summarization.core as summarization_module
 import context_engine.store.core as mes_store_core
 from agent.middlewares.summarization import Summarization
 from agent.middlewares.tool_call_normalize import ToolCallNormalize
-from context_engine.store.db import _migrate as mes_migrate
+from context_engine.store.db import build_schema_v1 as mes_build_schema
 from runtime import state_register_mem
 from server.queue import UserInputQueue, UserInputQueueStatus
 from server.service.interrupt_marker import write_interrupted_marker
@@ -695,7 +695,7 @@ def mes_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.
         tmp_path / "mes_memory.db", check_same_thread=False, isolation_level=None
     )
     conn.row_factory = sqlite3.Row
-    mes_migrate(conn)
+    mes_build_schema(conn)
     monkeypatch.setattr(mes_store_core, "_db", conn)
     yield conn
     conn.close()

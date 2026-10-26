@@ -55,7 +55,7 @@ context_engine/
 ├── content_codec.py     # Shared JSON content-cell decoder
 ├── store/
 │   ├── __init__.py      # Store-layer exports
-│   ├── db.py            # SQLite connection, WAL mode, versioned migrations (tables, indexes, FTS5 triggers)
+│   ├── db.py            # SQLite connection, WAL mode, complete current schema (tables, indexes, FTS5 triggers)
 │   ├── core.py          # Message CRUD: add/query/delete + session listing (lazy shared connection)
 │   └── message_repository.py # Turn-range & identity reads over the messages table
 └── curator/             # Background skill maintenance orchestrator (has its own README)
@@ -69,7 +69,7 @@ context_engine/
 ├──────────────────────┼───────────────────────────────┤
 │ • db.py              │ • retrieve_history_by_last_   │
 │   - SQLite conn      │   n_prompt() → formatted      │
-│   - WAL + migrations │   conversation string         │
+│   - WAL + schema     │   conversation string         │
 │ • core.py            │ • search_messages() → FTS5 /  │
 │   - add_messages     │   trigram / LIKE routing      │
 │   - turn queries     │ • _sanitize_fts5_query()      │
@@ -140,7 +140,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 
 **FTS5 Triggers:** each FTS table has `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` triggers on `messages` that keep the index in sync automatically. Deleting rows (e.g. `delete_messages_by_session`) therefore needs no separate FTS cleanup.
 
-**Migrations:** schema creation is tracked in a `_migrations` table keyed by **name** (`name TEXT PRIMARY KEY, at INTEGER NOT NULL`). Every step has a stable name, and `_migrate` runs each step whose name is not recorded yet, in list order — so a step inserted anywhere in the list, even before the position a database has already passed, still executes (the former index-keyed resume silently skipped it, which is how a production database lost the `reasoning_tokens` column). A fresh database runs the single complete baseline (`build_schema_v1`, recorded as `0001_initial_schema`) that creates the full schema above in one step. A legacy index-keyed tracking table (with a `v` column) is replaced on first connect without pre-seeding any name, so the idempotent baseline re-runs safely and the database's schema and data are untouched. Step order still matters for dependencies, so new steps should be appended — names, not positions, decide what has run.
+**Schema:** `build_schema_v1` is the complete current schema, executed on every connection with `IF NOT EXISTS` DDL. It creates the messages columns, named indexes, both FTS5 tables with their six sync triggers, and the auxiliary tables in one place. There is no migration chain, no schema-version tracking table and no additive ALTER path: a database is expected to already match this schema, and an old file is not converged in place.
 
 
 ---
