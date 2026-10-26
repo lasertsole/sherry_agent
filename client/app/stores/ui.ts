@@ -18,7 +18,7 @@ export const useUiStore = defineStore(
     /** What the left sidebar shows: the session list or the project file tree. */
     const sidebarBody = ref<'sessions' | 'files'>('sessions');
     const settingsMenuOpen = ref(false);
-    /** The 工作目录 body's two sections (file tree / git graph), each collapsible. */
+    /** The working-directory body's two sections (file tree / git graph), each collapsible. */
     const filesSectionOpen = ref(true);
     const gitSectionOpen = ref(true);
     /** Share of the body's height the file-tree section keeps (the draggable split). */

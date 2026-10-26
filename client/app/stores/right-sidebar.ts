@@ -166,7 +166,7 @@ export interface RightSidebarTab {
   id: string;
   /** Which panel component the tab renders. */
   kind: RightSidebarPanelKind;
-  /** Which group tab the tab sits under (当前会话 / 全局). */
+  /** Which group tab the tab sits under (This session / Global). */
   scope: RightSidebarScope;
   /**
    * Owning session for a SESSION-scoped tab (undefined for global tabs). The
@@ -263,19 +263,19 @@ export const useRightSidebarStore = defineStore(
     );
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
-    /** The session whose 当前会话 tab group is on screen ('' when on home). */
+    /** The session whose This-session tab group is on screen ('' when on home). */
     const activeSessionId = ref('');
     /** Last active session-scoped tab per session (in-memory, restored on switch). */
     const lastActiveSessionTab = ref<Record<string, string | null>>({});
     /**
-     * Which group tab is shown. 全局 by default: every pre-existing panel is a
+     * Which group tab is shown. Global by default: every pre-existing panel is a
      * global tool, so an untouched sidebar keeps exactly its old behaviour.
      */
     const activeScope = ref<RightSidebarScope>('global');
     /** Panel width in px (draggable, clamped; persisted). */
     const width = ref(RIGHT_SIDEBAR_DEFAULT_WIDTH);
     /**
-     * Whether the panel fills the whole viewport (the strip's 放大 button).
+     * Whether the panel fills the whole viewport (the strip's Zoom button).
      * Persisted like ``collapsed``: the choice is a workspace mode, not a
      * transient hover, and a reload should not silently undo it.
      */
@@ -407,7 +407,7 @@ export const useRightSidebarStore = defineStore(
     }
 
     /**
-     * Switch the session whose 当前会话 tab group is shown.
+     * Switch the session whose This-session tab group is shown.
      *
      * GLOBAL tabs are shared and stay active. When the group on screen is the
      * session group, it switches to that session's last active tab (or clears

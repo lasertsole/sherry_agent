@@ -411,7 +411,7 @@ def _run() -> None:
     # Get the event loop from the channel manager so heartbeat and cron services share the same loop
     event_loop = channel_manager.get_event_loop()
 
-    # Start heartbeat service unless the 心跳 panel's switch turned it off
+    # Start heartbeat service unless the Heartbeat panel's switch turned it off
     # (the persisted value is adopted here so a disabled heartbeat stays off
     # across restarts, not just for the session that toggled it).
     from server.service.heartbeat_control import apply_persisted_heartbeat_setting

@@ -222,7 +222,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     sidebarApi.activeScope = 'session';
     const wrapper = mountSidebar();
 
-    // Two tabs of one kind read `浏览器 1` / `浏览器 2`; a lone tab keeps the
+    // Two tabs of one kind read `浏览器 1` / `浏览器 2` ("Browser 1" / "Browser 2"); a lone tab keeps the
     // plain name (no pointless suffix).
     expect(wrapper.findAll('button.group').map(b => b.text())).toEqual(['浏览器 1', '浏览器 2', '终端']);
   });
@@ -237,7 +237,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     const wrapper = mountSidebar();
     await flushPromises();
 
-    // 全局 is the default group: the pre-existing tools are unchanged by grouping.
+    // Global is the default group: the pre-existing tools are unchanged by grouping.
     const scopeTabs = wrapper.findAll('[data-test^="scope-tab-"]');
     expect(scopeTabs.map(tab => tab.attributes('data-test'))).toEqual(['scope-tab-session', 'scope-tab-global']);
     // Pills: the active group carries the filled capsule, both animate the swap

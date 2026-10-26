@@ -1,44 +1,31 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { CachedCharacter } from '../db';
-
-// The character caching wrappers in `../db` route through the exported `db`
-// instance's `character` table (put / get / delete). Mocking that table keeps
-// tests off a real IndexedDB while still verifying dispatch + key semantics.
-// Explicit call signatures (no implementation params) keep both TS and
-// no-unused-vars clean; the vi.mock wrappers below supply the arguments.
-const characterTable = vi.hoisted(() => ({
-  put: vi.fn<(char: CachedCharacter) => Promise<void>>(),
-  get: vi.fn<(key: string) => Promise<CachedCharacter | undefined>>(),
-  delete: vi.fn<(key: string) => Promise<void>>()
-}));
-
-vi.mock('../db', () => ({
-  GLOBAL_SESSION_KEY: '__global__',
-  DEFAULT_CACHED_CHARACTER: {
-    userName: '远野汉娜',
-    userAvatar: '/avatar/user.jpg',
-    aiName: '橘雪莉',
-    aiAvatar: '/avatar/assistant.jpg'
-  },
-  db: { character: characterTable },
-  cacheCharacter: async (char: CachedCharacter) => {
-    await characterTable.put(char);
-  },
-  readCachedCharacter: async (sessionId: string) => {
-    return characterTable.get(sessionId);
-  },
-  clearCachedCharacter: async (sessionId: string) => {
-    await characterTable.delete(sessionId);
-  }
-}));
-
+/**
+ * Unit tests for the character-display snapshot cache wrappers in `../db`
+ * (cacheCharacter / readCachedCharacter / clearCachedCharacter +
+ * DEFAULT_CACHED_CHARACTER), run against the REAL `HistoryDb` singleton over
+ * fake-indexeddb — only the IndexedDB backend is faked, the wrappers under
+ * test are the real ones (the pre-rewrite version re-implemented them inside
+ * a vi.mock factory, so it could only ever test itself).
+ *
+ * `import 'fake-indexeddb/auto'` MUST stay the first import: it injects the
+ * fake IndexedDB implementation into globalThis before any module below
+ * evaluates (happy-dom has no IndexedDB, and `../db` creates its Dexie
+ * singleton at module scope).
+ *
+ * Isolation: every test starts from a wiped database (`db.delete()` +
+ * `db.open()`; Dexie 4 refuses to auto-reopen a deleted instance, so reopen
+ * explicitly — this recreates every table empty).
+ */
+import 'fake-indexeddb/auto';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  db,
   GLOBAL_SESSION_KEY,
   DEFAULT_CACHED_CHARACTER,
   cacheCharacter,
   readCachedCharacter,
   clearCachedCharacter
 } from '../db';
+import type { CachedCharacter } from '../db';
 
 const snapshot: CachedCharacter = {
   session_id: 'ses_A',
@@ -48,21 +35,18 @@ const snapshot: CachedCharacter = {
   aiAvatar: 'data:image/png;base64,BBBC'
 };
 
-beforeEach(() => {
-  characterTable.put.mockClear();
-  characterTable.get.mockClear();
-  characterTable.delete.mockClear();
-  characterTable.get.mockResolvedValue(undefined);
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
 });
 
-describe('cacheCharacter', () => {
-  it('writes the snapshot to the character table via db.character.put', async () => {
+describe('cacheCharacter / readCachedCharacter', () => {
+  it('round-trips a session snapshot keyed by session_id', async () => {
     await cacheCharacter(snapshot);
-    expect(characterTable.put).toHaveBeenCalledTimes(1);
-    expect(characterTable.put).toHaveBeenCalledWith(snapshot);
+    await expect(readCachedCharacter('ses_A')).resolves.toEqual(snapshot);
   });
 
-  it('persists a global-pending profile under GLOBAL_SESSION_KEY', async () => {
+  it('persists the global-pending profile under GLOBAL_SESSION_KEY', async () => {
     const globalProfile: CachedCharacter = {
       session_id: GLOBAL_SESSION_KEY,
       userName: '待定',
@@ -71,93 +55,56 @@ describe('cacheCharacter', () => {
       aiAvatar: ''
     };
     await cacheCharacter(globalProfile);
-    expect(characterTable.put).toHaveBeenCalledWith(globalProfile);
-  });
-});
-
-describe('readCachedCharacter', () => {
-  it('reads a snapshot by session_id via db.character.get', async () => {
-    characterTable.get.mockResolvedValue(snapshot);
-    await expect(readCachedCharacter('ses_A')).resolves.toEqual(snapshot);
-    expect(characterTable.get).toHaveBeenCalledWith('ses_A');
+    await expect(readCachedCharacter(GLOBAL_SESSION_KEY)).resolves.toEqual(globalProfile);
   });
 
   it('resolves to undefined when no snapshot exists for the session', async () => {
     await expect(readCachedCharacter('ses_MISSING')).resolves.toBeUndefined();
-    expect(characterTable.get).toHaveBeenCalledWith('ses_MISSING');
-  });
-
-  it('can read the global-pending profile by GLOBAL_SESSION_KEY', async () => {
-    const globalProfile: CachedCharacter = {
-      session_id: GLOBAL_SESSION_KEY,
-      userName: '待定',
-      userAvatar: '',
-      aiName: 'AI',
-      aiAvatar: ''
-    };
-    characterTable.get.mockResolvedValue(globalProfile);
-    await expect(readCachedCharacter(GLOBAL_SESSION_KEY)).resolves.toEqual(globalProfile);
   });
 
   it('keeps distinct snapshots isolated per session (old sessions unaffected)', async () => {
     // Two sessions that captured different global snapshots at open time.
     const oldSession: CachedCharacter = { ...snapshot, session_id: 'ses_OLD', aiName: '旧名' };
     const newSession: CachedCharacter = { ...snapshot, session_id: 'ses_NEW', aiName: '新名' };
-
-    characterTable.get.mockImplementation(async (key: string) =>
-      key === 'ses_OLD' ? oldSession : key === 'ses_NEW' ? newSession : undefined
-    );
+    await cacheCharacter(oldSession);
+    await cacheCharacter(newSession);
 
     await expect(readCachedCharacter('ses_OLD')).resolves.toEqual(oldSession);
     await expect(readCachedCharacter('ses_NEW')).resolves.toEqual(newSession);
-    // Updating the new session must not change what the old session reads back.
+    // Updating the new session's snapshot must not change what the old one reads back.
     await cacheCharacter({ ...newSession, aiName: '改名' });
-    expect(characterTable.get).toHaveBeenCalledWith('ses_OLD');
-    expect(characterTable.get).toHaveBeenCalledWith('ses_NEW');
+    await expect(readCachedCharacter('ses_OLD')).resolves.toEqual(oldSession);
+    await expect(readCachedCharacter('ses_NEW')).resolves.toMatchObject({ aiName: '改名' });
   });
 });
 
 describe('DEFAULT_CACHED_CHARACTER (builtin defaults)', () => {
-  it('carries the builtin default names and avatar URLs from before the refactor', () => {
-    expect(DEFAULT_CACHED_CHARACTER.userName).toBe('远野汉娜');
-    expect(DEFAULT_CACHED_CHARACTER.aiName).toBe('橘雪莉');
-    // Default avatars are served from the frontend public/ dir as relative URLs.
-    expect(DEFAULT_CACHED_CHARACTER.userAvatar).toBe('/avatar/user.jpg');
-    expect(DEFAULT_CACHED_CHARACTER.aiAvatar).toBe('/avatar/assistant.jpg');
+  it('carries the four display fields as non-empty strings', () => {
+    // Structural contract only: the concrete default names/avatars live in
+    // defaultCharacter.ts and must not be duplicated here.
+    for (const field of ['userName', 'userAvatar', 'aiName', 'aiAvatar'] as const) {
+      expect(typeof DEFAULT_CACHED_CHARACTER[field]).toBe('string');
+      expect(DEFAULT_CACHED_CHARACTER[field].length).toBeGreaterThan(0);
+    }
   });
 
   it('is usable as the fallback shape for a CachedCharacter snapshot', async () => {
     const fallback = { session_id: GLOBAL_SESSION_KEY, ...DEFAULT_CACHED_CHARACTER };
     await cacheCharacter(fallback);
-    expect(characterTable.put).toHaveBeenCalledWith(
-      expect.objectContaining({
-        session_id: GLOBAL_SESSION_KEY,
-        userName: '远野汉娜',
-        userAvatar: '/avatar/user.jpg',
-        aiName: '橘雪莉',
-        aiAvatar: '/avatar/assistant.jpg'
-      })
-    );
+    await expect(readCachedCharacter(GLOBAL_SESSION_KEY)).resolves.toEqual(fallback);
   });
 });
 
 describe('clearCachedCharacter', () => {
-  it('deletes the snapshot for a real session via db.character.delete', async () => {
-    await clearCachedCharacter('ses_A');
-    expect(characterTable.delete).toHaveBeenCalledWith('ses_A');
-  });
+  it('removes the row so subsequent reads return undefined, global row survives', async () => {
+    await cacheCharacter(snapshot);
+    await cacheCharacter({ ...snapshot, session_id: GLOBAL_SESSION_KEY });
 
-  it('removes the row so subsequent reads return undefined', async () => {
-    characterTable.get.mockResolvedValue(snapshot);
-    await expect(readCachedCharacter('ses_A')).resolves.toEqual(snapshot);
-
-    // Simulate the delete taking effect on the table.
-    characterTable.delete.mockImplementation(async (key: string) => {
-      if (key === 'ses_A') characterTable.get.mockResolvedValue(undefined);
-    });
     await clearCachedCharacter('ses_A');
 
     await expect(readCachedCharacter('ses_A')).resolves.toBeUndefined();
-    expect(characterTable.delete).toHaveBeenCalledWith('ses_A');
+    await expect(readCachedCharacter(GLOBAL_SESSION_KEY)).resolves.toMatchObject({
+      session_id: GLOBAL_SESSION_KEY
+    });
   });
 });

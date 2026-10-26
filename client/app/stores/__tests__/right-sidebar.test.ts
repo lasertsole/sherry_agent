@@ -55,7 +55,7 @@ describe('stores/right-sidebar', () => {
 
     // Every settings/runtime tool is a GLOBAL tab; the things read from the
     // active session (its preset, a file of its project directory) are session
-    // tabs, and the strip starts on 全局.
+    // tabs, and the strip starts on Global.
     expect(store.activeScope).toBe('global');
     const logs = store.openTab('logs');
     expect(store.tabs.find(tab => tab.id === logs)?.scope).toBe('global');
@@ -182,7 +182,7 @@ describe('stores/right-sidebar', () => {
   });
 
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
-    // The menu must never stack a second 系统配置 next to the open one — the
+    // The menu must never stack a second System Config next to the open one — the
     // click belongs to the tab that already exists.
     const store = useRightSidebarStore();
 

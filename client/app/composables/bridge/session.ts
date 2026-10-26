@@ -270,7 +270,7 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
 /**
  * Thinking control payload shapes. `mode: "on_off"` models use the boolean
  * switch; `mode: "levels"` models are always-think gateways whose control is
- * a 低/高/最高 selector (`level: "low" | "high" | "max"`).
+ * a low/high/max selector (`level: "low" | "high" | "max"`).
  */
 export type ThinkingMode = 'on_off' | 'levels';
 /** The seven thinking levels, least to most (mirrors the backend enum). */
@@ -318,7 +318,7 @@ export async function setAccessMode(sessionId: string, mode: AccessMode): Promis
   return toAccessMode(res.mode);
 }
 
-/** Web-search backends the 模型联网 panel can pick between. */
+/** Web-search backends the Web Search panel can pick between. */
 export type SearchBackend = 'tavily' | 'searxng';
 
 /** The SearXNG side of a backend state: its connection and how it is built. */
@@ -334,7 +334,7 @@ export interface SearxngStatus {
 }
 
 /**
- * The `.env` file as the 模型联网 panel edits it.
+ * The `.env` file as the Web Search panel edits it.
  *
  * Those keys are WITHHELD from `GET /env` (this panel owns them: there is one
  * editing surface per setting), so the state payload carries their file values.
@@ -358,7 +358,7 @@ export interface SearchEnvView {
  * `backend` is the session's explicit choice (`null` = follow the environment
  * default), while `effective` is what the tool will actually use — resolved
  * with the same availability-aware rule the tool applies, so the panel can show
- * "Tavily 降级到 SearXNG" without guessing.
+ * "Tavily downgrades to SearXNG" without guessing.
  */
 export interface SearchBackendState {
   backend: SearchBackend | null;
@@ -520,7 +520,7 @@ export interface ContextInspect {
   system_tokens: number;
   tools: ContextToolDefinition[];
   tool_tokens: number;
-  /** True when the session narrows the tool set (预设-工具 tab). */
+  /** True when the session narrows the tool set (the preset Tools tab). */
   tool_selection: boolean;
   messages: ContextMessage[];
   message_tokens: number;
@@ -608,7 +608,7 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
  * The composer's watchdog: the backend counts a turn as active while the
  * in-memory busy signal is set OR a QUEUED/CLAIMED input-queue row exists (a
  * normal chat stream only shows in the latter). Used to recover a client that
- * missed the turn's terminal frame, so 停止 cannot stay on for ever.
+ * missed the turn's terminal frame, so the Stop state cannot stay on for ever.
  *
  * @param sessionId Session to ask about.
  * @returns True while a turn is running.
@@ -897,10 +897,7 @@ export async function fetchTokenBudget(sessionId: string): Promise<TokenBudgetSt
  * @param sessionId Session whose cap should change.
  * @param cap New cap in tokens, or null for unlimited.
  */
-export async function setTokenBudgetCap(
-  sessionId: string,
-  cap: number | null
-): Promise<{ pending: boolean }> {
+export async function setTokenBudgetCap(sessionId: string, cap: number | null): Promise<{ pending: boolean }> {
   const res = await fetchApiPayload<{ pending?: boolean }>({
     url: '/sessions/budget',
     opts: { session_id: sessionId, cap },

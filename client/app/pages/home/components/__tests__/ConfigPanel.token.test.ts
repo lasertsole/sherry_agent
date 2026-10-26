@@ -96,7 +96,7 @@ async function mountWithEnvTab() {
   });
   const vm = wrapper.vm as unknown as ConfigPanelVm;
 
-  // Tabs are now [background, env, sherry]: the role config moved to 预设.
+  // Tabs are now [background, env, sherry]: the role config moved to the preset panel.
   vm.activeTab = 1;
   await flushPromises();
 
@@ -117,8 +117,8 @@ beforeEach(() => {
 describe('ConfigPanel per-area saving', () => {
   it('hides the footer on the env tab (each item saves on its own) but keeps it elsewhere', async () => {
     const { wrapper, vm } = await mountWithEnvTab();
-    // Env tab: no footer 保存/取消 — each non-model group card and the
-    // model panels' 保存/应用 replace them.
+    // Env tab: no Save/Cancel footer — each non-model group card and the
+    // model panels' Save/Apply replace them.
     expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);
     // handleSave is the env-area handler behind each non-model group button.
     expect(typeof (wrapper.vm as unknown as { handleSave?: unknown }).handleSave).toBe('function');

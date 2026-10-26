@@ -102,3 +102,28 @@ def test_the_runner_carries_names_for_its_own_kill_codes(runner):
     """The summary prints rc names; a killed group must not read as ``rc=?, ?``."""
     assert -9 in runner.RC_NAMES
     assert -6 in runner.RC_NAMES
+
+
+def test_tests_full_is_ignored_only_in_hermetic_mode(runner):
+    """The hermetic gate never collects tests/full; the --with-llm-e2e mode
+    (the llm-e2e workflow's dedicated job) MUST be able to reach it — an
+    unconditional ignore made the manual gate unable to run those cases."""
+    hermetic = runner.build_group_cmd("unit", False, [])
+    assert "--ignore=tests/full" in hermetic
+
+    llm = runner.build_group_cmd("unit", True, [])
+    assert "--ignore=tests/full" not in llm
+    assert "(unit) and llm_e2e" in llm
+
+
+def test_group_budgets_scale_up_in_llm_mode(runner):
+    """A real-LLM test can stream quietly for minutes (per-test timeouts reach
+    1500s in tests/full): the llm-mode idle budget must exceed that, and the
+    total budget must exceed the hermetic one."""
+    idle, total = runner.group_budgets(True)
+    assert idle >= 1500
+    assert total > runner.GROUP_TOTAL_TIMEOUT_SECONDS
+    assert runner.group_budgets(False) == (
+        runner.GROUP_IDLE_TIMEOUT_SECONDS,
+        runner.GROUP_TOTAL_TIMEOUT_SECONDS,
+    )

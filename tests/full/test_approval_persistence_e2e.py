@@ -71,7 +71,7 @@ from agent.middlewares.humanInTheLoop.types import BLOCKED_MESSAGE
 from models import build_main_llm
 from runtime import clear_all_register_sessions, state_register_mem
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 
 TOOL_NAME = "approval_probe"
 PROBE_ARGS = {"probe": "alpha"}

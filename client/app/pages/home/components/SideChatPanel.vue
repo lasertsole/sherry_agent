@@ -240,7 +240,7 @@ function selectionRoleLabel(role?: string): string {
 }
 
 /**
- * "添加到当前会话" inside the side panel re-quotes into this panel's composer.
+ * The "添加到当前会话" (add to this conversation) item inside the side panel re-quotes into this panel's composer.
  * @param payload
  */
 function onSelectionAdd(payload: SelectionPayload): void {

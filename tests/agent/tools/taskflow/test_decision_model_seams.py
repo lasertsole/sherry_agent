@@ -10,6 +10,11 @@ from pathlib import Path
 
 import pytest
 
+# unit marker is REQUIRED for gate visibility: the split runner selects groups
+# by marker expression, so an unmarked file is invisible to every CI group
+# even though a plain `pytest tests/` collects it.
+pytestmark = [pytest.mark.unit]
+
 ROOT = Path(__file__).resolve().parents[4]
 
 TASKFLOW_CALL_SITES = (

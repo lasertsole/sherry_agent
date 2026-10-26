@@ -2,7 +2,7 @@
   <div
     class="flex h-full min-h-0 flex-col"
     data-test="browser-panel">
-    <!-- Address bar: back / forward / reload, the URL, and 前往. The panel is a
+    <!-- Address bar: back / forward / reload, the URL, and the Go button. The panel is a
          window the user can resize (the sidebar's drag handle) or maximize (the
          strip's button), so no extra chrome is invented here. -->
     <div
@@ -937,7 +937,7 @@ const onHistorySelect = (url: string): void => {
   address.value = url;
   go();
 };
-/** Re-enter the current URL (the panel's 刷新). */
+/** Re-enter the current URL (the panel's Refresh). */
 const reload = (): void => {
   if (cdp.value) {
     channel?.send({ event: 'reload' });

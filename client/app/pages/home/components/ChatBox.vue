@@ -584,9 +584,9 @@ const LONG_MESSAGE_PREVIEW_LINES = 60;
 interface BubbleView {
   /** The markdown source this render shows. */
   text: string;
-  /** Streaming tail-only preview (shows the 流式 hint line). */
+  /** Streaming tail-only preview (shows the 流式 "streaming" hint line). */
   truncated: boolean;
-  /** Settled long answer shown collapsed (shows the 展开全文 button). */
+  /** Settled long answer shown collapsed (shows the 展开全文 "expand" button). */
   collapsed: boolean;
   /** Total character count (symbols and spaces included), for the expand label. */
   chars: number;
@@ -599,7 +599,7 @@ interface BubbleView {
  * row is re-laid-out on every flush, and one enormous row starves the page
  * (measured on a 2000-line answer: menus, timers and fetches all froze for tens
  * of seconds until the page caught up). Settled rows render a head PREVIEW and
- * an 展开全文 control instead — the starvation comes from having multi-thousand-
+ * an expand-full-text control instead — the starvation comes from having multi-thousand-
  * character rows at all, and the window usually holds several of them, so the cap
  * has to apply after the turn ends too (the same collapse idiom the tool cards
  * and thinking blocks already use). Both caps count CHARACTERS, symbols and

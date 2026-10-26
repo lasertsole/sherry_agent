@@ -39,7 +39,7 @@
       v-if="contentMounted"
       class="flex flex-col h-full"
       :style="store.maximized ? { width: '100%' } : { width: `${store.width}px` }">
-      <!-- Strip: the group pills (当前会话 / 全局 — the tabs' scope) are FIXED at the
+      <!-- Strip: the group pills (This session / Global — the tabs' scope) are FIXED at the
            left of the single tab row, and the active group's tab list scrolls to
            their right. The row keeps the shared h-15, so all three columns still
            share one header line. Tabs are added from the top toolbar and the
@@ -164,7 +164,7 @@ const store = useRightSidebarStore();
 /**
  * A tab's strip label: its kind's name, plus `` N`` when several tabs of that
  * kind are open (the toolbox opens a browser / terminal per click, and two tabs
- * both reading 浏览器 would be indistinguishable).
+ * both reading Browser would be indistinguishable).
  * @param tab
  * @param tab.id
  * @param tab.kind

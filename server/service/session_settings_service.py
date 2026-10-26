@@ -318,16 +318,6 @@ def clear_thinking_value(session_id: str) -> None:
     _delete_value(session_id, StateKey.LLM_THINKING_ENABLED_PENDING)
 
 
-def get_thinking_enabled(session_id: str) -> bool | None:
-    """Backward-compatible read of the boolean flag (on_off models)."""
-    return get_thinking_state(session_id)["enabled"]
-
-
-def set_thinking_enabled(session_id: str, enabled: bool) -> None:
-    """Backward-compatible write of the boolean flag (on_off models)."""
-    set_thinking_value(session_id, enabled)
-
-
 def sanitize_main_model_override(
     descriptor: object, *, allow_max_output: bool = False
 ) -> dict[str, str]:

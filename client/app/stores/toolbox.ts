@@ -320,7 +320,7 @@ export const useToolboxStore = defineStore('toolbox', () => {
   }
 
   /**
-   * Forget the session's scrollback (the panel's 清空 button).
+   * Forget the session's scrollback (the panel's Clear button).
    * @param key The panel's identity.
    */
   function clearTerminal(key: string): void {

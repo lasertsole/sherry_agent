@@ -1,179 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { CachedMessage, CachedSessionMeta, DraftTurn, CachedSubagentRun, CachedBackground } from '../db';
-import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
-
-/** `where(...).between(...)` chain result exposed by the messages-table mock (only what ../db calls). */
-interface MessagesBetweenResult {
-  toArray: () => Promise<CachedMessage[]>;
-  last: () => Promise<CachedMessage | undefined>;
-}
-
-/** `where(...)` clause shape exposed by the messages-table mock. */
-interface MessagesWhereResult {
-  between: (lower: [string, number], upper: [string, number]) => MessagesBetweenResult;
-  equals: (key: string) => { delete: () => Promise<number> };
-  delete: () => Promise<number>;
-}
-
-/** `where(...).between(...)` chain result exposed by the drafts-table mock. */
-interface DraftsBetweenResult {
-  toArray: () => Promise<DraftTurn[]>;
-}
-
-/** `where(...)` clause shape exposed by the drafts-table mock. */
-interface DraftsWhereResult {
-  between: (lower: [string, number], upper: [string, number]) => DraftsBetweenResult;
-  equals: (key: string) => { delete: () => Promise<number> };
-}
-
 /**
- * Mirror of db.ts's private isValidTurnNum: only finite numbers are trusted (poisoned-cache guard).
- * @param turnNum
+ * Unit tests for the Dexie cache wrappers in `../db`, run against the REAL
+ * `HistoryDb` singleton over fake-indexeddb (no Dexie mocks): only the
+ * IndexedDB backend is faked, so every wrapper's dispatch, index choice,
+ * ordering and poisoned-row guard is exercised for real — a regression in
+ * `../db` itself fails here (the pre-rewrite version mocked the whole module
+ * and could never fail on one).
+ *
+ * `character` is covered by character.db.test.ts; the persona preset helpers
+ * by personaPresets.test.ts.
+ *
+ * `import 'fake-indexeddb/auto'` MUST stay the first import: it injects the
+ * fake IndexedDB implementation into globalThis before any module below
+ * evaluates (happy-dom has no IndexedDB, and `../db` creates its Dexie
+ * singleton at module scope).
+ *
+ * Isolation: every test starts from a wiped database (`db.delete()` in the
+ * file-level beforeEach). Dexie 4 marks an instance as deleted by `delete()`
+ * and refuses to AUTO-reopen it afterwards, so explicitly reopen: this
+ * recreates every table at the current version, empty, with a reset
+ * auto-increment key generator.
  */
-function isValidTurnNum(turnNum: unknown): turnNum is number {
-  return typeof turnNum === 'number' && Number.isFinite(turnNum);
-}
-
-// Mock every table the `../db` wrappers touch (messages, sessions, drafts,
-// background, subagentRuns) at the collection level. `character` is already
-// covered by character.db.test.ts. Each table exposes the chain methods
-// (where/between/last/delete/put/bulkPut/bulkDelete/toArray/clear) with
-// explicitly typed vi.fn() declarations (matching the real Dexie chain
-// signatures db.ts calls) so the wrapper dispatch is verifiable.
-const messagesTable = vi.hoisted(() => {
-  const between = vi.fn<(lower: [string, number], upper: [string, number]) => MessagesBetweenResult>();
-  between.mockReturnValue({
-    toArray: vi.fn<() => Promise<CachedMessage[]>>(async () => []),
-    last: vi.fn<() => Promise<CachedMessage | undefined>>(async () => undefined)
-  });
-  const equals = vi.fn<(key: string) => { delete: () => Promise<number> }>();
-  equals.mockReturnValue({ delete: vi.fn(async () => 0) });
-  const where = vi.fn<(index: string) => MessagesWhereResult>();
-  where.mockReturnValue({
-    between,
-    equals,
-    delete: vi.fn(async () => 0)
-  });
-  return {
-    bulkPut: vi.fn<(rows: CachedMessage[]) => Promise<void>>(),
-    where,
-    between
-  };
-});
-
-const sessionsTable = vi.hoisted(() => ({
-  put: vi.fn<(meta: CachedSessionMeta) => Promise<void>>(),
-  toArray: vi.fn<() => Promise<CachedSessionMeta[]>>(),
-  delete: vi.fn<(id: string) => Promise<void>>()
-}));
-
-const draftsTable = vi.hoisted(() => {
-  const between = vi.fn<(lower: [string, number], upper: [string, number]) => DraftsBetweenResult>();
-  between.mockReturnValue({ toArray: vi.fn<() => Promise<DraftTurn[]>>(async () => []) });
-  const equals = vi.fn<(key: string) => { delete: () => Promise<number> }>();
-  equals.mockReturnValue({ delete: vi.fn(async () => 0) });
-  const where = vi.fn<(index: string) => DraftsWhereResult>();
-  where.mockReturnValue({ between, equals });
-  return {
-    put: vi.fn<(draft: DraftTurn) => Promise<void>>(),
-    delete: vi.fn<(key: [string, number]) => Promise<void>>(),
-    where,
-    between
-  };
-});
-
-const backgroundTable = vi.hoisted(() => ({
-  put: vi.fn<(row: CachedBackground) => Promise<void>>(),
-  get: vi.fn<(key: string) => Promise<CachedBackground | undefined>>()
-}));
-
-const subagentRunsTable = vi.hoisted(() => ({
-  bulkPut: vi.fn<(runs: CachedSubagentRun[]) => Promise<void>>(),
-  toArray: vi.fn<() => Promise<CachedSubagentRun[]>>(),
-  bulkDelete: vi.fn<(ids: string[]) => Promise<void>>(),
-  clear: vi.fn<() => Promise<void>>()
-}));
-
-vi.mock('../db', () => ({
-  GLOBAL_SESSION_KEY: '__global__',
-  MIN_KEY: -Infinity,
-  MAX_KEY: Infinity,
-  DEFAULT_CACHED_CHARACTER: {},
-  db: {
-    messages: messagesTable,
-    sessions: sessionsTable,
-    drafts: draftsTable,
-    background: backgroundTable,
-    subagentRuns: subagentRunsTable
-  },
-  cacheMessages: async (rows: CachedMessage[]) => {
-    if (!rows || rows.length === 0) return;
-    await messagesTable.bulkPut(rows);
-  },
-  readCachedMessages: async (sessionId: string) => {
-    const rows = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
-    return rows.filter(row => isValidTurnNum(row.turn_num));
-  },
-  cachedMaxTurnNum: async (sessionId: string) => {
-    const last = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).last();
-    if (last && isValidTurnNum(last.turn_num)) return last.turn_num;
-    const rows = await messagesTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
-    return rows.reduce((max, row) => (isValidTurnNum(row.turn_num) && row.turn_num > max ? row.turn_num : max), 0);
-  },
-  clearCachedSession: async (sessionId: string) => {
-    await messagesTable.where('session_id').equals(sessionId).delete();
-  },
-  cacheSessionMeta: async (meta: CachedSessionMeta) => {
-    await sessionsTable.put(meta);
-  },
-  readCachedSessionMetaList: async () => {
-    const list = await sessionsTable.toArray();
-    return list.sort((a, b) => b.updatedAt - a.updatedAt);
-  },
-  clearCachedSessionMeta: async (sessionId: string) => {
-    await sessionsTable.delete(sessionId);
-  },
-  saveDraftTurn: async (draft: DraftTurn) => {
-    await draftsTable.put(draft);
-  },
-  readDraftTurns: async (sessionId: string) => {
-    return draftsTable.where('_').between([sessionId, -Infinity], [sessionId, Infinity]).toArray();
-  },
-  clearDraftTurn: async (sessionId: string, turnNum: number) => {
-    await draftsTable.delete([sessionId, turnNum]);
-  },
-  clearDraftSession: async (sessionId: string) => {
-    await draftsTable.where('session_id').equals(sessionId).delete();
-  },
-  saveBackground: async (backgroundUrl: string, backgroundOpacity: number) => {
-    await backgroundTable.put({ session_id: '__global__', backgroundUrl, backgroundOpacity });
-  },
-  readBackgroundConfig: async () => {
-    const row = await backgroundTable.get('__global__');
-    if (!row?.backgroundUrl) return undefined;
-    return { backgroundUrl: row.backgroundUrl, backgroundOpacity: row.backgroundOpacity ?? 0 };
-  },
-  cacheSubagentRuns: async (runs: CachedSubagentRun[]) => {
-    if (!runs || runs.length === 0) return;
-    await subagentRunsTable.bulkPut(runs);
-  },
-  readCachedSubagentRuns: async () => {
-    const list = await subagentRunsTable.toArray();
-    return [...list].sort((a, b) => Number(b.run_id) - Number(a.run_id));
-  },
-  deleteCachedSubagentRuns: async (runIds: string[]) => {
-    if (!runIds || runIds.length === 0) return;
-    await subagentRunsTable.bulkDelete(runIds);
-  },
-  clearCachedSubagentRuns: async () => {
-    await subagentRunsTable.clear();
-  },
-  cacheCharacter: async () => undefined,
-  readCachedCharacter: async () => undefined,
-  clearCachedCharacter: async () => undefined
-}));
-
+import 'fake-indexeddb/auto';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type { CachedMessage, CachedSessionMeta, DraftTurn, CachedSubagentRun } from '../db';
 import {
+  db,
   GLOBAL_SESSION_KEY,
   cacheMessages,
   readCachedMessages,
@@ -193,6 +44,7 @@ import {
   deleteCachedSubagentRuns,
   clearCachedSubagentRuns
 } from '../db';
+import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
 
 const msg = (over: Partial<CachedMessage> = {}): CachedMessage => ({
   id: 1,
@@ -253,130 +105,115 @@ const run = (over: Partial<CachedSubagentRun> = {}): CachedSubagentRun => ({
   ...over
 });
 
-beforeEach(() => {
-  messagesTable.bulkPut.mockClear();
-  messagesTable.where.mockClear();
-  messagesTable.between.mockClear();
-  sessionsTable.put.mockClear();
-  sessionsTable.toArray.mockClear();
-  sessionsTable.delete.mockClear();
-  draftsTable.put.mockClear();
-  draftsTable.delete.mockClear();
-  draftsTable.where.mockClear();
-  draftsTable.between.mockClear();
-  backgroundTable.put.mockClear();
-  backgroundTable.get.mockClear();
-  backgroundTable.get.mockResolvedValue(undefined);
-  subagentRunsTable.bulkPut.mockClear();
-  subagentRunsTable.toArray.mockClear();
-  subagentRunsTable.toArray.mockResolvedValue([]);
-  subagentRunsTable.bulkDelete.mockClear();
-  subagentRunsTable.clear.mockClear();
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
 });
 
 describe('cacheMessages', () => {
   it('no-ops on an empty array', async () => {
     await cacheMessages([]);
-    expect(messagesTable.bulkPut).not.toHaveBeenCalled();
+    expect(await db.messages.count()).toBe(0);
   });
 
-  it('bulkPuts non-empty rows deduplicated by id on the backend shape', async () => {
-    const rows = [msg({ id: 1 }), msg({ id: 2, turn_num: 2 })];
-    await cacheMessages(rows);
-    expect(messagesTable.bulkPut).toHaveBeenCalledWith(rows);
+  it('upserts rows deduplicated by id (a re-cached id overwrites)', async () => {
+    await cacheMessages([msg({ id: 1, content: 'v1' }), msg({ id: 2, turn_num: 2 })]);
+    await cacheMessages([msg({ id: 1, content: 'v2' })]);
+
+    expect(await db.messages.count()).toBe(2);
+    await expect(db.messages.get(1)).resolves.toMatchObject({ id: 1, content: 'v2' });
   });
 });
 
 describe('readCachedMessages', () => {
-  it('queries the compound [session_id+turn_num] index between session bounds', async () => {
-    const rows = [msg({ id: 1 }), msg({ id: 2, turn_num: 2 })];
-    messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => rows), last: vi.fn(async () => undefined) });
+  it('returns only the session rows, ordered by turn_num ascending', async () => {
+    // Seeded out of order and mixed with another session's rows: the compound
+    // [session_id+turn_num] index must scope AND order the result for real.
+    await cacheMessages([
+      msg({ id: 1, turn_num: 3 }),
+      msg({ id: 2, turn_num: 1 }),
+      msg({ id: 3, turn_num: 2 }),
+      msg({ id: 4, session_id: 'ses_B', turn_num: 0 })
+    ]);
 
-    await expect(readCachedMessages('ses_A')).resolves.toEqual(rows);
-    expect(messagesTable.where).toHaveBeenCalledWith('_');
-    expect(messagesTable.between).toHaveBeenCalledWith(['ses_A', -Infinity], ['ses_A', Infinity]);
+    await expect(readCachedMessages('ses_A')).resolves.toEqual([
+      expect.objectContaining({ id: 2 }),
+      expect.objectContaining({ id: 3 }),
+      expect.objectContaining({ id: 1 })
+    ]);
   });
 
   it('drops rows with a non-numeric turn_num (poisoned rows must not reach sorters)', async () => {
-    const poisoned = [
+    // IndexedDB rejects NaN keys outright, so a poisoned row can only carry a
+    // STRING turn_num (written by an older buggy build) — which sorts AFTER all
+    // numbers and lands at the end of the index.
+    await db.messages.bulkPut([
       msg({ id: 1, turn_num: 1 }),
       msg({ id: 2, turn_num: 'corrupt' as unknown as number }),
-      msg({ id: 3, turn_num: Number.NaN }),
-      msg({ id: 4, turn_num: 2 })
-    ];
-    messagesTable.between.mockReturnValue({
-      toArray: vi.fn(async () => poisoned),
-      last: vi.fn(async () => undefined)
-    });
+      msg({ id: 3, turn_num: 2 })
+    ]);
 
-    // Only the finite-number rows survive: one NaN/garbage turn_num makes
+    // Only the finite-number rows survive: one garbage turn_num makes
     // `(a.turn_num - b.turn_num)` NaN and destabilizes the whole sort.
-    await expect(readCachedMessages('ses_A')).resolves.toEqual([poisoned[0], poisoned[3]]);
+    await expect(readCachedMessages('ses_A')).resolves.toEqual([
+      expect.objectContaining({ id: 1 }),
+      expect.objectContaining({ id: 3 })
+    ]);
   });
 });
 
 describe('cachedMaxTurnNum', () => {
-  it('returns the last row turn_num when cache is non-empty', async () => {
-    messagesTable.between.mockReturnValue({
-      toArray: vi.fn(async () => []),
-      last: vi.fn(async () => msg({ turn_num: 5 }))
-    });
+  it('returns the max turn_num when the cache is non-empty', async () => {
+    await cacheMessages([msg({ id: 1, turn_num: 5 }), msg({ id: 2, turn_num: 2 })]);
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(5);
   });
 
   it('returns 0 when the session has no cached rows', async () => {
-    messagesTable.between.mockReturnValue({ toArray: vi.fn(async () => []), last: vi.fn(async () => undefined) });
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(0);
   });
 
   it('falls back to the max over valid rows when the last row is poisoned', async () => {
-    const corrupt = msg({ id: 2, turn_num: 'corrupt' as unknown as number });
-    messagesTable.between.mockReturnValue({
-      toArray: vi.fn(async () => [msg({ id: 1, turn_num: 3 }), corrupt]),
-      last: vi.fn(async () => corrupt)
-    });
-    // Strings sort after all numbers in IndexedDB, so a poisoned row lands
+    // Strings sort after all numbers in IndexedDB, so the poisoned row lands
     // last; the numeric max must come from a scan over valid rows instead.
+    await db.messages.bulkPut([
+      msg({ id: 1, turn_num: 3 }),
+      msg({ id: 2, turn_num: 'corrupt' as unknown as number })
+    ]);
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(3);
   });
 
   it('returns 0 when every cached row is poisoned (forces a full refetch)', async () => {
-    const corrupt = msg({ id: 1, turn_num: 'corrupt' as unknown as number });
-    messagesTable.between.mockReturnValue({
-      toArray: vi.fn(async () => [corrupt]),
-      last: vi.fn(async () => corrupt)
-    });
+    await db.messages.bulkPut([msg({ id: 1, turn_num: 'corrupt' as unknown as number })]);
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(0);
   });
 });
 
 describe('clearCachedSession', () => {
-  it('deletes all messages of a session by its session_id column', async () => {
-    const del = vi.fn(async () => 0);
-    messagesTable.where.mockReturnValue({
-      between: vi.fn<MessagesWhereResult['between']>(),
-      equals: vi.fn(() => ({ delete: del })),
-      delete: vi.fn(async () => 0)
-    });
+  it('deletes only the given session messages, another session survives', async () => {
+    await cacheMessages([
+      msg({ id: 1 }),
+      msg({ id: 2, turn_num: 2 }),
+      msg({ id: 3, session_id: 'ses_B' })
+    ]);
     await clearCachedSession('ses_A');
-    expect(messagesTable.where).toHaveBeenCalledWith('session_id');
-    expect(del).toHaveBeenCalledTimes(1);
+
+    await expect(readCachedMessages('ses_A')).resolves.toEqual([]);
+    await expect(readCachedMessages('ses_B')).resolves.toHaveLength(1);
   });
 });
 
 describe('session meta (cacheSessionMeta / readCachedSessionMetaList / clearCachedSessionMeta)', () => {
-  it('writes a placeholder via sessions.put', async () => {
+  it('writes a placeholder that reads back by id', async () => {
     const meta: CachedSessionMeta = { id: 'ses_NEW', title: '新建对话', createTime: 'x', updatedAt: 2 };
     await cacheSessionMeta(meta);
-    expect(sessionsTable.put).toHaveBeenCalledWith(meta);
+    await expect(db.sessions.get('ses_NEW')).resolves.toEqual(meta);
   });
 
   it('reads all sessions sorted by updatedAt descending (newest first)', async () => {
-    sessionsTable.toArray.mockResolvedValue([
-      { id: 'a', title: 'a', createTime: 'x', updatedAt: 1 },
-      { id: 'b', title: 'b', createTime: 'x', updatedAt: 3 },
-      { id: 'c', title: 'c', createTime: 'x', updatedAt: 2 }
-    ]);
+    await cacheSessionMeta({ id: 'a', title: 'a', createTime: 'x', updatedAt: 1 });
+    await cacheSessionMeta({ id: 'b', title: 'b', createTime: 'x', updatedAt: 3 });
+    await cacheSessionMeta({ id: 'c', title: 'c', createTime: 'x', updatedAt: 2 });
+
     await expect(readCachedSessionMetaList()).resolves.toEqual([
       expect.objectContaining({ id: 'b' }),
       expect.objectContaining({ id: 'c' }),
@@ -384,110 +221,118 @@ describe('session meta (cacheSessionMeta / readCachedSessionMetaList / clearCach
     ]);
   });
 
-  it('deletes a placeholder by id via sessions.delete', async () => {
-    await clearCachedSessionMeta('ses_NEW');
-    expect(sessionsTable.delete).toHaveBeenCalledWith('ses_NEW');
+  it('deletes a placeholder by id, leaving the others', async () => {
+    await cacheSessionMeta({ id: 'a', title: 'a', createTime: 'x', updatedAt: 1 });
+    await cacheSessionMeta({ id: 'b', title: 'b', createTime: 'x', updatedAt: 2 });
+    await clearCachedSessionMeta('a');
+
+    const rest = await readCachedSessionMetaList();
+    expect(rest.map(m => m.id)).toEqual(['b']);
   });
 });
 
 describe('drafts (saveDraftTurn / readDraftTurns / clearDraftTurn / clearDraftSession)', () => {
-  it('writes a whole-turn draft via drafts.put', async () => {
-    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msgItem()] };
-    await saveDraftTurn(draft);
-    expect(draftsTable.put).toHaveBeenCalledWith(draft);
-  });
+  it('writes whole-turn drafts and reads them back ordered by turn_num', async () => {
+    await saveDraftTurn({ session_id: 'ses_A', turn_num: 2, messages: [msgItem({ id: -2, turn_num: 2 })] });
+    await saveDraftTurn({ session_id: 'ses_A', turn_num: 1, messages: [msgItem({ id: -1, turn_num: 1 })] });
 
-  it('reads drafts by compound key bounds', async () => {
-    const draft: DraftTurn = { session_id: 'ses_A', turn_num: 1, messages: [msgItem()] };
-    draftsTable.between.mockReturnValue({ toArray: vi.fn(async () => [draft]) });
-    await expect(readDraftTurns('ses_A')).resolves.toEqual([draft]);
-    expect(draftsTable.between).toHaveBeenCalledWith(['ses_A', -Infinity], ['ses_A', Infinity]);
+    const drafts = await readDraftTurns('ses_A');
+    expect(drafts.map(d => d.turn_num)).toEqual([1, 2]);
+    expect(drafts[0]!.messages[0]).toMatchObject({ id: -1, role: CHAT_ROLE.USER });
   });
 
   it('deletes a single draft by the [session_id+turn_num] composite key', async () => {
+    await saveDraftTurn({ session_id: 'ses_A', turn_num: 1, messages: [msgItem()] });
+    await saveDraftTurn({ session_id: 'ses_A', turn_num: 2, messages: [msgItem({ id: -2, turn_num: 2 })] });
     await clearDraftTurn('ses_A', 1);
-    expect(draftsTable.delete).toHaveBeenCalledWith(['ses_A', 1]);
+
+    const drafts = await readDraftTurns('ses_A');
+    expect(drafts.map(d => d.turn_num)).toEqual([2]);
   });
 
-  it('clears every draft of a session by its session_id column', async () => {
-    const del = vi.fn(async () => 0);
-    draftsTable.where.mockReturnValue({
-      between: vi.fn<DraftsWhereResult['between']>(),
-      equals: vi.fn(() => ({ delete: del }))
-    });
+  it('clears every draft of a session, another session survives', async () => {
+    await saveDraftTurn({ session_id: 'ses_A', turn_num: 1, messages: [msgItem()] });
+    await saveDraftTurn({ session_id: 'ses_B', turn_num: 1, messages: [msgItem({ session_id: 'ses_B' })] });
     await clearDraftSession('ses_A');
-    expect(draftsTable.where).toHaveBeenCalledWith('session_id');
-    expect(del).toHaveBeenCalledTimes(1);
+
+    await expect(readDraftTurns('ses_A')).resolves.toEqual([]);
+    await expect(readDraftTurns('ses_B')).resolves.toHaveLength(1);
   });
 });
 
 describe('background (saveBackground / readBackgroundConfig)', () => {
-  it('writes the global background row under GLOBAL_SESSION_KEY', async () => {
-    await saveBackground('data:image/png;base64,ZZZ', 40);
-    expect(backgroundTable.put).toHaveBeenCalledWith({
-      session_id: GLOBAL_SESSION_KEY,
-      backgroundUrl: 'data:image/png;base64,ZZZ',
-      backgroundOpacity: 40
-    });
-  });
+  it('round-trips the global background row under GLOBAL_SESSION_KEY', async () => {
+    await saveBackground('data:image/png;base64,ZZZ', 55);
 
-  it('defaults opacity to 0 when the row has no backgroundUrl (unset)', async () => {
-    backgroundTable.get.mockResolvedValue(undefined);
-    await expect(readBackgroundConfig()).resolves.toBeUndefined();
-  });
-
-  it('returns the full config when a backgroundUrl is set', async () => {
-    backgroundTable.get.mockResolvedValue({
-      session_id: GLOBAL_SESSION_KEY,
-      backgroundUrl: 'data:image/png;base64,ZZZ',
-      backgroundOpacity: 55
-    });
     await expect(readBackgroundConfig()).resolves.toEqual({
       backgroundUrl: 'data:image/png;base64,ZZZ',
       backgroundOpacity: 55
     });
+    // The row really is the single global one, not a per-session copy.
+    await expect(db.background.count()).resolves.toBe(1);
+  });
+
+  it('resolves to undefined when no row exists', async () => {
+    await expect(readBackgroundConfig()).resolves.toBeUndefined();
   });
 
   it('treats a row with an empty backgroundUrl as unset', async () => {
-    backgroundTable.get.mockResolvedValue({
+    await db.background.put({ session_id: GLOBAL_SESSION_KEY, backgroundUrl: '', backgroundOpacity: 0 });
+    await expect(readBackgroundConfig()).resolves.toBeUndefined();
+  });
+
+  it('defaults opacity to 0 on a legacy row written without one', async () => {
+    await db.background.put({
       session_id: GLOBAL_SESSION_KEY,
-      backgroundUrl: '',
+      backgroundUrl: 'data:image/png;base64,ZZZ',
+      backgroundOpacity: undefined
+    });
+    await expect(readBackgroundConfig()).resolves.toEqual({
+      backgroundUrl: 'data:image/png;base64,ZZZ',
       backgroundOpacity: 0
     });
-    await expect(readBackgroundConfig()).resolves.toBeUndefined();
   });
 });
 
 describe('subagentRuns (cache / read / delete / clear)', () => {
   it('cacheSubagentRuns no-ops on an empty list', async () => {
     await cacheSubagentRuns([]);
-    expect(subagentRunsTable.bulkPut).not.toHaveBeenCalled();
+    expect(await db.subagentRuns.count()).toBe(0);
   });
 
-  it('cacheSubagentRuns bulkPuts records keyed by run_id', async () => {
-    const runs = [run({ run_id: '1' }), run({ run_id: '2' })];
-    await cacheSubagentRuns(runs);
-    expect(subagentRunsTable.bulkPut).toHaveBeenCalledWith(runs);
+  it('cacheSubagentRuns upserts records keyed by run_id', async () => {
+    await cacheSubagentRuns([run({ run_id: '1' })]);
+    await cacheSubagentRuns([run({ run_id: '1', task: 'updated' }), run({ run_id: '2' })]);
+
+    expect(await db.subagentRuns.count()).toBe(2);
+    await expect(db.subagentRuns.get('1')).resolves.toMatchObject({ run_id: '1', task: 'updated' });
   });
 
-  it('readCachedSubagentRuns sorts newest run_id first', async () => {
-    subagentRunsTable.toArray.mockResolvedValue([run({ run_id: '1' }), run({ run_id: '3' }), run({ run_id: '10' })]);
-    const result = await readCachedSubagentRuns();
-    expect(result.map(r => r.run_id)).toEqual(['10', '3', '1']);
+  it('readCachedSubagentRuns sorts newest run_id first (numeric, not lexicographic)', async () => {
+    await cacheSubagentRuns([run({ run_id: '1' }), run({ run_id: '3' }), run({ run_id: '10' })]);
+    await expect(readCachedSubagentRuns()).resolves.toEqual([
+      expect.objectContaining({ run_id: '10' }),
+      expect.objectContaining({ run_id: '3' }),
+      expect.objectContaining({ run_id: '1' })
+    ]);
   });
 
   it('deleteCachedSubagentRuns no-ops on an empty list', async () => {
     await deleteCachedSubagentRuns([]);
-    expect(subagentRunsTable.bulkDelete).not.toHaveBeenCalled();
+    expect(await db.subagentRuns.count()).toBe(0);
   });
 
-  it('deleteCachedSubagentRuns bulkDeletes the given run_ids', async () => {
-    await deleteCachedSubagentRuns(['1', '2', '3']);
-    expect(subagentRunsTable.bulkDelete).toHaveBeenCalledWith(['1', '2', '3']);
+  it('deleteCachedSubagentRuns removes only the given run_ids', async () => {
+    await cacheSubagentRuns([run({ run_id: '1' }), run({ run_id: '2' }), run({ run_id: '3' })]);
+    await deleteCachedSubagentRuns(['1', '3']);
+
+    const rest = await readCachedSubagentRuns();
+    expect(rest.map(r => r.run_id)).toEqual(['2']);
   });
 
   it('clearCachedSubagentRuns empties the whole table', async () => {
+    await cacheSubagentRuns([run({ run_id: '1' })]);
     await clearCachedSubagentRuns();
-    expect(subagentRunsTable.clear).toHaveBeenCalledTimes(1);
+    expect(await db.subagentRuns.count()).toBe(0);
   });
 });

@@ -158,7 +158,7 @@ export async function fetchGitGraph(
 }
 
 /**
- * Move the current branch to a commit (the panel's 回退 action).
+ * Move the current branch to a commit (the panel's Reset action).
  * @param sessionId Session whose project directory is written.
  * @param hash Target commit (any revision git can resolve to a commit).
  * @param mode `soft` keeps the changes staged, `mixed` unstages them, `hard` discards them.

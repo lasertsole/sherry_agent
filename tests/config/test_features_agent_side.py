@@ -162,7 +162,6 @@ SPOT_DEFAULTS = [
     (MAX_TOKENS_BOOST, "max_cap", 32_768),
     (MAX_TOKENS_BOOST, "max_retries", 3),
     (SUBAGENT_ISOLATION, "branch_prefix", "sherry/"),
-    (SUBAGENT_ISOLATION, "repo_marker_name", ".sherry/isolation-repo"),
     (SUBAGENT_ISOLATION, "include_copy", [".omo"]),
     (SUBAGENT_INFRA, "registry_store_busy_timeout_ms", 5000),
     (SUBAGENT_INFRA, "registry_init_wait_timeout_s", 10.0),
@@ -199,10 +198,6 @@ SPOT_DEFAULTS = [
     (TOOLS_TIMEOUTS, "file_tools_search_max_matches", 10_000),
     (TOOLS_TIMEOUTS, "file_tools_search_time_budget_s", 5.0),
     (TOOLS_TIMEOUTS, "file_tools_search_prune_dirs", ["proc", "sys", "dev"]),
-    (HITL_DEFAULTS, "block_recurrence_limit", 3),
-    (HITL_DEFAULTS, "default_timeout", 60),
-    (HITL_DEFAULTS, "default_clarify_timeout", 3600),
-    (HITL_DEFAULTS, "default_description_prefix", "Action requires human approval"),
     # auto_edit never asks for a file change; the ask-once reminder is opt-in
     # (the confirm_all mode gates every change regardless of this flag).
     (HITL_DEFAULTS, "first_call_confirmation_enabled", False),

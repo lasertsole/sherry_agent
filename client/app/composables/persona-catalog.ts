@@ -1,6 +1,6 @@
 /**
  * The persona preset catalogue: the built-in entries plus the helpers the three
- * surfaces share — the 预设 panel, the mandatory new-session dialog and the
+ * surfaces share — the preset panel, the mandatory new-session dialog and the
  * top-bar preset viewer.
  *
  * A preset is a named payload of persona files + the character block (both role
@@ -44,18 +44,18 @@ export interface PresetEntry {
  * The built-in entries, in display order — the whole spectrum, read top to
  * bottom:
  *
- * - 纯净 (`pure`): nobody named, no persona content at all, only the catalogue's
+ * - Pure (`pure`): nobody named, no persona content at all, only the catalogue's
  *   REQUIRED tools and every optional middleware off — the bare floor a session
  *   can run on;
- * - 编程助手 (`coding`): the operating-rules template, empty soul / user profile,
+ * - Coding Assistant (`coding`): the operating-rules template, empty soul / user profile,
  *   no roles, every tool on;
- * - 情感陪伴 (`companion`): the full role-play persona with the orchestration
- *   surfaces switched off (no 任务与计划 / 子代理 tools, no optional middleware);
- * - 全量 (`sherry`): the DEFAULT — the full persona with every tool and switch on.
+ * - Companion (`companion`): the full role-play persona with the orchestration
+ *   surfaces switched off (no Tasks & planning / subagent tools, no optional middleware);
+ * - Full (`sherry`): the DEFAULT — the full persona with every tool and switch on.
  *
  * The `sherry` ID is kept as-is: sessions already bound to this built-in store
- * it in their 当前会话预设 binding, and only the LABEL became 全量 (the shipped
- * character is still 橘雪莉 — the preset names the configuration, not the role).
+ * it in their current-session preset binding, and only the LABEL became Full (the shipped
+ * character is still 橘雪莉 (Sherry) — the preset names the configuration, not the role).
  */
 export const BUILTIN_PRESETS: ReadonlyArray<{
   id: BuiltinPresetId;
@@ -84,7 +84,7 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   }
 ];
 
-/** The preset a session gets when nothing else is chosen (the full 全量 setup). */
+/** The preset a session gets when nothing else is chosen (Full, the full setup). */
 export const DEFAULT_PRESET_ID: BuiltinPresetId = 'sherry';
 
 /**
@@ -130,7 +130,7 @@ export function entryName(entry: PresetEntry, t: TranslateFn): string {
  * (the templates in `workspace/template/<lang>/ROLE.md` carry the same shape).
  *
  * A blank name contributes NO line, and both blank yields an empty file — the
- * prompt then gains no ROLE block at all (the 编程助手 built-in relies on this).
+ * prompt then gains no ROLE block at all (the Coding Assistant built-in relies on this).
  * @param character Role names to state.
  * @param t The component's translate function.
  * @returns The ROLE.md text ('' when neither role is named).
@@ -158,18 +158,18 @@ export interface PresetCatalogFacts {
   skills: ReadonlyArray<{ name: string; required?: boolean }>;
 }
 
-/** Tools 编程助手 turns off on top of its own selection (the memory store). */
+/** Tools Coding Assistant turns off on top of its own selection (the memory store). */
 export const CODING_DISABLED_TOOLS: readonly string[] = ['memory'];
 
-/** Skills 编程助手 keeps besides the required chain (the work flow tools). */
+/** Skills Coding Assistant keeps besides the required chain (the work flow tools). */
 export const CODING_SKILLS: readonly string[] = ['bugfix-contract', 'code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
 
-/** Tool groups 情感陪伴 keeps OFF entirely: the orchestration surfaces. */
+/** Tool groups Companion keeps OFF entirely: the orchestration surfaces. */
 export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
 
 /**
- * The 运行守则 sections 情感陪伴 drops, per UI language: the task-orchestration
- * doctrine (编排者信条 / 何时创建 Todo / 委派 / 转换屏障 / 完成契约 / 反模式) and
+ * The Operating Instructions sections Companion drops, per UI language: the task-orchestration
+ * doctrine (the literal headings 编排者信条 / 何时创建 Todo / 委派 / 转换屏障 / 完成契约 / 反模式) and
  * the two task bullets of the first section. A companion preset is not an
  * orchestrator, so the text that would steer it into planning-and-delegating is
  * removed rather than left to fight the preset's tool set.
@@ -186,7 +186,7 @@ export const COMPANION_DROPPED_SECTIONS: Record<string, { sections: string[]; bu
 };
 
 /**
- * The SOUL.md line 情感陪伴 drops, per UI language: the couple relationship
+ * The SOUL.md line Companion drops, per UI language: the couple relationship
  * with 远野汉娜 that the shipped templates carry.
  *
  * The companion preset keeps the persona's warmth, curiosity and tone; only the
@@ -225,13 +225,13 @@ export function stripRelationshipLines(text: string, locale: string): string {
 }
 
 /**
- * Strip the task / orchestration content out of one 运行守则 template (see
+ * Strip the task / orchestration content out of one Operating Instructions template (see
  * {@link COMPANION_DROPPED_SECTIONS}).
  *
  * A dropped SECTION runs from its heading to the next heading of the same or a
  * higher level (the shipped templates end with it). A dropped BULLET is one
  * ``- **label**`` line anywhere; a section left without any content is dropped
- * as well, so the empty husk of 运行守则 does not survive. Unknown languages and
+ * as well, so the empty husk of the operating rules does not survive. Unknown languages and
  * templates without a match come back untouched.
  * @param text The AGENTS.md template.
  * @param locale UI locale selecting the match list.
@@ -300,19 +300,19 @@ export function presetCatalogFacts(store: {
 /**
  * The agent block a built-in pins ({} = every default).
  *
- * - 纯净: only the catalogue's required tools and skills — the locked set the
+ * - Pure: only the catalogue's required tools and skills — the locked set the
  *   service would refuse to drop anyway, so the preset states the floor
  *   explicitly — and every optional middleware off;
- * - 编程助手: every tool except the memory store, the required skills plus the
+ * - Coding Assistant: every tool except the memory store, the required skills plus the
  *   four work-flow skills (`CODING_SKILLS`), and every optional middleware on;
- * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, every optional
- *   middleware off, and every NON-required skill except 编程助手's four (the two
+ * - Companion: every tool EXCEPT the Tasks & planning / subagent groups, every optional
+ *   middleware off, and every NON-required skill except Coding Assistant's four (the two
  *   presets split the index between them);
- * - 全量: no opinion (every tool, every switch on, every skill in the index, and
+ * - Full: no opinion (every tool, every switch on, every skill in the index, and
  *   the Summarization nudge left ON).
  *
  * The compression nudge (`middleware_options.Summarization.nudge`) is pinned OFF
- * by the three restricted presets and left at its default by 全量 — it is the
+ * by the three restricted presets and left at its default by Full — it is the
  * full-setup preset that keeps it.
  *
  * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
@@ -337,7 +337,7 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
   if (id !== 'coding' && facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
   }
-  // Only 全量 leaves the compression nudge on (its absence = the default).
+  // Only Full leaves the compression nudge on (its absence = the default).
   block.middleware_options = { Summarization: { nudge: false } };
   return block;
 }
@@ -352,7 +352,7 @@ function builtinSkills(id: BuiltinPresetId, skills: PresetCatalogFacts['skills']
   const required = skills.filter(skill => skill.required === true);
   const optional = skills.filter(skill => skill.required !== true);
   if (id === 'pure' || id === 'sherry') {
-    // 纯净 keeps the locked floor only; 全量 has no opinion (every skill).
+    // Pure keeps the locked floor only; Full has no opinion (every skill).
     return id === 'pure' ? required : skills;
   }
   const codingPicks = new Set(CODING_SKILLS);
@@ -370,7 +370,7 @@ export interface PersonaPresetPayload {
   /** Role names + avatars (written to the Dexie global profile). */
   character: PresetCharacter;
   /**
-   * The 工具 / 中间件 / 子代理模型 / 技能 selection (written to the session's agent
+   * The Tools / Middlewares / Agent models / Skills selection (written to the session's agent
    * config when the apply path knows its session). `{}` = every default: all
    * tools, all switches on, every role on its `model_tier`, every skill in the
    * prompt's index.
@@ -388,20 +388,20 @@ export interface PersonaPresetPayload {
 /**
  * The payload of a built-in entry, composed from the language template.
  *
- * - 纯净: EVERY persona file empty (no operating rules either) and nobody named
+ * - Pure: EVERY persona file empty (no operating rules either) and nobody named
  *   — the clean slate — plus an agent block that keeps only the required tools
  *   and turns every optional middleware off;
- * - 编程助手: the operating rules only — soul and user profile EMPTY, and BOTH
+ * - Coding Assistant: the operating rules only — soul and user profile EMPTY, and BOTH
  *   role names empty (no role statement: the prompt gains no ROLE block);
- * - 情感陪伴: the full template with the task-orchestration content stripped
- *   from 运行守则 (a companion is not an orchestrator) and the couple-relationship
+ * - Companion: the full template with the task-orchestration content stripped
+ *   from the Operating Instructions (a companion is not an orchestrator) and the couple-relationship
  *   line stripped from SOUL, plus the default names;
- * - 全量: the full template plus the shipped default names.
+ * - Full: the full template plus the shipped default names.
  * @param id Built-in entry id.
  * @param template The language template (`readSystemPromptTemplate`), already fetched.
  * @param t The component's translate function.
- * @param facts The loaded catalogue (drives 纯净 / 情感陪伴's agent block).
- * @param locale UI locale (selects 情感陪伴's section-strip list).
+ * @param facts The loaded catalogue (drives Pure / Companion's agent block).
+ * @param locale UI locale (selects Companion's section-strip list).
  * @returns The apply payload (ROLE.md composed from the character).
  */
 export function builtinPayload(
@@ -415,7 +415,7 @@ export function builtinPayload(
   const character: PresetCharacter = named
     ? { ...DEFAULT_CACHED_CHARACTER }
     : {
-        // 纯净 / 编程助手 name nobody — both roles render the neutral gray
+        // Pure / Coding Assistant name nobody — both roles render the neutral gray
         // placeholder (DEFAULT_PLACEHOLDER_AVATAR) instead of an avatar.
         aiName: '',
         aiAvatar: '',
@@ -438,7 +438,7 @@ export function builtinPayload(
   }
   content['ROLE.md'] = composeRoleFile(character, t);
   // No built-in pins a model: `null` = follow the environment config, which is
-  // also what the panel's 主代理 sub-tab starts at.
+  // also what the panel's Main agent sub-tab starts at.
   return { content, character, agent: builtinAgentConfig(id, facts), mainModel: null };
 }
 
@@ -466,7 +466,7 @@ export async function loadPresetPayload(
   const character: PresetCharacter = preset.character ?? { ...DEFAULT_CACHED_CHARACTER };
   return {
     agent: preset.agent ?? {},
-    // A preset saved before the 主代理 sub-tab existed has no choice: null = the
+    // A preset saved before the Main agent sub-tab existed has no choice: null = the
     // environment config, which is what its draft displayed too.
     mainModel: preset.main_model ?? null,
     content: {
@@ -482,8 +482,8 @@ export async function loadPresetPayload(
 /**
  * Write a preset payload: the persona files through the API (read back and
  * verified), the character into the Dexie global profile new sessions copy, and
- * — when the caller names the session — the agent config (工具 / 中间件 /
- * 子代理模型) into that session's own registers.
+ * — when the caller names the session — the agent config (Tools / Middlewares /
+ * Agent models) into that session's own registers.
  * @param payload Payload to apply.
  * @param sessionId Session to write the agent config for; omitted = files and
  *   character only (no session exists yet).

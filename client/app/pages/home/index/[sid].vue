@@ -1031,7 +1031,7 @@ function selectionRoleLabel(role?: string): string {
 }
 
 /**
- * "添加到当前会话": insert the selected text as a quote chip at the caret.
+ * "添加到当前会话" (add to this conversation): insert the selected text as a quote chip at the caret.
  * @param payload The quoted selection.
  */
 function onSelectionAdd(payload: SelectionPayload): void {
@@ -1040,7 +1040,7 @@ function onSelectionAdd(payload: SelectionPayload): void {
 }
 
 /**
- * "在辅助会话中提问": create a normal session derived from this one (same
+ * "在辅助会话中提问" (ask in a side session): create a normal session derived from this one (same
  * preset binding and character snapshot, no subagent semantics), open it in a
  * right-sidebar side-chat tab and hand it the quoted text.
  *

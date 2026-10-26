@@ -68,7 +68,7 @@ from agent.tools.taskflow.registry import store_sqlite as flow_store
 from config import SESSIONS_DIR
 from runtime import state_register_db
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 
 
 # ---------------------------------------------------------------------------

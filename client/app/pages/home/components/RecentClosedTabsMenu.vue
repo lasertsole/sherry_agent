@@ -19,7 +19,7 @@
     <div
       class="w-60"
       data-test="recent-closed-menu">
-      <!-- Two groups, mirroring the strip's 当前会话 / 全局 pills. -->
+      <!-- Two groups, mirroring the strip's This session / Global pills. -->
       <div
         class="flex shrink-0 items-center gap-0.5 rounded-full border border-solid border-gray-200/80 bg-gray-100/80 p-0.5 dark:border-gray-700/80 dark:bg-gray-800/80"
         data-test="recent-closed-scopes">

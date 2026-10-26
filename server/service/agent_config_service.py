@@ -177,7 +177,7 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             missing = sorted(set(wanted) - known)
             if missing:
                 raise AgentConfigError(f"unknown tool(s): {', '.join(missing)}")
-            # REQUIRED tools can never be left out (the 工具 tab shows them locked).
+            # REQUIRED tools can never be left out (the Tools tab shows them locked).
             dropped_required = sorted(_required_tool_names() - set(wanted))
             if dropped_required:
                 raise AgentConfigError(

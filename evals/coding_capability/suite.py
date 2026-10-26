@@ -431,7 +431,7 @@ def _coding_preset_payload() -> dict[str, Any]:
 
     # The catalogue's own static name source (``tool_catalog()`` reads the live
     # tool list, which the eval sandbox has already narrowed for children).
-    # Every 任务与计划 / 子代理 tool stays available; only the memory store is off.
+    # Every Tasks & planning / subagent tool stays available; only the memory store is off.
     tools = sorted({name for names in TOOL_GROUPS.values() for name in names} - {"memory"})
     dropped = set(REQUIRED_TOOLS) - set(tools)
     if dropped:  # the service's own rule: a required tool cannot be disabled

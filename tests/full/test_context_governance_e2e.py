@@ -70,7 +70,7 @@ from pub.func.message.eviction import EVICTED_TO_KEY, _READ_FILE_SLICE_NOTICE
 from pub.func.message.overflow_clip import CLIP_MARKER
 from runtime import clear_all_register_sessions, state_register_mem
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 
 _CTX_WINDOW = 41_600  # 41600 − 16000 reserve = usable 25600 (compact @ 20480)
 _EVICTED_PATH_RE = re.compile(r"\[evicted to: (.*?)\]")

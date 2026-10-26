@@ -692,11 +692,6 @@ def memory_tool(
         raise
 
 
-def check_memory_requirements() -> bool:
-    """Memory tool has no external requirements -- always available."""
-    return True
-
-
 # =============================================================================
 # OpenAI Function-Calling Schema
 # =============================================================================

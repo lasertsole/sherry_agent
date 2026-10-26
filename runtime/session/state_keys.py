@@ -65,7 +65,7 @@ class StateKey(StrEnum):
     # Model choice made mid-turn: parked (same semantics as the thinking twin).
     LLM_MAIN_MODEL_PENDING = "llm_main_model_pending"
 
-    # Per-session AGENT CONFIG (预设-工具/中间件/子代理模型 三栏 → PUT
+    # Per-session AGENT CONFIG (the preset Tools/Middlewares/Subagent-models tabs → PUT
     # /sessions/agent_config): one JSON payload
     # ``{"tools": [...]|null, "middlewares_disabled": [...],
     #    "subagent_models": {"<role>": {profile}|null}}``.

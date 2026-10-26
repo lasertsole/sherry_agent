@@ -9,7 +9,7 @@ from server.service.file_store import FileStore
 
 # Every system file that reaches the system prompt is editable through the
 # /system_prompt API, AGENTS.md included: the persona panel exposes it as the
-# 运行守则 tab again (restored 2026-10-05 on the user's request — it had been
+# Operating Instructions tab again (restored 2026-10-05 on the user's request — it had been
 # API-protected after the edit chain was removed, "defense in depth"). What stays
 # protected is the AGENT side, which is where the injection risk actually lives:
 # the memory-write guard (agent/tools/memory.py) and the threat scanner
@@ -29,7 +29,7 @@ class _WorkplaceFileStore(FileStore):
         self.max_content_length = SERVER_HTTP["system_prompt_max_content_length"]
         self.error_noun = "file"
         # Emptying a persona file is a legal state here, not an error: the
-        # 编程助手 built-in preset ships an empty soul / user profile (no
+        # the Coding Assistant built-in preset ships an empty soul / user profile (no
         # role-play), and an empty file simply drops out of the assembled prompt.
         self.allow_empty = True
 

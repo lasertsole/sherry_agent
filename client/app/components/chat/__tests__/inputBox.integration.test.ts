@@ -74,7 +74,7 @@ function mountInput(props: Record<string, unknown> = {}) {
 describe('inputBox.vue (integration, backend mocked)', () => {
   it('tells the user that typing queues a message while the agent is working', () => {
     // The backend accepts a send during a running turn and QUEUES it, so the
-    // placeholder must say so ("继续输入消息以排队") — the old "AI is thinking..."
+    // placeholder must say so ("继续输入消息以排队" — keep typing to queue) — the old "AI is thinking..."
     // only reported busy-ness and hid the queueing affordance.
     const idle = mountInput({ sending: false });
     const busy = mountInput({ sending: true });

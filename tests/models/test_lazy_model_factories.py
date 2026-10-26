@@ -148,13 +148,6 @@ class TestFactories:
         module.build_ittt_model()
         assert stub.calls == 2  # factory, like build_main_llm, is not memoized
 
-    def test_build_mineru_model_returns_the_singleton(self):
-        from models.extract_model import build_mineru_model, mineru_model
-        from models.extract_model.core import MinerUModel
-
-        assert build_mineru_model() is mineru_model
-        assert build_mineru_model() is MinerUModel.get_instance()
-
     def test_build_reranker_model_returns_lazy_reranker(self):
         from models.reranker_model import _LazyReranker, build_reranker_model
 
@@ -169,7 +162,6 @@ class TestFactories:
         for name in (
             "build_ittt_model",
             "build_vttt_model",
-            "build_mineru_model",
             "build_reranker_model",
         ):
             assert callable(getattr(models, name))

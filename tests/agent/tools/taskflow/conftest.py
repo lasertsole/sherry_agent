@@ -35,7 +35,7 @@ def _capture_real_dispatch_child() -> None:
 
     try:
         module = importlib.import_module("agent.tools.taskflow.tools._dispatch")
-    except Exception:  # pragma: no cover - import环境 problem: the opt-out fixture报错即可
+    except Exception:  # pragma: no cover - broken import environment: the opt-out fixture surfaces the error on its own
         return
     module.__dict__.setdefault("__real_dispatch_child__", module.dispatch_child)
 

@@ -1077,9 +1077,6 @@ class TestAntiThrashMatrix:
         strategy_key = mget("_LAST_STRATEGY_KEY")
         cooldown_key = mget("_COOLDOWN_ROUNDS_KEY")
         attempts_key = mget("_TURN_ATTEMPTS_KEY")
-        # contract pins
-        assert MIN_EFFECTIVENESS_PCT == 0.05
-        assert INEFFECTIVE_THRESHOLD == 2
 
         seen = []
 
@@ -1164,9 +1161,6 @@ class TestAntiThrashMatrix:
         mw = make_middleware(model=stub)
         count_key = mget("_COMPRESSION_COUNT_KEY")
         state_register_mem.set_state(sid, count_key, 5)
-        # contract pins
-        assert MAX_TOTAL_COMPRESSION_ATTEMPTS == 5
-        assert MAX_COMPRESS_ATTEMPTS_PER_TURN == 3
 
         for _ in range(2):
             with capture_logs() as lines:

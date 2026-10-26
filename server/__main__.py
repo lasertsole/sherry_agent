@@ -104,7 +104,7 @@ def main() -> None:
     # The DESKTOP app (the Tauri shell sets SHERRY_DESKTOP=1) ships with an
     # empty configuration on purpose: the user's first run has no API keys yet,
     # so refusing to serve would leave a window that can never be configured.
-    # An UNCONFIGURED model serves + warns (the 模型配置 panel writes the .env,
+    # An UNCONFIGURED model serves + warns (the Model Config panel writes the .env,
     # and the next launch picks it up); a CONFIGURED-but-invalid one still
     # aborts, exactly like a server.
     _unconfigured = _main_val is None and not _aux_raw

@@ -131,7 +131,7 @@ describe('ContextViewerPanel', () => {
     const row = wrapper.get('[data-test="context-message-0"]');
     const reasoning = row.get('[data-test="context-reasoning-0"]').element;
     const content = row.get('[data-test="context-content"]').element;
-    // The chat shows 思考过程 above the answer; the viewer must read the same way
+    // The chat shows the 思考过程 ("Thinking") section above the answer; the viewer must read the same way
     // (and that is the order the row was generated in).
     expect(reasoning.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

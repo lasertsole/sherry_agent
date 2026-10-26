@@ -9,7 +9,7 @@
     data-test="new-session-dialog">
     <div class="flex flex-col gap-3">
       <p class="m-0 text-xs text-gray-500 dark:text-gray-400">{{ t('personaPreset.selectHint') }}</p>
-      <!-- The catalogue: built-ins first (编程助手 is the default), then the saved presets. -->
+      <!-- The catalogue: built-ins first (Coding Assistant is the default), then the saved presets. -->
       <div
         class="flex max-h-[46vh] flex-col gap-1 overflow-y-auto"
         data-test="new-session-preset-list">
@@ -78,7 +78,7 @@ const localePath = useLocalePath();
 /** The saved presets (shared singleton); built-ins come from the catalogue. */
 const { presets } = usePersonaPresets();
 
-/** The agent-config store: its catalogue is what 纯净 / 情感陪伴 derive from. */
+/** The agent-config store: its catalogue is what Pure / Companion derive from. */
 const agentStore = useAgentConfigStore();
 
 /** Built-ins + saved presets, in the shared display order. */
@@ -112,12 +112,12 @@ const confirm = async () => {
   if (!entry || creating.value) return;
   creating.value = true;
   try {
-    // The tool catalogue comes first: 纯净 / 情感陪伴 derive their agent block
+    // The tool catalogue comes first: Pure / Companion derive their agent block
     // from it (a preset applied without it would silently write the wrong set).
     await agentStore.loadCatalog();
     const payload = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
     // The id is minted first so the apply can also write the preset's agent
-    // config (工具 / 中间件 / 子代理模型) into THIS session's registers.
+    // config (Tools / Middlewares / Agent models) into THIS session's registers.
     const sessionId = crypto.randomUUID();
     await applyPresetPayload(payload, sessionId);
 

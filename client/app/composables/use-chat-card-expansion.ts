@@ -20,7 +20,7 @@ export function useChatCardExpansion() {
   /**
    * Set of LONG message ids whose full text is shown (collapsed by default).
    * A settled answer past the size cap renders a head preview plus an
-   * 展开全文 control: one multi-thousand-line row starves the page (measured:
+   * The 展开全文 (expand full text) control: one multi-thousand-line row starves the page (measured:
    * menus, timers and fetches frozen for tens of seconds), and the same
    * collapse idiom already protects the tool cards and thinking blocks.
    */

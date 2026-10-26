@@ -179,7 +179,7 @@
               </div>
             </TabPanel>
 
-            <!-- 工具 tab: which main-agent tools this preset/session enables.
+            <!-- Tools tab: which main-agent tools this preset/session enables.
                  The catalogue comes from the backend (GET /agent/catalog) — the
                  client never hardcodes tool names. All checked = the default. -->
             <TabPanel
@@ -305,7 +305,7 @@
               </div>
             </TabPanel>
 
-            <!-- 中间件 tab: only the optional chain entries are listed, plus the
+            <!-- Middlewares tab: only the optional chain entries are listed, plus the
                 Summarization option row. The system-required baseline is NOT
                  rendered at all (nothing there is switchable); the backend still
                  refuses to store a required name as disabled. -->
@@ -395,7 +395,7 @@
               </div>
             </TabPanel>
 
-            <!-- 代理模型 tab: the main agent's model and one picker per functional
+            <!-- Agent models tab: the main agent's model and one picker per functional
                  subagent role. Both lists are the environment-config model
                  profiles (the same list the session-model picker uses). -->
             <TabPanel
@@ -487,7 +487,7 @@
               </div>
             </TabPanel>
 
-            <!-- 技能 tab: which skills' index entries (`<available_skills>` in the
+            <!-- Skills tab: which skills' index entries (`<available_skills>` in the
                  system prompt) this preset keeps. Two sub-tabs split the shipped
                  skills from the uploaded third-party ones. -->
             <TabPanel
@@ -777,23 +777,23 @@ const originalContent = ref<Record<string, string>>({});
 
 // ── Role config (the first tab): both role names + avatars ─────────────────
 // The names are display info (Dexie global profile, locked per session on first
-// open) AND prompt content: 应用 composes ROLE.md from them in the active UI
+// open) AND prompt content: Apply composes ROLE.md from them in the active UI
 // language, so the agent reads who it plays and who the user plays.
-/** One catalogue tool-group row the 工具 tab renders. */
+/** One catalogue tool-group row the Tools tab renders. */
 interface AgentToolGroupEntry {
   group: string;
   tools: Array<{ name: string; description?: string; required?: boolean }>;
 }
 
-// ── 工具 / 中间件 / 子代理模型 drafts (the preset's `agent` block) ──────────
+// ── Tools / Middlewares / Agent models drafts (the preset's `agent` block) ──────
 // The catalog (tool groups, middleware lock flags, roles) comes from the backend
-// once; the drafts below are what 保存预设 stores and 应用 writes to the session.
+// once; the drafts below are what Save Preset stores and Apply writes to the session.
 const agentStore = useAgentConfigStore();
 const llmProfiles = useLlmProfilesStore();
 /** The session's main-model control (its own store: the toolbar picker's key). */
 const sessionModel = useSessionModelStore();
 const route = useRoute();
-/** The session an 应用 targets (the open chat's sid; empty on the bare shell). */
+/** The session an Apply targets (the open chat's sid; empty on the bare shell). */
 const panelSessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
 
 /** Enabled tool names (catalog order); the draft starts all-selected. */
@@ -839,7 +839,7 @@ const agentMainModelOptions = computed<Array<{ label: string; value: string }>>(
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
 
-/** The profile id the 主代理 picker shows (an unknown id falls back to env). */
+/** The profile id the Main agent picker shows (an unknown id falls back to env). */
 const agentMainModelId = computed<string>(() =>
   llmProfiles.byId('MAIN_LLM', agentMainModel.value) ? agentMainModel.value : ENV_MODEL_ID
 );
@@ -907,16 +907,16 @@ const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boo
 const agentGroupFullyRequired = (group: AgentToolGroupEntry): boolean =>
   group.tools.length > 0 && group.tools.every(tool => tool.required === true);
 
-/** The two 工具 sub-tabs: the built-in groups and the MCP servers' tools. */
+/** The two Tools sub-tabs: the built-in groups and the MCP servers' tools. */
 const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
 
-/** The two 技能 sub-tabs: shipped skills and uploaded third-party ones. */
+/** The two Skills sub-tabs: shipped skills and uploaded third-party ones. */
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
 
-/** The two 代理模型 sub-tabs: the main agent and the functional subagents. */
+/** The two Agent models sub-tabs: the main agent and the functional subagents. */
 const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
 
-/** Which 代理模型 sub-tab is on screen. */
+/** Which Agent models sub-tab is on screen. */
 const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
 
 /** Group id the catalogue gives tools that arrive from an MCP server. */
@@ -925,10 +925,10 @@ const MCP_TOOL_GROUP = 'mcp';
 /** Tool the nudge option depends on (it writes memory through it). */
 const MEMORY_TOOL_NAME = 'memory';
 
-/** Which 工具 sub-tab is on screen (a view filter — the draft stays whole). */
+/** Which Tools sub-tab is on screen (a view filter — the draft stays whole). */
 const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
 
-/** Which 技能 sub-tab is on screen. */
+/** Which Skills sub-tab is on screen. */
 const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
 
 /** The tool groups of the active sub-tab. */
@@ -1202,7 +1202,7 @@ const cropTarget = ref<'user' | 'assistant'>('user');
 
 // Preset state machine: editingPresetId = the user preset currently loaded into the
 // editor (null = built-in / new mode); activeBuiltin = which virtual built-in entry
-// is loaded. The DEFAULT preset (全量) starts highlighted; the list itself
+// is loaded. The DEFAULT preset (Full) starts highlighted; the list itself
 // (BUILTIN_PRESETS + the saved presets) is defined in the shared catalogue, so the
 // new-session dialog and the top-bar viewer render the identical order and badges.
 const editingPresetId = ref<number | null>(null);
@@ -1259,11 +1259,11 @@ const loadContent = async () => {
     }
 
     // Role names/avatars come from the local Dexie global profile (the same row
-    // the old 系统配置-角色配置 tab edited); ROLE.md itself is NOT parsed back —
+    // the old System Config → Character Setup tab edited); ROLE.md itself is NOT parsed back —
     // the compose direction is one-way (names -> sentence).
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
     // An explicitly EMPTY name/avatar stays empty (the input shows its
-    // placeholder): the nameless built-ins (纯净 / 编程助手) ship no names on
+    // placeholder): the nameless built-ins (Pure / Coding Assistant) ship no names on
     // purpose, and prefilling the shipped character here made the panel disagree
     // with the preset it had just applied.
     fillCharacter({
@@ -1281,15 +1281,15 @@ const loadContent = async () => {
 };
 
 /**
- * Gate for 保存预设 / 应用: every file tab within the char limit. Empty content
- * is LEGAL — the 编程助手 built-in ships an empty soul / user profile (a plain
+ * Gate for Save Preset / Apply: every file tab within the char limit. Empty content
+ * is LEGAL — the Coding Assistant built-in ships an empty soul / user profile (a plain
  * assistant without role-play) and an empty user role name means "the user
  * plays nothing" — so no non-empty requirement remains. The backend accepts
  * blank persona writes for the same reason.
  */
 const allTabsValid = computed(() => tabs.every(tab => (editContent.value[tab.file] ?? '').length <= MAX_CHARS));
 
-/** Enablement for both the 保存预设 ("Save Preset") and 应用 ("Apply") buttons. */
+/** Enablement for both the Save Preset and Apply buttons. */
 const actionEnabled = computed(
   () => allTabsValid.value && !loading.value && !saving.value && !applying.value && !restoring.value
 );
@@ -1418,7 +1418,7 @@ const onCropConfirmed = (dataUrl: string) => {
   cropVisible.value = false;
 };
 
-/** Reset the role tab to the built-in default names + avatars (mirrors 恢复默认). */
+/** Reset the role tab to the built-in default names + avatars (mirrors Restore Default). */
 const restoreRoleDefault = () => {
   fillCharacter({ ...DEFAULT_CACHED_CHARACTER });
 };
@@ -1428,7 +1428,7 @@ const restoreRoleDefault = () => {
  * default avatar"): the field becomes empty — an empty avatar means "no avatar
  * of its own" and every render site falls back to the auto-imported
  * `DEFAULT_PLACEHOLDER_AVATAR` gray silhouette. The name is left untouched, so
- * this is the per-avatar sibling of 恢复默认.
+ * this is the per-avatar sibling of Restore Default.
  * @param target Which role the avatar belongs to.
  */
 const resetAvatar = (target: 'user' | 'assistant') => {
@@ -1454,18 +1454,18 @@ const restoreDefault = async (tab: PersonaTab) => {
 /**
  * Click a built-in entry: load its shipped template through the shared catalogue
  * (the same payload the new-session dialog and the top-bar viewer use).
- * - 纯净 → nobody named, no persona content, and only the required tools;
- * - 编程助手 → the operating rules only: empty soul and user profile, and BOTH
+ * - Pure → nobody named, no persona content, and only the required tools;
+ * - Coding Assistant → the operating rules only: empty soul and user profile, and BOTH
  *   role names empty — a plain coding assistant, no role statement at all;
- * - 情感陪伴 / 全量 → the full language template plus the default names/avatars
- *   (情感陪伴 also pins the orchestration surfaces off).
+ * - Companion / Full → the full language template plus the default names/avatars
+ *   (Companion also pins the orchestration surfaces off).
  * @param id Which built-in entry was clicked.
  */
 const selectBuiltin = async (id: BuiltinPresetId) => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
-    // The catalogue feeds 纯净 / 情感陪伴's agent block; it is fetched once per
+    // The catalogue feeds Pure / Companion's agent block; it is fetched once per
     // process (the panel already awaited it during load, so this is a cache hit).
     await agentStore.loadCatalog();
     const template = await readSystemPromptTemplate(locale.value);
@@ -1502,7 +1502,7 @@ const selectPreset = (preset: PersonaPreset) => {
 };
 
 /**
- * Click 保存预设 ("Save Preset"):
+ * Click Save Preset:
  * - editing an existing preset → overwrite it directly (no name dialog);
  * - otherwise (default/new mode) → open the name dialog to save as a new preset.
  */
@@ -1517,7 +1517,7 @@ const savePreset = () => {
   }
 };
 
-/** Direct-overwrite path for 保存预设 ("Save Preset") while editing a user preset. */
+/** Direct-overwrite path for Save Preset while editing a user preset. */
 const overwriteEditingPreset = async () => {
   const id = editingPresetId.value;
   if (id === null) return;
@@ -1613,7 +1613,7 @@ const doRemovePreset = async (preset: PersonaPreset) => {
 /**
  * Write the role names/avatars to the local Dexie global profile when they
  * changed — the "global pending profile" new sessions copy their display
- * snapshot from, exactly as the old 系统配置-角色配置 tab wrote it.
+ * snapshot from, exactly as the old System Config → Character Setup tab wrote it.
  */
 const persistCharacter = async () => {
   const current = buildPresetCharacter();
@@ -1633,7 +1633,7 @@ const persistCharacter = async () => {
   originalChar.value = current;
 };
 
-/** Click 应用 ("Apply"): full-write the persona files (incl. the composed ROLE.md) + the role profile; success → toast + saved + close, failure → stay open. */
+/** Click Apply: full-write the persona files (incl. the composed ROLE.md) + the role profile; success → toast + saved + close, failure → stay open. */
 const handleApply = async () => {
   if (!actionEnabled.value) return;
   applying.value = true;
@@ -1650,8 +1650,8 @@ const handleApply = async () => {
       throw new Error('[PersonaPanel] applied content verification failed');
     }
     await persistCharacter();
-    // The agent config lands on the SESSION (this preset's 工具 / 中间件 /
-    // 子代理模型 go live for the open chat; the backend parks it until the turn
+    // The agent config lands on the SESSION (this preset's Tools / Middlewares /
+    // Agent models go live for the open chat; the backend parks it until the turn
     // boundary when one is in flight). A session-less panel skips it.
     if (panelSessionId.value) {
       await agentStore.save(panelSessionId.value, buildAgentDraft());
@@ -2880,9 +2880,9 @@ const handleApply = async () => {
   min-width: 100%;
 }
 
-/* 让面板内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
-   内部 flex 链（TabView → panels → panel → textarea）自适应伸缩，
-   避免 72vh 等固定高度把内容区撑出垂直滚动条。 */
+/* Make the panel body a flex column container: the root layout fills the body's
+   height exactly via flex-1, the inner flex chain (TabView → panels → panel →
+   textarea) stretches adaptively, so fixed heights like 72vh never push the body into a vertical scrollbar. */
 :deep(.p-tabview-panels) {
   display: flex;
   flex-direction: column;

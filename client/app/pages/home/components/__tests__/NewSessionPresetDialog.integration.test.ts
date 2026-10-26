@@ -1,7 +1,7 @@
 /**
  * The mandatory new-session dialog: a session is created only after a preset is
  * chosen and applied, so this suite pins the two halves of that contract — the
- * catalogue it offers (编程助手 first, preselected) and the creation sequence
+ * catalogue it offers (Coding Assistant first, preselected) and the creation sequence
  * (apply → bind → character snapshot → placeholder → navigate).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -135,7 +135,7 @@ describe('NewSessionPresetDialog', () => {
       'new-session-preset-option-sherry',
       'new-session-preset-option-user:7'
     ]);
-    // The default preset is preselected, so 创建会话 is immediately actionable.
+    // The default preset is preselected, so the 创建会话 ("Create session") button is immediately actionable.
     expect(rows[3]!.find('i.pi-check').exists()).toBe(true);
     expect(buttonByText(wrapper, '创建会话').attributes('disabled')).toBeUndefined();
   });

@@ -238,7 +238,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    // The sidebar used to carry a 会话 / 后台任务 tab strip plus its own task list;
+    // The sidebar used to carry a Chats / Background tasks tab strip plus its own task list;
     // both are gone, so no run data may leak into the left column.
     const labels = wrapper.findAll('button').map(b => b.text());
     expect(labels.some(text => text.includes('后台任务'))).toBe(false);
@@ -411,7 +411,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     const dir = stubProjectDirectory('/proj');
     try {
       const wrapper = mountHome();
-      // In files mode the button names the way BACK, so "会话列表" is its title.
+      // In files mode the button names the way BACK, so "会话列表" ("Sessions") is its title.
       expect(wrapper.findAll('.btn').map(b => b.attributes('title'))).toContain('会话列表');
 
       routeState.params = {};

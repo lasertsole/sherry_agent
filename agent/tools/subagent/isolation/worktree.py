@@ -56,15 +56,6 @@ def run_slug(child_session_key: str, length: int = 8) -> str:
     return hashlib.sha256(child_session_key.encode("utf-8")).hexdigest()[:length]
 
 
-def _repo_toplevel(project_root: Path) -> str | None:
-    """The repository root of *project_root*, or ``None`` when it is not a repo."""
-    completed = run_git(project_root, ["rev-parse", "--show-toplevel"])
-    if completed.returncode != 0:
-        return None
-    toplevel = completed.stdout.strip()
-    return toplevel or None
-
-
 def ensure_repository(project_root: Path) -> bool:
     """Shadow git needs no user repository; keep the name for callers.
 

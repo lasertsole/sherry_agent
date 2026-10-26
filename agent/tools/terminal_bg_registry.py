@@ -215,11 +215,6 @@ class BackgroundTaskRegistry:
 background_registry = BackgroundTaskRegistry()
 
 
-def output_read_limit() -> int:
-    """Tail bytes ``terminal_bg(action='output')`` returns (from the registry config)."""
-    return int(TERMINAL_BG["output_max_read_bytes"])
-
-
 def read_output_tail(path: Path, max_bytes: int | None = None) -> str:
     """The LAST ``max_bytes`` of a background task's output file.
 

@@ -31,7 +31,7 @@ class FileStore:
     error_noun: str = "file"
     # Whether an empty (or whitespace-only) entry is legal for this store. False
     # everywhere except the workplace persona files: clearing a persona file is a
-    # legitimate state there — the 编程助手 built-in preset ships an empty soul /
+    # legitimate state there — the Coding Assistant built-in preset ships an empty soul /
     # user profile (a plain assistant, no role-play) — while an empty memory or
     # heartbeat file carries no meaning. An emptied persona file simply drops out
     # of the assembled prompt and can be refilled from the language templates.

@@ -320,22 +320,6 @@ class TestLoaderBounds:
 # ---------------------------------------------------------------------------
 
 
-class TestEnvFileSemantics:
-    def test_empty_value_does_not_swallow_next_line(self, tmp_path):
-        from models.utils import read_env_file_value
-
-        p = tmp_path / ".env"
-        p.write_text("EMPTY=\nNEXT_LINE=real\n", encoding="utf-8")
-        assert read_env_file_value("EMPTY", "fallback", env_path=p) == "fallback"
-
-    def test_export_prefix_and_quotes(self, tmp_path):
-        from models.utils import read_env_file_value
-
-        p = tmp_path / ".env"
-        p.write_text('export K="v"\n', encoding="utf-8")
-        assert read_env_file_value("K", env_path=p) == "v"
-
-
 # ---------------------------------------------------------------------------
 # EC-14 snapshot missing/corrupt
 # ---------------------------------------------------------------------------

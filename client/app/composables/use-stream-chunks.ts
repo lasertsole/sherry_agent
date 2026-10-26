@@ -162,7 +162,7 @@ export function useStreamChunks(
    * markdown-it + DOMPurify over the full text, O(n²) across a long answer —
    * and the virtual list re-measured on each paint (the ResizeObserver storm
    * seen on a 2000-line stream, which could wedge the page mid-turn and leave
-   * the composer frozen on 停止). Buffering per (turn, channel) and flushing on
+   * the composer frozen on Stop). Buffering per (turn, channel) and flushing on
    * an animation frame keeps the rendered result identical while the state
    * updates drop from one-per-chunk to at most one-per-frame. Tool chunks flush
    * first, so the interleaving with tool cards never changes.

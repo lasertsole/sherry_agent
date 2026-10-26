@@ -31,7 +31,7 @@ APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _COD
 
 SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
 if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
-    # Seed the editable copy from the shipped file so the 应用配置 panel has the
+    # Seed the editable copy from the shipped file so the App Config panel has the
     # full key list (comments included) to write into.
     template = _CODE_ROOT / "sherry.jsonc"
     if template.exists():
@@ -53,7 +53,7 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # config/path.py::resolve_default_project_dir).
     "project_dir": "",
     "WORKSPACE_TEMPLATE_LANG": "en",
-    # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off by
+    # Global heartbeat scheduler switch (the Heartbeat panel's toggle). Off by
     # default: the periodic heartbeat is opt-in, and the boot path reads this
     # value, so a session that never touches the switch never wakes the agent.
     "heartbeat.enabled": False,
@@ -68,7 +68,7 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "curator.prune_builtins": True,
     # User-configurable lifecycle hooks (agent/middlewares/user_hooks): the
     # master switch for the ``hooks`` section's commands. OFF by default and
-    # registered here so the 应用配置 panel can flip it and the shipped
+    # registered here so the App Config panel can flip it and the shipped
     # sherry.jsonc stays complete; the per-event hook LISTS are read by
     # ``load_sherry_hooks`` (they are lists of objects, not scalars).
     "hooks.enabled": False,

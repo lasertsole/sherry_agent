@@ -84,7 +84,7 @@ export async function writeEnvConfig(changes: Record<string, string>): Promise<b
 /** Which config FILE a panel group lives in (each has its own writer). */
 export type ConfigSource = 'models' | 'network' | 'env';
 
-/** A group tagged with its source file — the 模型配置 tab merges all three and
+/** A group tagged with its source file — the Model Config tab merges all three and
  *  writes every group back through ITS OWN endpoint (see ConfigPanel). */
 export interface SourcedEnvGroup extends EnvGroup {
   source: ConfigSource;
@@ -150,7 +150,7 @@ export async function writeNetworkConfig(changes: Record<string, string>): Promi
   return putGroupedConfig('/network-config', changes);
 }
 
-/** Result of one connectivity probe (the 模型配置 panels' 测试 button). */
+/** Result of one connectivity probe (the Model Config panels' Test button). */
 export interface ModelTestResult {
   /** Whether this group can be probed at all (media groups cannot). */
   supported: boolean;

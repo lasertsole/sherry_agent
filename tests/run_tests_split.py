@@ -77,13 +77,30 @@ RC_NAMES: dict[int, str] = {
 }
 
 #: A group that prints nothing for this long is hung (the slowest hermetic
-#: single test stays under 120s; llm_e2e groups are not run here).
+#: single test stays under 120s). Hermetic mode only — llm_e2e mode uses the
+#: larger LLM_E2E_* budgets below.
 GROUP_IDLE_TIMEOUT_SECONDS = 300.0
 
 #: Hard wall clock per group. Group A (unit) is the slowest at ~2 min; the
 #: budget exists so a pathological group fails the job with a summary instead
 #: of hitting the job's own (much longer) timeout with no diagnostics.
 GROUP_TOTAL_TIMEOUT_SECONDS = 900.0
+
+#: llm_e2e mode budgets: a single real-LLM test can stream quietly for many
+#: minutes (per-test pytest-timeout caps reach 1500s in tests/full), and the
+#: one group that collects (integration+module+system) legitimately runs for
+#: hours. An idle budget below the largest per-test timeout would abort a
+#: healthy run mid-test.
+LLM_E2E_IDLE_TIMEOUT_SECONDS = 1800.0
+LLM_E2E_TOTAL_TIMEOUT_SECONDS = 7200.0
+
+
+def group_budgets(with_llm_e2e: bool) -> tuple[float, float]:
+    """(idle, total) wall-clock budgets for one group, by mode."""
+    if with_llm_e2e:
+        return LLM_E2E_IDLE_TIMEOUT_SECONDS, LLM_E2E_TOTAL_TIMEOUT_SECONDS
+    return GROUP_IDLE_TIMEOUT_SECONDS, GROUP_TOTAL_TIMEOUT_SECONDS
+
 
 #: Grace for draining an exited child's buffered output before a still-open pipe
 #: is declared leaked and its session killed.
@@ -146,7 +163,13 @@ def parse_args() -> tuple[RunnerOptions, list[str]]:
 
 def build_group_cmd(group_expr: str, with_llm_e2e: bool, passthrough: list[str]) -> list[str]:
     """Build the pytest command line for one group."""
-    cmd: list[str] = [sys.executable, "-m", "pytest", "tests/", "--ignore=tests/full", "-q"]
+    cmd: list[str] = [sys.executable, "-m", "pytest", "tests/", "-q"]
+    if not with_llm_e2e:
+        # Hermetic gate only: tests/full is real-LLM e2e and stays out of it
+        # entirely. The --with-llm-e2e mode (the llm-e2e workflow's dedicated
+        # job) MUST be able to reach it — an unconditional ignore there made
+        # the manual gate structurally unable to run those 52 cases.
+        cmd += ["--ignore=tests/full"]
     # Marker selection. The group expression is composed with the llm_e2e
     # policy on the CLI (after pyproject addopts) so the script stays
     # self-contained: the last -m wins over ini addopts.
@@ -247,11 +270,15 @@ def _abort_group(proc: subprocess.Popen[str], pgid: int | None, reason: str) -> 
     _signal_group(proc, pgid, signal.SIGKILL)
 
 
-def _run_group_process(cmd: list[str]) -> int:
+def _run_group_process(cmd: list[str], with_llm_e2e: bool = False) -> int:
     """Run one pytest command streamed, bounded, and never waiting on EOF.
+
+    Budgets are read from the module constants THROUGH ``group_budgets`` at
+    call time (not captured here), so tests can monkeypatch the constants.
 
     Returns the child's exit code (negative when it died from a signal).
     """
+    idle_timeout, total_timeout = group_budgets(with_llm_e2e)
     proc: subprocess.Popen[str] = subprocess.Popen(
         cmd,
         cwd=REPO_ROOT,
@@ -292,14 +319,12 @@ def _run_group_process(cmd: list[str]) -> int:
             if rc is not None:
                 break
             now = time.monotonic()
-            if now - pump.last_output > GROUP_IDLE_TIMEOUT_SECONDS:
-                _abort_group(proc, pgid, f"no output for {GROUP_IDLE_TIMEOUT_SECONDS:.0f}s")
+            if now - pump.last_output > idle_timeout:
+                _abort_group(proc, pgid, f"no output for {idle_timeout:.0f}s")
                 rc = None
                 break
-            if now - start > GROUP_TOTAL_TIMEOUT_SECONDS:
-                _abort_group(
-                    proc, pgid, f"total budget {GROUP_TOTAL_TIMEOUT_SECONDS:.0f}s exceeded"
-                )
+            if now - start > total_timeout:
+                _abort_group(proc, pgid, f"total budget {total_timeout:.0f}s exceeded")
                 rc = None
                 break
             time.sleep(0.5)
@@ -349,7 +374,7 @@ def run_group(
     print(f"\n{'=' * 70}\nGROUP {name}: {desc}\n  $ {' '.join(cmd)}\n{'=' * 70}", flush=True)
 
     start = time.monotonic()
-    rc = _run_group_process(cmd)
+    rc = _run_group_process(cmd, with_llm_e2e)
     elapsed = time.monotonic() - start
     return rc, elapsed
 

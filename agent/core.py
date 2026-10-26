@@ -317,7 +317,7 @@ def _build_middlewares(
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
         WorkspaceNoticeMiddleware(),
-        # Per-session tool set (预设-工具 tab): narrows request.tools before the
+        # Per-session tool set (the preset Tools tab): narrows request.tools before the
         # model is bound and refuses a disabled tool at execution. Registered as
         # a real middleware (not gated) because it HAS no switch of its own — it
         # is what applies the switch, and an unset config is a no-op.

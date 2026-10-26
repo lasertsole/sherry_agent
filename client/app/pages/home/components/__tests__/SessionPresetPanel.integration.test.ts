@@ -1,7 +1,7 @@
 /**
- * The session preset VIEW (a right-sidebar tab under 当前会话): it names the
+ * The session preset VIEW (a right-sidebar tab under This session): it names the
  * preset the active session was created with and renders that preset's content
- * in the same four tabs the 预设 panel edits — strictly view-only, no other
+ * in the same four tabs the preset panel edits — strictly view-only, no other
  * preset selectable or previewable.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
@@ -223,7 +223,7 @@ describe('SessionPresetButton', () => {
 
     const panel = wrapper.get('[data-test="session-preset-panel"]');
     expect(panel.get('[data-test="session-preset-bound"]').text()).toBe('编程助手');
-    // Preview: the operating rules, and 空 for the coding preset's blank soul / user profile.
+    // Preview: the operating rules, and 空 ("empty") for the coding preset's blank soul / user profile.
     expect(panel.get('[data-test="session-preset-content-AGENTS.md"]').text()).toBe(TEMPLATE['AGENTS.md']);
     expect(panel.get('[data-test="session-preset-content-SOUL.md"]').text()).toBe('（空）');
     expect(panel.get('[data-test="session-preset-content-USER.md"]').text()).toBe('（空）');
@@ -379,18 +379,18 @@ describe('SessionPresetButton', () => {
     const wrapper = await mountPanel();
     const panel = wrapper.get('[data-test="session-preset-panel"]');
 
-    // 代理模型 leads the whole strip (the session's own model pair is what the
+    // Agent models leads the whole strip (the session's own model pair is what the
     // viewer is opened for), ahead of the persona tabs too.
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     expect(headers).toEqual(['代理模型', '角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '技能']);
 
-    // 主代理 is the SAME control as the toolbar's model switch: a picker bound to
+    // Main agent is the SAME control as the toolbar's model switch: a picker bound to
     // the session-model store (the stub reports "env" with no model configured).
     expect(panel.get('[data-test="session-preset-models-scope-main"]').text()).toBe('主代理');
     expect(panel.text()).toContain('跟随模型配置');
     const mainPicker = panel.get('[data-test="session-preset-main-model"]');
     expect((mainPicker.element as HTMLSelectElement).value).toBe('env');
-    // 子代理 keeps the editable role pickers.
+    // Subagent keeps the editable role pickers.
     await panel.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
     await flushPromises();
     expect(panel.find('[data-test="session-preset-role-model-researcher"]').exists()).toBe(true);
@@ -450,7 +450,7 @@ describe('SessionPresetButton', () => {
 
     const store = agentStoreState.current as { save: ReturnType<typeof vi.fn> };
     const wrapper = await mountPanel();
-    // The 代理模型 tab leads with 主代理; the role pickers sit under 子代理.
+    // The Agent models tab leads with Main agent; the role pickers sit under Subagent.
     await wrapper.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
     await flushPromises();
     const picker = wrapper.get('[data-test="session-preset-role-model-researcher"]');
@@ -536,7 +536,7 @@ describe('SessionPresetButton', () => {
     await flushPromises();
 
     expect(bridge.readSystemPromptTemplate).toHaveBeenLastCalledWith('en');
-    // And the panel's own labels follow the locale (the viewer's tab is 预设角色).
+    // And the panel's own labels follow the locale (the viewer's tab is 预设角色, "Presets & Role").
     expect(wrapper.get('[data-test="session-preset-panel"]').text()).toContain('Presets & Role');
   });
 });

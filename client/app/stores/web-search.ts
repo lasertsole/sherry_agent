@@ -13,7 +13,7 @@ import { fetchSearchBackend, setSearchBackend } from '~/composables/bridge/sessi
  * @param backend The backend now serving searches.
  * @param reason The reason code the tool sent.
  * @param message The backend's own message (the fallback text).
- * @returns The notice to show in 通知.
+ * @returns The notice to show in Notifications.
  */
 export function fallbackNoticeText(backend: SearchBackend, reason: string, message: string): string {
   const t = resolveRuntimeT();
@@ -31,12 +31,12 @@ export function fallbackNoticeText(backend: SearchBackend, reason: string, messa
 }
 
 /**
- * Web-search state: the 模型联网 panel's per-session backend choice, plus the
+ * Web-search state: the Web Search panel's per-session backend choice, plus the
  * downgrade the tool reports while it runs.
  *
  * The backend owns the truth (the session state register + the .env providers);
  * this store mirrors the choice for the panel and turns the
- * `search_backend_fallback` frame into a 通知 entry — that is where an operator
+ * `search_backend_fallback` frame into a Notifications entry — that is where an operator
  * looks for "something changed under me", and the badge keeps counting while
  * the panel is closed. The frame is best-effort: a missed one costs the notice,
  * never the search, whose result text names the backend it came from.
@@ -118,7 +118,7 @@ export const useWebSearchStore = defineStore('webSearch', () => {
   }
 
   /**
-   * Turn the `search_backend_fallback` frame into a 通知 entry. Identical
+   * Turn the `search_backend_fallback` frame into a Notifications entry. Identical
    * consecutive downgrades merge into one counted item (the notification
    * store's own rule), so a burst of retries reads as one line.
    * @param payload Raw frame payload (`{session_id, content: {backend, reason, message}}`).

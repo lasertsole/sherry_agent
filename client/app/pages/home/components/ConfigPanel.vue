@@ -336,7 +336,7 @@
          tab owns its Save/Reset pair.
          (角色配置 moved to the 预设 panel together with the persona presets.) -->
     <div
-      v-if="activeTab !== 1"
+      v-if="activeTab !== 1 && activeTab !== 3"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -375,6 +375,7 @@ import LlmModelManager from './LlmModelManager.vue';
 import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
+import { useRightSidebarStore } from '~/stores/right-sidebar';
 import { logUtil } from '~/utils/log';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
@@ -382,11 +383,11 @@ const chatBackgroundStore = useChatBackgroundStore();
 const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
 const setBackground = chatBackgroundStore.setBackground;
 
-const { t } = useI18n({ useScope: 'local' });
 /** The session the System Config tab is acting on (the shell keeps the store in sync). */
 const rightSidebarStore = useRightSidebarStore();
 const budgetSessionId = computed(() => rightSidebarStore.activeSessionId || '');
 
+const { t } = useI18n({ useScope: 'local' });
 
 /** Localized headings for the two optional internal model families. */
 const GROUP_TITLE_KEYS: Record<string, string> = {
@@ -413,7 +414,7 @@ const loading = ref(false);
 const saving = ref(false);
 
 // ── Env config state (three files, one panel) ────────────────
-// The 模型配置 tab shows THREE sources merged — the model families from .models,
+// The Model Config tab shows THREE sources merged — the model families from .models,
 // the browser / tracing groups from .network, and what remains in .env (sandbox /
 // gateway / login) — and every group carries its `source`, so a save writes each
 // group back through ITS OWN endpoint. Snapshot taken once on load; edits modify
@@ -734,7 +735,7 @@ const canSave = computed(() => {
   return true;
 });
 
-// ── Image crop handling (background only; the role avatars moved to the 预设 panel) ──
+// ── Image crop handling (background only; the role avatars moved to the preset panel) ──
 // After an image is selected, the crop dialog opens; the background is cropped and
 // output at the **actual aspect ratio of the current chat window/screen** so it fits
 // any ratio (16:9, 16:10, 3:2, 21:9…); since rendering uses `background-size: cover`,
@@ -860,7 +861,7 @@ const loadContent = async () => {
 
 /**
  * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
- * The model groups carry their own 保存/应用 inside the panel, so the env tab
+ * The model groups carry their own Save/Apply inside the panel, so the env tab
  * needs no footer button at all.
  */
 const handleSave = async () => {
@@ -1066,8 +1067,8 @@ onBeforeUnmount(onHide);
         "user": "用户信息",
         "env": "模型配置",
         "sherry": "应用配置",
-        "memoryAgent": "记忆·Agent",
         "budget": "Token 预算",
+        "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
       "role": {
@@ -1396,8 +1397,8 @@ onBeforeUnmount(onHide);
         "user": "User Profile",
         "env": "Model Config",
         "sherry": "App Config",
-        "memoryAgent": "Memory · Agent",
         "budget": "Token Budget",
+        "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
       "role": {
@@ -1726,8 +1727,8 @@ onBeforeUnmount(onHide);
         "user": "ユーザー情報",
         "env": "モデル設定",
         "sherry": "アプリ設定",
-        "memoryAgent": "記憶・Agent",
         "budget": "Token 予算",
+        "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
       "role": {
@@ -2056,8 +2057,8 @@ onBeforeUnmount(onHide);
         "user": "사용자 정보",
         "env": "모델 설정",
         "sherry": "앱 설정",
-        "memoryAgent": "메모리·Agent",
         "budget": "Token 예산",
+        "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },
       "role": {

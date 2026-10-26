@@ -30,7 +30,7 @@ export const HOME_TOOLBAR_EVENTS = [
   'notification',
   'extend',
   'account',
-  // The 模型联网 panel: the web-search backend + its provider settings.
+  // The Web Search panel: the web-search backend + its provider settings.
   'webSearch',
   // The toolbox (./config.ts `toolboxTools`): the browser and the user terminal.
   'browser',

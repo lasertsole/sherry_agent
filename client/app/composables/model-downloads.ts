@@ -1,4 +1,4 @@
-/** Client for the local-model prefetch progress endpoints (模型配置). */
+/** Client for the local-model prefetch progress endpoints (Model Config). */
 
 export type ModelDownloadPhase = 'idle' | 'downloading' | 'ready' | 'error';
 

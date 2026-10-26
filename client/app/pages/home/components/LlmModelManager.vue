@@ -248,7 +248,7 @@
             icon="pi pi-check"
             size="small"
             @click="applyProfile" />
-          <!-- Connectivity probe: same draft the 应用 button would write, but
+          <!-- Connectivity probe: same draft the Apply button would write, but
                it goes to /model/test and NOTHING is written. Disabled for the
                built-in local entry (no API parameters) and for the groups whose
                probe would need a media payload. -->
@@ -595,7 +595,7 @@ const clampPenalty = (key: string): void => {
 
 /**
  * The built-in "local model" entry: the group's live `.env` parameters with the
- * local flag forced on. Read-only in the UI (disabled inputs, no 保存) but
+ * local flag forced on. Read-only in the UI (disabled inputs, no Save) but
  * applicable like any other model; absent for groups without a local flag.
  */
 const localEntry = computed(() => {

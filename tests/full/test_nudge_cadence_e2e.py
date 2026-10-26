@@ -103,7 +103,7 @@ from models import build_auxiliary_llm
 from pub.func.message.eviction import EVICTED_TO_KEY
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1200)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(1200)]
 
 _CTX_WINDOW = 20_000  # usable 4000; compact threshold 3200; preserve budget 5000
 _BIG_CHARS = 26_000  # ~6.5K estimated tokens: hard overflow, no tail clip

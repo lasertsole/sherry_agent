@@ -38,25 +38,6 @@ def test_import_embed_model_has_no_side_effects() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_import_extract_model_does_not_export_mineru_env() -> None:
-    code = (
-        "import os\n"
-        "assert 'MINERU_TOOLS_CONFIG_JSON' not in os.environ, 'import exported env'\n"
-        "import models.extract_model.core  # noqa: F401\n"
-        "assert 'MINERU_TOOLS_CONFIG_JSON' not in os.environ, 'import exported env'\n"
-    )
-    env = {k: v for k, v in os.environ.items() if k != "MINERU_TOOLS_CONFIG_JSON"}
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        cwd=_REPO_ROOT,
-        env=env,
-        timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 def test_setup_embed_model_detects_then_downloads_once(monkeypatch, tmp_path) -> None:
     from models.embed_model.text import core
 
@@ -91,21 +72,3 @@ def test_setup_embed_model_skips_download_when_weights_present(monkeypatch, tmp_
     core.setup_embed_model()
 
     assert downloads == [], "present weights must not re-download"
-
-
-def test_setup_mineru_env_exports_config(monkeypatch) -> None:
-    from models.extract_model import core
-
-    monkeypatch.delenv("MINERU_TOOLS_CONFIG_JSON", raising=False)
-    core.setup_mineru_env()
-
-    assert os.environ["MINERU_TOOLS_CONFIG_JSON"] == core._MINERU_CONFIG_JSON
-
-
-def test_build_mineru_model_triggers_env_setup(monkeypatch) -> None:
-    from models.extract_model import core
-
-    monkeypatch.delenv("MINERU_TOOLS_CONFIG_JSON", raising=False)
-
-    assert core.build_mineru_model() is core.MinerUModel.get_instance()
-    assert os.environ["MINERU_TOOLS_CONFIG_JSON"] == core._MINERU_CONFIG_JSON

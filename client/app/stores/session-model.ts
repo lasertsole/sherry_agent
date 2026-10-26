@@ -14,7 +14,7 @@ export const ENV_MODEL_ID = 'env';
  * The backend owns the truth (the session state registers); this store mirrors
  * the current session's choice for the toolbar picker and pushes changes via
  * `PUT /sessions/model`. The options come from the environment-config MAIN_LLM
- * profile list (the same list the 模型配置 panel shows), and the choice lands
+ * profile list (the same list the Model Config panel shows), and the choice lands
  * on the NEXT turn — the backend refuses writes while a turn is in flight.
  *
  * A missing key means "not hydrated yet"; `ENV_MODEL_ID` means the session

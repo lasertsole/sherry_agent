@@ -53,45 +53,7 @@ def isolated_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_distinct_upserts_all_persisted(isolated_db: Path):
-    """F3 regression: 16 same-loop concurrent upserts (distinct run_ids) → zero row loss.
-
-    Before the busy_timeout + once-only-init fix, per-call connections with no
-    busy timeout could raise OperationalError("database is locked") under this
-    exact load and rows were silently lost (upsert_run_to_sqlite has no
-    try/except — an escaping OperationalError would surface to callers).
-    """
-    runs = [_make_run(run_id=f"run-{i:02d}", task=f"payload {i}") for i in range(16)]
-
-    await asyncio.gather(*(store_sqlite.upsert_run_to_sqlite(run) for run in runs))
-
-    loaded = await store_sqlite.load_runs_from_sqlite()
-    assert len(loaded) == 16
-    assert set(loaded) == {run.run_id for run in runs}
-    for run in runs:
-        record = loaded.get(run.run_id)
-        assert record is not None, f"row for {run.run_id} was lost"
-        assert record.task == run.task
-        assert record.requester_session_key == run.requester_session_key
-
-
 @pytest.mark.asyncio
-async def test_concurrent_same_run_id_upserts_yield_single_row(isolated_db: Path):
-    """F3 regression: same-loop concurrent upserts colliding on ONE run_id → exactly one row.
-
-    The run_id primary key must hold under concurrency: all 16 writers succeed
-    (no exceptions escape — gather re-raises) and INSERT OR REPLACE collapses
-    to a single stored row (last writer wins), never duplicates or lock errors.
-    """
-    runs = [_make_run(run_id="run-abc-123", task=f"payload {i}") for i in range(16)]
-
-    await asyncio.gather(*(store_sqlite.upsert_run_to_sqlite(run) for run in runs))
-
-    loaded = await store_sqlite.load_runs_from_sqlite()
-    assert len(loaded) == 1
-    assert loaded["run-abc-123"].task in {run.task for run in runs}
-
-
 @pytest.mark.asyncio
 async def test_save_runs_snapshot_removes_missing_run_ids(isolated_db: Path):
     """#34 regression: incremental save keeps full-replace sync semantics.

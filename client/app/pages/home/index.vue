@@ -242,7 +242,7 @@
          the panels mount and unmount with their tab; the notification badge keeps counting
          because its state lives in the notification STORE, not in the panel. -->
 
-    <!-- Mandatory preset choice for 新建对话: a session is created only after a
+    <!-- Mandatory preset choice for New Chat: a session is created only after a
          preset is picked and applied (persona files + character). Owned by the
          shell so every entry point (left sidebar, chat empty state, toolbar
          command) shares one dialog and one creation path. -->
@@ -345,7 +345,7 @@ const resolvePageKey = (route: { path: string; params: Record<string, unknown> }
  * counting while the notification tab is closed (registered below).
  */
 const notifications = useNotificationStore();
-/** Web-search store: its socket listener (the Tavily downgrade → 通知) is
+/** Web-search store: its socket listener (the Tavily downgrade → notification) is
  *  registered here, once per app shell. */
 const webSearchStore = useWebSearchStore();
 
@@ -434,7 +434,7 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
-// The 当前会话 tab group belongs to the route's session: switching sessions
+// The This-session tab group belongs to the route's session: switching sessions
 // shows that session's own tabs (or an empty group), never the previous one's.
 watch(openSessionId, sid => rightSidebarStore.setActiveSession(sid), { immediate: true });
 
@@ -452,7 +452,7 @@ const handleCloseRightTab = (tab: RightSidebarTab): void => {
   rightSidebarStore.rememberClosed(tab, openSessionId.value);
   rightSidebarStore.closeTab(tab.id);
 };
-/** Mandatory new-session preset dialog state (shared with every 新建对话 entry point). */
+/** Mandatory new-session preset dialog state (shared with every New Chat entry point). */
 const newSession = useNewSessionStore();
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
 
@@ -526,7 +526,7 @@ onMounted(() => {
   notifications.subscribe();
   // Same for the web-search downgrade frame: it arrives while a TURN runs, so
   // the listener cannot live in the session page (the user may be looking at
-  // another session) nor in the 模型联网 tab (lazily mounted).
+  // another session) nor in the Web Search tab (lazily mounted).
   webSearchStore.subscribe();
   useWs();
 });

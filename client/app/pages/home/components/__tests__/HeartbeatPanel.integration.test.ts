@@ -1,5 +1,5 @@
 /**
- * The 心跳 panel's global switch: it mirrors the backend state, applies the
+ * The Heartbeat panel's global switch: it mirrors the backend state, applies the
  * toggle through the backend (which starts/stops the running scheduler and
  * persists the choice), and rolls back when the backend refuses — a switch that
  * kept a state the backend never applied would misreport what is running.

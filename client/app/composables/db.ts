@@ -4,7 +4,7 @@ import type { MessageItem } from '@/pages/home/type';
 import type { AgentConfig } from './bridge/agent-config';
 import type { SessionModelProfile } from './bridge/session';
 
-/** The preset's agent block (工具 / 中间件 / 子代理模型) — re-exported for consumers. */
+/** The preset's agent block (Tools / Middlewares / Agent models) — re-exported for consumers. */
 export type { AgentConfig };
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
@@ -241,13 +241,13 @@ export interface PersonaPreset {
   content: Record<string, string>;
   /**
    * Character display info captured with the preset (both role names + avatars) —
-   * the 角色配置 part of the preset. Optional: presets saved before the role tab
+   * the Character Setup part of the preset. Optional: presets saved before the role tab
    * moved into the persona panel carry none, and applying one leaves the current
    * character untouched.
    */
   character?: PresetCharacter;
   /**
-   * Agent config captured with the preset (预设 的工具 / 中间件 / 子代理模型 tabs):
+   * Agent config captured with the preset (its Tools / Middlewares / Agent models tabs):
    * the enabled tool list, the disabled middleware names and the per-role model
    * profiles. Optional — presets saved before those tabs existed carry none, and
    * applying one writes "every default" (all tools, all switches on, role tiers).
@@ -255,7 +255,7 @@ export interface PersonaPreset {
    */
   agent?: AgentConfig;
   /**
-   * The MAIN agent's model choice (the 代理模型 tab's 主代理 sub-tab): a profile
+   * The MAIN agent's model choice (the Agent models tab's Main agent sub-tab): a profile
    * descriptor, or null for "follow the environment config". Optional — a preset
    * saved before the sub-tab existed leaves the session's model untouched.
    * Non-indexed, so it rides along without a Dexie version bump.
@@ -281,7 +281,7 @@ export interface PresetCharacter {
  * Purely local bookkeeping — the persona itself is frozen into the session's
  * prompt snapshot at its first build, so this row only powers the display (the
  * top-bar preset button). A session created before the binding existed has no
- * row and reads as "未选择".
+ * row and reads as "未选择" (nothing selected).
  */
 export interface SessionPresetBinding {
   /** Session id (primary key) */

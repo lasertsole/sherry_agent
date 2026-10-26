@@ -1,5 +1,5 @@
 /**
- * Per-session agent configuration bridge (预设 的工具 / 中间件 / 子代理模型 / 技能 四栏).
+ * Per-session agent configuration bridge (the preset's Tools / Middlewares / Agent models / Skills tabs).
  *
  * Three calls, mirroring `GET /agent/catalog` and `GET|PUT /sessions/agent_config`:
  *
@@ -39,7 +39,7 @@ export interface AgentMiddlewareEntry {
   gateable: boolean;
 }
 
-/** One skill the 技能 tab offers (the ``<available_skills>`` index's members). */
+/** One skill the Skills tab offers (the ``<available_skills>`` index's members). */
 export interface AgentSkillEntry {
   name: string;
   /** The SKILL.md description (bounded) — the row's hover tooltip. */

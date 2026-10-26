@@ -23,7 +23,7 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
         messages: [base({ id: 1, role: CHAT_ROLE.AI, content: '**bold** world' })]
       }
     });
-    // No character name on the prop → the neutral default label (改自 橘雪莉:
+    // No character name on the prop → the neutral default label (adapted from the 橘雪莉 character:
     // the persona name must never stand in for a nameless preset).
     expect(wrapper.text()).toContain('雪莉');
     expect(wrapper.text()).toContain('world');
@@ -57,11 +57,13 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(wrapper.text()).toContain('rate_limit');
   });
 
-  it('credits human messages as 我', () => {
+  it('renders USER role messages under the human row marker (credited as 我)', () => {
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] }
     });
-    expect(wrapper.text()).toContain('我');
+    // The row's role marker is the stable contract (a text assert on 我 — the zh role marker — alone
+    // matches almost any Chinese string on the page).
+    expect(wrapper.find('[data-message-role="human"]').exists()).toBe(true);
   });
 
   it('filters out TOOL role messages entirely', () => {
@@ -375,7 +377,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
 
     const card = wrapper.find('.background-task-card');
     expect(card.exists()).toBe(true);
-    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    // The per-origin label names the source (zh stub: 项目目录切换 "directory switched", not 后台任务 "background task")
     expect(wrapper.text()).toContain('项目目录切换');
     expect(wrapper.text()).not.toContain('后台任务');
     // Collapsed by default; expanding shows the verbatim notice
@@ -416,7 +418,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
 
     const card = wrapper.find('.background-task-card');
     expect(card.exists()).toBe(true);
-    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    // The per-origin label names the source (zh stub: 项目目录切换 "directory switched", not 后台任务 "background task")
     expect(wrapper.text()).toContain('项目目录切换');
     expect(wrapper.text()).not.toContain('后台任务');
     // Collapsed by default; expanding shows the verbatim notice
@@ -450,7 +452,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
   ])('labels the neutral card with its own source (%s)', (origin, label) => {
     // Every injector tags its rows with an origin, and the card names that
     // source instead of the generic background-task label. The generic-origin
-    // card (系统消息) collapses by default exactly like the tagged ones.
+    // card (系统消息 — "System message") collapses by default exactly like the tagged ones.
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 24, content: '门控正文', origin })] }
     });
@@ -673,7 +675,7 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
 
   it('opens the session context viewer when a token figure is clicked', async () => {
     // The token phrase on the AI row is the affordance: hovering it turns the
-    // numbers blue (the class) and clicking opens the 当前会话 context tab.
+    // numbers blue (the class) and clicking opens the This Session context tab.
     const sidebar = { openTab: vi.fn(() => 'contextViewer-1') };
     vi.stubGlobal('useRightSidebarStore', () => sidebar);
     const wrapper = mount(ChatBox, {

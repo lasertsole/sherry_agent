@@ -358,8 +358,8 @@ class TestFourLanguageRules:
         [
             "fix the bug",  # EN
             "修复这个bug",  # ZH
-            "バグを修正して",  # JA (漢字)
-            "リファクタリングして",  # JA (カタカナ, matches the リファクタ prefix)
+            "バグを修正して",  # JA (kanji)
+            "リファクタリングして",  # JA (katakana, matches the リファクタ prefix)
             "実装をお願いします",  # JA
             "버그 수정해줘",  # KO
             "테스트 추가해줘",  # KO

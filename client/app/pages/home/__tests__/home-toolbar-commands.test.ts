@@ -79,7 +79,7 @@ describe('buildHomeToolbarCommands', () => {
     }
     // The log viewer is a nine-grid entry like the other tools …
     expect(headerTools.map(tool => tool.event)).toContain('logs');
-    // 预设角色 leads the nine-grid (its panel is where a session's identity is
+    // Presets & Role leads the nine-grid (its panel is where a session's identity is
     // set up), and every tile keeps a distinct event.
     expect(headerTools[0]!.event).toBe('persona');
     expect(new Set(headerTools.map(tool => tool.event)).size).toBe(headerTools.length);

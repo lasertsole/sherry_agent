@@ -27,7 +27,10 @@ jobs:
   llm-e2e:
     name: Real-LLM e2e (dedicated)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # tests/full is part of this gate (52 cases, per-test timeouts up to 1500s;
+    # the runner's llm-e2e group budget is 7200s), so the job needs headroom
+    # beyond the old 45-minute hermetic-scale budget.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 

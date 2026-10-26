@@ -1,5 +1,5 @@
 /**
- * The left sidebar's 工作目录 body: the two section headers (文件树 / Git Graph)
+ * The left sidebar's working-directory body: the two section headers (Files / Git Graph)
  * share ONE row in EVERY open/close combination, and the Splitter exists ONLY
  * while both panels do.
  *

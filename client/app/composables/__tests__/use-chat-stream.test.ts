@@ -5,7 +5,7 @@
  * busy is QUEUED, but `handleSend` used to overwrite `streamingTurn` with the
  * queued turn. The still-running turn's next `chunk` then cleared the queued
  * send's badge (the old `clearQueueBadgeForTurn` call in `handleSocketChunk`),
- * so "已排队 · 第 N 位" never rendered. Fix: `handleSocketChunk` never touches
+ * so "已排队 · 第 N 位" (queued · position N) never rendered. Fix: `handleSocketChunk` never touches
  * badge state; `handleSend` only claims `streamingTurn` when the session was
  * idle, and `turn_started` moves it to the batch's trailing turn.
  */
@@ -415,7 +415,7 @@ describe('useChatStream queue badges', () => {
 // ---------------------------------------------------------------------------
 // Busy-state recovery: the composer must never stay "streaming" after the turn
 // ended. Live bug: a long answer was cut at its output cap, the server sent
-// `done`, the page never cleared isSending, and 停止 + "继续输入消息以排队"
+// `done`, the page never cleared isSending, and Stop + "继续输入消息以排队" (keep typing to queue)
 // stayed on until a manual reload.
 // ---------------------------------------------------------------------------
 describe('useChatStream busy-state recovery', () => {

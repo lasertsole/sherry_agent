@@ -71,7 +71,7 @@ export async function writeHeartbeat(fileToContent: Record<string, string>): Pro
   });
 }
 
-/** Global heartbeat switch state (the 心跳 panel's toggle). */
+/** Global heartbeat switch state (the Heartbeat panel's toggle). */
 export interface HeartbeatStatus {
   /** The persisted choice — what the switch shows. */
   enabled: boolean;

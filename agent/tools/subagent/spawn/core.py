@@ -673,7 +673,7 @@ async def spawn_subagent_direct(
     resolved_model_tier = model_plan.model_tier
     thinking_resolved = model_plan.thinking_override
 
-    # The requester session may pin a MODEL per functional role (预设-子代理模型):
+    # The requester session may pin a MODEL per functional role (preset subagent models):
     # a profile descriptor that outranks the role's model_tier. None = tier.
     role_model_profile = resolve_role_model_profile(requester_session_key, functional_role)
 

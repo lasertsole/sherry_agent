@@ -78,46 +78,6 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     return calls
 
 
-def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
-    """
-    Extract invalid tool-call entries from an assistant message.
-
-    Args:
-        msg: Assistant message.
-
-    Returns:
-        List of invalid tool-call entries.
-    """
-    invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
-
-    if not isinstance(invalid_tool_calls, list):
-        return []
-
-    calls: list[ToolCallLike] = []
-
-    for block in invalid_tool_calls:
-        if not block or not isinstance(block, dict):
-            continue
-
-        call_id = extract_tool_call_id(block)
-
-        if not call_id:
-            continue
-
-        error = block.get("error", "")
-
-        if isinstance(error, str) and error != "":
-            calls.append(
-                {
-                    "id": call_id,
-                    "name": block.get("name") if isinstance(block.get("name"), str) else None,
-                    "error": error,
-                }
-            )
-
-    return calls
-
-
 def extract_tool_result_id(msg: ToolMessage) -> str | None:
     """
     Extract the tool-call ID from a tool-result message.

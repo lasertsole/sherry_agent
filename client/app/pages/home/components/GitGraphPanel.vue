@@ -604,7 +604,7 @@ const runAction = async (action: () => Promise<GitGraphPage>, failure: string): 
 };
 
 /**
- * Move the current branch (the 回退 actions), behind a confirmation dialog.
+ * Move the current branch (the Reset actions), behind a confirmation dialog.
  * @param row The right-clicked row.
  * @param mode `soft` keeps the changes staged, `hard` discards them.
  */
@@ -821,7 +821,7 @@ onMounted(() => {
   void reload();
 });
 // A different session (or the same one after its project directory changed)
-// re-reads the history — the panel is mounted inside the sidebar's 工作目录 body.
+// re-reads the history — the panel is mounted inside the sidebar's working-directory body.
 watch(
   () => props.sessionId,
   () => {

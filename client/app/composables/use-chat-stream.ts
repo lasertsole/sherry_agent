@@ -508,7 +508,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     if (turn === null) {
       // A terminal frame for a turn this page no longer tracks. While the page
       // still believes it is streaming, that belief is the stale one: the
-      // server just proved the turn ended, so settle instead of leaving 停止
+      // server just proved the turn ended, so settle instead of leaving Stop
       // (and the queue placeholder) on for ever — the bug where a long answer
       // was cut at its output cap and the composer stayed "busy".
       if (isSending.value) {
@@ -643,7 +643,7 @@ export function useChatStream(deps: ChatStreamDeps) {
    *
    * The terminal frame is normally enough — this covers the case where it never
    * reached this page (socket swap mid-turn, dropped frame), which used to
-   * leave 停止 and the queue placeholder stuck until a reload.
+   * leave the Stop button and the queue placeholder stuck until a reload.
    */
   const startBusyWatchdog = () => {
     if (watchdogTimer !== null) return;

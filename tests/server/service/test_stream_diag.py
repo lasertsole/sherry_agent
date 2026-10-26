@@ -1,15 +1,11 @@
 """Tests for server.service.stream_diag (error-handling plan, module E)."""
 
-from types import SimpleNamespace
-
 import pytest
 
 from server.service.stream_diag import (
-    STREAM_DIAG_HEADERS,
     flatten_exception_chain,
     public_error_text,
     reraise_with_diag,
-    stream_diag_capture_response,
     stream_diag_init,
     stream_diag_summary,
 )
@@ -26,35 +22,6 @@ class TestStreamDiagInit:
         assert diag["headers"] == {}
         assert diag["http_status"] is None
         assert diag["started_at"] > 0
-
-
-class TestCaptureResponse:
-    def test_captures_status_and_known_headers(self):
-        diag = stream_diag_init()
-
-        class _FakeResponse:
-            status_code = 503
-            headers = {
-                "CF-Ray": "abc123",
-                "X-Request-Id": "req-9",
-                "x-custom": "ignored",
-            }
-
-        stream_diag_capture_response(diag, _FakeResponse())
-        assert diag["http_status"] == 503
-        assert diag["headers"] == {"cf-ray": "abc123", "x-request-id": "req-9"}
-
-    def test_only_stream_diag_headers_picked(self):
-        diag = stream_diag_init()
-        response = SimpleNamespace(headers=dict.fromkeys(STREAM_DIAG_HEADERS, "v"))
-        stream_diag_capture_response(diag, response)
-        assert diag["headers"] == dict.fromkeys(STREAM_DIAG_HEADERS, "v")
-
-    def test_object_without_headers_is_ignored(self):
-        diag = stream_diag_init()
-        stream_diag_capture_response(diag, object())
-        assert diag["http_status"] is None
-        assert diag["headers"] == {}
 
 
 class TestFlattenExceptionChain:

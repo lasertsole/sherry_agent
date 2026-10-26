@@ -84,7 +84,7 @@ from models import build_auxiliary_llm
 from pub.func.message.eviction import EVICTED_TO_KEY
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1200)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(1200)]
 
 # A small window keeps the auxiliary prompts cheap: usable 4000, compact
 # threshold 3200, preserve budget 5000 — the same knobs test_nudge_cadence_e2e

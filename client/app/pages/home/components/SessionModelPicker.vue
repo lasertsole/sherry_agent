@@ -47,7 +47,7 @@ const { t } = useI18n();
 const store = useSessionModelStore();
 /** Thinking control: its MODE follows the model, so re-hydrate after a switch. */
 const thinking = useThinkingStore();
-/** The env-config profiles: the SAME option list the 模型配置 panel shows. */
+/** The env-config profiles: the SAME option list the Model Config panel shows. */
 const profiles = useLlmProfilesStore();
 
 /** Env-config group whose profiles the picker mirrors. */
@@ -124,7 +124,7 @@ const currentModel = computed(() => {
 
 /**
  * Trigger text: the model name only — the toolbar row is tight, so the
- * "跟随模型配置" wording lives in the menu entry instead. Long names are cut
+ * The "跟随模型配置" (follow model config) wording lives in the menu entry instead. Long names are cut
  * short; the full name stays in the title/aria text.
  */
 const displayLabel = computed(() =>
@@ -142,7 +142,7 @@ const triggerTitle = computed(() =>
  */
 const triggerAriaLabel = computed(() => `${t('sessionModelPicker.a11y')}：${triggerTitle.value}`);
 
-/** Menu items: 跟随模型配置 first, then one entry per selectable profile. */
+/** Menu items: follow-model-config first, then one entry per selectable profile. */
 const menuItems = computed(() => [
   {
     label: t('sessionModelPicker.followEnvWith', { model: envLabel.value }),
@@ -168,7 +168,7 @@ watch(
 /**
  * Switch the session's model (null = follow the env config). Allowed at any
  * moment: a mid-turn choice is parked by the backend and applies next turn.
- * The thinking control's MODE (switch vs 低/高/最高 selector) is a property of
+ * The thinking control's MODE (switch vs low/high/max selector) is a property of
  * the chosen model, so it is re-hydrated once the write settles.
  * @param descriptor
  */

@@ -6,7 +6,7 @@
  * plugin joins the `md` singleton in safeHtml.ts via this registration. It is
  * kicked on the first directive mount and is idempotent; renders that happen
  * BEFORE the library lands show `$…$` as plain text (fail-open) — the next
- * re-render (new message, 展开全文, file viewer) picks formulas up.
+ * re-render (new message, expand-full-text, file viewer) picks formulas up.
  *
  * @module composables/use-katex
  */

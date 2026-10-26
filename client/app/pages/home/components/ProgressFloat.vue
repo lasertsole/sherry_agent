@@ -152,7 +152,7 @@ const expanded = ref(false);
 
 /**
  * Whether the plan has anything to report. The FLOAT is permanent (it stays on
- * screen with no plan — 始终显示), so this only switches the panel body between
+ * screen with no plan — the always-show setting), so this only switches the panel body between
  * the plan view and the empty-state line.
  */
 const hasPlan = computed(() => store.hasProgress || todoStore.todos.length > 0);

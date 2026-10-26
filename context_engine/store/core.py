@@ -890,29 +890,6 @@ def get_messages_by_lastest_n_turns(
     )
 
 
-def get_max_message_id(session_id: str) -> int:
-    """The newest message id of a session (0 when it has none)."""
-    row = (
-        _shared_db()
-        .execute("SELECT MAX(id) FROM messages WHERE session_id = ?", (session_id,))
-        .fetchone()
-    )
-    return int(row[0]) if row and row[0] is not None else 0
-
-
-def message_exists(session_id: str, message_id: int) -> bool:
-    """Whether *message_id* belongs to this session (a write-scope guard)."""
-    row = (
-        _shared_db()
-        .execute(
-            "SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
-            (message_id, session_id),
-        )
-        .fetchone()
-    )
-    return row is not None
-
-
 def session_has_messages(session_id: str) -> bool:
     """Whether the session has any persisted message row (cheap existence probe).
 
@@ -1029,7 +1006,7 @@ def get_session_ids() -> list[dict]:
         # injections (task_intent / cron) are excluded, so a carrier never
         # becomes the session title. A session whose only human rows are
         # internal gets an empty title, which the client renders as an i18n
-        # placeholder (e.g. "新会话") instead of leaking the raw session_id.
+        # placeholder (e.g. 新会话, "New chat") instead of leaking the raw session_id.
         result.append(
             {
                 "session_id": str(row["session_id"]),

@@ -1,9 +1,9 @@
 /**
- * The 预设 panel's three agent-config tabs (工具 / 中间件 / 子代理模型).
+ * The preset panel's three agent-config tabs (Tools / Middlewares / Agent models).
  *
  * Contract under test: the tabs render from the BACKEND catalogue (no
  * hardcoded names), the drafts map to the `agent` block (all-on / no-opinion
- * collapses to `{}`), and 保存预设 stores the block while 应用 writes it to the
+ * collapses to `{}`), and Save Preset stores the block while Apply writes it to the
  * open session through the store.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -249,8 +249,8 @@ describe('PersonaPanel agent-config tabs', () => {
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     expect(headers.slice(-4)).toEqual(['工具', '中间件', '代理模型', '技能']);
-    // The 技能 tab belongs to the same agent-config group and carries its own
-    // two sub-tabs; the 工具 tab splits the built-in groups from MCP.
+    // The Skills tab belongs to the same agent-config group and carries its own
+    // two sub-tabs; the Tools tab splits the built-in groups from MCP.
     expect(panel.find('[data-test="agent-skills-tab"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-skills-scope-builtin"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-skills-scope-thirdparty"]').exists()).toBe(true);
@@ -270,7 +270,7 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(panel.find('[data-test="agent-middleware-HumanInTheLoop"]').exists()).toBe(false);
     expect(panel.text()).not.toContain('HumanInTheLoop');
     expect(panel.find('[data-test="agent-middleware-option-Summarization"]').exists()).toBe(true);
-    // The 代理模型 tab leads with 主代理 and keeps the per-role pickers under 子代理.
+    // The Agent models tab leads with Main agent and keeps the per-role pickers under Subagent.
     expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(false);
     await panel.get('[data-test="agent-models-scope-subagent"]').trigger('click');
@@ -322,7 +322,7 @@ describe('PersonaPanel agent-config tabs', () => {
     await panel.get('[data-test="agent-middleware-TaskIntentMiddleware"]').trigger('click');
     await flushPromises();
 
-    // 保存预设 (no preset being edited → the name dialog opens) → confirm.
+    // Save Preset (no preset being edited → the name dialog opens) → confirm.
     const saveButton = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存预设');
     expect(saveButton).toBeTruthy();
     await saveButton!.trigger('click');
@@ -426,7 +426,7 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(panel.find('[data-test="agent-tool-bulk-taskflow_flow"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-tool-group-tasks"]').exists()).toBe(true);
 
-    // 全部禁用 keeps the required tool on and leaves the rest off.
+    // Disable all keeps the required tool on and leaves the rest off.
     await panel.get('[data-test="agent-tools-none"]').trigger('click');
     await flushPromises();
     expect(panel.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');

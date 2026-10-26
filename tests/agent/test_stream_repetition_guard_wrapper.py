@@ -323,7 +323,7 @@ class TestInternalRepetitionStream:
         assert _has_warning(out)
 
     def test_phrase_repetition_detected(self, fresh_state):
-        # "我来帮你" repeated 8 times -> phrase detector fires (> 5 repeats)
+        # "我来帮你" (let me help you) repeated 8 times -> phrase detector fires (> 5 repeats)
         content = "我来帮你" * 8
         chunks = [msg_chunk(content)]
         wrapper = RepetitionGuardWrapper(MockAgent(stream_chunks=chunks))
@@ -623,30 +623,22 @@ class TestMultipleModelCalls:
 class TestDelegation:
     """Unknown methods are delegated to the inner agent."""
 
-    def test_aget_state_delegated(self, fresh_state):
+    def test_unknown_methods_delegate_to_inner(self, fresh_state):
         mock = MockAgent()
         wrapper = RepetitionGuardWrapper(mock)
 
-        async def _run():
-            return await wrapper.aget_state(config={})
-
-        result = asyncio.run(_run())
-        assert result is not None  # MockAgent returns a MagicMock
-
-    def test_inner_property(self, fresh_state):
-        mock = MockAgent()
-        wrapper = RepetitionGuardWrapper(mock)
         assert wrapper.inner is mock
 
-    def test_aupdate_state_delegated(self, fresh_state):
-        mock = MockAgent()
-        wrapper = RepetitionGuardWrapper(mock)
-
         async def _run():
-            return await wrapper.aupdate_state(config={}, values={"x": 1})
+            # Neither method exists on the wrapper itself: a result at all
+            # proves the __getattr__ forwarding reached the inner agent.
+            state = await wrapper.aget_state(config={})
+            updated = await wrapper.aupdate_state(config={}, values={"x": 1})
+            return state, updated
 
-        result = asyncio.run(_run())
-        assert result is None  # MockAgent returns None
+        state, updated = asyncio.run(_run())
+        assert state is not None  # MockAgent.aget_state returns a MagicMock
+        assert updated is None  # MockAgent.aupdate_state returns None
 
 
 # ======================================================================

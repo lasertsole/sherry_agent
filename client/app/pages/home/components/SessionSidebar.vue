@@ -303,7 +303,7 @@ const collapsed = defineModel<boolean>('collapsed', { default: false });
 /** Which body the sidebar shows; the top bar's folder button flips it. */
 const ui = useUiStore();
 
-/** The two 工作目录 sections: their headers share one row, each toggles its panel. */
+/** The two working-directory sections: their headers share one row, each toggles its panel. */
 const sidebarSections = computed<Array<{ id: string; icon: string; label: string; open: boolean; toggle: () => void }>>(
   () => [
     {

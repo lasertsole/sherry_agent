@@ -239,7 +239,7 @@ def _bounded_field(value: Any, max_tokens: int) -> str:
 #: Skills no session config may drop: the multimedia handling chain. A user can
 #: send an image / an audio clip / a video at any moment, and these are what turn
 #: it into something the model can read (or, for ``text_to_image``, what lets it
-#: answer with one) — 预设-技能 shows them as locked rows and
+#: answer with one) — the preset Skills tab shows them as locked rows and
 #: ``agent_config_service`` refuses a payload that omits one.
 REQUIRED_SKILLS: frozenset[str] = frozenset(
     {

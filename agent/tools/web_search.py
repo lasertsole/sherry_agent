@@ -271,7 +271,7 @@ def build_web_search_tool():
         )
         # ONE tool name across every branch. TavilySearch's own default is
         # ``tavily_search``, which would make the backend swap visible as a
-        # DIFFERENT tool (the per-session tool selection, the 工具 tab and the
+        # DIFFERENT tool (the per-session tool selection, the Tools tab and the
         # model's tool list all know this tool as ``web_search``). Transcripts
         # persisted before this rename may still carry ``tavily_search`` — the
         # untrusted-output / redaction sets keep covering that name.

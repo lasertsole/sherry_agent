@@ -127,10 +127,6 @@ def discover_chapters(docs_root: Path) -> list[Chapter]:
     return chapters
 
 
-def build_page_map(docs_root: Path) -> dict[Path, Chapter]:
-    return {chapter.rel_dir: chapter for chapter in discover_chapters(docs_root)}
-
-
 def _github_blob(repo: str, branch: str, path: Path, anchor: str = "") -> str:
     url = f"https://github.com/{repo}/blob/{branch}/{path.as_posix()}"
     return f"{url}#{anchor}" if anchor else url
