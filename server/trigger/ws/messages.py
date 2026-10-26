@@ -287,7 +287,7 @@ async def _handle_edit_queued(
 async def _handle_send_now(
     websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
 ) -> None:
-    """``send_now``: re-stamp the row below the session minimum, then cancel."""
+    """``send_now``: flag the row to claim first (priority=1), then cancel."""
     msg_id = str(obj.get("msg_id", ""))
     # Order matters: prioritize BEFORE cancelling. `_cancel_session`
     # awaits the task's cancellation and its finally drains the

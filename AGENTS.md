@@ -265,11 +265,12 @@ User message → Robyn WS → agent.core.built_agent() graph
       command substring for legacy rows (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      the flow's AGGREGATED evidence (every dispatched step's child session +
-      the creator's; rows stamped with the flow are read by `flow_id`, with the
-      session-key set as the fallback for unstamped/creator rows) carrying no
-      FAIL/[stale]/[broken], then Gate E's goal judge (only for a flow with a
-      description and at least GOAL_GATE["min_steps"] = 3 steps)
+      the flow's evidence read by `flow_id` ONLY (step children are stamped at
+      spawn; finish temporarily stamps the creator's `StateKey.FLOW_ID` and
+      restores it in `finally`, so replay/creator rows carry the flow; stale /
+      broken / unmark events auto-stamp from the target session's flow context)
+      carrying no FAIL/[stale]/[broken], then Gate E's goal judge (only for a
+      flow with a description and at least GOAL_GATE["min_steps"] = 3 steps)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence
 ```
@@ -294,10 +295,10 @@ Each queued row is manageable from the client (`cancel_queued` / `edit_queued` /
 `send_now` frames → `queued_cancelled` / `queued_updated` / `send_now_ack`
 `{event, session_id, msg_id, ok}` acks): cancel voids a `QUEUED` row (a
 `CLAIMED` one is already inside a turn and is refused), edit rewrites only a
-`QUEUED` payload, and `send_now` re-stamps `created_at` below the session
-minimum **before** cancelling the running turn — the cancel-triggered drain then
-claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
-single ordering rule; there is no priority column).
+`QUEUED` payload, and `send_now` stamps the row's `priority` to 1 **before**
+cancelling the running turn — the cancel-triggered drain then claims the
+prioritised row first (`claim_next`'s `ORDER BY priority DESC, created_at ASC`
+stays the single ordering rule; the row keeps its real `created_at`).
 
 ## Chat Selection Quote & Side Session (`ChatBox.vue` / `SideChatPanel.vue`)
 

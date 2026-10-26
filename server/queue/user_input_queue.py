@@ -42,14 +42,14 @@ Public API (the signatures below are a contract):
     single ``UPDATE ... RETURNING`` guarded by ``BEGIN IMMEDIATE``, so
     concurrent claimers never double-claim. Returns the row as CLAIMED, or
     None when the queue is empty/fully expired. The drain calls this once per
-    turn (N queued messages -> N turns); ``prioritize`` re-stamps
-    ``created_at`` to reorder who "oldest" is.
+    turn (N queued messages -> N turns); ``prioritize`` stamps the row's
+    ``priority`` to 1 so it claims before its FIFO peers.
   - ``await mark_terminal(row_id, status) -> None``
     Transitions an ACTIVE row to ``DELIVERED | FAILED | VOIDED`` (any other
     status raises ``ValueError``); unknown row ids are a no-op.
   - ``await count_active(session_id) -> int`` -- QUEUED + CLAIMED count.
   - ``await list_active(session_id) -> list[UserInputQueueRow]`` -- active rows
-    ascending by ``created_at`` (FIFO).
+    in claim order (priority first, then FIFO by ``created_at``).
   - ``await recover(session_id) -> int`` -- voids expired (``expires_at <= now``)
     QUEUED/CLAIMED rows (24h crash-recovery expiry), returns how many.
   - ``await find_active_by_client_msg_id(client_msg_id) -> UserInputQueueRow |
@@ -118,7 +118,8 @@ CREATE TABLE IF NOT EXISTS user_input_queue (
     status TEXT NOT NULL,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    expires_at REAL NOT NULL
+    expires_at REAL NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -140,7 +141,7 @@ _ACTIVE_STATUSES_SQL = "('QUEUED', 'CLAIMED')"
 
 _ROW_COLUMNS = (
     "id, session_id, payload, source, reply_target, client_msg_id, "
-    "status, created_at, updated_at, expires_at"
+    "status, created_at, updated_at, expires_at, priority"
 )
 
 # Atomic race-free claim: the subquery and the UPDATE run as ONE statement under
@@ -151,7 +152,7 @@ SET status = 'CLAIMED', updated_at = ?
 WHERE id = (
     SELECT id FROM user_input_queue
     WHERE session_id = ? AND status = 'QUEUED' AND expires_at > ?
-    ORDER BY created_at ASC, id ASC
+    ORDER BY priority DESC, created_at ASC, id ASC
     LIMIT 1
 )
 RETURNING {_ROW_COLUMNS};
@@ -178,13 +179,12 @@ WHERE id = ? AND status = 'QUEUED'
 RETURNING {_ROW_COLUMNS};
 """
 
-# Jump the FIFO queue: claim_next orders by (created_at ASC, id ASC), so moving
-# a row's created_at just below the current minimum is enough. The caller
-# re-reads nothing afterwards: the queue's own ordering rule stays the single
-# source of truth for "who is next".
+# Jump the FIFO queue: claim_next orders by (priority DESC, created_at ASC,
+# id ASC), so stamping priority=1 is enough — the row keeps its real creation
+# time (a timestamp that is a timestamp, not an ordering lever).
 _PRIORITIZE_SQL = """
 UPDATE user_input_queue
-SET created_at = ?, updated_at = ?
+SET priority = 1, updated_at = ?
 WHERE id = ? AND session_id = ? AND status = 'QUEUED';
 """
 
@@ -230,14 +230,14 @@ LIMIT 1;
 # progress" fact), inserted in the same critical section as the idle check.
 _INSERT_CLAIMED_SQL = """
 INSERT INTO user_input_queue
-(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, 'CLAIMED', ?, ?, ?);
+(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at, priority)
+VALUES (?, ?, ?, ?, ?, ?, 'CLAIMED', ?, ?, ?, 0);
 """
 
 _INSERT_QUEUED_SQL = """
 INSERT INTO user_input_queue
-(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?);
+(id, session_id, payload, source, reply_target, client_msg_id, status, created_at, updated_at, expires_at, priority)
+VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?, ?);
 """
 
 
@@ -285,6 +285,8 @@ class UserInputQueueRow(BaseModel):
     created_at: float
     updated_at: float
     expires_at: float
+    #: >0 claims before FIFO peers (send_now); the creation time stays a time.
+    priority: int = 0
 
 
 def _row_from_db(row: aiosqlite.Row) -> UserInputQueueRow:
@@ -300,6 +302,7 @@ def _row_from_db(row: aiosqlite.Row) -> UserInputQueueRow:
         created_at=row[7],
         updated_at=row[8],
         expires_at=row[9],
+        priority=row[10],
     )
 
 
@@ -466,6 +469,7 @@ class QueueRepository:
                 row.created_at,
                 row.updated_at,
                 row.expires_at,
+                row.priority,
             ),
         )
 
@@ -506,8 +510,9 @@ class QueueRepository:
         async with db.execute(
             "SELECT COUNT(*) FROM user_input_queue "
             "WHERE session_id = ? AND status = 'QUEUED' "
-            "AND (created_at < ? OR (created_at = ? AND id <= ?))",
-            (row.session_id, row.created_at, row.created_at, row.id),
+            "AND (priority > ? OR (priority = ? AND (created_at < ? "
+            "OR (created_at = ? AND id <= ?))))",
+            (row.session_id, row.priority, row.priority, row.created_at, row.created_at, row.id),
         ) as cursor:
             position_row = await cursor.fetchone()
             if position_row is None:  # COUNT(*) always returns a row
@@ -538,22 +543,10 @@ class QueueRepository:
 
     @staticmethod
     async def prioritize(
-        db: aiosqlite.Connection, session_id: str, row_id: str, older_than: float, now: float
+        db: aiosqlite.Connection, session_id: str, row_id: str, now: float
     ) -> bool:
-        cursor = await db.execute(_PRIORITIZE_SQL, (older_than, now, row_id, session_id))
+        cursor = await db.execute(_PRIORITIZE_SQL, (now, row_id, session_id))
         return cursor.rowcount > 0
-
-    @staticmethod
-    async def queued_min_created_at(db: aiosqlite.Connection, session_id: str) -> float | None:
-        cursor = await db.execute(
-            "SELECT MIN(created_at) FROM user_input_queue "
-            "WHERE session_id = ? AND status = 'QUEUED'",
-            (session_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None or row[0] is None:
-            return None
-        return float(row[0])
 
     @staticmethod
     async def mark_terminal(
@@ -581,7 +574,7 @@ class QueueRepository:
         async with db.execute(
             f"SELECT {_ROW_COLUMNS} FROM user_input_queue "
             f"WHERE session_id = ? AND status IN {_ACTIVE_STATUSES_SQL} "
-            "ORDER BY created_at ASC, id ASC",
+            "ORDER BY priority DESC, created_at ASC, id ASC",
             (session_id,),
         ) as cursor:
             async for row in cursor:
@@ -720,20 +713,17 @@ class UserInputQueue:
             return await QueueRepository.update_payload(db, row_id, new_payload, time.time())
 
     async def prioritize(self, session_id: str, row_id: str) -> bool:
-        """Move a QUEUED row to the front of this session's FIFO queue.
+        """Flag a QUEUED row to claim before its FIFO peers.
 
-        ``claim_next`` orders by ``created_at ASC``, so the row is re-stamped
-        one second below the current minimum instead of the queue growing a
-        separate priority column: one ordering rule, one place to reason about
-        "who is next". Returns False when the row is not QUEUED (or not this
-        session's).
+        ``claim_next`` orders by (priority DESC, created_at ASC, id ASC), so
+        stamping ``priority = 1`` is enough and the row keeps its real
+        ``created_at`` — the timestamp stays a timestamp (design concept #27:
+        do not encode a missing column into data values). Returns False when
+        the row is not QUEUED (or not this session's).
         """
         await self._ensure_db()
-        now = time.time()
         async with self._conn.write_transaction() as db:
-            earliest = await QueueRepository.queued_min_created_at(db, session_id)
-            target = (earliest if earliest is not None else now) - 1.0
-            return await QueueRepository.prioritize(db, session_id, row_id, target, now)
+            return await QueueRepository.prioritize(db, session_id, row_id, time.time())
 
     async def mark_terminal(
         self, row_id: str, status: UserInputQueueStatus | Literal["DELIVERED", "FAILED", "VOIDED"]
