@@ -40,6 +40,34 @@ _STRIP_FIRST_RE = re.compile(
 )
 
 
+#: Design concept #20 (retry & backoff): the PUBLIC branch gets ONE bounded
+#: retry for failures a second attempt can plausibly fix. Transient means
+#: ``reason == "network"`` (connect reset / timeout — every OSError and
+#: ``HTTPException`` already collapses into that reason inside ``safe_fetch``)
+#: or an HTTP 502/503/504 gateway status. A 4xx, the SSRF refusal, a bad
+#: scheme and an oversize body are permanent, and the local branch (the
+#: operator's own dev server) stays single-shot.
+_TRANSIENT_FETCH_STATUSES = frozenset({502, 503, 504})
+_TRANSIENT_RETRY_DELAY_S = 1.0
+
+
+def _is_transient_fetch_failure(result: FetchResult) -> bool:
+    """Whether one more ``safe_fetch`` attempt is worth its delay."""
+    if result.reason == "network":
+        return True
+    return result.status in _TRANSIENT_FETCH_STATUSES
+
+
+async def _fetch_public(url: str) -> FetchResult:
+    """One SSRF-guarded fetch of a public URL, on the tool's own budgets."""
+    return await asyncio.to_thread(
+        safe_fetch,
+        url,
+        timeout=float(TOOLS_TIMEOUTS["web_fetch_timeout_seconds"]),
+        max_bytes=TOOLS_TIMEOUTS["web_fetch_max_bytes"],
+    )
+
+
 def local_fetch_enabled() -> bool:
     """Whether the local/private URL branch is switched on for this process.
 
@@ -163,12 +191,15 @@ async def web_fetch(url: str) -> str:
     else:
         if not is_public_url(url):
             return f"Error: URL '{url}' is not a public URL or could not be resolved."
-        result = await asyncio.to_thread(
-            safe_fetch,
-            url,
-            timeout=float(TOOLS_TIMEOUTS["web_fetch_timeout_seconds"]),
-            max_bytes=TOOLS_TIMEOUTS["web_fetch_max_bytes"],
-        )
+        result = await _fetch_public(url)
+        if _is_transient_fetch_failure(result):
+            logger.info(
+                "web_fetch: transient failure (reason={!r}, status={}); retrying once",
+                result.reason,
+                result.status,
+            )
+            await asyncio.sleep(_TRANSIENT_RETRY_DELAY_S)
+            result = await _fetch_public(url)
 
     if not result.ok:
         return f"Error: fetch failed ({result.reason}). URL: {result.final_url or url}"

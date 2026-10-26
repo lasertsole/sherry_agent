@@ -34,6 +34,20 @@ def _public_fetch(monkeypatch, result: FetchResult, *, public: bool = True):
     return calls
 
 
+def _public_fetch_sequence(monkeypatch, results: list[FetchResult], *, public: bool = True):
+    """Route the public branch through a canned per-call result sequence."""
+    calls: list[tuple] = []
+
+    def _safe_fetch(url, **kwargs):
+        calls.append((url, kwargs))
+        return results[min(len(calls) - 1, len(results) - 1)]
+
+    monkeypatch.setattr(wf, "safe_fetch", _safe_fetch)
+    monkeypatch.setattr(wf, "is_public_url", lambda url: public)
+    monkeypatch.setattr(wf, "_TRANSIENT_RETRY_DELAY_S", 0.0)
+    return calls
+
+
 class _FakeResponse:
     def __init__(self, content: bytes, status: int = 200, url: str = "http://localhost:3000/"):
         self.content = content
@@ -123,6 +137,79 @@ class TestPublicBranch:
     @pytest.mark.asyncio
     async def test_an_empty_url_is_refused(self):
         assert (await web_fetch.coroutine(url="   ")).startswith("Error:")
+
+
+class TestTransientRetry:
+    """Design concept #20: one bounded retry for transient public-fetch failures."""
+
+    @pytest.mark.asyncio
+    async def test_a_network_failure_is_retried_once_and_can_recover(self, monkeypatch):
+        calls = _public_fetch_sequence(
+            monkeypatch,
+            [
+                FetchResult(ok=False, reason="network", final_url="https://example.com/x"),
+                FetchResult(
+                    ok=True, body=_HTML.encode(), status=200, final_url="https://example.com/x"
+                ),
+            ],
+        )
+
+        out = await web_fetch.coroutine(url="https://example.com/x")
+
+        assert len(calls) == 2
+        assert out.startswith("URL: https://example.com/x\nStatus: 200")
+
+    @pytest.mark.asyncio
+    async def test_two_attempts_are_the_ceiling(self, monkeypatch):
+        calls = _public_fetch_sequence(
+            monkeypatch,
+            [FetchResult(ok=False, reason="network", final_url="https://example.com/x")],
+        )
+
+        out = await web_fetch.coroutine(url="https://example.com/x")
+
+        assert len(calls) == 2, "exactly one retry, never a third attempt"
+        assert out.startswith("Error: fetch failed (network)")
+
+    @pytest.mark.asyncio
+    async def test_a_gateway_status_counts_as_transient(self, monkeypatch):
+        calls = _public_fetch_sequence(
+            monkeypatch,
+            [
+                FetchResult(ok=True, body=b"busy", status=503, final_url="https://example.com/x"),
+                FetchResult(
+                    ok=True, body=_HTML.encode(), status=200, final_url="https://example.com/x"
+                ),
+            ],
+        )
+
+        out = await web_fetch.coroutine(url="https://example.com/x")
+
+        assert len(calls) == 2
+        assert "Status: 200" in out
+
+    @pytest.mark.asyncio
+    async def test_a_client_error_status_is_not_retried(self, monkeypatch):
+        calls = _public_fetch_sequence(
+            monkeypatch,
+            [FetchResult(ok=True, body=b"gone", status=404, final_url="https://example.com/x")],
+        )
+
+        await web_fetch.coroutine(url="https://example.com/x")
+
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_permanent_reasons_are_not_retried(self, monkeypatch):
+        for reason in ("oversize", "ssrf", "scheme"):
+            calls = _public_fetch(
+                monkeypatch, FetchResult(ok=False, reason=reason, final_url="https://example.com/x")
+            )
+
+            out = await web_fetch.coroutine(url="https://example.com/x")
+
+            assert len(calls) == 1, reason
+            assert out.startswith(f"Error: fetch failed ({reason})")
 
 
 class TestConversion:
