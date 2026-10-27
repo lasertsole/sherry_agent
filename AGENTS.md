@@ -1751,8 +1751,7 @@ the JUDGE and a gold-patch miss aborts before any model call; the host harness
 quiesces the session before it reads the tree — turn cancel, descendant/background
 kill, shadow-git `wait_for_idle` + `freeze` — keeps `.sherry` outside the checkout,
 quarantines it atomically on revert, includes untracked files in the saved diff,
-writes a per-instance result immediately, gives a no-edit turn ONE repair turn and
-HARD instances a 150-iteration `ITERATION_BUDGET_OVERRIDE`), `deepswe`
+and writes a per-instance result immediately), `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
 task's separate verifier image grades the agent's `git diff`),

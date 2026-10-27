@@ -301,5 +301,6 @@ uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --keep
 ## 8. 执行结果（2026-10-27）
 
 - **竞争修复**：shadow store 可移出实例项目（`SHADOW_GIT["store_dir"]` / `SHERRY_SHADOW_GIT_DIR`）；实例 `.git/info/exclude` 排除 `.sherry/`；`evals/swebench/teardown.py::quiesce_session` 在 diff / test patch / pytest / revert 前取消 turn、级联杀子代理、杀后台终端、等待并冻结 shadow-git 写者；每实例即时写 `instance_results/<id>.json`，单实例失败不再中止整轮；`revert` 改为原子 quarantine；`diff` 包含 untracked 新文件（`git add -N` + `git diff --binary HEAD` + `git reset`），并排除 `.sherry`。
-- **能力与可观测性**：HARD 主 agent 预算 150（`StateKey.ITERATION_BUDGET_OVERRIDE`）；无编辑且非超时/错误时执行一次短 repair turn，仍无 diff 则标 `no_edit`；报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；context-trim 占位符改为中性（`status=success` + `sherry_repair` 标记）；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
+- **4.2 暂未应用（已撤回）**：无编辑 repair turn、HARD 150 预算、maintainer prompt 已撤回。结论是“问题不在 main agent turn 太短”，需要重新讨论 4.2 的根因与方案；未加载/未自动路由 researcher 是当前更可疑的方向。
+- **其余可观测性/稳定性（4.3–4.6）**：报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；context-trim 占位符改为中性（`status=success` + `sherry_repair` 标记）；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
 - **验证**：完整三组门禁 PASS（unit 7314 passed / 1 skipped；integration+module+system 1378 passed / 12 skipped；regression 86 passed）；`tests/full/test_main_agent_e2e.py` + `tests/full/test_session_isolation_e2e.py` 共 7 passed；文档 link/parity gates PASS。

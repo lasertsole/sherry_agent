@@ -59,9 +59,6 @@ issue in the library source.
 
 - The project's environment interpreter is the `python` on PATH (`python -m
   pytest <path>` runs a test file). Use it if you want to run tests.
-- Work like a maintainer: locate the failing test and the smallest relevant
-  code path first, then make one focused edit and run the nearest check. Broad
-  repository-wide searching is not progress; stop searching once the fix is clear.
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
 
@@ -318,7 +315,6 @@ def _run(
             "instances_total": len(results),
             "resolved": sum(1 for r in results if r["resolved"]),
             "invalid_runs": [r["id"] for r in results if r["invalid_run"]],
-            "no_edit": [r["id"] for r in results if r.get("failure_kind") == "no_edit"],
             "harness_errors": [r["id"] for r in results if r.get("failure_kind") == "harness"],
             "resolve_rate": round(
                 sum(1 for r in results if r["resolved"])
@@ -449,43 +445,6 @@ async def _run_instances(
 #: the model has to find its way around first.
 _TURN_TIMEOUT_S = 1200.0
 _TURN_TIMEOUT_HARD_S = 2400.0
-
-
-#: HARD instances get a larger main-agent budget than the shipped 90: the
-#: analysis showed both instances exhausting 90/90, one before producing a diff.
-_HARD_ITERATION_BUDGET = 150
-#: A no-edit repair turn is deliberately short: it must edit, not explore.
-_REPAIR_ITERATION_BUDGET = 30
-_REPAIR_TIMEOUT_S = 600.0
-
-_REPAIR_PROMPT = """You made NO file edits in the previous turn. Stop broad exploration.
-
-Use the context you already gathered: pick the smallest plausible fix and apply
-it NOW with patch_file or write_file. Then run only the directly relevant check.
-A minimal patch that addresses the reported failure is better than more searching.
-
-Problem statement:
-{problem}
-"""
-
-
-def _set_iteration_budget(session_id: str, budget: int) -> None:
-    """Set the per-session iteration cap (the eval budget seam)."""
-    from runtime import StateKey, state_register_mem
-
-    state_register_mem.set_state(session_id, StateKey.ITERATION_BUDGET_OVERRIDE, int(budget))
-
-
-def _merge_drive(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
-    """Fold a repair turn's counters into the original turn's drive record."""
-    return {
-        "tool_calls": int(base.get("tool_calls") or 0) + int(extra.get("tool_calls") or 0),
-        "text": str(base.get("text") or "") + str(extra.get("text") or ""),
-        "resumes": int(base.get("resumes") or 0) + int(extra.get("resumes") or 0),
-        "interrupted": int(base.get("interrupted") or 0) + int(extra.get("interrupted") or 0),
-        "timeout": bool(base.get("timeout")) or bool(extra.get("timeout")),
-        "error": str(base.get("error") or "") or str(extra.get("error") or ""),
-    }
 
 
 async def _session_evidence(session_id: str) -> dict[str, Any]:
@@ -619,8 +578,6 @@ async def _run_instance(
     prompt = _TASK_TEMPLATE.format(problem=instance.problem_statement.strip(), repo=instance.repo)
     session_id = f"evals-swe-{instance.instance_id}-{uuid.uuid4().hex[:6]}"
     await harness._bind_session(session_id, instance.repo_dir)
-    base_budget = _HARD_ITERATION_BUDGET if hard else 90
-    _set_iteration_budget(session_id, base_budget)
 
     from config.features import SHADOW_GIT
     from agent.tools.pub_base import shadow_git
@@ -713,79 +670,6 @@ async def _run_instance(
                 "harness_error": "quiesce timed out",
             }
 
-        # No-edit gate (MVP): a completed turn that produced no file change gets
-        # ONE short repair turn before the verdict is recorded.
-        if not changed and not drive["timeout"] and not drive["error"]:
-            _set_iteration_budget(session_id, _REPAIR_ITERATION_BUDGET)
-            try:
-                repair = await asyncio.wait_for(
-                    harness._drive(
-                        session_id,
-                        _REPAIR_PROMPT.format(problem=instance.problem_statement.strip()),
-                    ),
-                    timeout=min(_REPAIR_TIMEOUT_S, timeout_s),
-                )
-            except TimeoutError:
-                repair = {
-                    "tool_calls": 0,
-                    "text": "",
-                    "resumes": 0,
-                    "interrupted": 0,
-                    "timeout": True,
-                    "error": "",
-                }
-            except Exception as exc:  # noqa: BLE001
-                repair = {
-                    "tool_calls": 0,
-                    "text": "",
-                    "resumes": 0,
-                    "interrupted": 0,
-                    "timeout": False,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            finally:
-                _set_iteration_budget(session_id, base_budget)
-            drive = _merge_drive(drive, repair)
-            quiesce = await teardown.quiesce_session(session_id, instance.repo_dir)
-            if quiesce.get("timed_out"):
-                changed = instances.changed_paths(instance)
-                evidence = await _session_evidence(session_id)
-                return {
-                    "id": instance.instance_id,
-                    "repo": instance.repo,
-                    "base_commit": instance.base_commit,
-                    "resolved": False,
-                    "failure_kind": "harness",
-                    "invalid_run": True,
-                    "fail_to_pass_ok": False,
-                    "pass_to_pass_ok": False,
-                    "test_patch_applied": False,
-                    "judge_detail": "",
-                    "judge_tests": None,
-                    "duration_s": round(time.monotonic() - started, 1),
-                    "tool_calls": drive["tool_calls"],
-                    "resumes": drive["resumes"],
-                    "timeout": drive["timeout"],
-                    "error": "quiesce timed out after repair: "
-                    + json.dumps(quiesce, ensure_ascii=False),
-                    "changed_paths": changed,
-                    "reply": drive["text"][:2000],
-                    "final_text": evidence["final_text"],
-                    "tokens": {
-                        "input": evidence["input"],
-                        "output": evidence["output"],
-                        "cache_read": evidence["cache_read"],
-                    },
-                    "cost_usd": evidence["cost_usd"],
-                    "quiesce": quiesce,
-                    "harness_error": "quiesce timed out after repair",
-                }
-            changed = instances.changed_paths(instance)
-            agent_diff = instances.diff(instance)
-            (results_dir / f"diff-{instance.instance_id}.patch").write_text(
-                agent_diff, encoding="utf-8"
-            )
-
         ok_f2p = ok_p2p = False
         f2p_tests: list[dict[str, Any]] = []
         p2p_tests: list[dict[str, Any]] = []
@@ -801,11 +685,6 @@ async def _run_instance(
 
         passed = bool(resolved)
         failure_kind = harness._failure_kind(passed, drive)
-        if not passed and failure_kind == "":
-            if not changed:
-                failure_kind = "no_edit"
-            elif not test_patch_applied:
-                failure_kind = "test_patch"
         evidence = await _session_evidence(session_id)
         return {
             "id": instance.instance_id,

@@ -56,34 +56,19 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     def _get_session_id(self, state: AgentState) -> str:
         return require_session_id(state, "IterationBudget: session_id is required")
 
-    def _effective_max(self, session_id: str) -> int:
-        """The per-session cap override, or this middleware's configured cap.
-
-        The eval harness sets ``ITERATION_BUDGET_OVERRIDE`` on a HARD session so
-        the singleton graph can give that instance a larger budget without
-        changing every other session.
-        """
-        override = state_register_mem.get_state(session_id, StateKey.ITERATION_BUDGET_OVERRIDE, 0)
-        try:
-            value = int(override or 0)
-        except (TypeError, ValueError):
-            value = 0
-        return value if value > 0 else self.max_iterations
-
     def _consume(self, session_id: str) -> bool:
         logger.debug("[IB_TRACE] _consume enter session_id={}", session_id)
-        cap = self._effective_max(session_id)
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
-        if used >= cap:
+        if used >= self.max_iterations:
             logger.debug(
                 "[IB_TRACE] _consume exhausted session_id={} used={} max={}",
                 session_id,
                 used,
-                cap,
+                self.max_iterations,
             )
             return False
         used += 1
-        remaining = cap - used
+        remaining = self.max_iterations - used
         state_register_mem.set_state(session_id, self._USED_KEY, used)
         logger.debug(
             "session_id {} consume {} times, {} remaining before halt", session_id, used, remaining
@@ -98,11 +83,11 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
 
     def _remaining(self, session_id: str) -> int:
         used: int = state_register_mem.get_state(session_id, self._USED_KEY, 0)
-        return max(0, self._effective_max(session_id) - used)
+        return max(0, self.max_iterations - used)
 
     def _before_agent_impl(self, state: AgentState) -> None:
         session_id = self._get_session_id(state)
-        state_register_mem.set_state(session_id, self._BUDGET_KEY, self._effective_max(session_id))
+        state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
         state_register_mem.set_state(session_id, self._USED_KEY, 0)
 
     @override
@@ -123,12 +108,11 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
                 "Returning terminal message instead of calling model.",
                 session_id,
                 remaining,
-                self._effective_max(session_id),
+                self.max_iterations,
             )
-            cap = self._effective_max(session_id)
             return AIMessage(
                 content=(
-                    f"The iteration budget ({cap}) has been exhausted. "
+                    f"The iteration budget ({self.max_iterations}) has been exhausted. "
                     "I must stop here. Please summarize what has been accomplished "
                     "and what remains to be done."
                 )
@@ -185,7 +169,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
             return ToolMessage(
                 content=(
                     f"Tool [{tool_name}] skipped — iteration budget "
-                    f"({self._effective_max(session_id)}) exhausted. "
+                    f"({self.max_iterations}) exhausted. "
                     "No further actions can be taken this turn."
                 ),
                 tool_call_id=request.tool_call["id"],

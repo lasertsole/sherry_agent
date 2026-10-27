@@ -142,32 +142,3 @@ class TestIterationBudget:
 
         assert IterationBudget._BUDGET_KEY == "iteration_budget"
         assert IterationBudget._USED_KEY == "iteration_budget_used"
-
-    def test_session_override_changes_the_cap(self, fresh_state_register):
-        """The eval harness raises a HARD session's cap without touching others."""
-        ib = self._make_middleware(max_iterations=3)
-        with patch(
-            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
-        ):
-            fresh_state_register.set_state("s1", "iteration_budget_override", 5)
-            assert ib._effective_max("s1") == 5
-            for _ in range(5):
-                assert ib._consume("s1") is True
-            assert ib._consume("s1") is False
-            assert ib._remaining("s1") == 0
-
-            # A different session keeps the middleware cap.
-            assert ib._effective_max("s2") == 3
-
-            # before_agent records the effective cap, not the configured one.
-            ib._before_agent_impl({"session_id": "s1"})
-            assert fresh_state_register.get_state("s1", "iteration_budget") == 5
-            assert fresh_state_register.get_state("s1", "iteration_budget_used") == 0
-
-    def test_an_invalid_override_falls_back_to_the_configured_cap(self, fresh_state_register):
-        ib = self._make_middleware(max_iterations=7)
-        with patch(
-            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
-        ):
-            fresh_state_register.set_state("s1", "iteration_budget_override", "nope")
-            assert ib._effective_max("s1") == 7
