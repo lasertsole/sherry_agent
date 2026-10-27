@@ -250,13 +250,12 @@ async def test_non_abort_error_still_injects(
 
 
 @pytest.mark.asyncio
-async def test_all_done_resets_and_does_not_inject(
+async def test_a_reminded_plan_resets_and_does_not_inject_again(
     monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
 ) -> None:
-    _patch_todos(
-        monkeypatch,
-        [_todo("a", "completed"), _todo("b", "cancelled")],
-    )
+    rows = [_todo("a", "completed"), _todo("b", "cancelled")]
+    _patch_todos(monkeypatch, rows)
+    tc._reminded_plans[_SID] = tc._plan_fingerprint(rows, [])
     st._stagnation_count[_SID] = 2
 
     result = await tc.PlanContinuationEnforcer().aafter_agent(_state())
@@ -284,7 +283,9 @@ async def test_all_done_forks_the_plan_extraction(
         forked.append(session_id)
 
     monkeypatch.setattr(nudge_mod, "maybe_trigger_plan_extraction", _record)
-    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+    rows = [_todo("a", "completed"), _todo("b", "completed")]
+    _patch_todos(monkeypatch, rows)
+    tc._reminded_plans[_SID] = tc._plan_fingerprint(rows, [])
 
     await tc.PlanContinuationEnforcer().aafter_agent(_state())
 
@@ -881,3 +882,113 @@ class TestContinuationCapEnforcement:
         assert st.is_stopped(_SID) is False, "a refused stop must stay retryable"
         assert st.continuation_turns(_SID) == 3
         assert _SID not in st._last_inject_time, "a refusal must not arm the cooldown"
+
+
+# ============================================================================
+# (h) final-verification reminder (one prompt per completed plan, no gate)
+# ============================================================================
+
+import agent.middlewares.summarization.nudges as _nudge_mod  # noqa: E402
+
+_REMINDER_MARKER = "[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]"
+
+
+@pytest.fixture(autouse=True)
+def _clear_reminder_throttle():
+    tc._reminded_plans.clear()
+    yield
+    tc._reminded_plans.clear()
+
+
+@pytest.fixture()
+def extraction_spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    forked: list[str] = []
+
+    async def _record(session_id: str) -> None:
+        forked.append(session_id)
+
+    monkeypatch.setattr(_nudge_mod, "maybe_trigger_plan_extraction", _record)
+    return forked
+
+
+@pytest.mark.asyncio
+async def test_a_completed_plan_gets_one_verification_reminder(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list, extraction_spy: list
+) -> None:
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    assert _REMINDER_MARKER in spy_auto_turn[0][1].content
+    assert "git diff" in spy_auto_turn[0][1].content
+    assert st.continuation_turns(_SID) == 0, "the reminder is not a continuation turn"
+    assert extraction_spy == [], "extraction waits for the reminder turn to end"
+
+
+@pytest.mark.asyncio
+async def test_the_reminder_is_not_repeated_for_the_same_plan(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list, extraction_spy: list
+) -> None:
+    _patch_todos(monkeypatch, [_todo("a", "completed")])
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+    st.reset(_SID)
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    assert extraction_spy == [_SID]
+
+
+@pytest.mark.asyncio
+async def test_a_changed_plan_earns_a_new_reminder(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _patch_todos(monkeypatch, [_todo("a", "completed")])
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+    st.reset(_SID)
+
+    _patch_todos(monkeypatch, [_todo("a", "completed"), _todo("b", "completed")])
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 2
+    assert _REMINDER_MARKER in spy_auto_turn[1][1].content
+
+
+@pytest.mark.asyncio
+async def test_an_open_flow_skips_the_reminder(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _patch_todos(monkeypatch, [_todo("a", "completed")])
+    _patch_flows(monkeypatch, [_flow([_step("s1", "ready")])])
+
+    await tc.PlanContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    assert _REMINDER_MARKER not in spy_auto_turn[0][1].content
+    assert "TaskFlow board" in spy_auto_turn[0][1].content
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reminder_is_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_todos(monkeypatch, [_todo("a", "completed")])
+
+    class _Refused:
+        outcome = "already_pending"
+
+    calls: list[str] = []
+
+    async def _refuse(session_key: str, injection: HumanMessage) -> object:
+        calls.append(session_key)
+        return _Refused()
+
+    hooks.register(hooks.MAYBE_TRIGGER_AUTO_TURN, _refuse)
+    try:
+        await tc.PlanContinuationEnforcer().aafter_agent(_state())
+    finally:
+        hooks.unregister(hooks.MAYBE_TRIGGER_AUTO_TURN)
+
+    assert calls, "the gate tried to deliver the reminder"
+    assert _SID not in tc._reminded_plans, "a refused reminder must be retried"

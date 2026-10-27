@@ -66,7 +66,9 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録します。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
 
-出典：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；テスト：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`。
+全置換がルート todo を落とした場合、猶予期間を待たずに `update_todos` が孤立 flow を即座に補償する（方針: `TODOLIST_INFRA["orphan_flow_on_drop"]`）。直後にセッション限定の sweep が走り、flow が終端に達するとルート todo へ即座に通知する。稼働中 flow と似た目標の作成は `ack_dup` がない限り警告される。
+
+出典：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`、`config/features/agent_side/taskflow_infra.py`；テスト：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`。
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 

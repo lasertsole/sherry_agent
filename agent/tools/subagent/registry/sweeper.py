@@ -256,6 +256,7 @@ async def _unreferenced_flow_sweep(
     *,
     now: float | None = None,
     grace_seconds: float | None = None,
+    session_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Collect non-terminal flows that no active todo references.
 
@@ -264,7 +265,8 @@ async def _unreferenced_flow_sweep(
     root's flow is marked reachable. A non-terminal, non-superseded flow older
     than the grace window and absent from the marked set is failed as
     ``orphan_unreferenced``. The grace window covers the create/bind race across
-    the two SQLite files.
+    the two SQLite files. ``session_ids`` narrows the scan for an immediate
+    post-replacement pass; None keeps the system-wide sweep.
     """
     from config.features import TASKFLOW_INFRA
     from agent.tools.taskflow.registry import store_sqlite as taskflow_store
@@ -278,7 +280,12 @@ async def _unreferenced_flow_sweep(
     )
     cutoff = current - grace
     try:
-        sessions = await taskflow_store.get_non_terminal_session_ids()
+        if session_ids is None:
+            sessions = await taskflow_store.get_non_terminal_session_ids()
+        else:
+            sessions = sorted(
+                str(session_id) for session_id in session_ids if str(session_id or "").strip()
+            )
     except Exception as exc:  # noqa: BLE001 - a sweep read failure must not stop the loop
         logger.warning("Unreferenced-flow sweep could not read non-terminal sessions: {}", exc)
         return {"sessions": 0, "roots": 0, "swept": 0}

@@ -131,6 +131,32 @@ The plan is still open, but you must stop working on it now.
 {todo_status}
 {flow_status}"""
 
+# Final-verification reminder: the plan is complete, but the agent may be
+# overstating the work. This is a PROMPT, not a gate — the agent re-checks and
+# either keeps fixing or confirms; nothing here inspects evidence or blocks.
+_VERIFICATION_REMINDER = """[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]
+
+Every plan item is complete and no TaskFlow flow is open. Before you report
+success, assume the work is broken until you have proved otherwise — the common
+failure is marking work done when it is not.
+
+Verify it yourself now:
+- Read what you changed (`git diff` / the edited files): confirm it matches the
+  request, with no stubs, TODOs, placeholders or unrequested scope creep.
+- Actually run the checks (tests / typecheck / lint) through the terminal tool.
+  "It should pass" is not evidence; a real command output is.
+- For user-facing changes, launch it and exercise it — UI, CLI or API — and read
+  the output.
+- "Probably works" = NOT verified. Keep fixing until you are certain.
+
+If something is wrong, fix it and continue (do not mark the plan complete).
+Only when you can point at the proof may you finish and summarize.
+"""
+
+#: Process-local reminder throttle: session_id -> fingerprint of the completed
+#: plan that already received the reminder. A changed plan gets a new reminder.
+_reminded_plans: dict[str, str] = {}
+
 #: Statuses that still need someone to act — the union of the todo vocabulary
 #: (``pending``/``in_progress``) and the TaskFlow step vocabulary
 #: (``ready``/``blocked``/``dispatched``); the gate reads the plan, which uses both.
@@ -247,6 +273,12 @@ def _build_status_block(todos: list[dict]) -> str:
             step_ref = f" (flow {todo['flow_id']} / {todo['step_id']})"
         lines.append(f"- [{icon}] {todo['content']} ({todo['priority']}){step_ref}")
     return "\n".join(lines)
+
+
+def _plan_fingerprint(todos: list[dict], flow_rows: list[dict]) -> str:
+    """Stable hash of the completed plan (todo rows + flow closure rows)."""
+    parts = [f"{row.get('content')}|{row.get('status')}" for row in [*todos, *flow_rows]]
+    return "\x1f".join(sorted(parts))
 
 
 def _turn_error(state: Any) -> BaseException | None:
@@ -396,6 +428,16 @@ class PlanContinuationEnforcer(AgentMiddleware):
             ] + _flow_rows(flows)
             incomplete = [row for row in plan_rows if row["status"] in _INCOMPLETE_STATUSES]
             if not incomplete:
+                # The plan is complete. With no open flow, spend ONE auto-turn
+                # on the paranoid self-check before treating the plan as done;
+                # the throttle keeps a reminder turn that ends unchanged from
+                # re-arming it. A TaskFlow session skips it (its finish gates
+                # already verify the goal).
+                fingerprint = _plan_fingerprint(todos, _flow_rows(flows))
+                if not flows and _reminded_plans.get(session_id) != fingerprint:
+                    if await self._inject(session_id, _VERIFICATION_REMINDER, count_turn=False):
+                        _reminded_plans[session_id] = fingerprint
+                    return None
                 st.reset(session_id)
                 # The plan just finished: hand it to the plan-extraction fork.
                 # Deliberately independent of compaction — a short session whose
@@ -499,19 +541,21 @@ class PlanContinuationEnforcer(AgentMiddleware):
             logger.exception("plan continuation: failed; continuing without injection")
             return None
 
-    async def _inject(self, session_id: str, prompt: str) -> None:
+    async def _inject(self, session_id: str, prompt: str, *, count_turn: bool = True) -> bool:
         """Fire-and-forget the prompt; record the injection only on success.
 
         The trigger is owned by the server layer and resolved through
         ``runtime.hooks``; an unregistered hook is a no-op that leaves the
-        session retryable.
+        session retryable. Returns True only on a CONFIRMED delivery.
+        ``count_turn=False`` keeps the final-verification reminder out of the
+        continuation ceiling (it is not plan work and has its own plan throttle).
         """
         try:
             from agent.tools.todolist import stagnation_tracker as st
 
             trigger = _resolve_hook(hooks.MAYBE_TRIGGER_AUTO_TURN)
             if trigger is None:
-                return
+                return False
             session_key = f"agent:main:session:{session_id}"
             # Injector provenance (persisted as the human row's ``origin``): these
             # directives must not read as messages the user sent.
@@ -529,14 +573,17 @@ class PlanContinuationEnforcer(AgentMiddleware):
                     session_id,
                     getattr(result, "outcome", "unknown"),
                 )
-                return
-            st.mark_injected(session_id)
+                return False
+            if count_turn:
+                st.mark_injected(session_id)
+            return True
         except Exception:
             logger.exception(
                 "plan continuation: auto_turn injection failed for session {}; "
                 "leaving the session retryable",
                 session_id,
             )
+            return False
 
 
 #: Backwards-compatible alias: the class was ``TodoContinuationEnforcer`` before

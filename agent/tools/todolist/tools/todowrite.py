@@ -200,6 +200,8 @@ async def _run_todo_action(
         result = await _run()
     except service.TodoIdNotFoundError as error:
         return _format_id_error(error)
+    except service.TodoReferenceError as error:
+        return f"todowrite refused: {error}"
     except ValueError as error:
         return f"todowrite refused: {error}"
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -260,6 +262,15 @@ async def todowrite(
         flow_id=flow_id,
         session_id=session_id,
     )
+    if action == "replace":
+        warning = service.TodoService.consume_reference_warning(session_id)
+        if warning:
+            output += (
+                "\n\n[REFERENCE INTEGRITY] The replacement dropped the GC-root todo of "
+                f"active flow(s) {', '.join(warning)}; those flow(s) were auto-cancelled. "
+                "If that was unintended, re-create the flow or use local actions "
+                "(patch/add/remove) to keep their todo."
+            )
     if action != "list_orphans" and session_id not in _reminded_sessions:
         _reminded_sessions.add(session_id)
         output += _FANOUT_REMINDER

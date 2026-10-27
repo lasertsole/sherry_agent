@@ -449,6 +449,24 @@ async def cancel_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
         return int(cursor.rowcount or 0)
 
 
+async def complete_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
+    """Mark active todos that reference a successfully finished flow completed."""
+    ids = [flow_id for flow_id in flow_ids if flow_id]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET status = ? "
+            "WHERE session_id = ? AND status NOT IN (?, ?) "
+            f"AND flow_id IN ({placeholders})",
+            ("completed", session_id, "completed", "cancelled", *ids),
+        )
+        await db.commit()
+        return int(cursor.rowcount or 0)
+
+
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """Read the session's todos linked to one TaskFlow flow, ordered by position."""
     await ensure_db()
@@ -487,6 +505,8 @@ def get_todos_sync(session_id: str) -> list[dict]:
 __all__ = [
     "add_todo",
     "append_todo",
+    "cancel_todos_for_flows",
+    "complete_todos_for_flows",
     "delete_todos_by_session",
     "ensure_db",
     "get_todo_by_id",

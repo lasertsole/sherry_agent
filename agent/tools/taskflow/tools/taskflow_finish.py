@@ -266,6 +266,9 @@ async def _auto_fail_finish(
         return conflict_error(exc)
     except FlowNotFoundError:
         return not_found_error(flow_id)
+    from ._shared import notify_flow_todos_cancelled
+
+    await notify_flow_todos_cancelled(session_id, flow_id)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow auto-failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
@@ -436,6 +439,9 @@ async def taskflow_finish(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    from ._shared import notify_flow_todos_completed
+
+    await notify_flow_todos_completed(session_id, flow_id)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow finished: flow_id={flow_id}, revision={updated['expected_revision']}, "

@@ -98,6 +98,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "CALLER_SCOPE": "caller_scope",
     "FLOW_ID": "flow_id",
     "STEP_ID": "step_id",
+    "TODO_REFERENCE_WARNING": "todo_reference_warning",
     "PLAN_STATUS": "plan_status",
     "PLAN_REVISION": "plan_revision",
     "PLAN_MUTATION_COUNT": "plan_mutation_count",

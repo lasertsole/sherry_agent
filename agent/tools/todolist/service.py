@@ -28,7 +28,8 @@ import asyncio
 
 from loguru import logger
 
-from runtime import StateKey
+from config.features import TODOLIST_INFRA
+from runtime import StateKey, state_register_mem
 from runtime.session.ws_push import broadcast_to_session
 
 from .config import (
@@ -58,6 +59,10 @@ _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 
 class TodoStoreError(Exception):
     """Raised when a todo mutation is rejected (transition barrier)."""
+
+
+class TodoReferenceError(Exception):
+    """Raised when dropping a flow root is refused by the reference policy."""
 
 
 class TodoIdNotFoundError(Exception):
@@ -241,6 +246,36 @@ async def _compensate_removed_flow(session_id: str, flow_id: str) -> None:
         logger.warning("todo remove: immediate flow compensation failed for {}: {}", flow_id, exc)
 
 
+def _set_reference_warning(session_id: str, flow_ids: list[str]) -> None:
+    """Park a model-facing warning about flows auto-cancelled by a replacement."""
+    try:
+        state_register_mem.set_state(
+            session_id,
+            StateKey.TODO_REFERENCE_WARNING,
+            list(dict.fromkeys(str(flow_id) for flow_id in flow_ids if flow_id)),
+        )
+    except Exception:  # noqa: BLE001 - warning is best-effort
+        logger.debug("todo reference warning write failed", exc_info=True)
+
+
+async def _trigger_session_sweep(session_id: str) -> None:
+    """Run the unreferenced-flow sweep for this session right after a replace.
+
+    Session-scoped only (the system-wide scan stays on its own timer) and with
+    the CONFIGURED grace window: a flow whose root todo was completed moments
+    ago is still on its finish path, and collecting it here would race
+    ``taskflow_flow(action="finish")``. The replacement's targeted compensation
+    already handles the flows it explicitly dropped; this pass is the backstop
+    for older leftovers.
+    """
+    try:
+        from agent.tools.subagent.registry.sweeper import _unreferenced_flow_sweep
+
+        await _unreferenced_flow_sweep(session_ids={session_id})
+    except Exception as exc:  # noqa: BLE001 - todo replacement must not be blocked
+        logger.warning("post-replace unreferenced-flow sweep failed: {}", exc)
+
+
 class TodoService:
     """Session-scoped todo mutations: validate, barrier, persist, push, return."""
 
@@ -263,6 +298,35 @@ class TodoService:
         for todo in validated:
             if todo.get("status") == "completed":
                 await _assert_transition_allowed(todo, session_id)
+
+        old_todos = await store.get_todos(session_id)
+        old_flow_ids = {str(t.get("flow_id")) for t in old_todos if t.get("flow_id")}
+        new_flow_ids = {str(t.get("flow_id")) for t in validated if t.get("flow_id")}
+        orphaned = sorted(old_flow_ids - new_flow_ids)
+        mode = str(TODOLIST_INFRA.get("orphan_flow_on_drop", "cancel")).lower()
+        if mode not in {"cancel", "refuse", "sweep_only"}:
+            mode = "cancel"
+        if orphaned and mode == "refuse":
+            raise TodoReferenceError(
+                "Cannot replace the todo list: it would drop the GC-root todo of "
+                f"active flow(s) {', '.join(orphaned)}. Finish or cancel those flows "
+                "first, or keep their todo in the replacement list."
+            )
+        if orphaned and mode == "cancel":
+            from agent.tools.taskflow.tools._shared import compensate_orphaned_flows
+
+            cancelled = await compensate_orphaned_flows(
+                session_id, orphaned, reason="todo_dropped_in_full_replace"
+            )
+            if cancelled:
+                cancelled_ids = [str(flow.get("flow_id") or "") for flow in cancelled]
+                logger.warning(
+                    "update_todos auto-cancelled {} orphaned flow(s): {}",
+                    len(cancelled_ids),
+                    cancelled_ids,
+                )
+                _set_reference_warning(session_id, cancelled_ids)
+
         await store.replace_all(session_id, validated)
         if plan_ref:
             from runtime import state_register_db
@@ -274,7 +338,21 @@ class TodoService:
             )
         latest = await store.get_todos(session_id)
         await _push_todo_update(session_id, latest)
+        if TODOLIST_INFRA.get("trigger_sweep_after_replace", True):
+            await _trigger_session_sweep(session_id)
         return latest
+
+    @staticmethod
+    def consume_reference_warning(session_id: str) -> list[str]:
+        """Take and clear the pending reference-integrity warning for a session."""
+        try:
+            value = state_register_mem.get_state(session_id, StateKey.TODO_REFERENCE_WARNING, [])
+            state_register_mem.delete_state(session_id, StateKey.TODO_REFERENCE_WARNING)
+        except Exception:  # noqa: BLE001 - warning is best-effort
+            return []
+        if not isinstance(value, list):
+            return []
+        return [str(flow_id) for flow_id in value if str(flow_id or "").strip()]
 
     @staticmethod
     async def add_todo(
@@ -414,6 +492,15 @@ class TodoService:
         return orphans
 
     @staticmethod
+    async def complete_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
+        """Mark active todos completed when their flow finishes successfully."""
+        completed = await store.complete_todos_for_flows(session_id, flow_ids)
+        if completed:
+            latest = await store.get_todos(session_id)
+            await _push_todo_update(session_id, latest)
+        return completed
+
+    @staticmethod
     async def get_todos(session_id: str) -> list[dict]:
         """Read the session's todos from the store."""
         return await store.get_todos(session_id)
@@ -435,6 +522,7 @@ class TodoService:
 
 __all__ = [
     "TodoIdNotFoundError",
+    "TodoReferenceError",
     "TodoService",
     "TodoStoreError",
     "_TASKFLOW_TERMINAL",
@@ -442,5 +530,6 @@ __all__ = [
     "_compensate_removed_flow",
     "_push_todo_update",
     "_read_taskflow_step_status",
+    "_trigger_session_sweep",
     "_validate_todos",
 ]

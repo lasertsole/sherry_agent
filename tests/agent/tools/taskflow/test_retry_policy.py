@@ -129,6 +129,7 @@ async def _create(
         description="retry probe",
         initial_state={"steps": list(steps or [])},
         session_id=session_id,
+        ack_dup=True,
     )
     assert "Error" not in out, out
 

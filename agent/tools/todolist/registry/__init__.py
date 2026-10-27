@@ -3,6 +3,8 @@
 from .store_sqlite import (
     add_todo,
     append_todo,
+    cancel_todos_for_flows,
+    complete_todos_for_flows,
     delete_todos_by_session,
     ensure_db,
     get_todo_by_id,
@@ -18,6 +20,8 @@ from .store_sqlite import (
 __all__ = [
     "add_todo",
     "append_todo",
+    "cancel_todos_for_flows",
+    "complete_todos_for_flows",
     "delete_todos_by_session",
     "ensure_db",
     "get_todo_by_id",

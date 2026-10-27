@@ -185,6 +185,9 @@ class StateKey(StrEnum):
     #: query `WHERE flow_id = ?` instead of reconstructing the session set.
     FLOW_ID = "flow_id"
     STEP_ID = "step_id"
+    #: Transient model-facing warning produced by a full todo replacement that
+    #: dropped a flow root and auto-cancelled the orphaned flow(s).
+    TODO_REFERENCE_WARNING = "todo_reference_warning"
 
 
 def hitl_tool_approved_key(tool_name: str) -> str:

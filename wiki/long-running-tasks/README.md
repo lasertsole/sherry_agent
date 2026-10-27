@@ -66,7 +66,9 @@ A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="crea
 
 A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the root query never sees the empty window between DELETE and INSERT.
 
-Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`.
+A full replacement that drops a root no longer waits for the grace window: `update_todos` compensates the orphaned flow immediately (policy: `TODOLIST_INFRA["orphan_flow_on_drop"]`), a session-scoped sweep runs right after it, and a terminal flow notifies its root todo at once. Creating a flow whose goal resembles an active one is warned about unless `ack_dup` is set.
+
+Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 

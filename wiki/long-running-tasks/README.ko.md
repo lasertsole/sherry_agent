@@ -66,7 +66,9 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록합니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
 
-출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`.
+전체 교체가 루트 todo를 버리면 유예 기간을 기다리지 않고 `update_todos`가 고아 flow를 즉시 보상한다(정책: `TODOLIST_INFRA["orphan_flow_on_drop"]`). 곧바로 세션 범위 sweep이 실행되고, flow가 종료 상태가 되면 루트 todo에 즉시 알린다. 활성 flow와 비슷한 목표의 생성은 `ack_dup`이 없으면 경고한다.
+
+출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 

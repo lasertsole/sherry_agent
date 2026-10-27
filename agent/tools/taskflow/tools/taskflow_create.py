@@ -29,12 +29,18 @@ async def taskflow_create(
     resumed_from: str | None = None,
     todo_content: str = "",
     todo_category: str = "quick",
+    ack_dup: bool = False,
 ) -> str:
     """Create a durable task flow and return its initial revision.
 
     A flow tracks multi-step work across turns with optimistic locking: every
     mutation bumps expected_revision, so concurrent writers are detected via
     revision conflicts instead of silent last-write-wins.
+
+    Before creating, an active same-session flow with a similar description is
+    reported as a possible duplicate. Pass ``ack_dup=True`` to confirm this is
+    a genuinely different task and skip that check; ``resumed_from`` already
+    declares the lineage, so it skips the check too.
 
     Pass deadline_hours to set an overall deadline (e.g. 24.0 for 24 hours);
     the sweeper marks the flow as failed once the deadline passes.
@@ -66,6 +72,13 @@ async def taskflow_create(
                 f"Error: resumed_from flow '{resumed_from}' not found in this session. "
                 "Create without resumed_from, or name an existing flow_id."
             )
+
+    if not ack_dup and resumed_from is None:
+        from ._duplicates import duplicate_flow_message, find_duplicate_flow
+
+        duplicate = await find_duplicate_flow(session_id, description, description)
+        if duplicate is not None:
+            return duplicate_flow_message(duplicate)
 
     creator_key = requester_session_key(session_id)
     state = default_state(description, initial_state, creator_session_key=creator_key)

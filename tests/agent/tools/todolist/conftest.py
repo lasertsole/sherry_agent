@@ -133,3 +133,19 @@ def build_main_tools_real() -> Callable[[], list]:
         return list(_real_agent_tools().build_main_tools())
 
     return _build
+
+
+@pytest.fixture(autouse=True)
+def _no_taskflow_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep todolist tests out of the real TaskFlow database.
+
+    ``update_todos`` runs a session-scoped sweep after a replacement; an
+    isolated todolist DB must not silently read or fail flows in the repository's
+    real TaskFlow store. The sweep itself is covered by the taskflow suite.
+    """
+    from agent.tools.todolist import service
+
+    async def _noop(_session_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(service, "_trigger_session_sweep", _noop)

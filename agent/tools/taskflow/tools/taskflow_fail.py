@@ -55,6 +55,9 @@ async def taskflow_fail(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    from ._shared import notify_flow_todos_cancelled
+
+    await notify_flow_todos_cancelled(session_id, flow_id)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow failed: flow_id={flow_id}, revision={updated['expected_revision']}, "

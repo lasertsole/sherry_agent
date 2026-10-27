@@ -129,6 +129,7 @@ async def taskflow_plan(
     flow_id: str = "",
     context: str | None = None,
     max_steps: int = 8,
+    ack_dup: bool = False,
     session_id: SessionId = "",
 ) -> str:
     """Decompose a goal into a dependency-ordered TaskFlow (nothing is started).
@@ -137,6 +138,9 @@ async def taskflow_plan(
     has no dependencies) and returns the plan for review. Start it afterwards
     with ``taskflow_dispatch`` (batch) or ``taskflow_run_task`` (reminder / full
     task text), or fix the plan first with ``taskflow_update_steps``.
+
+    An active same-session flow with a similar goal is reported as a possible
+    duplicate; pass ``ack_dup=True`` to confirm this is a different task.
     """
     goal = (goal or "").strip()
     if not goal:
@@ -166,6 +170,13 @@ async def taskflow_plan(
         )
 
     # Refuse BEFORE spending a planner call: the flow could not be created anyway.
+    if not ack_dup:
+        from ._duplicates import duplicate_flow_message, find_duplicate_flow
+
+        duplicate = await find_duplicate_flow(session_id, goal, goal)
+        if duplicate is not None:
+            return duplicate_flow_message(duplicate)
+
     active_flows = store_sqlite.get_active_flows_sync(session_id)
     if len(active_flows) >= TASKFLOW_INFRA["max_flows_per_session"]:
         return (

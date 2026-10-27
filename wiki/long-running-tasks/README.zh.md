@@ -66,7 +66,9 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败并记录 detached 子代理。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
 
-来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`。
+全量替换丢掉根 todo 时不再等待宽限期：`update_todos` 立即补偿孤儿 flow（策略：`TODOLIST_INFRA["orphan_flow_on_drop"]`），随后立即跑一次会话级 sweep；flow 进入终态时会立刻通知其根 todo。创建目标与活跃 flow 相似的新 flow 时会给出警告，除非设置 `ack_dup`。
+
+来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`。
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
