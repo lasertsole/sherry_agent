@@ -3,20 +3,23 @@
 //! Spawns the backend as a child process when the Tauri app starts and kills it
 //! on exit. Two launch shapes:
 //!
-//! * **Packaged** — `<app_home>/sherry-backend/sherry-backend`, the PyInstaller
-//!   build the shell downloads from the repository's GitHub releases on the
-//!   first launch of a packaged app (see [`super::backend_downloader`]). A
-//!   packaged app ALWAYS starts this one: the machine has no checkout, no venv
-//!   and no `python` to fall back to.
+//! * **Packaged** — the PyInstaller build the shell either ships inside the
+//!   bundle (`resource_dir/sherry-backend/`, the unified installer) or downloads
+//!   from the repository's GitHub releases on the first launch of a packaged
+//!   app (see [`super::backend_downloader`], the transitional fallback). A
+//!   packaged app ALWAYS starts one of them: the machine has no checkout, no
+//!   venv and no `python` to fall back to.
 //! * **Checkout** — `python -m server` from the project root. Kept for
 //!   `pnpm tauri dev`: a development build neither ships nor downloads the
 //!   frozen backend, and starting the checkout server is opt-in through
 //!   `EMA_AUTO_START_BACKEND`.
 //!
-//! Either way the child gets `SHERRY_HOME` pointing at the app-data directory:
-//! the backend keeps sessions, memory, logs, skills and its `.env` there
-//! (`config/path.py`), because the bundle itself is read-only and gets replaced
-//! by the next update.
+//! Either way the child gets `--sherry-home <app-data-dir>` on its command
+//! line (plus the bare `--sherry-desktop` flag): the backend keeps sessions,
+//! memory, logs, skills and its `.env` there (`config/path.py` scans `sys.argv`;
+//! the old `SHERRY_HOME`/`SHERRY_DESKTOP` environment variables remain a
+//! transitional fallback on the Python side only), because the bundle itself is
+//! read-only and gets replaced by the next update.
 //!
 //! This module uses `std::process::Command` directly — it does not
 //! require the tauri-plugin-shell frontend API.
@@ -91,10 +94,21 @@ impl PythonProcessManager {
             ));
         }
 
+        // The writable root for everything the backend persists travels as a
+        // CLI argument (config/path.py scans sys.argv — no env var, so nothing
+        // leaks into a spawned terminal or a subprocess scrubber). The working
+        // directory is the same place so a relative path inside the backend can
+        // never resolve into the read-only bundle. The bare `--sherry-desktop`
+        // flag stays PACKAGED-ONLY, exactly like the old `SHERRY_DESKTOP=1`
+        // env: it makes the backend serve before a model is configured (first
+        // run, because refusing would leave a window nobody can configure), and
+        // a dev checkout must keep refusing so a broken .env is noticed.
         let mut command = match &self.command {
             BackendCommand::Packaged(exe) => {
                 tracing::info!(exe = %exe.display(), home = %self.app_home.display(), "Spawning bundled Python backend");
-                Command::new(exe)
+                let mut c = Command::new(exe);
+                c.arg("--sherry-desktop");
+                c
             }
             BackendCommand::Checkout { python, root } => {
                 tracing::info!(python, root = %root.display(), home = %self.app_home.display(), "Spawning checkout Python backend: python -m server");
@@ -103,16 +117,9 @@ impl PythonProcessManager {
                 c
             }
         };
-
-        // The writable root for everything the backend persists. `current_dir`
-        // is the same place so a relative path inside the backend can never
-        // resolve into the read-only bundle.
         command
-            .env("SHERRY_HOME", &self.app_home)
-            // Tells the backend it is the packaged desktop app: it then serves
-            // even before a model is configured (first run), because refusing
-            // would leave a window nobody can configure.
-            .env("SHERRY_DESKTOP", "1")
+            .arg("--sherry-home")
+            .arg(&self.app_home)
             .current_dir(&self.app_home)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());

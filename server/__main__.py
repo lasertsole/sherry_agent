@@ -101,14 +101,17 @@ def main() -> None:
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
-    # The DESKTOP app (the Tauri shell sets SHERRY_DESKTOP=1) ships with an
+    # The DESKTOP app (the Tauri shell passes the bare --sherry-desktop flag;
+    # SHERRY_DESKTOP=1 is the transitional env fallback) ships with an
     # empty configuration on purpose: the user's first run has no API keys yet,
     # so refusing to serve would leave a window that can never be configured.
     # An UNCONFIGURED model serves + warns (the Model Config panel writes the .env,
     # and the next launch picks it up); a CONFIGURED-but-invalid one still
     # aborts, exactly like a server.
     _unconfigured = _main_val is None and not _aux_raw
-    _desktop = os.getenv("SHERRY_DESKTOP", "").strip().lower() in {"1", "true", "yes", "on"}
+    from config.path import SHERRY_DESKTOP
+
+    _desktop = SHERRY_DESKTOP
     _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
     _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
     # Optional independent families: only a SET value is validated — an unset
