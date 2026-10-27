@@ -60,6 +60,7 @@ from agent.tools.pub_base import (
     resolve_tool_session_id,
 )
 from agent.tools.pub_base.shadow_git import ensure_checkpoint
+from pub.func.transcript_repair import EMPTY_TOOL_RESULT
 
 
 from agent.tools.pub_base.env_scrub import scrub_env
@@ -446,6 +447,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 read_or_evict_output(tmp_path, session_id, encoding, evict_prefix="terminal-")
             )
             tmp_path = None  # read or evicted: nothing left to clean
+            if not output:
+                output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
@@ -790,6 +793,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 )
             )
             tmp_path = None  # read or evicted: nothing left to clean
+            if not output:
+                output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
                 return self._record_verification(
                     cmd_str,

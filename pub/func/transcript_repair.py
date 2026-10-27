@@ -95,6 +95,13 @@ def extract_tool_result_id(msg: ToolMessage) -> str | None:
     return None
 
 
+#: Default model-facing content for a tool that ran successfully but produced
+#: no output. An EMPTY ToolMessage is dropped by the pairing sanitizer (the
+#: provider requires a result for every call), which used to turn "no matches"
+#: into a misleading "missing after context trim" placeholder.
+EMPTY_TOOL_RESULT = "(no output)"
+
+
 def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
     """
     Create a placeholder tool-result message for a missing result.
@@ -128,6 +135,10 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     Fixes tool_use/tool_result pairing after message trimming to prevent
     "Message ordering conflict" errors from the agent.
 
+    An EMPTY ToolMessage is a real result (a command that produced no output),
+    not a missing one: it is kept and given ``EMPTY_TOOL_RESULT`` so the pairing
+    stays valid without pretending the result was trimmed away.
+
     Args:
         messages: List of messages.
 
@@ -137,6 +148,21 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     out: list[BaseMessage] = []
     seen_tool_result_ids: set[str] = set()
     changed = False
+
+    # An empty result is a REAL result (e.g. a grep with no match). Keep the
+    # ToolMessage and give it a non-empty default hint; dropping it would make
+    # the provider pairing invalid and force a "missing after context trim"
+    # placeholder that hides the successful empty outcome.
+    if any(isinstance(msg, ToolMessage) and not msg.content for msg in messages):
+        messages = [
+            (
+                msg.model_copy(update={"content": EMPTY_TOOL_RESULT})
+                if isinstance(msg, ToolMessage) and not msg.content
+                else msg
+            )
+            for msg in messages
+        ]
+        changed = True
 
     def push_tool_result(msg: ToolMessage) -> None:
         """Push a tool-result message, deduplicating by ID."""

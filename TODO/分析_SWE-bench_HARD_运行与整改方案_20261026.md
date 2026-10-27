@@ -157,6 +157,8 @@ tool terminal status=error -> "tool result missing after context trim."
 
 这不是工具本身失败，而是上下文裁剪后原始结果不可见。模型因此丢失了刚拿到的搜索结果，只能重新搜索，进一步消耗预算。
 
+> 复核（2026-10-28，归档 `sympy-messages.db`）：这两条占位符其实是**并行 grep 的空输出**（`simplify.py` 没有 `def fraction`；`printer.py`/`codeprinter.py` 没有 `_print_Pow`），不是 compaction（`compacted=0` / `compaction_checkpoint_id=None`）。空的 ToolMessage 被配对 sanitizer 丢掉，再补成 missing。现在空结果保留为 `(no output)`；long/fd output 的 preview 保持 `[evicted to: <path>]` + `read_file` 提示。
+
 **建议**：
 
 - 区分“工具真实错误”和“裁剪占位符”，后者不要写成 `tool_status=error`；
@@ -302,5 +304,5 @@ uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --keep
 
 - **竞争修复**：shadow store 可移出实例项目（`SHADOW_GIT["store_dir"]` / `SHERRY_SHADOW_GIT_DIR`）；实例 `.git/info/exclude` 排除 `.sherry/`；`evals/swebench/teardown.py::quiesce_session` 在 diff / test patch / pytest / revert 前取消 turn、级联杀子代理、杀后台终端、等待并冻结 shadow-git 写者；每实例即时写 `instance_results/<id>.json`，单实例失败不再中止整轮；`revert` 改为原子 quarantine；`diff` 包含 untracked 新文件（`git add -N` + `git diff --binary HEAD` + `git reset`），并排除 `.sherry`。
 - **4.2 暂未应用（已撤回）**：无编辑 repair turn、HARD 150 预算、maintainer prompt 已撤回。结论是“问题不在 main agent turn 太短”，需要重新讨论 4.2 的根因与方案；未加载/未自动路由 researcher 是当前更可疑的方向。
-- **其余可观测性/稳定性（4.3–4.6）**：报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；context-trim 占位符改为中性（`status=success` + `sherry_repair` 标记）；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
+- **其余可观测性/稳定性（4.3–4.6）**：报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；空结果保留为 `(no output)`（不再被配对修复成 missing），context-trim 占位符改为中性（`status=success` + `sherry_repair` 标记）；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
 - **验证**：完整三组门禁 PASS（unit 7314 passed / 1 skipped；integration+module+system 1378 passed / 12 skipped；regression 86 passed）；`tests/full/test_main_agent_e2e.py` + `tests/full/test_session_isolation_e2e.py` 共 7 passed；文档 link/parity gates PASS。

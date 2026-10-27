@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from pub.func.transcript_repair import sanitize_tool_use_result_pairing
+from pub.func.transcript_repair import (
+    EMPTY_TOOL_RESULT,
+    sanitize_tool_use_result_pairing,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -48,3 +51,23 @@ def test_a_real_tool_error_keeps_its_error_status():
     tool_messages = [message for message in repaired if isinstance(message, ToolMessage)]
     assert len(tool_messages) == 1
     assert tool_messages[0].status == "error"
+
+
+def test_an_empty_result_is_kept_with_a_default_hint():
+    """A successful tool with no output must not become a missing placeholder."""
+    messages = [
+        HumanMessage(content="go"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "terminal", "args": {}, "id": "call-3"}],
+        ),
+        ToolMessage(content="", tool_call_id="call-3", name="terminal", status="success"),
+    ]
+
+    repaired = sanitize_tool_use_result_pairing(messages)
+
+    tool_messages = [message for message in repaired if isinstance(message, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].content == EMPTY_TOOL_RESULT
+    assert tool_messages[0].status != "error"
+    assert "missing" not in str(tool_messages[0].content).lower()
