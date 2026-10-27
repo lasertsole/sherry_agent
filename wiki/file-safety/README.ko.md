@@ -72,7 +72,7 @@
 
 store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 비밀, 대용량 디렉터리, shadow store 자체를 `git add -A` 전에 기록하고 최근 `SHADOW_GIT["max_snapshots"]`(20)개만 유지합니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. `checkpoint` 도구가 list / show / restore를 제공하고 git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
 
-읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다.
+읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다. `SHADOW_GIT["store_dir"]`(또는 `SHERRY_SHADOW_GIT_DIR`)로 store를 프로젝트 밖으로 옮길 수 있습니다. eval harness는 run 단위 디렉터리를 사용하므로 인스턴스 checkout에 `.sherry`가 생기지 않습니다. `wait_for_idle()`과 `freeze()`가 teardown 배리어로, 진행 중인 스냅샷을 기다린 뒤 늦은 쓰기를 막고 revert합니다.
 
 ## 📖 읽기 우선 라이선스
 

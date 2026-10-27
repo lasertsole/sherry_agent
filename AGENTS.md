@@ -1747,7 +1747,12 @@ hard-imports) is the harness's only consumer and stays out of the shipped
 runtime closure). The external benchmarks are `swebench` (SWE-bench_Lite
 instances: pinned base commit, per-instance `uv venv --python 3.11`, the
 instance's own FAIL_TO_PASS/PASS_TO_PASS verdict; the test patch is applied by
-the JUDGE and a gold-patch miss aborts before any model call), `deepswe`
+the JUDGE and a gold-patch miss aborts before any model call; the host harness
+quiesces the session before it reads the tree — turn cancel, descendant/background
+kill, shadow-git `wait_for_idle` + `freeze` — keeps `.sherry` outside the checkout,
+quarantines it atomically on revert, includes untracked files in the saved diff,
+writes a per-instance result immediately, gives a no-edit turn ONE repair turn and
+HARD instances a 150-iteration `ITERATION_BUDGET_OVERRIDE`), `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
 task's separate verifier image grades the agent's `git diff`),
@@ -1814,7 +1819,11 @@ each suite is the version-controlled reference (threshold + model id).
   (secrets, bulk dirs and the shadow store) before `git add -A`; snapshots are
   pruned to `SHADOW_GIT["max_snapshots"]`. Restore takes a pre-restore snapshot
   and supports one file or the whole tree; the `checkpoint` tool exposes
-  list/show/restore. The git-graph panel reads the shadow chain (branch label
+  list/show/restore. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
+  moves the store outside the project — the eval harness points it at a
+  run-scoped directory so an instance checkout never contains `.sherry` — and
+  `freeze()` / `wait_for_idle()` are the write barrier a harness uses to stop
+  snapshot writers before it reverts. The git-graph panel reads the shadow chain (branch label
   `checkpoint`), and `git_head` announces `checkpoint@<hash>`. An UNBOUND
   session is untouched, and reads are never gated.
 - the three tool classes that used to inherit from the archived

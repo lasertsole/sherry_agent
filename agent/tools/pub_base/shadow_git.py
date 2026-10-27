@@ -8,9 +8,14 @@ worktree. Snapshots are fail-open: a broken shadow store never blocks a write.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 from loguru import logger
@@ -41,8 +46,84 @@ _dedup: set[tuple[str, str]] = set()
 _turn_counts: dict[str, int] = {}
 
 
+#: Per-root writer accounting for the eval teardown: wait_for_idle() must see
+#: every in-flight snapshot/restore, and freeze() must stop late ones.
+_writers_lock = threading.Lock()
+_active_writers: dict[str, int] = {}
+_frozen: set[str] = set()
+
+
+def _root_key(project_root: Path) -> str:
+    return str(project_root.resolve())
+
+
 def shadow_store(project_root: Path) -> Path:
-    return project_root.resolve() / ".sherry" / "shadow-git"
+    """The shadow-git store for one project.
+
+    ``SHADOW_GIT["store_dir"]`` (or ``SHERRY_SHADOW_GIT_DIR``) moves the store
+    outside the project — the eval harness uses it so ``git clean`` never sees
+    agent-private state. The default keeps the historical in-project path.
+    """
+    root = project_root.resolve()
+    override = str(SHADOW_GIT.get("store_dir") or os.getenv("SHERRY_SHADOW_GIT_DIR", "")).strip()
+    if override:
+        digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
+        return Path(override).expanduser().resolve() / digest
+    return root / ".sherry" / "shadow-git"
+
+
+def is_frozen(project_root: Path) -> bool:
+    """True while the eval teardown has frozen snapshots for this root."""
+    with _writers_lock:
+        return _root_key(project_root) in _frozen
+
+
+def freeze(project_root: Path) -> None:
+    """Stop new snapshots/restores for this root (idempotent)."""
+    with _writers_lock:
+        _frozen.add(_root_key(project_root))
+
+
+def unfreeze(project_root: Path) -> None:
+    """Re-allow snapshots/restores for this root (idempotent)."""
+    with _writers_lock:
+        _frozen.discard(_root_key(project_root))
+
+
+def active_writers(project_root: Path) -> int:
+    """Number of in-flight snapshot/restore operations for this root."""
+    with _writers_lock:
+        return _active_writers.get(_root_key(project_root), 0)
+
+
+def wait_for_idle(project_root: Path, *, timeout: float = 5.0) -> bool:
+    """Wait until no snapshot/restore is in flight; False on timeout."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while time.monotonic() < deadline:
+        if active_writers(project_root) == 0:
+            return True
+        time.sleep(0.01)
+    return active_writers(project_root) == 0
+
+
+@contextmanager
+def _writer(project_root: Path) -> Iterator[bool]:
+    """Count one writer; yield False when the root is frozen."""
+    key = _root_key(project_root)
+    with _writers_lock:
+        if key in _frozen:
+            yield False
+            return
+        _active_writers[key] = _active_writers.get(key, 0) + 1
+    try:
+        yield True
+    finally:
+        with _writers_lock:
+            remaining = _active_writers.get(key, 1) - 1
+            if remaining > 0:
+                _active_writers[key] = remaining
+            else:
+                _active_writers.pop(key, None)
 
 
 def _ensure_store(project_root: Path) -> Path:
@@ -171,8 +252,15 @@ def _prune_snapshots(project_root: Path) -> None:
 
 
 def take_snapshot(project_root: Path, reason: str, *, session_id: str = "") -> str | None:
-    """Take one snapshot and return its commit hash (None on failure)."""
+    """Take one snapshot and return its commit hash (None on failure/frozen)."""
     root = project_root.resolve()
+    with _writer(root) as allowed:
+        if not allowed:
+            return None
+        return _take_snapshot_locked(root, reason, session_id=session_id)
+
+
+def _take_snapshot_locked(root: Path, reason: str, *, session_id: str = "") -> str | None:
     _ensure_store(root)
     add = run_shadow(root, ["add", "-A"])
     if add.returncode != 0:
@@ -222,6 +310,8 @@ def ensure_checkpoint(
             return True
         project_root = Path(root)
     root = project_root.resolve()
+    if is_frozen(root):
+        return True
     key = (session_id, str(root))
     if key in _dedup:
         return True

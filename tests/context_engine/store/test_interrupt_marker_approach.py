@@ -414,7 +414,8 @@ async def test_fact_b_tool_call_healing_drops_trailing_human_when_no_marker():
     ]
     assert len(placeholders) == 1, f"no synthesized ToolMessage in {last_call!r}"
     placeholder = placeholders[0]
-    assert placeholder.status == "error"
+    assert placeholder.status != "error"
+    assert placeholder.additional_kwargs["sherry_repair"] == "missing_tool_result"
     assert "missing" in placeholder.content  # "tool result missing after context trim."
     assert placeholder.id is not None, "synthesized placeholder lost its id"
 
@@ -792,7 +793,8 @@ async def test_production_heal_write_time_keeps_strict_provider_valid(
     heal = next(m for m in msgs if getattr(m, "id", None) == PROD_HEAL_ID)
     assert isinstance(heal, ToolMessage)
     assert heal.tool_call_id == DANGLING_CALL_ID
-    assert heal.status == "error"
+    assert heal.status != "error"
+    assert heal.additional_kwargs["sherry_repair"] == "missing_tool_result"
     assert heal.content == PROD_HEAL_CONTENT
 
     # Next turn: strict provider must NOT 400 and must see the full valid

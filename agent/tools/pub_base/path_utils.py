@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import errno
 import os
+
+from loguru import logger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -410,6 +412,45 @@ def _is_materialized_link_path(path: Path, project_root: Path) -> bool:
     return False
 
 
+def _rewrite_leading_slash_path(file_path: str, root: Path) -> str:
+    """Rewrite a failed root-style absolute path (``/django/...``) to the project.
+
+    Models sometimes prefix a repository-relative path with ``/``. The original
+    path does not exist, while its first segment exists under the project root —
+    only then is it rewritten, so a real absolute path (``/etc/passwd``) is never
+    hijacked. The rewrite stays inside the root, so it cannot widen the
+    ``PathGuard`` boundary.
+    """
+    if not file_path.startswith("/") or file_path.startswith("//"):
+        return file_path
+    try:
+        if Path(file_path).exists():
+            return file_path
+    except OSError:
+        return file_path
+    relative = file_path.lstrip("/")
+    if not relative:
+        return file_path
+    first = relative.split("/", 1)[0]
+    try:
+        if not (root / first).exists():
+            return file_path
+    except OSError:
+        return file_path
+    candidate = root / relative
+    try:
+        if candidate.exists() or candidate.parent.exists():
+            logger.info(
+                "path hint: '{}' does not exist; using project path '{}'",
+                file_path,
+                candidate,
+            )
+            return str(candidate)
+    except OSError:
+        pass
+    return file_path
+
+
 def resolve_tool_path(
     file_path: str, session_id: str, action_desc: str
 ) -> tuple[Path, Path | None, str | None]:
@@ -424,6 +465,7 @@ def resolve_tool_path(
     from agent.tools.pub_base.tool_utils import tool_error
 
     root = current_project_dir(session_id)
+    file_path = _rewrite_leading_slash_path(file_path, root)
     try:
         return root, resolve_workspace_path(file_path, root), None
     except PathOutOfBoundsError:

@@ -41,6 +41,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from evals.coding_capability import suite as harness  # noqa: E402
 from evals.swebench import instances  # noqa: E402
+from evals.swebench import teardown  # noqa: E402
 from evals.swebench.instances import Instance  # noqa: E402
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
@@ -58,6 +59,9 @@ issue in the library source.
 
 - The project's environment interpreter is the `python` on PATH (`python -m
   pytest <path>` runs a test file). Use it if you want to run tests.
+- Work like a maintainer: locate the failing test and the smallest relevant
+  code path first, then make one focused edit and run the nearest check. Broad
+  repository-wide searching is not progress; stop searching once the fix is clear.
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
 
@@ -144,8 +148,24 @@ def main() -> None:
             raise SystemExit(completed.returncode)
         return
 
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    raw = sys.argv[1:]
+    args: list[str] = []
+    flags: set[str] = set()
+    cache_dir: Path | None = None
+    index = 0
+    while index < len(raw):
+        item = raw[index]
+        if item == "--instance-cache-dir":
+            if index + 1 >= len(raw):
+                raise SystemExit("--instance-cache-dir requires a directory")
+            cache_dir = Path(raw[index + 1]).expanduser().resolve()
+            index += 2
+            continue
+        if item.startswith("--"):
+            flags.add(item)
+        else:
+            args.append(item)
+        index += 1
     # ``--hard`` runs the HARD slice (multi-test regressions, 100+ PASS_TO_PASS
     # tests, one repo each); without it the small sympy spike is the default.
     default_slice = instances.HARD_INSTANCES if "--hard" in flags else instances.SPIKE_INSTANCES
@@ -157,6 +177,7 @@ def main() -> None:
             skip_self_check="--skip-self-check" in flags,
             hard="--hard" in flags or not args,
             keep_instances="--keep-instances" in flags,
+            cache_dir=cache_dir,
         )
     )
 
@@ -168,6 +189,7 @@ def _run(
     skip_self_check: bool,
     hard: bool = False,
     keep_instances: bool = False,
+    cache_dir: Path | None = None,
 ) -> int:
     run_id = time.strftime("%Y%m%d_%H%M%S")
     results_dir = REPO_ROOT / "evals" / "results" / "swebench" / run_id
@@ -231,7 +253,7 @@ def _run(
         print(
             f"[evals] dataset: {len(rows)} SWE-bench_Lite rows; running {len(selected)}", flush=True
         )
-        prepared = _prepare_all(selected, results_dir)
+        prepared, prepare_failures = _prepare_all(selected, results_dir, cache_dir=cache_dir)
         self_check = {} if skip_self_check else _self_check(prepared)
         if any(not ok for ok, _ in self_check.values()):
             for instance_id, (ok, output) in self_check.items():
@@ -242,7 +264,14 @@ def _run(
                         flush=True,
                     )
             return 2
-        results = asyncio.run(_run_instances(prepared, results_dir, hard=hard))
+        results = asyncio.run(_run_instances(prepared, results_dir, hard=hard, run_id=run_id))
+        for instance in selected:
+            failure = prepare_failures.get(instance.instance_id)
+            if failure is None:
+                continue
+            result = _harness_error_result(instance, RuntimeError(f"materialize failed: {failure}"))
+            _write_instance_result(results_dir, result)
+            results.append(result)
     finally:
         sandbox.restore()
         sandbox.close_aiosqlite_connections()
@@ -257,6 +286,8 @@ def _run(
 
     token_input = sum(int(r.get("tokens", {}).get("input", 0)) for r in results)
     token_output = sum(int(r.get("tokens", {}).get("output", 0)) for r in results)
+    token_cache = sum(int(r.get("tokens", {}).get("cache_read", 0)) for r in results)
+    total_cost = round(sum(float(r.get("cost_usd") or 0.0) for r in results), 6)
     report = {
         "run_id": run_id,
         "suite": "swebench",
@@ -276,7 +307,10 @@ def _run(
         "agent_config": harness._coding_preset_payload(),
         # This run's probed network reality (default-off philosophy: the record
         # says what was reachable; nothing was switched on for it).
-        "environment": {"web": _probe_web()},
+        "environment": {
+            "web": _probe_web(),
+            "sandbox_backend": _sandbox_backend(),
+        },
         "persona": harness._persona_evidence(results[0]["id"] if results else None),
         "isolation": harness._isolation_evidence(live_workspace, live_sessions, eval_workspace),
         "harness_self_check": {k: ok for k, (ok, _) in self_check.items()},
@@ -284,13 +318,20 @@ def _run(
             "instances_total": len(results),
             "resolved": sum(1 for r in results if r["resolved"]),
             "invalid_runs": [r["id"] for r in results if r["invalid_run"]],
+            "no_edit": [r["id"] for r in results if r.get("failure_kind") == "no_edit"],
+            "harness_errors": [r["id"] for r in results if r.get("failure_kind") == "harness"],
             "resolve_rate": round(
                 sum(1 for r in results if r["resolved"])
                 / max(1, len(results) - sum(1 for r in results if r["invalid_run"])),
                 4,
             ),
-            "resolve_rate_basis": "valid runs only (provider failures excluded)",
-            "tokens": {"input": token_input, "output": token_output},
+            "resolve_rate_basis": ("valid runs only (provider and harness errors excluded)"),
+            "tokens": {
+                "input": token_input,
+                "output": token_output,
+                "cache_read": token_cache,
+            },
+            "cost_usd": total_cost,
             "duration_s": round(time.monotonic() - started, 1),
         },
         "instances": results,
@@ -304,11 +345,17 @@ def _run(
 # ── preparation, validation, runs ───────────────────────────────────────────
 
 
-def _prepare_all(selected: list[Instance], results_dir: Path) -> list[Instance]:
-    """Clone + install every instance (the slow, model-free half)."""
+def _prepare_all(
+    selected: list[Instance],
+    results_dir: Path,
+    *,
+    cache_dir: Path | None = None,
+) -> tuple[list[Instance], dict[str, str]]:
+    """Clone + install every instance; one network failure never aborts the slice."""
     work_dir = results_dir / "instances"
     work_dir.mkdir(parents=True, exist_ok=True)
-    prepared = []
+    prepared: list[Instance] = []
+    failures: dict[str, str] = {}
     for instance in selected:
         print(
             f"[evals] materialising {instance.instance_id} "
@@ -316,12 +363,20 @@ def _prepare_all(selected: list[Instance], results_dir: Path) -> list[Instance]:
             flush=True,
         )
         started = time.monotonic()
-        prepared.append(instances.materialize(instance, work_dir))
+        try:
+            prepared.append(instances.materialize(instance, work_dir, cache_dir=cache_dir))
+        except Exception as exc:  # noqa: BLE001 — record invalid, continue
+            failures[instance.instance_id] = f"{type(exc).__name__}: {exc}"
+            print(
+                f"[evals] materialise FAILED {instance.instance_id}: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            continue
         print(
             f"[evals] materialised {instance.instance_id} in {time.monotonic() - started:.1f}s",
             flush=True,
         )
-    return prepared
+    return prepared, failures
 
 
 def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
@@ -356,19 +411,33 @@ def _self_check(prepared: list[Instance]) -> dict[str, tuple[bool, str]]:
 
 
 async def _run_instances(
-    prepared: list[Instance], results_dir: Path, *, hard: bool = False
+    prepared: list[Instance],
+    results_dir: Path,
+    *,
+    hard: bool = False,
+    run_id: str = "",
 ) -> list[dict[str, Any]]:
-    results = []
+    results: list[dict[str, Any]] = []
+    _write_run_meta(results_dir, run_id=run_id, hard=hard)
     for instance in prepared:
         timeout_s = _TURN_TIMEOUT_HARD_S if hard else _TURN_TIMEOUT_S
         print(
             f"[evals] starting {instance.instance_id} (turn_timeout={timeout_s:.0f}s)…",
             flush=True,
         )
-        result = await _run_instance(instance, results_dir, hard=hard)
+        try:
+            result = await _run_instance(instance, results_dir, hard=hard)
+        except Exception as exc:  # noqa: BLE001 — one instance must not abort the slice
+            print(
+                f"[evals] {instance.instance_id}: HARNESS ERROR {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            result = _harness_error_result(instance, exc)
+        _write_instance_result(results_dir, result)
         results.append(result)
         print(
             f"[evals] {instance.instance_id}: resolved={result['resolved']} "
+            f"failure={result.get('failure_kind') or 'none'} "
             f"duration={result['duration_s']}s tool_calls={result['tool_calls']} "
             f"tokens={result['tokens']}",
             flush=True,
@@ -382,6 +451,167 @@ _TURN_TIMEOUT_S = 1200.0
 _TURN_TIMEOUT_HARD_S = 2400.0
 
 
+#: HARD instances get a larger main-agent budget than the shipped 90: the
+#: analysis showed both instances exhausting 90/90, one before producing a diff.
+_HARD_ITERATION_BUDGET = 150
+#: A no-edit repair turn is deliberately short: it must edit, not explore.
+_REPAIR_ITERATION_BUDGET = 30
+_REPAIR_TIMEOUT_S = 600.0
+
+_REPAIR_PROMPT = """You made NO file edits in the previous turn. Stop broad exploration.
+
+Use the context you already gathered: pick the smallest plausible fix and apply
+it NOW with patch_file or write_file. Then run only the directly relevant check.
+A minimal patch that addresses the reported failure is better than more searching.
+
+Problem statement:
+{problem}
+"""
+
+
+def _set_iteration_budget(session_id: str, budget: int) -> None:
+    """Set the per-session iteration cap (the eval budget seam)."""
+    from runtime import StateKey, state_register_mem
+
+    state_register_mem.set_state(session_id, StateKey.ITERATION_BUDGET_OVERRIDE, int(budget))
+
+
+def _merge_drive(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    """Fold a repair turn's counters into the original turn's drive record."""
+    return {
+        "tool_calls": int(base.get("tool_calls") or 0) + int(extra.get("tool_calls") or 0),
+        "text": str(base.get("text") or "") + str(extra.get("text") or ""),
+        "resumes": int(base.get("resumes") or 0) + int(extra.get("resumes") or 0),
+        "interrupted": int(base.get("interrupted") or 0) + int(extra.get("interrupted") or 0),
+        "timeout": bool(base.get("timeout")) or bool(extra.get("timeout")),
+        "error": str(base.get("error") or "") or str(extra.get("error") or ""),
+    }
+
+
+async def _session_evidence(session_id: str) -> dict[str, Any]:
+    """Final assistant text + token/cache/cost evidence for the report."""
+    result: dict[str, Any] = {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cost_usd": 0.0,
+        "final_text": "",
+    }
+    try:
+        from langchain_core.messages import AIMessage
+
+        from agent.state_port import read_messages
+        from config.features.infra_side.model_pricing import resolve_model_pricing
+        from context_engine.store.core import _cache_read_tokens_from_usage
+        from pub.func.extract_text_from_content import extract_text_from_content
+
+        messages = await read_messages(session_id)
+    except Exception:  # noqa: BLE001 — evidence is reported, never fatal
+        return result
+
+    model = ""
+    for message in messages:
+        usage = getattr(message, "usage_metadata", None)
+        if not isinstance(usage, dict):
+            continue
+        result["input"] += int(usage.get("input_tokens") or 0)
+        result["output"] += int(usage.get("output_tokens") or 0)
+        cache = _cache_read_tokens_from_usage(usage)
+        if cache is not None:
+            result["cache_read"] += int(cache)
+        model = str(usage.get("model_name") or model)
+    for message in reversed(messages):
+        if isinstance(message, AIMessage):
+            text = extract_text_from_content(message.content)
+            if text.strip():
+                result["final_text"] = text
+                break
+    try:
+        pricing = resolve_model_pricing(model or os.getenv("MAIN_LLM_NAME", ""))
+        result["cost_usd"] = round(
+            (
+                result["input"] * float(pricing["input"])
+                + result["output"] * float(pricing["output"])
+            )
+            / 1_000_000,
+            6,
+        )
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return result
+
+
+def _sandbox_backend() -> str:
+    """The backend the eval actually used (``none`` on a host without bwrap)."""
+    try:
+        from agent.tools.pub_base.sandbox import get_backend, read_policy
+
+        backend = get_backend(read_policy())
+        return type(backend).__name__ if backend is not None else "none"
+    except Exception:  # noqa: BLE001 — an env fact, never fatal
+        return "unknown"
+
+
+def _write_instance_result(results_dir: Path, result: dict[str, Any]) -> None:
+    """Write one instance's result immediately (a later crash must not lose it)."""
+    target = results_dir / "instance_results" / f"{result.get('id', 'unknown')}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_run_meta(results_dir: Path, *, run_id: str, hard: bool) -> None:
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except Exception:  # noqa: BLE001
+        head = ""
+    meta = {
+        "run_id": run_id,
+        "argv": sys.argv[1:],
+        "git_head": head,
+        "hard": hard,
+        "model": harness._model_info(),
+        "sandbox_backend": _sandbox_backend(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    (results_dir / "run_meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
+    return {
+        "id": instance.instance_id,
+        "repo": instance.repo,
+        "base_commit": instance.base_commit,
+        "resolved": False,
+        "failure_kind": "harness",
+        "invalid_run": True,
+        "fail_to_pass_ok": False,
+        "pass_to_pass_ok": False,
+        "test_patch_applied": False,
+        "judge_detail": "",
+        "judge_tests": None,
+        "duration_s": 0.0,
+        "tool_calls": 0,
+        "resumes": 0,
+        "timeout": False,
+        "error": f"{type(exc).__name__}: {exc}",
+        "changed_paths": [],
+        "reply": "",
+        "final_text": "",
+        "tokens": {},
+        "cost_usd": 0.0,
+        "quiesce": {},
+        "harness_error": str(exc),
+    }
+
+
 async def _run_instance(
     instance: Instance, results_dir: Path, *, hard: bool = False
 ) -> dict[str, Any]:
@@ -389,83 +619,234 @@ async def _run_instance(
     prompt = _TASK_TEMPLATE.format(problem=instance.problem_statement.strip(), repo=instance.repo)
     session_id = f"evals-swe-{instance.instance_id}-{uuid.uuid4().hex[:6]}"
     await harness._bind_session(session_id, instance.repo_dir)
+    base_budget = _HARD_ITERATION_BUDGET if hard else 90
+    _set_iteration_budget(session_id, base_budget)
 
-    # The instance's interpreter has to be what the agent's own commands hit:
-    # the official images make the environment python the default one, so this
-    # is the closest equivalent to that (restored right after the turn).
+    from config.features import SHADOW_GIT
+    from agent.tools.pub_base import shadow_git
+
+    previous_store = SHADOW_GIT["store_dir"]
+    SHADOW_GIT["store_dir"] = str(results_dir / "shadow")
+
     original_path = os.environ.get("PATH", "")
     os.environ["PATH"] = f"{instance.python_exe.parent}{os.pathsep}{original_path}"
-    # The agent runs the repo's tests too, so the pretend version has to be in
-    # ITS environment as well (a shallow clone cannot report the real version).
     previous_scm = os.environ.get("SETUPTOOLS_SCM_PRETEND_VERSION")
     if instance.version:
         os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = instance.version
     started = time.monotonic()
+    timeout_s = _TURN_TIMEOUT_HARD_S if hard else _TURN_TIMEOUT_S
+    drive: dict[str, Any] = {
+        "tool_calls": 0,
+        "text": "",
+        "resumes": 0,
+        "interrupted": 0,
+        "timeout": False,
+        "error": "",
+    }
+    quiesce: dict[str, Any] = {}
     try:
-        timeout_s = _TURN_TIMEOUT_HARD_S if hard else _TURN_TIMEOUT_S
-        drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout_s)
-    except TimeoutError:
-        drive = {
-            "tool_calls": 0,
-            "text": "",
-            "resumes": 0,
-            "interrupted": 0,
-            "timeout": True,
-            "error": "",
-        }
+        try:
+            drive = await asyncio.wait_for(harness._drive(session_id, prompt), timeout=timeout_s)
+        except TimeoutError:
+            drive = {
+                "tool_calls": 0,
+                "text": "",
+                "resumes": 0,
+                "interrupted": 0,
+                "timeout": True,
+                "error": "",
+            }
+        except Exception as exc:  # noqa: BLE001 — the report must carry the failure
+            drive = {
+                "tool_calls": 0,
+                "text": "",
+                "resumes": 0,
+                "interrupted": 0,
+                "timeout": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
     finally:
         os.environ["PATH"] = original_path
         if previous_scm is None:
             os.environ.pop("SETUPTOOLS_SCM_PRETEND_VERSION", None)
         else:
             os.environ["SETUPTOOLS_SCM_PRETEND_VERSION"] = previous_scm
-    duration_s = round(time.monotonic() - started, 1)
+        # Stop every post-turn writer BEFORE the harness reads the tree.
+        quiesce = await teardown.quiesce_session(session_id, instance.repo_dir)
 
-    agent_diff = instances.diff(instance)
-    changed = instances.changed_paths(instance)
-    (results_dir / f"diff-{instance.instance_id}.patch").write_text(agent_diff, encoding="utf-8")
+    try:
+        agent_diff = instances.diff(instance)
+        changed = instances.changed_paths(instance)
+        (results_dir / f"diff-{instance.instance_id}.patch").write_text(
+            agent_diff, encoding="utf-8"
+        )
 
-    ok_f2p = ok_p2p = False
-    f2p_tests: list[dict[str, Any]] = []
-    p2p_tests: list[dict[str, Any]] = []
-    test_patch_applied = instances.apply_patch(instance, instance.test_patch)
-    if test_patch_applied:
-        ok_f2p, out_f2p, f2p_tests = instances.run_tests(instance, fail_to_pass)
-        ok_p2p, out_p2p, p2p_tests = instances.run_tests(instance, pass_to_pass)
-        resolved = ok_f2p and ok_p2p
-        detail = f"FAIL_TO_PASS ok={ok_f2p}\n{out_f2p}\nPASS_TO_PASS ok={ok_p2p}\n{out_p2p}"
-    else:
-        resolved = False
-        detail = "the test patch does not apply — the agent changed test files"
-    instances.revert(instance)
+        if quiesce.get("timed_out"):
+            evidence = await _session_evidence(session_id)
+            return {
+                "id": instance.instance_id,
+                "repo": instance.repo,
+                "base_commit": instance.base_commit,
+                "resolved": False,
+                "failure_kind": "harness",
+                "invalid_run": True,
+                "fail_to_pass_ok": False,
+                "pass_to_pass_ok": False,
+                "test_patch_applied": False,
+                "judge_detail": "",
+                "judge_tests": None,
+                "duration_s": round(time.monotonic() - started, 1),
+                "tool_calls": drive["tool_calls"],
+                "resumes": drive["resumes"],
+                "timeout": drive["timeout"],
+                "error": "quiesce timed out: " + json.dumps(quiesce, ensure_ascii=False),
+                "changed_paths": changed,
+                "reply": drive["text"][:2000],
+                "final_text": evidence["final_text"],
+                "tokens": {
+                    "input": evidence["input"],
+                    "output": evidence["output"],
+                    "cache_read": evidence["cache_read"],
+                },
+                "cost_usd": evidence["cost_usd"],
+                "quiesce": quiesce,
+                "harness_error": "quiesce timed out",
+            }
 
-    passed = bool(resolved)
-    return {
-        "id": instance.instance_id,
-        "repo": instance.repo,
-        "base_commit": instance.base_commit,
-        "resolved": passed,
-        "failure_kind": harness._failure_kind(passed, drive),
-        "invalid_run": (not passed) and harness._failure_kind(passed, drive) == "provider",
-        "fail_to_pass_ok": bool(test_patch_applied and ok_f2p),
-        "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
-        "test_patch_applied": test_patch_applied,
-        "judge_detail": detail[-3000:],
-        # Structured per-test outcomes (observability — the verdict above is the
-        # exit code's; this field makes near-misses like "same contract point,
-        # N asserts" visible instead of a truncated text blob).
-        "judge_tests": (
-            {"fail_to_pass": f2p_tests, "pass_to_pass": p2p_tests} if test_patch_applied else None
-        ),
-        "duration_s": duration_s,
-        "tool_calls": drive["tool_calls"],
-        "resumes": drive["resumes"],
-        "timeout": drive["timeout"],
-        "error": drive["error"],
-        "changed_paths": changed,
-        "reply": drive["text"][:2000],
-        "tokens": await harness._session_tokens(session_id),
-    }
+        # No-edit gate (MVP): a completed turn that produced no file change gets
+        # ONE short repair turn before the verdict is recorded.
+        if not changed and not drive["timeout"] and not drive["error"]:
+            _set_iteration_budget(session_id, _REPAIR_ITERATION_BUDGET)
+            try:
+                repair = await asyncio.wait_for(
+                    harness._drive(
+                        session_id,
+                        _REPAIR_PROMPT.format(problem=instance.problem_statement.strip()),
+                    ),
+                    timeout=min(_REPAIR_TIMEOUT_S, timeout_s),
+                )
+            except TimeoutError:
+                repair = {
+                    "tool_calls": 0,
+                    "text": "",
+                    "resumes": 0,
+                    "interrupted": 0,
+                    "timeout": True,
+                    "error": "",
+                }
+            except Exception as exc:  # noqa: BLE001
+                repair = {
+                    "tool_calls": 0,
+                    "text": "",
+                    "resumes": 0,
+                    "interrupted": 0,
+                    "timeout": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            finally:
+                _set_iteration_budget(session_id, base_budget)
+            drive = _merge_drive(drive, repair)
+            quiesce = await teardown.quiesce_session(session_id, instance.repo_dir)
+            if quiesce.get("timed_out"):
+                changed = instances.changed_paths(instance)
+                evidence = await _session_evidence(session_id)
+                return {
+                    "id": instance.instance_id,
+                    "repo": instance.repo,
+                    "base_commit": instance.base_commit,
+                    "resolved": False,
+                    "failure_kind": "harness",
+                    "invalid_run": True,
+                    "fail_to_pass_ok": False,
+                    "pass_to_pass_ok": False,
+                    "test_patch_applied": False,
+                    "judge_detail": "",
+                    "judge_tests": None,
+                    "duration_s": round(time.monotonic() - started, 1),
+                    "tool_calls": drive["tool_calls"],
+                    "resumes": drive["resumes"],
+                    "timeout": drive["timeout"],
+                    "error": "quiesce timed out after repair: "
+                    + json.dumps(quiesce, ensure_ascii=False),
+                    "changed_paths": changed,
+                    "reply": drive["text"][:2000],
+                    "final_text": evidence["final_text"],
+                    "tokens": {
+                        "input": evidence["input"],
+                        "output": evidence["output"],
+                        "cache_read": evidence["cache_read"],
+                    },
+                    "cost_usd": evidence["cost_usd"],
+                    "quiesce": quiesce,
+                    "harness_error": "quiesce timed out after repair",
+                }
+            changed = instances.changed_paths(instance)
+            agent_diff = instances.diff(instance)
+            (results_dir / f"diff-{instance.instance_id}.patch").write_text(
+                agent_diff, encoding="utf-8"
+            )
+
+        ok_f2p = ok_p2p = False
+        f2p_tests: list[dict[str, Any]] = []
+        p2p_tests: list[dict[str, Any]] = []
+        test_patch_applied = instances.apply_patch(instance, instance.test_patch)
+        if test_patch_applied:
+            ok_f2p, out_f2p, f2p_tests = instances.run_tests(instance, fail_to_pass)
+            ok_p2p, out_p2p, p2p_tests = instances.run_tests(instance, pass_to_pass)
+            resolved = ok_f2p and ok_p2p
+            detail = f"FAIL_TO_PASS ok={ok_f2p}\n{out_f2p}\nPASS_TO_PASS ok={ok_p2p}\n{out_p2p}"
+        else:
+            resolved = False
+            detail = "the test patch does not apply — the agent changed test files"
+
+        passed = bool(resolved)
+        failure_kind = harness._failure_kind(passed, drive)
+        if not passed and failure_kind == "":
+            if not changed:
+                failure_kind = "no_edit"
+            elif not test_patch_applied:
+                failure_kind = "test_patch"
+        evidence = await _session_evidence(session_id)
+        return {
+            "id": instance.instance_id,
+            "repo": instance.repo,
+            "base_commit": instance.base_commit,
+            "resolved": passed,
+            "failure_kind": failure_kind,
+            "invalid_run": (not passed) and failure_kind in {"provider", "harness"},
+            "fail_to_pass_ok": bool(test_patch_applied and ok_f2p),
+            "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
+            "test_patch_applied": test_patch_applied,
+            "judge_detail": detail[-3000:],
+            "judge_tests": (
+                {"fail_to_pass": f2p_tests, "pass_to_pass": p2p_tests}
+                if test_patch_applied
+                else None
+            ),
+            "duration_s": round(time.monotonic() - started, 1),
+            "tool_calls": drive["tool_calls"],
+            "resumes": drive["resumes"],
+            "timeout": drive["timeout"],
+            "error": drive["error"],
+            "changed_paths": changed,
+            "reply": drive["text"][:2000],
+            "final_text": evidence["final_text"],
+            "tokens": {
+                "input": evidence["input"],
+                "output": evidence["output"],
+                "cache_read": evidence["cache_read"],
+            },
+            "cost_usd": evidence["cost_usd"],
+            "quiesce": quiesce,
+            "harness_error": "",
+        }
+    finally:
+        try:
+            shadow_git.unfreeze(instance.repo_dir)
+        except Exception:  # noqa: BLE001, S110
+            pass
+        SHADOW_GIT["store_dir"] = previous_store
+        instances.revert(instance, trash_root=results_dir / "trash")
 
 
 def _publish(report: dict[str, Any], results_dir: Path, *, update_baseline: bool) -> int:

@@ -72,7 +72,7 @@
 
 store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（20）個だけ保持します。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
 
-読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。
+読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。 `SHADOW_GIT["store_dir"]`（または `SHERRY_SHADOW_GIT_DIR`）で store をプロジェクト外へ移せます。eval harness は run 単位のディレクトリを使うため、インスタンスの checkout に `.sherry` は現れません。`wait_for_idle()` と `freeze()` が teardown のバリアで、進行中のスナップショットを待ち、遅れて来る書き込みを止めてから revert します。
 
 ## 📖 読み取り先行ライセンス
 

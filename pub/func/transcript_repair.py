@@ -104,14 +104,20 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
         tool_name: Tool name (optional).
 
     Returns:
-        A dummy ToolMessage indicating the result was missing.
+        A dummy ToolMessage indicating the result was missing. It is a repair
+        marker, NOT a tool execution failure: ``status`` stays successful so
+        downstream consumers do not count it as an error, and the marker in
+        ``additional_kwargs`` lets reports count trim placeholders separately.
     """
     return ToolMessage(
         name=tool_name or "unknown",
         content="tool result missing after context trim.",
         tool_call_id=tool_call_id,
-        status="error",
-        additional_kwargs={"timestamp": int(time.time() * 1000)},
+        status="success",
+        additional_kwargs={
+            "timestamp": int(time.time() * 1000),
+            "sherry_repair": "missing_tool_result",
+        },
     )
 
 

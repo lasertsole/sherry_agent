@@ -249,7 +249,7 @@ async def test_clean_cancel_writes_single_deterministic_marker(
 async def test_dangling_tool_calls_healed_before_marker(
     queue: UserInputQueue, mes_db: sqlite3.Connection
 ):
-    """Trailing AIMessage(tool_calls) without results → error ToolMessage
+    """Trailing AIMessage(tool_calls) without results → neutral ToolMessage
     placeholder(s) with deterministic ids committed BEFORE the marker in the
     same aupdate_state commit (Task 3 verdict: heal at WRITE time)."""
     model = RecordingFakeChatModel(response_text="R1")
@@ -270,7 +270,8 @@ async def test_dangling_tool_calls_healed_before_marker(
     assert len(heal) == 1, f"expected one deterministic heal placeholder, got {msgs!r}"
     assert isinstance(heal[0], ToolMessage)
     assert heal[0].tool_call_id == DANGLING_CALL_ID
-    assert heal[0].status == "error"
+    assert heal[0].status != "error"
+    assert heal[0].additional_kwargs["sherry_repair"] == "missing_tool_result"
     assert heal[0].content == HEAL_CONTENT
 
     idx_heal = [getattr(m, "id", None) for m in msgs].index(heal_id)

@@ -38,6 +38,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -247,37 +248,134 @@ def _as_node_ids(names: list[str], files: list[str]) -> list[str]:
 # ── Materialising an instance ───────────────────────────────────────────────
 
 
-def materialize(instance: Instance, work_dir: Path) -> Instance:
-    """Clone at the base commit and install the checkout into a fresh venv."""
-    repo_dir = work_dir / instance.instance_id
-    venv_dir = work_dir / f"{instance.instance_id}-venv"
-    if repo_dir.exists():
-        shutil.rmtree(repo_dir)
-    repo_dir.mkdir(parents=True)
-    _run(["git", "init", "-q", "-b", "main"], cwd=repo_dir)
-    _run(["git", "remote", "add", "origin", instance.repo_url], cwd=repo_dir)
-    print(
-        f"[evals]   {instance.instance_id}: fetching {instance.base_commit[:10]} from "
-        f"{instance.repo_url}…",
-        flush=True,
-    )
-    _run(["git", "fetch", "-q", "--depth", "1", "origin", instance.base_commit], cwd=repo_dir)
-    _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=repo_dir)
-    _run(["git", "config", "user.email", "evals@sherry.local"], cwd=repo_dir)
-    _run(["git", "config", "user.name", "sherry-evals"], cwd=repo_dir)
-    print(f"[evals]   {instance.instance_id}: checkout ready", flush=True)
+def ensure_repo_excludes(repo_dir: Path, *patterns: str) -> None:
+    """Add local-only ignores to the instance clone (never the tracked .gitignore).
 
-    if venv_dir.exists():
-        shutil.rmtree(venv_dir)
-    print(
-        f"[evals]   {instance.instance_id}: creating Python {INSTANCE_PYTHON} venv…",
-        flush=True,
-    )
-    _run(["uv", "venv", "--python", INSTANCE_PYTHON, str(venv_dir)], cwd=work_dir)
+    The agent's private ``.sherry`` state must never make the instance look dirty
+    or be walked by ``git clean``; ``.git/info/exclude`` is per-clone, so the
+    benchmark checkout is unaffected beyond its own directory.
+    """
+    info = repo_dir / ".git" / "info"
+    info.mkdir(parents=True, exist_ok=True)
+    exclude = info / "exclude"
+    existing = exclude.read_text(encoding="utf-8").splitlines() if exclude.is_file() else []
+    missing = [pattern for pattern in patterns if pattern not in existing]
+    if missing:
+        exclude.write_text("\n".join([*existing, *missing]) + "\n", encoding="utf-8")
+
+
+def _retry_run(
+    argv: list[str],
+    *,
+    cwd: Path,
+    timeout: float = 1800.0,
+    env: dict[str, str] | None = None,
+    attempts: int = 3,
+) -> str:
+    """Run a network-bound step with bounded retries (fetch / install)."""
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _run(argv, cwd=cwd, timeout=timeout, env=env)
+        except Exception as exc:  # noqa: BLE001 - retried, then re-raised
+            last = exc
+            if attempt < attempts:
+                print(
+                    f"[evals]   retry {attempt}/{attempts - 1} after {type(exc).__name__}: "
+                    f"{str(exc)[-200:]}",
+                    flush=True,
+                )
+                time.sleep(2.0 * attempt)
+    assert last is not None
+    raise last
+
+
+def materialize(instance: Instance, work_dir: Path, *, cache_dir: Path | None = None) -> Instance:
+    """Clone at the base commit and install the checkout into a fresh venv.
+
+    ``cache_dir`` (``--instance-cache-dir``) makes the checkout + venv reusable
+    across runs: the repo is reused only when HEAD is the pinned base commit,
+    and the venv only when its interpreter still exists. Without it the
+    historical clean-room materialisation is unchanged.
+    """
+    base_dir = cache_dir or work_dir
+    base_dir.mkdir(parents=True, exist_ok=True)
+    repo_dir = base_dir / instance.instance_id
+    venv_dir = base_dir / f"{instance.instance_id}-venv"
     python_exe = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-    print(f"[evals]   {instance.instance_id}: installing the checkout + test extras…", flush=True)
-    _install(repo_dir, python_exe, work_dir, scm_version=instance.version)
-    print(f"[evals]   {instance.instance_id}: install done", flush=True)
+    reused_repo = False
+    if repo_dir.exists() and (repo_dir / ".git").exists():
+        try:
+            head = _run(["git", "rev-parse", "HEAD"], cwd=repo_dir).strip()
+        except Exception:  # noqa: BLE001 - a broken cache is rebuilt
+            head = ""
+        reused_repo = head == instance.base_commit
+    if reused_repo:
+        print(
+            f"[evals]   {instance.instance_id}: reusing cached checkout at "
+            f"{instance.base_commit[:10]}",
+            flush=True,
+        )
+        instance.repo_dir = repo_dir
+        ensure_repo_excludes(repo_dir, ".sherry/")
+        revert(instance)
+    else:
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
+        repo_dir.mkdir(parents=True)
+        _run(["git", "init", "-q", "-b", "main"], cwd=repo_dir)
+        _run(["git", "remote", "add", "origin", instance.repo_url], cwd=repo_dir)
+        print(
+            f"[evals]   {instance.instance_id}: fetching {instance.base_commit[:10]} from "
+            f"{instance.repo_url}…",
+            flush=True,
+        )
+        _retry_run(
+            ["git", "fetch", "-q", "--depth", "1", "origin", instance.base_commit],
+            cwd=repo_dir,
+        )
+        _run(["git", "checkout", "-q", "FETCH_HEAD"], cwd=repo_dir)
+        _run(["git", "config", "user.email", "evals@sherry.local"], cwd=repo_dir)
+        _run(["git", "config", "user.name", "sherry-evals"], cwd=repo_dir)
+        ensure_repo_excludes(repo_dir, ".sherry/")
+        print(f"[evals]   {instance.instance_id}: checkout ready", flush=True)
+
+    reuse_venv = reused_repo and venv_dir.exists() and python_exe.exists()
+    if reuse_venv:
+        print(
+            f"[evals]   {instance.instance_id}: reusing cached venv {venv_dir}",
+            flush=True,
+        )
+    else:
+        if venv_dir.exists():
+            shutil.rmtree(venv_dir)
+        print(
+            f"[evals]   {instance.instance_id}: creating Python {INSTANCE_PYTHON} venv…",
+            flush=True,
+        )
+        _retry_run(["uv", "venv", "--python", INSTANCE_PYTHON, str(venv_dir)], cwd=base_dir)
+        print(
+            f"[evals]   {instance.instance_id}: installing the checkout + test extras…",
+            flush=True,
+        )
+        last: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                _install(repo_dir, python_exe, base_dir, scm_version=instance.version)
+                last = None
+                break
+            except Exception as exc:  # noqa: BLE001 - retried, then re-raised
+                last = exc
+                if attempt < 3:
+                    print(
+                        f"[evals]   retry install {attempt}/2 after "
+                        f"{type(exc).__name__}: {str(exc)[-200:]}",
+                        flush=True,
+                    )
+                    time.sleep(2.0 * attempt)
+        if last is not None:
+            raise last
+        print(f"[evals]   {instance.instance_id}: install done", flush=True)
     instance.repo_dir = repo_dir
     instance.python_exe = python_exe
     return instance
@@ -373,22 +471,41 @@ def apply_patch(instance: Instance, patch: str) -> bool:
     return completed.returncode == 0
 
 
-def revert(instance: Instance) -> None:
-    """Drop every working-tree change, back to the pinned base."""
-    # The instance repo is shared with any detached subagent / background
-    # terminal that outlives the turn. `git clean` used to walk .sherry and
-    # fail on an object it could not lstat (EPERM) while such a writer was
-    # active. Drop the snapshot first (the retries are a stopgap until teardown
-    # quiesces every writer) and exclude any survivor from clean.
-    sherry_dir = instance.repo_dir / ".sherry"
-    for _attempt in range(3):
-        if not sherry_dir.exists():
-            break
-        shutil.rmtree(sherry_dir, ignore_errors=True)
-        time.sleep(0.2)
-    _run(["git", "checkout", "--", "."], cwd=instance.repo_dir)
-    _run(["git", "clean", "-qfd", "-e", ".sherry"], cwd=instance.repo_dir)
-    shutil.rmtree(sherry_dir, ignore_errors=True)
+def revert(instance: Instance, *, trash_root: Path | None = None) -> None:
+    """Drop every working-tree change, back to the pinned base.
+
+    The agent's private ``.sherry`` is quarantined with an ATOMIC directory
+    rename before git touches the tree: ``git clean`` never walks it, and a
+    late writer that recreates it cannot resurrect an inconsistent removal.
+    Callers should quiesce the session first (see ``teardown.quiesce_session``);
+    this function is the last-resort cleanup, not a race barrier.
+    """
+    repo = instance.repo_dir
+    sherry = repo / ".sherry"
+    trash = (trash_root or repo.parent / ".swe-trash") / (
+        f"{instance.instance_id}-{uuid.uuid4().hex[:8]}"
+    )
+    trash.parent.mkdir(parents=True, exist_ok=True)
+    quarantined: list[Path] = []
+
+    def _quarantine(source: Path, target: Path) -> None:
+        try:
+            os.replace(source, target)
+            quarantined.append(target)
+        except OSError:
+            # EXDEV / a filesystem that refuses the rename: best-effort delete.
+            shutil.rmtree(source, ignore_errors=True)
+
+    if sherry.exists():
+        _quarantine(sherry, trash)
+    _run(["git", "checkout", "--", "."], cwd=repo)
+    _run(["git", "clean", "-qfd", "-e", ".sherry"], cwd=repo)
+    # A writer that raced the rename can recreate it; exclude + quarantine once
+    # more, then drop the trash (the real fix is quiescing that writer first).
+    if sherry.exists():
+        _quarantine(sherry, trash.with_name(f"{trash.name}-late"))
+    for path in quarantined:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -526,14 +643,38 @@ def run_tests(
 
 
 def changed_paths(instance: Instance) -> list[str]:
-    """Paths the agent changed, against the pinned base."""
-    out = _run(["git", "diff", "--name-only"], cwd=instance.repo_dir)
+    """Paths the agent changed (tracked, staged and untracked), against the base."""
+    untracked = _untracked_for_diff(instance.repo_dir)
+    if untracked:
+        _run(["git", "add", "-N", "--", *untracked], cwd=instance.repo_dir)
+    try:
+        out = _run(["git", "diff", "HEAD", "--name-only"], cwd=instance.repo_dir)
+    finally:
+        _run(["git", "reset", "-q"], cwd=instance.repo_dir)
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
+def _untracked_for_diff(repo: Path) -> list[str]:
+    """Untracked, non-ignored files (``.sherry`` filtered out explicitly)."""
+    out = _run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=repo)
+    return [path for path in out.split("\0") if path and not path.startswith(".sherry/")]
+
+
 def diff(instance: Instance) -> str:
-    """The agent's full diff against the pinned base commit."""
-    return _run(["git", "diff"], cwd=instance.repo_dir)
+    """The agent's full diff against the pinned base commit.
+
+    ``git diff`` alone ignores untracked files, so a fix that ADDS a file would
+    vanish from the saved patch. Intent-to-add makes them visible; ``git reset``
+    then restores the index so the judge's test patch still applies. ``.sherry``
+    is agent-private state and never belongs in the submission.
+    """
+    untracked = _untracked_for_diff(instance.repo_dir)
+    if untracked:
+        _run(["git", "add", "-N", "--", *untracked], cwd=instance.repo_dir)
+    try:
+        return _run(["git", "diff", "--binary", "HEAD"], cwd=instance.repo_dir)
+    finally:
+        _run(["git", "reset", "-q"], cwd=instance.repo_dir)
 
 
 def _run(

@@ -18,6 +18,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "SYSTEM_PROMPT": "system_prompt",
     "ITERATION_BUDGET": "iteration_budget",
     "ITERATION_BUDGET_USED": "iteration_budget_used",
+    "ITERATION_BUDGET_OVERRIDE": "iteration_budget_override",
     "TOKEN_BUDGET_CAP": "token_budget_cap",
     "TOKEN_BUDGET_CAP_PENDING": "token_budget_cap_pending",
     "TOKEN_BUDGET_USED": "token_budget_used",

@@ -72,7 +72,7 @@
 
 store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` 在 `git add -A` 之前写入密钥、体积目录和 shadow store 自身的排除规则，只保留最近 `SHADOW_GIT["max_snapshots"]`（20）个。恢复前先拍 `pre-restore` 快照（撤销的撤销），支持单文件或整棵树；`checkpoint` 工具向 agent 暴露 list / show / restore。侧栏 git graph 读取这条快照链（分支标签 `checkpoint`），不再读用户历史。
 
-读取路径不设门，非 git 目录也是正常结果。shadow store 随项目走（clone 也会带上）；`SHADOW_GIT["enabled"]=False` 时所有钩子退化为 no-op。
+读取路径不设门，非 git 目录也是正常结果。shadow store 随项目走（clone 也会带上）；`SHADOW_GIT["enabled"]=False` 时所有钩子退化为 no-op。 `SHADOW_GIT["store_dir"]`（或 `SHERRY_SHADOW_GIT_DIR`）可把 store 移到项目之外；eval harness 使用 run 级目录，实例 checkout 里不会出现 `.sherry`。`wait_for_idle()` 与 `freeze()` 是它的 teardown 屏障：先等正在写的快照结束，再阻止迟到的写者，然后才 revert。
 
 ## 📖 先读后写许可证
 

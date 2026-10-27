@@ -72,7 +72,8 @@ class TestToolCallNormalizeFastPath:
         placeholders = [m for m in emitted if isinstance(m, ToolMessage)]
         assert len(placeholders) == 1
         assert placeholders[0].tool_call_id == "c1"
-        assert placeholders[0].status == "error"
+        assert placeholders[0].status != "error"
+        assert placeholders[0].additional_kwargs["sherry_repair"] == "missing_tool_result"
         assert "missing" in placeholders[0].content
 
     def test_stale_remove_message_residue_still_rebuilds(self):

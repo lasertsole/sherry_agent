@@ -307,21 +307,39 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
     # inherit the half-edited tree or the poisoned transcript of the try before.
     repo = results_dir / "repos" / task.id
     base_sha = tasks.build_repo(task, repo)
+    from evals.swebench.instances import ensure_repo_excludes
+
+    ensure_repo_excludes(repo, ".sherry/")
     session_id = f"evals-coding-{task.id}-{uuid.uuid4().hex[:8]}"
     await _bind_session(session_id, repo)
 
+    from agent.tools.pub_base import shadow_git
+    from config.features import SHADOW_GIT
+    from evals.swebench import teardown
+
+    previous_store = SHADOW_GIT["store_dir"]
+    SHADOW_GIT["store_dir"] = str(results_dir / "shadow")
     started = time.monotonic()
+    quiesce: dict = {}
     try:
-        drive = await asyncio.wait_for(_drive(session_id, task.prompt), timeout=task.timeout_s)
-    except TimeoutError:
-        drive = {
-            "tool_calls": 0,
-            "text": "",
-            "resumes": 0,
-            "interrupted": 0,
-            "timeout": True,
-            "error": "",
-        }
+        try:
+            drive = await asyncio.wait_for(_drive(session_id, task.prompt), timeout=task.timeout_s)
+        except TimeoutError:
+            drive = {
+                "tool_calls": 0,
+                "text": "",
+                "resumes": 0,
+                "interrupted": 0,
+                "timeout": True,
+                "error": "",
+            }
+        quiesce = await teardown.quiesce_session(session_id, repo)
+    finally:
+        try:
+            shadow_git.unfreeze(repo)
+        except Exception:  # noqa: BLE001, S110
+            pass
+        SHADOW_GIT["store_dir"] = previous_store
     duration_s = round(time.monotonic() - started, 1)
 
     exit_code, output = tasks.run_tests(repo)
@@ -335,11 +353,15 @@ async def _attempt(task: Task, results_dir: Path, attempt: int) -> dict[str, Any
     passed = exit_code == 0 and not tampered
     if tampered:
         output = f"{output}\n[evals] tests were modified: {tampered}"
+    failure_kind = _failure_kind(passed, drive)
+    if quiesce.get("timed_out") and not passed:
+        failure_kind = "harness"
     return {
         "id": task.id,
         "passed": passed,
-        "failure_kind": _failure_kind(passed, drive),
-        "invalid_run": (not passed) and _failure_kind(passed, drive) == "provider",
+        "failure_kind": failure_kind,
+        "invalid_run": (not passed) and failure_kind in {"provider", "harness"},
+        "quiesce": quiesce,
         "pytest_exit_code": exit_code,
         "pytest_tail": output,
         "duration_s": duration_s,

@@ -112,7 +112,7 @@ RuntimeError: git failed (1)
 - `git clean -qfd -e .sherry` 排除残留；
 - 新增单测 `tests/evals/test_swebench_instances.py::test_revert_drops_the_shadow_snapshot_and_excludes_it_from_git_clean`。
 
-> 竞争问题的完整拆解、quiesce 方案与下一步执行顺序见 [计划_SWE-bench_HARD_整改执行顺序_20261027.md](计划_SWE-bench_HARD_整改执行顺序_20261027.md)。
+> 竞争问题的完整拆解与 quiesce 方案已落地（`evals/swebench/teardown.py`、`shadow_git.freeze` / `wait_for_idle`）；执行计划文件已删除。
 
 **仍需补强**：
 
@@ -233,7 +233,7 @@ terminal: sandbox requested but no backend available (policy=auto) — degrading
    - `finally` 写最终报告（即使部分实例失败）。
 2. **revert 健壮化**（已实现并提交，`3651545f`）
    - `.sherry` 删除 + `git clean -e .sherry` + 单测。
-   - 计时重试只是权宜；竞争问题的完整拆解与修复顺序见 [计划_SWE-bench_HARD_整改执行顺序_20261027.md](计划_SWE-bench_HARD_整改执行顺序_20261027.md)。
+   - 计时重试只是权宜；竞争问题的完整拆解、quiesce、逐实例结果与 diff 保真已落地，执行计划文件已删除。
 3. **no-edit gate**
    - 在 SWE-bench arm 统计 `write_file` / `patch_file` 调用与 `git diff`；
    - 到阈值注入“停止搜索并编辑”的 directive；
@@ -295,3 +295,11 @@ uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --keep
 ```
 
 原始日志与汇总数据在 `evals/results/swebench/`（gitignored）；本文件只保留可提交的分析与整改项。
+
+---
+
+## 8. 执行结果（2026-10-27）
+
+- **竞争修复**：shadow store 可移出实例项目（`SHADOW_GIT["store_dir"]` / `SHERRY_SHADOW_GIT_DIR`）；实例 `.git/info/exclude` 排除 `.sherry/`；`evals/swebench/teardown.py::quiesce_session` 在 diff / test patch / pytest / revert 前取消 turn、级联杀子代理、杀后台终端、等待并冻结 shadow-git 写者；每实例即时写 `instance_results/<id>.json`，单实例失败不再中止整轮；`revert` 改为原子 quarantine；`diff` 包含 untracked 新文件（`git add -N` + `git diff --binary HEAD` + `git reset`），并排除 `.sherry`。
+- **能力与可观测性**：HARD 主 agent 预算 150（`StateKey.ITERATION_BUDGET_OVERRIDE`）；无编辑且非超时/错误时执行一次短 repair turn，仍无 diff 则标 `no_edit`；报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；context-trim 占位符改为中性（`status=success` + `sherry_repair` 标记）；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
+- **验证**：完整三组门禁 PASS（unit 7314 passed / 1 skipped；integration+module+system 1378 passed / 12 skipped；regression 86 passed）；`tests/full/test_main_agent_e2e.py` + `tests/full/test_session_isolation_e2e.py` 共 7 passed；文档 link/parity gates PASS。

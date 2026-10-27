@@ -17,6 +17,10 @@ class StateKey(StrEnum):
 
     ITERATION_BUDGET = "iteration_budget"
     ITERATION_BUDGET_USED = "iteration_budget_used"
+    #: Optional per-session cap override (eval harness: HARD instances get a
+    #: larger main-agent budget than the shipped 90). 0/absent keeps the
+    #: middleware's configured cap.
+    ITERATION_BUDGET_OVERRIDE = "iteration_budget_override"
 
     # Session-level token budget (client UI → /sessions/budget). The cap is
     # optional (absent/0 = unlimited); USED/COST accumulate across turns and
