@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download the backend archive (this platform)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}
 
@@ -250,7 +250,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
