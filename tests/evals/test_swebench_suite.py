@@ -89,3 +89,40 @@ def test_harness_error_result_and_incremental_write(tmp_path):
     )
     assert written["id"] == "sympy__sympy-0001"
     assert "boom" in written["error"]
+
+
+def test_tool_result_stats_separates_empty_evicted_and_missing():
+    from langchain_core.messages import ToolMessage
+
+    from pub.func.transcript_repair import EMPTY_TOOL_RESULT, MISSING_TOOL_RESULT
+
+    messages = [
+        ToolMessage(content=EMPTY_TOOL_RESULT, tool_call_id="1"),
+        ToolMessage(content="[evicted to: /x/evicted/terminal-a.log]", tool_call_id="2"),
+        ToolMessage(content=MISSING_TOOL_RESULT, tool_call_id="3"),
+        ToolMessage(
+            content="[Duplicated call to terminal - output cleared, see latest result]",
+            tool_call_id="4",
+        ),
+        ToolMessage(content="[Old tool result content cleared]", tool_call_id="5"),
+        ToolMessage(
+            content="[...truncated by context compression, tool result expired (TTL=300s)...]",
+            tool_call_id="6",
+        ),
+        ToolMessage(
+            content="[Output was truncated due to eviction threshold. Use read_file...]",
+            tool_call_id="7",
+        ),
+    ]
+
+    stats = suite._tool_result_stats(messages)
+
+    assert stats == {
+        "empty": 1,
+        "evicted": 1,
+        "missing": 1,
+        "deduped": 1,
+        "pruned": 1,
+        "ttl": 1,
+        "sliced": 1,
+    }

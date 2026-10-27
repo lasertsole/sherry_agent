@@ -285,6 +285,10 @@ def _run(
     token_output = sum(int(r.get("tokens", {}).get("output", 0)) for r in results)
     token_cache = sum(int(r.get("tokens", {}).get("cache_read", 0)) for r in results)
     total_cost = round(sum(float(r.get("cost_usd") or 0.0) for r in results), 6)
+    repair_stats: dict[str, int] = {}
+    for result in results:
+        for key, value in (result.get("tool_result_stats") or {}).items():
+            repair_stats[key] = repair_stats.get(key, 0) + int(value)
     report = {
         "run_id": run_id,
         "suite": "swebench",
@@ -328,6 +332,7 @@ def _run(
                 "cache_read": token_cache,
             },
             "cost_usd": total_cost,
+            "tool_result_stats": repair_stats,
             "duration_s": round(time.monotonic() - started, 1),
         },
         "instances": results,
@@ -447,6 +452,43 @@ _TURN_TIMEOUT_S = 1200.0
 _TURN_TIMEOUT_HARD_S = 2400.0
 
 
+def _tool_result_stats(messages: list[Any]) -> dict[str, int]:
+    """Count the tool-result shapes the 4.3 analysis needs to tell apart."""
+    from langchain_core.messages import ToolMessage
+
+    from pub.func.transcript_repair import EMPTY_TOOL_RESULT, MISSING_TOOL_RESULT
+
+    stats = {
+        "empty": 0,
+        "evicted": 0,
+        "missing": 0,
+        "deduped": 0,
+        "pruned": 0,
+        "ttl": 0,
+        "sliced": 0,
+    }
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        text = str(message.content or "")
+        repair = str((getattr(message, "additional_kwargs", None) or {}).get("sherry_repair") or "")
+        if repair == "missing_tool_result" or text == MISSING_TOOL_RESULT:
+            stats["missing"] += 1
+        elif text == EMPTY_TOOL_RESULT or repair == "empty_result":
+            stats["empty"] += 1
+        elif text.startswith("[evicted to: "):
+            stats["evicted"] += 1
+        elif text.startswith("[Duplicated call"):
+            stats["deduped"] += 1
+        elif text.startswith("[Old tool result content cleared]"):
+            stats["pruned"] += 1
+        elif "tool result expired (TTL" in text:
+            stats["ttl"] += 1
+        elif "Output was truncated due to eviction threshold" in text:
+            stats["sliced"] += 1
+    return stats
+
+
 async def _session_evidence(session_id: str) -> dict[str, Any]:
     """Final assistant text + token/cache/cost evidence for the report."""
     result: dict[str, Any] = {
@@ -455,6 +497,7 @@ async def _session_evidence(session_id: str) -> dict[str, Any]:
         "cache_read": 0,
         "cost_usd": 0.0,
         "final_text": "",
+        "tool_result_stats": _tool_result_stats([]),
     }
     try:
         from langchain_core.messages import AIMessage
@@ -468,6 +511,7 @@ async def _session_evidence(session_id: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 — evidence is reported, never fatal
         return result
 
+    result["tool_result_stats"] = _tool_result_stats(messages)
     model = ""
     for message in messages:
         usage = getattr(message, "usage_metadata", None)
@@ -566,6 +610,7 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
         "final_text": "",
         "tokens": {},
         "cost_usd": 0.0,
+        "tool_result_stats": {},
         "quiesce": {},
         "harness_error": str(exc),
     }
@@ -666,6 +711,7 @@ async def _run_instance(
                     "cache_read": evidence["cache_read"],
                 },
                 "cost_usd": evidence["cost_usd"],
+                "tool_result_stats": evidence.get("tool_result_stats", {}),
                 "quiesce": quiesce,
                 "harness_error": "quiesce timed out",
             }
@@ -716,6 +762,7 @@ async def _run_instance(
                 "cache_read": evidence["cache_read"],
             },
             "cost_usd": evidence["cost_usd"],
+            "tool_result_stats": evidence.get("tool_result_stats", {}),
             "quiesce": quiesce,
             "harness_error": "",
         }

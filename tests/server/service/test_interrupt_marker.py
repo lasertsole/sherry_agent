@@ -60,7 +60,7 @@ DANGLING_CALL_ID = "call_1"
 DANGLING_AI_ID = "ai-dangling-superstep"
 
 # Mirrors pub/func/transcript_repair.make_missing_tool_result content.
-HEAL_CONTENT = "tool result missing after context trim."
+HEAL_CONTENT = "tool result missing (not recorded; re-run the tool if you still need it)."
 
 
 # ---------------------------------------------------------------------------

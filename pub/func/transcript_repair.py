@@ -101,6 +101,11 @@ def extract_tool_result_id(msg: ToolMessage) -> str | None:
 #: into a misleading "missing after context trim" placeholder.
 EMPTY_TOOL_RESULT = "(no output)"
 
+#: Default content for a result that is genuinely absent from the transcript
+#: (not empty, not evicted). The old wording claimed "after context trim", which
+#: was false for empty results and misleading for every other cause.
+MISSING_TOOL_RESULT = "tool result missing (not recorded; re-run the tool if you still need it)."
+
 
 def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
     """
@@ -118,7 +123,7 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
     """
     return ToolMessage(
         name=tool_name or "unknown",
-        content="tool result missing after context trim.",
+        content=MISSING_TOOL_RESULT,
         tool_call_id=tool_call_id,
         status="success",
         additional_kwargs={
@@ -156,7 +161,15 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     if any(isinstance(msg, ToolMessage) and not msg.content for msg in messages):
         messages = [
             (
-                msg.model_copy(update={"content": EMPTY_TOOL_RESULT})
+                msg.model_copy(
+                    update={
+                        "content": EMPTY_TOOL_RESULT,
+                        "additional_kwargs": {
+                            **(getattr(msg, "additional_kwargs", None) or {}),
+                            "sherry_repair": "empty_result",
+                        },
+                    }
+                )
                 if isinstance(msg, ToolMessage) and not msg.content
                 else msg
             )

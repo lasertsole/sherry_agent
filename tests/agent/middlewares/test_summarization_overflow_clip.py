@@ -360,6 +360,6 @@ class TestPairingInvariant:
         ]
         assert structure_clipped == structure_original
         assert not any(
-            "tool result missing after context trim." in str(message.content)
+            "tool result missing" in str(message.content)
             for message in sanitized
         )

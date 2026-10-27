@@ -416,7 +416,7 @@ async def test_fact_b_tool_call_healing_drops_trailing_human_when_no_marker():
     placeholder = placeholders[0]
     assert placeholder.status != "error"
     assert placeholder.additional_kwargs["sherry_repair"] == "missing_tool_result"
-    assert "missing" in placeholder.content  # "tool result missing after context trim."
+    assert "missing" in placeholder.content  # "tool result missing (not recorded; ...)"
     assert placeholder.id is not None, "synthesized placeholder lost its id"
 
     # The pair is healed, but the dangling span swallowed the new user turn:
@@ -681,7 +681,7 @@ PROD_MARKER_ID = f"interrupted-{THREAD_ID}-1"
 PROD_HEAL_ID = f"{PROD_MARKER_ID}-heal-{DANGLING_CALL_ID}"
 
 # Mirrors pub/func/transcript_repair.make_missing_tool_result content.
-PROD_HEAL_CONTENT = "tool result missing after context trim."
+PROD_HEAL_CONTENT = "tool result missing (not recorded; re-run the tool if you still need it)."
 
 
 @pytest.fixture
