@@ -375,10 +375,11 @@ def apply_patch(instance: Instance, patch: str) -> bool:
 
 def revert(instance: Instance) -> None:
     """Drop every working-tree change, back to the pinned base."""
-    # The agent's shadow-git snapshot lives under the project's .sherry/. Its
-    # GC can still be finishing when the turn returns, and `git clean` then
-    # fails on an object it cannot lstat (EPERM). Drop the snapshot first (a
-    # few retries cover the writer race) and exclude any survivor from clean.
+    # The instance repo is shared with any detached subagent / background
+    # terminal that outlives the turn. `git clean` used to walk .sherry and
+    # fail on an object it could not lstat (EPERM) while such a writer was
+    # active. Drop the snapshot first (the retries are a stopgap until teardown
+    # quiesces every writer) and exclude any survivor from clean.
     sherry_dir = instance.repo_dir / ".sherry"
     for _attempt in range(3):
         if not sherry_dir.exists():

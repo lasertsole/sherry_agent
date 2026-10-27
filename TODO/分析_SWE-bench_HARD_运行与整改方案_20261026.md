@@ -104,13 +104,15 @@ RuntimeError: git failed (1)
 
 整个 HARD run 因此退出；已完成的 Django 分数、token、报告都没有落盘。
 
-**根因**：agent 的 shadow-git 是项目目录级快照，agent 的 turn 返回时其 GC/写入可能尚未完全结束；`git clean` 与它竞争，对临时对象 `lstat` 得到 EPERM。`revert` 没有隔离、重试或排除 `.sherry`。
+**根因**：harness 与 agent 共享同一个 worktree，而 turn 返回只代表主图结束，不保证 detached 子代理、后台终端或被取消/超时的工具线程已经停止；`.sherry` 是 untracked 目录，`git clean` 会直接遍历它，任一并发写者都可能让 `lstat`/清理失败。shadow-git 快照本身在写工具线程内同步执行，跨 turn 存活的是上述后台写者。`revert` 没有隔离、没有 quiesce，也没有排除 `.sherry`。
 
-**当前修复**（已落到代码，尚未提交）：
+**当前修复**（已落到代码并提交，`3651545f`）：
 
 - `revert()` 先删除 `.sherry`（最多 3 次、每次 200ms），再 `git checkout -- .`；
 - `git clean -qfd -e .sherry` 排除残留；
 - 新增单测 `tests/evals/test_swebench_instances.py::test_revert_drops_the_shadow_snapshot_and_excludes_it_from_git_clean`。
+
+> 竞争问题的完整拆解、quiesce 方案与下一步执行顺序见 [计划_SWE-bench_HARD_整改执行顺序_20261027.md](计划_SWE-bench_HARD_整改执行顺序_20261027.md)。
 
 **仍需补强**：
 
@@ -229,8 +231,9 @@ terminal: sandbox requested but no backend available (policy=auto) — degrading
    - `_run_instances` 包 `try/except`，失败写 `{"harness_error": ...}`，继续；
    - 每实例结束立即写 `instance_result.json`；
    - `finally` 写最终报告（即使部分实例失败）。
-2. **revert 健壮化**（已实现，待提交）
+2. **revert 健壮化**（已实现并提交，`3651545f`）
    - `.sherry` 删除 + `git clean -e .sherry` + 单测。
+   - 计时重试只是权宜；竞争问题的完整拆解与修复顺序见 [计划_SWE-bench_HARD_整改执行顺序_20261027.md](计划_SWE-bench_HARD_整改执行顺序_20261027.md)。
 3. **no-edit gate**
    - 在 SWE-bench arm 统计 `write_file` / `patch_file` 调用与 `git diff`；
    - 到阈值注入“停止搜索并编辑”的 directive；
