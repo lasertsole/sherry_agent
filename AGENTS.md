@@ -659,14 +659,18 @@ away (last session closed, binding cleared).
 
 ## Packaged Desktop App (Tauri) (`client/src-tauri/`)
 
-A release is TWO artifacts. `pnpm tauri build` (client/) produces the
-**installer** — the static SPA plus the Rust shell, ~30 MiB, no Python — and
-`packaging/build_backend.py` produces the **backend tree** (PyInstaller onedir,
-~1 GiB), which ships as the per-platform GitHub release asset the shell downloads
-on the app's first launch. `.github/workflows/desktop-build.yml` builds both on
-ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a `v*`
-tag); the split is forced by GitHub's 2 GiB release-asset cap, which a bundled
-backend exceeds several times over.
+A release is a UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
+build` (client/) bundles the static SPA, the Rust shell AND the CPU backend tree
+(`bundle.resources = ["sherry-backend/"]`, unpacked into the resource dir by the
+desktop workflow before the build) — first launch runs with zero downloads.
+`packaging/build_backend.py` still produces the per-platform backend archive as
+a GitHub release asset, now the DOWNLOAD FALLBACK (an older installer, a
+stripped install, a resource mismatch), and `packaging/build_cuda_pack.py`
+produces the optional Linux-only CUDA pack asset the user opts into from the
+model settings tab. `.github/workflows/desktop-build.yml` builds all of it on
+ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a
+`v*` tag): `build-tauri` needs `build-backend` (and `build-cuda-pack` runs
+beside them), so the installer carries its own backend.
 
 Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
 `tests/`, `evals/`, `wiki/` and `wiki/` trees (plus frontend `*.test.*` /
@@ -690,29 +694,47 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB saved
   — the difference between fitting the asset cap and not); macOS/Windows wheels
   are already CPU-only.
-- **Which backend runs**: `services/backend_downloader.rs` owns the first-run
-  flow — `<app_home>/sherry-backend/sherry-backend` present _and_ its `VERSION`
-  equal to this build's → spawn it straight away; otherwise download
-  `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest release
-  (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background thread, unpack
-  into a staging dir with the system `tar`, swap it in, then spawn it. Tauri
-  events (`backend-download-started` / `-progress` / `-complete` / `-error`,
-  plus the `backend_download_status` pull and the `retry_backend_download`
-  command; `use-backend-download.ts` + `BackendDownloadOverlay.vue` render it,
-  and the SPA reloads once the backend is up). The whole path is gated on
-  `cfg!(dev)` being FALSE: a dev build (`pnpm tauri dev`, a plain `cargo build`)
-  neither ships nor downloads a frozen backend, and spawns `python -m server`
-  from the checkout when `EMA_AUTO_START_BACKEND` asks for it.
-- **Never symlink the backend tree**: while the backend was a
-  `bundle.resources` entry, `tauri-build` copied it into `target/release/` at
-  BUILD time with `std::fs::copy`, which truncates the destination before
-  reading the source — a `target/release/sherry-backend` symlink pointing back
-  at the source made that copy empty every file (observed: 7,634 zero-byte
-  files in one build). The resource entry is gone (the downloader replaced it),
-  so that copy no longer runs; `packaging/build_backend.py` still removes a
-  leftover symlink of that name.
-- **`SHERRY_HOME` is the writable root** (`config/path.py`): the shell sets it
-  to the OS app-data dir, and every writable path derives from it — `src/`,
+- **Which backend runs**: the shell prefers the BUNDLED tree —
+  `resource_dir()/sherry-backend/sherry-backend` present _and_ its `VERSION`
+  equal to this build's → spawn it straight away (`"Using the bundled Python
+  backend (no download)"`). Otherwise `services/backend_downloader.rs` owns the
+  fallback: download `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest
+  release (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background
+  thread, unpack into a staging dir with the system `tar`, swap it in, then
+  spawn it. Tauri events (`backend-download-started` / `-progress` /
+  `-complete` / `-error`, plus the `backend_download_status` pull and the
+  `retry_backend_download` command; `use-backend-download.ts` +
+  `BackendDownloadOverlay.vue` render it, and the SPA reloads once the backend
+  is up). The whole path is gated on `cfg!(dev)` being FALSE: a dev build
+  (`pnpm tauri dev`, a plain `cargo build`) neither ships nor downloads a
+  frozen backend, and spawns `python -m server` from the checkout when
+  `EMA_AUTO_START_BACKEND` asks for it.
+- **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
+  `nvidia-smi` / the kernel-module record and gates the model settings tab's
+  card (`cuda_support` command; `CudaPackCard.vue` + `use-cuda-pack.ts` +
+  four-locale `config.cuda.*` copy). The opt-in download
+  (`cuda_pack_downloader.rs`, events `cuda-pack-download-*`) resumes via HTTP
+  Range (206 continues, 200 restarts, 416 resets an over-long tmp), installs
+  into `<app_home>/sherry-cuda-pack/` with the same staging + swap, and its
+  `VERSION` records the backend version it was built from (one pipeline builds
+  both — a matching backend version transitively pins the torch ABI). At every
+  packaged start the process manager re-checks pack vs backend versions and, on
+  a match, joins the pack's `*.so` directories to the loader via
+  `ld-linux --library-path` (probed loader path, NOT `LD_LIBRARY_PATH`); the
+  `restart_backend` command makes a fresh download take effect (torch resolves
+  the CUDA libraries at import). A pack never touches the env, and an
+  uninstall falls back to CPU on the next start.
+- **Never symlink the backend tree**: `tauri-build`'s build-time resource copy
+  (the `bundle.resources` entry the unified installer restored) uses
+  `std::fs::copy`, which truncates the destination before reading the source —
+  a `target/release/sherry-backend` symlink pointing back at the source made
+  that copy empty every file (observed: 7,634 zero-byte files in one build).
+  `packaging/build_backend.py` removes a leftover symlink of that name before
+  building, which is what makes the resource entry safe again.
+- **The app home is the writable root** (`config/path.py`): the shell passes
+  `--sherry-home <OS app-data dir>` on the backend's command line (the
+  `SHERRY_HOME` env var remains a transitional fallback), and every writable
+  path derives from it — `src/`,
   `workspace/` (sessions, memory), `temp/`, `logs/`, `models/`, `.codeintel/`,
   `.env`, `.models` / `.network` (gitignored; seeded from their templates),
   `sherry.jsonc`, and the WRITABLE half of the skills tree
@@ -726,10 +748,12 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   reported to the UI keep the CHECKOUT shape (`./skills/auto/…`) whichever home
   they live in (`app_relative` / `resolve_app_path` map between the two).
 - **First run without a model**: the boot's 200K token gate aborts a SERVER,
-  but `SHERRY_DESKTOP=1` (set by the shell) lets an UNCONFIGURED desktop app
-  serve anyway, so the window can open and 模型配置 can write the files; a
-  CONFIGURED-but-invalid value still aborts. The backend must be restarted
-  (relaunch the app) after configuring — the runtime reads the file at boot.
+  but the packaged shell passes the bare `--sherry-desktop` flag (packaged
+  only; `SHERRY_DESKTOP=1` is the transitional env fallback), which lets an
+  UNCONFIGURED desktop app serve anyway, so the window can open and 模型配置
+  can write the files; a CONFIGURED-but-invalid value still aborts. The
+  backend must be restarted (relaunch the app) after configuring — the runtime
+  reads the file at boot.
 
 ## Configuration Files (`.env` / `.models` / `.network`)
 

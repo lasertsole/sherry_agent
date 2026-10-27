@@ -1,6 +1,6 @@
-# 计划:MCP 文件夹化(《打包_塞包模式》后置计划)
+# 计划:MCP 文件夹化(统一打包的后续计划)
 
-本计划是 `计划_打包_塞包模式_Electron式.md` 的后置 —— 依赖塞包模式落地后 `plugins/` 落入只读安装目录这一前提,解决"用户如何往只读包里加自己的 MCP"问题。
+本计划是统一打包(塞包模式)落地后的后续计划 —— 依赖打包改造后 `plugins/` 落入只读安装目录这一前提,解决"用户如何往只读包里加自己的 MCP"问题。
 
 ## 设计概览
 
@@ -21,7 +21,7 @@
 |---|------|------|
 | 1 | 当前 MCP 走**单一 JSON 文件**:`plugins/mcp_server/config.json`(当前空 `{}`) | `agent/tools/mcp_plugin.py:19` |
 | 2 | `PLUGINS_PATH = ROOT_DIR / "plugins"`,`ROOT_DIR` 是 bundle 根(exe 父目录) | `config/path.py:83` |
-| 3 | 塞包模式下 `ROOT_DIR = resource_dir()/sherry-backend/` 是**只读安装目录** → `plugins/` 不可写,用户加不了 MCP | 前置计划 T1+T2 |
+| 3 | 统一打包下 `ROOT_DIR` 指向**只读安装目录** → `plugins/` 不可写,用户加不了 MCP | 已落地的 bundle.resources(A1) |
 | 4 | 加载器 `_load_config()` 读单文件,`build_mcp_tools()` 建 `MultiServerMCPClient` 取所有工具 | `mcp_plugin.py:47-54` |
 | 5 | 占位符 `$sys.executable`(当前 venv Python)、`$here/`(配置文件所在目录 `plugins/mcp_server/`) | `mcp_plugin.py:32-42` |
 | 6 | MCP 工具命名 `mcp__<server>__<tool>`,自动归入 catalog 的 `mcp` 组(无需改 catalog) | `agent/tools/catalog.py:74-93` |
