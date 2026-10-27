@@ -237,6 +237,10 @@
                 </div>
               </template>
             </template>
+
+            <!-- Optional CUDA pack (packing-plan E1): Tauri desktop only, and
+                 only where the shell detected an NVIDIA driver. -->
+            <CudaPackCard />
           </div>
         </TabPanel>
 
@@ -372,6 +376,7 @@ import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
+import CudaPackCard from './CudaPackCard.vue';
 import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
@@ -440,6 +445,7 @@ let codeEmbedderFrameSeq = 0;
 /**
  * Human-readable model size (the status payload is bytes).
  * @param bytes
+ * @returns The size in a locale-stable MiB/GiB string.
  */
 function formatCodeEmbedderSize(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
@@ -583,7 +589,10 @@ const loadEnvConfig = async () => {
   }
 };
 
-/** Writes the diff back to each file's own endpoint; returns true on success */
+/**
+ * Writes the diff back to each file's own endpoint.
+ * @returns True on success (the caller keeps its own error surface).
+ */
 const persistEnvChanges = async (): Promise<boolean> => {
   const perSource: Record<ConfigSource, Record<string, string>> = { models: {}, network: {}, env: {} };
   for (const g of envGroups.value) {
@@ -665,7 +674,10 @@ const loadSherryConfig = async () => {
   }
 };
 
-/** Writes sherry changes back to the backend (sherry.jsonc PUT); returns true on success */
+/**
+ * Writes sherry changes back to the backend (sherry.jsonc PUT).
+ * @returns True on success (the caller keeps its own error surface).
+ */
 const persistSherryChanges = async (): Promise<boolean> => {
   const changes: Record<string, string> = {};
   for (const e of sherryEntries.value) {
@@ -713,6 +725,7 @@ watch(
 
 /**
  * Reads an uploaded image file as a base64 data URL
+ * @returns The data URL, or null when the file cannot be read
  * @param file
  */
 const readFileAsDataUrl = (file: File): Promise<string> =>
@@ -750,6 +763,7 @@ const cropOutput = ref({ width: 512, height: 512 });
 
 /**
  * Background crop size: generated from the current window's physical pixels (aspect ratio == chat window aspect ratio).
+ * @returns The crop dimensions for the current window.
  * Based on the window's real physical resolution (logical width/height × devicePixelRatio) so any screen gets a sharp full fill.
  */
 const getBackgroundCrop = () => {
@@ -835,6 +849,7 @@ const onBackgroundSelect = (event: { files: File[] }) => {
 
 /**
  * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * @returns The label for the active locale.
  * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
  * @param files
  */

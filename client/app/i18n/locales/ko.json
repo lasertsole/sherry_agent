@@ -535,7 +535,17 @@
       "soul": "Agent 인격, 어조, 성격",
       "user": "사용자 정보 및 선호도"
     },
-    "uploadAvatar": "아바타 업로드"
+    "uploadAvatar": "아바타 업로드",
+    "cuda": {
+      "title": "CUDA 가속(선택)",
+      "hint": "CUDA pack은 로컬 음성 인식과 문서 파싱을 GPU에서 실행합니다. CPU 빌드는 이것 없이도 완전하게 동작합니다.",
+      "supported": "가속 사용 가능: {gpu}(드라이버 {driver})",
+      "unsupported": "사용 가능한 NVIDIA 드라이버가 감지되지 않았습니다",
+      "download": "CUDA Pack 다운로드",
+      "uninstall": "CUDA pack 제거",
+      "restart": "설치 후 백엔드 재시작",
+      "installedHint": "설치됨. 백엔드 재시작 후 적용됩니다."
+    }
   },
   "rightSidebar": {
     "fileViewer": "프로젝트 파일",

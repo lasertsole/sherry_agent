@@ -535,7 +535,17 @@
       "soul": "Agent 人格、トーン、性格",
       "user": "ユーザー情報と好み"
     },
-    "uploadAvatar": "アバターをアップロード"
+    "uploadAvatar": "アバターをアップロード",
+    "cuda": {
+      "title": "CUDA アクセラレーション（任意）",
+      "hint": "CUDA pack はローカル音声認識とドキュメント解析を GPU で実行します。CPU 版はそのまま完全に動作します。",
+      "supported": "アクセラレーション利用可：{gpu}（ドライバー {driver}）",
+      "unsupported": "利用可能な NVIDIA ドライバーが見つかりません",
+      "download": "CUDA Pack をダウンロード",
+      "uninstall": "CUDA pack をアンインストール",
+      "restart": "インストールしてバックエンドを再起動",
+      "installedHint": "インストール済み。バックエンドの再起動後に有効になります。"
+    }
   },
   "rightSidebar": {
     "fileViewer": "プロジェクトファイル",

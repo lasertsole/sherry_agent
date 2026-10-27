@@ -535,7 +535,17 @@
       "soul": "Agent personality, tone, character",
       "user": "User info and preferences"
     },
-    "uploadAvatar": "Upload Avatar"
+    "uploadAvatar": "Upload Avatar",
+    "cuda": {
+      "title": "CUDA acceleration (optional)",
+      "hint": "The CUDA pack runs local speech recognition and document parsing on the GPU. The CPU build is fully functional without it.",
+      "supported": "Acceleration available: {gpu} (driver {driver})",
+      "unsupported": "No usable NVIDIA driver detected",
+      "download": "Download CUDA Pack",
+      "uninstall": "Uninstall CUDA pack",
+      "restart": "Install and restart backend",
+      "installedHint": "Installed; it takes effect after a backend restart."
+    }
   },
   "rightSidebar": {
     "fileViewer": "Project files",

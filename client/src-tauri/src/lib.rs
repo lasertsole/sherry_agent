@@ -2,8 +2,9 @@ mod commands;
 mod services;
 mod utils;
 
-use commands::{agent, backend, session, system, system_prompt};
+use commands::{agent, backend, cuda, session, system, system_prompt};
 use services::backend_downloader::{ensure_and_launch, BackendDownloader, BackendDownloadState};
+use services::cuda_pack_downloader::CudaPackDownloadState;
 use services::python_bridge::PythonBridge;
 use services::python_process::{BackendCommand, PythonProcessManager};
 use utils::config::AppConfig;
@@ -72,6 +73,12 @@ pub fn run() {
             // Backend download (first run of a packaged app)
             backend::backend_download_status,
             backend::retry_backend_download,
+            // Optional CUDA pack (model settings tab; Linux only)
+            cuda::cuda_support,
+            cuda::cuda_pack_status,
+            cuda::download_cuda_pack,
+            cuda::remove_cuda_pack,
+            cuda::restart_backend,
         ])
         .setup(|app| {
             // ── System tray ──────────────────────────────────────
@@ -208,13 +215,25 @@ pub fn run() {
 
                 // Both branches answer the download-status IPC; in the bundled
                 // branch the state simply stays "ready" and no download starts.
+                // The CUDA pack's state is likewise always managed: the pack is
+                // optional and its commands answer "idle" until a download.
                 app.manage(BackendDownloadState::default());
+                app.manage(CudaPackDownloadState::default());
+                // Both bundled/downloaded launches hand the manager the pack
+                // DIRECTORY: the per-start resolver decides (per R1/R6) whether
+                // the pack's VERSION matches the backend and joins its
+                // libraries to the loader path — so restart_backend picks a
+                // freshly downloaded pack up without rebuilding the manager.
+                let cuda_pack_dir = Some(app_home.join(services::cuda_pack_downloader::PACK_DIR));
 
                 match bundled_exe {
                     Some(exe) => {
                         tracing::info!(exe = %exe.display(), "Using the bundled Python backend (no download)");
                         app.manage(PythonProcessManager::new(
-                            BackendCommand::Packaged(exe),
+                            BackendCommand::Packaged {
+                                exe,
+                                cuda_pack_dir: cuda_pack_dir.clone(),
+                            },
                             app_home.clone(),
                         ));
                         if let Err(e) = app.state::<PythonProcessManager>().start() {
@@ -229,7 +248,10 @@ pub fn run() {
                         // other way for the app to work, so it ALWAYS starts.
                         let downloader = BackendDownloader::new(app_home.clone());
                         app.manage(PythonProcessManager::new(
-                            BackendCommand::Packaged(downloader.backend_path()),
+                            BackendCommand::Packaged {
+                                exe: downloader.backend_path(),
+                                cuda_pack_dir: cuda_pack_dir.clone(),
+                            },
                             app_home.clone(),
                         ));
                         if let Err(e) = ensure_and_launch(app.handle()) {

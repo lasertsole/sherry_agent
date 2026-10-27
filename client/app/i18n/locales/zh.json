@@ -535,7 +535,17 @@
       "soul": "Agent人格、语气、性格",
       "user": "用户信息和偏好"
     },
-    "uploadAvatar": "上传头像"
+    "uploadAvatar": "上传头像",
+    "cuda": {
+      "title": "CUDA 加速（可选）",
+      "hint": "CUDA pack 让本地语音识别和文档解析走 GPU。CPU 版功能完整，不下载也能用。",
+      "supported": "支持加速：{gpu}（驱动 {driver}）",
+      "unsupported": "未检测到可用的 NVIDIA 驱动",
+      "download": "下载 CUDA Pack",
+      "uninstall": "卸载 CUDA pack",
+      "restart": "安装并重启后端",
+      "installedHint": "已安装，重启后端后生效。"
+    }
   },
   "rightSidebar": {
     "fileViewer": "项目文件",

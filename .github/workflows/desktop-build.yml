@@ -126,6 +126,47 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+  # ── The optional CUDA pack (Linux; the model settings tab's opt-in) ──────
+  build-cuda-pack:
+    name: CUDA pack (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # NO CPU-torch swap here: the pack is exactly the CUDA payload the lock
+      # resolves on Linux (nvidia-* wheels + triton + torch's CUDA binaries).
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      - name: Build the CUDA pack
+        run: uv run --no-sync python packaging/build_cuda_pack.py
+
+      - name: Compress the CUDA pack
+        run: |
+          cd client/src-tauri/sherry-cuda-pack
+          tar czf "${{ github.workspace }}/sherry-cuda-pack-linux-x86_64.tar.gz" .
+
+      - name: Drop the build residue
+        run: rm -rf client/src-tauri/sherry-cuda-pack build/pyinstaller-cuda
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherry-cuda-pack-linux-x86_64
+          path: sherry-cuda-pack-linux-x86_64.tar.gz
+          retention-days: 90
+          if-no-files-found: error
+
   # ── The installers (fast: SPA + Rust shell, no backend) ──────────────────
   build-tauri:
     name: Installer (${{ matrix.platform }})
@@ -245,7 +286,7 @@ jobs:
   release:
     name: Publish the release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-backend, build-tauri]
+    needs: [build-backend, build-cuda-pack, build-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write
