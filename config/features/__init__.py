@@ -110,6 +110,7 @@ from .agent_side import (
     ToolResultEvictionConfig as ToolResultEvictionConfig,
     UserHooksConfig as UserHooksConfig,
     USER_HOOKS as USER_HOOKS,
+    COORDINATION as COORDINATION,
     ToolsTimeoutsConfig as ToolsTimeoutsConfig,
     assert_max_token_valid as assert_max_token_valid,
     assert_max_output_valid as assert_max_output_valid,

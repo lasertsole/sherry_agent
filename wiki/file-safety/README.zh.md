@@ -130,6 +130,17 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 
 干净合并会注销 worktree、删除其分支并移除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`、接口变更，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
 
+## 🤝 跨代理协作（认领 + 发现板）
+
+上面这些层是**机械的**：它们阻止字节级丢失，却不知道任何人的意图。两个 advisory、opt-in 的面补上意图——都默认**关闭**（`COORDINATION`，环境变量 `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`）、都以读为主、都**永不拒绝写入**：
+
+- **路径认领**（`claim_scope`）——"我即将写这些路径"。写同一路径的同伴会在工具结果里得到**一行**提示（`claim_notice`），写入照常成功；提示按 (session, path) 在 10 分钟窗口内去重（agent 层看不到 turn id——它在 server 的 turn scope 里——窗口给出同样的降噪效果，且不新增耦合）。claim 在 `COORDINATION["claim_ttl_seconds"]`（1800 秒）后过期，`release=true` 可在任务结束时释放，过期行在下一次认领写入时被清扫。
+- **同伴发现**（`share_finding` / `peers_findings`）——兄弟代理共享 `FAIL`（"试过，不行"）、`FACT`（"已确认"）与 `PATCH`（"这个文件的接口变了"）；读侧是普通查询（按空白切分的每个词都要命中文本或文件路径，可选 kind 过滤，有上限）。开启该板后，合并会自动发布一条 `PATCH`，于是"谁改了什么、接口有没有动"无需再问父代理。
+
+存储是**每项目一个** SQLite 文件 `<project>/.sherry/coordination.db`（`claims` + `findings`，`busy_timeout` 30 秒，WAL，只建当前 schema）。它懒创建，且**读绝不创建**：没有 `.sherry/` 的项目直接返回空，因此一次查询不会在用户项目里留下文件。**发现板的内容永不进入 system prompt**——它每次写入都会变，放进 prompt 会击穿前缀缓存；只能通过工具调用进出。
+
+两个开关都关闭时，`build_main_tools()` 与不含此特性的构建**逐字节相同**，`GET /agent/catalog` 也不会列出 coordination 分组：默认工具面、其 token 成本与所有预设 payload 均不变。
+
 ## ⚖️ 备选方案与实测
 
 **行哈希编辑（omo 的 hashline）**没有实现：它比整文件 CAS 更精细——只比对编辑触及的行——但需要改造 read 工具自身的输出格式，而上面四层已经消除了它要解决的静默丢失故障。

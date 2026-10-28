@@ -129,6 +129,41 @@ Text CAS protects bytes, not callers: `foo(a, b)` → `foo(a, b, *, timeout)` me
 
 A clean merge unregisters the worktree, deletes its branch and removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, the interface changes, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
 
+## 🤝 Cross-agent coordination (claims + findings board)
+
+The layers above are MECHANICAL: they stop byte-level loss without knowing
+anyone's intent. Two advisory, opt-in surfaces add the intent — both shipped OFF
+(`COORDINATION`, env `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`),
+both read-mostly, and neither can ever refuse a write:
+
+- **Path claims** (`claim_scope`) — "I am about to write these paths". A peer
+  that writes the same path gets ONE advisory line in its tool result
+  (`claim_notice`) and the write still succeeds; the notice is deduped per
+  (session, path) inside a 10-minute window (the agent layer cannot see a turn
+  id — it lives in the server's turn scope — so the window delivers the same
+  noise control without inventing a coupling). Claims expire after
+  `COORDINATION["claim_ttl_seconds"]` (1800 s), `release=true` drops them at
+  task end, and an expired row is swept on the next claim write.
+- **Peer findings** (`share_finding` / `peers_findings`) — sibling agents share
+  `FAIL` ("tried it, does not work"), `FACT` ("confirmed") and `PATCH` ("this
+  file's interface changed") notes; the read side is a plain query (every
+  whitespace-separated term must match text or file paths, optional kind
+  filter, capped). A merge publishes a `PATCH` entry on its own when the board
+  is on, so "who changed what, and did the interface move?" is answerable
+  without asking the parent.
+
+Storage is ONE per-project SQLite file, `<project>/.sherry/coordination.db`
+(`claims` + `findings`, `busy_timeout` 30 s, WAL, current schema only). It is
+created lazily and never by a read: a project without `.sherry/` simply answers
+empty, so a lookup cannot litter a user's tree. **Nothing from the board is ever
+rendered into the system prompt** — the content changes on every write, so
+putting it there would break the provider prefix cache; it moves only through
+tool calls.
+
+With both switches off, `build_main_tools()` is byte-identical to a build
+without this feature and `GET /agent/catalog` lists no coordination group: the
+default tool face, its token cost and every preset payload are unchanged.
+
 ## ⚖️ Alternatives, measured
 
 **Row-hash editing (omo's hashline)** is not built: it is finer than a whole-file CAS — only the lines an edit touches are compared — but it requires changing the read tool's own output format, and the four layers above already remove the silent-loss failures it targets.

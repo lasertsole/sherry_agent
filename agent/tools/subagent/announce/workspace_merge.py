@@ -47,6 +47,7 @@ async def merge_isolated_workspace_for_run(run: SubagentRunRecord) -> MergeRepor
     report.affected_importers = _affected_importers(report)
     _mark_merged_paths_stale(run, report)
     await _reverify_after_merge(run, report)
+    _share_merge_finding(run, report)
     logger.info(
         "Isolated workspace merged for run {}: {} (parent={})",
         run.run_id,
@@ -114,6 +115,38 @@ def _mark_merged_paths_stale(run: SubagentRunRecord, report: MergeReport) -> Non
         ),
         parent_session_id,
     )
+
+
+def _share_merge_finding(run: SubagentRunRecord, report: MergeReport) -> None:
+    """Publish a PATCH finding so peers can read what this merge changed.
+
+    Opt-in (``COORDINATION["findings_enabled"]``) and fail-open. The text is the
+    interface summary the report already computed — the findings board is a
+    lookup surface, never a prompt injection (live data in the system prompt
+    would break the provider prefix cache).
+    """
+    from config.features import COORDINATION
+
+    if not COORDINATION["findings_enabled"]:
+        return
+    try:
+        from agent.tools.coordination_tools import share_merge_finding
+
+        files = [*report.applied, *report.created]
+        changed = [
+            change.name
+            for delta in report.interface_changes
+            for change in (*delta.removed, *delta.renamed, *delta.changed)
+        ]
+        text = (
+            f"merged {len(files)} file(s); interface changes: {', '.join(changed[:10])}"
+            if changed
+            else f"merged {len(files)} file(s); no interface changes"
+        )
+        parent_session_id = normalize_session_key(run.spawned_by or run.requester_session_key)
+        share_merge_finding(report.parent_root, parent_session_id, files, text)
+    except Exception as exc:  # noqa: BLE001 - the merge never fails on its notice
+        logger.debug("merge finding skipped: {}", exc)
 
 
 async def _reverify_after_merge(run: SubagentRunRecord, report: MergeReport) -> None:

@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (84 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (85 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -1702,9 +1702,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 54 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 55 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 30 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 84 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 85 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
@@ -1938,6 +1938,24 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
   fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
   sandbox actually runs — neither backend has ever been verified on one.
+- **Cross-agent coordination is advisory and opt-in** (`COORDINATION`, env
+  `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`, both OFF):
+  `claim_scope` records a per-path intent for this session and `write_file` /
+  `patch_file` attach ONE `claim_notice` line when a peer holds a claim on the
+  written path — the write always succeeds (no refusal path: claim → license →
+  CAS would stack three decisions into one). The notice is deduped per
+  (session, path) in a 10-minute window because the agent layer cannot see a
+  turn id, and claims expire after `claim_ttl_seconds` (1800). The findings
+  board adds `share_finding` (FAIL / FACT / PATCH) and the read-only
+  `peers_findings` query (every whitespace term must match text or file paths,
+  optional kind, capped); a merge publishes a PATCH entry on its own when the
+  board is on. Storage is ONE file, `<project>/.sherry/coordination.db`
+  (`claims` + `findings`, busy_timeout, WAL, current schema only), lazily
+  created and NEVER created by a read — a project without `.sherry/` answers
+  empty. Board content never enters the system prompt (it changes on every
+  write, so it would break the prefix cache); it moves only through tool calls.
+  Both switches off ⇒ `build_main_tools()` and `GET /agent/catalog` are
+  byte-identical to a build without the feature.
 - **The SUBAGENT lane sits behind a load gate**
   (`agent/tools/pub_base/load_gate.py`, `LANE_SYSTEM["load_gate_*"]`). The lane
   is COUNTING backpressure ("are all 8 slots busy"); the gate is the

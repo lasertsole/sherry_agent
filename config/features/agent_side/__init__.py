@@ -151,6 +151,10 @@ from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,
     STEP_JUDGE as STEP_JUDGE,
 )
+from .coordination import (
+    CoordinationConfig as CoordinationConfig,
+    COORDINATION as COORDINATION,
+)
 from .completion_judge import (
     CompletionJudgeConfig as CompletionJudgeConfig,
     COMPLETION_JUDGE as COMPLETION_JUDGE,

@@ -192,16 +192,23 @@ class PatchFileTool(BaseTool):
         content, new_content, strategy, match_count = outcome
         diff = _unified_diff(content, new_content, display_path(resolved, root))
 
-        return json.dumps(
-            {
-                "success": True,
-                "path": display_path(resolved, root),
-                "strategy": strategy,
-                "matches": match_count,
-                "diff": diff,
-            },
-            ensure_ascii=False,
-        )
+        payload: dict[str, object] = {
+            "success": True,
+            "path": display_path(resolved, root),
+            "strategy": strategy,
+            "matches": match_count,
+            "diff": diff,
+        }
+        # Advisory only (opt-in): a peer's claim never blocks a patch.
+        try:
+            from agent.tools.coordination_tools import claim_notice_for
+
+            notice = claim_notice_for(session_id, root, resolved)
+        except Exception:  # noqa: BLE001 - advisory only
+            notice = None
+        if notice:
+            payload["claim_notice"] = notice
+        return json.dumps(payload, ensure_ascii=False)
 
     def _apply_patch(
         self,
