@@ -296,6 +296,27 @@ def new_turn(session_id: str) -> None:
             _dedup.discard(key)
 
 
+def diff_changed_paths(project_root: Path, *, cap: int = 200) -> list[str]:
+    """Project-relative paths whose working tree differs from the last snapshot.
+
+    The shell accounting seam (design: shell writes bypass the file tools, so
+    they used to leave no ledger row at all). ``ensure_checkpoint`` has already
+    stored the pre-command state, so one ``git diff --name-only`` names exactly
+    what the command changed — content comparison, so a ``touch -d`` cannot
+    fake it. Fail-open: a missing store, a broken repo or a timeout yields ``[]``.
+    """
+    root = project_root.resolve()
+    try:
+        result = run_shadow(root, ["diff", "--name-only", SHADOW_REF], timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("shadow diff failed (fail-open): {}", exc)
+        return []
+    if result.returncode != 0:
+        return []
+    paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return paths[:cap]
+
+
 def ensure_checkpoint(
     session_id: str, *, reason: str = "before_write", project_root: Path | None = None
 ) -> bool:

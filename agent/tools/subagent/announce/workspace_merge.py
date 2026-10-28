@@ -44,7 +44,9 @@ async def merge_isolated_workspace_for_run(run: SubagentRunRecord) -> MergeRepor
         )
         return None
 
+    report.affected_importers = _affected_importers(report)
     _mark_merged_paths_stale(run, report)
+    await _reverify_after_merge(run, report)
     logger.info(
         "Isolated workspace merged for run {}: {} (parent={})",
         run.run_id,
@@ -54,18 +56,96 @@ async def merge_isolated_workspace_for_run(run: SubagentRunRecord) -> MergeRepor
     return report
 
 
+def _affected_importers(report: MergeReport) -> list[str]:
+    """Files that still import a symbol this merge renamed/removed/re-shaped.
+
+    The report used to name the change and leave the caller hunt to the parent;
+    the reverse index answers it directly. READ-ONLY and fail-open: a missing
+    index (never built, or a project outside code-intel) yields no names and
+    the report degrades to exactly the old behaviour — this must never trigger
+    an index build inside a merge.
+    """
+    names: set[str] = set()
+    for delta in report.interface_changes:
+        names.update(change.name for change in delta.removed)
+        names.update(change.old_name for change in delta.renamed)
+        names.update(change.name for change in delta.changed)
+    if not names:
+        return []
+    try:
+        from agent.tools.code_intel.indexer import importers_of_names
+        from agent.tools.code_intel.roots import index_db_for_root
+        from config.features import CODE_INTEL
+        from config.path import CODE_INTEL_DIR
+
+        db_path = index_db_for_root(
+            report.parent_root, str(CODE_INTEL.get("db_path") or ""), CODE_INTEL_DIR
+        )
+        merged = set(report.applied) | set(report.created)
+        return [
+            path
+            for path in importers_of_names(db_path, names)
+            if path not in merged  # the file that made the change is not a victim
+        ]
+    except Exception as exc:  # noqa: BLE001 - the report must render regardless
+        logger.debug("affected-importer lookup skipped: {}", exc)
+        return []
+
+
 def _mark_merged_paths_stale(run: SubagentRunRecord, report: MergeReport) -> None:
-    """The parent's verified evidence about a merged path is stale again."""
+    """The parent's verified evidence about a merged path is stale again.
+
+    Importer files count too: a "pure import user" never writes or verifies the
+    changed module, so a path-only sweep left its PASSING evidence green even
+    though the symbol it imports just changed shape.
+    """
     from agent.tools.pub_base.evidence_recorder import mark_evidence_stale_for_paths
 
     parent_session_id = normalize_session_key(run.spawned_by or run.requester_session_key)
     mark_evidence_stale_for_paths(
         (
             str(report.parent_root / relpath)
-            for relpath in (*report.applied, *report.created, *report.deleted)
+            for relpath in (
+                *report.applied,
+                *report.created,
+                *report.deleted,
+                *report.affected_importers,
+            )
         ),
         parent_session_id,
     )
+
+
+async def _reverify_after_merge(run: SubagentRunRecord, report: MergeReport) -> None:
+    """Verdict-on-the-spot for the files the interface change may have broken.
+
+    OFF by default (``EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]``): it
+    runs a subprocess during an announce. When on, the parent session's passed
+    commands covering the affected importers are replayed once, so the report's
+    "affected importers" line is followed by a real broken/unmark event rather
+    than leaving the discovery to a finish gate that may be many turns away.
+    Fail-open; a skipped replay is not an error.
+    """
+    from config.features import EVIDENCE_REGRESSION_GATE
+
+    if not EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"] or not report.affected_importers:
+        return
+    try:
+        from agent.tools.pub_base.regression_gate import reverify_affected_paths
+
+        parent_session_id = normalize_session_key(run.spawned_by or run.requester_session_key)
+        results = await reverify_affected_paths(
+            parent_session_id,
+            report.affected_importers,
+            max_commands=int(EVIDENCE_REGRESSION_GATE["merge_reverify_max_commands"]),
+        )
+        report.merge_reverify = [
+            f"{result.outcome}: {result.command}"
+            for result in results
+            if result.outcome != "passed"
+        ]
+    except Exception as exc:  # noqa: BLE001 - the merge report must still render
+        logger.warning("merge re-verify skipped (fail-open): {}", exc)
 
 
 def attach_merge_report(run: SubagentRunRecord, report: MergeReport) -> SubagentRunRecord | None:
@@ -136,8 +216,8 @@ def _interface_lines(report: MergeReport) -> list[str]:
         return []
 
     lines = [
-        "- **Interface changes** (renamed/added/removed symbols — another subagent may "
-        "still call an OLD name):"
+        "- **Interface changes** (renamed/added/removed symbols, and call-shape changes — "
+        "another subagent may still call the OLD name or the OLD arguments):"
     ]
     for delta in deltas[:_INTERFACE_MAX_FILES]:
         if delta.error:
@@ -155,11 +235,30 @@ def _interface_lines(report: MergeReport) -> list[str]:
                 f"    - removed: `{removed.name}` ({_symbol_label(removed.kind, removed.parent)})"
             )
         lines.extend(_overflow_line(len(delta.removed)))
+        for changed in delta.changed[:_INTERFACE_MAX_PER_KIND]:
+            # Same name, different shape: a rename hunt finds nothing here, and
+            # every existing call site of this symbol is now suspect.
+            lines.append(
+                f"    - changed: `{changed.name}{changed.old_signature or ''}` → "
+                f"`{changed.name}{changed.new_signature or ''}` "
+                f"({_symbol_label(changed.kind, changed.parent)})"
+            )
+        lines.extend(_overflow_line(len(delta.changed)))
         for added in delta.added[:_INTERFACE_MAX_PER_KIND]:
             lines.append(f"    - added: `{added.name}` ({_symbol_label(added.kind, added.parent)})")
         lines.extend(_overflow_line(len(delta.added)))
     if len(deltas) > _INTERFACE_MAX_FILES:
         lines.append(f"  - … and {len(deltas) - _INTERFACE_MAX_FILES} more file(s)")
+    if report.affected_importers:
+        # The actionable half: "someone still imports what you just changed".
+        shown = ", ".join(f"`{path}`" for path in report.affected_importers[:10])
+        more = len(report.affected_importers) - 10
+        lines.append(
+            f"  - affected importers (still reference a changed symbol): {shown}"
+            + (f" … and {more} more" if more > 0 else "")
+        )
+    for verdict in report.merge_reverify[:5]:
+        lines.append(f"  - re-verify {verdict}")
     return lines
 
 

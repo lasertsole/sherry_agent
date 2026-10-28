@@ -88,6 +88,32 @@ TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
 
 
+def _record_shell_writes(session_id: str) -> None:
+    """Account for files a shell command changed (the shell blind spot).
+
+    ``terminal``/``python_repl`` write through routes the file tools never see:
+    no write license, no revision CAS and — before this — no ledger row, so the
+    session's evidence rows carried an EMPTY ``modified_files`` and a peer's
+    "passing" row stayed green after the shell broke it. The pre-command state
+    is already in the shadow store (``ensure_checkpoint``), so one diff names
+    every path the command touched, content-compared (a ``touch -d`` cannot
+    fake it). Fail-open throughout: accounting never fails the command.
+    """
+    session = (session_id or "").strip()
+    if not session:
+        return
+    try:
+        from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
+        from agent.tools.pub_base.path_utils import session_workspace_root
+        from agent.tools.pub_base.shadow_git import diff_changed_paths
+
+        root = session_workspace_root(session)
+        for relative in diff_changed_paths(root):
+            mark_evidence_stale(str(root / relative), session)
+    except Exception as exc:  # noqa: BLE001 - never fail the command over bookkeeping
+        logger.debug("shell write accounting skipped: {}", exc)
+
+
 def _process_group_kwargs() -> dict[str, Any]:
     """Make the child a process-group leader so a tree kill cannot escape.
 
@@ -318,9 +344,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         ``sandbox=False``); the ledger row then says so, which is the only
         durable trace an unsandboxed command leaves.
         """
-        record_verification_evidence(
-            command, result, _extract_session_id(run_manager), sandboxed=sandboxed
-        )
+        session = _extract_session_id(run_manager)
+        record_verification_evidence(command, result, session, sandboxed=sandboxed)
+        _record_shell_writes(session)
         return result
 
     def _session_writable_roots(self, session_id: str | None) -> list[Path]:

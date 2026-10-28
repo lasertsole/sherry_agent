@@ -116,6 +116,18 @@ store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 �
 - 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다);
 - 병합되는 모든 코드 파일(Python / TS / TSX / JS / JSX / Rust / Go)은 쓰기 전에 **심볼 단위**로 비교됩니다——이름 변경(같은 kind, 같은 소속 클래스, 이름 거리 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`), 삭제, 추가가 완료 회신의 **Interface changes** 절에 실립니다. 다른 서브에이전트의 파일이 아직 **옛 이름**을 호출하고 있을 수 있기 때문입니다. 이 비교는 fail-open이며(거대하거나 해석할 수 없는 파일은 그 절에 기록될 뿐, 결코 치명적이지 않습니다), 상한도 있습니다(파일 10개, 종류별 20건).
 
+
+### 심볼 면(그리고 이를 우회하는 shell)
+
+텍스트 CAS는 바이트를 보호할 뿐 호출자를 보호하지 않습니다: `foo(a, b)` → `foo(a, b, *, timeout)`는 충돌 없이 병합되면서 모든 import를 깨뜨립니다. 네 가지 추가가 그 틈을 메웁니다——모두 쓰기를 막지 않고, 모두 페일오픈입니다:
+
+- **호출 형태 변화를 보고.** 심볼의 `(kind, name, parent)`는 그대로인데 인자/반환 형태가 바뀌면 `changed: foo(a, b) → foo(a, b, *, timeout=1)`로 절에 실립니다(현재 Python: 정규화된 인자 텍스트 + 반환 주석 유무. 공백은 접히므로 순수 재포맷은 변경이 아닙니다). 모듈 수준 대입도 `variable` 심볼로 면에 들어갑니다——모듈 상수 개명은 함수 개명과 똑같이 importer를 깨뜨립니다. 이 면은 **인터페이스 비교 전용** opt-in이며, 코드 인덱스(callers/explore)는 여전히 함수·메서드·클래스만 나열합니다.
+- **보고서가 호출자를 지목.** 코드 인덱스의 `import_edges`가 "누가 이 이름을 import하는가"를 **읽기 전용**·상한 있는 역조회(`agent/tools/code_intel/indexer.py::importers_of_names`)로 답합니다. 인덱스가 없으면 빈 결과——병합이 인덱스 구축을 유발하지 않습니다. 영향 파일은 `affected importers`에 나열되고 동시에 증거 원장에서 stale이 되므로, 변경된 모듈을 한 번도 건드리지 않은 "순수 import 사용자"의 초록 증거가 남지 않습니다.
+- **선택적 병합 시점 판정.** `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]`(기본 **꺼짐**)는 영향 importer를 커버하는 부모 세션의 passed 명령을 한 번 재실행하고(`merge_reverify_max_commands` = 5 상한) broken/unmark를 덧붙입니다——"이 개명이 호출자를 깨뜨렸는가"를 여러 턴 뒤의 finish 게이트가 아니라 병합 시점에 답합니다. 안전 사양은 finish 게이트와 동일(허용 목록, 셸 없음, 1회). 루프 방지는 구조적으로 성립합니다: 재실행은 원장 행을 읽고 이벤트만 덧붙이며, 덧붙인 이벤트가 재실행이나 병합을 유발하지 않습니다.
+- **shell 쓰기도 기록.** `terminal` / `python_repl`은 파일 도구가 보지 못하는 경로로 쓰고(라이선스·CAS 없음) 이전에는 원장 행을 전혀 남기지 않아 그 세션의 `modified_files`가 비어 있었습니다. 명령 전 상태는 이미 shadow store에 있으므로 `git diff --name-only`가 변경점을 지목하고(내용 비교이므로 `touch -d`로 속일 수 없습니다), 각 경로는 `write_file`과 같은 `mark_evidence_stale` 경로를 탑니다. REPL의 제한 builtins는 `open`을 막지만 클래스 내성으로 `os`에 닿을 수 있습니다——비교는 결과를 보므로 둘 다 잡습니다.
+
+**재실행 게이트는 파일을 다시 쓰는 formatter를 실행하지 않습니다.** `black`, `prettier`, `ruff format`은 허용 목록에 있고, 기록된 `black foo.py`(`--check` 없음)는 finish 재실행에서 라이선스/CAS 스택 전체를 우회해 파일을 다시 썼습니다. 이제 formatter는 보고 전용 형태(`--check` / `--diff`, 또는 `ruff check`)에서만 검증 명령으로 인정되며, 맨 호출은 **건너뜁니다**(실패시키지 않음) — 사용할 수 없는 기록이 flow를 붙잡지 않습니다.
+
 깨끗한 병합은 worktree를 등록 해제하고 그 브랜치를 지우고 워크스페이스를 제거합니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 인터페이스 변경, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
 
 ## ⚖️ 대안과 실측

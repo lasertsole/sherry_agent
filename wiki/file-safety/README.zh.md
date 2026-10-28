@@ -116,6 +116,18 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 - 新文件只创建到空位上；删除要求父树仍然匹配；符号链接绝不穿透合并（跳过并报告）；
 - 每个被合并的代码文件（Python / TS / TSX / JS / JSX / Rust / Go）在写入前会做一次**符号级**比较——改名（同 kind、同所在类、名字距离 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`）、删除与新增都会以一节 **接口变更** 出现在完成回复里，因为别的子代理的文件可能还在调用**旧名字**。这次比较是 fail-open 的（超大或无法解析的文件在那一节里注明，绝不致命），并且有上限（10 个文件、每种至多 20 条）。
 
+
+### 符号面（以及绕过它的 shell）
+
+文本 CAS 保护的是字节，不是调用方：`foo(a, b)` → `foo(a, b, *, timeout)` 能干净合并，却打断每一处 import。四项补充填上这个缺口——都不阻断写入、都 fail-open：
+
+- **调用形状变化会被报告。** 符号 `(kind, name, parent)` 未变但参数/返回形状改变，会以 `changed: foo(a, b) → foo(a, b, *, timeout=1)` 出现在该节（当前为 Python：归一化后的参数文本 + 是否存在返回注记；空白折叠，所以纯格式化不算变更）。模块级赋值也作为 `variable` 符号进入面——模块常量改名与函数改名一样会打断 import 方。该面**仅对接口比较开启**：代码索引（callers/explore）仍只列函数/方法/类。
+- **公告点名调用方。** 代码索引的 `import_edges` 通过一个**只读**、有上限的反查（`agent/tools/code_intel/indexer.py::importers_of_names`）回答"谁 import 了这个名字"。索引缺失时返回空——合并**绝不**触发索引构建。受影响的文件既列在 `affected importers` 下，也在证据账本里被标 stale，因此"只 import、从未改过该模块"的会话不再保留绿灯；否则只有路径级失效，那个会话的 PASS 行会存活。
+- **可选的合并期裁决。** `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]`（默认**关**）会把父会话中覆盖受影响 importers 的 passed 命令重放一次，上限 `merge_reverify_max_commands`（5），并追加 broken/unmark——于是"这次改名有没有打断调用方"在合并点就有答案，而不必等许多轮之后的 finish 门。安全规格与 finish 门一致：白名单可执行文件、不走 shell、一次尝试。防循环不变量由构造保证：重放只读账本行并追加事件，而追加的事件绝不触发重放或合并。
+- **shell 写也记账。** `terminal` / `python_repl` 走文件工具看不见的路径（无许可、无 CAS），过去完全不写账本行，导致该会话的 `modified_files` 恒空。命令前状态已在 shadow store 里，所以对它做一次 `git diff --name-only` 就能点名命令改了什么（内容比对，`touch -d` 骗不过），每条路径再走与 `write_file` 同一条 `mark_evidence_stale` 管道。REPL 的受限 builtins 挡住 `open`，但类内省能摸到 `os`——比对看的是结果，两条路都捕获。
+
+**回放门拒绝执行会改写文件的 formatter。** `black`、`prettier`、`ruff format` 都在白名单里，而被记录的 `black foo.py`（不带 `--check`）会在 finish 回放时**绕过整个许可/CAS 栈直写文件**。现在 formatter 只有在只读形态（`--check` / `--diff`，或 `ruff check`）下才算验证命令；裸调用被**跳过**（不是判失败），因此一条不可用的记录不会把 flow 卡死。
+
 干净合并会注销 worktree、删除其分支并移除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`、接口变更，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
 
 ## ⚖️ 备选方案与实测
