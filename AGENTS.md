@@ -1873,7 +1873,11 @@ each suite is the version-controlled reference (threshold + model id).
   shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation and a
   single `refs/heads/main` chain. `info/exclude` carries the deny patterns
   (secrets, bulk dirs and the shadow store) before `git add -A`; snapshots are
-  pruned to `SHADOW_GIT["max_snapshots"]`. Restore takes a pre-restore snapshot
+  pruned to `SHADOW_GIT["max_snapshots"]` (100 — the store is PER PROJECT ROOT and
+  shared by every session including subagents, so a small budget collapsed the
+  restore window to the last step or two once a fan-out ran concurrently;
+  `ensure_checkpoint` dedupes per session per turn, and the bare store's delta
+  compression keeps 100 snapshots at a few hundred KiB). Restore takes a pre-restore snapshot
   and supports one file or the whole tree; the `checkpoint` tool exposes
   list/show/restore. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
   moves the store outside the project — the eval harness points it at a

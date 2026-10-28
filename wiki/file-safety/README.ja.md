@@ -70,7 +70,7 @@
 
 バインドされたプロジェクトは**もう**リポジトリに初期化されません。sherry はユーザーの `.git` で `git init` / `add` / `commit` / `reset` / `checkout` / worktree を実行しません。各ターンの最初の書き込みで `shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）が `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` を分離し、`.sherry/shadow-git/` にスナップショットします。失敗しても書き込みは続行します（fail-open）。
 
-store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（20）個だけ保持します。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
+store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（100）個だけ保持します——store はプロジェクトルート単位で全セッション（サブエージェント含む）が共有するため、枠が小さいと並行ファンアウトで直近 1〜2 ステップまで縮みました。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
 
 読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。 `SHADOW_GIT["store_dir"]`（または `SHERRY_SHADOW_GIT_DIR`）で store をプロジェクト外へ移せます。eval harness は run 単位のディレクトリを使うため、インスタンスの checkout に `.sherry` は現れません。`wait_for_idle()` と `freeze()` が teardown のバリアで、進行中のスナップショットを待ち、遅れて来る書き込みを止めてから revert します。
 
