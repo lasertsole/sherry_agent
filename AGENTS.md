@@ -466,8 +466,11 @@ per-turn cache would go stale after a HITL resume. The single accessor is
 `agent.tools.pub_base.session_workspace_root(session_id)` feeding
 `resolve_workspace_path(path, root)`; `PathGuard`, the four file tools,
 `terminal`, `python_repl`, `ptc` and the code-intel runners all read it (the
-guard also moves its boundary, keeping its policy: in-root passes, only the
-hard-deny floor rejects outside it).
+guard also moves its boundary). In-root is NOT the end of the story: because an
+unconfigured session's root IS the checkout, the four file tools also meet the
+sherry-self read/write allow-lists (`self_path_policy.py`, see the security
+section), which is what stops `patch_file` from rewriting `agent/core.py` and
+`read_file` from reading `.models`.
 
 Derivation: a subagent inherits the parent's binding at spawn
 (`resolve_spawned_workspace_inheritance`) and the value is persisted as the
@@ -1911,10 +1914,37 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
   `PathGuard` additionally screens the command-string arguments (`commands` /
-  `query`) against the hard-deny floor only. The read-surface whitelist
+  `query`) against the hard-deny floor AND the sherry-self policy — read-looking
+  tokens against the read allow-list, extracted write targets (`>` / `>>` /
+  `tee` / `truncate` / `shred` / `sed -i`) against the write allow-list, so
+  `cat .models` and `echo x > agent/core.py` are refused; base64, shell
+  variables and runtime-built paths escape that static scan, which is why the
+  file tools' gate and the OS sandbox remain the real ones. The read-surface whitelist
   (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
   fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
   sandbox actually runs — neither backend has ever been verified on one.
+- **Sherry's own files are gated by two allow-lists**
+  (`agent/tools/pub_base/self_path_policy.py`). Nothing configured means the
+  session root IS the checkout, so the in-root test used to call the whole
+  source tree — and the credentials beside it — safe; a WHITELIST replaces that
+  assumption. WRITE allows only `<project>/.sherry/`, the CURRENT session's
+  `plans|attachments|uploads`, `TEMP_DIR`, `STATIC_DIR`,
+  `SRC_DIR/{images,audio,video}` and `SRC_DIR/rag/uploads`. READ is broader by
+  design — the whole source tree is readable (reading breaks nothing, leaks
+  nothing) — and denies `.env` `.models` `.network` `sherry.jsonc` and their
+  `.example`s, `src/data/**`, `src/checkpoints/**`, the workspace persona files
+  and `workspace/{memory,knowledge}/**`, model-weight suffixes, `mcp_servers/**`,
+  the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory
+  ledger and every session directory except the CURRENT session's `plans/`.
+  Enforced in `resolve_tool_path` (including its IN-ROOT success branch, and
+  `search_files`' own resolve) and in `resolve_external_path`; a path in a
+  DIFFERENT session project directory is the user's workspace and never reaches
+  it. The main agent gets one-shot HITL (`sherry_self_access`, approve/reject
+  only — no YOLO, no session allowlist), a SUBAGENT is refused with no card,
+  and outside an agent run (no runnable context to ask) the access fails CLOSED.
+  Internal writers are untouched: `memory`, `skill_manage`, `exit_plan_mode`,
+  the ledger, shadow-git, the checkpointer, trajectory and the knowledge index
+  build paths from `config.path` constants and never call those resolvers.
 - An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `wiki/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
 - the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears. A completed plan (no incomplete todo, no open flow) earns ONE `[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]` auto-turn before the gate treats it as done: the paranoid prompt asks the agent to re-read the diff, actually run the tests/typecheck/lint and launch user-facing changes. It is a PROMPT, not a gate (no evidence query, no HITL, no schema); a process-local fingerprint throttles it to once per completed plan, a changed plan re-arms it, a refused delivery is retried, and a TaskFlow session skips it (its finish gates own verification).

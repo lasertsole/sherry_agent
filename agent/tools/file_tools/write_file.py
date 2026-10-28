@@ -179,7 +179,7 @@ class FormattedWriteFileTool(BaseTool):
         (2026-10-24): the model reads JSON fine (``patch_file`` precedent) and
         the client renders the diff inline.
         """
-        root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
+        root, resolved, error = resolve_tool_path(file_path, session_id, "write file", mode="write")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
 

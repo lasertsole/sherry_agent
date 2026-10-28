@@ -142,7 +142,7 @@ class PatchFileTool(BaseTool):
         replace_all: bool = False,
         session_id: str = "",
     ) -> str:
-        root, resolved, error = resolve_tool_path(file_path, session_id, "patch file")
+        root, resolved, error = resolve_tool_path(file_path, session_id, "patch file", mode="write")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
 

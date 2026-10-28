@@ -202,7 +202,7 @@ class ReadFileTool(BaseTool):
         limit: int = _READ_DEFAULT_LIMIT,
         session_id: str = "",
     ) -> str:
-        root, resolved, error = resolve_tool_path(file_path, session_id, "read file")
+        root, resolved, error = resolve_tool_path(file_path, session_id, "read file", mode="read")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
         root = root

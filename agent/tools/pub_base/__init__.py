@@ -10,6 +10,7 @@ from .path_utils import (
     safe_error_detail,
     _extract_session_id,
     resolve_tool_path,
+    enforce_self_path_policy,
     _open_no_follow,
     PathOutOfBoundsError,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "safe_error_detail",
     "_extract_session_id",
     "resolve_tool_path",
+    "enforce_self_path_policy",
     "resolve_tool_session_id",
     "_open_no_follow",
     "PathOutOfBoundsError",

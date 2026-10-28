@@ -452,7 +452,11 @@ def _rewrite_leading_slash_path(file_path: str, root: Path) -> str:
 
 
 def resolve_tool_path(
-    file_path: str, session_id: str, action_desc: str
+    file_path: str,
+    session_id: str,
+    action_desc: str,
+    *,
+    mode: str = "read",
 ) -> tuple[Path, Path | None, str | None]:
     """Resolve a tool's file argument: ``(root, resolved, error_json)``.
 
@@ -460,21 +464,32 @@ def resolve_tool_path(
     line of defense); a path that escapes it may still be approved through the
     external-path HITL flow, and a refusal comes back as the error JSON callers
     return verbatim. ``action_desc`` words the approval prompt ("read file",
-    "write file", …).
+    "write file", …), and ``mode`` selects the sherry-self allow-list: the
+    in-root pass is NOT the end of the story, because with nothing configured
+    the in-root root is the checkout itself — so every in-root success is also
+    checked against the self-path policy (``read`` / ``write``).
     """
     from agent.tools.pub_base.tool_utils import tool_error
 
     root = current_project_dir(session_id)
     file_path = _rewrite_leading_slash_path(file_path, root)
     try:
-        return root, resolve_workspace_path(file_path, root), None
+        resolved = resolve_workspace_path(file_path, root)
     except PathOutOfBoundsError:
         try:
             resolved = resolve_external_path(
-                file_path, session_id=session_id, action_desc=action_desc
+                file_path, session_id=session_id, action_desc=action_desc, mode=mode
             )
         except PathOutOfBoundsError as e:
             return root, None, tool_error(str(e))
+        return root, resolved, None
+    # In-root success: still sherry's own file when the session root IS the
+    # checkout (the default). The external branch above enforces the same policy
+    # for absolute paths that point into the self tree from another root.
+    try:
+        enforce_self_path_policy(resolved, session_id, action_desc, mode)
+    except PathOutOfBoundsError as e:
+        return root, None, tool_error(str(e))
     return root, resolved, None
 
 
@@ -508,6 +523,112 @@ def _inside_session_root(resolved: Path, project_root: Path, candidate: Path) ->
     if resolved == project_root or resolved.is_relative_to(project_root):
         return True
     return _is_materialized_link_path(candidate, project_root)
+
+
+def _self_access_prompt(
+    resolved: Path, project_root: Path, action_desc: str, mode: str
+) -> HITLRequest:
+    """The approval card for a path over sherry's own files.
+
+    Deliberately narrower than the external card: ``approve`` or ``reject`` only.
+    YOLO ("allow all external paths forever") and the session allowlist are
+    convenience channels for the USER's files; neither may permanently unlock
+    sherry's own source, credentials or runtime state, so the approval is always
+    one-shot.
+    """
+    from langchain.agents.middleware.human_in_the_loop import (
+        ActionRequest,
+        HITLRequest,
+        ReviewConfig,
+    )
+
+    what = "MODIFY" if mode == "write" else "READ"
+    action_request = ActionRequest(
+        name="sherry_self_access",
+        args={"path": str(resolved), "mode": mode},
+        description=(
+            f"Sherry self-file access approval — this {what}s sherry's OWN files\n"
+            f"  Path: {resolved}\n"
+            f"  Project root: {project_root}\n"
+            f"  Intent: {action_desc or 'unspecified'}\n\n"
+            + (
+                "  A write here changes sherry's source, configuration or runtime state:\n"
+                "  it can break the running backend, corrupt another session, or persist a\n"
+                "  change across restarts.\n"
+                if mode == "write"
+                else "  A read here exposes credentials, private memory or another session's\n"
+                "  transcript to the model and to the persisted tool result.\n"
+            )
+            + "\nOptions:\n"
+            "  approve — allow this ONE access\n"
+            "  reject  — deny\n"
+            "(No allow-all: sherry's own files never become permanently unlocked.)"
+        ),
+    )
+    review_config = ReviewConfig(
+        action_name="sherry_self_access",
+        allowed_decisions=["approve", "reject"],
+    )
+    return HITLRequest(
+        action_requests=[action_request],
+        review_configs=[review_config],
+    )
+
+
+def _session_is_subagent(session_id: str) -> bool:
+    """Whether this session is a spawned child (so cross-session access is fatal)."""
+    session = (session_id or "").strip()
+    if not session:
+        return False
+    try:
+        from agent.tools.subagent.registry import get_run_by_child_session_key
+
+        return get_run_by_child_session_key(session) is not None
+    except Exception:  # noqa: BLE001 — a probe failure must never block a main agent
+        logger.debug("self-path: subagent probe failed", exc_info=True)
+        return ":subagent:" in session
+
+
+def enforce_self_path_policy(
+    resolved: Path, session_id: str, action_desc: str, mode: str = "read"
+) -> None:
+    """Gate one access over sherry's own files (raises when refused).
+
+    MAIN agent: one-shot HITL approval. A SUBAGENT: refused outright — a child
+    reading the parent's config or another session's state is cross-session
+    leakage with no human in that loop, and the isolation rule is absolute
+    (approval there would also hand the child a way to unlock its parent's
+    files for the whole tree).
+    """
+    from agent.tools.pub_base.self_path_policy import classify_self_path
+
+    reason = classify_self_path(resolved, session_id, mode)  # type: ignore[arg-type]
+    if reason is None:
+        return
+
+    if _session_is_subagent(session_id):
+        raise PathOutOfBoundsError(
+            f"{reason}. A subagent may not access the parent session's or another "
+            "session's sherry files; ask the parent agent to do it."
+        )
+
+    from langgraph.types import interrupt
+
+    prompt = _self_access_prompt(resolved, current_project_dir(session_id), action_desc, mode)
+    try:
+        hitl_response = interrupt(prompt)
+    except RuntimeError as exc:
+        # No runnable graph context (a direct tool call from a script or an
+        # eval harness): there is no operator to ask, so the access is REFUSED
+        # rather than silently allowed — sherry's own files are the one place
+        # where "cannot ask" must fail closed.
+        raise PathOutOfBoundsError(
+            f"Sherry self-file access needs operator approval, which is unavailable "
+            f"outside an agent run: {resolved} ({reason}) [{exc}]"
+        ) from exc
+    decisions = hitl_response.get("decisions", [])
+    if not decisions or decisions[0].get("type") != "approve":
+        raise PathOutOfBoundsError(f"Sherry self-file access denied: {resolved} ({reason})")
 
 
 def _external_access_prompt(resolved: Path, project_root: Path, action_desc: str) -> HITLRequest:
@@ -589,6 +710,7 @@ def resolve_external_path(
     *,
     session_id: str,
     action_desc: str = "",
+    mode: str = "read",
 ) -> Path:
     """Resolve a path that may be outside ROOT_DIR, gated by HITL approval.
 
@@ -606,6 +728,8 @@ def resolve_external_path(
         file_path: The path to resolve (relative, absolute, or ~).
         session_id: Current session ID (main or child).
         action_desc: Optional description for the approval prompt.
+        mode: ``read`` or ``write`` — selects the sherry-self allow-list; an
+            access outside it asks the operator (a subagent is refused).
 
     Raises:
         PathOutOfBoundsError: If denied by the deny list, by user, or for a
@@ -614,14 +738,18 @@ def resolve_external_path(
     candidate = _absolute_candidate(file_path)
     resolved = candidate.resolve()
 
-    # 1a. Inside the repository — safe path, and no state lookup (fast path).
+    # 1a. Inside the repository — no state lookup (fast path), but still subject
+    # to the sherry-self policy: "inside the checkout" is exactly where the
+    # source tree, credentials and runtime state live.
     if resolved == ROOT_DIR or resolved.is_relative_to(ROOT_DIR):
+        enforce_self_path_policy(resolved, session_id, action_desc, mode)
         return resolved
 
     # 1b/1c. Inside the session's project directory (directly or through a
     # recorded materialized link) — the operator pointed the agent there.
     project_root = current_project_dir(session_id).resolve()
     if _inside_session_root(resolved, project_root, candidate):
+        enforce_self_path_policy(resolved, session_id, action_desc, mode)
         return resolved
 
     # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
