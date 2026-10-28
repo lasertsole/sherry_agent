@@ -142,3 +142,123 @@ class TestWriteSherryConfig:
     def test_write_rejects_non_mapping(self, sherry_file):
         with pytest.raises(ValueError, match="mapping"):
             write_sherry_config(["not", "a", "mapping"])  # type: ignore[arg-type]
+
+
+class TestListSettings:
+    """The list-settings API: only registered keys, validated entries, safe edits.
+
+    Lists sit outside the typed scalar registry (``load_sherry_list_setting``),
+    so they get their own read/write pair with a KEY ALLOWLIST — a free-form key
+    would let the UI author settings nothing consumes.
+    """
+
+    @staticmethod
+    def _service(monkeypatch, tmp_path, text: str):
+        import server.service.sherry_config as service
+
+        config = tmp_path / "sherry.jsonc"
+        config.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(service, "SHERRY_CONFIG_PATH", config)
+        return service, config
+
+    def test_reading_a_missing_key_is_an_empty_list(self, monkeypatch, tmp_path):
+        service, _ = self._service(monkeypatch, tmp_path, '{\n  "LOG_LEVEL": "INFO",\n}\n')
+
+        assert service.read_sherry_list("regression_gate_allowed_executables") == []
+
+    def test_an_unknown_key_is_refused_both_ways(self, monkeypatch, tmp_path):
+        service, _ = self._service(monkeypatch, tmp_path, "{}\n")
+
+        with pytest.raises(ValueError, match="Unknown list setting"):
+            service.read_sherry_list("not_a_registered_key")
+        with pytest.raises(ValueError, match="Unknown list setting"):
+            service.write_sherry_list("not_a_registered_key", ["x"])
+
+    def test_write_then_read_round_trips(self, monkeypatch, tmp_path):
+        service, config = self._service(
+            monkeypatch, tmp_path, '{\n  // keep me\n  "LOG_LEVEL": "INFO",\n}\n'
+        )
+
+        written = service.write_sherry_list(
+            "regression_gate_allowed_executables", ["Gradle", "  maven  "]
+        )
+
+        assert written == ["gradle", "maven"], "entries are normalized"
+        assert service.read_sherry_list("regression_gate_allowed_executables") == [
+            "gradle",
+            "maven",
+        ]
+        text = config.read_text(encoding="utf-8")
+        assert "// keep me" in text, "comments survive the line-wise edit"
+        assert '"LOG_LEVEL": "INFO",' in text
+
+    def test_an_existing_value_is_replaced_in_place(self, monkeypatch, tmp_path):
+        service, config = self._service(
+            monkeypatch,
+            tmp_path,
+            '{\n  "regression_gate_allowed_executables": ["rspec"],\n  "LOG_LEVEL": "INFO",\n}\n',
+        )
+
+        service.write_sherry_list("regression_gate_allowed_executables", ["dotnet"])
+
+        lines = [
+            line for line in config.read_text(encoding="utf-8").splitlines() if "regression" in line
+        ]
+        assert lines == ['  "regression_gate_allowed_executables": ["dotnet"],']
+        assert '"LOG_LEVEL": "INFO",' in config.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            ["gradle; rm -rf /"],
+            ["gradle && whoami"],
+            ["x" * 300],
+            ["ok", 3],
+        ],
+    )
+    def test_bad_entries_are_refused_and_the_file_is_untouched(self, monkeypatch, tmp_path, values):
+        original = '{\n  "LOG_LEVEL": "INFO",\n}\n'
+        service, config = self._service(monkeypatch, tmp_path, original)
+
+        with pytest.raises(ValueError):
+            service.write_sherry_list("regression_gate_allowed_executables", values)
+
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_a_multi_line_array_is_refused_rather_than_corrupted(self, monkeypatch, tmp_path):
+        original = '{\n  "regression_gate_allowed_executables": [\n    "gradle"\n  ],\n}\n'
+        service, config = self._service(monkeypatch, tmp_path, original)
+
+        with pytest.raises(ValueError, match="single line"):
+            service.write_sherry_list("regression_gate_allowed_executables", ["dotnet"])
+
+        assert config.read_text(encoding="utf-8") == original
+
+    def test_the_yolo_deny_list_uses_the_same_endpoint(self, monkeypatch, tmp_path):
+        service, _ = self._service(monkeypatch, tmp_path, '{\n  "LOG_LEVEL": "INFO",\n}\n')
+
+        service.write_sherry_list("yolo_deny_paths", ["~/.docker/"])
+
+        assert service.read_sherry_list("yolo_deny_paths") == ["~/.docker/"]
+
+    def test_a_missing_key_is_inserted_inside_the_object(self, monkeypatch, tmp_path):
+        """Appending past the closing brace would make the document unparseable."""
+        service, config = self._service(
+            monkeypatch, tmp_path, '{\n  // note\n  "LOG_LEVEL": "INFO"\n}\n'
+        )
+
+        service.write_sherry_list("regression_gate_allowed_executables", ["gradle"])
+
+        text = config.read_text(encoding="utf-8")
+        assert json5.loads(text) == {
+            "LOG_LEVEL": "INFO",
+            "regression_gate_allowed_executables": ["gradle"],
+        }
+        assert "// note" in text
+        assert text.index("regression_gate") < text.index("}"), "inside the object"
+
+    def test_a_single_line_document_is_refused_with_a_reason(self, monkeypatch, tmp_path):
+        service, _ = self._service(monkeypatch, tmp_path, "{}\n")
+
+        with pytest.raises(ValueError, match="multi-line top-level object"):
+            service.write_sherry_list("yolo_deny_paths", ["~/.docker/"])

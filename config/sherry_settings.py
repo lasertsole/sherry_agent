@@ -141,6 +141,16 @@ def load_sherry_settings() -> dict[str, Any]:
     return settings
 
 
+#: The list settings the API accepts (``/sherry-config/list/<key>``). A list
+#: lives OUTSIDE the typed scalar registry: the consumer owns the defaults and
+#: merges the user's entries (``load_sherry_list_setting``). Only these keys may
+#: be written — a free-form key would let the UI author settings nobody reads.
+LIST_SETTING_KEYS: tuple[str, ...] = (
+    "regression_gate_allowed_executables",
+    "yolo_deny_paths",
+)
+
+
 def load_sherry_list_setting(key: str) -> list[str]:
     """Load a top-level string-list setting from ``sherry.jsonc``.
 

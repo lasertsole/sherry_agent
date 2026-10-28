@@ -282,6 +282,10 @@
               {{ t('config.sherry.noConfigFile') }}
             </p>
 
+            <!-- Replay-gate allowlist: a LIST setting (outside the scalar
+                 registry), so it owns its own read/write pair. -->
+            <ReplayAllowlistEditor />
+
             <!-- Application settings that live outside sherry.jsonc: LANGSMITH
                  comes from .network, `other` is the .env catch-all. Each keeps
                  its own source writer through the env-group save path. -->
@@ -377,6 +381,7 @@ import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import CudaPackCard from './CudaPackCard.vue';
+import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';

@@ -414,7 +414,21 @@
       "loadError": "Failed to load app config. Please check the backend service.",
       "saveFailed": "Failed to save app config.",
       "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-      "noConfigFile": "No sherry.jsonc file found."
+      "noConfigFile": "No sherry.jsonc file found.",
+      "allowlist": {
+        "title": "Replay-gate allowlist",
+        "hint": "Add executable names the finish-time replay may re-run, on top of the five built-in toolchains (affects only which verification commands are replayed).",
+        "placeholder": "e.g. gradle",
+        "add": "Add",
+        "remove": "Remove",
+        "reload": "Reload",
+        "empty": "No extra executables — the built-in allowlist applies.",
+        "badChars": "No whitespace or shell metacharacters (;&|<>$`)",
+        "tooLong": "Name is too long",
+        "duplicate": "Already listed",
+        "loadFailed": "Read failed (backend unreachable?)",
+        "saveFailed": "Save failed"
+      }
     },
     "cron": {
       "addJob": "New task",

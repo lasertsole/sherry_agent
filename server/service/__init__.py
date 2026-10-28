@@ -26,6 +26,8 @@ from .env import (
 )
 from .sherry_config import (
     read_sherry_config as read_sherry_config,
+    read_sherry_list as read_sherry_list,
+    write_sherry_list as write_sherry_list,
     write_sherry_config as write_sherry_config,
 )
 from .models_config import (

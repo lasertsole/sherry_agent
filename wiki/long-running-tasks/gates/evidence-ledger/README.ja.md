@@ -39,6 +39,8 @@ terminal / python_repl がコマンドを実行
 
 **Finish 時の再検証。** `taskflow_flow(action="finish")` の Gate C は最初に `regression_gate.reverify_flow_evidence()` を呼びます: flow の各セッションの passed コマンドを重複排除して 1 回ずつ再実行し（allowlist の実行ファイル、シェルなし、`max_reverify_commands` とコマンド単位タイムアウトで制限）、作業ディレクトリは flow のプロジェクトルートです。成功したら stale/broken だったコマンドに `unmark` を追加し、失敗したら `broken` を追加します。これは変更されたソースファイルを stale 行が名指ししていなくても A のテストコマンドを再実行するため、クロスファイル import 破壊を検出できる唯一の経路です。ステップは `file_deps` を宣言でき、他のステップの書き込みがそのいずれかに触れた場合、`prioritized_sessions()` がそのステップのコマンドを `max_reverify_commands` 上限より前に移動します（`file_deps_mode="prioritize"`、既定）。オプトインの `file_deps_mode="filter"` は宣言が命中したセッションだけを再実行します——安価ですが、未宣言ステップの破壊を見逃す可能性があります。
 
+**検証ツール許可リストは設定可能です。** 再実行されるのは、最初のプロセスが既知のテスト/lint/ビルド/型チェックツールであるコマンドだけであり、その集合はコード既定値 + `sherry.jsonc` の `regression_gate_allowed_executables` です（`yolo_deny_paths` と同じ list-setting パターン：既定値は消費側が持ち、ユーザーの項目は呼び出しごとにマージされるため、編集は再起動なしで次回の再実行から効きます）。gradle / maven / dotnet / rspec / swift を使うユーザーは**実行ファイル名**を追加するだけで、コードは触りません。シェルメタ文字の拒否・コマンド上限・コマンド単位タイムアウトは不変で、このリストを読むのはこの再検証ゲートだけです——サブエージェントが**記録**できるコマンドは別の面です。システム設定 → アプリ設定パネルが `GET|PUT /sherry-config/list/regression_gate_allowed_executables` 経由で編集し、このエンドポイントは登録済みの list キーだけを受け付け、各項目を検証します（小文字・シェルメタ文字なし・長さ上限）。組み込み既定値はそこから削除できません。
+
 ---
 
 ## ストレージ

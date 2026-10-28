@@ -14,6 +14,14 @@
   // behaviour). SHERRY_PROJECT_DIR overrides this key for a single launch.
   "project_dir": "",
 
+  // Replay-gate allowlist extension: executable names (lowercase) the finish-time
+  // regression gate may re-run ON TOP OF the built-in five toolchains (Python /
+  // JS-TS / Rust / Go / C-C++). Add a new one here (gradle / maven / dotnet /
+  // rspec / swift / …) instead of editing code. Only the replay gate reads it —
+  // which commands a subagent may RECORD is unaffected. Entries are validated
+  // (no shell metacharacters); keep the array on one line.
+  "regression_gate_allowed_executables": [],
+
 
   // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
   "WORKSPACE_TEMPLATE_LANG": "en",

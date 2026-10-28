@@ -266,7 +266,15 @@ User message → Robyn WS → agent.core.built_agent() graph
       the writer's own session is marked separately); at taskflow_flow(action="finish") the regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
-      while a false-positive stale is cleared; read side derives
+      while a false-positive stale is cleared — the replay allowlist is the code
+      defaults PLUS `regression_gate_allowed_executables` from sherry.jsonc (the
+      `yolo_deny_paths` list-setting pattern: consumer owns the defaults, user
+      entries merge per call, so a new toolchain is a config line, not a code
+      change; only the replay gate reads it, and the list API at
+      `GET|PUT /sherry-config/list/<key>` accepts only the registered keys —
+      `LIST_SETTING_KEYS` in `config/sherry_settings.py` — validating every entry
+      for lowercase/no-shell-metacharacters/bounds, with the built-in defaults
+      never removable); read side derives
       broken/stale using the exact `modified_files` set, falling back to the
       command substring for legacy rows (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps

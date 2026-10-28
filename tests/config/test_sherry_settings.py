@@ -133,7 +133,14 @@ class TestLoadSherryListSetting:
 
 class TestShippedConfigFile:
     def test_repo_sherry_jsonc_is_valid_and_complete(self):
-        """The shipped sherry.jsonc must parse and carry every known key."""
+        """The shipped sherry.jsonc must parse and carry every SCALAR key.
+
+        List settings are the one documented exception: they live outside the
+        typed scalar registry on purpose (the consumer owns the defaults and
+        merges the user's entries — see ``load_sherry_list_setting``), so the
+        shipped file may carry the ones the UI edits. Anything else is still a
+        drift signal, and a list key that no API accepts is one too.
+        """
 
         def dotted_keys(node, prefix=""):
             for name, value in node.items():
@@ -143,5 +150,13 @@ class TestShippedConfigFile:
                 else:
                     yield path
 
+        list_setting_keys = sherry_settings.LIST_SETTING_KEYS
+
         data = json5.loads(sherry_settings.SHERRY_CONFIG_PATH.read_text(encoding="utf-8"))
-        assert list(dotted_keys(data)) == list(sherry_settings.SHERRY_SETTING_KEYS)
+        shipped = list(dotted_keys(data))
+        list_keys = [key for key in shipped if key in list_setting_keys]
+        scalar_keys = [key for key in shipped if key not in list_setting_keys]
+
+        assert scalar_keys == list(sherry_settings.SHERRY_SETTING_KEYS)
+        assert list_keys, "the shipped file documents the replay-gate allowlist"
+        assert data["regression_gate_allowed_executables"] == [], "the default is empty"

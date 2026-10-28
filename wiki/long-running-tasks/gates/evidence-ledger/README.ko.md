@@ -39,6 +39,8 @@ terminal / python_repl 이 명령을 실행
 
 **Finish 시 재검증.** `taskflow_flow(action="finish")`의 Gate C는 먼저 `regression_gate.reverify_flow_evidence()`를 호출합니다: flow 각 세션의 passed 명령을 중복 제거해 한 번씩 재실행하며(allowlist 실행 파일, 셸 없음, `max_reverify_commands` 및 명령별 타임아웃), 작업 디렉터리는 flow의 프로젝트 루트입니다. 성공하면 stale/broken이었던 명령에 `unmark`를 추가하고, 실패하면 `broken`을 추가합니다. 이 경로는 변경된 소스 파일을 stale 행이 지목하지 않아도 A의 테스트 명령을 다시 실행하므로 크로스 파일 import 파괴를 잡을 수 있는 유일한 경로입니다. 단계는 `file_deps`를 선언할 수 있으며, 다른 단계의 쓰기가 그중 하나에 닿으면 `prioritized_sessions()`가 해당 단계의 명령을 `max_reverify_commands` 상한 앞으로 옮깁니다(`file_deps_mode="prioritize"`, 기본). 선택형 `file_deps_mode="filter"`는 선언이 적중한 세션만 재실행합니다 — 더 저렴하지만 선언되지 않은 단계의 파괴를 놓칠 수 있습니다.
 
+**검증기 허용 목록은 설정 가능합니다.** 재실행되는 것은 첫 프로세스가 알려진 테스트/lint/빌드/타입 검사 도구인 명령뿐이며, 그 집합은 코드 기본값 + `sherry.jsonc`의 `regression_gate_allowed_executables`입니다(`yolo_deny_paths`와 같은 list-setting 패턴: 기본값은 소비자가 소유하고 사용자 항목은 호출 시 병합되므로, 편집은 재시작 없이 다음 재실행부터 적용됩니다). gradle / maven / dotnet / rspec / swift 사용자는 **실행 파일 이름**만 추가하면 되고 코드는 건드리지 않습니다. 셸 메타 문자 거부, 명령 상한, 명령별 타임아웃은 그대로이며 이 목록을 읽는 것은 이 재검증 게이트뿐입니다——서브에이전트가 **기록**할 수 있는 명령은 별개의 면입니다. 시스템 설정 → 앱 설정 패널이 `GET|PUT /sherry-config/list/regression_gate_allowed_executables`로 편집하며, 이 엔드포인트는 등록된 list 키만 허용하고 각 항목을 검증합니다(소문자, 셸 메타 문자 없음, 길이 상한). 내장 기본값은 여기서 삭제할 수 없습니다.
+
 ---
 
 ## 스토리지

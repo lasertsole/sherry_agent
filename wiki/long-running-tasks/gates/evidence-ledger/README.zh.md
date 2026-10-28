@@ -39,6 +39,8 @@ terminal / python_repl 跑了一条命令
 
 **Finish 时重验。** `taskflow_flow(action="finish")` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。step 可以声明 `file_deps`；当其他 step 的写入命中其中之一时，`prioritized_sessions()` 会把该 step 的命令排到 `max_reverify_commands` 上限之前（`file_deps_mode="prioritize"`，默认）。可选的 `file_deps_mode="filter"` 只重放声明命中的 session——更便宜，但可能漏掉未声明 step 的破坏。
 
+**验证器白名单可配置。** 只有首进程是已识别测试/lint/构建/类型检查工具的命令才会被回放，而这个集合 = 代码默认值 + `sherry.jsonc` 的 `regression_gate_allowed_executables`（与 `yolo_deny_paths` 相同的 list-setting 模式：默认值归消费方所有，用户条目按调用合并，所以改完下一次回放即生效，无需重启）。使用 gradle / maven / dotnet / rspec / swift 的用户只需追加**可执行文件名**，不必改代码。shell 元字符拒绝、命令上限与单命令超时均不变，且只有这条回放门读该列表——子代理能**记录**哪些命令是另一个面。系统配置 → 应用配置面板通过 `GET|PUT /sherry-config/list/regression_gate_allowed_executables` 编辑它；该端点只接受已注册的 list key 并校验每个条目（小写、无 shell 元字符、有上限），内置默认值无法从这里删除。
+
 ---
 
 ## 存储

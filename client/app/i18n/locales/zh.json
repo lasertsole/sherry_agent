@@ -414,7 +414,21 @@
       "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
       "saveFailed": "应用配置保存失败，请检查值是否合法。",
       "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-      "noConfigFile": "未找到 sherry.jsonc 文件。"
+      "noConfigFile": "未找到 sherry.jsonc 文件。",
+      "allowlist": {
+        "title": "回放门白名单",
+        "hint": "在代码内置的五种工具链之外，追加 finish 回放时允许自动执行的可执行文件名（只影响回放哪些验证命令）。",
+        "placeholder": "如 gradle",
+        "add": "追加",
+        "remove": "移除",
+        "reload": "重新读取",
+        "empty": "尚未追加任何可执行文件——仍使用内置白名单。",
+        "badChars": "不能包含空白或 shell 元字符（;&|<>$`）",
+        "tooLong": "名称过长",
+        "duplicate": "已存在",
+        "loadFailed": "读取失败（后端不可达？）",
+        "saveFailed": "保存失败"
+      }
     },
     "cron": {
       "addJob": "新建任务",

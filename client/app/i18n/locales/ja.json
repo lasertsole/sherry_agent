@@ -414,7 +414,21 @@
       "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
       "saveFailed": "アプリ設定の保存に失敗しました。",
       "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
-      "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+      "noConfigFile": "sherry.jsonc ファイルが見つかりません。",
+      "allowlist": {
+        "title": "リプレイ許可リスト",
+        "hint": "finish 時のリプレイで自動実行を許す実行ファイル名を、組み込みの 5 ツールチェーンに追加します（再実行する検証コマンドにのみ影響）。",
+        "placeholder": "例: gradle",
+        "add": "追加",
+        "remove": "削除",
+        "reload": "再読込",
+        "empty": "追加項目はありません——組み込み許可リストが適用されます。",
+        "badChars": "空白やシェルメタ文字（;&|<>$`）は使えません",
+        "tooLong": "名前が長すぎます",
+        "duplicate": "既に登録済み",
+        "loadFailed": "読み込み失敗（バックエンドに到達できません）",
+        "saveFailed": "保存失敗"
+      }
     },
     "cron": {
       "addJob": "新規タスク",

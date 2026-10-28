@@ -49,3 +49,42 @@ export async function writeSherryConfig(changes: Record<string, string>): Promis
     return false;
   }
 }
+
+/** The list settings the backend accepts (its own allowlist is the authority). */
+export type SherryListKey = 'regression_gate_allowed_executables' | 'yolo_deny_paths';
+
+/** One list-setting payload (`GET /sherry-config/list/<key>`). */
+export interface SherryListPayload {
+  key: string;
+  values: string[];
+}
+
+/**
+ * Read one list setting (the USER's entries; the code owns the defaults).
+ * Throws on request failure so a caller can tell an error from an empty list.
+ * @param key
+ */
+export async function readSherryList(key: SherryListKey): Promise<string[]> {
+  const res = await fetchApi<SherryListPayload>({
+    url: `/sherry-config/list/${key}`,
+    opts: { _ts: Date.now() },
+    method: 'get'
+  });
+  return Array.isArray(res?.values) ? res.values : [];
+}
+
+/**
+ * Replace one list setting; the backend normalizes (lowercase, dedupe) and
+ * validates the entries, and answers the written list.
+ * @param key
+ * @param values
+ * @returns The written list.
+ */
+export async function writeSherryList(key: SherryListKey, values: string[]): Promise<string[]> {
+  const res = await fetchApi<SherryListPayload>({
+    url: `/sherry-config/list/${key}`,
+    opts: { values },
+    method: 'put'
+  });
+  return Array.isArray(res?.values) ? res.values : [];
+}

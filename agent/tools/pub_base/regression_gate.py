@@ -89,6 +89,30 @@ def _executable_name(token: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
+#: The sherry.jsonc list key users extend the verifier allowlist with.
+#: Also the key the list-settings API accepts (``server/service/sherry_config.py``).
+ALLOWED_EXECUTABLES_SETTING = "regression_gate_allowed_executables"
+
+
+def _get_allowed_executables() -> frozenset[str]:
+    """The verifier allowlist: code defaults + the user's sherry.jsonc extras.
+
+    Same shape as the YOLO deny list (``path_utils._get_yolo_deny_paths``): the
+    caller owns the defaults, ``load_sherry_list_setting`` contributes the user
+    entries, and the merge is read per call so an edited file applies on the
+    next replay without a restart. Entries are lower-cased because the check
+    compares ``_executable_name`` output.
+    """
+    from config.sherry_settings import load_sherry_list_setting
+
+    merged: set[str] = set(_ALLOWED_EXECUTABLES)
+    for name in load_sherry_list_setting(ALLOWED_EXECUTABLES_SETTING):
+        candidate = name.strip().lower()
+        if candidate:
+            merged.add(candidate)
+    return frozenset(merged)
+
+
 def _is_python_executable(name: str) -> bool:
     """True for ``python`` / ``python3`` / ``python3.13`` (venv bin names)."""
     return name in {"python", "python3", "py"} or bool(re.fullmatch(r"python3\.\d+", name))
@@ -111,9 +135,10 @@ def _safe_argv(command: str) -> list[str] | None:
         return None
     if not argv:
         return None
+    allowed = _get_allowed_executables()
     executable = _executable_name(argv[0])
     python = _is_python_executable(executable)
-    if not python and executable not in _ALLOWED_EXECUTABLES:
+    if not python and executable not in allowed:
         return None
     if python:
         if len(argv) < 3 or argv[1] != "-m" or _executable_name(argv[2]) not in _PYTHON_MODULES:
@@ -125,17 +150,15 @@ def _safe_argv(command: str) -> list[str] | None:
         if _is_python_executable(target):
             if len(argv) < 5 or argv[3] != "-m" or _executable_name(argv[4]) not in _PYTHON_MODULES:
                 return None
-        elif target not in _ALLOWED_EXECUTABLES:
+        elif target not in allowed:
             return None
     elif executable in _PACKAGE_RUNNERS:
         if len(argv) < 2 or argv[1] not in {"test", "run", "exec", "x"}:
             return None
-        if argv[1] in {"exec", "x"} and (
-            len(argv) < 3 or _executable_name(argv[2]) not in _ALLOWED_EXECUTABLES
-        ):
+        if argv[1] in {"exec", "x"} and (len(argv) < 3 or _executable_name(argv[2]) not in allowed):
             return None
     elif executable == "npx":
-        if len(argv) < 2 or _executable_name(argv[1]) not in _ALLOWED_EXECUTABLES:
+        if len(argv) < 2 or _executable_name(argv[1]) not in allowed:
             return None
     return argv
 
