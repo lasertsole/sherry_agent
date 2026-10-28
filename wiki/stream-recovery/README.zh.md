@@ -32,6 +32,24 @@
 
 读取与 流 generator 在同一事件循环上运行，因此文本和序号在同一个一致切面读取，无需锁。没有注册引擎时，会话没有运行中回合，快照函数返回 `None`。HTTP 历史路径额外附加 `turn_num`（下一个持久化回合号）作为展示元数据。
 
+## 持久化执行：崩溃后什么还活着
+
+Sherry 的持久化模型是**「状态持久 + sweeper 兜底 + 新 turn 重驱动」**，不是 Temporal 式的 activity 重放。崩溃无法重放；能保证的是没有任何**状态**在说谎，恢复才有可信的依据。2026-10 对五个子系统（HITL、checkpointer、TaskFlow、subagent registry、evidence ledger）的审计落地了第一批修复：
+
+| 缺陷 | 修复 |
+| :--- | :--- |
+| subagent registry 的终态判定用字符串字面量（`COMPLETED`、`FAILED`…）比对值为 `pending / running / interrupted / terminal` 的枚举——永不命中，保留上限形同虚设，内存无界增长 | 改为比对 `ExecutionStatus.TERMINAL`；上限现在保留活跃 run、驱逐旧的终态 run |
+| 会话目录清扫用原始 session id 探测 checkpoint，而 checkpointer 存的是 `session_thread_id(session_id)`（INTEGER）——只剩 checkpoint 的会话被当成空目录删掉 | `pub.func` 里唯一的 `session_thread_id()` 映射，清扫点统一调用 |
+| trajectory 文档写「写入时裁剪」，但 `prune_session` 没有调用者；其排序还用了恒为 0 的 `MAX(seq)`，保留的是任意一批 turn | 写入时接线，按会话每 60 秒节流一次，按插入顺序（rowid）排序 |
+| 全局 keep-latest checkpoint 裁剪跑在 `built_agent()` 里——即**每一轮**——且连接没有 `busy_timeout`，keep-set 在删除前就已过期（期间别的会话提交的新 checkpoint 会被误删） | 改为启动时一次（`server/service/checkpoint_maintenance.py`），在 `BEGIN IMMEDIATE` 内执行，keep-set 偏向顶层行 |
+| 所有 checkpointer 连接都缺 `busy_timeout`（与 WAL 不同，它是每连接属性） | 统一走一个助手（`agent/checkpointer/pragmas.py`，30 秒） |
+| `delete_thread_history` 无异常保护，数据库被锁时会在消息库已清空之后中断清理——半删除里最糟的那一半 | 每一步都有保护；checkpoint 删除改为**最先**执行，重试总能补完 |
+| 终态 run 的交付状态只靠 30 秒周期 flush 落盘；崩溃落在窗口内会让 SQLite 停在 TERMINAL+PENDING——该状态没有重试路径，已完成的结果永久丢失 | 交付状态迁移（`delivered / failed / suspended / in_progress`）即时落盘（`set_run_durable`） |
+| auto-turn 驱动继承了空实现的 `apply_hitl_pending`，headless turn 中断后图悬挂但会话看似空闲：回合结束的裁剪可能删掉那个 checkpoint，drain 还会把新消息注入悬挂图 | 驱动改为设置标志；`submit_user_input` 也把 checkpoint 里的 interrupt 当作 busy（探测 fail-open），这正是重启后留下的情形 |
+
+审计剩余项（跨会话的启动期 HITL 重建、持久化时间戳改用挂钟时间而非 `time.monotonic()`、重启后恢复 in-flight step、以及 P3/P4 的 evidence/可观测性批次）在计划中跟踪，不会被默认当成已完成。
+
+
 ## 帧序号与水位
 
 `StreamTurn.run()` 产生的每一帧在 yield 之前都盖上按回合单调递增的 `_frame_seq`：

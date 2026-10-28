@@ -427,8 +427,12 @@ async def _build_graph(
     # create table before using
     await checkpointer.setup()
 
-    # Delete all checkpoints but keeps the latest checkpoint
-    await checkpointer.aclean_old_checkpoints()
+    # NOTE: no global checkpoint prune here. This function runs on EVERY turn
+    # (the graph is force-rebuilt), so pruning here made the shared checkpoint
+    # DB take a competing writer per turn — ordinary concurrency turned into
+    # SQLITE_BUSY turn failures, and a session committing a new checkpoint
+    # mid-prune could have it deleted. The one global prune now runs at boot
+    # (``server.service.checkpoint_maintenance``).
 
     main_llm = build_main_llm()
     auxiliary_llm = build_auxiliary_llm()

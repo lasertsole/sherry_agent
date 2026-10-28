@@ -11,7 +11,7 @@ import threading
 from collections import OrderedDict
 
 from config.features import SUBAGENT_INFRA
-from ..types.registry import SubagentRunRecord
+from ..types.registry import ExecutionStatus, SubagentRunRecord
 from . import spawn_budget
 
 # threading.Lock is the correct primitive here (not asyncio.Lock): the registry
@@ -26,15 +26,14 @@ _MAX_RETAINED_RUNS: int = SUBAGENT_INFRA["registry_max_retained_runs"]
 
 
 def _is_terminal(run: SubagentRunRecord) -> bool:
-    """Whether the run reached a final state (safe to evict from memory)."""
-    status = getattr(getattr(run, "execution", None), "status", None)
-    return str(getattr(status, "value", status) or "").upper() in {
-        "COMPLETED",
-        "FAILED",
-        "TIMEOUT",
-        "CANCELLED",
-        "STOPPED",
-    }
+    """Whether the run reached a final state (safe to evict from memory).
+
+    Compared against the ENUM, not string literals: ``ExecutionStatus`` holds
+    ``pending / running / interrupted / terminal``, so the older literal set
+    (``COMPLETED``, ``FAILED``, …) matched nothing and the cap below never
+    evicted — the process grew until the dev DB held thousands of runs.
+    """
+    return getattr(getattr(run, "execution", None), "status", None) == ExecutionStatus.TERMINAL
 
 
 def _evict_overflow() -> None:
@@ -60,6 +59,21 @@ def set_run(run: SubagentRunRecord) -> None:
         _runs[run.run_id] = run
         _runs.move_to_end(run.run_id)
         _evict_overflow()
+
+
+def set_run_durable(run: SubagentRunRecord) -> None:
+    """``set_run`` + an immediate SQLite mirror.
+
+    Used by DELIVERY transitions: those are the last fact a run produces, and
+    they used to reach disk only through the 30 s periodic flush — a crash in
+    that window left SQLite saying TERMINAL+PENDING, which has no retry path,
+    so the completed result was lost forever. The hot paths (per-tool-call
+    updates) keep the plain in-memory setter.
+    """
+    set_run(run)
+    from . import store_sqlite
+
+    store_sqlite.upsert_run_sync(run)
 
 
 def delete(run_id: str) -> SubagentRunRecord | None:

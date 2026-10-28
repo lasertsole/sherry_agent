@@ -99,6 +99,15 @@ def _clip(text: Any, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1] + "…"
 
 
+#: Per-session prune cadence: the retention policy is a slow background concern,
+#: so a session pays for at most one prune per interval rather than per event.
+_PRUNE_INTERVAL_S = 60.0
+
+#: A reader (the trajectory tab) shares this file with the writer: wait instead
+#: of failing. Matches the checkpointer's choice, at the tab's shorter horizon.
+_BUSY_TIMEOUT_MS = 5_000
+
+
 def _event_id(session_id: str, turn_id: str, kind: str, frame: dict[str, Any]) -> str:
     """Deterministic upsert key: one row per tool call, one per other event kind."""
     if kind in ("tool_start", "tool_end"):
@@ -143,6 +152,8 @@ class TrajectoryStore:
         )
         self._lock = asyncio.Lock()
         self._ready = False
+        #: ``session_id -> monotonic`` of the last prune; see ``_prune_if_due``.
+        self._last_prune: dict[str, float] = {}
 
     # -- schema -----------------------------------------------------------
 
@@ -156,6 +167,12 @@ class TrajectoryStore:
         import aiosqlite
 
         async with aiosqlite.connect(self._db_path) as db:
+            # WAL lives in the database header (set once), busy_timeout does NOT
+            # (per connection, defaults to 0): the trajectory tab reads this file
+            # while the agent writes it, so a reader would otherwise fail with
+            # SQLITE_BUSY instead of waiting.
+            await db.execute("PRAGMA journal_mode = WAL")
+            await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             for ddl in self._ddls():
                 await db.execute(ddl)
             await db.commit()
@@ -217,6 +234,21 @@ class TrajectoryStore:
                 await db.commit()
         except Exception:
             logger.debug("trajectory projection failed (fail-open)", exc_info=True)
+            return
+        await self._prune_if_due(session_id)
+
+    async def _prune_if_due(self, session_id: str) -> None:
+        """Apply the retention policy at most once per interval per session.
+
+        ``prune_session`` used to be dead code while the docs promised
+        "pruned on write" — the ledger grew without bound. Calling it per event
+        would add a GROUP BY to every tool call, so it is debounced.
+        """
+        now = time.monotonic()
+        if now - self._last_prune.get(session_id, 0.0) < _PRUNE_INTERVAL_S:
+            return
+        self._last_prune[session_id] = now
+        await self.prune_session(session_id)
 
     async def prune_session(self, session_id: str) -> int:
         """Keep only the newest ``max_turns_per_session`` turns for a session."""
@@ -228,9 +260,13 @@ class TrajectoryStore:
             import aiosqlite
 
             async with self._lock, aiosqlite.connect(self._db_path) as db:
+                # Order by ROWID, not ``MAX(seq)``: the seq column is 0 for
+                # every lifecycle row and never exceeds 0 today, so ordering by
+                # it kept an ARBITRARY set of turns — the retention policy must
+                # follow insertion order, which is the turn order.
                 cursor = await db.execute(
-                    "SELECT turn_id, MAX(seq) AS last_seq FROM trajectory_events "
-                    "WHERE session_id = ? GROUP BY turn_id ORDER BY last_seq DESC",
+                    "SELECT turn_id, MAX(rowid) AS last_row FROM trajectory_events "
+                    "WHERE session_id = ? GROUP BY turn_id ORDER BY last_row DESC",
                     (session_id,),
                 )
                 rows: list[Any] = list(await cursor.fetchall())
@@ -250,6 +286,7 @@ class TrajectoryStore:
 
     async def delete_session(self, session_id: str) -> int:
         """Delete every trajectory event of a purged session."""
+        self._last_prune.pop(session_id, None)
         try:
             await self._ensure()
             import aiosqlite

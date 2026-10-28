@@ -32,6 +32,24 @@
 
 읽기는 스트림 generator와 같은 이벤트 루프에서 실행되므로 텍스트와 시퀀스 번호가 같은 일관된 컷에서 읽히며 락이 필요 없습니다. 등록된 엔진이 없으면 실행 중 턴이 없고 스냅샷 함수는 `None`을 반환합니다. HTTP 히스토리 경로는 표시용 메타데이터로 `turn_num`(다음에 영속화될 턴 번호)을 덧붙입니다.
 
+## 영속 실행: 크래시 후에도 살아남는 것
+
+Sherry의 내구성 모델은 **"상태는 영속 + sweeper가 보완 + 새 turn이 재구동"**이며 Temporal식 액티비티 재실행이 아닙니다. 크래시는 재생할 수 없지만, 어떤 **상태**도 거짓말하지 않음을 보장할 수 있다면 복구에 진실된 근거가 생깁니다. 2026-10에 다섯 하위 시스템(HITL, 체크포인터, TaskFlow, 서브에이전트 레지스트리, 증거 원장)을 감사하고 첫 배치를 수정했습니다:
+
+| 결함 | 수정 |
+| :--- | :--- |
+| 레지스트리의 종료 판정이 문자열 리터럴(`COMPLETED` 등)을 값이 `pending / running / interrupted / terminal`인 열거형과 비교——일치하지 않아 보존 상한이 동작하지 않고 메모리가 무한히 증가 | `ExecutionStatus.TERMINAL`과 비교. 상한은 활성 run은 유지하고 오래된 종료 run을 제거 |
+| 세션 디렉터리 스윕이 원시 session id로 checkpoint를 조회. 체크포인터는 `session_thread_id(session_id)`(INTEGER)를 저장하므로 checkpoint만 남은 폴더가 빈 것으로 오인되어 삭제됨 | `pub.func`의 단일 `session_thread_id()` 매핑을 스윕에서 사용 |
+| trajectory는 "쓰기 시 정리"라고 문서화했지만 `prune_session` 호출자가 없었고, 정렬도 항상 0인 `MAX(seq)`라 임의의 turn 집합이 남음 | 쓰기 시 연결하고 세션당 60초로 제한해 실행, 삽입 순서(rowid) 정렬 |
+| 전역 keep-latest 정리가 `built_agent()`(즉 매 turn)에서, `busy_timeout` 없는 연결로 실행되고 keep-set을 삭제 전에 확정(그 사이 다른 세션이 커밋한 최신 checkpoint가 유실될 수 있음) | 부팅 시 1회(`server/service/checkpoint_maintenance.py`)로 이동, `BEGIN IMMEDIATE` 안에서 실행하고 keep은 최상위 행 우선 |
+| 모든 체크포인터 연결에 `busy_timeout`이 없음(WAL과 달리 연결 단위 PRAGMA) | 단일 헬퍼(`agent/checkpointer/pragmas.py`, 30초)로 통일 |
+| `delete_thread_history`에 보호가 없어 DB 잠금 시 메시지 저장소를 비운 뒤 purge가 중단——반쪽 삭제의 최악 | 각 단계를 보호하고 checkpoint 삭제를 가장 먼저 수행(재시도로 항상 완료 가능) |
+| 종료 run의 전달 상태가 30초 주기 flush로만 디스크에 도달했고 그 창의 크래시는 SQLite를 TERMINAL+PENDING으로 남김——재시도 경로가 없어 완료 결과가 영구 유실 | 전달 상태 전이(`delivered / failed / suspended / in_progress`)를 즉시 영속화(`set_run_durable`) |
+| auto-turn 드라이버가 빈 구현의 `apply_hitl_pending`을 상속해, headless turn 중단 후 그래프는 멈춰 있는데 세션은 idle로 보였음: 턴 종료 정리가 그 checkpoint를 지우고 drain이 새 메시지를 멈춘 그래프에 주입할 수 있었음 | 드라이버가 플래그를 설정. `submit_user_input`도 checkpoint의 interrupt를 busy로 간주(페일오픈 탐색). 재시작 후의 전형적 경우 |
+
+감사의 남은 항목(세션 전체에 걸친 부팅 시 HITL 재구성, 영속 타임스탬프를 `time.monotonic()`에서 실제 시간으로, 재시작 후 in-flight step 복귀, P3/P4 증거·관측성 배치)은 계획에서 추적하며 완료로 간주하지 않습니다.
+
+
 ## 프레임 시퀀스와 워터마크
 
 `StreamTurn.run()`이 내보내는 모든 프레임은 yield 전에 턴 단위 단조 `_frame_seq`를 찍습니다:

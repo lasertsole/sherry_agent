@@ -253,10 +253,15 @@ class _AutoTurnStreamDriver(StreamDriver):
     """Driver for the idle auto turn.
 
     Hard rules honored: never touches ``_active_tasks`` / ``answering`` /
-    ``_pending_args`` (all owned by ``async_generate``) and never sets the
-    HITL-pending flag (the auto turn historically never did). The done frame
-    falls back to ``null`` (not ``""``/``0``) when no meta chunk arrived —
-    the original wire shape of this path.
+    ``_pending_args`` (all owned by ``async_generate``). The done frame falls
+    back to ``null`` (not ``""``/``0``) when no meta chunk arrived — the
+    original wire shape of this path.
+
+    It DOES set the HITL-pending flag now (``apply_hitl_pending`` below). It
+    inherited the base class's no-op, which meant a headless auto turn that
+    interrupted left the graph suspended while the session looked idle: the
+    turn-end prune could then delete that very checkpoint and the drain could
+    feed a new HumanMessage into the suspended graph.
     """
 
     done_model_name = None
@@ -269,6 +274,17 @@ class _AutoTurnStreamDriver(StreamDriver):
 
     async def check_interrupt(self) -> dict[str, Any] | None:
         return await get_pending_interrupt(self.session_id)
+
+    def apply_hitl_pending(self) -> None:
+        """Flag the session HITL-pending — the base class's no-op lost it.
+
+        Without this the interrupt was invisible to ``on_turn_finished`` (which
+        then pruned checkpoints and kicked the drain) and to the drain loop
+        itself, so a queued message could be injected into a suspended graph.
+        """
+        from agent.tools.subagent.registry.session_state import set_hitl_pending
+
+        set_hitl_pending(self.session_id, True)
 
     def log_error(self, exc: Exception, elapsed: float) -> None:
         logger.error("auto_turn: turn failed for {}: {}", self.session_id, exc)

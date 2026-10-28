@@ -101,8 +101,15 @@ def _checkpoints_has_session(session_id: str) -> bool:
             return False
         conn = sqlite3.connect(str(db_path))
         try:
+            # ``thread_id`` is an INTEGER: the checkpointer writes
+            # ``session_thread_id(session_id)``, so probing with the raw session
+            # id never matched and the sweep deleted every checkpoint-only
+            # session folder.
+            from pub.func import session_thread_id
+
             cursor = conn.execute(
-                "SELECT 1 FROM checkpoints WHERE thread_id = ? LIMIT 1", (session_id,)
+                "SELECT 1 FROM checkpoints WHERE thread_id = ? LIMIT 1",
+                (session_thread_id(session_id),),
             )
             return cursor.fetchone() is not None
         finally:

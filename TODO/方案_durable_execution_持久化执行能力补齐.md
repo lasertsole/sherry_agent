@@ -1,10 +1,29 @@
 # 方案：Durable Execution 持久化执行能力补齐（深挖版）
 
 - 建档日期：2026-10-28
-- 状态：**待评审 / 未开工**
+- 状态：**部分落地（2026-10-29）** —— 见下方「进度」；剩余项仍待排期。
 - 目标：穷举 sherry 的五个 durable execution 子系统在**所有场景、所有条件分支**下无法实现 durable execution 的情景，给出修复方案、实施阶段、验收标准。
 - 设计理念：sherry 的 durable execution 不是"自动 replay 工作流"（如 Temporal/Restate），而是 **"状态持久 + sweeper 兜底 + 新 turn 重驱动"**。本方案只补"状态活了但执行没活"的卡死/僵尸/重复，以及"并发写互相打断"的启动失败，**不追求 activity 自动重放**。
 - 范围：HITL 中断/恢复、checkpointer 崩溃时点、TaskFlow step/flow 状态机、subagent 生命周期、evidence ledger。
+
+## 进度（2026-10-29 第一批）
+
+已落地并测试（19 条新用例，回归门 A/B/C 全过）：
+
+| 项 | 落地内容 |
+|---|---|
+| P0-1 | `_is_terminal` 改为比对 `ExecutionStatus.TERMINAL`（原字符串集合永不命中 → 保留上限失效） |
+| P0-2 | `pub.func.session_thread_id()` 单一映射；`session_dir_sweep` 改用它查询（原用原始 session id 查 INTEGER 列） |
+| P0-3 | `prune_session` 接线（写入路径，按会话 60s 节流）；排序由恒 0 的 `MAX(seq)` 改为 rowid 插入序 |
+| P2-1 | `agent/checkpointer/pragmas.py`（busy_timeout 30s）统一主连接 / 两个 prune / delete / purge |
+| P2-2 | 全局 keep-latest 剪枝移出 `built_agent()`（原每轮执行）→ 启动一次（`server/service/checkpoint_maintenance.py`），`BEGIN IMMEDIATE` 内执行，keep 偏向顶层行；`finally` 关连接 |
+| P2-3 | purge 顺序反转（checkpoint 最先删）+ 每步异常保护；另补 `set_hitl_pending(False)` 清理 |
+| P1-1（后半） | `submit_user_input` 把 checkpoint 里的 pending interrupt 当 busy 信号（fail-open 探测） |
+| P1-2（前半） | `_AutoTurnStreamDriver.apply_hitl_pending` 重写（原为空实现 no-op） |
+| P1-4 | 交付状态迁移（delivered/failed/suspended/in_progress）即时落盘 `set_run_durable` |
+| P4-2 | trajectory `journal_mode=WAL` + `busy_timeout=5000` |
+
+**未做（仍需排期）**：P1-1 前半（启动期跨会话 HITL 重建——每 session 建图，需分批与成本评估）、P1-2 后半（A1/A2/A3/A8/A9 五个 interrupt 点的 headless deny）、P1-3（恢复的 RUNNING 标 INTERRUPTED + PENDING child announce）、P1-5（boot heal + CLAIMED recover）、P1-6（持久化时间戳 monotonic → wall-clock，涉及面广）、P3 全部（13 项，含 stale 自愈、flow_id fallback、循环依赖检测等）、P4-1/P4-3（error 事件生产者、seq）。
 
 ## 0. 结论先行
 

@@ -307,28 +307,29 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
         return AnnounceDeliveryResult(success=True)
 
     if not run.completion.required:
-        from ..registry import mark_delivery_delivered, set_run
+        from ..registry import mark_delivery_delivered, set_run_durable
 
         updated = mark_delivery_delivered(run)
-        set_run(updated)
+        set_run_durable(updated)
         return AnnounceDeliveryResult(success=True)
 
     from ..registry import (
         mark_delivery_in_progress,
         mark_delivery_delivered,
         mark_delivery_suspended,
-        set_run,
         count_pending_descendant_runs,
+        set_run,
+        set_run_durable,
     )
 
     pending_count = count_pending_descendant_runs(run.requester_session_key)
     if pending_count >= config.delivery_suspend_hard_cap:
         updated = mark_delivery_suspended(run)
-        set_run(updated)
+        set_run_durable(updated)
         return AnnounceDeliveryResult(success=False, suspended=True, error="Hard cap exceeded")
 
     updated = mark_delivery_in_progress(run)
-    set_run(updated)
+    set_run_durable(updated)
     run = updated
 
     target_key = run.requester_session_key
@@ -363,7 +364,7 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
         await _maybe_route_third_path(run, result)
         _mark_delivered(run)
         updated = mark_delivery_delivered(run)
-        set_run(updated)
+        set_run_durable(updated)
     elif not result.suspended:
         now = time.monotonic()
         from ..registry.delivery_state import should_discard_delivery
@@ -374,11 +375,11 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
             from ..registry import mark_delivery_discarded
 
             updated = mark_delivery_discarded(run, reason="max_retries_or_expiry")
-            set_run(updated)
+            set_run_durable(updated)
             result.terminal = True
         elif pending_count >= config.delivery_suspend_soft_cap:
             updated = mark_delivery_suspended(run)
-            set_run(updated)
+            set_run_durable(updated)
             result.suspended = True
 
     return result
@@ -477,10 +478,10 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
                 )
                 return AnnounceDeliveryResult(success=False, error=f"permanent: {error_str}")
 
-            from ..registry import mark_delivery_failed, set_run
+            from ..registry import mark_delivery_failed, set_run_durable
 
             updated = mark_delivery_failed(run, error_str)
-            set_run(updated)
+            set_run_durable(updated)
             run = updated
 
             if error_class == "transient":

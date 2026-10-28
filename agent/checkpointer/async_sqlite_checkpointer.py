@@ -2,6 +2,7 @@ import aiosqlite
 from pathlib import Path
 from config import SRC_DIR
 from pub.func import rand_str_to_int
+from agent.checkpointer.pragmas import connect_with_busy_timeout
 from agent.checkpointer.thread_safe_checkpointer import (
     ThreadSafeAsyncSqliteSaver,
 )
@@ -13,7 +14,9 @@ async def build_async_sqlite_checkpointer() -> ThreadSafeAsyncSqliteSaver:
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     sqlite_file_path: Path = checkpoints_dir / "sqlite.db"
 
-    conn: aiosqlite.Connection = await aiosqlite.connect(sqlite_file_path, check_same_thread=False)
+    # busy_timeout first: WAL is inherited from the database header, but the
+    # timeout is per connection, and every other module opens its own.
+    conn: aiosqlite.Connection = await connect_with_busy_timeout(sqlite_file_path)
     await conn.execute("PRAGMA journal_mode = WAL")
     await conn.execute("PRAGMA foreign_keys = ON")
     await conn.execute("PRAGMA cache_size=-64000")
@@ -34,10 +37,13 @@ async def delete_thread_history(session_id: str) -> None:
     # async with guarantees the connection (and its file handle) is closed on
     # both success and failure paths — without it, every clear_session call
     # leaked one connection. Uncommitted work is rolled back on close.
-    async with aiosqlite.connect(sqlite_file_path, check_same_thread=False) as _conn:
-        await _conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-        await _conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-        await _conn.commit()
+    conn = await connect_with_busy_timeout(sqlite_file_path)
+    try:
+        await conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        await conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+        await conn.commit()
+    finally:
+        await conn.close()
 
 
 async def prune_session_checkpoints(session_id: str) -> dict[str, int]:
@@ -52,7 +58,7 @@ async def prune_session_checkpoints(session_id: str) -> dict[str, int]:
     if not sqlite_file_path.exists():
         return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
 
-    conn = await aiosqlite.connect(sqlite_file_path, check_same_thread=False)
+    conn = await connect_with_busy_timeout(sqlite_file_path)
     try:
         saver = ThreadSafeAsyncSqliteSaver(conn)
         return await saver.aclean_thread_checkpoints(str(rand_str_to_int(session_id)))

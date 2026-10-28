@@ -88,6 +88,19 @@ async def purge_session_data(session_id: str) -> None:
     if not is_safe_session_id(session_id):
         raise ValueError(f"invalid session_id: {session_id!r}")
 
+    # (0) sqlite checkpointer — checkpoints + writes for this thread. FIRST on
+    # purpose: the purge spans four independent stores and cannot be atomic, so
+    # the surviving half decides whether a retry can finish the job. A leftover
+    # checkpoint whose message rows are gone is invisible (nothing lists it) and
+    # never re-purged; a leftover message row whose checkpoint is gone is still
+    # listed, so the next attempt deletes it. Guarded like every other step: a
+    # SQLITE_BUSY here used to abort the whole purge AFTER mes_memory was
+    # already deleted — the worst of both halves.
+    try:
+        await delete_thread_history(session_id=session_id)
+    except Exception as e:  # noqa: BLE001 - best-effort like the other steps
+        logger.warning(f"Failed to clear checkpoints for session_id={session_id}: {e}")
+
     # (1) Context engine mes_memory store — messages for this session. The bulk
     # DELETE is blocking SQLite, so it runs on a worker thread (audit-hygiene:
     # no store I/O on the event loop).
@@ -123,8 +136,14 @@ async def purge_session_data(session_id: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to clear planning stores for session_id={session_id}: {e}")
 
-    # (3) sqlite checkpointer — checkpoints + writes for this thread.
-    await delete_thread_history(session_id=session_id)
+    # (3) In-memory HITL flag — a deleted session must not leave a pending flag
+    # that keeps its (now nonexistent) thread "busy" for the drain loop.
+    try:
+        from server.service.turn_runner import set_hitl_pending
+
+        set_hitl_pending(session_id, False)
+    except Exception as e:  # noqa: BLE001 - a flag reset must never block the purge
+        logger.warning(f"Failed to clear the HITL flag for {session_id}: {e}")
 
     # (3.5) Background terminal tasks: the processes are children of THIS
     # process, so a deleted session's live commands must be terminated before

@@ -186,8 +186,11 @@ class TestConditionalVacuum:
         real_connect = aiosqlite.connect
         saver = ThreadSafeAsyncSqliteSaver(await real_connect(":memory:"))
 
-        def failing_connect(*args: Any, **kwargs: Any) -> _VacuumFailer:
-            return _VacuumFailer(real_connect(*args, **kwargs))
+        async def failing_connect(*args: Any, **kwargs: Any) -> _VacuumFailer:
+            # The production helper AWAITS the connection (it runs a PRAGMA on it
+            # first), so the fake factory must be a coroutine function that wraps
+            # the already-opened connection.
+            return _VacuumFailer(await real_connect(*args, **kwargs))
 
         monkeypatch.setattr(aiosqlite, "connect", failing_connect)
         stream = io.StringIO()

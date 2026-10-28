@@ -235,6 +235,15 @@ def main() -> None:
     hooks.register(hooks.BROWSER_MANAGER, get_browser_manager)
     atexit.register(shutdown_browser_blocking)
 
+    # Checkpoint housekeeping: the ONE global keep-latest prune runs here, at
+    # boot — it used to run inside built_agent(), i.e. every turn, which made
+    # the shared checkpoint DB take a competing writer per turn (SQLITE_BUSY
+    # turn failures) and let a concurrent commit land between the prune's
+    # SELECT and DELETE. Fail-open: a locked DB never blocks startup.
+    from server.service.checkpoint_maintenance import clean_checkpoints_at_boot
+
+    asyncio.run(clean_checkpoints_at_boot())
+
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle
 
