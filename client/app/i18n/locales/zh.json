@@ -691,5 +691,8 @@
       "tavily_timeout": "请求超时",
       "tavily_error": "请求失败"
     }
+  },
+  "loadGate": {
+    "warning": "主机负载过高（CPU {cpu}% / 内存 {ram}%），子代理派发已暂缓，负载回落后会自动继续。"
   }
 }

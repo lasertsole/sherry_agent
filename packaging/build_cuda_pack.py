@@ -86,6 +86,8 @@ def _build_tree() -> Path:
         args += ["--collect-all", package]
     for package in bb.COLLECT_SUBMODULES:
         args += ["--collect-submodules", package]
+    for module in bb.HIDDEN_IMPORTS:
+        args += ["--hidden-import", module]
     for module in bb.EXCLUDES:
         args += ["--exclude-module", module]
     args.append(str(ROOT / "packaging" / "backend_entry.py"))

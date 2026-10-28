@@ -180,6 +180,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ lanes: runtime/lane/lane_slot() gates every dispatch point —
   │    MAIN(turn) / SUBAGENT(child) / NUDGE(memory) / NESTED(sessions.send)
+  │    (the SUBAGENT lane ALSO sits behind the load gate, below)
   │
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
@@ -1923,6 +1924,27 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
   fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
   sandbox actually runs — neither backend has ever been verified on one.
+- **The SUBAGENT lane sits behind a load gate**
+  (`agent/tools/pub_base/load_gate.py`, `LANE_SYSTEM["load_gate_*"]`). The lane
+  is COUNTING backpressure ("are all 8 slots busy"); the gate is the
+  environment half ("can the machine carry one more"). It runs BEFORE
+  `lane_slot(SUBAGENT)` in `_execute_subagent_with_lane`, so a deferred dispatch
+  holds no slot: at ≥90% CPU/RAM it only logs (the cap throttles there), at
+  ≥95% it defers — the run stays PENDING, ONE `load_warning` frame goes to the
+  session (module-level per-run throttle), and it re-checks after
+  `load_gate_retry_s`. The deferral is BOUNDED: past `load_gate_max_defer_s`
+  (600 s) the run is terminalized via `complete_run(TIMEOUT, error="load_timeout:
+  …")` rather than abandoned, because an abandoned PENDING run is an orphan the
+  sweeper would re-dispatch → defer again (a loop); a kill during the wait is
+  seen through `kill_reconciliation` (a killed PENDING run is NOT TERMINAL) and
+  ends it at once. Sampling (three CPU intervals ≈4.5 s) runs in
+  `asyncio.to_thread` at most once per `load_gate_snapshot_ttl_s` (5 s) for the
+  whole process — concurrent waiters share one verdict — and FAILS OPEN on a
+  psutil error (a broken monitor must not stall dispatch) while honouring a real
+  stop. Shipped `load_gate_enabled: False` (byte-for-byte the old behavior);
+  enabling it requires the packaging smoke step that proves psutil reached the
+  frozen tree (`HIDDEN_IMPORTS` in `packaging/build_backend.py`), because the
+  import is lazy and invisible to the freezer.
 - **Sherry's own files are gated by two allow-lists**
   (`agent/tools/pub_base/self_path_policy.py`). Nothing configured means the
   session root IS the checkout, so the in-root test used to call the whole

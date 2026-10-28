@@ -71,7 +71,12 @@ export type AgentWsEventType =
    * The model-call retry loop scheduled / completed / exhausted a retry. The
    * chat row renders the attempt counter while the turn streams.
    */
-  | 'model_retry';
+  | 'model_retry'
+  /**
+   * The SUBAGENT lane's load gate deferred a dispatch (host CPU/memory at the
+   * hard-stop threshold). Best-effort, once per run: a notice, never a blocker.
+   */
+  | 'load_warning';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';

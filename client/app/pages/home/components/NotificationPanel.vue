@@ -81,6 +81,10 @@ const SOURCE_STYLES: Record<NotificationItem['source'], { card: string; icon: st
   web_search: {
     card: 'border-violet-200 bg-violet-50/60 dark:border-violet-800/60 dark:bg-violet-900/20',
     icon: 'pi-globe text-violet-500'
+  },
+  load_gate: {
+    card: 'border-orange-200 bg-orange-50/60 dark:border-orange-800/60 dark:bg-orange-900/20',
+    icon: 'pi-gauge text-orange-500'
   }
 };
 
@@ -103,7 +107,8 @@ onBeforeUnmount(() => store.setPanelVisible(false));
       "source": {
         "heartbeat": "心跳任务",
         "cron": "定时任务",
-        "web_search": "联网搜索降级"
+        "web_search": "联网搜索降级",
+        "load_gate": "主机负载"
       },
       "merge": {
         "count": "{count} ×"
@@ -117,7 +122,8 @@ onBeforeUnmount(() => store.setPanelVisible(false));
       "source": {
         "heartbeat": "Heartbeat Task",
         "cron": "Scheduled Task",
-        "web_search": "Web-search downgrade"
+        "web_search": "Web-search downgrade",
+        "load_gate": "Host load"
       },
       "merge": {
         "count": "{count} ×"
@@ -131,7 +137,8 @@ onBeforeUnmount(() => store.setPanelVisible(false));
       "source": {
         "heartbeat": "ハートビートタスク",
         "cron": "定期タスク",
-        "web_search": "ウェブ検索の降格"
+        "web_search": "ウェブ検索の降格",
+        "load_gate": "ホスト負荷"
       },
       "merge": {
         "count": "{count} ×"
@@ -145,7 +152,8 @@ onBeforeUnmount(() => store.setPanelVisible(false));
       "source": {
         "heartbeat": "하트비트 태스크",
         "cron": "정기 태스크",
-        "web_search": "웹 검색 강등"
+        "web_search": "웹 검색 강등",
+        "load_gate": "호스트 부하"
       },
       "merge": {
         "count": "{count} ×"

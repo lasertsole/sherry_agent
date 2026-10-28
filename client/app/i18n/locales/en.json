@@ -691,5 +691,8 @@
       "tavily_timeout": "the request timed out",
       "tavily_error": "the request failed"
     }
+  },
+  "loadGate": {
+    "warning": "Host load is too high (CPU {cpu}% / RAM {ram}%) — subagent dispatch is paused and resumes automatically once load drops."
   }
 }

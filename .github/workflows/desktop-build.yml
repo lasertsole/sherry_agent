@@ -91,6 +91,25 @@ jobs:
       - name: Build the backend tree
         run: uv run --no-sync python packaging/build_backend.py
 
+      # The load gate imports psutil lazily (inside a function), so the freezer
+      # cannot see it, and it ships a per-platform C extension: prove the payload
+      # actually landed in the tree before shipping it.
+      - name: Verify psutil made it into the frozen tree (load gate)
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" - <<'EOF'
+          import pathlib
+          import sys
+
+          tree = pathlib.Path("client/src-tauri/sherry-backend/_internal")
+          hits = sorted(p for p in tree.rglob("psutil*"))
+          print(f"psutil payload entries: {len(hits)}")
+          for hit in hits[:5]:
+              print(" ", hit.relative_to(tree))
+          sys.exit(0 if hits else "psutil is MISSING from the frozen backend tree")
+          EOF
+
       # Release hygiene: the frozen tree must not carry the repo's tests, docs
       # or generated wiki. build_backend.py runs the same guard; this step makes
       # the check explicit in the workflow log.

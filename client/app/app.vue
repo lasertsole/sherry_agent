@@ -37,6 +37,7 @@
 <script lang="ts" setup>
 import { storeToRefs } from 'pinia';
 import { useConnectionStore } from '~/stores/connection';
+import { useLoadGateStore } from '~/stores/load-gate';
 
 // Client-side initialization restores the selected locale (paired with detectBrowserLanguage: false in nuxt.config.ts).
 // Background: Nuxt i18n's browser-language auto detection under prefix_except_default would auto-redirect
@@ -116,6 +117,10 @@ onMounted(async () => {
   // The returned stop handle needs no saving: app.vue is the root component and shares the page's
   // lifecycle.
   void startConnectionWatch();
+
+  // The SUBAGENT lane's load gate reports a deferred dispatch as a notice; the
+  // listener is process-wide (the frame carries its own session id).
+  useLoadGateStore().subscribe();
 
   // 1) Cookie: the user's last chosen language (highest priority, persisted preference)
   const cookieLocale = readCookie(PREF_COOKIE);

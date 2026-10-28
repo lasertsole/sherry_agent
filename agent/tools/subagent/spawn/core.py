@@ -15,11 +15,14 @@ Pipeline overview:
 
 import os
 import re
+import time
 import uuid
 import asyncio
 from pathlib import Path
 from loguru import logger
 from typing import Any, Literal
+
+from config.features import LANE_SYSTEM
 from ..config import get_config
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
@@ -874,6 +877,109 @@ async def spawn_subagent_direct(
     )
 
 
+#: Runs already notified about a deferred dispatch. Module-level on purpose: the
+#: registry record has no generic metadata slot, and the throttle only has to
+#: survive this process. Cleaned when the run leaves the lane wrapper.
+_load_warned_runs: set[str] = set()
+
+
+def _is_run_killed(run: SubagentRunRecord) -> bool:
+    """Whether a deferred dispatch should stop waiting.
+
+    A PENDING run that is killed does NOT become TERMINAL (the kill path only
+    records ``kill_reconciliation``), so checking the status alone would keep
+    waiting for a run nobody will ever execute.
+    """
+    return run.execution.status == ExecutionStatus.TERMINAL or run.kill_reconciliation is not None
+
+
+def _fail_run_load_timeout(run: SubagentRunRecord, gate: Any) -> None:
+    """Terminalize a dispatch the load gate never let through.
+
+    MUST terminalize, not merely return: an abandoned PENDING run is an orphan,
+    and the sweeper's orphan recovery would re-dispatch it → another deferral →
+    a loop. ``ended_reason`` comes from the outcome status (``timeout``), and the
+    load-specific detail rides the outcome's error text.
+    """
+    from ..registry.run_manager import complete_run
+
+    complete_run(
+        run.run_id,
+        RunOutcome(
+            status=RunOutcomeStatus.TIMEOUT,
+            error=(
+                f"load_timeout: host load stayed above the gate for more than "
+                f"{LANE_SYSTEM['load_gate_max_defer_s']:.0f}s "
+                f"(cpu {gate.cpu:.0f}%, ram {gate.ram:.0f}%)"
+            ),
+        ),
+    )
+    logger.warning(
+        "subagent run {} terminalized: deferred by the load gate past the budget", run.run_id
+    )
+
+
+async def _notify_load_warning(run: SubagentRunRecord, gate: Any) -> None:
+    """Push the ``load_warning`` frame for this run ONCE (best effort)."""
+    if run.run_id in _load_warned_runs:
+        return
+    _load_warned_runs.add(run.run_id)
+    try:
+        from runtime.session.ws_push import broadcast_to_session
+
+        frame = {
+            "event": "load_warning",
+            "session_id": run.requester_session_key,
+            "content": {
+                "cpu": round(gate.cpu, 1),
+                "ram": round(gate.ram, 1),
+                "run_id": run.run_id,
+            },
+        }
+        await broadcast_to_session(run.requester_session_key, frame)
+    except Exception as e:  # noqa: BLE001 — a notice must never block the wait
+        logger.warning("Failed to push load_warning for run {}: {}", run.run_id, e)
+
+
+async def _wait_for_load_gate(run: SubagentRunRecord) -> bool:
+    """Wait out a stop verdict BEFORE taking a lane slot. False = give up.
+
+    Placed in front of ``lane_slot`` on purpose: a deferred dispatch must not
+    consume a slot it will not use. The wait reads the process-wide snapshot
+    (no per-run sampling), backs off ``load_gate_retry_s`` at a time, and gives
+    up either when the run is killed or when the deferral budget is spent (the
+    run is then terminalized — see :func:`_fail_run_load_timeout`).
+    """
+    if not LANE_SYSTEM["load_gate_enabled"]:
+        return True  # shipped-off: byte-for-byte the old behavior, no sampling
+
+    from agent.tools.pub_base.load_gate import get_load_gate
+
+    defer_started = time.monotonic()
+    while True:
+        gate = await get_load_gate()
+        if not gate.stop:
+            return True
+        elapsed = time.monotonic() - defer_started
+        budget = float(LANE_SYSTEM["load_gate_max_defer_s"])
+        if elapsed >= budget:
+            _fail_run_load_timeout(run, gate)
+            return False
+        logger.info(
+            "subagent run {} deferred by the load gate (cpu={:.0f}% ram={:.0f}%)",
+            run.run_id,
+            gate.cpu,
+            gate.ram,
+        )
+        await _notify_load_warning(run, gate)
+        # Never sleep past the budget: a short max_defer must be observed on time.
+        await asyncio.sleep(min(float(LANE_SYSTEM["load_gate_retry_s"]), budget - elapsed))
+        current = get_run(run.run_id)
+        if current is None or _is_run_killed(current):
+            logger.info("subagent run {} killed while deferred by the load gate", run.run_id)
+            return False
+
+
 async def _execute_subagent_with_lane(
     run: SubagentRunRecord,
     system_prompt: str,
@@ -897,6 +1003,9 @@ async def _execute_subagent_with_lane(
     from runtime.lane import LaneType, lane_slot
 
     try:
+        # The environment gate runs FIRST: a deferred dispatch holds no slot.
+        if not await _wait_for_load_gate(run):
+            return
         logger.debug("subagent run {} waiting for a SUBAGENT lane slot", run.run_id)
         async with lane_slot(LaneType.SUBAGENT):
             current = get_run(run.run_id)
@@ -928,6 +1037,7 @@ async def _execute_subagent_with_lane(
     finally:
         # Early return / cancellation paths never reach _execute_subagent's own
         # cleanup, so the task reference is released here exactly once.
+        _load_warned_runs.discard(run.run_id)
         from ..registry import remove_task
 
         remove_task(run.run_id)
