@@ -468,9 +468,7 @@ class TestEmptyOutput:
     def test_an_empty_command_returns_a_default_hint(
         self, tool: SafeShellTool, sessions_root: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(
-            subprocess, "Popen", lambda *a, **kw: _SilentSyncProc(*a, **kw)
-        )
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: _SilentSyncProc(*a, **kw))
 
         out = tool._run(["true"], session_id=_SID)
 
