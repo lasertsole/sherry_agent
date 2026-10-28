@@ -167,18 +167,21 @@ def _check_role_containment(
     requester_session_key: str,
     child_functional_role: FunctionalRole,
 ) -> str | None:
-    """Reject cross-role spawning from a specialized parent.
+    """Reject escalation-capable spawning from a specialized parent.
 
     MAIN (no run record) and general (``tools: inherit`` = every tool) impose no
     restriction: every specialized role's whitelist is a subset of theirs, so no
-    escalation is possible. A specialized parent (researcher / executor /
-    reviewer / librarian) may only spawn children of the SAME functional role —
-    same role = same whitelist = the child can do exactly what the parent can.
-    Without this, a read-only researcher could hire a write-capable executor.
+    escalation is possible. A specialized parent may spawn its OWN role plus any
+    roles listed in ``SPAWN_ALLOWED_CHILD_ROLES`` — an executor may therefore
+    spawn read-only researcher / librarian children to research before it
+    writes. The map only ever permits READ-ONLY extras, so no write-capable
+    escalation path opens, and a role ABSENT from the map keeps the legacy
+    same-role-only rule (a read-only researcher still cannot hire an executor).
 
     Returns the refusal text, or ``None`` when the spawn is allowed.
     """
     from ..registry import get_run_by_child_session_key
+    from ..types.functional_role import SPAWN_ALLOWED_CHILD_ROLES
 
     parent_run = get_run_by_child_session_key(requester_session_key)
     if parent_run is None:
@@ -186,12 +189,14 @@ def _check_role_containment(
     parent_role = getattr(parent_run, "functional_role", FunctionalRole.GENERAL)
     if parent_role == FunctionalRole.GENERAL:
         return None  # inherit mode: every specialized whitelist is a subset
-    if child_functional_role == parent_role:
+    allowed = SPAWN_ALLOWED_CHILD_ROLES.get(parent_role, frozenset({parent_role}))
+    if child_functional_role in allowed:
         return None
+    allowed_names = " / ".join(role.value for role in sorted(allowed, key=str))
     return (
         f"Capability containment: a {parent_role} subagent can only spawn "
-        f"{parent_role} children (requested {child_functional_role}). "
-        f'Pass functional_role="{parent_role}" for a same-role child; use a general '
+        f"these roles: {allowed_names} (requested {child_functional_role}). "
+        'Pass functional_role="<one of the allowed roles>"; use a general '
         "subagent or the main agent to spawn a different role."
     )
 

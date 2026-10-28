@@ -10,7 +10,7 @@
 
 - **`run_timeout_seconds` デフォルト 0.0 → 600.0（10 分）**：子エージェントが時間的に無制限に走ることはなくなりました。`spawn` と `steer` は再び子の `ainvoke` を `asyncio.wait_for` で包み、followup のタイムアウト検査も有効です（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）。sweeper の 2 時間 stale 検出は外側の安全網として残ります。呼び出し側は `sessions_spawn(run_timeout_seconds=...)` で spawn ごとに上書きでき、`0` は従来どおり「タイムアウトなし」です。
 - **ランタイム `sessions_spawn` ツールに `isolation` を追加**（同じ掃除で、それが守る「一段だけ」ルールも文書化）：モデルは隔離 git worktree を要求でき、cwd がすでに隔離ワークスペース内にある spawn は worktree の worktree を切らずにそのツリーを再利用します。従来このフィールドは build-time クラスにしかなく、隔離機能全体がモデル側から到達不能でした。
-- **能力の封じ込め（同ロール派生）**：特化した子（`researcher` / `executor` / `reviewer` / `librarian`）は**自分のロール**の子しか spawn できません。これまで read-only の researcher は ORCHESTRATOR 深度で書き込み可能な executor を雇えました——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来て、父のロールは関与しないためです。同じロール = 同じ allow-list で昇格経路が消えます。`MAIN` と `general`（inherit = 全ツール）は無制限のままで、クロスロール要求は**拒否**され、エラー文が直し方（`functional_role="<父ロール>"`）を示します（黙って付け替えることはありません）。`functional_role` はランタイムの `sessions_spawn` ツールにも公開され、同ロールの fan-out が表現可能になりました。
+- **能力の封じ込め（ロール許可リスト）**：特化した子（`researcher` / `executor` / `reviewer` / `librarian`）は許可リストのロールしか spawn できません——**自分のロール**に加え、executor は**読み取り専用**の `researcher` / `librarian` も spawn できます（書く前の調査）。これまで read-only の researcher は ORCHESTRATOR 深度で書き込み可能な executor を雇えました——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来て、父のロールは関与しないためです。同じロール = 同じ allow-list で昇格経路が消えます。`MAIN` と `general`（inherit = 全ツール）は無制限のままで、クロスロール要求は**拒否**され、エラー文が直し方（`functional_role="<父ロール>"`）を示します（黙って付け替えることはありません）。`functional_role` はランタイムの `sessions_spawn` ツールにも公開され、同ロールの fan-out が表現可能になりました。
 - **`sessions_spawn` がタイムアウトを公開**：`run_timeout_seconds` フィールドを追加（グローバル既定と並ぶ、モデル自身のレバー）。ツールはモデルが渡した値を**拒否せず** `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）に clamp します——60 秒という「短く」の意図は 10 分の下限に、99999 は 2 時間の上限に落ち着く——`None`／非正値は「未設定」（グローバル既定を使う）です。内部呼び出し側（TaskFlow dispatch、`delegate_task`）は clamp を迂回し、独自の境界を保ちます。
 - **新規 `sessions_messages` ツール**：`session_key` で子セッションの checkpoint トランスクリプトを読む（8 番目のランタイムツール）。タイムアウト／kill の場面向けです——`Status: timed out` で `Result:` が無いとき、呼び出し側は何も得られませんでしたが、子エージェントの checkpoint には実行したすべてのツール呼び出しが残っています。出力は token 予算化（合計 4 000、1 メッセージ 500）され、`spawned_by`／run の完了オーナーで認可されるため、その子を spawn したセッションだけが読めます。
 - **新規 `max_total_spawns_per_session`（50）**：セッション単位の累積 spawn バジェット（`registry/spawn_budget.py`。registry の他のライブビューと同じくプロセス内メモリ）。`max_children_per_agent`（5）が同時に走る子の数、こちらは「1つ終えたら次を起動」の無限繰り返し——詰まったオーケストレーターが陥る形——を制限します。`register_run` でカウント（登録に到達した spawn が対象）、spawn の admission ゲートで検査、セッション破棄で削除され、プロセス再起動でクリアされます。
@@ -76,8 +76,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── resolve_subagent_capabilities(depth, max_depth)：
   │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │     │     depth ≥ max → LEAF/NONE（capabilities/core.py）
-  │     └── 能力の封じ込め：特化（functional）の親は**同じ機能ロール**しか
-  │         spawn できない——MAIN/general は無制限
+  │     └── 能力の封じ込め：特化（functional）の親は許可リストのロールしか
+  │         spawn できない（自分のロール。executor は加えて読み取り専用の
+  │         researcher / librarian）——MAIN/general は無制限
   │
   ├── 3. モデルと思考プラン（Model & Thinking Plan、spawn/plan.py、
   │     spawn/thinking.py）
@@ -510,7 +511,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 **ツールポリシー。** ロールの `tools` 一覧は allow-list になります（既定の deny-list はクリア）。spawn ごとの `extra_tools` はその allow-list に加わりますが、どちらも無条件の `main_only` メタデータゲートと明示 deny-list の対象です。
 
-**能力の封じ込め。** 特化ロール（`researcher` / `executor` / `reviewer` / `librarian`）は**同じロール**の子だけを spawn できます：同じロール = 同じ allow-list = 子の能力は父とちょうど同じ。これがないと、read-only の researcher が ORCHESTRATOR 深度で書き込み可能な executor を spawn し、代わりに書かせられてしまいます——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来るのであって、父のロールで絞られることはありません。`MAIN`（run レコード無し）と `general`（inherit = 全ツール）は無制限です——特化ロールの allow-list はその部分集合だからです。クロスロール要求は拒否され（決して黙って付け替えられません）、エラー文が出口を示します：`Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+**能力の封じ込め。** 特化ロール（`researcher` / `executor` / `reviewer` / `librarian`）は許可リスト（`SPAWN_ALLOWED_CHILD_ROLES`、`types/functional_role.py`）のロールだけを spawn できます：**自分のロール**、加えて executor は**読み取り専用**の `researcher` / `librarian`（書く前の調査）。エントリが無いロールは従来どおり「同じロールのみ」で、3 つの読み取り専用／監査ロールはそのままです。これがないと、read-only の researcher が ORCHESTRATOR 深度で書き込み可能な executor を spawn し、代わりに書かせられてしまいます——子のツールは**子自身**のロールで絞られた完全なメイン工具集から来るのであって、父のロールで絞られることはありません。`MAIN`（run レコード無し）と `general`（inherit = 全ツール）は無制限です——特化ロールの allow-list はその部分集合だからです。許可されないロールは拒否され（決して黙って付け替えられません）、エラー文が許可集合と出口の両方を示します：`Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 安全性は 2 つの不変条件（テストで固定）で保たれます：各エントリは親ロール自身を含むこと、許可される**親以外の子は必ず読み取り専用**であること。この単一ホップの規則により、祖先チェーン走査なしで多段も安全です——書き込みロールは書き込みロールにしか到達せず、読み取り専用ロールは同種にしか派生できません。
 
 **`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）；`goal_max_turns` は goal loop 予算を上書きします。モデルが呼ぶランタイムツールが持つのは `functional_role`・`run_timeout_seconds`・`isolation` で、ここに挙げた残りは build-time クラスのものです。
 

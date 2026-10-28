@@ -65,7 +65,7 @@
 |------|------|----------------|----------------|
 | `general` | 기본 worker; 항등 역할(패키지 정의는 결코 로드되지 않음) | 깊이 역할 | 모든 도구 + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | 쓰기 가능한 구현과 명령 실행. 읽기 전용 `researcher` / `librarian`을 추가로 spawn할 수 있는 유일한 역할 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `librarian` | 읽기 전용 외부 코드베이스 검색: 서드파티 저장소 clone·색인·검색 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
@@ -103,6 +103,8 @@ spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 
 ```
 
 호출 시점 가드는 `sessions_spawn`(권한 상승 경로)을 도구와 런타임 spawn 래퍼 양쪽에서 뒷받침합니다. `sessions_yield`는 조립 시점 제거만으로 보호됩니다.
+
+**기능 역할 봉쇄(세 번째, 직교 게이트).** 깊이는 자식이 spawn을 *할 수 있는지*를 정하고, 봉쇄는 *어떤 역할*을 spawn할 수 있는지를 정합니다. `_check_role_containment`(`spawn/core.py`)는 요청자 자신의 run 레코드만 읽고(단일 홉, 조상 체인을 순회하지 않습니다) `SPAWN_ALLOWED_CHILD_ROLES`(`types/functional_role.py`)를 참조합니다: 항목이 없는 역할은 ‘같은 역할만’이며 `researcher` / `reviewer` / `librarian`이 그대로이고, `MAIN`(run 레코드 없음)과 `general`(`tools: inherit` = 모든 도구)은 무제한으로 단락됩니다——전문화 역할의 허용 목록은 모두 그 부분집합이기 때문입니다. 유일하게 확장된 항목은 `executor`로, 쓰기 전 조사를 위해 **읽기 전용** `researcher` / `librarian`을 추가로 spawn할 수 있습니다. 다단계 안전성은 체인 순회가 아니라 단일 홉 불변식에 기댑니다: 허용되는 **부모 이외의 자식은 반드시 읽기 전용**이므로 쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 같은 종류에만 도달하며 쓰기 능력으로 돌아가는 경로가 없습니다. 앞으로 순환을 만드는 항목(예: `researcher → executor`)을 추가하면 구멍이 열리는 대신 불변식 테스트에서 실패합니다.
 
 ## 🧪 완료 판정기와 goal loop
 

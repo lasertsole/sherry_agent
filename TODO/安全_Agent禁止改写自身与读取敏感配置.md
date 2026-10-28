@@ -13,7 +13,7 @@
 > 3. 当前两者**均无代码层强制**:`resolve_external_path` 的 1a 快速通道把整棵 `ROOT_DIR`
 >    标为"仓库内即安全"直接放行,PathGuard 的 in-root 策略不再查 hard-deny floor,
 >    且默认未配置时会话项目目录就回退到 `ROOT_DIR` 自身——详见
->    [分析_子代理同文件写与符号破坏防护.md](分析_子代理同文件写与符号破坏防护.md)
+>    [计划_子代理并发写防护与符号破坏检测.md](计划_子代理并发写防护与符号破坏检测.md)
 >    与上一轮「sherry 自改自身风险」调研。
 
 ---
@@ -29,7 +29,7 @@
 | PathGuard in-root 放行 | `agent/middlewares/path_guard/core.py:106-109` | "in-root passes, outside the root only the hard-deny floor rejects"——root 内**根本不查** floor |
 | hard-deny floor 不含自身 | `path_guard/core.py:71`、`config/features/agent_side/hitl_defaults.py:39-48` | floor 仅 `/etc/passwd`/`/etc/shadow`/`/etc/sudoers` + `~/.ssh`/`~/.aws`/`~/.gnupg`/`~/.env` 等外部凭证 |
 | `validate_project_dir` 不拦 | `config/path.py:447-471` | 只校验绝对/存在/是目录/非符号链接环,**不拒绝绑定到 `ROOT_DIR`** |
-| shell 写完全绕过文件许可 | `agent/tools/...` 见 [分析_子代理同文件写与符号破坏防护.md](分析_子代理同文件写与符号破坏防护.md) §1.3 | `terminal`/`python_repl`/`ptc` 写文件无许可、无 CAS、无 `path_lock`,证据记账也不挂 |
+| shell 写完全绕过文件许可 | `agent/tools/...` 见 [计划_子代理并发写防护与符号破坏检测.md](计划_子代理并发写防护与符号破坏检测.md) §1.3 | `terminal`/`python_repl`/`ptc` 写文件无许可、无 CAS、无 `path_lock`,证据记账也不挂 |
 
 **判定:agent 在默认配置下可在无 HITL 审批下 `patch_file` 修改 `agent/core.py` 这类自身源码,
 也可 `cat` / `python -c "open(...).write(...)"` 走 shell 改写。** `patch_file` 还不要求事先读

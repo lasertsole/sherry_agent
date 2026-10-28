@@ -65,7 +65,7 @@
 |--------|------|------------------|----------------------|
 | `general` | 既定 worker；恒等ロール（パッケージ定義は決して読み込まれない） | 深度ロール | 全ツール + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 書き込み可能な実装とコマンド実行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 書き込み可能な実装とコマンド実行。読み取り専用の `researcher` / `librarian` を追加で spawn できる唯一のロール | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 読み取り専用の diff・品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `librarian` | 読み取り専用の外部コードベース検索：サードパーティリポジトリの clone・索引・検索 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
@@ -103,6 +103,8 @@ spawn 権限は二つの独立した地点で執行されるため、単一の�
 ```
 
 呼び出し時のガードは `sessions_spawn`（昇格経路）をツール側とランタイム spawn ラッパーの両方で支えます。`sessions_yield` は組み立て時の剥がしのみで保護されます。
+
+**機能ロールの封じ込め（3 つ目・直交するゲート）。** 深度は子が spawn を*行えるか*を決め、封じ込めはそれ*が spawn できるロール*を決めます。`_check_role_containment`（`spawn/core.py`）は要求元自身の run レコードだけを見て（単一ホップ。祖先チェーンは辿りません）、`SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）を参照します：エントリが無いロールは「同じロールのみ」で、`researcher` / `reviewer` / `librarian` はそのままです。`MAIN`（run レコード無し）と `general`（`tools: inherit` = 全ツール）は無制限として短絡します——特化ロールの許可リストはすべてその部分集合だからです。唯一の拡張エントリは `executor` で、書く前の調査のため**読み取り専用**の `researcher` / `librarian` を追加で spawn できます。多段の安全性はチェーン走査ではなく単一ホップの不変条件に依ります：許可される**親以外の子は必ず読み取り専用**なので、書き込みロールは書き込みロールにしか、読み取り専用ロールは同種にしか到達せず、書き込み能力へ戻る経路は存在しません。将来サイクルを成すエントリ（例：`researcher → executor`）を足すと、穴を開けるのではなく不変条件テストで失敗します。
 
 ## 🧪 完了判定器と goal loop
 

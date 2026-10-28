@@ -10,7 +10,7 @@
 
 - **`run_timeout_seconds` 默认 0.0 → 600.0（10 分钟）**：子代理不再在时间上无限运行。`spawn` 与 `steer` 重新用 `asyncio.wait_for` 包裹子代理的 `ainvoke`，followup 超时检查重新生效（`TimeoutError` → `RunOutcomeStatus.TIMEOUT`）；sweeper 的 2 小时 stale 检测仍是外层兜底。调用方依旧可以通过 `sessions_spawn(run_timeout_seconds=...)` 逐次覆盖，`0` 仍然表示"无超时"。
 - **运行时 `sessions_spawn` 工具补上 `isolation`**（同一轮也把它现在守护的"只做一层"规则落了地）：模型可以请求隔离的 git worktree，而 cwd 已在某个隔离工作区内的 spawn 会复用那棵树，而不是切出"worktree 的 worktree"。此前该字段只存在于 build-time 类，整套隔离功能在模型侧都不可达。
-- **能力遏制（同角色派生）**：专用子代理（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn **同角色**的子代理。此前只读的 researcher 在 ORCHESTRATOR 深度可以雇一个可写的 executor 干活，因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，父代理的角色从不参与。同角色 = 同一 allow-list，升级路径就此消失；`MAIN` 与 `general`（inherit = 全部工具）不受限制，跨角色请求被**拒绝**并在错误文本里给出修法（`functional_role="<父角色>"`），绝不静默改角色。`functional_role` 现在也暴露在运行时 `sessions_spawn` 工具上，同角色 fan-out 才可表达。
+- **能力遏制（角色白名单）**：专用子代理（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn 白名单允许的角色——**自己的角色**，外加 executor 可额外派生**只读**的 `researcher` / `librarian`（先调研后写入）。此前只读的 researcher 在 ORCHESTRATOR 深度可以雇一个可写的 executor 干活，因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，父代理的角色从不参与。同角色 = 同一 allow-list，升级路径就此消失；`MAIN` 与 `general`（inherit = 全部工具）不受限制，跨角色请求被**拒绝**并在错误文本里给出修法（`functional_role="<父角色>"`），绝不静默改角色。`functional_role` 现在也暴露在运行时 `sessions_spawn` 工具上，同角色 fan-out 才可表达。
 - **`sessions_spawn` 暴露超时**：新增 `run_timeout_seconds` 字段（模型自己的旋钮，与全局默认并存）。工具把模型传入的值 **clamp** 到 `[run_timeout_min_seconds, run_timeout_max_seconds]`（600 秒 .. 7200 秒）而不是拒绝——想要 60 秒的"短"意图落在 10 分钟下限，99999 落在 2 小时上限——`None`/非正值表示"未设"（走全局默认）。内部调用方（TaskFlow dispatch、`delegate_task`）绕过 clamp，保留自己的边界。
 - **新增 `sessions_messages` 工具**：按 `session_key` 读取子会话的 checkpoint 转录（第八个运行时工具）。它服务于超时/被 kill 的场景——`Status: timed out` 且没有 `Result:` 时调用方此前一无所获，而子代理的 checkpoint 里仍留着它调过的每一次工具调用。输出有 token 预算（总计 4 000、每条 500），并按 `spawned_by` / run 的完成归属鉴权：只有 spawn 该子代理的会话能读。
 - **新增 `max_total_spawns_per_session`（50）**：按会话累计的 spawn 预算（`registry/spawn_budget.py`，与 registry 其余内存视图一样为进程内状态）。`max_children_per_agent`（5）限制的是同时运行的孩子数；这一项限制的是"完成一个再开一个"无限重复——卡住的编排器正是这样打转的。计数发生在 `register_run`（走到注册即算一次 spawn），检查在 spawn 准入闸门，会话被清除时随之丢弃；进程重启后清零。
@@ -75,8 +75,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── resolve_subagent_capabilities(depth, max_depth)：
   │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │     │     depth ≥ max → LEAF/NONE（capabilities/core.py）
-  │     └── 能力遏制：专用（functional）父代理只能 spawn **同功能角色**——
-  │         MAIN/general 不受限制
+  │     └── 能力遏制：专用（functional）父代理只能 spawn 白名单内的角色
+  │         （自身角色；executor 额外可派生只读的 researcher / librarian）
+  │         ——MAIN/general 不受限制
   │
   ├── 3. 模型与思考计划（Model & Thinking Plan，spawn/plan.py、spawn/thinking.py）
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
@@ -504,7 +505,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 **工具策略。** 角色的 `tools` 列表成为 allow-list（默认 deny-list 被清空）。每次 spawn 的 `extra_tools` 会并入该 allow-list；两者仍受无条件的 `main_only` 元数据门与显式 deny-list 约束。
 
-**能力遏制。** 专用角色（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn **同角色**的子代理：同角色 = 同一 allow-list = 子代理的能力恰好等于父代理。没有这条约束时，只读的 researcher 在 ORCHESTRATOR 深度可以 spawn 一个可写文件的 executor 替它写——因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，从不按父代理的过滤。`MAIN`（无 run 记录）与 `general`（inherit = 全部工具）不受限制——任何专用角色的 allow-list 都是它们的子集。跨角色请求会被拒绝（绝不静默改角色），错误文本直接给出出路：`Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+**能力遏制。** 专用角色（`researcher` / `executor` / `reviewer` / `librarian`）只能 spawn 白名单（`SPAWN_ALLOWED_CHILD_ROLES`，`types/functional_role.py`）内的角色：**自己的角色**，外加 executor 可额外派生**只读**的 `researcher` / `librarian`——让 executor 能先调研再写。缺席的条目仍是「只同角色」，三个只读/审计角色保持原样。没有这条约束时，只读的 researcher 在 ORCHESTRATOR 深度可以 spawn 一个可写文件的 executor 替它写——因为子代理的工具来自完整主工具集、按**子代理自己**的角色过滤，从不按父代理的过滤。`MAIN`（无 run 记录）与 `general`（inherit = 全部工具）不受限制——任何专用角色的 allow-list 都是它们的子集。不被允许的角色会被拒绝（绝不静默改角色），错误文本同时列出允许集合与出路：`Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 两条不变量由测试钉死：每个条目必须保留父角色本身，允许的**非父角色子项必须是只读角色**——这条单跳规则让多层派生无需祖先链遍历即安全：写角色只能到达写角色，只读角色只能派生自己那一类。
 
 **`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。模型实际调用的运行时工具携带 `functional_role`、`run_timeout_seconds` 与 `isolation`；此处其余字段属于 build-time 类。
 

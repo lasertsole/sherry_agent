@@ -65,7 +65,7 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 |------|---------|--------------------|---------------|
 | `general` | Default worker; identity role (its package definition is never loaded) | depth role | all tools + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | Write-capable implementation and command execution; the one role that may also spawn read-only `researcher` / `librarian` children | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `librarian` | Read-only external codebase retrieval: clone, index, and search third-party repos | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
@@ -103,6 +103,8 @@ call:      check_spawn_permission(session_id)            → "status=forbidden",
 ```
 
 The call-time guard backs `sessions_spawn` (the escalation path) in both the tool and the runtime spawn wrapper. `sessions_yield` is protected by assembly-time stripping alone.
+
+**Functional-role containment (a third, orthogonal gate).** Depth decides *whether* a worker may spawn; containment decides *which role* it may spawn. `_check_role_containment` (`spawn/core.py`) reads the requester's own run record — one hop, never the ancestor chain — and consults `SPAWN_ALLOWED_CHILD_ROLES` (`types/functional_role.py`): an absent entry means same-role only, which is what `researcher` / `reviewer` / `librarian` keep, and `MAIN` (no run record) plus `general` (`tools: inherit` = every tool) short-circuit as unrestricted because every specialized allow-list is already a subset of theirs. The one widened entry is `executor`, which may additionally spawn the READ-ONLY `researcher` / `librarian` so it can research before it writes. Multi-hop safety rests on a single-hop invariant, not on chain traversal: every permitted non-parent child must be read-only, so a write role can only reach write roles and a read-only role only its own kind — no path returns to a write capability, and a future entry that would form a cycle (say `researcher → executor`) fails the invariant test instead of opening a hole.
 
 ## 🧪 Completion Judge & Goal Loop
 

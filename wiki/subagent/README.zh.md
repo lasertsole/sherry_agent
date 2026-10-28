@@ -65,7 +65,7 @@
 |------|------|----------------|------------|
 | `general` | 默认 worker；恒等角色（其包内定义永不被加载） | 深度角色 | 全部工具 + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 可写实现与命令执行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 可写实现与命令执行；唯一可额外派生只读 `researcher` / `librarian` 子代理的角色 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `librarian` | 只读的外部代码库检索：clone、建索引并搜索第三方仓库 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
@@ -103,6 +103,8 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 ```
 
 调用期守卫为 `sessions_spawn`（提权路径）兜底，工具与运行时 spawn 包装器都接入了它。`sessions_yield` 仅由组装期剥离保护。
+
+**功能角色遏制（第三道、正交的门）。** 深度决定子代理*能否* spawn；遏制决定它*能 spawn 哪个角色*。`_check_role_containment`（`spawn/core.py`）只读调用方自己的运行记录——单跳，绝不回溯祖先链——再查 `SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）：缺席条目意为「只同角色」，即 `researcher` / `reviewer` / `librarian` 保持的行为；`MAIN`（无运行记录）与 `general`（`tools: inherit` = 全部工具）直接短路为不受限，因为任何专用角色的白名单都已是它们的子集。唯一的放宽条目是 `executor`，它可额外派生**只读**的 `researcher` / `librarian`，以便先调研后写入。多层安全靠单跳不变量而非链遍历：允许的**非父角色子项必须只读**，于是写角色只能到达写角色、只读角色只能到达同类——没有任何路径回到写能力；未来若加入会成环的条目（例如 `researcher → executor`），会在不变量测试上失败，而不是开出一个洞。
 
 ## 🧪 完成判别器与 goal loop
 
