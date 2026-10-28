@@ -124,6 +124,45 @@ STATIC_DIR = APP_HOME / "static"
 TEMP_DIR = APP_HOME / "temp"
 
 MODELS_DIR = APP_HOME / "models"
+
+
+def _seed_mcp_folder() -> None:
+    """First-boot seeding of the MCP drop folder (desktop homes only).
+
+    The folder is the ONE writable place a user adds MCP servers (the bundled
+    ``plugins/mcp_server/config.json`` sits in the read-only install tree).
+    A checkout (``APP_HOME == ROOT_DIR``) stays untouched — importing config
+    must not drop an untracked directory into the repository.
+    """
+    try:
+        MCP_SERVERS_DIR.mkdir(parents=True, exist_ok=True)
+        readme = MCP_SERVERS_DIR / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                "# MCP 服务器投放文件夹\n\n"
+                "把 MCP server 配置放进本文件夹，重启后端后自动加载。支持两种形态：\n\n"
+                "1. 扁平文件：`<名字>.json` —— 文件本身就是 server spec，例如\n"
+                "   `{\n"
+                '     "command": "npx",\n'
+                '     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n'
+                "   }\n"
+                "2. 自包含子目录：`<名字>/config.json` —— server 脚本可以和配置放在一起，\n"
+                '   配置里的 `$here/` 指向该子目录本身，例如 `"args": ["$here/server.py"]`。\n\n'
+                "同名时用户配置覆盖内置默认。单个配置解析失败只跳过该项，不影响其它 server。\n"
+                "安全提示：只投放你信任的 MCP server（它们的命令在本机执行）。",
+                encoding="utf-8",
+            )
+    except OSError:
+        pass  # a read-only home must never break the import
+
+
+#: The user's MCP drop folder (per-user, writable). User servers layer on top
+#: of the read-only bundled defaults in ``plugins/mcp_server/config.json``.
+MCP_SERVERS_DIR = APP_HOME / "mcp_servers"
+
+if APP_HOME != ROOT_DIR:
+    _seed_mcp_folder()
+
 #: The workspace root: persona files (AGENTS.md / SOUL.md / USER.md / ROLE.md),
 #: per-session directories, plan knowledge and the memory markdown tree.
 #:

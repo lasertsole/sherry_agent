@@ -363,6 +363,28 @@ class TestAppHome:
         out = self._run(str(home), "from config.path import APP_HOME; print(APP_HOME)")
         assert out == str(home)
 
+    def test_the_desktop_home_seeds_the_mcp_folder(self, tmp_path):
+        home = tmp_path / "home"
+        self._run(
+            str(home),
+            "from config.path import MCP_SERVERS_DIR; "
+            "print(MCP_SERVERS_DIR.is_dir()); "
+            "print((MCP_SERVERS_DIR / 'README.md').is_file())",
+        )
+        # The seeding ran in the SUBPROCESS (import time); assert on disk here.
+        assert (home / "mcp_servers").is_dir()
+        assert (home / "mcp_servers" / "README.md").is_file()
+
+    def test_the_checkout_does_not_gain_an_mcp_folder(self):
+        # APP_HOME == ROOT_DIR: importing config must not drop an untracked
+        # directory into the repository.
+        out = self._run(
+            None,
+            "from config.path import APP_HOME, ROOT_DIR, MCP_SERVERS_DIR; "
+            "print(APP_HOME == ROOT_DIR); print(MCP_SERVERS_DIR.is_dir())",
+        )
+        assert out.splitlines() == ["True", "False"]
+
     def test_the_desktop_flag_reads_the_bare_cli_flag(self):
         out = self._run(
             None,

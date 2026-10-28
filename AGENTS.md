@@ -755,6 +755,30 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   backend must be restarted (relaunch the app) after configuring — the runtime
   reads the file at boot.
 
+## MCP Servers (`agent/tools/mcp_plugin.py`)
+
+MCP servers come from TWO layers merged by name (user overrides bundled):
+the read-only bundled defaults (`plugins/mcp_server/config.json`, shipped in
+the installer) and the user drop folder `APP_HOME/mcp_servers/` — the ONE
+writable place a user adds MCP servers in a unified install (`plugins/` is
+read-only there; the folder is seeded with a README on first boot of a
+desktop home, never in a checkout). Two drop shapes are scanned: a flat
+`<name>.json` (the file IS the server spec) and a self-contained
+`<name>/config.json` directory whose `$here/` resolves to the directory
+itself, so `server.py` travels beside its config; the bundled file's
+`$here/` keeps resolving to `plugins/mcp_server/` (legacy behavior). Every
+entry parses in ISOLATION — a bad JSON file shows as a ⚠ entry in
+`GET /mcp/servers` (`server/service/mcp_service.py`, the extend panel's MCP
+tab renders it) and is skipped by the loader instead of failing the load;
+noise (non-JSON files, directories without a config) never appears.
+`build_mcp_tools()` connects one `MultiServerMCPClient` PER server, so a
+dead server costs only its own tools, and the tool names
+(`mcp__<server>__<tool>`) still file under the catalog's `mcp` group
+unchanged. A config change takes effect on the next backend restart (the
+agent graph holds the tool list; the extend panel's restart button rides
+the same `restart_backend` command the CUDA pack uses). Only drop trusted
+MCP servers — their commands run on this machine.
+
 ## Configuration Files (`.env` / `.models` / `.network`)
 
 The backend's user configuration is split by sensitivity into three project-root
