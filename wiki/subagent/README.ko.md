@@ -37,10 +37,11 @@
 1. **두 축은 결코 합쳐지지 않는다.** 기능 역할은 spawn 권한을 부여할 수 없고, 깊이 역할은 도구 허용 목록이나 프롬프트를 바꿀 수 없습니다. 모든 spawn에서 둘이 합성됩니다.
 2. **`general`은 항등 역할이다.** 기능 역할 힌트가 없으면 spawn 동작은 그대로입니다: 어떤 정의도 로드되지 않고 LLM 티어는 깊이 역할이 공급합니다.
 3. **spawn 권한은 두 번 깊이로 게이트된다**——조립 시점(도구 정책 교집합)과 호출 시점(도구 자체의 권한 검사).
-4. **완료 게이트는 상시 켜져 있다.** 스택 어디에도 활성/비활성 스위치가 없으며 입력은 예산과 판정 기준뿐입니다.
-5. **페일오픈은 모델 오류, 파싱 불가능한 출력, 이용 불가능한 조회에만 적용되며 부정적 판정에는 결코 적용되지 않는다.** 파싱된 `RETRY`, `BLOCK`, 실패한 증거 행은 여전히 차단합니다.
-6. **자식 컨텍스트는 항상 격리된다.** 자식은 자신의 빈 메시지 목록에서 시작하고 부모 트랜스크립트를 상속하지 않으며, 이를 바꾸는 모드도 없습니다.
-7. **완료 캐리어는 주장이지 검증된 결과가 아니다.** 부모 턴이 받는 것은 자식의 자기 보고입니다. 세션에 통과 증거가 없으면 drain 게이트가 필수 검증 메시지를 덧붙입니다.
+4. **역할 파생은 홉 단위 허용 목록이며 체인을 순회하지 않는다.** 전문화된 부모는 자기 역할에 더해 `SPAWN_ALLOWED_CHILD_ROLES` 항목이 나열한 읽기 전용 확장을 spawn할 수 있습니다. 불변식은 단일 홉(허용되는 부모 이외의 자식은 쓰기 능력을 가져서는 안 됨)이며, 이것이 조상 순회 없이 다단계를 안전하게 만드는 이유입니다.
+5. **완료 게이트는 상시 켜져 있다.** 스택 어디에도 활성/비활성 스위치가 없으며 입력은 예산과 판정 기준뿐입니다.
+6. **페일오픈은 모델 오류, 파싱 불가능한 출력, 이용 불가능한 조회에만 적용되며 부정적 판정에는 결코 적용되지 않는다.** 파싱된 `RETRY`, `BLOCK`, 실패한 증거 행은 여전히 차단합니다.
+7. **자식 컨텍스트는 항상 격리된다.** 자식은 자신의 빈 메시지 목록에서 시작하고 부모 트랜스크립트를 상속하지 않으며, 이를 바꾸는 모드도 없습니다.
+8. **완료 캐리어는 주장이지 검증된 결과가 아니다.** 부모 턴이 받는 것은 자식의 자기 보고입니다. 세션에 통과 증거가 없으면 drain 게이트가 필수 검증 메시지를 덧붙입니다.
 
 ## 🧭 두 개의 역할 축
 
@@ -92,7 +93,7 @@
 
 ## 🔒 spawn 권한 가드
 
-spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 권한 상승이 불가능합니다:
+깊이 기반 spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 권한 상승이 불가능합니다(기능 역할 봉쇄는 세 번째 직교 게이트입니다——아래 주석 참조):
 
 - **조립 시점(주 게이트).** 최종 허용 목록이 역할 허용 목록과 `extra_tools`로 구축된 뒤, Phase 8.6이 이를 `can_spawn_children(role)`과 교집합합니다: spawn할 수 없는 모든 역할에서 `sessions_spawn`과 `sessions_yield`가 목록에서 제거됩니다. 상속 모드에서는 목록이 비어 있고 기본 거부 목록이 이미 이 쌍을 막으므로 교집합은 무연산입니다.
 - **호출 시점(심층 방어).** `check_spawn_permission(session_id)`는 먼저 정규 호출자 키를 해석하고(자식·swarm 키는 그대로, 다른 id는 `agent:main:session:` 접두사), 다음으로 깊이를 해석하며(실행 레코드 우선, 세션 키 형태 차선), 마지막으로 깊이 역할을 해석해 spawn할 수 없는 호출자를 거부합니다. `(allowed, reason)` 튜플을 반환하고 결코 예외를 던지지 않으며, 도구는 기존 문자열 계약으로 거부를 렌더링합니다.
@@ -175,6 +176,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | 역할 enum과 로더 | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py` |
 | 역할 기반 spawn 동작 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 권한 가드 | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 기능 역할 봉쇄 | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 완료 판정기와 drain | `tests/agent/tools/subagent/test_completion_judge.py`, `tests/agent/tools/subagent/test_completion_drain.py` |
 | 부모 턴 게이트 | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | 단계 판정기 | `tests/agent/tools/taskflow/test_step_judge.py`, `tests/agent/tools/taskflow/test_resume_with_judge.py` |

@@ -37,10 +37,11 @@ Completion is then verified by four always-on layers, ordered from the single ch
 1. **The axes never merge.** A functional role cannot grant spawn permission, and the depth role cannot change the tool allow-list or the prompt. Both compose on every spawn.
 2. **`general` is the identity role.** With no functional-role hint, spawn behavior is unchanged: no definition is loaded, and the depth role supplies the LLM tier.
 3. **Spawn privilege is depth-gated twice** — at assembly time (tool-policy intersection) and at call time (a permission check inside the tool itself).
-4. **Completion gates are always on.** There is no enable/disable switch anywhere in the stack; only budgets and criteria are inputs.
-5. **Fail-open means model error, unparseable output, or an unavailable lookup — never a negative verdict.** A parsed `RETRY`, `BLOCK`, or failing evidence row still blocks.
-6. **Child context is isolated.** A child starts from its own empty message list; the parent transcript is never inherited, and there is no mode that changes this.
-7. **Completion carriers are claims, not verified results.** The parent turn receives the child's report as a claim; when the session has no passing evidence, the drain gate appends a mandatory-verification message.
+4. **Role spawning is allow-listed per hop, never chain-walked.** A specialized parent may spawn its own role plus the read-only extras its `SPAWN_ALLOWED_CHILD_ROLES` entry lists; the invariant is single-hop (no permitted non-parent child may be write-capable), which is what makes multi-hop safe without ancestor traversal.
+5. **Completion gates are always on.** There is no enable/disable switch anywhere in the stack; only budgets and criteria are inputs.
+6. **Fail-open means model error, unparseable output, or an unavailable lookup — never a negative verdict.** A parsed `RETRY`, `BLOCK`, or failing evidence row still blocks.
+7. **Child context is isolated.** A child starts from its own empty message list; the parent transcript is never inherited, and there is no mode that changes this.
+8. **Completion carriers are claims, not verified results.** The parent turn receives the child's report as a claim; when the session has no passing evidence, the drain gate appends a mandatory-verification message.
 
 ## 🧭 Two Role Axes
 
@@ -92,7 +93,7 @@ per-role model profile (own max_output_tokens, default 8192)
 
 ## 🔒 Spawn Privilege Guards
 
-Spawn privilege is enforced at two independent points, so no single leak can escalate it:
+Depth-based spawn privilege is enforced at two independent points, so no single leak can escalate it (functional-role containment is a third, orthogonal gate — see the note below):
 
 - **Assembly time (primary gate).** After the final allow-list is built from the role whitelist and `extra_tools`, Phase 8.6 intersects it with `can_spawn_children(role)`: for any role that may not spawn, `sessions_spawn` and `sessions_yield` are stripped from the list. In inherit mode the list is empty and the default deny-list already blocks the pair, so the intersection is a no-op there.
 - **Call time (defense in depth).** `check_spawn_permission(session_id)` resolves the canonical caller key (child and swarm keys verbatim; any other id gets the `agent:main:session:` prefix), resolves depth from the run record first and the session-key shape second, then resolves the depth role and refuses non-spawning callers. It returns a `(allowed, reason)` tuple and never raises; the tool renders the refusal through its existing string contract.
@@ -175,6 +176,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | Role enum and loader | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py` |
 | Role-driven spawn behavior | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | Spawn privilege guard | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| Functional-role containment | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | Completion judge and drain | `tests/agent/tools/subagent/test_completion_judge.py`, `tests/agent/tools/subagent/test_completion_drain.py` |
 | Parent-turn gate | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | Step judge | `tests/agent/tools/taskflow/test_step_judge.py`, `tests/agent/tools/taskflow/test_resume_with_judge.py` |

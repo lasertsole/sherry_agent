@@ -651,8 +651,10 @@ async def spawn_subagent_direct(
         load_role_definition(functional_role) if functional_role != FunctionalRole.GENERAL else None
     )
 
-    # --- Phase 4.6: capability containment (same-role derivation) ---
-    # Specialized role → same-role children only (see _check_role_containment).
+    # --- Phase 4.6: capability containment (role allow-list) ---
+    # Specialized role → the roles its allow-list permits (its own role; an
+    # executor also the read-only researcher / librarian). See
+    # _check_role_containment and SPAWN_ALLOWED_CHILD_ROLES.
     # Refused here, before the model plan and the attachment materialization, and
     # the isolated workspace a refusal may have cut is discarded like any other.
     containment_error = _check_role_containment(requester_session_key, functional_role)

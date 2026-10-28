@@ -37,10 +37,11 @@
 1. **二つの軸は決して融合しない。** 機能ロールが spawn 権限を与えることはなく、深度ロールがツール許可リストやプロンプトを変えることもありません。すべての spawn で両者が合成されます。
 2. **`general` は恒等ロール。** 機能ロールのヒントがなければ spawn 挙動は不変です：定義は読み込まれず、LLM ティアは深度ロールが供給します。
 3. **spawn 権限は二度にわたり深度でゲートされる**——組み立て時（ツールポリシーの交差）と、呼び出し時（ツール自身の中の権限チェック）。
-4. **完了ゲートは常時有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
-5. **フェイルオープンはモデルエラー、解析不能な出力、利用不能な参照に限られ、否定的な判定には決して適用されない。** 解析済みの `RETRY`、`BLOCK`、失敗した証跡行は依然としてブロックします。
-6. **子コンテキストは常に独立。** 子は自身の空のメッセージリストから始まり、親のトランスクリプトを継承せず、これを変えるモードも存在しません。
-7. **完了キャリアは主張であり、検証済みの結果ではない。** 親ターンが受け取るのは子の自己申告です。セッションに合格証跡がなければ、drain ゲートが検証必須メッセージを追記します。
+4. **ロール派生はホップ単位の許可リストで、チェーンを辿らない。** 特化した親は自分のロールに加え、`SPAWN_ALLOWED_CHILD_ROLES` のエントリが列挙する読み取り専用の拡張を spawn できます。不変条件は単一ホップ（許可される親以外の子は書き込み能力を持ってはならない）であり、これが祖先走査なしで多段を安全にする理由です。
+5. **完了ゲートは常時有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
+6. **フェイルオープンはモデルエラー、解析不能な出力、利用不能な参照に限られ、否定的な判定には決して適用されない。** 解析済みの `RETRY`、`BLOCK`、失敗した証跡行は依然としてブロックします。
+7. **子コンテキストは常に独立。** 子は自身の空のメッセージリストから始まり、親のトランスクリプトを継承せず、これを変えるモードも存在しません。
+8. **完了キャリアは主張であり、検証済みの結果ではない。** 親ターンが受け取るのは子の自己申告です。セッションに合格証跡がなければ、drain ゲートが検証必須メッセージを追記します。
 
 ## 🧭 二つの役割軸
 
@@ -92,7 +93,7 @@
 
 ## 🔒 spawn 権限ガード
 
-spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません：
+深度に基づく spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません（機能ロールの封じ込めは 3 つ目の直交ゲートです——下の注記を参照）：
 
 - **組み立て時（主ゲート）。** 最終的な許可リストがロール許可リストと `extra_tools` から構築された後、Phase 8.6 がそれを `can_spawn_children(role)` と交差させます：spawn できないロールでは `sessions_spawn` と `sessions_yield` がリストから剥がされます。継承モードではリストが空で既定の拒否リストが既にこのペアを塞いでいるため、交差はそこでは無操作です。
 - **呼び出し時（多層防御）。** `check_spawn_permission(session_id)` はまず正規の呼び出し元キーを解決し（子と swarm のキーはそのまま、それ以外の id には `agent:main:session:` を前置）、次に深度を解決し（実行レコード優先、セッションキー形状が次点）、最後に深度ロールを解決して spawn 不可の呼び出し元を拒否します。`(allowed, reason)` タプルを返し、決して例外を投げません。ツールは既存の文字列契約を通じて拒否を描画します。
@@ -175,6 +176,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | ロール enum とローダー | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py` |
 | ロール駆動の spawn 挙動 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 権限ガード | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 機能ロールの封じ込め | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 完了判定器と drain | `tests/agent/tools/subagent/test_completion_judge.py`、`tests/agent/tools/subagent/test_completion_drain.py` |
 | 親ターンゲート | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | ステップ判定器 | `tests/agent/tools/taskflow/test_step_judge.py`、`tests/agent/tools/taskflow/test_resume_with_judge.py` |

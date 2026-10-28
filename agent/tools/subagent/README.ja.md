@@ -495,7 +495,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 |------------------|------|--------------|--------------------|
 | `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール）+ ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 書き込み可能な実装とコマンド実行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 書き込み可能な実装とコマンド実行。読み取り専用の `researcher` / `librarian` を追加で spawn 可能 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `librarian` | 読み取り専用の外部コードベース検索。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 

@@ -489,7 +489,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 |------------------|------|--------------|--------------|
 | `general` | 默认 worker；继承全部工具与基于 depth 的 LLM | `inherit` | （全部工具）+ ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 可写入的实现与命令执行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 可写入的实现与命令执行；可额外派生只读的 `researcher` / `librarian` 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `librarian` | 只读的外部代码库检索，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 

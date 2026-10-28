@@ -37,10 +37,11 @@
 1. **两条轴永不合并。** 功能角色不能授予 spawn 权限，深度角色也不能改变工具白名单或提示词。每次 spawn 都是两者的组合。
 2. **`general` 是恒等角色。** 不传功能角色提示时，spawn 行为不变：不加载任何定义，LLM 档位由深度角色决定。
 3. **spawn 权限有两道深度门**——组装期（工具策略求交）与调用期（工具自身的权限检查）。
-4. **完成门禁恒开。** 整条栈没有任何启用/停用开关；输入只有预算与判据。
-5. **失败开放只针对模型错误、无法解析的输出或不可用的查询——绝不针对否定判定。** 解析出的 `RETRY`、`BLOCK` 或失败证据行仍然照常拦截。
-6. **子上下文始终独立。** 子代理从自己的空消息列表开始，永不继承父会话记录，也不存在改变这一点的模式。
-7. **完成载体是声明，不是已验证结果。** 父回合收到的是子代理的自述；当会话没有通过证据时，drain 门禁会追加一条强制验证消息。
+4. **角色派生按跳白名单化，绝不回溯链条。** 专用父代理可派生自己的角色，外加其 `SPAWN_ALLOWED_CHILD_ROLES` 条目列出的只读扩展；不变量是单跳的（允许的非父角色子项绝不能具备写能力），这正是多层安全无需祖先遍历的原因。
+5. **完成门禁恒开。** 整条栈没有任何启用/停用开关；输入只有预算与判据。
+6. **失败开放只针对模型错误、无法解析的输出或不可用的查询——绝不针对否定判定。** 解析出的 `RETRY`、`BLOCK` 或失败证据行仍然照常拦截。
+7. **子上下文始终独立。** 子代理从自己的空消息列表开始，永不继承父会话记录，也不存在改变这一点的模式。
+8. **完成载体是声明，不是已验证结果。** 父回合收到的是子代理的自述；当会话没有通过证据时，drain 门禁会追加一条强制验证消息。
 
 ## 🧭 两条角色轴
 
@@ -92,7 +93,7 @@
 
 ## 🔒 spawn 权限守卫
 
-spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提权：
+基于深度的 spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提权（功能角色遏制是第三道、正交的门——见下方说明）：
 
 - **组装期（主门）。** 当最终白名单由角色白名单与 `extra_tools` 构建完成后，Phase 8.6 将其与 `can_spawn_children(role)` 求交：对任何无权 spawn 的角色，`sessions_spawn` 与 `sessions_yield` 都会从列表中剥离。继承模式下白名单为空、默认拒绝列表已拦截这两个工具，因此求交在那里是空操作。
 - **调用期（纵深防御）。** `check_spawn_permission(session_id)` 先解析规范调用方会话键（子代理与 swarm 键原样使用；其它 id 补上 `agent:main:session:` 前缀），再解析深度（先查运行记录，后看会话键形状），然后解析深度角色并拒绝无权 spawn 的调用方。它返回 `(allowed, reason)` 元组、永不抛异常；工具通过既有的字符串契约渲染拒绝。
@@ -175,6 +176,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | 角色枚举与加载器 | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py` |
 | 角色驱动的 spawn 行为 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 权限守卫 | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 功能角色遏制 | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 完成判别器与 drain | `tests/agent/tools/subagent/test_completion_judge.py`、`tests/agent/tools/subagent/test_completion_drain.py` |
 | 父回合门禁 | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | 步骤判官 | `tests/agent/tools/taskflow/test_step_judge.py`、`tests/agent/tools/taskflow/test_resume_with_judge.py` |
