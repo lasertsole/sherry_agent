@@ -164,7 +164,8 @@
     "refreshGraph": "Refresh",
     "refreshGraphPrompt": "Refetch and redraw the run graph",
     "noTasks": "No background tasks yet",
-    "tasksLoading": "Loading tasks..."
+    "tasksLoading": "Loading tasks...",
+    "resize": "Drag to resize"
   },
   "toolbar": {
     "newChat": "New Chat",

@@ -22,7 +22,7 @@
       v-model:current-session-id="currentSessionId" />
 
     <!-- Right side - session main area -->
-    <div class="relative flex flex-col flex-1 min-w-0 h-full bg-transparent dark:bg-transparent">
+    <div class="relative flex flex-col flex-1 min-w-[320px] h-full bg-transparent dark:bg-transparent">
       <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
@@ -263,6 +263,7 @@ import RightSidebar from './components/RightSidebar.vue';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
+import { useSidebarWidthStore } from '~/stores/sidebar-width';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
@@ -434,6 +435,8 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
+/** Left column width (draggable in SessionSidebar; the auto-collapse reads it) */
+const sidebarWidthStore = useSidebarWidthStore();
 // The This-session tab group belongs to the route's session: switching sessions
 // shows that session's own tabs (or an empty group), never the previous one's.
 watch(openSessionId, sid => rightSidebarStore.setActiveSession(sid), { immediate: true });
@@ -517,6 +520,26 @@ const toggleSidebar = () => {
 
 // Load the global chat area background image after mount (session list fetching is already
 // done inside the SessionSidebar component)
+// Narrow-window safety net (ZCode's shell behaviour): when the conversation is
+// squeezed below a readable width, the accessory columns retract — right first,
+// left second. Only WINDOW resizes trigger it, so opening a panel by hand is
+// never undone by the layout.
+useAutoCollapse({
+  // Read/write the store state directly: `storeToRefs` drops primitive keys on a
+  // plain reactive store (and the test double is exactly that), which would
+  // leave this accessor reading `undefined`.
+  isSidebarCollapsed: () => uiStore.sidebarCollapsed,
+  setSidebarCollapsed: value => {
+    uiStore.sidebarCollapsed = value;
+  },
+  sidebarWidth: () => sidebarWidthStore.width,
+  isRightCollapsed: () => rightSidebarStore.collapsed,
+  setRightCollapsed: value => {
+    rightSidebarStore.collapsed = value;
+  },
+  rightSidebarWidth: () => rightSidebarStore.width
+});
+
 onMounted(() => {
   chatBackgroundStore.loadBackground();
   // The notification badge must keep counting while its tab is closed, so the

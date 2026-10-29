@@ -1,17 +1,42 @@
 <template>
   <!-- Left side - history records area -->
-  <!-- Mobile: fixed positioning, hidden by default, toggled via a button -->
-  <!-- md: fixed positioning, width 280px -->
-  <!-- lg: relative positioning, width 360px -->
+  <!-- In-flow column whose width is a persisted store value (drag the right
+       edge to resize: 280px floor, half the viewport at most; the fresh-profile
+       default is 360px on a desktop-width window and 280px below it).
+       Collapsed = width 0, the outer overflow-hidden clips the fixed inner
+       width wholesale. -->
   <div
     :class="[
       'relative h-full overflow-hidden transition-all duration-300',
       collapsed
         ? 'w-0 border-r-0'
-        : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
-    ]">
-    <!-- Fixed content width: when collapsed the outer overflow-hidden clips it wholesale, inner elements are never squeezed or wrapped -->
-    <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
+        : 'shrink-0 border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
+    ]"
+    :style="{ width: collapsed ? '0px' : sidebarWidth + 'px' }"
+    data-test="session-sidebar">
+    <!-- Right-edge resize handle: dragging right widens the column (it is
+         left-anchored). The store clamps every step, so the drag can never go
+         below the 280px floor or past half the viewport. Hidden while
+         collapsed — there is no width to drag. -->
+    <div
+      v-if="!collapsed"
+      class="group absolute right-0 top-0 z-10 flex h-full w-2 items-center justify-center cursor-col-resize"
+      :class="{ 'bg-gray-400/20': resizing }"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="t('sidebar.resize')"
+      :title="t('sidebar.resize')"
+      data-test="session-sidebar-resize"
+      @pointerdown="startResize">
+      <span
+        class="h-8 w-1 rounded-full transition-colors"
+        :class="resizing ? 'bg-gray-500' : 'bg-gray-400/70 group-hover:bg-gray-400'"></span>
+    </div>
+    <!-- Content width follows the column so the list reflows while dragging;
+         when collapsed the outer overflow-hidden clips it wholesale. -->
+    <div
+      class="flex flex-col px-4 h-full"
+      :style="{ width: sidebarWidth + 'px' }">
       <!-- LOGO area (the theme switch and the language picker live in the top
            toolbar, immediately left of the menu button). -->
       <div
@@ -259,14 +284,15 @@ import HistoryItem from './HistoryItem.vue';
 import ProjectFileTree from './ProjectFileTree.vue';
 import GitGraphPanel from './GitGraphPanel.vue';
 // function
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
 // `useVirtualRows` and the row builders come from Nuxt's composable
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
-import { useRightSidebarStore } from '@/stores/right-sidebar';
+import { RIGHT_SIDEBAR_MIN_WIDTH, useRightSidebarStore } from '@/stores/right-sidebar';
+import { useSidebarWidthStore } from '@/stores/sidebar-width';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { discardSideChatSession } from '~/composables/use-side-chat';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -299,6 +325,69 @@ const localePath = useLocalePath();
 
 /** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
+
+// ── Width (draggable, persisted) ───────────────────────────────────────────
+/** The shell's left-column width, shared with the layout's auto-collapse. */
+const sidebarWidthStore = useSidebarWidthStore();
+const sidebarWidth = computed(() => sidebarWidthStore.width);
+const rightSidebar = useRightSidebarStore();
+
+/**
+ * Pixels the rest of the shell needs at minimum: the conversation's 320px
+ * floor plus the right column's floor while it is open. The drag ceiling
+ * shrinks by this much, so a wide left column can never push the other two
+ * past their own minimums (which would overflow the window instead).
+ */
+const shellReservedWidth = computed(() => 320 + (rightSidebar.collapsed ? 0 : RIGHT_SIDEBAR_MIN_WIDTH));
+
+/** Whether a pointer drag is in progress (drives the grip's highlighted state). */
+const resizing = ref(false);
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+
+/**
+ * Follow the pointer: the column is left-anchored, so moving RIGHT (dx > 0)
+ * widens it. `setWidth` clamps each step, so the drag never leaves the band.
+ * @param event Pointer move event.
+ */
+const onResizeMove = (event: PointerEvent) => {
+  if (!resizing.value) return;
+  sidebarWidthStore.setWidth(
+    resizeStartWidth + (event.clientX - resizeStartX),
+    window.innerWidth,
+    shellReservedWidth.value
+  );
+};
+
+/** End the drag and detach the window listeners. */
+const stopResize = () => {
+  if (!resizing.value) return;
+  resizing.value = false;
+  window.removeEventListener('pointermove', onResizeMove);
+  window.removeEventListener('pointerup', stopResize);
+  window.removeEventListener('pointercancel', stopResize);
+};
+
+/**
+ * Start a width drag from the right-edge handle.
+ * @param event Pointer down event on the handle.
+ */
+const startResize = (event: PointerEvent) => {
+  resizing.value = true;
+  resizeStartX = event.clientX;
+  resizeStartWidth = sidebarWidth.value;
+  window.addEventListener('pointermove', onResizeMove);
+  window.addEventListener('pointerup', stopResize);
+  window.addEventListener('pointercancel', stopResize);
+  event.preventDefault();
+};
+
+/**
+ * Keep the column inside its band when the window shrinks: a width saved on a
+ * wide window would otherwise overflow a narrower one (mirrors the right
+ * sidebar's `fitToViewport`).
+ */
+const fitWidthToViewport = () => sidebarWidthStore.fitToViewport(window.innerWidth, shellReservedWidth.value);
 
 /** Which body the sidebar shows; the top bar's folder button flips it. */
 const ui = useUiStore();
@@ -694,6 +783,13 @@ ensureSessionCharacter('default');
 // ensureSessionCharacter from local Dexie).
 onMounted(() => {
   loadSessionList();
+  fitWidthToViewport();
+  window.addEventListener('resize', fitWidthToViewport);
+});
+
+onBeforeUnmount(() => {
+  stopResize();
+  window.removeEventListener('resize', fitWidthToViewport);
 });
 
 // Stronger guarantee: use the session_id at the end of the browser URL as the 'single source of truth' for the active state.

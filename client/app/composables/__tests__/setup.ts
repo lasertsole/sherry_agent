@@ -466,6 +466,17 @@ vi.stubGlobal('useSubagentStore', () =>
 // override it with their own `vi.stubGlobal` in `beforeEach`.
 // `reactive` mirrors Pinia's contract: state refs are auto-unwrapped on access
 // (`store.tabs.find(...)`, not `store.tabs.value.find(...)`).
+// `useSidebarWidthStore` backs the home shell's LEFT column width (draggable,
+// persisted). Same shape as the right-sidebar stub: a reactive object whose
+// properties are plain values, so `store.width` reads directly.
+vi.stubGlobal('useSidebarWidthStore', () =>
+  Vue.reactive({
+    width: 360,
+    setWidth: () => {},
+    fitToViewport: () => {}
+  })
+);
+
 vi.stubGlobal('useRightSidebarStore', () =>
   Vue.reactive({
     collapsed: true,

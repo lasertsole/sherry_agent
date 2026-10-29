@@ -140,7 +140,7 @@ client/
 │   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
-│   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
+│   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)

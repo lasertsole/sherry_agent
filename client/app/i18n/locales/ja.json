@@ -164,7 +164,8 @@
     "refreshGraph": "再読み込み",
     "refreshGraphPrompt": "実行グラフを再取得して再描画",
     "noTasks": "バックグラウンドタスクはまだありません",
-    "tasksLoading": "タスクを読み込み中..."
+    "tasksLoading": "タスクを読み込み中...",
+    "resize": "ドラッグで幅を調整"
   },
   "toolbar": {
     "newChat": "新しい会話",

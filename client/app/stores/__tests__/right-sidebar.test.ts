@@ -280,10 +280,12 @@ describe('stores/right-sidebar', () => {
     expect(clampSidebarWidth(50, 2000)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
     expect(clampSidebarWidth(5000, 2000)).toBe(RIGHT_SIDEBAR_MAX_WIDTH);
     expect(clampSidebarWidth(500, 2000)).toBe(500);
-    // Narrow viewport: the 55% viewport cap wins over the fixed maximum.
-    expect(clampSidebarWidth(700, 800)).toBe(440);
-    // A viewport so narrow that 55% is below the minimum still yields something usable.
-    expect(clampSidebarWidth(400, 400)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
+    // Narrow viewport: the 65% viewport cap wins over the fixed maximum
+    // (ZCode's side-pane ceiling; it used to be 55%).
+    expect(clampSidebarWidth(700, 800)).toBe(520);
+    // A viewport so narrow that 65% falls below the minimum yields the cap:
+    // a panel wider than the window helps nobody.
+    expect(clampSidebarWidth(400, 400)).toBe(260);
   });
 
   it('setWidth() clamps every drag step and defaults to a comfortable width', () => {
@@ -303,12 +305,12 @@ describe('stores/right-sidebar', () => {
   it('fitToViewport() pulls a saved width back inside a shrunken window', () => {
     const store = useRightSidebarStore();
 
-    // 700 fits a 2000px window, but not an 800px one (cap = 440).
+    // 700 fits a 2000px window, but not an 800px one (65% cap = 520).
     store.setWidth(700, 2000);
     expect(store.width).toBe(700);
 
     store.fitToViewport(800);
-    expect(store.width).toBe(440);
+    expect(store.width).toBe(520);
 
     // No-op while the width still fits.
     store.setWidth(400, 2000);

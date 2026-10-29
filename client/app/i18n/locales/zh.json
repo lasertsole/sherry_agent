@@ -164,7 +164,8 @@
     "refreshGraph": "刷新",
     "refreshGraphPrompt": "重新拉取并重绘运行图",
     "noTasks": "暂无后台任务",
-    "tasksLoading": "正在加载任务…"
+    "tasksLoading": "正在加载任务…",
+    "resize": "拖动调整宽度"
   },
   "toolbar": {
     "newChat": "新建对话",

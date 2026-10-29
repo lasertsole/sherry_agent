@@ -1417,6 +1417,21 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
+## Shell Layout: Three Columns (`client/app/pages/home/index.vue`)
+
+The shell is one flex row — left session column, conversation, right sidebar — and each column owns a width band modelled on ZCode's workspace shell. The point of the bands is that no column can be squeezed out of existence by another, and only the columns that are worth less than the chat give way.
+
+| Column | Band | Owner |
+| :--- | :--- | :--- |
+| Left (`SessionSidebar.vue`) | 280px floor, half the viewport at most, minus what the other columns need; drag the right edge, width persisted | `stores/sidebar-width.ts` (`SIDEBAR_MIN_WIDTH` / `SIDEBAR_MAX_WIDTH_RATIO`) |
+| Middle (`NuxtPage`) | `min-w-[320px]` — never collapses to zero | inline in `index.vue` |
+| Right (`RightSidebar.vue`) | 240px floor (`RIGHT_SIDEBAR_MIN_WIDTH`), 65% viewport cap, `shrink` so it gives way when every minimum cannot fit | `stores/right-sidebar.ts` |
+
+- **The clamps compose.** The left column's ceiling is `min(50% viewport, viewport - reserved)`, where `reserved` is the conversation's 320px plus the right column's 240px while it is open (`shellReservedWidth` in `SessionSidebar.vue`). Without that the two fixed minimums would overflow the window on a wide drag. A viewport too narrow for the floor lets the ceiling win: a column wider than the window helps nobody.
+- **Narrow-window safety net** (`composables/use-auto-collapse.ts`, thresholds 480 / 360 with a 300ms resize debounce): below a 480px conversation the right column retracts, below 360 the left one does too. It runs once at mount (a layout restored from localStorage can already be too narrow) and then only on WINDOW RESIZE — opening a panel by hand is never undone by the layout.
+- **Writability**: the composable writes the two `collapsed` refs, so they must come from `storeToRefs`; a `computed(() => store.collapsed)` throws on write (Vue only warns) and the collapse silently never happens.
+- **Collapsed is not a width**: the left column's collapsed state stays `w-0` (the parent owns the flag) and expanding returns to the persisted width. The right column keeps its `maximized` mode (`fixed inset-0`), which the `shrink min-w-[240px]` classes must not touch — the class list keeps them in the expanded branch only.
+
 ## Session Token Budget (`agent/middlewares/token_budget/`)
 
 A session can carry an optional token CAP (`PUT /sessions/budget`,

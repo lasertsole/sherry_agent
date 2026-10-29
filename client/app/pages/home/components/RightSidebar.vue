@@ -9,7 +9,10 @@
           'fixed inset-0 z-40 bg-white dark:bg-[#181820]'
         : collapsed
           ? 'relative w-0'
-          : 'relative border-l border-solid border-gray-light dark:border-gray-dark',
+          : // `shrink` lets the column give way when the window is too narrow for
+            // every minimum (the left column is `shrink-0` and the conversation
+            // has its own 320px floor); the inline width stays the target.
+            'relative shrink border-l border-solid border-gray-light min-w-[240px] dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
     :style="collapsed || store.maximized ? undefined : { width: `${store.width}px` }">

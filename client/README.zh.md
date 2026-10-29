@@ -141,7 +141,7 @@ client/
 │   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令，弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
 │   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
-│   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
+│   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）；右边缘可拖拽（下限 280px、上限视口一半、宽度持久化）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）

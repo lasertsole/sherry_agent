@@ -141,7 +141,7 @@ client/
 │   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
 │   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
-│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
+│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터). 오른쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 절반, 너비 영속)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드. 행 우클릭 메뉴: 열기 / 연결 프로그램 / 내장 브라우저로 열기 / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가)
 │   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)

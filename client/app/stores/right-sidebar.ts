@@ -107,8 +107,8 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'taskDetail'
 ]);
 
-/** Narrowest usable sidebar (below this the panels get unusable). */
-export const RIGHT_SIDEBAR_MIN_WIDTH = 280;
+/** Narrowest usable sidebar: ZCode's side-pane floor (the panels stay readable). */
+export const RIGHT_SIDEBAR_MIN_WIDTH = 240;
 /** Widest allowed sidebar: a drag can never swallow more than this (or ~half of a narrow window). */
 export const RIGHT_SIDEBAR_MAX_WIDTH = 760;
 /** Default width for a fresh profile. */
@@ -120,7 +120,8 @@ export const RIGHT_SIDEBAR_PANEL_MIN_HEIGHT = 360;
 
 /**
  * Clamp a requested width into the allowed band, also keeping the panel below
- * ~55% of the viewport so it can never crowd the chat out on small screens.
+ * 65% of the viewport (ZCode's side-pane ceiling) so it can never crowd the
+ * chat out on small screens.
  * @param width Requested width in px.
  * @param viewportWidth Current window width (defaults to `window.innerWidth`).
  */
@@ -128,7 +129,7 @@ export function clampSidebarWidth(
   width: number,
   viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth
 ): number {
-  const viewportCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.55) : RIGHT_SIDEBAR_MAX_WIDTH;
+  const viewportCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.65) : RIGHT_SIDEBAR_MAX_WIDTH;
   const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(RIGHT_SIDEBAR_MAX_WIDTH, viewportCap));
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
