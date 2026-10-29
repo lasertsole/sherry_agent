@@ -649,3 +649,31 @@ class TestTrajectoryErrorEvent:
             'record_event(\n                    self.session_id,\n                    "error",'
             in source
         )
+
+
+@pytest.mark.asyncio
+async def test_the_first_prune_is_not_deferred_on_a_freshly_booted_host(tmp_path, monkeypatch):
+    """``monotonic()`` is uptime: a 0.0 default deferred the first prune by an hour.
+
+    CI containers boot seconds before the suite, so the "never pruned" sentinel
+    must not be a timestamp at all.
+    """
+    import server.service.trajectory_store as module
+    from config.features import TRAJECTORY
+
+    monkeypatch.setitem(TRAJECTORY, "max_turns_per_session", 1)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 120.0)
+    store = module.TrajectoryStore(tmp_path / "traj.db")
+    calls: list[str] = []
+    real_prune = store.prune_session
+
+    async def _spy(session_id: str) -> int:
+        calls.append(session_id)
+        return await real_prune(session_id)
+
+    store.prune_session = _spy  # type: ignore[method-assign]
+
+    await store.append("s1", "turn-0", "turn_start", {}, seq=1)
+    await store.append("s1", "turn-1", "turn_start", {}, seq=2)
+
+    assert calls == ["s1"], "the first event must prune even at low uptime"

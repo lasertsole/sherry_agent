@@ -247,7 +247,12 @@ class TrajectoryStore:
         would add a GROUP BY to every tool call, so it is debounced.
         """
         now = time.monotonic()
-        if now - self._last_prune.get(session_id, 0.0) < _PRUNE_INTERVAL_S:
+        # ``None`` = never pruned, NOT 0.0: ``monotonic()`` is the host's uptime,
+        # so ``now - 0.0 < interval`` skipped only-recently-booted hosts' first
+        # prune for up to an hour of uptime (a fresh CI container never pruned
+        # at all). Missing means "due now".
+        last = self._last_prune.get(session_id)
+        if last is not None and now - last < _PRUNE_INTERVAL_S:
             return
         self._last_prune[session_id] = now
         await self.prune_session(session_id)
