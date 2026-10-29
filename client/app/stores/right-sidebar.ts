@@ -111,8 +111,8 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'taskDetail'
 ]);
 
-/** Narrowest usable sidebar: ZCode's side-pane floor (the panels stay readable). */
-export const RIGHT_SIDEBAR_MIN_WIDTH = 240;
+/** Narrowest usable sidebar: below this the panels are cramped rather than small. */
+export const RIGHT_SIDEBAR_MIN_WIDTH = 280;
 /** Widest allowed sidebar: a drag can never swallow more than this (or ~half of a narrow window). */
 export const RIGHT_SIDEBAR_MAX_WIDTH = 760;
 /** Default width for a fresh profile. */
@@ -122,7 +122,7 @@ export const RIGHT_SIDEBAR_PANEL_MIN_WIDTH = 420;
 /**
  * Floor for panels whose content is a SHORT LIST rather than an editor. The
  * 420px floor exists so an 800-1600px editor body is not squeezed into a
- * column; a four-row list has no such need, and at the column's own 240px floor
+ * column; a four-row list has no such need, and at the column's own 280px floor
  * the editor floor made it overflow its own panel with a horizontal scrollbar.
  */
 export const RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH = 200;

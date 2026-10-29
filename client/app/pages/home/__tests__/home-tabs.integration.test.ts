@@ -172,25 +172,25 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     expect(bellIn('toolbar-left')).toBe(false);
   });
 
-  it('puts the theme switch and the language picker just left of the menu button', async () => {
+  it('puts the theme switch just left of the menu button', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
     const right = wrapper.get('[data-test="toolbar-right"]');
     expect(right.findComponent(ModeSwitch).exists()).toBe(true);
-    expect(right.find('[data-test="toolbar-locale"]').exists()).toBe(true);
-    // The sidebar keeps no copy of either.
+    // The interface language left the toolbar for the 菜单 grid's first entry, so
+    // the toolbar keeps exactly one app-wide switch.
+    expect(right.find('[data-test="toolbar-locale"]').exists()).toBe(false);
+    // The sidebar keeps no copy of the switch.
     expect(wrapper.get('[data-test="sidebar-title-row"]').findComponent(ModeSwitch).exists()).toBe(false);
 
-    // DOM order inside the right cluster: the picker comes BEFORE the menu button.
-    const picker = right.get('[data-test="toolbar-locale"]').element;
+    // DOM order inside the right cluster: the switch comes BEFORE the menu button.
+    const toggle = right.findComponent(ModeSwitch).element;
     const menu = right.get('button[title="菜单"]').element;
-    expect(picker.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggle.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    // The narrow-column guards are back with the controls (both drop out of the
-    // row below 620px).
+    // The narrow-column guard drops it out of the row below 620px.
     expect(wrapper.find('.\\@max-\\[620px\\]\\:hidden').findComponent(ModeSwitch).exists()).toBe(true);
-    expect(wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!').length).toBe(1);
   });
 
   it('keeps the log viewer out of the top bar (it is a nine-grid entry)', async () => {

@@ -30,7 +30,7 @@
             ? 'border-theme-main bg-gray-50 dark:bg-gray-800'
             : 'border-gray-200 hover:border-theme-main dark:border-gray-700'
         ]"
-        @click="select(option.code)">
+        @click="switchTo(option.code)">
         <span class="flex min-w-0 items-center gap-2">
           <span class="truncate text-sm text-gray-700 dark:text-gray-200">{{ option.name }}</span>
           <span class="shrink-0 text-xs text-gray-400 dark:text-gray-500">{{ option.code }}</span>
@@ -44,40 +44,14 @@
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-const { t, locale, setLocale } = useI18n();
+// `useLocaleSwitch` comes from Nuxt's composable auto-import (a value import of
+// `~/composables/**` is lint-restricted), same as the other composables here.
 
-/** One selectable interface language. */
-interface LanguageOption {
-  /** BCP-47-ish code nuxt-i18n switches on. */
-  code: 'zh' | 'en' | 'ja' | 'ko';
-  /** The language's own name — never translated. */
-  name: string;
-}
-
-/**
- * The four shipped locales, each named in its own language: a person looking
- * for their language should not have to read the current UI language first.
- */
-const options: LanguageOption[] = [
-  { code: 'zh', name: '简体中文' },
-  { code: 'en', name: 'English' },
-  { code: 'ja', name: '日本語' },
-  { code: 'ko', name: '한국어' }
-];
-
-/** The active locale (nuxt-i18n exposes it as a ref). */
-const current = computed(() => String(locale.value));
-
-/**
- * Switch the interface language. nuxt-i18n persists the choice in its locale
- * cookie and re-renders in place — no reload, no session impact.
- * @param code Target locale code.
- */
-const select = async (code: LanguageOption['code']) => {
-  if (code === current.value) return;
-  await setLocale(code);
-};
+const { t } = useI18n();
+// The shared switch (setLocale + the preference cookie app.vue reads at boot).
+// Each locale is named in its OWN language: a person looking for theirs should
+// not have to read the current UI language first.
+const { current, switchTo, options } = useLocaleSwitch();
 </script>

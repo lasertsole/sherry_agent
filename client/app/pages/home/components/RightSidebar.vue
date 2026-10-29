@@ -12,7 +12,7 @@
           : // `shrink` lets the column give way when the window is too narrow for
             // every minimum (the left column is `shrink-0` and the conversation
             // has its own 320px floor); the inline width stays the target.
-            'relative shrink border-l border-solid border-gray-light min-w-[240px] dark:border-gray-dark',
+            'relative shrink border-l border-solid border-gray-light min-w-[280px] dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
     :style="collapsed || store.maximized ? undefined : { width: `${store.width}px` }">
@@ -244,7 +244,7 @@ const activeKind = computed<RightSidebarPanelKind | null>(() =>
 /**
  * Laying-out floor of the OPEN panel. Editors keep the 420px floor (they are
  * built as 800-1600px bodies and squeeze badly); list panels lay out inside the
- * column's own 240px floor instead, so they use a narrow zero-scroll floor.
+ * column's own 280px floor instead, so they use a narrow zero-scroll floor.
  */
 const panelMinWidth = computed(() =>
   activeKind.value && NARROW_PANEL_KINDS.has(activeKind.value)

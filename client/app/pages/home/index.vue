@@ -109,40 +109,12 @@
               class="@max-[300px]:hidden!"
               data-test="toolbox-button"
               @click="isToolboxOpen = true" />
-            <!-- Theme switch + language picker: the two app-wide switches, sitting
-                 immediately LEFT of the menu button. They are the first controls to
-                 go when the column gets narrow (the theme wrapper is a span because
-                 ModeSwitch's root is a fragment; the picker carries the important
-                 modifier because PrimeVue sets its own `display`). -->
+            <!-- Theme switch: the one app-wide toggle left in the bar (the
+                 interface language lives in the 菜单 grid's first entry, where a
+                 user who cannot read the current UI will actually find it). It is
+                 the first control to go when the column gets narrow — the wrapper
+                 is a span because ModeSwitch's root is a fragment. -->
             <span class="@max-[620px]:hidden"><ModeSwitch /></span>
-            <Select
-              :model-value="locale"
-              :options="languageOptions"
-              option-label="name"
-              option-value="code"
-              class="@max-[620px]:hidden! w-40"
-              size="small"
-              :aria-label="t('a11y.language')"
-              data-test="toolbar-locale"
-              @update:model-value="onLanguageChange">
-              <template #value="slotProps">
-                <span
-                  v-if="slotProps.value"
-                  class="flex items-center gap-1.5">
-                  <i class="pi pi-globe" />
-                  <span>{{ t(`config.language.${slotProps.value}`) }}</span>
-                </span>
-                <span
-                  v-else
-                  class="flex items-center gap-1.5">
-                  <i class="pi pi-globe" />
-                  <span>{{ t('config.language.zh') }}</span>
-                </span>
-              </template>
-              <template #option="slotProps">
-                <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
-              </template>
-            </Select>
             <!-- Settings menu entry: the three-bars button. All other functions
                  (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
                  bar into the large dialog nine-grid that this button pops open. -->
@@ -276,38 +248,7 @@ import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
 import { buildHomeToolbarCommands } from './dialogs';
 
-const { t, locale, setLocale } = useI18n();
-
-/** Language switcher options: the names come from System Config's language block. */
-const languageOptions = computed(() => [
-  { name: t('config.language.zh'), code: 'zh' },
-  { name: t('config.language.en'), code: 'en' },
-  { name: t('config.language.ja'), code: 'ja' },
-  { name: t('config.language.ko'), code: 'ko' }
-]);
-
-/**
- * Language switch handler: switches via nuxt-i18n's `setLocale` (under the
- * `no_prefix` strategy its internal `navigate()` returns early, so `/home/:id`
- * URLs stay stable) and then writes the preference cookie — the module's own
- * cookie write is a no-op with `detectBrowserLanguage: false`, and the cookie is
- * what makes the choice survive a refresh (app.vue reads the same key).
- * @param code
- */
-async function onLanguageChange(code: string) {
-  await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
-  persistLocalePreference(code as 'zh' | 'en' | 'ja' | 'ko');
-}
-
-/**
- * Persist the language preference cookie (key: `i18n_redirected`).
- * @param code
- */
-function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
-  if (import.meta.server) return;
-  const pref = useCookie('i18n_redirected');
-  pref.value = code;
-}
+const { t } = useI18n();
 
 /** Global chat area background image: bound to the root container (fills the entire window, including the left session list) */
 const chatBackgroundStore = useChatBackgroundStore();

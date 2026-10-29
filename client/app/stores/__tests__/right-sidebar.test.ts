@@ -23,7 +23,7 @@ describe('stores/right-sidebar', () => {
 
   it('lays list panels out inside the column floor, editors above it', () => {
     // Editors keep the 420px body floor (they scroll sideways below it); a list
-    // panel would then overflow its own 240px column with a scrollbar, so the
+    // panel would then overflow its own column with a scrollbar, so the
     // narrow kinds get a floor below the column's own minimum.
     expect(RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH).toBeLessThan(RIGHT_SIDEBAR_MIN_WIDTH);
     expect(RIGHT_SIDEBAR_PANEL_MIN_WIDTH).toBeGreaterThan(RIGHT_SIDEBAR_MIN_WIDTH);
@@ -296,9 +296,10 @@ describe('stores/right-sidebar', () => {
     // Narrow viewport: the 65% viewport cap wins over the fixed maximum
     // (ZCode's side-pane ceiling; it used to be 55%).
     expect(clampSidebarWidth(700, 800)).toBe(520);
-    // A viewport so narrow that 65% falls below the minimum yields the cap:
-    // a panel wider than the window helps nobody.
-    expect(clampSidebarWidth(400, 400)).toBe(260);
+    // A viewport so narrow that 65% falls below the minimum yields the floor
+    // (the cap never goes under it): a panel wider than the window helps nobody,
+    // and the auto-collapse is closing this column there anyway.
+    expect(clampSidebarWidth(400, 400)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
   });
 
   it('setWidth() clamps every drag step and defaults to a comfortable width', () => {

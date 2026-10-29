@@ -170,7 +170,7 @@ client/
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
 │   │           ├── I18nPanel.vue               # 国際化 tab: アプリ全体の言語切替（メニューのグリッド先頭）
-│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）。左端はドラッグハンドル（下限 240px、上限はビューポートの 65%、すべての下限が収まらない窓では下限まで縮む）
+│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）。左端はドラッグハンドル（下限 280px、上限はビューポートの 65%、すべての下限が収まらない窓では下限まで縮む）
 │   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file：テキスト + markdown、画像/PDF/docx は GET /project/file/blob 経由）
 │   │           ├── PdfViewer.vue             # ファイルビューア内の PDF プレビュー（pdf.js、ページ送り + 幅合わせ、GET /project/file/blob）
 │   │           ├── DocxViewer.vue            # ファイルビューア内の docx プレビュー（mammoth → HTML → DOMPurify、GET /project/file/blob）
