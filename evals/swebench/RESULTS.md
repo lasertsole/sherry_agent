@@ -6,6 +6,24 @@
 
 ---
 
+## 20261030_031038 — HARD 切片 @ 「编码助手」系统提示词（persona=coding）
+
+- 目的：验证 `TODO/分析_SWE-bench_HARD_运行与整改方案_20261026.md` §4.2——换用内置编码助手预设的
+  系统提示词，能否让 90/90 迭代不再空转（4.2 的现象）。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --instance-cache-dir /tmp/swebench-instance-cache`
+- persona：`--persona coding` 把 `workspace/template/zh/AGENTS.md`（+ 空 SOUL/USER/ROLE）种进 eval
+  workspace；报告记录 `persona.mode=coding`、`template_lang=zh`、`AGENTS.md` digest `004d7ef0885a169b`、
+  assembled prompt 11,497 字符。其余配置与 2026-10-26 中性臂一致（编码助手 agent block、无沙箱后端、
+  90 迭代、deepseek-flash / thinking off）。
+- 结果：`resolved 0/2`；两实例 `changed_paths=[]`、均以预算耗尽文本结束；成本 $1.467，cache_read 0
+- 工具分布：django terminal 43 / read_file 4 / search_files 1；sympy terminal 44 / read_file 1 /
+  skill_view 1；`write_file` / `patch_file` / `sessions_spawn` / `taskflow` 全为 0（无任何子代理 run）
+- 结论：编码助手模板的「编排者信条」禁止主代理编辑、要求委托，但模板工具名 `task`/`taskflow_step`
+  与当前工具面（`sessions_spawn`/`taskflow`）不符，且本 harness 的子代理只读——模型既未编辑也未委托，
+  退化为纯 terminal 探索。Django 由中性臂的 resolved 退化为 no-edit。**该提示词不解决 4.2，且使 Django 退化。**
+
+---
+
 ## 20261017_003529 — HARD 切片 @ 1M 上下文窗口
 
 - 命令：`uv run --no-sync python evals/swebench/suite.py --hard --update-baseline`

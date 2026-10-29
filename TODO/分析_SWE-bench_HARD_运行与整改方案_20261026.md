@@ -147,6 +147,45 @@ Django 也耗尽 90 次，但在耗尽前已写出补丁并通过。Sympy 的问
 - prompt/工具策略：先读目标测试文件与该文件相关的 printer，再限定搜索范围；禁止把 `find /`、全仓库 grep 当成默认动作。
 - 在 harness 层把 `changed_paths == []` 标记为 `no_edit` 失败类型，单列统计，而不是普通 unresolved。
 
+### 4.2 复核（2026-10-30）：换用「编码助手」系统提示词 → 未解决，且 Django 退化
+
+**方法**：给 swebench arm 增加 `--persona coding`（`evals/coding_capability/suite.py::_seed_persona`）：
+把内置「编程助手 / 编码助手」预设的系统提示词原样种进 eval workspace
+（`workspace/template/zh/AGENTS.md` + 空 `SOUL.md`/`USER.md`/`ROLE.md`，与该预设写入的人格文件一致，
+`AGENTS.md` digest `004d7ef0885a169b`，assembled prompt 11,497 字符）。其余全部不变：
+编码助手 agent block、`SANDBOX_POLICY=auto`、90 迭代、`deepseek-flash` / thinking=off。
+与线上预设的唯一偏差：`ROLE.md` 留空（线上会写入两行角色名，不含任何编辑/编排指令）。
+
+**命令**：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --instance-cache-dir /tmp/swebench-instance-cache`
+
+**产物**：`evals/results/swebench/20261030_031038/`（`eval_report.json` 的 `persona_mode=coding`、
+`persona.mode=coding`、`template_lang=zh`；两个 `diff-*.patch` 均为 0 字节）。
+
+| 实例 | 判定 | 改动文件 | 迭代 | 工具调用 | 工具分布 | 时长 |
+|---|---|---|---|---|---:|---|---:|
+| django__django-17051 | 未解决（**中性臂下曾 resolved**） | 0 | 90/90 | 48 | terminal 43 / read_file 4 / search_files 1 | 123.4 s |
+| sympy__sympy-20639 | 未解决 | 0 | 90/90 | 46 | terminal 44 / read_file 1 / skill_view 1 | 89.9 s |
+
+`write_file` / `patch_file` / `sessions_spawn` / `taskflow` 在两个实例中均为 **0 次**；
+subagent registry 里没有任何 run（`sandbox/stores/subagent_registry.db` 只有 `pending_injections`）。
+总成本 $1.467，`cache_read=0`（中性臂为 97%，原因未定，仅作成本观测）。
+
+**结论**：**没有解决 4.2，方向相反。** 机制有三层，全部可复现：
+
+1. 编码助手模板的「编排者信条（ORCHESTRATOR / NEVER THE IMPLEMENTER）」明确禁止主代理编辑产品文件、
+   要求把实现委托给子代理；模板给出的工具名是历史名（`task`、`taskflow_step`），
+   而本构建的实际工具是 `sessions_spawn` / `taskflow`。模型既没有编辑，也没有发起任何委托——
+   它退化成 90 轮 `terminal` 探索（grep/sed），耗尽预算。
+2. 即使发生委托，本 harness 的子代理是只读的（`evals/sandbox.py::SAFE_TOOL_NAMES =
+   read_file / search_files / question`），无法写文件或执行命令，委托在这条评测链路上不可能产出 patch。
+   （生产环境的 executor 子代理可写；这恰恰说明该提示词与评测链路不兼容，不能拿它当 4.2 的整改。）
+3. 中性臂里让 Django 通过的规则——"Make the change yourself: read the files, edit them, then run
+   the tests"——正是编码助手模板缺失的那条（模板反过来禁止）。
+
+**对后续的含义**：
+4.2 的整改不是「换人格」，而是（a）提示词必须点名本构建真实存在的工具，（b）为「主代理直改」保留明确许可，
+或让评测的子代理具备写权限。预算（136/150）与主代理 turn 数无关，本节证据再次排除预算假设。
+
 ### 4.3 P1：工具结果被上下文裁剪替换为 “tool result missing after context trim.”
 
 Sympy 消息序列中出现两次：
@@ -303,6 +342,6 @@ uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --keep
 ## 8. 执行结果（2026-10-27）
 
 - **竞争修复**：shadow store 可移出实例项目（`SHADOW_GIT["store_dir"]` / `SHERRY_SHADOW_GIT_DIR`）；实例 `.git/info/exclude` 排除 `.sherry/`；`evals/swebench/teardown.py::quiesce_session` 在 diff / test patch / pytest / revert 前取消 turn、级联杀子代理、杀后台终端、等待并冻结 shadow-git 写者；每实例即时写 `instance_results/<id>.json`，单实例失败不再中止整轮；`revert` 改为原子 quarantine；`diff` 包含 untracked 新文件（`git add -N` + `git diff --binary HEAD` + `git reset`），并排除 `.sherry`。
-- **4.2 暂未应用（已撤回）**：无编辑 repair turn、HARD 150 预算、maintainer prompt 已撤回。结论是“问题不在 main agent turn 太短”，需要重新讨论 4.2 的根因与方案；未加载/未自动路由 researcher 是当前更可疑的方向。
+- **4.2 暂未应用（已撤回）**：无编辑 repair turn、HARD 150 预算、maintainer prompt 已撤回。结论是“问题不在 main agent turn 太短”，需要重新讨论 4.2 的根因与方案；未加载/未自动路由 researcher 是当前更可疑的方向。**2026-10-30 复核：换用编码助手系统提示词同样不解决，且让 Django 从 resolved 退化为 no-edit（0/2、两实例零改动）——根因是模板的编排者信条 + 陈旧工具名 + 评测子代理只读，见 §4.2 复核小节。**
 - **其余可观测性/稳定性（4.3–4.6）**：报告补 `final_text`、`cache_read`、`cost_usd`、`sandbox_backend`、`harness_error`、`run_meta.json`；空结果保留为 `(no output)`（`sherry_repair=empty_result`），真正缺失的占位符改为 `tool result missing (not recorded; ...)`（`status=success` + `sherry_repair=missing_tool_result`），驱逐 preview 带 `[evicted to: <path>]` + `read_file` 提示，报告新增 `tool_result_stats`；materialize 增加有界重试与 `--instance-cache-dir` 复用；`/django/...` 这类仓库根风格路径在文件工具内安全重写。
 - **验证**：完整三组门禁 PASS（unit 7314 passed / 1 skipped；integration+module+system 1378 passed / 12 skipped；regression 86 passed）；`tests/full/test_main_agent_e2e.py` + `tests/full/test_session_isolation_e2e.py` 共 7 passed；文档 link/parity gates PASS。

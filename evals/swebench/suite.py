@@ -1,8 +1,9 @@
 """SWE-bench_Lite spike suite — the external benchmark, actually run.
 
 Same harness as ``evals/coding_capability`` (the real main agent through
-``server.service.messages.async_generate``, the neutral persona, the 编码助手
-preset's agent block, auto-granted approvals, the isolated workspace), fed with
+``server.service.messages.async_generate``, the neutral persona — or, with
+``--persona coding``, the shipped 编码助手 preset's system prompt — that preset's
+agent block, auto-granted approvals, the isolated workspace), fed with
 **external** instances instead of self-designed tasks: SWE-bench_Lite problems,
 each judged by its own ``FAIL_TO_PASS`` / ``PASS_TO_PASS`` sets after the
 harness applies the instance's test patch.
@@ -149,6 +150,7 @@ def main() -> None:
     args: list[str] = []
     flags: set[str] = set()
     cache_dir: Path | None = None
+    persona = "neutral"
     index = 0
     while index < len(raw):
         item = raw[index]
@@ -156,6 +158,14 @@ def main() -> None:
             if index + 1 >= len(raw):
                 raise SystemExit("--instance-cache-dir requires a directory")
             cache_dir = Path(raw[index + 1]).expanduser().resolve()
+            index += 2
+            continue
+        if item == "--persona":
+            if index + 1 >= len(raw):
+                raise SystemExit("--persona requires 'neutral' or 'coding'")
+            persona = raw[index + 1]
+            if persona not in ("neutral", "coding"):
+                raise SystemExit(f"unknown --persona {persona!r} (expected 'neutral' or 'coding')")
             index += 2
             continue
         if item.startswith("--"):
@@ -175,6 +185,7 @@ def main() -> None:
             hard="--hard" in flags or not args,
             keep_instances="--keep-instances" in flags,
             cache_dir=cache_dir,
+            persona=persona,
         )
     )
 
@@ -187,13 +198,14 @@ def _run(
     hard: bool = False,
     keep_instances: bool = False,
     cache_dir: Path | None = None,
+    persona: str = "neutral",
 ) -> int:
     run_id = time.strftime("%Y%m%d_%H%M%S")
     results_dir = REPO_ROOT / "evals" / "results" / "swebench" / run_id
     results_dir.mkdir(parents=True)
     print(
         f"[evals] swebench run {run_id} | slice={'hard' if hard else 'spike'} | "
-        f"instances={','.join(instance_ids)}",
+        f"persona={persona} | instances={','.join(instance_ids)}",
         flush=True,
     )
     eval_workspace = results_dir / "sandbox" / "workspace"
@@ -216,7 +228,7 @@ def _run(
         )
         return 3
 
-    harness._seed_persona(eval_workspace)
+    harness._seed_persona(eval_workspace, persona=persona)
     _append_agents_appendix(eval_workspace)
     harness.init_agent()
     main_tools = harness._main_tool_names()
@@ -312,6 +324,7 @@ def _run(
             "web": _probe_web(),
             "sandbox_backend": _sandbox_backend(),
         },
+        "persona_mode": persona,
         "persona": harness._persona_evidence(results[0]["id"] if results else None),
         "isolation": harness._isolation_evidence(live_workspace, live_sessions, eval_workspace),
         "harness_self_check": {k: ok for k, (ok, _) in self_check.items()},

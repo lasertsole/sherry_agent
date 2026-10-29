@@ -94,6 +94,13 @@ _NEUTRAL_AGENTS_MD = """# Working rules
 
 _EMPTY_PERSONA_FILES = ("SOUL.md", "USER.md", "ROLE.md")
 
+#: Which persona files the CURRENT process seeded (recorded as report evidence).
+#: ``neutral`` = the capability baseline's standalone rules; ``coding`` = the
+#: shipped 编码助手/编程助手 preset's rules template, i.e. that preset's SYSTEM
+#: PROMPT (the thing an arm may deliberately be testing).
+_PERSONA_MODE = "neutral"
+_PERSONA_TEMPLATE_LANG = "zh"
+
 #: Markers a neutral arm must not contain: the persona name in any shipped
 #: spelling and the orchestrator doctrine.
 _FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "ORCHESTRATOR", "NEVER THE IMPLEMENTER")
@@ -239,19 +246,37 @@ def _session_names(workspace: Path) -> set[str]:
     return {entry.name for entry in sessions.iterdir() if entry.is_dir()}
 
 
-def _seed_persona(workspace: Path) -> None:
-    """Write the neutral arm: rules only, no persona, no template copy.
+def _seed_persona(workspace: Path, *, persona: str = "neutral", template_lang: str = "zh") -> None:
+    """Write this arm's persona files.
 
-    ``workspace/template/`` is deliberately NOT copied — the shipped templates
-    carry the persona (and its orchestrator doctrine) that a neutral arm must not
-    carry. The memory note is seeded instead, so the memory store
-    finds an empty page rather than warning about a missing template.
+    ``persona="neutral"`` (the capability baseline) writes standalone rules with
+    no persona and no template copy: ``workspace/template/`` carries the shipped
+    persona (and its orchestrator doctrine), which a neutral arm must not carry.
+
+    ``persona="coding"`` writes the shipped 编码助手 preset's SYSTEM PROMPT
+    instead: its ``AGENTS.md`` template (the operating rules, including the
+    orchestrator doctrine) with SOUL / USER / ROLE empty — exactly the files that
+    preset applies. Only the rules file is copied; the template directory's
+    persona files are never seeded. The memory note stays empty either way, so
+    the memory store finds an empty page rather than a missing template.
     """
+    global _PERSONA_MODE, _PERSONA_TEMPLATE_LANG
+    if persona not in ("neutral", "coding"):
+        raise ValueError(f"unknown persona {persona!r} (expected 'neutral' or 'coding')")
     (workspace / "memory").mkdir(parents=True, exist_ok=True)
-    (workspace / "AGENTS.md").write_text(_NEUTRAL_AGENTS_MD, encoding="utf-8")
+    if persona == "coding":
+        template = REPO_ROOT / "workspace" / "template" / template_lang / "AGENTS.md"
+        if not template.is_file():
+            raise FileNotFoundError(f"coding persona template not found: {template}")
+        rules = template.read_text(encoding="utf-8")
+    else:
+        rules = _NEUTRAL_AGENTS_MD
+    (workspace / "AGENTS.md").write_text(rules, encoding="utf-8")
     (workspace / "memory" / "FACTS.md").write_text("", encoding="utf-8")
     for name in _EMPTY_PERSONA_FILES:
         (workspace / name).write_text("", encoding="utf-8")
+    _PERSONA_MODE = persona
+    _PERSONA_TEMPLATE_LANG = template_lang
 
 
 def init_agent() -> None:
@@ -602,11 +627,18 @@ def _persona_evidence(session_id: str | None) -> dict[str, Any]:
         path = WORKSPACE_DIR / name
         digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.is_file() else ""
         digests[name] = digest
+    markers = sorted(m for m in _FORBIDDEN_MARKERS if m in prompt)
     return {
+        # ``mode`` names the arm under test: the neutral baseline, or the
+        # shipped coding preset's system prompt (whose persona markers are the
+        # POINT of that arm, hence ``markers_expected``).
+        "mode": _PERSONA_MODE,
+        "template_lang": _PERSONA_TEMPLATE_LANG if _PERSONA_MODE == "coding" else None,
         "workspace_dir": str(WORKSPACE_DIR),
         "file_digests": digests,
         "assembled_prompt_chars": len(prompt),
-        "forbidden_markers_found": sorted(m for m in _FORBIDDEN_MARKERS if m in prompt),
+        "forbidden_markers_found": markers,
+        "markers_expected": _PERSONA_MODE == "coding",
         "assembled_prompt_head": prompt[:600],
     }
 
