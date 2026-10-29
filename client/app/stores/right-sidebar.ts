@@ -109,8 +109,15 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
 
 /** Narrowest usable sidebar: below this the panels are cramped rather than small. */
 export const RIGHT_SIDEBAR_MIN_WIDTH = 280;
-/** Widest allowed sidebar: a drag can never swallow more than this (or ~half of a narrow window). */
-export const RIGHT_SIDEBAR_MAX_WIDTH = 760;
+/**
+ * Widest allowed sidebar, as a fraction of the viewport. The band is
+ * PROPORTIONAL at both ends for the shell's columns: a fixed pixel maximum meant
+ * a 4K display could never give the panel more than 760px, while a laptop could
+ * give it 60% of its width.
+ */
+export const RIGHT_SIDEBAR_MAX_WIDTH_RATIO = 0.65;
+/** Fallback ceiling when no viewport is known (SSR / a test that passes none). */
+export const RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH = 760;
 /** Default width for a fresh profile. */
 export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 /** Laying-out floor of a panel body: narrower than this it scrolls sideways instead of squeezing. */
@@ -121,11 +128,13 @@ export const RIGHT_SIDEBAR_PANEL_MIN_HEIGHT = 360;
 /**
  * Clamp a requested width into the allowed band.
  *
- * Two ceilings apply: 65% of the viewport (the side pane must never crowd the
- * chat out) and the hard 760px maximum. ``reserved`` is the space the rest of
- * the shell needs at minimum — the left column plus the conversation's floor —
- * so a drag stops where the layout actually stops instead of storing a width
- * the flex row silently refuses to render.
+ * Two PROPORTIONAL ceilings apply: the 65% viewport cap (the side pane must
+ * never crowd the chat out) and whatever the rest of the shell still needs —
+ * ``reserved`` is the left column plus the conversation's floor in px, so the
+ * drag stops where the layout actually stops instead of storing a width the flex
+ * row silently refuses to render. There is no fixed pixel maximum: on a large
+ * display the panel scales with the window, exactly like the left column's 50%
+ * ceiling and the conversation's 35% floor.
  * @param width Requested width in px.
  * @param viewportWidth Current window width (defaults to `window.innerWidth`).
  * @param reserved Pixels the other columns need at minimum.
@@ -135,9 +144,12 @@ export function clampSidebarWidth(
   viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth,
   reserved: number = 0
 ): number {
-  const ratioCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.65) : RIGHT_SIDEBAR_MAX_WIDTH;
-  const roomCap = viewportWidth > 0 ? viewportWidth - Math.max(0, reserved) : RIGHT_SIDEBAR_MAX_WIDTH;
-  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(RIGHT_SIDEBAR_MAX_WIDTH, ratioCap, roomCap));
+  const hasViewport = viewportWidth > 0;
+  const ratioCap = hasViewport
+    ? Math.floor(viewportWidth * RIGHT_SIDEBAR_MAX_WIDTH_RATIO)
+    : RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH;
+  const roomCap = hasViewport ? viewportWidth - Math.max(0, reserved) : RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH;
+  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(ratioCap, roomCap));
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
 
