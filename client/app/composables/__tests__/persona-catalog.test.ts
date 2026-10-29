@@ -350,8 +350,9 @@ describe('persona catalogue', () => {
       expect(stripped, lang).not.toMatch(/NEVER THE IMPLEMENTER|実装者では|구현자가/);
       expect(stripped.length, lang).toBeLessThan(template.length);
       expect(stripped, lang).toContain('# AGENTS.md');
-      // The 边界 ("Boundaries") section survives in every language (its last bullet).
-      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(4);
+      // The 边界 ("Boundaries") section survives in every language (its bullets), and
+      // so does the clarify-first rule: only 任务分配 / 任务执行 are stripped.
+      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(5);
     }
   });
 
