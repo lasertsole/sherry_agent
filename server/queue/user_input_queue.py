@@ -195,6 +195,13 @@ WHERE id = ? AND status IN {_ACTIVE_STATUSES_SQL}
 RETURNING {_ROW_COLUMNS};
 """
 
+# A CLAIMED row with no live turn is orphaned (no turn survives a restart).
+# Requeue it instead of voiding: the user's message is still wanted.
+_REQUEUE_CLAIMED_SQL = """
+UPDATE user_input_queue SET status = 'QUEUED', updated_at = ?
+WHERE session_id = ? AND status = 'CLAIMED';
+"""
+
 _RECOVER_SQL = f"""
 UPDATE user_input_queue
 SET status = 'VOIDED', updated_at = ?
@@ -561,6 +568,11 @@ class QueueRepository:
         return int(cursor.rowcount)
 
     @staticmethod
+    async def requeue_claimed(db: aiosqlite.Connection, session_id: str, now: float) -> int:
+        cursor = await db.execute(_REQUEUE_CLAIMED_SQL, (now, session_id))
+        return int(cursor.rowcount)
+
+    @staticmethod
     async def delete_session(db: aiosqlite.Connection, session_id: str) -> int:
         """Delete every queue row of a session (ephemeral-session purge)."""
         cursor = await db.execute(
@@ -780,6 +792,24 @@ class UserInputQueue:
                 session_id,
             )
         return removed
+
+    async def requeue_claimed(self, session_id: str) -> int:
+        """Return CLAIMED rows to QUEUED (a crashed turn's claim); return the count.
+
+        Safe only when no turn can be running — the boot pass is the caller.
+        Dedup keys are untouched, so the row behaves like any other queued
+        message: the drain claims it once, in FIFO order.
+        """
+        await self._ensure_db()
+        async with self._conn.write_transaction() as db:
+            requeued = await QueueRepository.requeue_claimed(db, session_id, time.time())
+        if requeued:
+            logger.info(
+                "user_input_queue requeue_claimed: returned {} row(s) to QUEUED for session {}",
+                requeued,
+                session_id,
+            )
+        return requeued
 
     async def recover(self, session_id: str) -> int:
         """Void expired QUEUED/CLAIMED rows (24h crash-recovery expiry); return the count.

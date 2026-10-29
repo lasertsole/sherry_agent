@@ -244,6 +244,17 @@ def main() -> None:
 
     asyncio.run(clean_checkpoints_at_boot())
 
+    # Boot reconciliation: HITL-pending flags, dangling tool calls and CLAIMED
+    # queue rows all live in memory (or in a turn that died), so a restart
+    # silently forgets them. Every step is fail-open and the scan is capped —
+    # a broken session costs its own probe, never startup.
+    from server.service.boot_recovery import reconcile_at_boot
+
+    try:
+        asyncio.run(reconcile_at_boot())
+    except Exception:
+        logger.exception("boot recovery failed; starting anyway")
+
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle
 

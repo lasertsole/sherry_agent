@@ -62,6 +62,18 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 ```
 User message → Robyn WS → agent.core.built_agent() graph
   │
+  │    (A HEADLESS turn — cron / auto-turn / a system-injected carrier — has no
+  │     operator: `resolve_turn_operator` returns None and the approval gates
+  │     auto-deny. The tools that call `interrupt()` THEMSELVES bypass those
+  │     gates, so each now refuses instead of suspending: `question` declines,
+  │     `exit_plan_mode` returns an error telling the model to stop, the
+  │     sherry-self-file approval fails closed, and the generic `interrupt_on`
+  │     strategy plus the sandbox-bypass path deny with `NO_OPERATOR_MESSAGE`.
+  │     The predicate is `no_operator_in_scope()` — an EXPLICIT empty scope, not
+  │     "no scope at all" (a unit test or an auxiliary graph keeps the old
+  │     suspend-and-wait behaviour). Boot rebuilding the flag for a session
+  │     whose graph is still suspended lives in `server/service/boot_recovery.py`,
+  │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
@@ -218,6 +230,24 @@ User message → Robyn WS → agent.core.built_agent() graph
      `init_registry()` a boot sweep deletes every orphan subtree whose root main
      session or parent run is gone, in one fail-open pass.
 
+     A restart is a STATE TRANSITION, not a no-op (`registry/state.py`). No task
+     survives it, so a restored RUNNING run is terminalized as a TIMEOUT with
+     `pause_reason=process_restart` / `ended_reason=process_restarted` (leaving
+     it RUNNING made every liveness reader — the WAITING-flow sweep, orphan
+     recovery, `should_keep_child_link` — believe the child was alive), and its
+     delivery stays PENDING for the sweeper's undelivered scan
+     (`_scan_undelivered_terminal_runs`, throttled to one sweep interval,
+     idempotent through the announce flow), which is how the owning step learns
+     instead of staying DISPATCHED. Every persisted monotonic timestamp is
+     REBASED onto the restore point (`_rebase_restored_clock`):
+     `time.monotonic()` is process-relative, so an old value can read as hours
+     old or as a future time and silently disable each `now - timestamp` expiry
+     check; `archive_at` is a deadline and gets a fresh window rather than being
+     rebased to "now" (which would archive on the first sweep). Killing an
+     INTERRUPTED run also releases its per-session guard state
+     (`release_child_session_state`) — there is no live child agent whose
+     `finally` would.
+
      Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
      reviewer / librarian) may only spawn roles on its allow-list
      (`SPAWN_ALLOWED_CHILD_ROLES`, types/functional_role.py) — its own role
@@ -281,14 +311,35 @@ User message → Robyn WS → agent.core.built_agent() graph
       command substring for legacy rows (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      the flow's evidence read by `flow_id` ONLY (step children are stamped at
+      the flow's evidence read by `flow_id` FIRST (step children are stamped at
       spawn; finish temporarily stamps the creator's `StateKey.FLOW_ID` and
       restores it in `finally`, so replay/creator rows carry the flow; stale /
       broken / unmark events auto-stamp from the target session's flow context)
-      carrying no FAIL/[stale]/[broken], then Gate E's goal judge (only for a
-      flow with a description and at least GOAL_GATE["min_steps"] = 3 steps)
+      carrying no FAIL/[stale]/[broken]. A restart empties that read — the
+      stamp is memory-only — so an EMPTY flow-scoped result falls back to the
+      flow's OWN sessions (its step children plus the creator, never the whole
+      session), which is the only way evidence that still exists can gate the
+      finish. Then Gate E's goal judge (only for a flow with a description and
+      at least GOAL_GATE["min_steps"] = 3 steps)
+    · TaskFlow state-machine guards — `validate_steps_list` refuses a
+      `depends_on` CYCLE at create/update time (depth-first over the
+      already-validated id graph, so an A→B→A plan cannot pin a flow until the
+      inactivity sweep); `mark_flow_superseded` BUMPS `expected_revision`
+      (superseding makes the predecessor terminal, so a writer holding the
+      pre-supersede revision must lose its CAS, not resurrect a cancelled
+      flow); the stale-WAITING marker writes its payload with
+      `touch_updated_at=False` (that column is the inactivity clock the sweep
+      itself reads); `_auto_fail_finish` KILLS the detached children under
+      `TASKFLOW_INFRA["auto_kill_on_detach"]` (a failed flow can never collect
+      their results, so a live child only holds a lane), fail-open per child;
+      and a run that ended TIMEOUT/KILLED auto-resumes its step with
+      `step_outcome="failure"`, so the step fails instead of being marked done
+      with an empty result and unlocking its dependents
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
-      drained completion carriers when the session lacks passing evidence
+      drained completion carriers when the session lacks passing evidence; a
+      `[stale]` or `[broken]` row counts as "lacks" (the same marks the finish
+      gates read), so a child whose work a later write invalidated cannot drain
+      as if it were verified
 ```
 
 ## Queued User Input (`server/service/input_queue_service.py`)
@@ -1644,7 +1695,11 @@ pending. The old `resume_stream` WS handler and its
 longer sends that frame. This snapshot + per-turn `seq` pair is Sherry's
 stream-recovery anchor: it restores the text tail without replaying any frame,
 while committed tool calls stay queryable in the per-turn trajectory ledger
-(`GET /sessions/:session_id/trajectory`). Because the turn keeps running when
+(`GET /sessions/:session_id/trajectory`; hook events and frame projections share
+ONE per-turn sequence — the hooks used to write `seq=0`, so every hook event
+sorted before the turn's first frame — timestamps carry milliseconds, and a
+failed stream records an `error` event before re-raising, because a timeline
+that simply stops reads as "still running"). Because the turn keeps running when
 its last viewer disconnects (the socket release no longer cancels it), the
 reconnect resumes the SAME turn. Inbound frames are also checked against the
 socket's registered session (`_frame_session_allowed`) so one session's socket
@@ -1654,9 +1709,9 @@ The per-turn trajectory ledger also has a UI consumer: `TrajectoryPanel.vue` is
 a SESSION-scoped right-sidebar tab (`right-sidebar.ts` kind/scope, opened from a
 tool card's history button or `ChatBox.vue::openTrajectory`). It consumes the
 existing `GET /sessions/:session_id/trajectory` only — no backend change —
-groups rows by `turn_id`, re-sorts each turn by `(ts, seq, event_id)` (the
-ledger's lifecycle rows all carry `seq=0`, so the server order would put them
-before every tool row), and caps at two 500-row pages. It renders tool rows
+groups rows by `turn_id`, re-sorts each turn by `(ts, seq, event_id)` (rows
+can share a `ts` at millisecond precision, so the server order alone is not
+total), and caps at two 500-row pages. It renders tool rows
 (name/status/duration/args/result) and lifecycle rows (compact / model_retry /
 invalid_tool_call / turn_start / turn_end) with a kind badge; search is
 filter-style with an n/m counter, folding is two section switches plus

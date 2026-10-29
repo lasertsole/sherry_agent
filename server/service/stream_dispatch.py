@@ -44,7 +44,13 @@ from runtime.session.state_keys import StateKey
 from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
-from .trajectory_store import current_turn_id, project_frame, turn_end_event
+from .trajectory_store import (
+    current_turn_id,
+    next_turn_seq,
+    project_frame,
+    record_event,
+    turn_end_event,
+)
 
 
 # Stash of pending tool args, keyed by [bare session id][tool_call_id] (the
@@ -313,10 +319,6 @@ class StreamTurn:
         # Per-turn stream diagnostics (chunk/byte counters + first-chunk timing)
         # consumed by the failure path in run().
         self._diag: dict[str, Any] = stream_diag_init()
-        # Trajectory ledger: the event sequence number the projector stamps on
-        # every event derived from an emitted frame (the turn identity comes
-        # from the scope opened by the turn driver).
-        self._trajectory_seq: int = 0
         # Per-turn monotonic frame sequence, carried on every emitted frame and
         # in the resume snapshot: a resumed client drops frames at or below the
         # snapshot's seq, so a frame produced before the snapshot but delivered
@@ -490,8 +492,9 @@ class StreamTurn:
         turn_id = current_turn_id.get()
         if not turn_id:
             return
-        self._trajectory_seq += 1
-        project_frame(frame, self.session_id, turn_id, self._trajectory_seq)
+        # The SAME per-turn counter the agent-side hook events use: two counters
+        # made every hook event sort before the turn's first frame.
+        project_frame(frame, self.session_id, turn_id, next_turn_seq(turn_id))
 
     async def run(self) -> AsyncGenerator[dict[str, Any]]:
         """Stamp every frame with a per-turn monotonic ``seq`` before yielding.
@@ -587,6 +590,18 @@ class StreamTurn:
             diag_summary = self._failure_diag(e)
             logger.exception("Stream failed: {}", diag_summary)
             self._log_failed(elapsed, e)
+            # Trajectory ledger: the turn started (turn_start) and now failed —
+            # without this row the timeline simply stops, which reads as "still
+            # running" to anyone inspecting it. Best-effort: a ledger problem
+            # must never mask the original error.
+            try:
+                record_event(
+                    self.session_id,
+                    "error",
+                    {"error": type(e).__name__, "detail": diag_summary[:500]},
+                )
+            except Exception:  # noqa: BLE001 - diagnostics only
+                logger.debug("trajectory error event failed", exc_info=True)
             reraise_with_diag(e, diag_summary)
         finally:
             if _ACTIVE_TURNS.get(self.session_id) is self:

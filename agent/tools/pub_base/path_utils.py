@@ -612,6 +612,17 @@ def enforce_self_path_policy(
             "session's sherry files; ask the parent agent to do it."
         )
 
+    # A headless turn (cron / auto-turn / carrier) has nobody to ask: suspending
+    # would strand the graph, and silently allowing would break the one rule
+    # that must fail closed. Refuse.
+    from agent.middlewares.humanInTheLoop.approval_scope import no_operator_in_scope
+
+    if no_operator_in_scope():
+        raise PathOutOfBoundsError(
+            f"Sherry self-file access needs operator approval, and this is an "
+            f"automated turn with nobody present: {resolved} ({reason})"
+        )
+
     from langgraph.types import interrupt
 
     prompt = _self_access_prompt(resolved, current_project_dir(session_id), action_desc, mode)

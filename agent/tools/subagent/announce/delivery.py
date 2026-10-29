@@ -417,11 +417,22 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         owner_session_id = str(flow.get("session_id") or "").strip()
         if not owner_session_id:
             return False
+        # A run that timed out or was killed did NOT do the step's work, so the
+        # step must fail rather than be marked done with an empty/short result:
+        # a DONE step unlocks its dependents, and they would build on nothing.
+        outcome_status = getattr(getattr(run, "execution", None), "outcome", None)
+        outcome_status = getattr(outcome_status, "status", None)
+        declared_outcome = (
+            "failure"
+            if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED)
+            else None
+        )
         answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
             flow_id=flow_id,
             child_session_key=run.child_session_key,
             result=result_text,
             session_id=owner_session_id,
+            step_outcome=declared_outcome,
         )
         first_line = answer.splitlines()[0] if answer else ""
         if isinstance(answer, str) and answer.startswith("Error:"):

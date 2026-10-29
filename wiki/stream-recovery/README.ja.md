@@ -38,16 +38,22 @@ Sherry の耐久性モデルは**「状態は永続 + sweeper が下支え + 新
 
 | 欠陥 | 修正 |
 | :--- | :--- |
-| レジストリの終端判定が文字列リテラル（`COMPLETED` 等）を、値が `pending / running / interrupted / terminal` の列挙と比較——一致せず、保持上限が機能せずメモリが無制限に増加 | `ExecutionStatus.TERMINAL` と比較。上限は稼働中 run を残し古い終端 run を追い出す |
+| レジストリの終端判定が文字列リテラル（`COMPLETED`、`FAILED` 等）を、値が `pending / running / interrupted / terminal` の列挙と比較——一致せず、保持上限が機能せずメモリが無制限に増加 | `ExecutionStatus.TERMINAL` と比較。上限は稼働中 run を残し古い終端 run を追い出す |
 | セッションディレクトリのスイープが生の session id で checkpoint を照会。チェックポインタは `session_thread_id(session_id)`（INTEGER）を保存するため、checkpoint だけが残るフォルダが空と誤認され削除された | `pub.func` の単一の `session_thread_id()` マッピングをスイープで使用 |
-| trajectory は「書き込み時に剪定」と記しつつ `prune_session` に呼び出し元がなく、しかも常に 0 の `MAX(seq)` で並べていたため任意の turn が残った | 書き込み時に接続し、セッションごとに 60 秒で間引いて実行、挿入順（rowid）で並べる |
+| trajectory は「書き込み時に剪定」と記しつつ `prune_session` に呼び出し元がなく、しかもフックが常に 0 を書いた `MAX(seq)` で並べていたため任意の turn が残った | 書き込み時に接続し、セッションごとに 60 秒で間引いて実行、挿入順（rowid）で並べる |
 | グローバルな keep-latest 剪定が `built_agent()`（= 毎ターン）で、`busy_timeout` の無い接続で走り、keep-set を削除前に確定していた（その間に他セッションがコミットした最新 checkpoint が失われ得る） | 起動時に 1 回（`server/service/checkpoint_maintenance.py`）、`BEGIN IMMEDIATE` 内で実行し、keep は最上位行を優先 |
 | すべてのチェックポインタ接続に `busy_timeout` が無かった（WAL と違い接続単位の PRAGMA） | 単一ヘルパー（`agent/checkpointer/pragmas.py`、30 秒）に統一 |
 | `delete_thread_history` に保護が無く、DB ロック時にメッセージストアを空にした後で purge が中断——半削除の最悪側 | 各手順を保護し、checkpoint 削除を最初に実行（再試行で必ず完了できる） |
 | 終端 run の配信状態は 30 秒周期の flush でしかディスクに届かず、その窓でのクラッシュは SQLite を TERMINAL+PENDING に残す——再試行経路が無く、完了結果が永久に失われる | 配信状態の遷移（`delivered / failed / suspended / in_progress`）を即時永続化（`set_run_durable`） |
 | auto-turn ドライバが空実装の `apply_hitl_pending` を継承し、headless turn の中断後もグラフが停止したままセッションは idle に見えた：ターン終了時の剪定がその checkpoint を消し、drain が新しいメッセージを停止中のグラフへ注入し得た | ドライバがフラグを設定。`submit_user_input` も checkpoint 内の interrupt を busy として扱う（フェイルオープンな探索）。これは再起動後の典型ケース |
 
-監査の残項目（起動時のセッション横断 HITL 再構築、永続化タイムスタンプを `time.monotonic()` から実時間へ、再起動後の in-flight step 復帰、P3/P4 の証跡・可観測性バッチ）は計画で追跡しており、完了扱いにはしていません。
+第 2 バッチで監査の残項目はすべて解消しました。うち三つは同じ洞察を共有します——再起動が無効化するのはデータだけではなく、**時計**と**メモリだけのフラグ**でもある、ということです。
+
+- **起動時の照合**（`server/service/boot_recovery.py`、checkpoint を持つセッションディレクトリへの上限付きの 1 パス）：グラフが停止したままのセッションは HITL pending フラグを再構築します（レジスタはメモリのみなので、そうしないとサーバーは IDLE と報告し、次のメッセージが `Command(resume=...)` ではなく通常のターンとして投入されます）。最後のアシスタントターンが結果のないツール呼び出しを持つ転記は、エラー占位と中断マーカーを 1 コミットで書き込んで修復します（決定的 id）。**完了し得ない**ターンが取得した `CLAIMED` のキュー行は、24 時間の失効まで枠を占め続ける代わりに `QUEUED` へ戻します。各手順はフェイルオープンで走査は上限付きなので、壊れたセッションは自分の探索コストだけを払います。
+- **復元された RUNNING run は生きていません。** 再起動を跨いで生き残るタスクは無いため、読み込み時に終端化します（`pause_reason=process_restart`、outcome は TIMEOUT）。RUNNING のままにすると、WAITING flow の走査は子が生きていると信じ、孤児回収は決して訪れない失联しきい値を待ち続けます。配信は PENDING のまま残り、sweeper の未配信走査が告知するため、所有する step は DISPATCHED のまま留まらず結果を知ります。
+- **永続タイムスタンプは読み込み時に再基準化**（`_rebase_restored_clock`）。`time.monotonic()` はプロセス相対で、前のプロセスの値は数時間前にも未来にも読めるため、`now - timestamp` の期限判定が静かに無効化されていました。期限（`archive_at`）には新しい窓を与えます（「今」に再基準化すると最初の走査でアーカイブされます）。
+- **中断するツールは headless ターンでは拒否します。** 承認ゲートは操作者のいないターンを既に自動拒否していましたが、自ら `interrupt()` を呼ぶツール（`question`、`exit_plan_mode`、自己ファイル承認、汎用 `interrupt_on` 戦略、サンドボックスバイパス）は停止していました——誰も答えられないターンが中断されるわけです。今は拒否し、モデルには続行（または停止）を伝え、決して再試行させません。
+- **trajectory のタイムラインは本物になりました。** フックのイベントとフレーム投影は 1 つのターン単位シーケンスを共有します（フックは `seq=0` を渡していたため、すべてのフックイベントがそのターンの最初のフレームより前に並びました）。タイムスタンプはミリ秒精度を持ち、失敗したストリームは再送出の前に `error` イベントを記録します——途中で止まるタイムラインは「まだ実行中」に見えるからです。
 
 
 ## フレームシーケンスと水位

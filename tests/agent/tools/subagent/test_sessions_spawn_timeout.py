@@ -7,6 +7,8 @@ default). Internal callers — TaskFlow dispatch, ``delegate_task`` — bypass t
 clamp on purpose and keep their own bounds.
 """
 
+import time
+
 import pytest
 
 from agent.tools.subagent.config import SubagentConfig, get_config, set_config
@@ -119,3 +121,37 @@ class TestBuildTimeToolSurface:
         await SessionsSpawnTool(session_id="s1")._arun(task="do it")
 
         assert captured_spawn["run_timeout_seconds"] is None
+
+
+class TestTheRunBudgetIsOneDeadline:
+    """P3-12: ``run_timeout_seconds`` bounds the RUN, not each model call.
+
+    The goal loop can make ``goal_max_turns`` calls through the same ``_invoke``;
+    a per-call timeout multiplied the advertised bound by the turn budget.
+    """
+
+    def test_the_remaining_budget_shrinks_across_calls(self):
+        from agent.tools.subagent.spawn.core import _RunWallClock
+
+        budget = _RunWallClock(1.0)
+        first = budget.remaining()
+        time.sleep(0.05)
+        second = budget.remaining()
+
+        assert first is not None and second is not None
+        assert 0 < second < first <= 1.0
+
+    def test_a_disabled_budget_never_bounds(self):
+        from agent.tools.subagent.spawn.core import _RunWallClock
+
+        assert _RunWallClock(0).remaining() is None
+        assert _RunWallClock(-5).remaining() is None
+
+    def test_an_exhausted_budget_raises_timeout(self):
+        from agent.tools.subagent.spawn.core import _RunWallClock
+
+        budget = _RunWallClock(0.01)
+        time.sleep(0.02)
+
+        with pytest.raises(TimeoutError):
+            budget.remaining()

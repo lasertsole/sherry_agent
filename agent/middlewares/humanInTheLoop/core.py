@@ -174,6 +174,11 @@ class HumanInTheLoop(AgentMiddleware):
             action_requests=[AR(name="clarify", args={"question": question, "choices": choices})],
             review_configs=[RC(action_name="clarify", allowed_decisions=["approve", "reject"])],
         )
+        from .approval_scope import no_operator_in_scope
+
+        if no_operator_in_scope():
+            logger.info("HITL: clarify on a headless turn — declining without suspending")
+            return None
         try:
             logger.info(
                 "HITL: clarify requested for session {} (choices={})",
@@ -323,6 +328,16 @@ class HumanInTheLoop(AgentMiddleware):
             action_name=tool_name,
             allowed_decisions=["approve", "reject"],
         )
+        from .approval_scope import NO_OPERATOR_MESSAGE, no_operator_in_scope
+
+        if no_operator_in_scope():
+            logger.info("HITL: sandbox bypass on a headless turn — auto-denying {}", tool_name)
+            return False, ToolMessage(
+                content=f"{NO_OPERATOR_MESSAGE} {BLOCKED_MESSAGE}",
+                name=tool_name,
+                tool_call_id=tool_call["id"],
+                status="error",
+            )
         try:
             hitl_response = interrupt(
                 HITLRequest(

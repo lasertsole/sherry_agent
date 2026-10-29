@@ -305,3 +305,36 @@ async def test_finish_fail_open_when_evidence_collector_raises(
     out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
 
     assert "TaskFlow finished" in out
+
+
+@pytest.mark.asyncio
+async def test_finish_falls_back_to_the_flows_sessions_after_a_restart(
+    isolated_db: Path, ledger: EvidenceLedger
+):
+    """P3-2: the flow stamps live in memory only, so a restart orphans them.
+
+    With no flow-stamped row, the strict read is empty; Gate C then reads the
+    flow's OWN sessions (its step children plus the creator), which is the only
+    way the evidence that still exists can gate the finish.
+    """
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    state_register_mem.clear_session(CHILD_A)  # nothing survives a restart
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest new.py", status="failed")
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert out.startswith("Error: Finish gate rejected")
+    assert "failing verification evidence" in out
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_still_lets_a_clean_flow_finish(
+    isolated_db: Path, ledger: EvidenceLedger
+):
+    await _seed_flow([_step("s1", "done", child_session_key=CHILD_A)])
+    state_register_mem.clear_session(CHILD_A)
+    ledger.for_session(CHILD_A).append(kind="test", command="pytest new.py", status="passed")
+
+    out = await _finish_tool().coroutine(session_id=SESSION, flow_id=FLOW)
+
+    assert "TaskFlow finished" in out

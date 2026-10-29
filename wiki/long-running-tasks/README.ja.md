@@ -64,7 +64,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | ゾンビ todo | アクティブな todo が failed/cancelled フローを参照 | todo を `cancelled` |
 | prune | 終端/superseded 行が `max_total_flows_per_session`（200）超過 | 最も古い行を削除 |
 
-ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録します。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
+ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
 
 全置換がルート todo を落とした場合、猶予期間を待たずに `update_todos` が孤立 flow を即座に補償する（方針: `TODOLIST_INFRA["orphan_flow_on_drop"]`）。直後にセッション限定の sweep が走り、flow が終端に達するとルート todo へ即座に通知する。稼働中 flow と似た目標の作成は `ack_dup` がない限り警告される。
 

@@ -99,6 +99,10 @@ async def _do_sweep() -> None:
     if failed_retried > 0:
         logger.info("Sweeper retried {} failed deliveries", failed_retried)
 
+    stragglers = await _scan_undelivered_terminal_runs()
+    if stragglers > 0:
+        logger.info("Sweeper announced {} undelivered terminal run(s)", stragglers)
+
     pruned = await pressure_prune_suspended_deliveries()
     if pruned > 0:
         logger.warning("Sweeper pressure pruned {} suspended deliveries", pruned)
@@ -409,6 +413,61 @@ async def _liveness_sweep(
     }
 
 
+#: Annonce attempts per sweep: a sweep must stay bounded even when a restored
+#: registry holds hundreds of undelivered terminal runs.
+_MAX_UNDELIVERED_ANNOUNCES_PER_SWEEP = 20
+
+
+async def _scan_undelivered_terminal_runs() -> int:
+    """Announce TERMINAL runs whose completion never reached the owner.
+
+    A restart (or a crash between ``complete_subagent_run`` and delivery) leaves
+    the run terminal while its delivery stays PENDING; nothing else re-announces
+    it, so the result is lost and the owning TaskFlow step stays DISPATCHED
+    forever. The announce flow is idempotent (delivered rows are skipped, the
+    idempotency key dedupes), so a retry is safe; the retry is throttled to one
+    sweep interval so a deferral cannot turn into a hot loop.
+
+    FAILED / SUSPENDED deliveries are NOT touched here — they have their own
+    budgeted retries (``finalize_failed_deliveries`` /
+    ``finalize_suspended_deliveries``). Runs finalized as ``pending_orphaned``
+    are skipped on purpose: they never started, so announcing them is the boot
+    flood the restore-time finalize exists to prevent. The attempt is CAPPED per
+    sweep: one slow announce must not turn a large restored registry into a
+    sweep that never finishes.
+    """
+    from . import memory
+    from ..types.registry import DeliveryStatus, ExecutionStatus
+
+    now = time.monotonic()
+    interval = get_config().sweeper_interval_seconds
+    retried = 0
+    for run in list(memory.snapshot().values()):
+        if retried >= _MAX_UNDELIVERED_ANNOUNCES_PER_SWEEP:
+            break
+        if run.execution.status != ExecutionStatus.TERMINAL:
+            continue
+        if not run.completion.required:
+            continue
+        if run.suppress_announce_reason or run.suppress_completion_delivery:
+            continue
+        if run.ended_reason == "pending_orphaned":
+            continue
+        if run.delivery.status != DeliveryStatus.PENDING:
+            continue
+        last = run.delivery.last_attempt_at
+        if last is not None and now - last < interval:
+            continue
+        from ..announce.core import run_subagent_announce_flow
+
+        try:
+            await run_subagent_announce_flow(run)
+            retried += 1
+        except Exception as exc:  # noqa: BLE001 - one run must not stop the sweep
+            logger.debug("Sweeper: undelivered announce retry failed for {}: {}", run.run_id, exc)
+    return retried
+
+
 async def _scan_stale_waiting_taskflows() -> int:
     """Scan TaskFlows in WAITING state whose ``wait.set_at`` exceeds the timeout.
 
@@ -472,7 +531,10 @@ async def _scan_stale_waiting_taskflows() -> int:
                 child_key,
             )
 
-            # Non-destructive marker: refresh the wait payload in place.
+            # Non-destructive marker: refresh the wait payload in place. The
+            # write must NOT touch ``updated_at`` — that column is the liveness
+            # clock this sweep and the inactivity timeout read, so stamping it
+            # here would keep the flow we just called stale perpetually fresh.
             try:
                 wait["stale_detected_at"] = now
                 wait["stale_child_session_key"] = child_key
@@ -481,6 +543,7 @@ async def _scan_stale_waiting_taskflows() -> int:
                     flow["expected_revision"],
                     session_id=flow["session_id"],
                     wait=wait,
+                    touch_updated_at=False,
                 )
             except Exception as e:
                 logger.debug("Could not mark TaskFlow '{}' as stale: {}", flow["flow_id"], e)

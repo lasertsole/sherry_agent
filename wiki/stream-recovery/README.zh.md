@@ -40,14 +40,20 @@ Sherry 的持久化模型是**「状态持久 + sweeper 兜底 + 新 turn 重驱
 | :--- | :--- |
 | subagent registry 的终态判定用字符串字面量（`COMPLETED`、`FAILED`…）比对值为 `pending / running / interrupted / terminal` 的枚举——永不命中，保留上限形同虚设，内存无界增长 | 改为比对 `ExecutionStatus.TERMINAL`；上限现在保留活跃 run、驱逐旧的终态 run |
 | 会话目录清扫用原始 session id 探测 checkpoint，而 checkpointer 存的是 `session_thread_id(session_id)`（INTEGER）——只剩 checkpoint 的会话被当成空目录删掉 | `pub.func` 里唯一的 `session_thread_id()` 映射，清扫点统一调用 |
-| trajectory 文档写「写入时裁剪」，但 `prune_session` 没有调用者；其排序还用了恒为 0 的 `MAX(seq)`，保留的是任意一批 turn | 写入时接线，按会话每 60 秒节流一次，按插入顺序（rowid）排序 |
+| trajectory 文档写「写入时裁剪」，但 `prune_session` 没有调用者；其排序还用了钩子事件恒写 0 的 `MAX(seq)`，保留的是任意一批 turn | 写入时接线，按会话每 60 秒节流一次，按插入顺序（rowid）排序 |
 | 全局 keep-latest checkpoint 裁剪跑在 `built_agent()` 里——即**每一轮**——且连接没有 `busy_timeout`，keep-set 在删除前就已过期（期间别的会话提交的新 checkpoint 会被误删） | 改为启动时一次（`server/service/checkpoint_maintenance.py`），在 `BEGIN IMMEDIATE` 内执行，keep-set 偏向顶层行 |
 | 所有 checkpointer 连接都缺 `busy_timeout`（与 WAL 不同，它是每连接属性） | 统一走一个助手（`agent/checkpointer/pragmas.py`，30 秒） |
 | `delete_thread_history` 无异常保护，数据库被锁时会在消息库已清空之后中断清理——半删除里最糟的那一半 | 每一步都有保护；checkpoint 删除改为**最先**执行，重试总能补完 |
 | 终态 run 的交付状态只靠 30 秒周期 flush 落盘；崩溃落在窗口内会让 SQLite 停在 TERMINAL+PENDING——该状态没有重试路径，已完成的结果永久丢失 | 交付状态迁移（`delivered / failed / suspended / in_progress`）即时落盘（`set_run_durable`） |
 | auto-turn 驱动继承了空实现的 `apply_hitl_pending`，headless turn 中断后图悬挂但会话看似空闲：回合结束的裁剪可能删掉那个 checkpoint，drain 还会把新消息注入悬挂图 | 驱动改为设置标志；`submit_user_input` 也把 checkpoint 里的 interrupt 当作 busy（探测 fail-open），这正是重启后留下的情形 |
 
-审计剩余项（跨会话的启动期 HITL 重建、持久化时间戳改用挂钟时间而非 `time.monotonic()`、重启后恢复 in-flight step、以及 P3/P4 的 evidence/可观测性批次）在计划中跟踪，不会被默认当成已完成。
+第二批把审计剩余项全部落地，其中三项共享同一个洞察：重启失效的不只是数据，还有**时钟**与**仅存在于内存的标志**。
+
+- **启动对账**（`server/service/boot_recovery.py`，对被 checkpoint 覆盖的会话目录做一次有上限的扫描）：图仍挂起的会话重建 HITL pending 标志（该寄存器只在内存，否则服务端报 IDLE，下一条消息会被当作普通回合派发而不是 `Command(resume=...)`）；转录末尾若有带工具调用却无结果的助手回合，用错误占位符加中断标记一次提交修复（确定性 id）；被**已不可能完成**的回合认领的 `CLAIMED` 队列行退回 `QUEUED`，而不是占着槽位等到 24 小时过期。每一步都失败开放且扫描有上限，坏会话只花掉自己那一次探测。
+- **恢复出来的 RUNNING run 不是活的。** 没有任何任务能跨重启存活，因此加载时直接终态化（`pause_reason=process_restart`，outcome TIMEOUT）；继续留着 RUNNING 会让 WAITING flow 扫描以为子代理还活着，让孤儿回收等待一个永远不会到来的失联阈值。它的交付保持 PENDING，由 sweeper 的未交付扫描补发公告——拥有该 step 的 flow 因此能得知结果，而不是一直停在 DISPATCHED。
+- **所有持久化时间戳在加载时重基准**（`_rebase_restored_clock`）。`time.monotonic()` 是进程相对的：上个进程写的值在这里可能读成数小时前、也可能读成未来，于是每个 `now - timestamp` 的过期判定都静默失效。截止时间（`archive_at`）给一个新的窗口而不是重基准到“现在”，否则第一次扫描就会归档。
+- **会中断的工具在 headless 回合直接拒绝。** 审批门早已对无操作者的回合自动拒绝，但自己调用 `interrupt()` 的工具（`question`、`exit_plan_mode`、自我文件审批、通用 `interrupt_on` 策略、沙箱绕过）仍然挂起——一个无人能答的回合就此中断。现在它们拒绝并告诉模型继续（或停止），绝不重试。
+- **trajectory 时间线是真的了。** 钩子事件与帧投影现在共享**同一个**按回合递增的序号（钩子过去传 `seq=0`，于是每个钩子事件都排在该回合第一帧之前），时间戳带毫秒，失败的流在重新抛出前记一条 `error` 事件——一条直接停住的时间线看起来就像“还在运行”。
 
 
 ## 帧序号与水位

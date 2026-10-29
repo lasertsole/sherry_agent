@@ -60,9 +60,10 @@ async def test_replacing_a_flow_stamps_both_pointers(isolated_db: Path):
     assert predecessor is not None
     assert predecessor["superseded_by"] == "flow-new"
     assert predecessor["resumed_from"] is None
-    # Lineage is metadata: the predecessor's content and revision are untouched.
-    # The active predecessor becomes terminal so no active read can surface it.
-    assert predecessor["expected_revision"] == 1
+    # Superseding makes the predecessor terminal, so it BUMPS the revision: a
+    # writer still holding the pre-supersede revision must lose its CAS rather
+    # than resurrect a cancelled flow.
+    assert predecessor["expected_revision"] == 2
     assert predecessor["status"] == TaskFlowStatus.CANCELLED.value
     assert predecessor["terminal_reason"] == "superseded"
 
@@ -125,3 +126,26 @@ async def test_mark_superseded_is_session_scoped(isolated_db: Path):
     flow = await store_sqlite.get_flow("flow-mine", _SESSION)
     assert flow is not None
     assert flow["superseded_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_pre_supersede_revision_loses_its_cas(isolated_db: Path):
+    """P3-8: superseding bumps the revision, so a stale writer cannot resurrect.
+
+    Without the bump, a caller that read the flow before the supersede would
+    still match the revision and be free to write a plan into a flow that is now
+    CANCELLED — the successor and the zombie would both be live.
+    """
+    assert (await _create("flow-old")).startswith("TaskFlow created")
+    before = await store_sqlite.get_flow("flow-old", _SESSION)
+    assert before is not None
+
+    await store_sqlite.mark_flow_superseded("flow-old", "flow-new", session_id=_SESSION)
+
+    with pytest.raises(store_sqlite.FlowConflictError):
+        await store_sqlite.update_flow(
+            "flow-old",
+            before["expected_revision"],
+            session_id=_SESSION,
+            state={"steps": [], "results": []},
+        )

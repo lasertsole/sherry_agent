@@ -1188,6 +1188,52 @@ def _first_turn_self_evident(result_text: str | None, evidence_summary: str | No
     )
 
 
+def release_child_session_state(run: SubagentRunRecord) -> None:
+    """Drop the per-session state a child agent leaves in the mem register.
+
+    Split out of :func:`_release_child_resources` because a run that is killed
+    while INTERRUPTED (paused on HITL, possibly restored from disk after a
+    restart) has no live child agent to release — but its OutputRepetitionGuard
+    keys are still in the child's bucket and would leak once per run.
+    """
+    try:
+        from agent.middlewares.output_repetition_guard.repetition_state import (
+            SESSION_STATE_KEYS,
+        )
+        from runtime import state_register_mem
+
+        for _key in SESSION_STATE_KEYS:
+            state_register_mem.delete_state(run.child_session_key, _key)
+    except Exception:
+        logger.exception(
+            "Failed to release OutputRepetitionGuard state for session {}",
+            run.child_session_key,
+        )
+
+
+class _RunWallClock:
+    """One wall-clock budget shared by every turn a run makes.
+
+    ``run_timeout_seconds`` bounds the RUN, not each model call: the goal loop
+    may make ``goal_max_turns`` calls, and a per-call ``wait_for(timeout)``
+    multiplied the advertised bound by the turn budget. ``remaining()`` returns
+    the seconds left for the next call (``None`` when the budget is disabled by
+    ``timeout_seconds <= 0``) and raises ``TimeoutError`` once it is spent, so
+    the caller's normal timeout path finalizes the run as TIMEOUT.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+
+    def remaining(self) -> float | None:
+        if self.deadline is None:
+            return None
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        return remaining
+
+
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
     """Close the child's checkpointer and drop its per-session state.
 
@@ -1227,19 +1273,7 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
     # middlewares' top-level state (heartbeat_killed, summarization, tool
     # guardrails, iteration budget, ...). We delete exactly the 6 keys this
     # middleware owns, scoped to the child's own bucket via ``delete_state``.
-    try:
-        from agent.middlewares.output_repetition_guard.repetition_state import (
-            SESSION_STATE_KEYS,
-        )
-        from runtime import state_register_mem
-
-        for _key in SESSION_STATE_KEYS:
-            state_register_mem.delete_state(run.child_session_key, _key)
-    except Exception:
-        logger.exception(
-            "Failed to release OutputRepetitionGuard state for session {}",
-            run.child_session_key,
-        )
+    release_child_session_state(run)
 
     from ..registry import remove_task
 
@@ -1410,14 +1444,22 @@ async def _execute_subagent_scoped(
         # ``_invoke`` is reused by goal-loop continuation turns: the same config
         # keeps the same checkpoint thread, so a continuation extends the SAME
         # child conversation instead of starting a fresh one.
+        #
+        # The budget is ONE deadline for the whole run, not one per turn: the
+        # goal loop can spend up to ``goal_max_turns`` calls, and a per-turn
+        # ``wait_for(timeout_seconds)`` let five turns run five times the
+        # advertised ``run_timeout_seconds``.
+        budget = _RunWallClock(timeout_seconds)
+
         async def _invoke(msgs: list) -> dict:
             payload = {"session_id": run.child_session_key, "messages": msgs}
-            if timeout_seconds > 0:
-                return await asyncio.wait_for(
-                    child_agent.ainvoke(input=payload, config=agent_config),
-                    timeout=timeout_seconds,
-                )
-            return await child_agent.ainvoke(input=payload, config=agent_config)
+            remaining = budget.remaining()
+            if remaining is None:
+                return await child_agent.ainvoke(input=payload, config=agent_config)
+            return await asyncio.wait_for(
+                child_agent.ainvoke(input=payload, config=agent_config),
+                timeout=remaining,
+            )
 
         agent_result = await _invoke(messages)
 

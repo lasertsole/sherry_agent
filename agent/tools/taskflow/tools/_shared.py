@@ -691,4 +691,45 @@ def validate_steps_list(steps: list) -> str | None:
             dep_id = str(dep).strip()
             if dep_id not in seen:
                 return f"Error: step '{step_id}' depends_on references unknown step_id '{dep_id}'"
+    cycle = _find_dependency_cycle(steps)
+    if cycle is not None:
+        return f"Error: dependency cycle: {' -> '.join(cycle)}"
+    return None
+
+
+def _find_dependency_cycle(steps: list) -> list[str] | None:
+    """Return one dependency cycle as a step-id path, or ``None`` when acyclic.
+
+    Depth-first over the already-validated graph (ids exist, no self-edges).
+    Every step is a node here, whatever its status: a cycle among DONE steps is
+    still a malformed plan, and a terminal step's deps are never re-walked by
+    the scheduler, so a late-detected cycle would silently pin the flow.
+    """
+    graph: dict[str, list[str]] = {
+        str(step["step_id"]).strip(): [str(dep).strip() for dep in step.get("depends_on") or []]
+        for step in steps
+    }
+    WHITE, GREY, BLACK = 0, 1, 2  # noqa: N806 - tiny local colour marks
+    colour = dict.fromkeys(graph, WHITE)
+    path: list[str] = []
+
+    def _visit(node: str) -> list[str] | None:
+        colour[node] = GREY
+        path.append(node)
+        for dep in graph.get(node, ()):  # node -> its prerequisites
+            if colour.get(dep, WHITE) == GREY:
+                return path[path.index(dep) :] + [dep]
+            if colour.get(dep, WHITE) == WHITE:
+                found = _visit(dep)
+                if found is not None:
+                    return found
+        path.pop()
+        colour[node] = BLACK
+        return None
+
+    for node in graph:
+        if colour[node] == WHITE:
+            found = _visit(node)
+            if found is not None:
+                return found
     return None

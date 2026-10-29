@@ -179,6 +179,14 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
             from ..evidence_collector import collect_evidence_summary
 
             evidence = collect_evidence_summary(flow_id=flow_id)
+            if not evidence:
+                # A restart clears the in-memory flow stamps (``StateKey.FLOW_ID``
+                # has no persisted twin), so every row of a still-open flow reads
+                # as unstamped and the strict flow-scoped read comes back empty.
+                # Falling back to the flow's OWN sessions (its step children plus
+                # the creator) is the only way to see evidence that still exists;
+                # it never widens to the whole session beyond those keys.
+                evidence = collect_evidence_summary(session_keys=keys)
         except Exception:  # noqa: BLE001 - optional probe; never block a finish
             return None
     finally:
@@ -232,9 +240,11 @@ async def _auto_fail_finish(
 ) -> str:
     """Terminal failure for a finish loop that exhausted one independent budget.
 
-    Children are NOT killed: still-running ones are recorded as detached, which
-    ``taskflow_summary`` surfaces. The flow becomes failed so the LLM cannot
-    keep spending finish calls on it.
+    Still-running children are recorded as detached (``taskflow_summary``
+    surfaces them) and then killed when ``TASKFLOW_INFRA["auto_kill_on_detach"]``
+    is on: a failed flow can never collect their results, so leaving them alive
+    only burns lane slots. The flow becomes failed so the LLM cannot keep
+    spending finish calls on it.
     """
     state["failure_reason"] = reason
     detached = detached_child_keys(list(state.get("steps") or []))
@@ -269,6 +279,7 @@ async def _auto_fail_finish(
     from ._shared import notify_flow_todos_cancelled
 
     await notify_flow_todos_cancelled(session_id, flow_id)
+    await _kill_detached_children(detached)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow auto-failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
@@ -276,6 +287,28 @@ async def _auto_fail_finish(
         "fresh plan, or taskflow_inspect(action='summary') to inspect. Children still running are recorded "
         "as detached, not killed."
     )
+
+
+async def _kill_detached_children(child_session_keys: list[str]) -> None:
+    """Kill the children a failed flow left running (fail-open, per child).
+
+    The flow is already terminal here, so a kill problem must never turn the
+    failure answer into an error: an unknown key (a child already cleaned up) or
+    a refused control check is skipped and logged.
+    """
+    if not child_session_keys or not TASKFLOW_INFRA["auto_kill_on_detach"]:
+        return
+    from agent.tools.subagent.control.kill import kill_subagent_run_with_cascade
+    from agent.tools.subagent.registry.queries import get_run_by_child_session_key
+
+    for key in child_session_keys:
+        try:
+            run = get_run_by_child_session_key(key)
+            if run is None:
+                continue
+            await kill_subagent_run_with_cascade(run.run_id, reason="taskflow_detached")
+        except Exception:
+            logger.warning("taskflow: failed to kill detached child {}", key, exc_info=True)
 
 
 @tool("taskflow_finish")

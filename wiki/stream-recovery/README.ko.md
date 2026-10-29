@@ -38,16 +38,22 @@ Sherry의 내구성 모델은 **"상태는 영속 + sweeper가 보완 + 새 turn
 
 | 결함 | 수정 |
 | :--- | :--- |
-| 레지스트리의 종료 판정이 문자열 리터럴(`COMPLETED` 등)을 값이 `pending / running / interrupted / terminal`인 열거형과 비교——일치하지 않아 보존 상한이 동작하지 않고 메모리가 무한히 증가 | `ExecutionStatus.TERMINAL`과 비교. 상한은 활성 run은 유지하고 오래된 종료 run을 제거 |
+| 레지스트리의 종료 판정이 문자열 리터럴(`COMPLETED`, `FAILED` 등)을 값이 `pending / running / interrupted / terminal`인 열거형과 비교——일치하지 않아 보존 상한이 동작하지 않고 메모리가 무한히 증가 | `ExecutionStatus.TERMINAL`과 비교. 상한은 활성 run은 유지하고 오래된 종료 run을 제거 |
 | 세션 디렉터리 스윕이 원시 session id로 checkpoint를 조회. 체크포인터는 `session_thread_id(session_id)`(INTEGER)를 저장하므로 checkpoint만 남은 폴더가 빈 것으로 오인되어 삭제됨 | `pub.func`의 단일 `session_thread_id()` 매핑을 스윕에서 사용 |
-| trajectory는 "쓰기 시 정리"라고 문서화했지만 `prune_session` 호출자가 없었고, 정렬도 항상 0인 `MAX(seq)`라 임의의 turn 집합이 남음 | 쓰기 시 연결하고 세션당 60초로 제한해 실행, 삽입 순서(rowid) 정렬 |
+| trajectory는 "쓰기 시 정리"라고 문서화했지만 `prune_session` 호출자가 없었고, 정렬도 훅이 항상 0을 쓰던 `MAX(seq)`라 임의의 turn 집합이 남음 | 쓰기 시 연결하고 세션당 60초로 제한해 실행, 삽입 순서(rowid) 정렬 |
 | 전역 keep-latest 정리가 `built_agent()`(즉 매 turn)에서, `busy_timeout` 없는 연결로 실행되고 keep-set을 삭제 전에 확정(그 사이 다른 세션이 커밋한 최신 checkpoint가 유실될 수 있음) | 부팅 시 1회(`server/service/checkpoint_maintenance.py`)로 이동, `BEGIN IMMEDIATE` 안에서 실행하고 keep은 최상위 행 우선 |
 | 모든 체크포인터 연결에 `busy_timeout`이 없음(WAL과 달리 연결 단위 PRAGMA) | 단일 헬퍼(`agent/checkpointer/pragmas.py`, 30초)로 통일 |
 | `delete_thread_history`에 보호가 없어 DB 잠금 시 메시지 저장소를 비운 뒤 purge가 중단——반쪽 삭제의 최악 | 각 단계를 보호하고 checkpoint 삭제를 가장 먼저 수행(재시도로 항상 완료 가능) |
 | 종료 run의 전달 상태가 30초 주기 flush로만 디스크에 도달했고 그 창의 크래시는 SQLite를 TERMINAL+PENDING으로 남김——재시도 경로가 없어 완료 결과가 영구 유실 | 전달 상태 전이(`delivered / failed / suspended / in_progress`)를 즉시 영속화(`set_run_durable`) |
 | auto-turn 드라이버가 빈 구현의 `apply_hitl_pending`을 상속해, headless turn 중단 후 그래프는 멈춰 있는데 세션은 idle로 보였음: 턴 종료 정리가 그 checkpoint를 지우고 drain이 새 메시지를 멈춘 그래프에 주입할 수 있었음 | 드라이버가 플래그를 설정. `submit_user_input`도 checkpoint의 interrupt를 busy로 간주(페일오픈 탐색). 재시작 후의 전형적 경우 |
 
-감사의 남은 항목(세션 전체에 걸친 부팅 시 HITL 재구성, 영속 타임스탬프를 `time.monotonic()`에서 실제 시간으로, 재시작 후 in-flight step 복귀, P3/P4 증거·관측성 배치)은 계획에서 추적하며 완료로 간주하지 않습니다.
+두 번째 배치가 감사의 남은 항목을 모두 닫았습니다. 그중 셋은 같은 통찰을 공유합니다——재시작이 무효화하는 것은 데이터뿐 아니라 **시계**와 **메모리에만 있는 플래그**이기도 합니다.
+
+- **부팅 시 조정**(`server/service/boot_recovery.py`, checkpoint를 가진 세션 디렉터리에 대한 상한 있는 1회 스캔): 그래프가 여전히 멈춰 있는 세션은 HITL pending 플래그를 재구성합니다(레지스터는 메모리에만 있어서, 그렇지 않으면 서버는 IDLE로 보고하고 다음 메시지가 `Command(resume=...)` 대신 일반 턴으로 디스패치됩니다). 마지막 어시스턴트 턴이 결과 없는 도구 호출을 가진 전사는 오류 자리표시자와 인터럽트 마커를 한 커밋으로 기록해 복구합니다(결정적 id). **완료될 수 없는** 턴이 클레임한 `CLAIMED` 큐 행은 24시간 만료까지 슬롯을 붙잡는 대신 `QUEUED`로 되돌립니다. 모든 단계는 페일오픈이고 스캔은 상한이 있어, 망가진 세션은 자기 탐색 비용만 치릅니다.
+- **복원된 RUNNING run은 살아 있지 않습니다.** 재시작을 넘겨 살아남는 태스크는 없으므로 로드 시 종료 상태로 만듭니다(`pause_reason=process_restart`, outcome TIMEOUT). RUNNING으로 두면 WAITING flow 스캔은 자식이 살아 있다고 믿고, 고아 복구는 결코 오지 않을 임계값을 기다립니다. 전달은 PENDING으로 남고 sweeper의 미전달 스캔이 공지하므로, 소유한 step은 DISPATCHED에 머무르지 않고 결과를 알게 됩니다.
+- **모든 영속 타임스탬프는 로드 시 재기준화**(`_rebase_restored_clock`)됩니다. `time.monotonic()`은 프로세스 상대라서 이전 프로세스의 값이 몇 시간 전으로도, 미래로도 읽혀 `now - timestamp` 만료 판정이 조용히 무효가 되었습니다. 마감(`archive_at`)에는 새 창을 줍니다(“지금”으로 재기준화하면 첫 스캔에서 아카이브됩니다).
+- **중단하는 도구는 headless 턴에서 거부합니다.** 승인 게이트는 이미 운영자가 없는 턴을 자동 거부했지만, 스스로 `interrupt()`를 호출하는 도구(`question`, `exit_plan_mode`, 자기 파일 승인, 일반 `interrupt_on` 전략, 샌드박스 바이패스)는 그대로 멈췄습니다——아무도 답할 수 없는 턴이 중단되는 것입니다. 이제는 거부하고 모델에게 계속(또는 중지)하라고 알리며, 절대 재시도하지 않습니다.
+- **trajectory 타임라인이 진짜가 되었습니다.** 훅 이벤트와 프레임 투영이 이제 하나의 턴 단위 시퀀스를 공유합니다(훅은 `seq=0`을 넘겨서 모든 훅 이벤트가 그 턴의 첫 프레임보다 앞에 정렬되었습니다). 타임스탬프는 밀리초 정밀도를 가지며, 실패한 스트림은 재던지기 전에 `error` 이벤트를 기록합니다——그냥 멈춘 타임라인은 “아직 실행 중”으로 보이기 때문입니다.
 
 
 ## 프레임 시퀀스와 워터마크

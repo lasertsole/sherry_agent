@@ -64,7 +64,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | 僵尸 todo | 活跃 todo 引用已 failed/cancelled 的 flow | todo 标 `cancelled` |
 | prune | 终态/superseded 行超过 `max_total_flows_per_session`（200） | 删除最旧的 |
 
-活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败并记录 detached 子代理。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
+活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
 
 全量替换丢掉根 todo 时不再等待宽限期：`update_todos` 立即补偿孤儿 flow（策略：`TODOLIST_INFRA["orphan_flow_on_drop"]`），随后立即跑一次会话级 sweep；flow 进入终态时会立刻通知其根 todo。创建目标与活跃 flow 相似的新 flow 时会给出警告，除非设置 `ack_dup`。
 

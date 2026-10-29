@@ -318,11 +318,11 @@ async def get_flow(flow_id: str, session_id: str) -> dict | None:
 async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: str) -> bool:
     """Stamp a predecessor flow's ``superseded_by`` back-pointer.
 
-    The back-pointer is lineage metadata and deliberately does NOT bump
-    ``expected_revision`` (a caller holding the predecessor's revision is not
-    invalidated). It DOES make an active predecessor terminal: a superseded flow
-    must leave every active read, including the unreferenced-flow sweep's
-    reachable set.
+    The call BUMPS ``expected_revision``: superseding changes the flow's status
+    to terminal, and a writer still holding the pre-supersede revision must lose
+    its CAS instead of resurrecting a cancelled flow with a stale plan. It also
+    makes an active predecessor terminal: a superseded flow must leave every
+    active read, including the unreferenced-flow sweep's reachable set.
     Returns True when one row matched, False when the flow is absent FOR THIS
     SESSION.
     """
@@ -332,6 +332,7 @@ async def mark_flow_superseded(flow_id: str, superseded_by: str, *, session_id: 
     async with _connect() as db:
         cursor = await db.execute(
             f"UPDATE {TABLE_NAME} SET superseded_by = ?, updated_at = ?, "
+            f"expected_revision = expected_revision + 1, "
             f"status = CASE WHEN status IN ({placeholders}) THEN status ELSE ? END, "
             f"terminal_reason = CASE WHEN status IN ({placeholders}) "
             f"THEN terminal_reason ELSE ? END "
@@ -365,6 +366,7 @@ async def update_flow(
     token_budget: int | None = None,
     deadline_ts: float | None | _Unset = UNSET,
     terminal_reason: str | None | _Unset = UNSET,
+    touch_updated_at: bool = True,
 ) -> dict:
     """Optimistic-locking mutation of one flow row owned by ``session_id``.
 
@@ -380,7 +382,11 @@ async def update_flow(
     * ``terminal_reason``: replace when not UNSET (None clears).
 
     Every successful call also stamps ``updated_at`` — the inactivity clock the
-    liveness sweep reads.
+    liveness sweep reads — UNLESS ``touch_updated_at=False``. That opt-out
+    exists for bookkeeping writes made BY a sweep (the stale-WAITING marker):
+    refreshing the clock a sweep reads would keep the very flow it is trying to
+    collect perpetually fresh. ``expected_revision`` is bumped either way, so
+    optimistic locking is unchanged.
 
     Returns the updated flow dict. Raises FlowNotFoundError when no flow with
     that id exists FOR THIS SESSION (a flow owned by another session is
@@ -420,8 +426,9 @@ async def update_flow(
         raise ValueError("update_flow called with nothing to update")
 
     new_revision = int(expected_revision) + 1
-    assignments.append("updated_at = ?")
-    params.append(time.time())
+    if touch_updated_at:
+        assignments.append("updated_at = ?")
+        params.append(time.time())
     assignments.append("expected_revision = ?")
     params.append(new_revision)
     params.extend([flow_id, int(expected_revision), session_id])

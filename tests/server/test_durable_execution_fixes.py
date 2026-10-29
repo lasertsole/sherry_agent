@@ -407,3 +407,245 @@ class _FakeExecutor:
 class _FakeRegistry:
     def resolve(self, route):
         return _FakeExecutor()
+
+
+class TestBootRecovery:
+    """The three memory-only facts a restart forgets, and their boot repairs."""
+
+    @pytest.mark.asyncio
+    async def test_a_pending_interrupt_rebuilds_the_busy_flag(self, monkeypatch):
+        from server.service import boot_recovery
+
+        from agent.tools.subagent.registry import session_state
+
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: ["sess-a", "sess-b"])
+
+        async def _probe(session_id, *args, **kwargs):
+            return {"tool_name": "terminal"} if session_id == "sess-a" else None
+
+        monkeypatch.setattr("agent.state_port.read_interrupt", _probe)
+        session_state.set_hitl_pending("sess-a", False)
+        session_state.set_hitl_pending("sess-b", False)
+
+        out = await boot_recovery.rebuild_hitl_pending()
+
+        assert out == {"scanned": 2, "rebuilt": 1}
+        assert session_state.is_hitl_pending("sess-a") is True
+        assert session_state.is_hitl_pending("sess-b") is False
+
+    @pytest.mark.asyncio
+    async def test_a_broken_probe_is_skipped(self, monkeypatch):
+        from server.service import boot_recovery
+
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: ["sess-a"])
+
+        async def _boom(session_id, *args, **kwargs):
+            raise RuntimeError("checkpointer unavailable")
+
+        monkeypatch.setattr("agent.state_port.read_interrupt", _boom)
+
+        assert await boot_recovery.rebuild_hitl_pending() == {"scanned": 1, "rebuilt": 0}
+
+    @pytest.mark.asyncio
+    async def test_healing_skips_a_suspended_session(self, monkeypatch):
+        """A HITL-pending transcript is a resume target, not a crash relic."""
+        from server.service import boot_recovery
+
+        from agent.tools.subagent.registry import session_state
+
+        session_state.set_hitl_pending("sess-suspended", True)
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: ["sess-suspended"])
+        healed: list[str] = []
+
+        async def _read(session_id):
+            return []
+
+        async def _heal(session_id, *args, **kwargs):
+            healed.append(session_id)
+            return type("W", (), {"healed_calls": 1})()
+
+        monkeypatch.setattr("agent.state_port.read_messages", _read)
+        monkeypatch.setattr("agent.state_port.heal_interrupted_turn", _heal)
+        try:
+            assert await boot_recovery.heal_dangling_turns() == 0
+        finally:
+            session_state.set_hitl_pending("sess-suspended", False)
+
+        assert healed == []
+
+    @pytest.mark.asyncio
+    async def test_a_dangling_tool_call_is_healed(self, monkeypatch):
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        from server.service import boot_recovery
+
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: ["sess-crash"])
+        messages = [
+            HumanMessage(content="run it"),
+            AIMessage(content="", tool_calls=[{"id": "call-1", "name": "terminal", "args": {}}]),
+        ]
+
+        async def _read(session_id):
+            return messages
+
+        healed: list[str] = []
+
+        async def _heal(session_id, config, partial_text, reason, graph=None):
+            healed.append(reason)
+            return type("W", (), {"healed_calls": 1})()
+
+        monkeypatch.setattr("agent.state_port.read_messages", _read)
+        monkeypatch.setattr("agent.state_port.heal_interrupted_turn", _heal)
+
+        assert await boot_recovery.heal_dangling_turns() == 1
+        assert healed == ["cancelled"]
+
+    def test_the_dangling_scan_ignores_answered_calls(self):
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+        from server.service.boot_recovery import _has_dangling_tool_call
+
+        answered = [
+            HumanMessage(content="run it"),
+            AIMessage(content="", tool_calls=[{"id": "call-1", "name": "terminal", "args": {}}]),
+            ToolMessage(content="ok", tool_call_id="call-1"),
+        ]
+
+        assert _has_dangling_tool_call(answered) is False
+        assert _has_dangling_tool_call(answered[:2]) is True
+        assert _has_dangling_tool_call([]) is False
+
+    @pytest.mark.asyncio
+    async def test_claimed_rows_are_requeued_at_boot(self, monkeypatch):
+        from server.service import boot_recovery
+
+        monkeypatch.setattr(boot_recovery, "candidate_session_ids", lambda: ["s1", "s2"])
+        seen: list[str] = []
+
+        class _FakeQueue:
+            async def requeue_claimed(self, session_id: str) -> int:
+                seen.append(session_id)
+                return 1 if session_id == "s2" else 0
+
+        monkeypatch.setattr("server.queue.user_input_queue.UserInputQueue", _FakeQueue)
+
+        assert await boot_recovery.requeue_claimed_inputs() == 1
+        assert seen == ["s1", "s2"]
+
+
+class TestRestoredRunShape:
+    """A restart leaves no live run behind, and no clock from the old process."""
+
+    def test_a_restored_running_run_becomes_a_terminal_timeout(self):
+        from agent.tools.subagent.registry.state import _mark_restored_running_terminal
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        run = _run_record("r-live", ExecutionStatus.RUNNING)
+        out = _mark_restored_running_terminal(run, now=5.0)
+
+        assert out.execution.status == ExecutionStatus.TERMINAL
+        assert out.execution.outcome.status.value == "timeout"
+        assert out.pause_reason == "process_restart"
+        assert out.ended_reason == "process_restarted"
+
+    def test_every_timestamp_is_rebased_onto_this_process(self):
+        import time
+
+        from agent.tools.subagent.registry.state import _rebase_restored_clock
+        from agent.tools.subagent.types.registry import (
+            CompletionDeliveryState,
+            ExecutionState,
+            ExecutionStatus,
+        )
+
+        run = _run_record("r-old", ExecutionStatus.RUNNING)
+        stale = 999_999.0  # a monotonic value from the previous process
+        run = run.model_copy(
+            update={
+                "execution": ExecutionState(status=ExecutionStatus.RUNNING, started_at=stale),
+                "delivery": CompletionDeliveryState(
+                    status="failed", last_attempt_at=stale, delivered_at=stale
+                ),
+                "archive_at": stale,
+            }
+        )
+
+        now = time.monotonic()
+        out = _rebase_restored_clock(run, now)
+
+        assert out.execution.started_at == now
+        assert out.delivery.last_attempt_at == now
+        assert out.delivery.delivered_at == now
+        assert out.archive_at is not None and out.archive_at > now, "a deadline needs a window"
+
+    def test_a_live_run_ages_from_the_restart(self):
+        import time
+
+        from agent.tools.subagent.registry.helpers import is_stale_unended_run
+        from agent.tools.subagent.registry.state import _rebase_restored_clock
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        run = _run_record("r-live", ExecutionStatus.RUNNING)
+        run = run.model_copy(
+            update={"execution": run.execution.model_copy(update={"started_at": 999_999.0})}
+        )
+
+        rebased = _rebase_restored_clock(run, time.monotonic())
+
+        assert is_stale_unended_run(rebased) is False
+
+
+class TestTrajectorySequencing:
+    """P4-3: one per-turn counter, and a timestamp with real precision."""
+
+    def test_the_counter_is_per_turn_and_monotonic(self):
+        from server.service import trajectory_store as ts
+
+        assert ts.next_turn_seq("turn-a") == 1
+        assert ts.next_turn_seq("turn-a") == 2
+        assert ts.next_turn_seq("turn-b") == 1
+
+    def test_ending_turn_drops_its_counter(self):
+        from server.service import trajectory_store as ts
+
+        ts.next_turn_seq("turn-c")
+        ts._drop_turn_seq("turn-c")
+
+        assert ts.next_turn_seq("turn-c") == 1
+
+    @pytest.mark.asyncio
+    async def test_a_stored_timestamp_carries_milliseconds(self, monkeypatch):
+        from server.service import trajectory_store as ts
+
+        store = ts.TrajectoryStore(Path(":memory:"))
+        monkeypatch.setattr(store, "_ensure", _noop)
+        # A file-backed store: ``read`` opens its own connection.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.db"
+            store = ts.TrajectoryStore(path)
+            await store.append("s1", "t1", "turn_start", {"type": "turn_start"}, seq=1)
+
+            events = await store.read("s1", turn_id="t1")
+
+        assert events, "the event must be readable"
+        ts_value = events[0]["ts"]
+        assert "." in ts_value, f"second precision is a collision magnet: {ts_value}"
+        assert len(ts_value.split(".")[1]) >= 3
+
+
+async def _noop() -> None:
+    return None
+
+
+class TestTrajectoryErrorEvent:
+    """P4-1: a failed stream leaves a row, so the timeline cannot look "running"."""
+
+    def test_the_failure_path_records_an_error_event(self):
+        source = Path("server/service/stream_dispatch.py").read_text(encoding="utf-8")
+
+        assert (
+            'record_event(\n                    self.session_id,\n                    "error",'
+            in source
+        )

@@ -19,6 +19,7 @@ from collections.abc import Sequence
 
 from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.errors import GraphInterrupt
+from loguru import logger
 
 from .approval import is_confirm_all_mode, is_yolo_mode, set_session_yolo
 from .approval_scope import NO_OPERATOR_MESSAGE
@@ -459,6 +460,13 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
             action_name=tool_name,
             allowed_decisions=config["allowed_decisions"],
         )
+        from .approval_scope import NO_OPERATOR_MESSAGE, no_operator_in_scope
+
+        if no_operator_in_scope():
+            # Nobody is present to answer, so suspending would strand the turn.
+            logger.info("HITL: headless turn — auto-denying {}", tool_name)
+            ctx.outcome.deny(tool_call, tool_name, NO_OPERATOR_MESSAGE)
+            return True
         try:
             hitl_response = interrupt(
                 HITLRequest(

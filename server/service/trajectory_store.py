@@ -18,8 +18,10 @@ import asyncio
 import contextlib
 import contextvars
 import json
+import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -224,7 +226,7 @@ class TrajectoryStore:
                         session_id,
                         turn_id,
                         seq,
-                        time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+                        datetime.now().isoformat(timespec="milliseconds"),
                         kind,
                         1 if is_error else 0,
                         _clip(summary, int(TRAJECTORY["result_clip_chars"])),
@@ -368,6 +370,30 @@ def reset_trajectory_store() -> None:
     _store = None
 
 
+# One sequence per TURN, shared by both producers: the stream's frame projector
+# and the agent-side hook events. It used to be two counters — the projector's
+# per-turn int and a hardcoded 0 for hooks — so every hook event sorted BEFORE
+# the turn's first frame and ``read()`` (ORDER BY seq) returned a scrambled
+# timeline. Guarded by a lock because the sweep removes entries from other
+# threads.
+_TURN_SEQ: dict[str, int] = {}
+_TURN_SEQ_LOCK = threading.Lock()
+
+
+def next_turn_seq(turn_id: str) -> int:
+    """The next sequence number for *turn_id* (1-based, process-local)."""
+    with _TURN_SEQ_LOCK:
+        value = _TURN_SEQ.get(turn_id, 0) + 1
+        _TURN_SEQ[turn_id] = value
+        return value
+
+
+def _drop_turn_seq(turn_id: str) -> None:
+    """Forget a finished turn's counter (the ledger keeps the numbers)."""
+    with _TURN_SEQ_LOCK:
+        _TURN_SEQ.pop(turn_id, None)
+
+
 def turn_start_event(session_id: str, *, source: str, message_ids: list[str]) -> None:
     """Record a ``turn_start`` event for the turn the current scope names."""
     record_event(session_id, "turn_start", {"source": source, "message_ids": message_ids})
@@ -376,6 +402,9 @@ def turn_start_event(session_id: str, *, source: str, message_ids: list[str]) ->
 def turn_end_event(session_id: str, *, total_ms: float, ttfb_ms: float | None) -> None:
     """Record a ``turn_end`` event (total wall clock + time to first chunk)."""
     record_event(session_id, "turn_end", {"total_ms": round(total_ms), "ttfb_ms": ttfb_ms})
+    turn_id = current_turn_id.get()
+    if turn_id:
+        _drop_turn_seq(turn_id)
 
 
 def record_event(session_id: str, kind: str, payload: dict[str, Any]) -> None:
@@ -393,7 +422,13 @@ def record_event(session_id: str, kind: str, payload: dict[str, Any]) -> None:
     except RuntimeError:
         return
     loop.create_task(
-        get_trajectory_store().append(session_id, turn_id, kind, {"type": kind, **payload}, seq=0)
+        get_trajectory_store().append(
+            session_id,
+            turn_id,
+            kind,
+            {"type": kind, **payload},
+            seq=next_turn_seq(turn_id),
+        )
     )
 
 

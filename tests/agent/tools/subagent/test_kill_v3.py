@@ -127,3 +127,61 @@ async def test_tasks_are_registered_under_the_run_id_not_the_session_key():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+@pytest.mark.asyncio
+class TestKillingAnInterruptedRun:
+    """P3-5: no live child agent means no ``finally`` — release its state here."""
+
+    async def test_the_guard_state_is_released(self, monkeypatch):
+        from agent.middlewares.output_repetition_guard.repetition_state import (
+            SESSION_STATE_KEYS,
+        )
+        from agent.tools.subagent.control.kill import kill_subagent_run
+        from runtime import state_register_mem
+
+        run = _make_run(execution=ExecutionState(status=ExecutionStatus.INTERRUPTED))
+        set_run(run)
+        key = run.child_session_key
+        for name in SESSION_STATE_KEYS:
+            state_register_mem.set_state(key, name, "leaked")
+
+        await kill_subagent_run(run.run_id, reason="test")
+
+        assert all(
+            state_register_mem.get_state(key, name, None) is None for name in SESSION_STATE_KEYS
+        )
+
+    async def test_a_running_run_is_not_touched_here(self, monkeypatch):
+        """The live child's own ``finally`` releases its state; this must not race it."""
+        from agent.tools.subagent.control import kill as kill_mod
+        from agent.tools.subagent.control.kill import kill_subagent_run
+
+        run = _make_run(execution=ExecutionState(status=ExecutionStatus.RUNNING))
+        set_run(run)
+        released: list[str] = []
+
+        async def _fake_complete(run_id, *args, **kwargs):
+            return _make_run(
+                execution=ExecutionState(
+                    status=ExecutionStatus.TERMINAL,
+                    outcome=RunOutcome(status=RunOutcomeStatus.KILLED, error="test"),
+                )
+            )
+
+        monkeypatch.setattr(kill_mod, "complete_subagent_run", None, raising=False)
+        import agent.tools.subagent.registry.lifecycle as lifecycle
+
+        monkeypatch.setattr(lifecycle, "complete_subagent_run", _fake_complete)
+        import agent.tools.subagent.spawn.core as spawn_core
+
+        monkeypatch.setattr(
+            spawn_core,
+            "release_child_session_state",
+            lambda run: released.append(run.run_id),
+            raising=False,
+        )
+
+        await kill_subagent_run(run.run_id, reason="test")
+
+        assert released == []

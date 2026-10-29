@@ -38,6 +38,11 @@ class TaskFlowInfraConfig(TypedDict):
     #: ``taskflow_create`` and ``taskflow_plan``. Finished / cancelled / failed
     #: flows do not count — they no longer hold a lane of planning.
     max_flows_per_session: int
+    #: Kill the children a failed flow leaves running. A failed flow can never
+    #: collect their results, so a detached child only burns a SUBAGENT lane
+    #: slot and keeps writing to the tree; kill it (fail-open per child). Set
+    #: False to leave them running for inspection.
+    auto_kill_on_detach: bool
     #: How many step children ONE dispatch call may spawn at the same time. The
     #: SUBAGENT lane is the global backpressure (over-limit children queue as
     #: PENDING); this cap keeps a single dispatch wave from flooding it. 1
@@ -55,6 +60,7 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "waiting_timeout_hours": 24,
     "stale_action_hours": 12,
     "unreferenced_flow_grace_seconds": 300.0,
+    "auto_kill_on_detach": True,
     "finish_nudge_max": 2,
     "finish_failure_limit": 2,
     "finish_protocol_violation_limit": 3,
