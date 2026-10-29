@@ -109,6 +109,12 @@ export interface MessageItem {
    */
   origin?: string;
   /**
+   * Whether this AI row is the tail of an interrupted PURE-TEXT answer the
+   * backend can continue (`stopped`/`done` frame flag). In-memory only: a
+   * history reload re-derives it from the `[interrupted]` marker content.
+   */
+  resumable?: boolean;
+  /**
    * Live model-retry progress for this AI turn (from the `model_retry` WS frame).
    * Never persisted: it decorates the in-memory streaming row, so a history reload
    * simply drops it.

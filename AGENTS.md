@@ -367,6 +367,79 @@ cancelling the running turn — the cancel-triggered drain then claims the
 prioritised row first (`claim_next`'s `ORDER BY priority DESC, created_at ASC`
 stays the single ordering rule; the row keeps its real `created_at`).
 
+## Interrupted-Answer Continuation & Message Edit (`server/service/resumable_breakpoint.py`)
+
+Two chat-row actions on the SAME per-session agent socket: **继续生成** (resume an
+interrupted pure-text answer) and **编辑消息** (rewrite a sent user message and
+re-run that turn). Both are additive WS frames; both fail open with one ack.
+
+**Continue.** The cancel / heartbeat-timeout path already heals the checkpoint
+and writes an `[interrupted] {partial}` marker (`interrupt_marker.py`). What was
+missing was identity: `_record_resumable_breakpoint` (in `server/service/messages.py`)
+stores `StateKey.RESUMABLE_BREAKPOINT` — mem + DB dual-write, like the token
+budget counters — as `{marker_id, partial_text, reason, at_turn_id, turn_seq,
+is_reasoning_only}`, and ONLY when the write was fresh (`wrote_checkpointer`),
+`healed_calls == 0` (a dangling tool call needs a rerun/skip decision this MVP
+does not make) and the turn produced visible text or reasoning. `turn_seq` is
+the human-message count the marker id was derived from — the validation
+fingerprint. `StreamDriver` adds an additive `resumable` boolean to `stopped`
+(the cancel path and the WS stop ack) and to `done` (a heartbeat timeout ends
+the turn NORMALLY, so the button must not need a `stopped` frame).
+
+A new turn clears the breakpoint: `_GenerateTurn.__init__` (all generation turns,
+the queue drain, the auto turn) and `_ResumeTurn.__init__` (HITL resume), gated
+by the class flag `_clears_resumable_breakpoint` so `_ContinueTurn` keeps it for
+itself. The client's `stopped`/`done` handler cannot rely on `streamingTurn` —
+the user's own Stop clears it before any frame arrives — so the `ws:resumable`
+handler falls back to the transcript's tail row.
+
+`continue_generation` (WS frame) VALIDATES before streaming: no live task
+(`busy`), breakpoint present and still the trailing marker with a matching turn
+count (`stale`, which also drops it). Then `_ContinueTurn(_GenerateTurn)` runs
+with `_is_continuation = True`: `_prepare` re-validates against the live
+transcript, CONSUMES the breakpoint (one shot), rewrites the marker to the clean
+partial text through `agent/state_port.py::restore_interrupt_marker` (same id →
+`add_messages` upsert; refuses an absent id instead of appending) and picks
+`_REASONING_ONLY_PROMPT` from `is_reasoning_only`. The rest is the existing
+max-tokens continuation: the injected prompt is a `HumanMessage` tagged
+`metadata={"internal": True, "provenance": "continuation"}`, and
+`message_persistence._is_persistable` filters that provenance so the prompt
+never shows up as a user row (this was pre-existing max-tokens behavior too).
+A cancelled continuation writes its own breakpoint through the inherited cancel
+hooks (the continuation prompt advances `turn_seq`, so the next marker id
+differs). The client sends `continue_generation`, reads the ack
+(`ok`/`busy`/`stale` → toast + hide + history reload), appends the chunks to the
+interrupted row (stripping the marker prefix locally) and lets `done` reload
+history — after which the persisted marker row and the continuation row are two
+rows (accepted; MesMemory is append-only).
+
+**Edit.** `edit_message {turn_num, new_text, msg_id, row_id?}` is refused while
+`detect_state(session_id).busy` (a live turn or a pending approval owns the
+transcript). `context_engine.store.core.find_user_turn_cut` maps the clicked
+row to `(ordinal, cut_turn_num)`: `origin = 'user'` human rows only, so the
+ordinal matches the checkpoint's human count while `cut_turn_num` is the
+persisted BATCH number — they are NOT the same thing (`add_messages` starts a
+new `turn_num` per persistence batch, so one user turn spans several numbers).
+`agent/state_port.py::truncate_messages_after_turn` then removes that ordinal's
+human message and everything after it from the live checkpoint through
+`RemoveMessage` (the checkpoint is pruned to latest-only, so history rewind is
+not available), counting turns over non-`metadata.internal` humans (reminder
+blocks / notices belong to the turn that follows them); `-1` = the turn was
+compacted away (`compacted`, never a silent partial truncation).
+`store.core.delete_messages_from_turn` hard-deletes `turn_num >= cut` and
+re-points `session_leafs` at the previous turn (first turn → leaf cleared), so
+the re-run's batch reuses the edited turn's number. The edited text is then
+re-submitted through `submit_user_input` with a FRESH `msg_id` (the old one is
+tombstoned by the dedupe) — the normal `turn_started`/`chunk`/`done` flow
+follows, and only failures ack (`edit_message_ack`). The client truncates
+`chatMessages` at that turn, appends an optimistic user/AI pair with the SAME
+turn number, and purges the Dexie cache from that turn on
+(`clearCachedMessagesFromTurn`) — without that purge the local cache merge
+resurrects the deleted rows on the next history load. Edit mode is entered from
+the bubble's pencil (persisted user rows only), prefills the composer
+(`setDraftText`), shows a banner and routes the composer's send to `handleEdit`;
+Esc cancels.
+
 ## Chat Selection Quote & Side Session (`ChatBox.vue` / `SideChatPanel.vue`)
 
 Right-clicking a **valid text selection inside one message row** opens a PrimeVue
@@ -1426,6 +1499,35 @@ codes in, no generic toasts) and the transport's own 401 → refresh-once → re
 - Two entry points, one method: the agent's `terminal_bg(action="kill", task_id=...)` (main-agent-only, like the other actions) and the UI's `terminal_bg_kill` WS frame, which answers `terminal_bg_kill_ack {ok, task_id, reason}` and lets the watcher's `terminal_bg_exit` confirm the final state.
 - Live updates: `_run_background` pushes `terminal_bg_started` after registering the task, so an open panel adds the row without polling; `GET /terminal/bg?session_id=` is the snapshot for mount / reconnect (the registry is process-level and NOT persisted — after a restart an empty list is correct, not lost work).
 - The chat strip (`BackgroundTasksPanel.vue`, mounted under the message list in `index/[sid].vue`, rendered only when tasks exist) shows command / status / pid and offers 终止 on running rows; `use-background-tasks.ts` owns the state (snapshot + the three frames), so the panel is a pure view.
+
+## Command Palette (`client/app/components/CommandPalette.vue`)
+
+`Ctrl+K` / `Cmd+K` opens one searchable command list over the things the shell
+already knows how to do. It is a thin layer over the existing command
+registries, not a second dispatch table:
+
+- `composables/use-command-registry.ts` — `CommandEntry {id, label, section,
+  icon?, keywords?, handler}`, `registerStatic`/`registerStaticBatch` (a
+  repeated id REPLACES, so a remount or a locale switch cannot duplicate rows),
+  `setDynamicCommands`, scoring (exact 1000 > prefix > substring > keyword) and
+  `highlightLabel` (escaped first, THEN the match is wrapped in `<mark>` — the
+  label is user/page-provided text rendered through `v-html`).
+- `pages/home/commands.ts` — the static half is DERIVED from `headerTools` /
+  `toolboxTools` (the 菜单 grid is the source of truth, so a new tile appears in
+  both), plus the notification bell and 新建会话; handlers call the existing
+  `buildHomeToolbarCommands` registry and `useNewSessionStore().openDialog()`.
+- The dynamic half (skill index + recent sessions) is pulled on every open and
+  replaces the previous dynamic set.
+- Search history is Dexie v4 (`commandHistory`, additive table; one row per
+  command id, capped 50, newest first), rendered as 最近使用 on an empty query.
+- The shell (`pages/home/index.vue`) mounts it, registers the static batch under
+  a `watch(locale, …, {immediate: true})` (labels are resolved i18n text — a
+  `watchEffect` would retrigger itself because registering reads and writes the
+  same registry refs) and owns the document-level keydown (Shift/Alt variants
+  pass through; the listener is removed on unmount).
+- i18n: `commandPalette.*` in all four locales; command labels reuse
+  `toolbar.*`. Sections render session → navigate → tools → skills; the keyboard
+  cursor walks the grouped list as one flat index, and a new query resets it.
 
 ## Shell Layout: Three Columns (`client/app/pages/home/index.vue`)
 

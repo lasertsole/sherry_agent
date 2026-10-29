@@ -15,10 +15,13 @@
           :ai-name="characterInfo.aiName"
           :loading-older="loadingOlder"
           :selection-enabled="!hitlRequest"
+          :can-edit="!isSending"
           @reach-top="loadOlderHistory"
           @release-head="onReleaseHead"
           @selection-add="onSelectionAdd"
-          @selection-side-chat="onSelectionSideChat" />
+          @selection-side-chat="onSelectionSideChat"
+          @edit-message="onEditMessage"
+          @continue-generation="handleContinueGeneration" />
         <!-- Background commands the agent started (terminal(run_in_background=True)):
              a command-level stop lives here, so the chat keeps running while a
              single long command is cancelled. Renders nothing when there are none. -->
@@ -390,6 +393,23 @@
                 </div>
               </template>
             </div>
+            <!-- Edit mode banner: the composer is about to rewrite a sent
+                 user message (and re-run that turn) instead of sending a new
+                 one. Esc or ✕ leaves edit mode without touching the transcript. -->
+            <div
+              v-if="editingTurn"
+              class="mx-2 mb-1 flex items-center gap-2 rounded-md border border-solid border-amber-300/70 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300"
+              data-test="chat-edit-banner">
+              <i class="pi pi-pencil text-[10px]"></i>
+              <span class="flex-1">{{ t('chatBox.editingMessage') }}</span>
+              <button
+                type="button"
+                class="underline"
+                data-test="chat-edit-cancel"
+                @click="cancelEditMessage">
+                {{ t('common.cancel') }}
+              </button>
+            </div>
             <!-- Input box: hidden while a HITL request occupies the same slot -->
             <ChatInputBox
               v-show="!hitlRequest"
@@ -398,7 +418,7 @@
               :sending="isSending"
               :disabled="!!hitlRequest"
               :disabled-text="t('chatInput.waitingApproval')"
-              @send="handleSend"
+              @send="onComposerSend"
               @stop="handleStop" />
           </div>
         </div>
@@ -820,6 +840,56 @@ const clearMediaSelection = () => {
   selectedVideos.value = [];
 };
 
+/**
+ * Edit mode: the turn being rewritten (`null` = the composer sends normally).
+ * The row id travels with it so the backend truncates at the EXACT message
+ * rather than guessing from the turn number.
+ */
+const editingTurn = ref<{ turnNum: number; rowId: number } | null>(null);
+
+/**
+ * Enter edit mode for a sent user message: prefill the composer and focus it.
+ * @param message The clicked row.
+ */
+const onEditMessage = (message: MessageItem) => {
+  if (isSending.value || hitlRequest.value) return;
+  editingTurn.value = { turnNum: message.turn_num, rowId: message.id };
+  chatInputBoxRef.value?.setDraftText?.(message.content);
+};
+
+/** Leave edit mode without touching the transcript. */
+const cancelEditMessage = () => {
+  editingTurn.value = null;
+  draft.value = '';
+  chatInputBoxRef.value?.setDraftText?.('');
+};
+
+/**
+ * Composer submit: in edit mode the text rewrites that turn (truncate + re-run),
+ * otherwise it is a normal send.
+ * @param text The composer's text (chips already extracted).
+ */
+const onComposerSend = (text: string) => {
+  const editing = editingTurn.value;
+  if (!editing) {
+    void handleSend(text);
+    return;
+  }
+  editingTurn.value = null;
+  handleEdit(editing.turnNum, text, editing.rowId);
+};
+
+// Esc leaves edit mode (never while a turn streams: the composer is read-only
+// then, and its own Esc handling must stay untouched).
+const onEditModeKeydown = (event: KeyboardEvent) => {
+  if (!editingTurn.value || event.key !== 'Escape') return;
+  cancelEditMessage();
+};
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', onEditModeKeydown);
+  onUnmounted(() => window.removeEventListener('keydown', onEditModeKeydown));
+}
+
 const stream = useChatStream({
   chatMessages,
   sessionId,
@@ -841,6 +911,8 @@ const stream = useChatStream({
 const {
   handleSend,
   handleStop,
+  handleContinueGeneration,
+  handleEdit,
   handleSocketChunk,
   handleTurnStarted,
   handleQueued,

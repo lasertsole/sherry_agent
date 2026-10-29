@@ -76,7 +76,10 @@
     "removeVideo": "Remove video",
     "diffNewFile": "New file",
     "codeWrap": "Wrap",
-    "codeZoom": "Zoom"
+    "codeZoom": "Zoom",
+    "continueGeneration": "Continue generating",
+    "editMessage": "Edit message",
+    "editingMessage": "Editing a sent message — sending re-runs that turn"
   },
   "chat": {
     "backgroundMessage": "Background task",
@@ -109,7 +112,11 @@
     "pageError": "Page error",
     "replyFailed": "(Reply failed: {reason})",
     "sendFailed": "(Send failed: {reason})",
-    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly.",
+    "breakpointStale": "The interrupted answer can no longer be continued",
+    "continueBusy": "A turn is running; try again once it finishes",
+    "editBusy": "A turn is running; editing is unavailable",
+    "editCompacted": "This message is outside the editable range (its history was compacted)"
   },
   "connection": {
     "offline": "Network offline",
@@ -166,6 +173,18 @@
     "noTasks": "No background tasks yet",
     "tasksLoading": "Loading tasks...",
     "resize": "Drag to resize"
+  },
+  "commandPalette": {
+    "placeholder": "Type a command…",
+    "recent": "Recently used",
+    "noMatch": "No matching command",
+    "newSession": "New Session",
+    "section": {
+      "session": "Sessions",
+      "navigate": "Navigation",
+      "tools": "Tools",
+      "skills": "Skills"
+    }
   },
   "toolbar": {
     "newChat": "New Chat",

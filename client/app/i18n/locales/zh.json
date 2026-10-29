@@ -76,7 +76,10 @@
     "removeVideo": "移除视频",
     "diffNewFile": "新建文件",
     "codeWrap": "换行",
-    "codeZoom": "放大"
+    "codeZoom": "放大",
+    "continueGeneration": "继续生成",
+    "editMessage": "编辑消息",
+    "editingMessage": "正在编辑已发送的消息；发送后将重跑该轮"
   },
   "chat": {
     "backgroundMessage": "后台任务",
@@ -109,7 +112,11 @@
     "pageError": "页面错误",
     "replyFailed": "（回复失败：{reason}）",
     "sendFailed": "（发送失败：{reason}）",
-    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步",
+    "breakpointStale": "断点已失效，无法继续生成",
+    "continueBusy": "当前对话进行中，无法继续生成",
+    "editBusy": "对话进行中，暂时无法编辑",
+    "editCompacted": "该消息已超出可编辑范围（历史已被压缩）"
   },
   "connection": {
     "offline": "网络已断开",
@@ -166,6 +173,18 @@
     "noTasks": "暂无后台任务",
     "tasksLoading": "正在加载任务…",
     "resize": "拖动调整宽度"
+  },
+  "commandPalette": {
+    "placeholder": "输入命令名…",
+    "recent": "最近使用",
+    "noMatch": "无匹配命令",
+    "newSession": "新建会话",
+    "section": {
+      "session": "会话",
+      "navigate": "导航",
+      "tools": "工具",
+      "skills": "技能"
+    }
   },
   "toolbar": {
     "newChat": "新建对话",

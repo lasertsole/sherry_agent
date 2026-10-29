@@ -17,12 +17,23 @@ from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 
+from agent.state_port import InterruptMarkerWrite, read_messages, restore_interrupt_marker
+
 from .session_cleanup_service import purge_session
 from .stream_dispatch import (
     StreamTurn,
     _consume_tool_duration,
     _normalize_text,
     _pop_pending_args,
+)
+from .resumable_breakpoint import (
+    BreakpointReason,
+    BreakpointStaleError,
+    breakpoint_is_valid,
+    build_breakpoint,
+    clear_breakpoint,
+    read_breakpoint,
+    set_breakpoint,
 )
 
 
@@ -109,11 +120,14 @@ different hooks.
 
 async def _write_interrupt_marker(
     session_id: str, partial_text: str, reason: Literal["cancelled", "heartbeat_timeout"]
-) -> None:
+) -> InterruptMarkerWrite | None:
     """Persist the interrupted-turn marker on ``async_generate``'s cancellation
     paths (plan / G3-allowed touchpoint: ONE await per handler, placed
     BEFORE the terminal frame so the partial transcript is reconciled while
     ``ai_text`` still holds it).
+
+    Returns what the checkpointer write did (the caller decides whether the
+    turn is resumable), or ``None`` when the best-effort write failed.
 
     Best-effort by contract: a failing marker write must never mask the
     "Request cancelled" frame nor break generator teardown, so every
@@ -123,7 +137,7 @@ async def _write_interrupt_marker(
     try:
         from .interrupt_marker import write_interrupted_marker
 
-        await write_interrupted_marker(
+        return await write_interrupted_marker(
             session_id, build_agent_config(session_id), partial_text, reason
         )
     except asyncio.CancelledError:
@@ -132,6 +146,65 @@ async def _write_interrupt_marker(
         logger.warning(
             f"Interrupted-marker write failed (best-effort): session_id={session_id}, "
             f"reason={reason}, error={e}"
+        )
+        return None
+
+
+def _record_resumable_breakpoint(
+    session_id: str,
+    write: InterruptMarkerWrite | None,
+    *,
+    reason: BreakpointReason,
+    turn_id: str,
+    partial_text: str,
+    has_visible_text: bool,
+    has_reasoning: bool,
+) -> None:
+    """Record that this interrupted turn can be continued (pure text only).
+
+    Only when the heal wrote a FRESH marker (``wrote_checkpointer``) and there
+    were no dangling tool calls (``healed_calls == 0``): a tool-call
+    interruption needs a rerun/skip decision that this MVP does not make. A turn
+    with neither visible text nor reasoning has nothing to continue from.
+
+    Best-effort: the register write cannot fail the cancel path.
+    """
+    try:
+        if write is None or not write.wrote_checkpointer:
+            return
+        if write.healed_calls > 0:
+            logger.info(
+                "resumable breakpoint skipped (tool-call interruption): session_id={}, "
+                "healed_calls={}",
+                session_id,
+                write.healed_calls,
+            )
+            return
+        if not partial_text.strip() and not has_reasoning:
+            return
+        set_breakpoint(
+            session_id,
+            build_breakpoint(
+                marker_id=write.marker_id,
+                partial_text=partial_text,
+                reason=reason,
+                turn_id=turn_id or "",
+                turn_seq=write.turn_seq,
+                is_reasoning_only=not has_visible_text and has_reasoning,
+            ),
+        )
+        logger.info(
+            "resumable breakpoint recorded: session_id={}, marker={!r}, reason={}, partial_len={}",
+            session_id,
+            write.marker_id,
+            reason,
+            len(partial_text),
+        )
+    except Exception as exc:  # noqa: BLE001 - best-effort on a cancellation path
+        logger.warning(
+            "resumable breakpoint write failed (best-effort): session_id={}, error={!r}",
+            session_id,
+            exc,
         )
 
 
@@ -159,7 +232,15 @@ _MAX_REASONING_ONLY_RETRIES = WS_STREAM["max_reasoning_only_retries"]
 
 
 class _GenerateTurn(StreamTurn):
-    """A normal user turn (stream or non-stream) through the context-assembled agent."""
+    """A normal user turn (stream or non-stream) through the context-assembled agent.
+
+    Any NEW turn invalidates a pending resumable breakpoint: the transcript grows
+    past the interrupted answer, so continuing would interleave two turns.
+    ``_ContinueTurn`` turns this off — they consume the breakpoint themselves.
+    """
+
+    #: Whether constructing this turn clears the session's resumable breakpoint.
+    _clears_resumable_breakpoint: bool = True
 
     def __init__(
         self,
@@ -171,6 +252,8 @@ class _GenerateTurn(StreamTurn):
         messages: Sequence[MultiModalMessage] | None = None,
     ) -> None:
         super().__init__(session_id)
+        if self._clears_resumable_breakpoint:
+            clear_breakpoint(session_id)
         if messages is not None:
             self.messages: list[MultiModalMessage] = list(messages)
         elif multi_modal_message is not None:
@@ -212,7 +295,15 @@ class _GenerateTurn(StreamTurn):
             prompt = _REASONING_ONLY_PROMPT if self._is_reasoning_only else _CONTINUATION_PROMPT
             input_dict: dict[str, Any] = {
                 "session_id": self.session_id,
-                "messages": [HumanMessage(content=prompt)],
+                "messages": [
+                    # Internal carrier: MessagePersistence keeps it in the
+                    # checkpoint (the model must see it) but never writes it as a
+                    # visible user row.
+                    HumanMessage(
+                        content=prompt,
+                        metadata={"internal": True, "provenance": "continuation"},
+                    )
+                ],
             }
         else:
             # ONE graph turn fed with the whole FIFO batch: each queued input
@@ -359,10 +450,28 @@ class _GenerateTurn(StreamTurn):
         self._has_visible_text = False
 
     async def _on_cancelled(self) -> None:
-        await _write_interrupt_marker(self.session_id, self.ai_text, "cancelled")
+        write = await _write_interrupt_marker(self.session_id, self.ai_text, "cancelled")
+        _record_resumable_breakpoint(
+            self.session_id,
+            write,
+            reason="cancelled",
+            turn_id=self.turn_id,
+            partial_text=self.ai_text,
+            has_visible_text=self._has_visible_text,
+            has_reasoning=self._has_reasoning,
+        )
 
     async def _on_heartbeat_timeout(self, exc: HeartbeatTimeoutError) -> None:
-        await _write_interrupt_marker(self.session_id, self.ai_text, "heartbeat_timeout")
+        write = await _write_interrupt_marker(self.session_id, self.ai_text, "heartbeat_timeout")
+        _record_resumable_breakpoint(
+            self.session_id,
+            write,
+            reason="heartbeat_timeout",
+            turn_id=self.turn_id,
+            partial_text=self.ai_text,
+            has_visible_text=self._has_visible_text,
+            has_reasoning=self._has_reasoning,
+        )
 
     def _log_completed(self, elapsed: float) -> None:
         logger.debug(
@@ -410,6 +519,78 @@ class _GenerateTurn(StreamTurn):
         await super()._cleanup(kind, source)
 
 
+class _ContinueTurn(_GenerateTurn):
+    """Continue a PURE-TEXT interrupted answer (Stop / heartbeat timeout).
+
+    Reuses the max-tokens continuation path: the interrupt marker at the tail of
+    the checkpoint is rewritten to the clean partial answer
+    (``restore_interrupt_marker`` — same id, so the reducer upserts in place) and
+    the base class's continuation branch injects ``_CONTINUATION_PROMPT``. The
+    model therefore resumes mid-sentence, exactly like a truncated generation.
+
+    The breakpoint is CONSUMED here (cleared before the first token): one
+    interruption is continuable once, so a failure cannot replay the same
+    partial answer. A continuation that is itself interrupted writes a NEW
+    breakpoint through the inherited cancel hooks (with the next marker id).
+    """
+
+    _clears_resumable_breakpoint = False
+
+    def __init__(self, session_id: str) -> None:
+        # No user message: the continuation's input is the injected prompt.
+        super().__init__(session_id, messages=[])
+        self._is_continuation = True
+        self._breakpoint: dict[str, Any] | None = None
+        self._stale_reason: str | None = None
+
+    async def _prepare(self) -> None:
+        breakpoint = read_breakpoint(self.session_id)
+        if breakpoint is None:
+            # The WS handler validates before dispatching; this is the race case.
+            self._stale_reason = "no breakpoint"
+            logger.info("continue turn: no breakpoint for session {}", self.session_id)
+            return
+        await super()._prepare()
+        messages = await read_messages(self.session_id, self._agent)
+        if not breakpoint_is_valid(messages, breakpoint):
+            self._stale_reason = "transcript moved on"
+            clear_breakpoint(self.session_id)
+            return
+        # One shot: consume the breakpoint BEFORE the first token. A cancelled
+        # continuation records its own (the next marker id).
+        clear_breakpoint(self.session_id)
+        marker_id = str(breakpoint.get("marker_id") or "")
+        partial_text = str(breakpoint.get("partial_text") or "")
+        restored = await restore_interrupt_marker(
+            self.session_id,
+            build_agent_config(self.session_id),
+            marker_id,
+            partial_text,
+            self._agent,
+        )
+        if not restored:
+            self._stale_reason = "marker missing"
+            return
+        self._breakpoint = breakpoint
+        self._is_reasoning_only = breakpoint.get("is_reasoning_only") is True
+        logger.info(
+            "continue turn: resuming session {} from marker {!r} (partial_len={})",
+            self.session_id,
+            marker_id,
+            len(partial_text),
+        )
+
+    async def _create_source(self) -> tuple[Literal["stream", "invoke"], Any]:
+        if self._stale_reason:
+            raise BreakpointStaleError(
+                "The interrupted answer can no longer be continued; send a new message instead."
+            )
+        return await super()._create_source()
+
+    def _log_started(self) -> None:
+        logger.info(f"Agent continuation started: session_id={self.session_id}")
+
+
 class _ResumeTurn(StreamTurn):
     """A HITL resume turn: continues the agent after a human decision."""
 
@@ -424,6 +605,10 @@ class _ResumeTurn(StreamTurn):
         self.decision = decision
         self.message = message
         self.edited_args = edited_args
+        # A HITL resume continues the same graph state but is a fresh turn from
+        # the user's point of view: the interrupted answer is no longer the tail
+        # the user could continue from.
+        clear_breakpoint(session_id)
         self._agent: Any = None
         self._config: Any = None
         self._resume_value: dict[str, Any] = {}
@@ -549,6 +734,19 @@ async def async_generate_multi(
     if not messages:
         return
     engine = _GenerateTurn(session_id, is_stream=is_stream, origin=origin, messages=messages)
+    async for frame in engine.run():
+        yield frame
+
+
+async def continue_generation(session_id: str) -> AsyncGenerator[dict[str, str]]:
+    """Continue the session's interrupted pure-text answer from its breakpoint.
+
+    Yields the same chunk format as :func:`async_generate`. A missing or stale
+    breakpoint raises :class:`~server.service.resumable_breakpoint.BreakpointStaleError`
+    on the first iteration, which the stream driver reports as an ``error``
+    frame — the client then hides the continue button and refreshes history.
+    """
+    engine = _ContinueTurn(session_id)
     async for frame in engine.run():
         yield frame
 

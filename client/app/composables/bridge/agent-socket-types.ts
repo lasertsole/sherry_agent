@@ -131,6 +131,10 @@ export interface AgentSocket {
   sendEditQueued(msgId: string, message: string): void;
   /** Interrupt the running turn and deliver this queued message next. */
   sendNow(msgId: string): void;
+  /** Continue an interrupted pure-text answer from its breakpoint. */
+  sendContinueGeneration(): void;
+  /** Rewrite a sent user message and re-run it (truncates that turn onward). */
+  sendEditMessage(turnNum: number, newText: string, msgId: string, rowId?: number): void;
   /** Tear the connection down and settle every pending send (page unmount). */
   dispose(): void;
 }

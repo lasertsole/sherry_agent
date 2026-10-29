@@ -16,6 +16,84 @@ const base = (over: Partial<MessageItem>): MessageItem => ({
   ...over
 });
 
+describe('ChatBox.vue: edit + continue entry points', () => {
+  it('offers the edit action on a persisted user message and emits its row', async () => {
+    const message = base({ id: 42, role: CHAT_ROLE.USER, content: 'fix this', turn_num: 2 });
+    const wrapper = mount(ChatBox, { props: { messages: [message] } });
+
+    const button = wrapper.find('[data-test="chat-edit-message"]');
+    expect(button.exists()).toBe(true);
+    await button.trigger('click');
+
+    expect(wrapper.emitted('edit-message')).toEqual([[message]]);
+  });
+
+  it('never offers editing on an AI row, a streaming row, or a locked composer', () => {
+    const ai = mount(ChatBox, {
+      props: { messages: [base({ id: 3, role: CHAT_ROLE.AI, content: 'answer', turn_num: 1 })] }
+    });
+    expect(ai.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+
+    // A temp (negative) id is an optimistic row: not persisted yet.
+    const streaming = mount(ChatBox, {
+      props: { messages: [base({ id: -1, role: CHAT_ROLE.USER, content: 'sending', turn_num: 1 })] }
+    });
+    expect(streaming.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+
+    // `can-edit` false (a turn is streaming) hides it too.
+    const busy = mount(ChatBox, {
+      props: { canEdit: false, messages: [base({ id: 5, role: CHAT_ROLE.USER, content: 'x', turn_num: 1 })] }
+    });
+    expect(busy.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+  });
+
+  it('offers 继续生成 on an interrupted tail answer and emits the turn', async () => {
+    const interrupted = base({
+      id: 9,
+      role: CHAT_ROLE.AI,
+      content: '[interrupted:cancelled] half an ans',
+      turn_num: 4
+    });
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 8, role: CHAT_ROLE.USER, content: 'q', turn_num: 4 }), interrupted] }
+    });
+
+    const button = wrapper.find('[data-test="chat-continue-generation"]');
+    expect(button.exists()).toBe(true);
+    expect(button.text()).toContain('继续生成');
+    await button.trigger('click');
+
+    expect(wrapper.emitted('continue-generation')).toEqual([[4]]);
+  });
+
+  it('hides 继续生成 when the interrupted answer is not the tail', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.AI, content: '[interrupted:cancelled] cut', turn_num: 1 }),
+          base({ id: 2, role: CHAT_ROLE.USER, content: 'next question', turn_num: 2 }),
+          base({ id: 3, role: CHAT_ROLE.AI, content: 'full answer', turn_num: 2 })
+        ]
+      }
+    });
+
+    expect(wrapper.find('[data-test="chat-continue-generation"]').exists()).toBe(false);
+  });
+
+  it('the live resumable flag offers 继续生成 without the marker prefix', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 1 }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'half an ans', turn_num: 1, resumable: true })
+        ]
+      }
+    });
+
+    expect(wrapper.find('[data-test="chat-continue-generation"]').exists()).toBe(true);
+  });
+});
+
 describe('ChatBox.vue (integration, backend mocked)', () => {
   it('renders a single AI message with the neutral default name and sanitized markdown', () => {
     const wrapper = mount(ChatBox, {

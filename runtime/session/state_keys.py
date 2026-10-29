@@ -31,6 +31,13 @@ class StateKey(StrEnum):
     TOOL_GUARDRAIL_STATE = "tool_guardrail_state"
     IS_STREAM_TURN = "is_stream_turn"
 
+    # The resumable breakpoint of an interrupted PURE-TEXT turn (user Stop or
+    # heartbeat timeout, no dangling tool calls): the marker id, the partial
+    # answer and enough identity to validate it before a continuation runs.
+    # ``{}``/absent = nothing to continue. Dual-written (mem + DB) so a restart
+    # keeps the breakpoint. A new turn clears it (one breakpoint, one resume).
+    RESUMABLE_BREAKPOINT = "resumable_breakpoint"
+
     LLM_STALE_STREAK = "llm_stale_streak"
     LLM_FALLBACK_INDEX = "llm_fallback_index"
     # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.

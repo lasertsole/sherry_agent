@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import homeIndex from '@/pages/home/index.vue';
+import CommandPalette from '@/components/CommandPalette.vue';
 import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 import { useSubagentStore } from '@/stores/subagent';
@@ -69,6 +70,15 @@ const primevueStub = {
   },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
+  // The Ctrl+K palette (only its visibility is exercised here; its own suite
+  // covers the rows). Rendering the slot only when open keeps the shell markup
+  // unchanged for the other cases.
+  Dialog: { props: ['visible'], template: '<div class="dlg" v-if="visible"><slot /></div>' },
+  InputText: {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template: '<input class="it" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  },
   ChatInputBox: { template: '<div class="cib"></div>' }
 };
 
@@ -155,6 +165,30 @@ describe('home/index.vue (integration, backend mocked)', () => {
     // The logo label falls back to the neutral default name when the session has
     // no character name (it is the persona name only when the persona sets one).
     expect(wrapper.text()).toContain('🍊雪莉');
+  });
+
+  it('opens the Ctrl+K command palette, and ignores the Shift/Alt variants', async () => {
+    const wrapper = mountHome();
+    const palette = wrapper.findComponent(CommandPalette);
+    expect(palette.props('visible')).toBe(false);
+
+    // Ctrl+Shift+K is a different chord: the shell must leave it alone.
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true }));
+    await nextTick();
+    expect(palette.props('visible')).toBe(false);
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
+    await nextTick();
+    expect(palette.props('visible')).toBe(true);
+
+    // The listener is removed with the shell (leaked listeners would fire on
+    // every later mount's document too).
+    const fresh = mountHome();
+    wrapper.unmount();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+    await nextTick();
+    expect(fresh.findComponent(CommandPalette).props('visible')).toBe(true);
+    fresh.unmount();
   });
 
   it('puts the right-sidebar toggle to the right of the settings menu button', () => {

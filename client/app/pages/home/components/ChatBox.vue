@@ -182,6 +182,21 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
+                  <!-- Rewrite a SENT user message (pencil floats beside the copy
+                       button, fades in with the bubble hover). The backend
+                       truncates that turn onward and re-runs the edited text.
+                       Persisted user rows only: a streaming row has a temp id, and
+                       an approval card owns the composer. -->
+                  <button
+                    v-if="canEditMessage(message)"
+                    type="button"
+                    class="absolute top-2 right-11 flex h-7 w-7 items-center justify-center rounded-full border border-solid border-white/20 bg-blue-700/40 text-blue-100 opacity-0 transition-opacity duration-200 hover:bg-blue-600/50 hover:text-white focus-visible:opacity-100 group-hover:opacity-100"
+                    :title="t('chatBox.editMessage')"
+                    :aria-label="t('chatBox.editMessage')"
+                    data-test="chat-edit-message"
+                    @click="emit('edit-message', message)">
+                    <i class="pi pi-pencil text-xs"></i>
+                  </button>
                   <!-- A streaming row renders only its TAIL while it grows: one
                        multi-thousand-line row being re-laid-out on every flush starved
                        the page (menus, timers and fetches froze for tens of seconds on
@@ -242,6 +257,18 @@
                   "
                   :title="t('chatBox.contextTip')"
                   @open-context="openContextViewer" />
+                <!-- The answer was cut off (Stop / heartbeat timeout) but the
+                     backend still holds its partial text: continue it instead of
+                     re-sending the question. Only the LAST row qualifies. -->
+                <button
+                  v-if="continueTurn !== null && message.turn_num === continueTurn"
+                  type="button"
+                  class="mt-1 flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
+                  data-test="chat-continue-generation"
+                  @click="emit('continue-generation', message.turn_num)">
+                  <i class="pi pi-play text-[10px]"></i>
+                  {{ t('chatBox.continueGeneration') }}
+                </button>
               </div>
             </div>
           </div>
@@ -342,6 +369,8 @@ interface Props {
   selectionEnabled?: boolean;
   /** Whether the menu offers "ask in side session" (the side panel itself only re-quotes). */
   allowSideChat?: boolean;
+  /** Whether a settled row may be edited (false while a turn streams). */
+  canEdit?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -351,7 +380,8 @@ const props = withDefaults(defineProps<Props>(), {
   aiName: '',
   loadingOlder: false,
   selectionEnabled: true,
-  allowSideChat: true
+  allowSideChat: true,
+  canEdit: true
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -407,7 +437,41 @@ const emit = defineEmits<{
   (e: 'release-head', messageIds: number[]): void;
   (e: 'selection-add', payload: SelectionPayload): void;
   (e: 'selection-side-chat', payload: SelectionPayload): void;
+  (e: 'edit-message', message: MessageItem): void;
+  (e: 'continue-generation', turnNum: number): void;
 }>();
+
+/**
+ * Whether this row offers "edit and re-run".
+ *
+ * Only PERSISTED user messages (a positive row id): the streaming pair carries
+ * temporary negative ids, and its turn is not written yet. The composer is
+ * disabled while an approval card owns it, and editing under a pending approval
+ * would interleave two transcripts.
+ * @param message Candidate row.
+ */
+const canEditMessage = (message: MessageItem): boolean =>
+  props.canEdit && props.selectionEnabled && message.role === CHAT_ROLE.USER && message.id > 0 && message.turn_num > 0;
+
+/** The `[interrupted]` marker the backend prefixes onto a cut-off answer. */
+const INTERRUPTED_MARKER = /^\[interrupted(?::[a-z_]+)?\]/i;
+
+/**
+ * The turn number of the answer that can be continued, or null.
+ *
+ * Only the LAST message of the list qualifies: a continuation appends to the
+ * interrupted answer, so a later row means the transcript moved on. Two sources
+ * agree: the live `resumable` flag (terminal frame) and the persisted
+ * `[interrupted]` marker prefix (after a reload the flag is recomputed from the
+ * content). A streaming row keeps its button hidden until the turn settles.
+ */
+const continueTurn = computed<number | null>(() => {
+  const list = props.messages ?? [];
+  const last = list[list.length - 1];
+  if (!last || last.role !== CHAT_ROLE.AI || last.streaming) return null;
+  const flagged = last.resumable === true || INTERRUPTED_MARKER.test(last.content.trimStart());
+  return flagged ? last.turn_num : null;
+});
 
 /** The one selection menu instance (a per-row popup would mount one per message). */
 const selectionMenuRef = useTemplateRef<{ show: (event: Event) => void }>('selectionMenuRef');

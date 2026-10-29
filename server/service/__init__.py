@@ -14,6 +14,7 @@ from .messages import (
     async_generate as async_generate,
     async_generate_multi as async_generate_multi,
     clear_session as clear_session,
+    continue_generation as continue_generation,
     get_history_by_turn_page as get_history_by_turn_page,
     get_pending_interrupt as get_pending_interrupt,
     get_session_list as get_session_list,

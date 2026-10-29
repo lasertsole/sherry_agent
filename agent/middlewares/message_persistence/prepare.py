@@ -120,6 +120,14 @@ def _is_persistable(message: Any) -> bool:
     # the model can read it, but must never appear in the visible history.
     if additional_kwargs.get("side_chat_context"):
         return False
+    # The continuation prompt (max-tokens continuation and the interrupt
+    # continuation) is a HumanMessage the SERVER injects to make the model
+    # resume mid-answer. It lives in the checkpoint so the model sees it, but it
+    # is not something the user said — persisting it would render a
+    # "[System: Your previous response was truncated…]" user bubble in the chat.
+    metadata = getattr(message, "metadata", None) or {}
+    if metadata.get("provenance") == "continuation":
+        return False
     # Compression artifacts (the summary pair and any previously chained
     # summary) never belong in the raw store — the row builder filters the
     # human half for the same reason; the AI half is filtered here.

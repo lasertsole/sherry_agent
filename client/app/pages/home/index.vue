@@ -226,6 +226,14 @@
          shell so every entry point (left sidebar, chat empty state, toolbar
          command) shares one dialog and one creation path. -->
     <NewSessionPresetDialog v-model:visible="newSession.dialogOpen" />
+
+    <!-- Ctrl+K command palette: one entry point over the menu grid, the toolbox,
+         recent sessions and the skill index. It lives in the shell (not in a
+         session page) so the shortcut works everywhere under /home, and its rows
+         come from the command registry — never from this template. -->
+    <CommandPalette
+      v-model:visible="commandPaletteOpen"
+      @open-tab="kind => rightSidebarStore.openTab(kind)" />
   </div>
 </template>
 
@@ -244,19 +252,21 @@ import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
 import { useSidebarWidthStore } from '~/stores/sidebar-width';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
+import CommandPalette from '~/components/CommandPalette.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 // function
-import { computed, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
-import { buildHomeToolbarCommands } from './dialogs';
+import { buildHomeToolbarCommands, type HomeToolbarContext } from './dialogs';
+import { buildNotificationCommandEntries, buildSessionCommandEntries, buildToolbarCommandEntries } from './commands';
 import { middleMinWidthCss } from '@/common/layout';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 /** Global chat area background image: bound to the root container (fills the entire window, including the left session list) */
 const chatBackgroundStore = useChatBackgroundStore();
@@ -303,10 +313,11 @@ const webSearchStore = useWebSearchStore();
  * Toolbar command registry: event → command (every entry opens a right-sidebar tab).
  * `handleOperate` is a lookup, so a new toolbar entry only needs a registry row.
  */
-const toolbarCommands = buildHomeToolbarCommands({
+const toolbarContext: HomeToolbarContext = {
   openRightTab: (kind, payload) =>
     payload ? rightSidebarStore.openTab(kind, payload) : rightSidebarStore.openTab(kind)
-});
+};
+const toolbarCommands = buildHomeToolbarCommands(toolbarContext);
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
@@ -406,6 +417,45 @@ const handleCloseRightTab = (tab: RightSidebarTab): void => {
 };
 /** Mandatory new-session preset dialog state (shared with every New Chat entry point). */
 const newSession = useNewSessionStore();
+
+/**
+ * The palette's static half: the menu grid, the toolbox, the notification list
+ * and "New chat".
+ *
+ * Re-registered when the LOCALE changes (not on every render): the labels are
+ * resolved i18n text, so an open palette must not keep answering in the old
+ * language. Watching `locale` rather than a `watchEffect` is deliberate —
+ * `registerStaticBatch` reads and writes the same registry refs, so a tracked
+ * effect here would retrigger itself. Re-registration replaces by id.
+ */
+watch(
+  locale,
+  () =>
+    registerStaticBatch([
+      ...buildToolbarCommandEntries(toolbarContext, t),
+      ...buildNotificationCommandEntries(toolbarContext, t),
+      ...buildSessionCommandEntries(() => newSession.openDialog(), t)
+    ]),
+  { immediate: true }
+);
+
+/** Whether the Ctrl+K palette is open (transient UI state, never persisted). */
+const commandPaletteOpen = ref(false);
+
+/**
+ * Ctrl+K (Cmd+K on macOS) opens the palette from anywhere in the shell.
+ *
+ * The listener is document-level because the shell renders no focusable wrapper;
+ * `preventDefault` is unconditional for the chord (the composer does not use
+ * Ctrl+K, so there is nothing to protect) and Shift/Alt variants pass through.
+ * @param event The keydown.
+ */
+const onCommandPaletteKeydown = (event: KeyboardEvent): void => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
+  if (event.key !== 'k' && event.key !== 'K') return;
+  event.preventDefault();
+  commandPaletteOpen.value = true;
+};
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
 
 /**
@@ -491,6 +541,9 @@ useAutoCollapse({
 
 onMounted(() => {
   chatBackgroundStore.loadBackground();
+  // The Ctrl+K palette's global chord (removed again on unmount; the shell is
+  // the only listener, so the login page and dialogs never see it).
+  document.addEventListener('keydown', onCommandPaletteKeydown);
   // The notification badge must keep counting while its tab is closed, so the
   // listener lives in the store (registered once) and the session socket is
   // established here — the notification TAB is lazily mounted and would
@@ -501,5 +554,9 @@ onMounted(() => {
   // another session) nor in the Web Search tab (lazily mounted).
   webSearchStore.subscribe();
   useWs();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onCommandPaletteKeydown);
 });
 </script>

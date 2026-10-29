@@ -147,6 +147,38 @@ The pure helpers (`groupTurns`, `summarizeTurns`, `formatDuration`,
 `previewOf`, `eventMatches`) live in `client/app/composables/use-trajectory.ts`;
 the bridge call is `fetchTrajectory` in `bridge/session.ts`.
 
+## Resuming an Interrupted Answer
+
+A turn can end mid-answer for two reasons: the user pressed Stop, or the
+heartbeat idle timeout fired. Both already write an `[interrupted] {partial}`
+marker into the checkpoint and one `[interrupted:<reason>]` row into MesMemory.
+What an interrupted turn can additionally be is **resumable**.
+
+The cancel path records `StateKey.RESUMABLE_BREAKPOINT` (mem + DB dual-write,
+so a restart keeps it) with the marker id, the partial text and the turn count
+the marker id was derived from. It does so only for a PURE-TEXT interruption:
+a fresh marker write, no healed tool calls (a dangling tool call would need a
+rerun/skip decision), and something to continue from (visible text or
+reasoning). `stopped` and `done` frames carry an additive `resumable` boolean;
+`done` carries it because a heartbeat timeout ends the turn normally.
+
+The client's 继续生成 button sends `continue_generation`. The server validates
+the breakpoint against the live transcript (marker still trailing, turn count
+unchanged), refuses with `stale`/`busy` otherwise, consumes it (one resume per
+interruption), rewrites the marker to the clean partial text and replays the
+ordinary max-tokens continuation: the model sees its own unfinished answer plus
+a continuation prompt and finishes it. The continuation is a new turn; the
+prompt is tagged `provenance: continuation` so message persistence never
+renders it as a user row. A new turn (user message, HITL resume, auto turn)
+clears the breakpoint, and a cancelled continuation records its own.
+
+The same turn-boundary machinery powers **editing a sent user message**: the
+edited turn and everything after it are removed from the live checkpoint
+(`RemoveMessage`, since only the newest checkpoint is retained) and hard-deleted
+from MesMemory, then the edited text is re-run as a new turn that reuses the
+old turn number. The client drops the corresponding Dexie cache rows too, or
+the next history merge would resurrect them.
+
 ## Code Map
 
 - `server/service/stream_dispatch.py`: `StreamTurn` (`ai_text`, `_frame_seq`, `turn_id`, `_ACTIVE_TURNS`) and `active_turn_snapshot`.

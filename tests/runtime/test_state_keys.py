@@ -25,6 +25,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "TOKEN_BUDGET_LIMITED": "token_budget_limited",
     "TOOL_GUARDRAIL_STATE": "tool_guardrail_state",
     "IS_STREAM_TURN": "is_stream_turn",
+    "RESUMABLE_BREAKPOINT": "resumable_breakpoint",
     "LLM_STALE_STREAK": "llm_stale_streak",
     "LLM_FALLBACK_INDEX": "llm_fallback_index",
     "LLM_FALLBACK_SWITCHES": "llm_fallback_switches",

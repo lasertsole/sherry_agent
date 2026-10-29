@@ -679,7 +679,14 @@ async def test_stop_with_no_active_turn_only_acks(ws_env):
         socket.push({"type": "stop", "session_id": "s1"})
         await _wait_until(lambda: socket.frames, what="stop ack")
         assert socket.frames == [
-            {"event": "stopped", "session_id": "s1", "content": "", "message_ids": []}
+            {
+                "event": "stopped",
+                "session_id": "s1",
+                "content": "",
+                # Additive: no breakpoint exists for this session.
+                "resumable": False,
+                "message_ids": [],
+            }
         ]
         assert ws_env.wsm._active_tasks == {}
 

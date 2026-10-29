@@ -591,6 +591,162 @@ export function useChatStream(deps: ChatStreamDeps) {
     void loadSessionHistory(mySid);
   };
 
+  /**
+   * `ws:resumable`: the turn that just ended (Stop or heartbeat timeout) left a
+   * pure-text answer the backend can continue. Marks the tail AI row of the
+   * streaming turn so its 继续生成 button appears.
+   *
+   * The terminal frame is emitted BEFORE the page's done/stopped handling, so
+   * `streamingTurn` still names the row. A flag for another session (another
+   * KeepAlive-cached page) is ignored.
+   * @param event Raw mitt payload.
+   */
+  const onResumable = (event: unknown) => {
+    const payload = (typeof event === 'object' && event !== null ? event : {}) as { sessionId?: string };
+    if (payload.sessionId && payload.sessionId !== mySid) return;
+    // The user's own Stop clears `streamingTurn` immediately (the button flips
+    // back before any frame arrives), so a stopped frame usually lands with no
+    // streaming turn: fall back to the transcript's tail row, which is the
+    // answer that was just cut off.
+    const turn = streamingTurn.value ?? chatMessages.value.reduce((max, row) => Math.max(max, row.turn_num), 0);
+    const aiMsg = turnTailAi(turn);
+    if (!aiMsg) return;
+    aiMsg.resumable = true;
+    chatMessages.value = [...chatMessages.value];
+  };
+  on('ws:resumable', onResumable);
+
+  /**
+   * `ws:continue_ack`: the backend accepted or refused a continue request.
+   *
+   * A refusal happens BEFORE any stream starts, so the page is still in its
+   * optimistic busy state: settle it, hide the button and tell the user why. A
+   * success needs no action — the continuation's chunks follow.
+   * @param event Raw mitt payload.
+   */
+  const onContinueAck = (event: unknown) => {
+    const payload = (typeof event === 'object' && event !== null ? event : {}) as {
+      sessionId?: string;
+      ok?: boolean;
+      reason?: string | null;
+    };
+    if (payload.sessionId && payload.sessionId !== mySid) return;
+    if (payload.ok === true) return;
+    settleNoActiveTurn();
+    const turn = chatMessages.value.reduce((max, row) => Math.max(max, row.turn_num), 0);
+    const aiMsg = turnTailAi(turn);
+    if (aiMsg) {
+      aiMsg.resumable = false;
+      chatMessages.value = [...chatMessages.value];
+    }
+    if (payload.reason === 'busy') {
+      toastWarn(t('errors.continueBusy'));
+    } else {
+      toastWarn(t('errors.breakpointStale'));
+    }
+    void loadSessionHistory(mySid);
+  };
+  on('ws:continue_ack', onContinueAck);
+
+  /**
+   * `ws:edit_ack`: the backend refused a message edit. The page already truncated
+   * its rows and appended the optimistic pair, so the repair is a history reload
+   * (the server's rows are authoritative); the toast names the reason.
+   * @param event Raw mitt payload.
+   */
+  const onEditAck = (event: unknown) => {
+    const payload = (typeof event === 'object' && event !== null ? event : {}) as {
+      sessionId?: string;
+      ok?: boolean;
+      reason?: string | null;
+    };
+    if (payload.sessionId && payload.sessionId !== mySid) return;
+    if (payload.ok === true) return;
+    settleNoActiveTurn();
+    if (payload.reason === 'busy') {
+      toastWarn(t('errors.editBusy'));
+    } else if (payload.reason === 'compacted' || payload.reason === 'not_found') {
+      toastWarn(t('errors.editCompacted'));
+    } else {
+      toastError(t('errors.replyFailed', { reason: payload.reason || 'edit_failed' }));
+    }
+    void loadSessionHistory(mySid);
+  };
+  on('ws:edit_ack', onEditAck);
+
+  /**
+   * Continue the interrupted answer shown in row `turnNum`.
+   *
+   * The continuation appends to the SAME row (the backend writes a second
+   * message; the UI merges them until the history reload separates them). The
+   * row's `[interrupted]` marker prefix is stripped locally so the merged text
+   * reads as one answer.
+   * @param turnNum The interrupted AI row's turn number.
+   */
+  const handleContinueGeneration = (turnNum: number) => {
+    if (isSending.value) return;
+    const aiMsg = turnTailAi(turnNum);
+    if (!aiMsg) return;
+    aiMsg.resumable = false;
+    aiMsg.content = aiMsg.content.replace(/^\[interrupted(?::[a-z_]+)?\]\s*/i, '');
+    chatMessages.value = [...chatMessages.value];
+
+    isSending.value = true;
+    streamingTurn.value = turnNum;
+    startBusyWatchdog();
+    socket.sendContinueGeneration();
+  };
+
+  /**
+   * Rewrite a sent user message and re-run it.
+   *
+   * Mirrors `handleSend` except that it TRUNCATES first and keeps the edited
+   * turn's number: every row at or after that turn is optimistic-only once the
+   * server drops it, so they leave the list, and the fresh user/AI pair takes
+   * the edited turn's place. The backend re-runs the text through the ordinary
+   * queue path with a fresh `msg_id`, so the normal turn frames follow.
+   * @param turnNum The edited turn's number.
+   * @param newText The replacement text.
+   * @param rowId The persisted row id of the edited message (0/negative when unknown).
+   */
+  const handleEdit = (turnNum: number, newText: string, rowId?: number) => {
+    if (isSending.value) return;
+    const sid = sessionId.value || 'default';
+    chatMessages.value = chatMessages.value.filter(row => row.turn_num < turnNum);
+    // The server deletes those turns; drop their cached copies as well, or the
+    // next history load's merge re-adds rows the backend no longer has.
+    void clearCachedMessagesFromTurn(sid, turnNum);
+
+    const userMsg: MessageItem = {
+      session_id: sid,
+      role: CHAT_ROLE.USER,
+      content: newText,
+      id: drafts.allocateTempId(),
+      turn_num: turnNum,
+      timestamp: new Date().toISOString()
+    };
+    const aiMsg: MessageItem = {
+      session_id: sid,
+      role: CHAT_ROLE.AI,
+      content: '',
+      reasoning: '',
+      id: drafts.allocateTempId(),
+      turn_num: turnNum,
+      timestamp: new Date().toISOString()
+    };
+    chatMessages.value = [...chatMessages.value, userMsg, aiMsg];
+
+    isSending.value = true;
+    streamingTurn.value = turnNum;
+    startBusyWatchdog();
+    drafts.trackDraftTurn(sid, turnNum);
+
+    const msgId = generateMsgId();
+    lastSendMsgId = msgId;
+    sendByMsgId.set(msgId, { turnNum, userMsg, aiMsg });
+    socket.sendEditMessage(turnNum, newText, msgId, rowId);
+  };
+
   //: How often the watchdog asks whether the turn is really still running, and
   //: how long after a send the first check waits (a just-submitted turn may not
   //: have claimed its queue row yet).
@@ -825,6 +981,9 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
     off('ws:connected', onSocketConnected);
     off('ws:model_retry', onModelRetry);
+    off('ws:resumable', onResumable);
+    off('ws:continue_ack', onContinueAck);
+    off('ws:edit_ack', onEditAck);
   });
 
   /** Clear the busy state when a reconnect snapshot proves the turn ended. */
@@ -1055,6 +1214,8 @@ export function useChatStream(deps: ChatStreamDeps) {
   return {
     handleSend,
     handleStop,
+    handleContinueGeneration,
+    handleEdit,
     handleSocketChunk,
     handleTurnStarted,
     handleQueued,

@@ -144,6 +144,32 @@ kind 徽标与可展开 payload。头部提供过滤式搜索（n/m 计数）、
 `eventMatches`）在 `client/app/composables/use-trajectory.ts`；bridge 调用是
 `bridge/session.ts` 的 `fetchTrajectory`。
 
+## 中断后续写
+
+一轮回答可能在两种情况下被截断：用户点了停止，或心跳空闲超时。两者都会把
+`[interrupted] {partial}` 标记写入 checkpoint，并在 MesMemory 里写一行
+`[interrupted:<reason>]`。在此之上，被中断的 turn 还可能是**可续写**的。
+
+取消路径会记录 `StateKey.RESUMABLE_BREAKPOINT`（mem + DB 双写，重启后仍在），
+内容是标记 id、已生成的文本、以及推导标记 id 时的人类消息计数。只有**纯文本**
+中断才记录：标记是本次新写入的、没有愈合的 tool call（悬空 tool call 需要先
+决定重跑还是跳过），且确实有内容可续（可见文本或推理）。`stopped` 与 `done`
+帧都带一个追加字段 `resumable`；`done` 也带它，因为心跳超时是以正常结束的方式
+终止 turn 的。
+
+前端的「继续生成」按钮发送 `continue_generation`。服务端先用实时 transcript 校验
+断点（标记仍在末尾、计数未变），不满足则回 `stale`/`busy`；校验通过后**消耗**
+断点（一次中断只能续一次），把标记改写成干净的部分文本，然后复用既有的
+max_tokens 续写路径：模型看到自己未完成的回答加一条续写提示，继续写完。续写是
+新的一轮；提示消息带 `provenance: continuation`，消息持久化会过滤它，不会渲染成
+用户气泡。任何新的 turn（用户消息、HITL 恢复、自动 turn）都会清除断点，而续写
+自身被中断时会写入新的断点。
+
+同一套 turn 边界机制也支撑**编辑已发送的用户消息**：被编辑的轮次及其之后的内容
+会从实时 checkpoint 中删除（`RemoveMessage`，因为只保留最新一个 checkpoint），
+并从 MesMemory 硬删，然后用新的一轮重跑编辑后的文本，复用原来的 turn 编号。
+客户端同时清掉 Dexie 缓存里的对应行，否则下一次历史合并会把它们复活。
+
 ## 代码地图
 
 - `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）和 `active_turn_snapshot`。

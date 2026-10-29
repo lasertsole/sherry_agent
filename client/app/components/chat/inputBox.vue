@@ -476,7 +476,15 @@ function insertVoiceText(text: string): void {
   inputDom.value.dispatchEvent(new InputEvent('input', { bubbles: true }));
 }
 
-defineExpose({ clearHistory, addFileMention, addQuoteChip, insertVoiceText });
+defineExpose({
+  clearHistory,
+  addFileMention,
+  addQuoteChip,
+  insertVoiceText,
+  // Edit mode prefills the composer and wants the caret ready: the same
+  // write-and-focus path the ↑ history browser uses.
+  setDraftText: writeDraftToInput
+});
 </script>
 
 <style lang="scss" scoped>

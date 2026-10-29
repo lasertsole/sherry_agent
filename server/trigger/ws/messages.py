@@ -212,12 +212,18 @@ async def _handle_stop(websocket: WebSocketAdapter, session_id: str, obj: dict[s
     """``stop``: cancel the running turn and ack on this (possibly separate) socket."""
     await _cancel_session(session_id)
     await _stop_child_runs(session_id)
+    # The cancelled turn's driver already broadcast its own `stopped` (carrying
+    # `resumable`); this ack answers the REQUESTING socket. It repeats the flag
+    # because frames may arrive in either order on a page that just woke up.
+    from server.service.resumable_breakpoint import has_breakpoint
+
     await _send_ws(
         websocket,
         {
             "event": "stopped",
             "session_id": session_id,
             "content": "",
+            "resumable": has_breakpoint(session_id),
             "message_ids": [],
         },
     )
@@ -423,6 +429,163 @@ async def _handle_resume_stream(
     )
 
 
+async def _handle_edit_message(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``edit_message``: truncate at a user message, then re-run it.
+
+    Three steps, in this order:
+
+    1. locate the edited user row (``row_id`` when the client has it) and count
+       the user turns before it — that ordinal is how the checkpoint counts
+       turns, while ``turn_num`` is the persisted batch number;
+    2. truncate the live checkpoint (``RemoveMessage``) and hard-delete the
+       persisted rows from that turn on, so the re-run reuses its turn number;
+    3. re-submit the edited text through the ordinary queue path (a FRESH
+       ``msg_id``: the old one is tombstoned by the dedupe) — the normal
+       ``turn_started`` / ``chunk`` / ``done`` frames follow.
+
+    Only failures ack (``edit_message_ack``): success is visible as the new
+    turn's frames, and the client has already updated its rows optimistically.
+    """
+    turn_num_raw = obj.get("turn_num")
+    row_id_raw = obj.get("row_id")
+    turn_num = int(turn_num_raw) if isinstance(turn_num_raw, (int, str)) else 0
+    row_id = int(row_id_raw) if isinstance(row_id_raw, int) and row_id_raw > 0 else None
+    new_text = str(obj.get("new_text") or "").strip()
+    msg_id = str(obj.get("msg_id") or "")
+
+    async def _reject(reason: str) -> None:
+        await _send_ws(
+            websocket,
+            {
+                "event": "edit_message_ack",
+                "session_id": session_id,
+                "content": {"ok": False, "reason": reason},
+            },
+        )
+
+    if turn_num <= 0 or not new_text or not msg_id:
+        await _reject("invalid_payload")
+        return
+
+    # A live turn (or a pending approval) owns the transcript: truncating under
+    # it would interleave two answers in one checkpoint.
+    from agent.tools.subagent.registry.session_state import detect_state
+
+    try:
+        state = detect_state(session_id)
+    except Exception as exc:  # noqa: BLE001 - detection failure reads as busy
+        logger.warning(f"edit_message: state detection failed for {session_id}: {exc}")
+        await _reject("busy")
+        return
+    if state.busy:
+        await _reject("busy")
+        return
+
+    from context_engine.store.core import delete_messages_from_turn, find_user_turn_cut
+
+    try:
+        cut = await asyncio.to_thread(find_user_turn_cut, session_id, turn_num, row_id)
+    except Exception as exc:  # noqa: BLE001 - a store failure is reported, not raised
+        logger.warning(f"edit_message: row lookup failed for {session_id}: {exc}")
+        await _reject("failed")
+        return
+    if cut is None:
+        await _reject("not_found")
+        return
+    ordinal, cut_turn_num = cut
+
+    from agent.state_port import truncate_messages_after_turn
+
+    removed = await truncate_messages_after_turn(session_id, ordinal)
+    if removed < 0:
+        # The turn is no longer in the live checkpoint: its history was compacted.
+        await _reject("compacted")
+        return
+    try:
+        await asyncio.to_thread(delete_messages_from_turn, session_id, cut_turn_num)
+    except Exception as exc:  # noqa: BLE001 - history truncation is best-effort
+        logger.exception(f"edit_message: message truncation failed for {session_id}: {exc}")
+
+    # The edited turn replaces the interrupted tail (if any): its breakpoint is
+    # stale by construction.
+    from server.service.resumable_breakpoint import clear_breakpoint
+
+    clear_breakpoint(session_id)
+
+    logger.info(
+        f"Agent edit re-run: session_id={session_id}, turn={cut_turn_num}, ordinal={ordinal}"
+    )
+    try:
+        result = await iqs.submit_user_input(session_id, new_text, "user", client_msg_id=msg_id)
+    except Exception as exc:  # noqa: BLE001 - surface a refusal instead of a silent no-op
+        logger.exception(f"edit_message: re-run submit failed for {session_id}: {exc}")
+        await _reject("failed")
+        return
+    if result.status is iqs.SubmitStatus.QUEUE_FULL:
+        await _reject("queue_full")
+    elif result.status is iqs.SubmitStatus.DEDUPED:
+        await _reject("duplicate")
+
+
+async def _handle_continue_generation(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``continue_generation``: resume an interrupted pure-text answer.
+
+    Validation happens HERE, before any stream starts, so a stale or missing
+    breakpoint is a single ack the client can act on (hide the button, toast,
+    refresh history) instead of a half-started turn. ``busy`` protects the
+    transcript: truncating/continuing while another turn writes would interleave
+    two answers.
+    """
+    from server.service import continue_generation
+    from server.service.resumable_breakpoint import (
+        clear_breakpoint,
+        read_breakpoint,
+        validate_breakpoint,
+    )
+
+    active = _active_tasks.get(session_id)
+    reason: str | None = None
+    if active is not None and not active.done():
+        reason = "busy"
+    else:
+        breakpoint = read_breakpoint(session_id)
+        if breakpoint is None:
+            reason = "stale"
+        elif not await validate_breakpoint(session_id, breakpoint):
+            # The transcript moved past the marker: drop the dead breakpoint so
+            # the flag does not resurrect on the next history load.
+            clear_breakpoint(session_id)
+            reason = "stale"
+    await _send_ws(
+        websocket,
+        {
+            "event": "continue_generation_ack",
+            "session_id": session_id,
+            "content": {"ok": reason is None, "reason": reason},
+        },
+    )
+    if reason is not None:
+        return
+
+    logger.info(f"Agent continue-generation started: session_id={session_id}")
+    relation_register.register_websocket(session_id, websocket)
+    continue_turn_id = uuid.uuid4().hex
+    task = asyncio.ensure_future(
+        _run_stream(
+            websocket,
+            session_id,
+            continue_generation(session_id),
+            "continue",
+            turn_id=continue_turn_id,
+        )
+    )
+    _active_tasks[session_id] = task
+
+
 async def _handle_terminal_bg_kill(
     websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
 ) -> None:
@@ -460,6 +623,8 @@ _FRAME_HANDLERS: dict[str, Any] = {
     "cancel_queued": _handle_cancel_queued,
     "edit_queued": _handle_edit_queued,
     "send_now": _handle_send_now,
+    "continue_generation": _handle_continue_generation,
+    "edit_message": _handle_edit_message,
 }
 
 

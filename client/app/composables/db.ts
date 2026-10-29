@@ -313,6 +313,25 @@ export interface BrowserVisit {
   visitedAt: number;
 }
 
+/**
+ * One executed palette command (the Ctrl+K panel's search history).
+ *
+ * A snapshot of what the user ran — the label and icon are copied so a deleted
+ * skill or a renamed command still reads correctly in the history.
+ */
+export interface CommandHistoryEntry {
+  /** Auto-increment primary key. */
+  id?: number;
+  /** The command's registry id (`toolbar.skills`, `skill.<name>`…). */
+  commandId: string;
+  /** Label at execution time. */
+  label: string;
+  /** Icon class at execution time. */
+  icon?: string;
+  /** Execution time (epoch ms); the history orders by this. */
+  executedAt: number;
+}
+
 /** Primary key of the global pending profile in the character table (not a real session ID) */
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -351,6 +370,8 @@ class HistoryDb extends Dexie {
   sessionPresets!: Table<SessionPresetBinding, string>;
   /** Browser visit history (auto-increment id, see {@link BrowserVisit}) */
   browserVisits!: Table<BrowserVisit, number>;
+  /** Executed palette commands (auto-increment id, see {@link CommandHistoryEntry}) */
+  commandHistory!: Table<CommandHistoryEntry, number>;
 
   constructor() {
     super('ema-history-cache');
@@ -390,6 +411,11 @@ class HistoryDb extends Dexie {
     this.version(3).stores({
       browserVisits: '++id, url, visitedAt, sessionId'
     });
+    // version(4): the command palette's search history. Same additive bump — only
+    // the new table is declared; every earlier table keeps its v1-v3 shape.
+    this.version(4).stores({
+      commandHistory: '++id, commandId, executedAt'
+    });
   }
 }
 
@@ -407,6 +433,31 @@ export const db = new HistoryDb();
 export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
   if (!rows || rows.length === 0) return;
   await db.messages.bulkPut(rows);
+}
+
+/**
+ * Drop cached message rows at or after `fromTurnNum` for one session.
+ *
+ * The message edit truncates the transcript server-side (the edited turn and
+ * everything after it are deleted and re-run). Without this the Dexie cache
+ * still holds the deleted rows, and `mergeDedup` re-adds them on the next
+ * history load — the deleted turns would visibly come back.
+ *
+ * @param sessionId  Session whose tail turns are dropped.
+ * @param fromTurnNum First turn to drop (inclusive).
+ */
+export async function clearCachedMessagesFromTurn(sessionId: string, fromTurnNum: number): Promise<void> {
+  if (!sessionId || !Number.isFinite(fromTurnNum)) return;
+  try {
+    const keys = await db.messages
+      .where('[session_id+turn_num]')
+      .between([sessionId, fromTurnNum], [sessionId, MAX_KEY], true, true)
+      .primaryKeys();
+    if (keys.length) await db.messages.bulkDelete(keys);
+  } catch {
+    // Cache unavailable (private mode): the next merge is merely stale, the
+    // server rows still win for ids they return.
+  }
 }
 
 /**

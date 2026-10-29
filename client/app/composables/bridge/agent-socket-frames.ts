@@ -170,6 +170,12 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       });
     },
     done: data => {
+      // A heartbeat timeout ends the turn NORMALLY (the timeout notice arrives as
+      // a chunk), so the resumable flag rides the done frame — emitted before
+      // onDone so the chat slice still sees the streaming turn it decorates.
+      if (data.resumable === true) {
+        emit('ws:resumable', { sessionId: data.session_id ?? ctx.sessionId });
+      }
       ctx.settleResolve(turnMessageIds(ctx, data.message_ids));
       ctx.setActiveTurn(null);
       ctx.handlers.onDone?.({
@@ -185,9 +191,30 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.setActiveTurn(null);
     },
     stopped: data => {
+      // `resumable` is set when the interrupted answer is a PURE-TEXT one (no
+      // dangling tool calls): the chat row then offers 继续生成.
+      if (data.resumable === true) {
+        emit('ws:resumable', { sessionId: data.session_id ?? ctx.sessionId });
+      }
       ctx.settleResolve(turnMessageIds(ctx, data.message_ids));
       ctx.setActiveTurn(null);
       ctx.flushStopResolvers();
+    },
+    continue_generation_ack: data => {
+      const content = (data.content ?? {}) as { ok?: unknown; reason?: unknown };
+      emit('ws:continue_ack', {
+        sessionId: data.session_id ?? ctx.sessionId,
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
+    },
+    edit_message_ack: data => {
+      const content = (data.content ?? {}) as { ok?: unknown; reason?: unknown };
+      emit('ws:edit_ack', {
+        sessionId: data.session_id ?? ctx.sessionId,
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
     },
     stream_resume: data => {
       const content = (data.content ?? {}) as {
