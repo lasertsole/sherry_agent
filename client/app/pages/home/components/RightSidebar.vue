@@ -200,6 +200,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   webSearch: defineAsyncComponent(() => import('./WebSearchPanel.vue')),
   taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
   account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
+  i18n: defineAsyncComponent(() => import('./I18nPanel.vue')),
   notification: defineAsyncComponent(() => import('./NotificationPanel.vue')),
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),

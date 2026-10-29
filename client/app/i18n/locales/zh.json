@@ -209,7 +209,8 @@
     "toolbox": "工具箱",
     "browser": "浏览器",
     "terminal": "终端",
-    "webSearch": "模型联网"
+    "webSearch": "模型联网",
+    "i18n": "国际化"
   },
   "config": {
     "agent": {
@@ -560,6 +561,10 @@
       "uninstall": "卸载 CUDA pack",
       "restart": "安装并重启后端",
       "installedHint": "已安装，重启后端后生效。"
+    },
+    "i18n": {
+      "title": "国际化",
+      "hint": "选择界面语言，立即生效并记住选择（不影响会话内容）。"
     }
   },
   "rightSidebar": {
@@ -594,7 +599,8 @@
     },
     "scopeEmpty": "该分组暂无标签页",
     "recentClosed": "最近关闭的标签页",
-    "recentClosedEmpty": "最近没有关闭的标签页"
+    "recentClosedEmpty": "最近没有关闭的标签页",
+    "i18n": "国际化"
   },
   "progressFloat": {
     "status": {

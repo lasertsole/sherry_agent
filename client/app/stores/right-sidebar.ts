@@ -34,6 +34,8 @@ export type RightSidebarPanelKind =
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
   | 'terminal'
+  /** Interface language (国际化): the app-wide locale switch, first in the 菜单. */
+  | 'i18n'
   /** A helper session opened from a quoted chat selection (an ordinary session). */
   | 'sideChat';
 
@@ -72,6 +74,8 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   fileViewer: 'session',
   account: 'global',
   notification: 'global',
+  // The interface language belongs to the browser profile, not to a session.
+  i18n: 'global',
   sessionPreset: 'session',
   // A diff belongs to the session whose project directory it was read from.
   gitDiff: 'session',

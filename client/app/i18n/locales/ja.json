@@ -209,7 +209,8 @@
     "toolbox": "ツールボックス",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
-    "webSearch": "モデル検索"
+    "webSearch": "モデル検索",
+    "i18n": "国際化"
   },
   "config": {
     "agent": {
@@ -560,6 +561,10 @@
       "uninstall": "CUDA pack をアンインストール",
       "restart": "インストールしてバックエンドを再起動",
       "installedHint": "インストール済み。バックエンドの再起動後に有効になります。"
+    },
+    "i18n": {
+      "title": "国際化",
+      "hint": "UI の言語を選びます。すぐに反映され、選択は記憶されます（セッションの内容には影響しません）。"
     }
   },
   "rightSidebar": {
@@ -594,7 +599,8 @@
     },
     "scopeEmpty": "このグループにタブはありません",
     "recentClosed": "最近閉じたタブ",
-    "recentClosedEmpty": "最近閉じたタブはありません"
+    "recentClosedEmpty": "最近閉じたタブはありません",
+    "i18n": "国際化"
   },
   "progressFloat": {
     "status": {

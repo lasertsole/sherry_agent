@@ -126,7 +126,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 59 개의 페이지 컴포넌트:
+│   │       └── components/        # 60 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유; 선택 텍스트 우클릭으로 인용)
 │   │           ├── SideChatPanel.vue          # 보조 세션 탭: 인용에서 일반 자식 세션을 만들고 독립 스트림 + HITL 승인
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
@@ -169,6 +169,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 비밀번호 설정 / 교체 / 로그인 보호 해제(현재 비밀번호 필요)
+│   │           ├── I18nPanel.vue               # 국제화 tab: 앱 전체 언어 전환(메뉴 그리드 첫 번째)
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기). 왼쪽 가장자리가 드래그 핸들(하한 240px, 상한 뷰포트 65%, 모든 하한이 들어가지 않는 창에서는 하한까지 줄어듦)
 │   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file: 텍스트 + markdown, 이미지/PDF/docx는 GET /project/file/blob 경유)
 │   │           ├── PdfViewer.vue             # 파일 뷰어 내 PDF 미리보기(pdf.js, 페이지 탐색 + 너비 맞춤, GET /project/file/blob)

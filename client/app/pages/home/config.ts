@@ -45,8 +45,18 @@ export const toolboxTools: Tool[] = [
 ];
 
 export const headerTools: Tool[] = [
-  // FIRST: the preset panel is where a session's identity is set up, so it
-  // leads the grid (its own name is Presets & Role).
+  // FIRST: the interface language. It is the one entry that is not about the
+  // session or the agent at all — a user who cannot read the current UI needs it
+  // before anything else, and it is the cheapest to reach from the menu.
+  {
+    toolName: 'toolbar.i18n',
+    icon: 'pi pi-globe',
+    title: 'toolbar.i18n',
+    event: 'i18n',
+    label: 'toolbar.i18n'
+  },
+  // SECOND: the preset panel is where a session's identity is set up, so it
+  // follows immediately (its own name is Presets & Role).
   {
     toolName: 'toolbar.persona',
     icon: 'pi pi-user',

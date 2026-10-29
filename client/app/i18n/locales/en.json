@@ -209,7 +209,8 @@
     "toolbox": "Toolbox",
     "browser": "Browser",
     "terminal": "Terminal",
-    "webSearch": "Web Search"
+    "webSearch": "Web Search",
+    "i18n": "Language"
   },
   "config": {
     "agent": {
@@ -560,6 +561,10 @@
       "uninstall": "Uninstall CUDA pack",
       "restart": "Install and restart backend",
       "installedHint": "Installed; it takes effect after a backend restart."
+    },
+    "i18n": {
+      "title": "Language",
+      "hint": "Pick the interface language. The choice applies at once and is remembered; it does not affect session content."
     }
   },
   "rightSidebar": {
@@ -594,7 +599,8 @@
     },
     "scopeEmpty": "No tabs in this group",
     "recentClosed": "Recently closed tabs",
-    "recentClosedEmpty": "No recently closed tabs"
+    "recentClosedEmpty": "No recently closed tabs",
+    "i18n": "Language"
   },
   "progressFloat": {
     "status": {

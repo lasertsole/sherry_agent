@@ -209,7 +209,8 @@
     "toolbox": "도구 상자",
     "browser": "브라우저",
     "terminal": "터미널",
-    "webSearch": "모델 검색"
+    "webSearch": "모델 검색",
+    "i18n": "국제화"
   },
   "config": {
     "agent": {
@@ -560,6 +561,10 @@
       "uninstall": "CUDA pack 제거",
       "restart": "설치 후 백엔드 재시작",
       "installedHint": "설치됨. 백엔드 재시작 후 적용됩니다."
+    },
+    "i18n": {
+      "title": "국제화",
+      "hint": "인터페이스 언어를 선택합니다. 즉시 적용되고 선택이 기억되며 세션 내용에는 영향을 주지 않습니다."
     }
   },
   "rightSidebar": {
@@ -594,7 +599,8 @@
     },
     "scopeEmpty": "이 그룹에 탭이 없습니다",
     "recentClosed": "최근 닫은 탭",
-    "recentClosedEmpty": "최근에 닫은 탭이 없습니다"
+    "recentClosedEmpty": "최근에 닫은 탭이 없습니다",
+    "i18n": "국제화"
   },
   "progressFloat": {
     "status": {

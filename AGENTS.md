@@ -1209,7 +1209,7 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
-The 预设角色 panel (the 菜单 entry renamed from 预设; it leads the nine-grid, and the right
+The 预设角色 panel (the 菜单 entry renamed from 预设; it sits immediately after the 国际化 entry, which leads the nine-grid, and the right
 sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
 per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
 `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
