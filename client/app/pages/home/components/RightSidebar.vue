@@ -154,7 +154,10 @@ import {
   type RightSidebarScope,
   type RightSidebarTab
 } from '~/stores/right-sidebar';
+import { useSidebarWidthStore } from '~/stores/sidebar-width';
+import { useUiStore } from '~/stores/ui';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import { middleMinWidth } from '@/common/layout';
 import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
 
 /** The session the main area shows (the recent-tabs menu filters by it). */
@@ -163,6 +166,14 @@ defineProps<{ sessionId?: string }>();
 const { t } = useI18n({ useScope: 'local' });
 
 const store = useRightSidebarStore();
+/**
+ * Pixels the left column plus the conversation's floor need. The drag ceiling
+ * subtracts them so the stored width is always one the flex row can actually
+ * render — without it a wide drag stored 65% while the DOM stopped sooner.
+ */
+const leftSidebar = useSidebarWidthStore();
+const ui = useUiStore();
+const reservedWidth = () => (ui.sidebarCollapsed ? 0 : leftSidebar.width) + middleMinWidth(window.innerWidth);
 
 /**
  * A tab's strip label: its kind's name, plus `` N`` when several tabs of that
@@ -324,7 +335,7 @@ let dragStartWidth = 0;
  */
 const onDragMove = (event: PointerEvent) => {
   if (!dragging.value) return;
-  store.setWidth(dragStartWidth - (event.clientX - dragStartX), window.innerWidth);
+  store.setWidth(dragStartWidth - (event.clientX - dragStartX), window.innerWidth, reservedWidth());
 };
 
 /** End the drag and detach the window listeners. */
@@ -354,7 +365,7 @@ const startDrag = (event: PointerEvent) => {
  * Keep the panel inside its band when the window is resized: a width saved on a
  * wide window would otherwise overflow a narrower one.
  */
-const fitToViewport = () => store.fitToViewport(window.innerWidth);
+const fitToViewport = () => store.fitToViewport(window.innerWidth, reservedWidth());
 
 onMounted(() => {
   fitToViewport();

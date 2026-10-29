@@ -170,7 +170,7 @@ client/
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 비밀번호 설정 / 교체 / 로그인 보호 해제(현재 비밀번호 필요)
 │   │           ├── I18nPanel.vue               # 국제화 tab 본문. 시스템 설정 패널의 마지막 탭으로 포함
-│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기). 왼쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 65%, 모든 하한이 들어가지 않는 창에서는 하한까지 줄어듦)
+│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기). 왼쪽 가장자리가 드래그 핸들(하한 280px, 대화 영역이 320px / 35% 하한을 지킬 수 있는 범위가 상한, 모든 하한이 들어가지 않는 창에서는 하한까지 줄어듦)
 │   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file: 텍스트 + markdown, 이미지/PDF/docx는 GET /project/file/blob 경유)
 │   │           ├── PdfViewer.vue             # 파일 뷰어 내 PDF 미리보기(pdf.js, 페이지 탐색 + 너비 맞춤, GET /project/file/blob)
 │   │           ├── DocxViewer.vue            # 파일 뷰어 내 docx 미리보기(mammoth → HTML → DOMPurify, GET /project/file/blob)

@@ -289,6 +289,17 @@ describe('stores/right-sidebar', () => {
     expect(clampSidebarWidth(400, 400)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
   });
 
+  it('clampSidebarWidth() stops a drag where the shell can still lay out', () => {
+    // 1280px window, 280 left column + 448 conversation floor reserved: 552 is
+    // the widest the panel may be, well under the 65% (832) ratio cap.
+    expect(clampSidebarWidth(900, 1280, 280 + 448)).toBe(552);
+    // Without a reservation the hard 760px maximum applies (65% would allow
+    // 832, but the absolute cap has always been 760), as before.
+    expect(clampSidebarWidth(900, 1280)).toBe(RIGHT_SIDEBAR_MAX_WIDTH);
+    // The floor still wins on a window too narrow for it.
+    expect(clampSidebarWidth(900, 700, 280 + 320)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
+  });
+
   it('setWidth() clamps every drag step and defaults to a comfortable width', () => {
     const store = useRightSidebarStore();
     expect(store.width).toBe(RIGHT_SIDEBAR_DEFAULT_WIDTH);

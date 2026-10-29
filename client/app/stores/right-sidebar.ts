@@ -119,18 +119,25 @@ export const RIGHT_SIDEBAR_PANEL_MIN_WIDTH = 420;
 export const RIGHT_SIDEBAR_PANEL_MIN_HEIGHT = 360;
 
 /**
- * Clamp a requested width into the allowed band, also keeping the panel below
- * 65% of the viewport (ZCode's side-pane ceiling) so it can never crowd the
- * chat out on small screens.
+ * Clamp a requested width into the allowed band.
+ *
+ * Two ceilings apply: 65% of the viewport (the side pane must never crowd the
+ * chat out) and the hard 760px maximum. ``reserved`` is the space the rest of
+ * the shell needs at minimum — the left column plus the conversation's floor —
+ * so a drag stops where the layout actually stops instead of storing a width
+ * the flex row silently refuses to render.
  * @param width Requested width in px.
  * @param viewportWidth Current window width (defaults to `window.innerWidth`).
+ * @param reserved Pixels the other columns need at minimum.
  */
 export function clampSidebarWidth(
   width: number,
-  viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth
+  viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth,
+  reserved: number = 0
 ): number {
-  const viewportCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.65) : RIGHT_SIDEBAR_MAX_WIDTH;
-  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(RIGHT_SIDEBAR_MAX_WIDTH, viewportCap));
+  const ratioCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.65) : RIGHT_SIDEBAR_MAX_WIDTH;
+  const roomCap = viewportWidth > 0 ? viewportWidth - Math.max(0, reserved) : RIGHT_SIDEBAR_MAX_WIDTH;
+  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(RIGHT_SIDEBAR_MAX_WIDTH, ratioCap, roomCap));
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
 
@@ -302,18 +309,20 @@ export const useRightSidebarStore = defineStore(
      * Set the panel width from a drag (clamped into the allowed band).
      * @param next Requested width in px.
      * @param viewportWidth Current window width (tests pass it explicitly).
+     * @param reserved
      */
-    function setWidth(next: number, viewportWidth?: number): void {
-      width.value = clampSidebarWidth(next, viewportWidth);
+    function setWidth(next: number, viewportWidth?: number, reserved: number = 0): void {
+      width.value = clampSidebarWidth(next, viewportWidth, reserved);
     }
 
     /**
      * Re-clamp the stored width against the viewport, e.g. after the window
      * shrank past the cap the width was saved under (no-op while it still fits).
      * @param viewportWidth Current window width.
+     * @param reserved
      */
-    function fitToViewport(viewportWidth: number): void {
-      const next = clampSidebarWidth(width.value, viewportWidth);
+    function fitToViewport(viewportWidth: number, reserved: number = 0): void {
+      const next = clampSidebarWidth(width.value, viewportWidth, reserved);
       if (next !== width.value) width.value = next;
     }
 

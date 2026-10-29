@@ -22,7 +22,14 @@
       v-model:current-session-id="currentSessionId" />
 
     <!-- Right side - session main area -->
-    <div class="relative flex flex-col flex-1 min-w-[320px] h-full bg-transparent dark:bg-transparent">
+    <!-- The conversation keeps TWO floors: 320px absolute (a message row needs
+         it) and 35% of the viewport (on a large display it keeps its share
+         instead of shrinking to the absolute floor while the side panels eat the
+         rest). `max()` applies both; `common/layout.ts` holds the numbers
+         because the right column's drag ceiling must agree with them. -->
+    <div
+      class="relative flex flex-col flex-1 h-full bg-transparent dark:bg-transparent"
+      :style="{ minWidth: middleMinWidthCss() }">
       <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
@@ -247,6 +254,7 @@ import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
 import { buildHomeToolbarCommands } from './dialogs';
+import { middleMinWidthCss } from '@/common/layout';
 
 const { t } = useI18n();
 

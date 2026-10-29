@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { nextTick, reactive, ref } from 'vue';
 import RightSidebar from '@/pages/home/components/RightSidebar.vue';
 import { RIGHT_SIDEBAR_PANEL_MIN_HEIGHT, RIGHT_SIDEBAR_PANEL_MIN_WIDTH } from '@/stores/right-sidebar';
+import { middleMinWidth } from '@/common/layout';
 
 // The store is a Nuxt auto-import: shadow it with a real-shaped double so the
 // strip's rendering and the tab actions can be asserted directly. `reactive`
@@ -40,6 +41,9 @@ let sidebarApi: {
 };
 
 const VIEWPORT_WIDTH = 1280;
+// The drag / fit ceiling reserves the other columns: the left-store stub's
+// width (360, see the shared setup) plus the conversation's max(320px, 35%).
+const RESERVED_WIDTH = 360 + middleMinWidth(VIEWPORT_WIDTH);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -416,7 +420,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     // sees the live viewport so the drag can never outgrow the window.
     await handle.trigger('pointerdown', { clientX: 800 });
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: 700 }));
-    expect(sidebarApi.setWidth).toHaveBeenLastCalledWith(520, VIEWPORT_WIDTH);
+    expect(sidebarApi.setWidth).toHaveBeenLastCalledWith(520, VIEWPORT_WIDTH, RESERVED_WIDTH);
 
     // While dragging the grip highlights (mode-independent grey: the theme
     // accent is white in dark mode and vanished over a light panel).
@@ -435,7 +439,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
     window.dispatchEvent(new Event('resize'));
 
-    expect(sidebarApi.fitToViewport).toHaveBeenCalledWith(VIEWPORT_WIDTH);
+    expect(sidebarApi.fitToViewport).toHaveBeenCalledWith(VIEWPORT_WIDTH, RESERVED_WIDTH);
   });
 
   it('opens the recent-tabs menu with both groups and restores a closed side chat', async () => {
