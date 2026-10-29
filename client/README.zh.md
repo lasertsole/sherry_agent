@@ -169,7 +169,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 更换密码 / 关闭登录保护（需当前密码）
-│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
+│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）；左边缘可拖拽（下限 240px、上限视口 65%，窗口挤不下所有下限时先缩到下限）
 │   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file：文本 + markdown，图片/PDF/docx 经 GET /project/file/blob）
 │   │           ├── PdfViewer.vue             # 文件查看器内的 PDF 预览（pdf.js，翻页 + 适应宽度，GET /project/file/blob）
 │   │           ├── DocxViewer.vue            # 文件查看器内的 docx 预览（mammoth → HTML → DOMPurify，GET /project/file/blob）

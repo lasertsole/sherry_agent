@@ -168,7 +168,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
 │   │           ├── AccountSettingsPanel.vue   # Account tab: set the password / replace it / disable login protection (the current password is required)
-│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
+│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors); its left edge is a drag handle (240px floor, 65% viewport cap, and it shrinks to that floor when the window cannot hold every minimum)
 │   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file: text + markdown, images via GET /project/file/blob)
 │   │           ├── PdfViewer.vue             # PDF preview inside the file viewer (pdf.js, page nav + fit-width, GET /project/file/blob)
 │   │           ├── DocxViewer.vue            # docx preview inside the file viewer (mammoth → HTML → DOMPurify, GET /project/file/blob)
