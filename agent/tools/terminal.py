@@ -231,8 +231,10 @@ class SafeShellInput(BaseModel):
         description=(
             "Run the command in the background and return immediately with a task id "
             "(the process keeps running; its output is captured to a file). Use "
-            "terminal_bg(action='list') to see this session's tasks and "
-            "terminal_bg(action='output', task_id=...) to read one's output. "
+            "terminal_bg(action='list') to see this session's tasks, "
+            "terminal_bg(action='output', task_id=...) to read one's output, and "
+            "terminal_bg(action='kill', task_id=...) to stop ONE task's process tree "
+            "(the current turn and the session's other tasks keep running). "
             "You are notified when it exits. Good for servers, "
             "watchers, and anything longer than the timeout."
         ),
@@ -703,6 +705,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         task.live = True
         background_registry.register(task)
         background_registry.start_watcher(task_id, proc, session_id)
+        # The panel's "a task exists" edge: an open right-sidebar panel adds the
+        # row immediately instead of waiting for the exit. Fail-open inside.
+        await background_registry.push_started(task)
         logger.info(
             "terminal: background task {} started (pid {}, session {}): {}",
             task_id,

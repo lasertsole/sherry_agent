@@ -102,6 +102,40 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
         });
       }
     },
+    terminal_bg_started: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.task_id !== 'string' || !content.task_id) return;
+      ctx.handlers.onTerminalBgStarted?.({
+        task_id: content.task_id,
+        command: typeof content.command === 'string' ? content.command : '',
+        status: typeof content.status === 'string' ? content.status : 'running',
+        pid: typeof content.pid === 'number' ? content.pid : null,
+        exit_code: typeof content.exit_code === 'number' ? content.exit_code : null,
+        session_id: data.session_id ?? ctx.sessionId,
+        output_path: typeof content.output_path === 'string' ? content.output_path : null
+      });
+    },
+    terminal_bg_exit: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.task_id !== 'string' || !content.task_id) return;
+      ctx.handlers.onTerminalBgExit?.({
+        taskId: content.task_id,
+        // Older backends sent no status: an exit frame with a zero code is a
+        // completion, anything else a failure — the kill reason arrives only
+        // from a backend that reports it.
+        status: typeof content.status === 'string' ? content.status : 'completed',
+        reason: typeof content.reason === 'string' ? content.reason : 'exited',
+        exitCode: typeof content.exit_code === 'number' ? content.exit_code : null
+      });
+    },
+    terminal_bg_kill_ack: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      ctx.handlers.onTerminalBgKillAck?.({
+        taskId: typeof content.task_id === 'string' ? content.task_id : '',
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
+    },
     queued_cancelled: data => {
       ctx.handlers.onQueuedCancelled?.({
         sessionId: data.session_id ?? ctx.sessionId,

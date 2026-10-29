@@ -423,9 +423,38 @@ async def _handle_resume_stream(
     )
 
 
+async def _handle_terminal_bg_kill(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``terminal_bg_kill``: stop ONE background command, leaving the turn alone.
+
+    Command-level cancel: the process tree of that task dies, the conversation
+    keeps running, and the session's other background tasks are untouched. The
+    acknowledgement says whether the signal landed; the registry's watcher still
+    sends ``terminal_bg_exit`` with the final status (the panel's authority).
+    """
+    task_id = str(obj.get("task_id") or "").strip()
+    ok = False
+    reason: str | None = "missing task_id"
+    if task_id:
+        from agent.tools.terminal_bg_registry import background_registry
+
+        ok = background_registry.kill_task(task_id, session_id)
+        reason = None if ok else "not_found_or_not_running"
+    await _send_ws(
+        websocket,
+        {
+            "event": "terminal_bg_kill_ack",
+            "session_id": session_id,
+            "content": {"ok": ok, "task_id": task_id, "reason": reason},
+        },
+    )
+
+
 #: ``type`` → handler. A generation frame carries no type (the default).
 _FRAME_HANDLERS: dict[str, Any] = {
     "stop": _handle_stop,
+    "terminal_bg_kill": _handle_terminal_bg_kill,
     "resume_stream": _handle_resume_stream,
     "hitl_response": _handle_hitl_response,
     "cancel_queued": _handle_cancel_queued,

@@ -715,5 +715,15 @@
   },
   "loadGate": {
     "warning": "Host load is too high (CPU {cpu}% / RAM {ram}%) — subagent dispatch is paused and resumes automatically once load drops."
+  },
+  "backgroundTasks": {
+    "title": "Background commands",
+    "runningCount": "{running} running / {total} total",
+    "statusRunning": "Running",
+    "statusCompleted": "Done",
+    "statusFailed": "Failed",
+    "statusKilled": "Stopped",
+    "kill": "Stop this command (the conversation keeps running)",
+    "killRefused": "Already finished"
   }
 }

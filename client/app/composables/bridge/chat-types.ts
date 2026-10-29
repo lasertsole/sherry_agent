@@ -76,7 +76,15 @@ export type AgentWsEventType =
    * The SUBAGENT lane's load gate deferred a dispatch (host CPU/memory at the
    * hard-stop threshold). Best-effort, once per run: a notice, never a blocker.
    */
-  | 'load_warning';
+  | 'load_warning'
+  /**
+   * A background command (`terminal(run_in_background=True)`) started / ended,
+   * and the acknowledgement of a user-issued kill. Command-level: these frames
+   * never touch the turn.
+   */
+  | 'terminal_bg_started'
+  | 'terminal_bg_exit'
+  | 'terminal_bg_kill_ack';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';

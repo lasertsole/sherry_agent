@@ -126,8 +126,9 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 60 개의 페이지 컴포넌트:
+│   │       └── components/        # 61 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유; 선택 텍스트 우클릭으로 인용)
+│   │           ├── BackgroundTasksPanel.vue#          # 채팅의 백그라운드 명령 스트립(terminal(run_in_background=True)): 상태, pid, 턴을 멈추지 않는 명령 단위 중지
 │   │           ├── SideChatPanel.vue          # 보조 세션 탭: 인용에서 일반 자식 세션을 만들고 독립 스트림 + HITL 승인
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow 플랫 단계 목록, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)

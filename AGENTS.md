@@ -1417,6 +1417,16 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
+## Background Commands: Command-Level Cancel (`agent/tools/terminal_bg_registry.py`)
+
+`terminal(run_in_background=True)` starts a child that OUTLIVES the turn, so stopping it cannot go through the turn's cancel: the WS `stop` frame cancels the turn's own asyncio task, and the background child is a separate process group with its own watcher. This feature is the missing verb — stop ONE command, leave the turn and the session's other commands alone.
+
+- `BackgroundTaskRegistry.kill_task(task_id, session_id=None)` reuses `kill_session_tasks`' tree kill (the process group recorded at spawn, SIGTERM → bounded SIGKILL) scoped to one id. It refuses (returns False, signals nothing) for an unknown id, another session's task (the id IS the ownership boundary), and one whose process already exited. `kill_session_tasks` (session deletion) is unchanged.
+- The watcher keeps the story straight: after `proc.wait()` a task whose status is already `killed` only records `exit_code` (a killed process exits non-zero, and rewriting that as `failed` would make the panel flicker killed → failed); the exit frame carries `status` + `reason` (`killed` / `exited`), and the auto-turn notice says "stopped by user" instead of "FAILED". A natural failure still reads `failed` / `exited`.
+- Two entry points, one method: the agent's `terminal_bg(action="kill", task_id=...)` (main-agent-only, like the other actions) and the UI's `terminal_bg_kill` WS frame, which answers `terminal_bg_kill_ack {ok, task_id, reason}` and lets the watcher's `terminal_bg_exit` confirm the final state.
+- Live updates: `_run_background` pushes `terminal_bg_started` after registering the task, so an open panel adds the row without polling; `GET /terminal/bg?session_id=` is the snapshot for mount / reconnect (the registry is process-level and NOT persisted — after a restart an empty list is correct, not lost work).
+- The chat strip (`BackgroundTasksPanel.vue`, mounted under the message list in `index/[sid].vue`, rendered only when tasks exist) shows command / status / pid and offers 终止 on running rows; `use-background-tasks.ts` owns the state (snapshot + the three frames), so the panel is a pure view.
+
 ## Shell Layout: Three Columns (`client/app/pages/home/index.vue`)
 
 The shell is one flex row — left session column, conversation, right sidebar — and each column owns a width band modelled on ZCode's workspace shell. The point of the bands is that no column can be squeezed out of existence by another, and only the columns that are worth less than the chat give way.

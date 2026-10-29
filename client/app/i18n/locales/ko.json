@@ -715,5 +715,15 @@
   },
   "loadGate": {
     "warning": "호스트 부하가 너무 높습니다(CPU {cpu}% / 메모리 {ram}%). 서브에이전트 파견을 일시 중지했으며 부하가 내려가면 자동으로 재개합니다."
+  },
+  "backgroundTasks": {
+    "title": "백그라운드 명령",
+    "runningCount": "실행 중 {running} / 전체 {total}",
+    "statusRunning": "실행 중",
+    "statusCompleted": "완료",
+    "statusFailed": "실패",
+    "statusKilled": "중지됨",
+    "kill": "이 명령 중지(대화는 계속됨)",
+    "killRefused": "이미 종료됨"
   }
 }

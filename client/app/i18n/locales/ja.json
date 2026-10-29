@@ -715,5 +715,15 @@
   },
   "loadGate": {
     "warning": "ホスト負荷が高すぎます（CPU {cpu}% / メモリ {ram}%）。サブエージェントの派遣を一時停止し、負荷が下がると自動で再開します。"
+  },
+  "backgroundTasks": {
+    "title": "バックグラウンド コマンド",
+    "runningCount": "実行中 {running} / 全 {total}",
+    "statusRunning": "実行中",
+    "statusCompleted": "完了",
+    "statusFailed": "失敗",
+    "statusKilled": "停止済み",
+    "kill": "このコマンドを停止（会話は継続）",
+    "killRefused": "すでに終了しています"
   }
 }

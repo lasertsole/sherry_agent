@@ -278,6 +278,17 @@ class SessionAgentSocket implements AgentSocket {
     this.sendFrame(JSON.stringify({ type: 'send_now', session_id: this.sessionId, msg_id: msgId }));
   }
 
+  /**
+   * Stop ONE background command of this session. Command-level: the turn keeps
+   * streaming and the session's other background tasks are untouched. The
+   * backend answers `terminal_bg_kill_ack` (signal landed) and later
+   * `terminal_bg_exit` (the final state).
+   * @param taskId The task id from terminal(run_in_background=True).
+   */
+  sendTerminalBgKill(taskId: string): void {
+    this.sendFrame(JSON.stringify({ type: 'terminal_bg_kill', session_id: this.sessionId, task_id: taskId }));
+  }
+
   private sendFrame(frame: string): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(frame);

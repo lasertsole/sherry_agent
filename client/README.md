@@ -125,8 +125,9 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 60 page components:
+│   │       └── components/        # 61 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media; right-click quotes a selection)
+│   │           ├── BackgroundTasksPanel.vue#          # The chat's background-command strip (terminal(run_in_background=True)): status, pid, and a command-level 终止 that leaves the turn running
 │   │           ├── SideChatPanel.vue          # Side-session tab: a quoted selection opens an ordinary child session with its own stream + HITL
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow step lists, collapsed to a pill and always on screen, live via taskflow_updated)

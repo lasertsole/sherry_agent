@@ -19,6 +19,15 @@
           @release-head="onReleaseHead"
           @selection-add="onSelectionAdd"
           @selection-side-chat="onSelectionSideChat" />
+        <!-- Background commands the agent started (terminal(run_in_background=True)):
+             a command-level stop lives here, so the chat keeps running while a
+             single long command is cancelled. Renders nothing when there are none. -->
+        <BackgroundTasksPanel
+          :tasks="backgroundTasks"
+          :running-count="backgroundTasksRunning"
+          :killing="backgroundTasksKilling"
+          :kill-refusal="backgroundTasksKillRefusal"
+          :kill="killBackgroundTask" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -438,6 +447,7 @@ import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
+import BackgroundTasksPanel from '../components/BackgroundTasksPanel.vue';
 import { useNewSessionStore } from '~/stores/new-session';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
@@ -567,6 +577,21 @@ const streamingTurn = ref<number | null>(null);
  * misrouted between concurrent sends.
  */
 const agentSocket = acquireAgentSocket(mySid);
+
+// Background commands of this session: the http snapshot on mount / reconnect,
+// the socket frames as deltas (see use-background-tasks). Command-level: the
+// kill never touches the turn.
+const {
+  tasks: backgroundTasks,
+  runningCount: backgroundTasksRunning,
+  killing: backgroundTasksKilling,
+  killRefusal: backgroundTasksKillRefusal,
+  load: loadBackgroundTasks,
+  kill: killBackgroundTask,
+  onStarted: onBackgroundTaskStarted,
+  onExit: onBackgroundTaskExit,
+  onKillAck: onBackgroundTaskKillAck
+} = useBackgroundTasks(() => mySid, agentSocket);
 
 /** Input box draft (controlled, two-way bound to inputBox.vue via defineModel) */
 const draft = ref('');
@@ -854,6 +879,9 @@ agentSocket.setHandlers({
   onQueuedCancelled: handleQueuedCancelled,
   onQueuedUpdated: handleQueuedUpdated,
   onSendNowAck: handleSendNowAck,
+  onTerminalBgStarted: onBackgroundTaskStarted,
+  onTerminalBgExit: onBackgroundTaskExit,
+  onTerminalBgKillAck: onBackgroundTaskKillAck,
   onDone: handleSocketDone
 });
 
@@ -1069,11 +1097,24 @@ async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
   }
 }
 
+/**
+ * A reconnect may have missed `terminal_bg_started` / `_exit` frames: re-pull the
+ * snapshot so the strip matches the backend again.
+ * @param payload Reconnect payload (`sessionId` optional).
+ */
+const onBackgroundTasksReconnected = (payload: unknown) => {
+  const info = (payload ?? {}) as { sessionId?: string };
+  if (!info.sessionId || info.sessionId === mySid) void loadBackgroundTasks();
+};
+
 // After mount, ensure character info is loaded (immediate already fired on KeepAlive restore; this is a fallback)
 onMounted(() => {
   if (sessionId.value) {
     ensureSessionCharacter(sessionId.value);
+    // A panel opened after a reconnect has missed every frame until now.
+    void loadBackgroundTasks();
   }
+  on('stream:reconnected', onBackgroundTasksReconnected);
   // Subscribe to the "session deleted → abort stream generation" event.
   // That session may be inactive yet still KeepAlive cached with an un-aborted stream; on deletion,
   // home/index.vue broadcasts, and this handler aborts this instance's AbortController.
@@ -1095,6 +1136,7 @@ onUnmounted(() => {
   off(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
+  off('stream:reconnected', onBackgroundTasksReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
   off('stream:resumed', onStreamResumed);
   off('chat:file-mention', onFileMentionRequest);
