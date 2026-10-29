@@ -34,8 +34,6 @@ export type RightSidebarPanelKind =
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
   | 'terminal'
-  /** Interface language (国际化): the app-wide locale switch, first in the 菜单. */
-  | 'i18n'
   /** A helper session opened from a quoted chat selection (an ordinary session). */
   | 'sideChat';
 
@@ -74,8 +72,6 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   fileViewer: 'session',
   account: 'global',
   notification: 'global',
-  // The interface language belongs to the browser profile, not to a session.
-  i18n: 'global',
   sessionPreset: 'session',
   // A diff belongs to the session whose project directory it was read from.
   gitDiff: 'session',
@@ -119,15 +115,6 @@ export const RIGHT_SIDEBAR_MAX_WIDTH = 760;
 export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 /** Laying-out floor of a panel body: narrower than this it scrolls sideways instead of squeezing. */
 export const RIGHT_SIDEBAR_PANEL_MIN_WIDTH = 420;
-/**
- * Floor for panels whose content is a SHORT LIST rather than an editor. The
- * 420px floor exists so an 800-1600px editor body is not squeezed into a
- * column; a four-row list has no such need, and at the column's own 280px floor
- * the editor floor made it overflow its own panel with a horizontal scrollbar.
- */
-export const RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH = 200;
-/** Panel kinds that lay out inside the narrow floor (lists, not editors). */
-export const NARROW_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set(['i18n']);
 /** Laying-out floor of a panel body: shorter than this it scrolls vertically instead of clipping. */
 export const RIGHT_SIDEBAR_PANEL_MIN_HEIGHT = 360;
 

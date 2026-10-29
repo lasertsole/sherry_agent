@@ -45,15 +45,14 @@ export const toolboxTools: Tool[] = [
 ];
 
 export const headerTools: Tool[] = [
-  // FIRST: the interface language. It is the one entry that is not about the
-  // session or the agent at all — a user who cannot read the current UI needs it
-  // before anything else, and it is the cheapest to reach from the menu.
+  // FIRST: System Config. It holds the app-wide settings (interface language
+  // included), so it is the entry a user reaches for before anything else.
   {
-    toolName: 'toolbar.i18n',
-    icon: 'pi pi-globe',
-    title: 'toolbar.i18n',
-    event: 'i18n',
-    label: 'toolbar.i18n'
+    toolName: 'toolbar.systemConfig',
+    icon: 'pi pi-sliders-h',
+    title: 'toolbar.systemConfig',
+    event: 'systemConfig',
+    label: 'toolbar.systemConfig'
   },
   // SECOND: the preset panel is where a session's identity is set up, so it
   // follows immediately (its own name is Presets & Role).
@@ -107,13 +106,6 @@ export const headerTools: Tool[] = [
     title: 'toolbar.webSearch',
     event: 'webSearch',
     label: 'toolbar.webSearch'
-  },
-  {
-    toolName: 'toolbar.systemConfig',
-    icon: 'pi pi-sliders-h',
-    title: 'toolbar.systemConfig',
-    event: 'systemConfig',
-    label: 'toolbar.systemConfig'
   },
   {
     toolName: 'toolbar.memory',

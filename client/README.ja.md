@@ -154,7 +154,7 @@ client/
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く。コンポーザーへドラッグでき、ドロップで @./path メンション chip を挿入。行の右クリックメニューもここで結線）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
-│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、言語など）
+│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、模型設定、アプリ設定、Token 予算、国際化）
 │   │           ├── LlmModelManager.vue        # モデル設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
@@ -169,7 +169,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
-│   │           ├── I18nPanel.vue               # 国際化 tab: アプリ全体の言語切替（メニューのグリッド先頭）
+│   │           ├── I18nPanel.vue               # 国際化 tab の本体。システム設定パネルの最後のタブとして埋め込み
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）。左端はドラッグハンドル（下限 280px、上限はビューポートの 65%、すべての下限が収まらない窓では下限まで縮む）
 │   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file：テキスト + markdown、画像/PDF/docx は GET /project/file/blob 経由）
 │   │           ├── PdfViewer.vue             # ファイルビューア内の PDF プレビュー（pdf.js、ページ送り + 幅合わせ、GET /project/file/blob）

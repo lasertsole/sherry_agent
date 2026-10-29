@@ -18,8 +18,6 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
  * grids so a new entry without a command fails there.
  */
 export const HOME_TOOLBAR_EVENTS = [
-  // The interface language: a grid entry, but a settings surface like the rest.
-  'i18n',
   'skills',
   'knowledgeGraph',
   'stats',
@@ -78,7 +76,6 @@ function nextToolboxInstance(kind: string): string {
  */
 export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<string, () => void> {
   const commands: Record<HomeToolbarEvent, () => void> = {
-    i18n: () => context.openRightTab('i18n'),
     skills: () => context.openRightTab('skills'),
     knowledgeGraph: () => context.openRightTab('knowledgeGraph'),
     stats: () => context.openRightTab('stats'),

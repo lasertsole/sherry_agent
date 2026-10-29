@@ -130,7 +130,7 @@
           :key="store.activeTabId ?? 'none'"
           class="h-full"
           :payload="activeTabPayload"
-          :style="{ minWidth: `${panelMinWidth}px`, minHeight: `${PANEL_MIN_HEIGHT}px` }"
+          :style="{ minWidth: `${PANEL_MIN_WIDTH}px`, minHeight: `${PANEL_MIN_HEIGHT}px` }"
           @saved="emit('saved')" />
         <div
           v-if="!activePanel"
@@ -148,8 +148,6 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch 
 import type { Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
-  NARROW_PANEL_KINDS,
-  RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH,
   RIGHT_SIDEBAR_PANEL_MIN_HEIGHT,
   RIGHT_SIDEBAR_PANEL_MIN_WIDTH,
   type RightSidebarPanelKind,
@@ -202,7 +200,6 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   webSearch: defineAsyncComponent(() => import('./WebSearchPanel.vue')),
   taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
   account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
-  i18n: defineAsyncComponent(() => import('./I18nPanel.vue')),
   notification: defineAsyncComponent(() => import('./NotificationPanel.vue')),
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
@@ -221,6 +218,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
 const emit = defineEmits<{ saved: []; 'close-tab': [tab: RightSidebarTab] }>();
 
 /** Laying-out floor of a mounted panel (the body scrolls below it). */
+const PANEL_MIN_WIDTH = RIGHT_SIDEBAR_PANEL_MIN_WIDTH;
 const PANEL_MIN_HEIGHT = RIGHT_SIDEBAR_PANEL_MIN_HEIGHT;
 
 /** The active tab, or null (no tabs / stale id / a tab of another session). */
@@ -239,17 +237,6 @@ const activeTab = computed(() => {
  */
 const activeKind = computed<RightSidebarPanelKind | null>(() =>
   activeTab.value && activeTab.value.scope === store.activeScope ? activeTab.value.kind : null
-);
-
-/**
- * Laying-out floor of the OPEN panel. Editors keep the 420px floor (they are
- * built as 800-1600px bodies and squeeze badly); list panels lay out inside the
- * column's own 280px floor instead, so they use a narrow zero-scroll floor.
- */
-const panelMinWidth = computed(() =>
-  activeKind.value && NARROW_PANEL_KINDS.has(activeKind.value)
-    ? RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH
-    : RIGHT_SIDEBAR_PANEL_MIN_WIDTH
 );
 
 /** The panel component to render (null → the empty state). */

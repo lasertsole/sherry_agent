@@ -335,16 +335,28 @@
           :header="t('config.tabs.budget')">
           <TokenBudgetPanel :session-id="budgetSessionId" />
         </TabPanel>
+        <!-- Interface language: an app-wide (browser-profile) setting, so it sits
+             with the other system settings instead of in the toolbar. Appended
+             LAST on purpose: the footer / embedder / dirty-state logic below is
+             keyed by tab INDEX, and inserting a tab anywhere else would silently
+             re-target it. -->
+        <TabPanel
+          value="i18n"
+          :header="t('config.tabs.i18n')">
+          <I18nPanel />
+        </TabPanel>
       </TabView>
     </template>
 
     <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
          scrolls), and only the background / sherry tabs use it — every env item
-         saves or applies on its own inside its own group card, and the budget
-         tab owns its Save/Reset pair.
-         (角色配置 moved to the 预设 panel together with the persona presets.) -->
+         saves or applies on its own inside its own group card, the budget tab
+         owns its Save/Reset pair, and the language list applies on click.
+         (角色配置 moved to the 预设 panel together with the persona presets.)
+         Index-keyed like the rest of this panel's tab logic: env 1, budget 3,
+         i18n 4. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -383,6 +395,7 @@ import LlmModelManager from './LlmModelManager.vue';
 import CudaPackCard from './CudaPackCard.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import TokenBudgetPanel from './TokenBudgetPanel.vue';
+import I18nPanel from './I18nPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { useRightSidebarStore } from '~/stores/right-sidebar';
@@ -1088,6 +1101,7 @@ onBeforeUnmount(onHide);
         "env": "模型配置",
         "sherry": "应用配置",
         "budget": "Token 预算",
+        "i18n": "国际化",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1418,6 +1432,7 @@ onBeforeUnmount(onHide);
         "env": "Model Config",
         "sherry": "App Config",
         "budget": "Token Budget",
+        "i18n": "Language",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1748,6 +1763,7 @@ onBeforeUnmount(onHide);
         "env": "モデル設定",
         "sherry": "アプリ設定",
         "budget": "Token 予算",
+        "i18n": "国際化",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2078,6 +2094,7 @@ onBeforeUnmount(onHide);
         "env": "모델 설정",
         "sherry": "앱 설정",
         "budget": "Token 예산",
+        "i18n": "국제화",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },

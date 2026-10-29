@@ -154,7 +154,7 @@ client/
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件；可拖拽进输入框——落下即插入 @./path 引用 chip——行右键菜单在此接线）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
-│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、Token 预算、国际化）
 │   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
@@ -169,7 +169,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 更换密码 / 关闭登录保护（需当前密码）
-│   │           ├── I18nPanel.vue               # 国际化 tab：应用级语言切换，菜单九宫格的第一位
+│   │           ├── I18nPanel.vue               # 国际化 tab 内容，嵌在系统配置面板的最后一个页签
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）；左边缘可拖拽（下限 280px、上限视口 65%，窗口挤不下所有下限时先缩到下限）
 │   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file：文本 + markdown，图片/PDF/docx 经 GET /project/file/blob）
 │   │           ├── PdfViewer.vue             # 文件查看器内的 PDF 预览（pdf.js，翻页 + 适应宽度，GET /project/file/blob）

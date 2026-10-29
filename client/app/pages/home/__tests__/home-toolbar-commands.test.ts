@@ -10,7 +10,6 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
   // The toolbox dialog's two entries (the hammer button) open working panels
   // rather than settings ones.
-  ['i18n', 'i18n'],
   ['browser', 'browser'],
   ['terminal', 'terminal'],
   ['logs', 'logs'],
@@ -80,11 +79,11 @@ describe('buildHomeToolbarCommands', () => {
     }
     // The log viewer is a nine-grid entry like the other tools …
     expect(headerTools.map(tool => tool.event)).toContain('logs');
-    // The interface language leads the nine-grid — the one entry that does not
-    // depend on reading the current UI — and Presets & Role follows immediately
-    // (its panel is where a session's identity is set up). Every tile keeps a
+    // System Config leads the nine-grid (it holds the app-wide settings, the
+    // interface language among them) and Presets & Role follows immediately (its
+    // panel is where a session's identity is set up). Every tile keeps a
     // distinct event.
-    expect(headerTools[0]!.event).toBe('i18n');
+    expect(headerTools[0]!.event).toBe('systemConfig');
     expect(headerTools[1]!.event).toBe('persona');
     expect(new Set(headerTools.map(tool => tool.event)).size).toBe(headerTools.length);
     // … while the notification list stays the one top-bar-only command.

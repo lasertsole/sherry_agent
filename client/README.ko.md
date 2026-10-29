@@ -154,7 +154,7 @@ client/
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기. 컴포저로 드래그할 수 있고 드롭 시 @./path 멘션 chip 삽입, 행 우클릭 메뉴도 여기서 연결)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
-│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 모델 설정, 앱 설정, Token 예산, 국제화)
 │   │           ├── LlmModelManager.vue        # 모델 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .models에 쓰지 않음)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
@@ -169,7 +169,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 비밀번호 설정 / 교체 / 로그인 보호 해제(현재 비밀번호 필요)
-│   │           ├── I18nPanel.vue               # 국제화 tab: 앱 전체 언어 전환(메뉴 그리드 첫 번째)
+│   │           ├── I18nPanel.vue               # 국제화 tab 본문. 시스템 설정 패널의 마지막 탭으로 포함
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기). 왼쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 65%, 모든 하한이 들어가지 않는 창에서는 하한까지 줄어듦)
 │   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file: 텍스트 + markdown, 이미지/PDF/docx는 GET /project/file/blob 경유)
 │   │           ├── PdfViewer.vue             # 파일 뷰어 내 PDF 미리보기(pdf.js, 페이지 탐색 + 너비 맞춤, GET /project/file/blob)

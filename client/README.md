@@ -153,7 +153,7 @@ client/
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file; draggable into the composer — the drop inserts an @./path mention chip — and the row's right-click menu is wired here)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
-│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, language, ...)
+│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, Token 预算, 国际化)
 │   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
@@ -168,7 +168,7 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
 │   │           ├── AccountSettingsPanel.vue   # Account tab: set the password / replace it / disable login protection (the current password is required)
-│   │           ├── I18nPanel.vue               # Interface language tab (国际化): the app-wide locale switch, first in the 菜单 grid
+│   │           ├── I18nPanel.vue               # Interface language tab body (国际化), embedded as the last tab of the System Config panel
 │   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors); its left edge is a drag handle (280px floor, 65% viewport cap, and it shrinks to that floor when the window cannot hold every minimum)
 │   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file: text + markdown, images via GET /project/file/blob)
 │   │           ├── PdfViewer.vue             # PDF preview inside the file viewer (pdf.js, page nav + fit-width, GET /project/file/blob)

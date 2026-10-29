@@ -1209,7 +1209,7 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
-The 预设角色 panel (the 菜单 entry renamed from 预设; it sits immediately after the 国际化 entry, which leads the nine-grid, and the right
+The 预设角色 panel (the 菜单 entry renamed from 预设; it sits immediately after the 系统配置 entry, which leads the nine-grid, and the right
 sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
 per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
 `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
@@ -1431,10 +1431,9 @@ The shell is one flex row — left session column, conversation, right sidebar �
 - **Narrow-window safety net** (`composables/use-auto-collapse.ts`, thresholds 480 / 360 with a 300ms resize debounce): below a 480px conversation the right column retracts, below 360 the left one does too. It runs once at mount (a layout restored from localStorage can already be too narrow) and then only on WINDOW RESIZE — opening a panel by hand is never undone by the layout.
 - **Writability**: the composable writes the two `collapsed` refs, so they must come from `storeToRefs`; a `computed(() => store.collapsed)` throws on write (Vue only warns) and the collapse silently never happens.
 - **Not Splitter-based (deliberate).** The conversation and the right column are two flex items, not a PrimeVue `Splitter` pair: when the conversation reaches its 320px floor the RIGHT column starts shrinking, instead of both shrinking proportionally from the start. The layout guarantees minimums, not a ratio. Switching to a fractional split was considered and dropped — the browser/terminal/settings panels host their own resizers, and a second split model on top of them made every nested drag ambiguous.
-- **Panel body floors are per kind.** Every right-column panel body carries a laying-out floor (`RIGHT_SIDEBAR_PANEL_MIN_WIDTH`, 420px) so an 800-1600px editor is not squeezed into the column — below it the panel scrolls sideways on purpose. LIST panels are the exception (`NARROW_PANEL_KINDS`, today the 国际化 language list): they use a 200px floor so four short rows reflow inside the column's own 280px minimum instead of hanging off its right edge with a horizontal scrollbar.
 - **Collapsed is not a width**: the left column's collapsed state stays `w-0` (the parent owns the flag) and expanding returns to the persisted width. The right column keeps its `maximized` mode (`fixed inset-0`), which the `shrink min-w-[280px]` classes must not touch — the class list keeps them in the expanded branch only.
 
-The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the 菜单 button. The interface language moved into the 菜单 grid's first entry (国际化) because a user who cannot read the current UI has to be able to find it without reading the toolbar; both entry points that ever existed funnelled through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
+The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the 菜单 button. The interface language lives in the 菜单's FIRST entry, 系统配置, as its LAST tab (国际化): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 
 ## Session Token Budget (`agent/middlewares/token_budget/`)
 
