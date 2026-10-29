@@ -2,8 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import {
+  NARROW_PANEL_KINDS,
   RECENT_CLOSED_LIMIT,
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
+  RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH,
+  RIGHT_SIDEBAR_PANEL_MIN_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH,
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
@@ -16,6 +19,16 @@ import {
 describe('stores/right-sidebar', () => {
   beforeEach(() => {
     setActivePinia(createTestingPinia({ stubActions: false }));
+  });
+
+  it('lays list panels out inside the column floor, editors above it', () => {
+    // Editors keep the 420px body floor (they scroll sideways below it); a list
+    // panel would then overflow its own 240px column with a scrollbar, so the
+    // narrow kinds get a floor below the column's own minimum.
+    expect(RIGHT_SIDEBAR_NARROW_PANEL_MIN_WIDTH).toBeLessThan(RIGHT_SIDEBAR_MIN_WIDTH);
+    expect(RIGHT_SIDEBAR_PANEL_MIN_WIDTH).toBeGreaterThan(RIGHT_SIDEBAR_MIN_WIDTH);
+    // The one narrow kind today is the interface-language list.
+    expect([...NARROW_PANEL_KINDS]).toEqual(['i18n']);
   });
 
   it('starts collapsed with no tabs', () => {
