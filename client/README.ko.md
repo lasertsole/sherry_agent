@@ -126,7 +126,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 50 개의 페이지 컴포넌트:
+│   │       └── components/        # 59 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유; 선택 텍스트 우클릭으로 인용)
 │   │           ├── SideChatPanel.vue          # 보조 세션 탭: 인용에서 일반 자식 세션을 만들고 독립 스트림 + HITL 승인
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
@@ -147,6 +147,7 @@ client/
 │   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
 │   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
+│   │           ├── TrajectoryPanel.vue       # 현재 세션 tab: 턴별 트래젝토리 원장(GET /sessions/:id/trajectory, turn별로 묶고 클라이언트에서 재정렬·페이지 처리)
 │   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다). 주소창은 영속 방문 기록(Dexie, 재시작 후에도 유지)을 URL / 제목 퍼지 매칭으로 제안합니다
 │   │           ├── BrowserHistoryDropdown.vue # 주소창의 기록 드롭다운: 최근/추천 방문(favicon, 제목, 상대 시간)과 지우기 동작
 │   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행
@@ -180,6 +181,10 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
 │   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
 │   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
+│   │           ├── TokenBudgetPanel.vue      # 시스템 설정 tab: 열린 세션의 Token 상한, 사용량/비용, 초기화(GET/POST /sessions/budget)
+│   │           ├── ReplayAllowlistEditor.vue # 시스템 설정: 피니시 재생 허용 목록 편집기(GET/PUT /sherry-config/list/<key>, 실행 파일 이름 추가/삭제)
+│   │           ├── CudaPackCard.vue          # 모델 설정: 선택적 CUDA 팩 카드(Linux 전용——감지, 이어받기 다운로드, 이후 백엔드 재시작)
+│   │           ├── RecentClosedTabsMenu.vue  # 오른쪽 사이드바 탭 스트립의 맨 왼쪽 컨트롤: 최근 닫은 탭을 두 그룹(현재 세션 / 전역)으로 표시
 │   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
 │   ├── stores/                    # Pinia 스토어
 │   │   ├── ui.ts               # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)

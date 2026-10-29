@@ -126,7 +126,7 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 50 个页面组件：
+│   │       └── components/        # 59 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media；选中文字右键可引用）
 │   │           ├── SideChatPanel.vue          # 辅助会话标签页：右键引用新建普通子会话，独立消息流 + HITL 审批
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
@@ -147,6 +147,7 @@ client/
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
+│   │           ├── TrajectoryPanel.vue       # 当前会话 tab：按回合的轨迹账本（GET /sessions/:id/trajectory，按 turn 分组、客户端重排与分页）
 │   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）。地址栏还会联想持久化的访问历史（Dexie，跨重启保留），按 URL / 标题模糊匹配
 │   │           ├── BrowserHistoryDropdown.vue # 地址栏的历史下拉：最近/匹配的访问记录（favicon、标题、相对时间）与清空操作
 │   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
@@ -180,6 +181,10 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
 │   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
 │   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
+│   │           ├── TokenBudgetPanel.vue      # 系统配置 tab：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
+│   │           ├── ReplayAllowlistEditor.vue # 系统配置：回放门白名单编辑器（GET/PUT /sherry-config/list/<key>，增删可执行文件名）
+│   │           ├── CudaPackCard.vue          # 模型配置：可选 CUDA 加速包卡片（仅 Linux——检测、断点续传下载，然后重启后端）
+│   │           ├── RecentClosedTabsMenu.vue  # 右栏标签条最左的控件：最近关闭的标签，两组（当前会话 / 全局）
 │   │           └── AvatarCropDialog.vue       # 头像上传 + 裁剪（cropperjs）
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）

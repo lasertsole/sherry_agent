@@ -126,7 +126,7 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 50 のページコンポーネント：
+│   │       └── components/        # 59 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由、選択テキストを右クリックで引用）
 │   │           ├── SideChatPanel.vue          # 補助セッションタブ：引用から通常の子セッションを作成し、独立ストリーム + HITL 承認
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
@@ -147,6 +147,7 @@ client/
 │   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。ヘッダーのブランチ名でブランチ切替、行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
 │   │           ├── GitDiffPanel.vue          # 右サイドバーのコミット差分（左右 2 カラム、赤=削除 / 緑=追加。追加・削除されたファイルは 1 カラム）
 │   │           ├── ContextViewerPanel.vue    # 右サイドバーのエージェント コンテキスト（GET /context/inspect: システム プロンプト / ツール定義 / ライブ メッセージ一覧、開いている間は自動更新）
+│   │           ├── TrajectoryPanel.vue       # 現在のセッション tab: ターン単位のトラジェクトリ台帳（GET /sessions/:id/trajectory、turn ごとにグループ化しクライアント側で再ソート・ページング）
 │   │           ├── BrowserPanel.vue          # ツールボックスのブラウザ：アドレスバー + 埋め込みページ（セッションごとの履歴、戻る / 進む / 再読み込み。フリーサイズはリサイズ可能な仮想デバイス枠を描画し、境界は ZCode と同じ。開発者ツールは新しいウィンドウで開きます — iframe は開発者ツールを内蔵できません）。エージェントのブラウザ機能を有効にすると CDP モードに切り替わります：バックエンドがヘッドレス Chromium をホストし、パネルは screencast のフレームを描画してポインタ / キーボード / ホイールを転送します（アドレスバーとナビは /browser/ws 経由。「開発者ツールを開く」はパネルで視聴できる本物のインスペクタページを開きます）。アドレスバーは永続化された閲覧履歴（Dexie、再起動後も保持）を URL / タイトルのあいまい一致でサジェストします
 │   │           ├── BrowserHistoryDropdown.vue # アドレスバーの履歴ドロップダウン：最近/候補の訪問（favicon、タイトル、相対時間）とクリア操作
 │   │           ├── TerminalPanel.vue         # ツールボックスのターミナル：ユーザーが入力するコマンドをセッションのプロジェクト ディレクトリで実行
@@ -180,6 +181,10 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 右サイドバー タブ：パネル内の SubagentTasksView（セッションへ戻る操作なし）
 │   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
 │   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
+│   │           ├── TokenBudgetPanel.vue      # システム設定 tab: 開いているセッションの Token 上限、使用量/コスト、リセット（GET/POST /sessions/budget）
+│   │           ├── ReplayAllowlistEditor.vue # システム設定: フィニッシュ時の再生許可リスト編集（GET/PUT /sherry-config/list/<key>、実行ファイル名の追加/削除）
+│   │           ├── CudaPackCard.vue          # モデル設定: 任意の CUDA パックカード（Linux のみ——検出、レジューム付きダウンロード、その後バックエンド再起動）
+│   │           ├── RecentClosedTabsMenu.vue  # 右サイドバーのタブストリップ左端のコントロール: 最近閉じたタブを 2 グループ（現在のセッション / グローバル）で表示
 │   │           └── AvatarCropDialog.vue       # アバターアップロード + 切り抜き（cropperjs）
 │   ├── stores/                    # Pinia ストア
 │   │   ├── ui.ts               # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）

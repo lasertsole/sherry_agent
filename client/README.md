@@ -125,7 +125,7 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 50 page components:
+│   │       └── components/        # 59 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media; right-click quotes a selection)
 │   │           ├── SideChatPanel.vue          # Side-session tab: a quoted selection opens an ordinary child session with its own stream + HITL
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
@@ -146,6 +146,7 @@ client/
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
+│   │           ├── TrajectoryPanel.vue       # 当前会话 tab: the per-turn trajectory ledger (GET /sessions/:id/trajectory, rows grouped by turn, re-sorted and paged client-side)
 │   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
 │   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
@@ -179,6 +180,10 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
 │   │           ├── SubagentRunDetail.vue      # Single subagent run detail
 │   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
+│   │           ├── TokenBudgetPanel.vue      # 系统配置 tab: the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
+│   │           ├── ReplayAllowlistEditor.vue # 系统配置: the finish-replay allowlist editor (GET/PUT /sherry-config/list/<key>, add/remove executable names)
+│   │           ├── CudaPackCard.vue          # 模型配置: the optional CUDA pack card (Linux only — detect, download with resume, then restart the backend)
+│   │           ├── RecentClosedTabsMenu.vue  # The right-sidebar tab strip's leftmost control: recently closed tabs in two groups (当前会话 / 全局)
 │   │           └── AvatarCropDialog.vue       # Avatar upload + crop (cropperjs)
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
