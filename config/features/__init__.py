@@ -13,6 +13,8 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    AnthropicCacheConfig as AnthropicCacheConfig,
+    ANTHROPIC_CACHE as ANTHROPIC_CACHE,
     CustomThinkingMapping as CustomThinkingMapping,
     EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
     THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,

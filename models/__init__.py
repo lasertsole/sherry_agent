@@ -8,6 +8,8 @@ _MODULE_MAP = {
     "build_taskflow_llm": ".LLMs",
     "build_compression_llm": ".LLMs",
     "NormalizingChatModel": ".LLMs",
+    "AnthropicCacheControlChatModel": ".LLMs",
+    "maybe_wrap_anthropic_cache": ".LLMs",
     "ReasoningChatOpenAI": ".LLMs",
     "build_reasoning_kwargs": ".LLMs",
     "is_openai_reasoning_model": ".LLMs",

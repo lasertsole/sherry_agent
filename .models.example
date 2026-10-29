@@ -9,6 +9,10 @@
 // Read once at boot — restart the backend after a change.
 {
   // ── 主模型 Main chat model — must support JSON generation and tool calling ──
+  // Anthropic: requires the bundled `langchain-anthropic` integration and gets
+  //   explicit prompt caching (cache_control breakpoints on the frozen system
+  //   prompt, the tool list and the settled history tail). Toggle / TTL live in
+  //   .env (SHERRY_ANTHROPIC_CACHE / SHERRY_ANTHROPIC_CACHE_TTL), not here.
   "MAIN_LLM_PROVIDER": "",
   "MAIN_LLM_NAME": "",
   "MAIN_LLM_API_BASE": "",
@@ -130,7 +134,11 @@
   // A JSON OBJECT stored as a JSON STRING so the flat key/value editor works.
   // Lookup: provider-returned cost → this table → litellm cache → `_default`.
   // User-editable; no code change. Set a model to adjust budget estimates.
-  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
+  // `cache_read` / `cache_write` (USD per 1M cached tokens) are OPTIONAL and
+  // only affect the ESTIMATED cost: a read of a cached prefix (~0.1x input) and
+  // a write into the cache (~1.25x for the 5-minute TTL, ~2x for 1 hour).
+  // Omitted => cached tokens are priced at the plain `input` rate.
+  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"claude-sonnet-4-20250514\": {\"input\": 3.0, \"output\": 15.0, \"cache_read\": 0.3, \"cache_write\": 3.75}, \"claude-opus-4-20250514\": {\"input\": 15.0, \"output\": 75.0, \"cache_read\": 1.5, \"cache_write\": 18.75}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
 
   // ── 技能安全扫描器 SkillSpector scanner (its own LLM selection) ─────────
   // SKILL_SCANNER_ENABLED: master switch (1 = scan uploaded skills).

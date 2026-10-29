@@ -9,6 +9,8 @@ _MODULE_MAP = {
     "build_taskflow_llm": ".taskflow_llm",
     "build_compression_llm": ".compression_llm",
     "NormalizingChatModel": ".reasoning_normalizer",
+    "AnthropicCacheControlChatModel": ".anthropic_cache",
+    "maybe_wrap_anthropic_cache": ".anthropic_cache",
     "build_reasoning_kwargs": ".reasoning_payload",
     "is_openai_reasoning_model": ".reasoning_payload",
     "is_zhipu_reasoning_model": ".reasoning_payload",

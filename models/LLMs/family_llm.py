@@ -108,7 +108,12 @@ def build_family_llm(prefix: str, temperature: float | None = None) -> Any:
                 ),
             }
         )
-        return NormalizingChatModel(inner=init_chat_model(**model_config))
+        from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
+
+        inner = maybe_wrap_anthropic_cache(
+            init_chat_model(**model_config), os.getenv(f"{prefix}_PROVIDER")
+        )
+        return NormalizingChatModel(inner=inner)
     except Exception as exc:  # noqa: BLE001 - build-time fail-open (plan §3.5)
         logger.warning(
             "{}: configured model could not be built ({}); falling back to the auxiliary model",

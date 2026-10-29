@@ -268,7 +268,13 @@ def _build_inner_chat_model_from(
     ):
         kwargs = {k: v for k, v in config.items() if k != "model_provider"}
         return ReasoningChatOpenAI(**kwargs)
-    return init_chat_model(**config)
+    inner = init_chat_model(**config)
+    # Anthropic's prompt cache is opt-in: without explicit ``cache_control``
+    # breakpoints the frozen system prompt earns nothing there. The wrapper is
+    # mounted for that provider only (every other client is returned untouched).
+    from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
+
+    return maybe_wrap_anthropic_cache(inner, effective_provider)
 
 
 def _build_inner_chat_model():

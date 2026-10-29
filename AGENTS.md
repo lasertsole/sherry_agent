@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (85 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (86 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -1007,6 +1007,41 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   and `route`. T1/T2/T3/user compactions share `_finish_compact`; T4/T5 record
   from `_finish_forced_recovery`.
 
+## Provider Prompt Caching (`models/LLMs/anthropic_cache.py`)
+
+Anthropic is the one supported provider whose prompt cache is OPT-IN: nothing is cached unless the request marks a
+prefix with `cache_control`. Everything above (the frozen system prompt, the session-stable tool face, live state
+pushed down into the reminder layer) was built for providers that cache automatically, so on Anthropic it earned
+nothing. A `BaseChatModel` wrapper mounted at every client build point — `main_llm._build_inner_chat_model_from`,
+`auxiliary_llm/core.py` and `family_llm.build_family_llm` — rewrites each outgoing request before delegating.
+
+- **Three breakpoints**, in Anthropic's prefix order (tools → system → messages): BP1 the last text block of the
+  `SystemMessage` (also caches the tool list, since system follows tools), BP2 the last converted tool definition
+  (only pays off when a thinking switch or an agent-config edit changes the system prompt while the tools stay put),
+  BP3 the last real history message found when scanning back past the current turn's human carriers. BP3 anchors the
+  PREVIOUS turn's settled tail on purpose: `DynamicReminderMiddleware` and the workspace notice splice human messages
+  (a reminder, then the new user text) whose content changes per turn, so a breakpoint on the last message would miss
+  every time. The fourth slot stays free.
+- **Config** — `ANTHROPIC_CACHE` (`config/features/agent_side/anthropic_cache.py`): `enabled` (`SHERRY_ANTHROPIC_CACHE`,
+  default on), `ttl` (`SHERRY_ANTHROPIC_CACHE_TTL`: `short` = `{"type": "ephemeral"}`, `long` adds `"ttl": "1h"`),
+  `max_breakpoints` (clamped to Anthropic's limit of 4). Breakpoints the caller already placed count against the
+  budget; nothing is added twice.
+- **Gating** — `anthropic` only. Bedrock's Claude goes through `langchain-aws` (different cache API) and a
+  Claude-routed OpenRouter request loses the marker in the OpenAI-shaped client, so neither is claimed. Every other
+  provider's request is byte-identical to before.
+- **Cost** — `MODEL_PRICING_TABLE` entries take optional `cache_read` / `cache_write` prices (USD per 1M cached
+  tokens); `TokenBudget._cost_delta` splits `usage_metadata.input_token_details` into uncached / cache-read /
+  cache-write and charges each rate. A table without the two fields prices cached tokens at the plain input rate (the
+  pre-existing estimate — no invented discount). OpenAI-shaped usage reports `input_tokens` INCLUDING the cached
+  ones, so they are subtracted before the uncached rate applies; Anthropic's `input_tokens` already excludes them.
+- **Fail-open and non-mutating** — an injection failure, an unconvertible tool list, or `enabled=false` sends the
+  request unchanged; the caller's messages and tools are copied, never mutated (the middleware chain's state and the
+  message store are untouched).
+- **Semantics checklist** (why the existing invalidation points stay correct): a thinking switch reloads the memory
+  snapshot and deletes `SYSTEM_PROMPT` → BP1 misses because the bytes changed; an agent-config edit invalidates BP1
+  and BP2 together; a compaction rewrites prompt and messages → BP1 and BP3 miss; a changing reminder never touches
+  BP3.
+
 ## LLM Retry, Backoff & Retry Events (ZCode parity)
 
 `agent/middlewares/llm_retry/core.py::LLMRetryMiddleware` is the ONE retry layer
@@ -1757,9 +1792,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 55 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
+| `config/features/agent_side/` | 56 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
 | `config/features/infra_side/` | 30 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 85 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/__init__.py` | Aggregator — all 86 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
