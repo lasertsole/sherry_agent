@@ -21,6 +21,13 @@ from agent.tools.subagent.types.capability import SubagentSessionRole
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
+# Every specialized role definition also names the opt-in coordination tools,
+# so they arrive at the end of each whitelist. Only the writer (executor) claims
+# a path; the read-only roles share and read findings. A child still only SEES
+# them when COORDINATION enables them.
+_COORDINATION_TOOLS = ["share_finding", "peers_findings"]
+_EXECUTOR_COORDINATION_TOOLS = ["claim_scope", *_COORDINATION_TOOLS]
+
 
 @pytest.fixture()
 def _captured_lane(monkeypatch):
@@ -111,10 +118,26 @@ class TestA1WhitelistIntersection:
     @pytest.mark.parametrize(
         ("hint", "expected_allow"),
         [
-            ("researcher", ["read_file", "search_files", "terminal", "web_search"]),
-            ("executor", ["read_file", "write_file", "patch_file", "terminal", "python_repl"]),
-            ("reviewer", ["read_file", "terminal"]),
-            ("librarian", ["read_file", "search_files", "terminal", "web_search"]),
+            (
+                "researcher",
+                ["read_file", "search_files", "terminal", "web_search", *_COORDINATION_TOOLS],
+            ),
+            (
+                "executor",
+                [
+                    "read_file",
+                    "write_file",
+                    "patch_file",
+                    "terminal",
+                    "python_repl",
+                    *_EXECUTOR_COORDINATION_TOOLS,
+                ],
+            ),
+            ("reviewer", ["read_file", "terminal", *_COORDINATION_TOOLS]),
+            (
+                "librarian",
+                ["read_file", "search_files", "terminal", "web_search", *_COORDINATION_TOOLS],
+            ),
         ],
     )
     def test_builtin_roles_leaf_whitelist_unchanged(

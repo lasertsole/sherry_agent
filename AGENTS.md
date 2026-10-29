@@ -1954,8 +1954,14 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   created and NEVER created by a read — a project without `.sherry/` answers
   empty. Board content never enters the system prompt (it changes on every
   write, so it would break the prefix cache); it moves only through tool calls.
-  Both switches off ⇒ `build_main_tools()` and `GET /agent/catalog` are
-  byte-identical to a build without the feature.
+  A functional role's `tools:` list is an allow-list, so the specialized
+  definitions name the tools — a child would otherwise never see them however
+  the main agent is configured (pinned by `tests/agent/tools/test_coordination.py`).
+  The executor, the only writer, names all three (it is the only role that
+  claims a path); `researcher` / `reviewer` / `librarian` name only the
+  sharing/reading pair, so a read-only role never expresses write intent. Both
+  switches off ⇒ `build_main_tools()`, the child tool face and
+  `GET /agent/catalog` are byte-identical to a build without the feature.
 - **The SUBAGENT lane sits behind a load gate**
   (`agent/tools/pub_base/load_gate.py`, `LANE_SYSTEM["load_gate_*"]`). The lane
   is COUNTING backpressure ("are all 8 slots busy"); the gate is the

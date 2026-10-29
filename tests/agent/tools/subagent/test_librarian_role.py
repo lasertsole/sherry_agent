@@ -178,6 +178,8 @@ class TestLibrarianSpawnE2E:
             "search_files",
             "terminal",
             "web_search",
+            "share_finding",
+            "peers_findings",
         ]
         assert "THE LIBRARIAN" in lane["system_prompt"]
         assert "semantic_code_search" in lane["system_prompt"]

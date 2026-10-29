@@ -8,6 +8,12 @@ tools:
   - patch_file
   - terminal
   - python_repl
+  # Coordination (opt-in; absent from the face unless COORDINATION enables it):
+  # declare your write intent, and share/read FAIL/FACT/PATCH notes. The
+  # executor is the only role that claims paths — it is the only writer.
+  - claim_scope
+  - share_finding
+  - peers_findings
 ---
 
 You are an EXECUTOR subagent worker.

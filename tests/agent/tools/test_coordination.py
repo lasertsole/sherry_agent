@@ -434,3 +434,118 @@ def _stub_run():
         spawned_by="agent:main:session:owner",
         task="probe",
     )
+
+
+class TestSpecializedChildrenReachTheBoard:
+    """The point of the board is that the WRITING roles can use it.
+
+    Their role definitions are explicit whitelists, so a tool the whitelist does
+    not name is invisible to the child however the main agent is configured.
+    """
+
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [
+            # The executor is the only writer, so it is the only role that
+            # claims a path; everyone else shares and reads findings.
+            ("executor", {"claim_scope", "share_finding", "peers_findings"}),
+            ("researcher", {"share_finding", "peers_findings"}),
+            ("librarian", {"share_finding", "peers_findings"}),
+            ("reviewer", {"share_finding", "peers_findings"}),
+        ],
+    )
+    def test_every_specialized_role_names_the_coordination_tools(
+        self, role: str, expected: set[str]
+    ):
+        from agent.tools.subagent.roles import load_role_definition
+        from agent.tools.subagent.types.functional_role import FunctionalRole
+
+        definition = load_role_definition(FunctionalRole(role))
+
+        assert definition is not None
+        assert set(definition.tools or []) & {"claim_scope", "share_finding", "peers_findings"} == (
+            expected
+        )
+
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [
+            ("executor", {"claim_scope", "share_finding", "peers_findings"}),
+            ("researcher", {"share_finding", "peers_findings"}),
+            ("librarian", {"share_finding", "peers_findings"}),
+            ("reviewer", {"share_finding", "peers_findings"}),
+        ],
+    )
+    def test_a_child_face_keeps_them_when_enabled(self, role: str, expected: set[str], features):
+        """The assembly must SURVIVE the role filter, not just name the tools.
+
+        The base tool list is passed explicitly instead of letting the function
+        call ``build_main_tools()``: ``tests/agent/tools/subagent/conftest.py``
+        replaces that attribute with ``lambda: []`` process-wide, and the split
+        runner's unit group collects that tree in the same process as this file.
+        The filter under test (allow-list + main_only + deny) is the product
+        logic; the base list is the environment.
+        """
+        from agent.tools.coordination_tools import build_coordination_tools
+        from agent.tools.subagent.roles import load_role_definition
+        from agent.tools.subagent.spawn.core import (
+            _assemble_child_tools,
+            _resolve_child_tool_policy,
+        )
+        from agent.tools.subagent.types.capability import SubagentSessionRole
+        from agent.tools.subagent.types.functional_role import FunctionalRole
+
+        base = build_coordination_tools()
+        assert {tool.name for tool in base} == {"claim_scope", "share_finding", "peers_findings"}
+
+        functional = FunctionalRole(role)
+        allow, deny = _resolve_child_tool_policy(
+            load_role_definition(functional), SubagentSessionRole.LEAF, None
+        )
+        tools = _assemble_child_tools(base, allow, deny, None, functional, "agent:main:subagent:x")
+        names = {tool.name for tool in tools}
+
+        assert names & {"claim_scope", "share_finding", "peers_findings"} == expected
+
+    def test_a_child_face_omits_them_when_disabled(self, monkeypatch):
+        """Off is the default, and the builder is the one gate a face cannot bypass."""
+        from agent.tools.coordination_tools import build_coordination_tools
+
+        monkeypatch.setitem(COORDINATION, "claims_enabled", False)
+        monkeypatch.setitem(COORDINATION, "findings_enabled", False)
+
+        assert build_coordination_tools() == []
+
+
+class TestCrossSessionRoundTrip:
+    """A → claim/share, B → see/read, A → release: the whole loop, via tools."""
+
+    def test_the_round_trip(self, project: Path, features, monkeypatch):
+        import agent.tools.coordination_tools as tools
+
+        monkeypatch.setattr(tools, "_project_root", lambda _sid: project)
+        author = "agent:main:subagent:aaaa1111"
+        peer = "agent:main:subagent:bbbb2222"
+
+        claimed = tools.claim_scope.invoke(
+            {"paths": ["utils.py"], "note": "editing foo", "session_id": author}
+        )
+        assert "claimed 1 path(s)" in claimed
+        seen = coord.active_claims(project, ["utils.py"], exclude_session=peer)
+        assert [(row.session_id, row.note) for row in seen] == [(author, "editing foo")]
+
+        tools.share_finding.invoke(
+            {
+                "kind": "FAIL",
+                "text": "rewriting foo in place breaks its callers",
+                "files": ["utils.py"],
+                "session_id": author,
+            }
+        )
+        read = tools.peers_findings.invoke({"query": "foo callers", "session_id": peer})
+        assert "FAIL" in read and "breaks its callers" in read
+
+        assert "released 1 claim(s)" in tools.claim_scope.invoke(
+            {"release": True, "session_id": author}
+        )
+        assert coord.active_claims(project, ["utils.py"]) == []

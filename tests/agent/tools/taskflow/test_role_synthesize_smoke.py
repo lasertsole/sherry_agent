@@ -161,6 +161,8 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
         "search_files",
         "terminal",
         "web_search",
+        "share_finding",
+        "peers_findings",
         "python_repl",
     ]
     assert "RESEARCHER specialization" in lane["system_prompt"]

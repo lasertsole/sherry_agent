@@ -164,6 +164,8 @@ With both switches off, `build_main_tools()` is byte-identical to a build
 without this feature and `GET /agent/catalog` lists no coordination group: the
 default tool face, its token cost and every preset payload are unchanged.
 
+The specialized roles can use the board too: all four functional role definitions name its tools in their tool lists, because such a list is an allow-list — a tool it does not name is invisible to the child however the main agent is configured. The executor, the only writer, names all three (it is the only role that claims a path); researcher, reviewer and librarian name the sharing/reading pair, so a read-only role never expresses write intent. They appear in a child's face only while the board is enabled, so with both switches off a child sees exactly what it did before.
+
 ## ⚖️ Alternatives, measured
 
 **Row-hash editing (omo's hashline)** is not built: it is finer than a whole-file CAS — only the lines an edit touches are compared — but it requires changing the read tool's own output format, and the four layers above already remove the silent-loss failures it targets.
