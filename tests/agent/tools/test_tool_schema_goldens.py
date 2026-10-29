@@ -56,8 +56,10 @@ TERMINAL_SCHEMA = {
             "description": (
                 "Run the command in the background and return immediately with a task "
                 "id (the process keeps running; its output is captured to a file). Use "
-                "terminal_bg(action='list') to see this session's tasks and "
-                "terminal_bg(action='output', task_id=...) to read one's output. "
+                "terminal_bg(action='list') to see this session's tasks, "
+                "terminal_bg(action='output', task_id=...) to read one's output, and "
+                "terminal_bg(action='kill', task_id=...) to stop ONE task's process tree "
+                "(the current turn and the session's other tasks keep running). "
                 "You are notified when it exits. Good for servers, "
                 "watchers, and anything longer than the timeout."
             ),
