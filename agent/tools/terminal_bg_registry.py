@@ -4,10 +4,8 @@
 keeps running, and the agent must be able to ask about it later in the session —
 two facts this module owns:
 
-* the task record (id, pid, command, output file, exit status, and — once it
-  finished — the bounded output TAIL that outlives the file), and
-* a watcher that awaits the child's exit, frees the command's disk (the log
-  file is deleted; the tail is kept) and then tells the world: a WS frame
+* the task record (id, pid, command, output file, exit status), and
+* a watcher that awaits the child's exit and then tells the world: a WS frame
   (``terminal_bg_exit``) for the UI and an auto-turn for the agent.
 
 In-memory and process-level on purpose: the tasks are CHILDREN of this process,
@@ -19,7 +17,6 @@ notification step is fail-open — losing a notice must never lose the task.
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,14 +26,7 @@ from loguru import logger
 from config.features import TERMINAL_BG
 from pub.func.message.eviction import get_eviction_dir
 
-__all__ = [
-    "BackgroundTask",
-    "BackgroundTaskRegistry",
-    "background_registry",
-    "open_background_output",
-    "read_output_tail",
-    "task_output",
-]
+__all__ = ["BackgroundTask", "BackgroundTaskRegistry", "background_registry"]
 
 
 @dataclass
@@ -53,11 +43,6 @@ class BackgroundTask:
     status: str = "running"  # running | completed | failed | killed
     exit_code: int | None = None
     live: bool = False  # whether a watcher still holds the process handle
-    ended_at: float | None = None  # time.monotonic() at the terminal transition
-    #: The bounded output tail kept AFTER the file is released (see
-    #: `_release_output`): a finished command must not hold its log on disk just
-    #: to stay readable.
-    output_tail: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The JSON shape the query tools and the WS frame share."""
@@ -106,18 +91,6 @@ class BackgroundTaskRegistry:
 
     def register(self, task: BackgroundTask) -> None:
         self._tasks[task.task_id] = task
-        self._prune_finished(task.session_id)
-
-    def _prune_finished(self, session_id: str) -> None:
-        """Keep a session's FINISHED ledger bounded; running tasks are never pruned.
-
-        A finished record only exists so the agent can still read its retained
-        tail — beyond ``max_tasks_per_session`` of them the oldest are dropped
-        (newest first order, so the tail of the list is what goes).
-        """
-        finished = [task for task in self.list_session(session_id) if task.status != "running"]
-        for task in finished[int(TERMINAL_BG["max_tasks_per_session"]) :]:
-            self._tasks.pop(task.task_id, None)
 
     def update(self, task_id: str, *, status: str, exit_code: int | None = None) -> None:
         task = self._tasks.get(task_id)
@@ -126,8 +99,6 @@ class BackgroundTaskRegistry:
         task.status = status
         task.exit_code = exit_code
         task.live = False
-        if status != "running":
-            task.ended_at = time.monotonic()
 
     def kill_session_tasks(self, session_id: str) -> int:
         """Kill the process TREE of every still-running task of one session.
@@ -205,12 +176,7 @@ class BackgroundTaskRegistry:
         task.add_done_callback(self._watchers.discard)
 
     async def _watch(self, task_id: str, proc: asyncio.subprocess.Process, session_id: str) -> None:
-        """Await the child's exit, release its log, then announce it.
-
-        Fail-open at every step. The ORDER matters: the log file is turned into
-        a bounded in-memory tail BEFORE the notifications, so a finished command
-        costs no disk while the agent can still read what it printed.
-        """
+        """Await the child's exit and announce it. Fail-open at every step."""
         try:
             exit_code = await proc.wait()
         except asyncio.CancelledError:
@@ -226,7 +192,6 @@ class BackgroundTaskRegistry:
             # the user/agent stopped it. Keep the status, record only the code.
             task.exit_code = exit_code
             task.live = False
-            task.ended_at = time.monotonic()
         else:
             self.update(
                 task_id,
@@ -240,33 +205,10 @@ class BackgroundTaskRegistry:
             exit_code,
             task.status,
         )
-        self._release_output(task)
         if not TERMINAL_BG["notify_on_exit"]:
             return
         await self._push_exit_notification(task)
         await self._trigger_auto_turn(task)
-
-    @staticmethod
-    def _release_output(task: BackgroundTask) -> None:
-        """Free a finished command's disk: keep its bounded tail, delete the log.
-
-        The retained log exists so the command can be watched while it runs and
-        read once it finished; a finished command that kept the file would
-        accumulate one log per run in the session's ``evicted/`` directory
-        forever. The tail (``output_max_read_bytes``) is what
-        ``terminal_bg(action='output')`` answers with afterwards.
-        """
-        path = task.output_path
-        if path is not None:
-            tail = read_output_tail(path, TERMINAL_BG["output_max_read_bytes"])
-            task.output_tail = tail or None
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                logger.debug("background task {}: output file removal failed", task.task_id)
-            task.output_path = None
-        if task.ended_at is None:
-            task.ended_at = time.monotonic()
 
     async def push_started(self, task: BackgroundTask) -> None:
         """Best-effort ``terminal_bg_started`` frame (the UI's "a task exists" edge).
@@ -373,26 +315,13 @@ def read_output_tail(path: Path, max_bytes: int | None = None) -> str:
     return text
 
 
-def task_output(task: BackgroundTask, max_bytes: int | None = None) -> str:
-    """A task's readable output: the LIVE log while it runs, the retained tail after.
-
-    ``_release_output`` deletes the log at exit and keeps this tail, so both
-    phases answer ``terminal_bg(action='output')`` from one place.
-    """
-    if task.output_path is not None:
-        return read_output_tail(task.output_path, max_bytes)
-    return task.output_tail or ""
-
-
 def open_background_output(session_id: str, task_id: str) -> Path | None:
-    """Create (and return) the output file for one background task.
+    """Create (and return) the retained output file for one background task.
 
-    The file lives under the session's ``evicted/`` directory — the same place
-    every other oversized payload is kept — and exists only while the command
-    RUNS: at exit ``_release_output`` reads its tail into memory and deletes it,
-    so finished commands leave nothing behind (session deletion still removes
-    anything a crashed process left). ``None`` for an unsafe session id (nothing
-    is written outside ``SESSIONS_DIR``).
+    Retained means RETAINED: the file lives under the session's ``evicted/``
+    directory — the same place every other oversized payload is kept, so session
+    deletion removes it and nothing sweeps it while the task is alive. ``None``
+    for an unsafe session id (nothing is written outside ``SESSIONS_DIR``).
     """
     directory = get_eviction_dir(session_id)
     if directory is None:

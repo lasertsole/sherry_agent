@@ -21,7 +21,7 @@ from langchain_core.tools import BaseTool, tool
 from agent.tools.pub_base import SessionId
 from agent.tools.terminal_bg_registry import (
     background_registry,
-    task_output,
+    read_output_tail,
 )
 
 __all__ = [
@@ -73,11 +73,9 @@ def _read_task_output(task_id: str | None, session_id: str) -> str:
     task = background_registry.get(str(task_id or "").strip())
     if task is None or task.session_id != str(session_id or ""):
         return f"No background task found with task_id: {task_id}"
-    # Running: the live log file. Finished: the tail retained when the file was
-    # released at exit (a finished command must not hold its log on disk).
-    if task.output_path is None and not task.output_tail:
+    if task.output_path is None:
         return "This background task has no output file."
-    text = task_output(task)
+    text = read_output_tail(task.output_path)
     if not text.strip():
         return f"(no output yet; status={task.status})"
     return text
