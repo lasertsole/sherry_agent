@@ -1,7 +1,8 @@
 ﻿<template>
   <div class="flex flex-col flex-1 h-full bg-transparent dark:bg-transparent">
     <!-- Chat main area / empty state (with a session sid shows the chat panel; the root path without sid shows "start a new chat").
-        Background tasks live in the right sidebar's task-detail tab, so this column is always the chat. -->
+        Background tasks live in the toolbar's terminal entry (the third icon's
+        popover, TasksButton), so this column is always the chat. -->
     <div
       v-if="sessionId"
       class="flex flex-col flex-1 h-full min-h-0">
@@ -24,15 +25,6 @@
           @edit-message="onEditMessage"
           @continue-generation="handleContinueGeneration"
           @fork-turn="onForkTurn" />
-        <!-- Background commands the agent started (terminal(run_in_background=True)):
-             a command-level stop lives here, so the chat keeps running while a
-             single long command is cancelled. Renders nothing when there are none. -->
-        <BackgroundTasksPanel
-          :tasks="backgroundTasks"
-          :running-count="backgroundTasksRunning"
-          :killing="backgroundTasksKilling"
-          :kill-refusal="backgroundTasksKillRefusal"
-          :kill="killBackgroundTask" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -199,13 +191,21 @@
               <AccessModePicker
                 v-if="mySid"
                 :session-id="mySid" />
-              <!-- Running background work of this session (terminal entry): opens a
-                   right-sidebar tab; the badge counts what still owns a slot.
+              <!-- Running background work of this session (terminal entry): the
+                   badge counts sub-agents, foreground tool calls AND detached
+                   background commands; the popover lists all three and is where a
+                   detached command is watched and stopped.
                    Thinned away on a narrow column (see the row's @container note). -->
               <TasksButton
                 v-if="mySid"
                 class="@max-[500px]:hidden!"
                 :session-id="mySid"
+                :background-tasks="backgroundTasks"
+                :background-running="backgroundTasksRunning"
+                :background-killing="backgroundTasksKilling"
+                :background-kill-refusal="backgroundTasksKillRefusal"
+                :background-reload="loadBackgroundTasks"
+                :background-kill="stopBackgroundTask"
                 @focus="onTasksFocus" />
               <!-- Per-session model + thinking controls (right side of the media
                    toolbar). Switching is allowed at any time; a mid-turn change
@@ -473,7 +473,6 @@ import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
-import BackgroundTasksPanel from '../components/BackgroundTasksPanel.vue';
 import { useNewSessionStore } from '~/stores/new-session';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
@@ -620,6 +619,21 @@ const {
   onExit: onBackgroundTaskExit,
   onKillAck: onBackgroundTaskKillAck
 } = useBackgroundTasks(() => mySid, agentSocket);
+
+/**
+ * Kill one background command and re-pull the snapshot once shortly after.
+ *
+ * The watcher's `terminal_bg_exit` is the row's authority, but it is a
+ * best-effort WS push: a socket that reconnects around the kill can miss it, and
+ * the row would keep a stop control that can never succeed again. The section
+ * shows "stopping" for a requested stop either way; this re-pull and the one on
+ * every popover open are what settle the final status from the snapshot.
+ * @param taskId The backend's `bg-…` task id.
+ */
+const stopBackgroundTask = (taskId: string): void => {
+  killBackgroundTask(taskId);
+  window.setTimeout(() => void loadBackgroundTasks(), 1200);
+};
 
 /** Input box draft (controlled, two-way bound to inputBox.vue via defineModel) */
 const draft = ref('');

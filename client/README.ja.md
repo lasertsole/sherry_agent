@@ -128,7 +128,7 @@ client/
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
 │   │       └── components/        # 61 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由、選択テキストを右クリックで引用）
-│   │           ├── BackgroundTasksPanel.vue#          # チャットのバックグラウンド コマンド ストリップ（terminal(run_in_background=True)）: 状態、pid、ターンを止めないコマンド単位の「停止」
+│   │           ├── BackgroundCommandsSection.vue#     # ターミナル入口のポップオーバーの第 3 セクション：エージェントのバックグラウンド コマンド（terminal(run_in_background=True)）——状態、pid、ターンを止めないコマンド単位の「停止」
 │   │           ├── SideChatPanel.vue          # 補助セッションタブ：引用から通常の子セッションを作成し、独立ストリーム + HITL 承認
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
 │   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow のフラットなステップ一覧、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
@@ -139,7 +139,7 @@ client/
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：トリガー（プランモード / 変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
-│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド（ポップオーバーの行はページにジャンプを委ねる：実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
+│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド / バックグラウンド コマンド（バッジは三者の合計）——ポップオーバーの行はページにジャンプを委ねる（実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
 │   │           ├── ProjectDirectoryChip.vue   # セッションのプロジェクトディレクトリ用ツールバー項目（バインド / 解除、保留と拒否のヒント付き）
 │   │           ├── ProjectDirectoryPicker.vue # ブラウザ版の内蔵フォルダピッカー（GET /system/dirs。デスクトップ版は OS ダイアログ）
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）。右端はドラッグハンドル（下限 280px、上限はビューポートの半分、幅は永続化）

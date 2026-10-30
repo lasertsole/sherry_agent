@@ -2,12 +2,15 @@
  * The toolbar's terminal entry lists what this session is running and hands the
  * jump to the session page: a sub-agent row asks for that run's live context
  * view, a command row asks for its tool card in the chat (where the command's
- * output lives). The entry itself opens no panel.
+ * output lives). Detached background commands (terminal(run_in_background=True))
+ * are the popup's third section — they outlive the turn, so their stop control
+ * lives there. The entry itself opens no panel.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { reactive, ref } from 'vue';
 import TasksButton from '@/pages/home/components/TasksButton.vue';
+import type { BackgroundTaskItem } from '@/composables/use-background-tasks';
 
 const state = vi.hoisted(() => ({
   loadTaskRuns: vi.fn(async () => {}),
@@ -32,6 +35,15 @@ const run = {
   run_id: 'run-1',
   task: 'check the logs',
   execution: { status: 'RUNNING', started_at: Date.now() - 9000 }
+};
+
+const backgroundRun: BackgroundTaskItem = {
+  taskId: 'bg-1',
+  command: 'sleep 1000',
+  status: 'running',
+  pid: 4242,
+  exitCode: null,
+  reason: null
 };
 
 beforeEach(() => {
@@ -96,5 +108,53 @@ describe('TasksButton.vue (integration)', () => {
 
     expect(wrapper.findAll('button.row-button')).toHaveLength(0);
     expect(wrapper.text()).toContain('暂无');
+  });
+
+  it('lists a detached background command and counts it in the badge', async () => {
+    const wrapper = mount(TasksButton, {
+      props: { sessionId: 'sid-1', backgroundTasks: [backgroundRun], backgroundRunning: 1 }
+    });
+
+    // The badge counts every unit of work that owns a slot: 1 sub-agent +
+    // 1 foreground command + 1 background command.
+    expect(wrapper.find('button > span').text()).toBe('3');
+
+    await openPopover(wrapper);
+
+    expect(wrapper.find('[data-test="background-commands"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('sleep 1000');
+  });
+
+  it('forwards the stop click for a detached background command', async () => {
+    const backgroundKill = vi.fn();
+    const wrapper = mount(TasksButton, {
+      props: { sessionId: 'sid-1', backgroundTasks: [backgroundRun], backgroundRunning: 1, backgroundKill }
+    });
+
+    await openPopover(wrapper);
+    await wrapper.find('[data-test="background-task-kill"]').trigger('click');
+
+    expect(backgroundKill).toHaveBeenCalledWith('bg-1');
+  });
+
+  it('leaves the background section out when the session never backgrounded a command', async () => {
+    const wrapper = mountButton();
+
+    await openPopover(wrapper);
+
+    expect(wrapper.find('[data-test="background-commands"]').exists()).toBe(false);
+  });
+
+  it('re-pulls the background snapshot when the popover opens, not when it closes', async () => {
+    const backgroundReload = vi.fn();
+    const wrapper = mount(TasksButton, { props: { sessionId: 'sid-1', backgroundReload } });
+
+    // Closed → opening refreshes (a command may have settled while it was shut).
+    await openPopover(wrapper);
+    expect(backgroundReload).toHaveBeenCalledTimes(1);
+
+    // Open → closing must not fetch again.
+    await wrapper.find('button').trigger('click');
+    expect(backgroundReload).toHaveBeenCalledTimes(1);
   });
 });

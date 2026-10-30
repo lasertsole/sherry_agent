@@ -128,7 +128,7 @@ client/
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
 │   │       └── components/        # 61 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유; 선택 텍스트 우클릭으로 인용)
-│   │           ├── BackgroundTasksPanel.vue#          # 채팅의 백그라운드 명령 스트립(terminal(run_in_background=True)): 상태, pid, 턴을 멈추지 않는 명령 단위 중지
+│   │           ├── BackgroundCommandsSection.vue#     # 터미널 진입점 팝오버의 세 번째 섹션: 에이전트의 백그라운드 명령(terminal(run_in_background=True)) — 상태, pid, 턴을 멈추지 않는 명령 단위 중지
 │   │           ├── SideChatPanel.vue          # 보조 세션 탭: 인용에서 일반 자식 세션을 만들고 독립 스트림 + HITL 승인
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow 플랫 단계 목록, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
@@ -139,7 +139,7 @@ client/
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
-│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령 / 백그라운드 명령(배지는 셋의 합계) — 팝오버 행은 페이지에 이동을 맡긴다(실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
 │   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터). 오른쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 절반, 너비 영속)

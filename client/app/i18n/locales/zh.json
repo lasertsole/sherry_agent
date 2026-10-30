@@ -746,6 +746,7 @@
     "statusCompleted": "已完成",
     "statusFailed": "失败",
     "statusKilled": "已终止",
+    "statusStopping": "终止中…",
     "kill": "终止该命令（不影响对话）",
     "killRefused": "已结束，无法终止"
   },

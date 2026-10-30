@@ -1,54 +1,46 @@
 <template>
-  <!-- Background commands of this session, directly under the message list.
-       Renders nothing when there is nothing to show, so an ordinary session
-       never grows an empty strip. -->
-  <div
+  <!-- Background commands of this session (the agent's
+       terminal(run_in_background=True)), as the third section of the toolbar's
+       background-task popup. Renders nothing when there is nothing to show, so a
+       session that never backgrounded a command does not grow an empty block. -->
+  <section
     v-if="tasks.length > 0"
-    class="shrink-0 border-t border-solid border-gray-light dark:border-gray-dark bg-gray-50/60 dark:bg-gray-800/40"
-    data-test="background-tasks">
-    <button
-      type="button"
-      class="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-gray-600 dark:text-gray-300"
-      :aria-expanded="expanded"
-      @click="expanded = !expanded">
-      <i
-        class="pi text-[0.65rem]"
-        :class="expanded ? 'pi-chevron-down' : 'pi-chevron-right'"
-        aria-hidden="true"></i>
-      <i
-        class="pi pi-server text-[0.7rem]"
-        aria-hidden="true"></i>
-      <span class="font-medium">{{ t('backgroundTasks.title') }}</span>
+    class="flex flex-col gap-1.5 border-t border-solid border-gray-100 pt-2 dark:border-gray-800"
+    data-test="background-commands">
+    <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+      {{ t('backgroundTasks.title') }}
       <span class="text-gray-400 dark:text-gray-500">
         {{ t('backgroundTasks.runningCount', { running: runningCount, total: tasks.length }) }}
       </span>
-    </button>
-
-    <ul
-      v-if="expanded"
-      class="m-0 max-h-40 overflow-y-auto px-2 pb-2 list-none"
-      data-test="background-task-rows">
+    </span>
+    <ul class="m-0 flex list-none flex-col gap-1 p-0">
       <li
         v-for="task in tasks"
         :key="task.taskId"
         class="flex items-center gap-2 rounded px-1 py-1 text-xs"
         :data-task-id="task.taskId">
+        <!-- A requested stop shows its own chip: the row must never read
+             "running" while its stop control is already unusable (the exit
+             frame is a best-effort push; the snapshot settles the final state). -->
         <span
           class="shrink-0 rounded px-1.5 py-0.5 text-[0.65rem]"
-          :class="statusClass(task)"
+          :class="
+            task.status === 'running' && killing.has(task.taskId)
+              ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+              : statusClass(task)
+          "
           data-test="background-task-status">
-          {{ statusLabel(task) }}
+          {{
+            task.status === 'running' && killing.has(task.taskId)
+              ? t('backgroundTasks.statusStopping')
+              : statusLabel(task)
+          }}
         </span>
         <span
           class="min-w-0 flex-1 truncate font-mono text-gray-700 dark:text-gray-300"
-          :title="task.command">
+          :title="rowTitle(task)">
           {{ task.command || task.taskId }}
         </span>
-        <span
-          v-if="task.pid"
-          class="shrink-0 text-gray-400 dark:text-gray-500"
-          >pid {{ task.pid }}</span
-        >
         <span
           v-if="task.taskId === killRefusal?.taskId"
           class="shrink-0 text-red-500"
@@ -58,7 +50,7 @@
         <button
           v-if="task.status === 'running'"
           type="button"
-          class="shrink-0 rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
+          class="shrink-0 cursor-pointer rounded px-1.5 py-0.5 transition-colors disabled:opacity-50"
           :class="'bg-red-500/30 hover:bg-red-500/50'"
           :disabled="killing.has(task.taskId)"
           :title="t('backgroundTasks.kill')"
@@ -71,18 +63,17 @@
         </button>
       </li>
     </ul>
-  </div>
+  </section>
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import type { KillRefusal, BackgroundTaskItem } from '~/composables/use-background-tasks';
 
 /**
- * The strip is a VIEW over `useBackgroundTasks`: the page owns the composable
- * (it installs the socket handlers and loads the snapshot), the strip only
+ * A VIEW over `useBackgroundTasks`: the session page owns the composable (it
+ * installs the socket handlers and loads the snapshot), this section only
  * renders what it is handed and forwards the kill click.
  */
 defineProps<{
@@ -94,9 +85,6 @@ defineProps<{
 }>();
 
 const { t } = useI18n();
-
-/** Expanded by default: the strip only exists while a command is worth watching. */
-const expanded = ref(true);
 
 /**
  * Localized status label (running / done / failed / stopped).
@@ -134,5 +122,17 @@ const statusClass = (task: BackgroundTaskItem): string => {
     default:
       return 'bg-gray-400/20 text-gray-600 dark:text-gray-300';
   }
+};
+
+/**
+ * What the row's hover tooltip carries: the command plus the pid/exit code the
+ * compact popup row has no room for.
+ * @param task
+ */
+const rowTitle = (task: BackgroundTaskItem): string => {
+  const parts = [task.command || task.taskId];
+  if (task.pid) parts.push(`pid ${task.pid}`);
+  if (task.exitCode !== null) parts.push(`exit ${task.exitCode}`);
+  return parts.join(' · ');
 };
 </script>

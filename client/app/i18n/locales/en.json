@@ -746,6 +746,7 @@
     "statusCompleted": "Done",
     "statusFailed": "Failed",
     "statusKilled": "Stopped",
+    "statusStopping": "Stopping…",
     "kill": "Stop this command (the conversation keeps running)",
     "killRefused": "Already finished"
   },

@@ -127,7 +127,7 @@ client/
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
 │   │       └── components/        # 61 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media; right-click quotes a selection)
-│   │           ├── BackgroundTasksPanel.vue#          # The chat's background-command strip (terminal(run_in_background=True)): status, pid, and a command-level 终止 that leaves the turn running
+│   │           ├── BackgroundCommandsSection.vue#     # The third section of the terminal entry's popover: the agent's background commands (terminal(run_in_background=True)) — status, pid, and a command-level Stop that leaves the turn running
 │   │           ├── SideChatPanel.vue          # Side-session tab: a quoted selection opens an ordinary child session with its own stream + HITL
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow step lists, collapsed to a pill and always on screen, live via taskflow_updated)
@@ -138,7 +138,7 @@ client/
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
-│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)

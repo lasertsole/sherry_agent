@@ -746,6 +746,7 @@
     "statusCompleted": "完了",
     "statusFailed": "失敗",
     "statusKilled": "停止済み",
+    "statusStopping": "停止中…",
     "kill": "このコマンドを停止（会話は継続）",
     "killRefused": "すでに終了しています"
   },

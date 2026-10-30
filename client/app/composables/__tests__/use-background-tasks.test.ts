@@ -33,10 +33,12 @@ describe('useBackgroundTasks', () => {
 
     await composable.load();
 
-    expect(apiMock.fetchApi).toHaveBeenCalledWith({
-      url: '/terminal/bg?session_id=sess-1',
-      method: 'get'
-    });
+    // The trailing `_` is the cache-buster: a snapshot must never be answered
+    // from the browser cache (a re-pull right after a kill would read stale).
+    expect(apiMock.fetchApi).toHaveBeenCalledTimes(1);
+    const call = apiMock.fetchApi.mock.calls[0]?.[0] as { url: string; method: string };
+    expect(call.method).toBe('get');
+    expect(call.url).toMatch(/^\/terminal\/bg\?session_id=sess-1&_=\d+$/);
     expect(composable.tasks.value.map(t => t.taskId)).toEqual(['bg-1', 'bg-2']);
     expect(composable.runningCount.value).toBe(1);
   });
@@ -49,6 +51,20 @@ describe('useBackgroundTasks', () => {
     await composable.load();
 
     expect(composable.tasks.value).toHaveLength(1);
+  });
+
+  it('drops a settled task from the in-flight stop set when the snapshot says so', async () => {
+    const composable = useBackgroundTasks(() => 'sess-1', fakeSocket());
+    composable.onStarted(task() as never);
+    composable.kill('bg-1');
+    expect(composable.killing.value.has('bg-1')).toBe(true);
+
+    apiMock.fetchApi.mockResolvedValue({ tasks: [task({ status: 'killed', exit_code: -15 })] });
+    await composable.load();
+
+    // The row must show the real terminal status, not the requested stop.
+    expect(composable.killing.value.has('bg-1')).toBe(false);
+    expect(composable.tasks.value[0]!.status).toBe('killed');
   });
 
   it('adds a started row and updates a repeated start in place', () => {

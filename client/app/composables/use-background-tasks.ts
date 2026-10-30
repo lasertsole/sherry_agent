@@ -5,19 +5,20 @@ import type { TerminalBgTaskInfo } from './bridge/agent-socket-types';
 
 /**
  * One session's background commands (the agent's
- * `terminal(run_in_background=True)`), as the chat area's strip shows them.
+ * `terminal(run_in_background=True)`), as the toolbar's background-task popup
+ * shows them.
  *
- * Two sources, on purpose: `GET /terminal/bg` is the snapshot (the panel opens,
- * the page mounts, a socket reconnects) and the WS frames are the deltas —
- * `terminal_bg_started` adds a row, `terminal_bg_exit` settles it. Polling is
- * absent: a command that starts while the panel is open arrives as a frame.
+ * Two sources, on purpose: `GET /terminal/bg` is the snapshot (the popover
+ * opens, the page mounts, a socket reconnects) and the WS frames are the deltas
+ * — `terminal_bg_started` adds a row, `terminal_bg_exit` settles it. Polling is
+ * absent: a command that starts while the popover is open arrives as a frame.
  *
  * These commands are CHILDREN of the backend process and are not persisted, so
  * the list is rebuilt on every page load — an empty snapshot right after a
  * restart is correct, not a lost task.
  */
 
-/** One row of the strip. */
+/** One row of the popup's background-command section. */
 export interface BackgroundTaskItem {
   taskId: string;
   command: string;
@@ -63,6 +64,14 @@ export function useBackgroundTasks(sessionId: () => string, socket: AgentSocket)
       exitCode: item.exit_code ?? null,
       reason: item.status === 'killed' ? 'killed' : null
     }));
+    // A settled command can never still be "stopping": the snapshot is the
+    // authority, so its id leaves the in-flight set and the row shows the real
+    // terminal status instead of the requested stop.
+    if (killing.value.size > 0) {
+      const running = new Set(tasks.value.filter(task => task.status === 'running').map(task => task.taskId));
+      const next = new Set([...killing.value].filter(taskId => running.has(taskId)));
+      if (next.size !== killing.value.size) killing.value = next;
+    }
   }
 
   /** Pull the snapshot (panel open / page mount / socket reconnect). Fail-open. */
@@ -71,7 +80,10 @@ export function useBackgroundTasks(sessionId: () => string, socket: AgentSocket)
     if (!id) return;
     try {
       const response = await fetchApi({
-        url: `/terminal/bg?session_id=${encodeURIComponent(id)}`,
+        // `_` is a cache-buster: a snapshot is state, never a cacheable
+        // document — a re-pull right after a kill must not answer with the
+        // pre-kill body the browser still holds.
+        url: `/terminal/bg?session_id=${encodeURIComponent(id)}&_=${Date.now()}`,
         method: 'get'
       });
       const payload = (response ?? {}) as { tasks?: TerminalBgTaskInfo[] };

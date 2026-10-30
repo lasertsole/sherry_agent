@@ -128,7 +128,7 @@ client/
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
 │   │       └── components/        # 61 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media；选中文字右键可引用）
-│   │           ├── BackgroundTasksPanel.vue#          # 聊天区的后台命令条（terminal(run_in_background=True)）：状态、pid，以及不影响对话的单命令「终止」
+│   │           ├── BackgroundCommandsSection.vue#     # 终端入口弹框的第三段：agent 的后台命令（terminal(run_in_background=True)）——状态、pid，以及不影响对话的单命令「终止」
 │   │           ├── SideChatPanel.vue          # 辅助会话标签页：右键引用新建普通子会话，独立消息流 + HITL 审批
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow 扁平步骤列表，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
@@ -139,7 +139,7 @@ client/
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
-│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令，弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令 / 后台命令（徽标三者合计）；弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
 │   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）；右边缘可拖拽（下限 280px、上限视口一半、宽度持久化）

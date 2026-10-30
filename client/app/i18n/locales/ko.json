@@ -746,6 +746,7 @@
     "statusCompleted": "완료",
     "statusFailed": "실패",
     "statusKilled": "중지됨",
+    "statusStopping": "중지 중…",
     "kill": "이 명령 중지(대화는 계속됨)",
     "killRefused": "이미 종료됨"
   },
