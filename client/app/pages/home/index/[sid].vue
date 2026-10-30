@@ -1140,6 +1140,29 @@ function onFileMentionRequest(request: unknown): void {
   chatInputBoxRef.value?.addFileMention?.(payload.payload);
 }
 
+/**
+ * The whiteboard's "add to chat": push the exported PNG into the pending image
+ * tray.
+ *
+ * Mirrors the file-mention relay (the board panel is outside this page's
+ * component tree). The tray is the ONE input the send path reads, so the image
+ * gets the preview chip, the 10-image cap and the upload pipeline for free.
+ * The `mySid` check is the frozen session id, so a KeepAlive-cached page of
+ * another session never receives the drawing.
+ * @param request `{ sessionId, payload: { base64, name } }` from the board.
+ */
+function onAddImageRequest(request: unknown): void {
+  const payload = request as { sessionId?: string; payload?: { base64?: string; name?: string } } | undefined;
+  const base64 = payload?.payload?.base64;
+  if (!base64 || payload?.sessionId !== mySid) return;
+  const MAX_PENDING_IMAGES = 10;
+  if (selectedImages.value.length >= MAX_PENDING_IMAGES) {
+    toastWarn(t('chatInput.maxImagesExceed', { count: MAX_PENDING_IMAGES, extra: 1 }));
+    return;
+  }
+  selectedImages.value = [...selectedImages.value, { base64, name: payload?.payload?.name || 'whiteboard.png' }];
+}
+
 /** True while a side session is being created (guards a double-click). */
 const creatingSideChat = ref(false);
 
@@ -1257,6 +1280,8 @@ onMounted(() => {
   // "Add to chat" asks over the bus; only the instance owning that session
   // performs the insert.
   on('chat:file-mention', onFileMentionRequest);
+  // The whiteboard panel hands its PNG over the same bus.
+  on('chat:add-image', onAddImageRequest);
 });
 
 // Remove listeners on component unmount (KeepAlive cache slot evicted/destroyed) to avoid leaks
@@ -1268,6 +1293,7 @@ onUnmounted(() => {
   off('stream:reconnect:failed', onStreamReconnectFailed);
   off('stream:resumed', onStreamResumed);
   off('chat:file-mention', onFileMentionRequest);
+  off('chat:add-image', onAddImageRequest);
   // Cancel this page's pending draft-write debounce timers (the slice lives in
   // this component's closure; an orphaned timer would fire into a dead page).
   drafts.dispose();

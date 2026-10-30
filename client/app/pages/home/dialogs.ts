@@ -32,9 +32,11 @@ export const HOME_TOOLBAR_EVENTS = [
   'account',
   // The Web Search panel: the web-search backend + its provider settings.
   'webSearch',
-  // The toolbox (./config.ts `toolboxTools`): the browser and the user terminal.
+  // The toolbox (./config.ts `toolboxTools`): the browser, the user terminal
+  // and the whiteboard.
   'browser',
-  'terminal'
+  'terminal',
+  'whiteboard'
 ] as const;
 
 /** One toolbar event of the home shell. */
@@ -92,7 +94,10 @@ export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<st
     // The toolbox panels open a NEW tab per click: several browsers / terminals
     // side by side is the point (each keeps its own page / scrollback).
     browser: () => context.openRightTab('browser', { instance: nextToolboxInstance('browser') }),
-    terminal: () => context.openRightTab('terminal', { instance: nextToolboxInstance('terminal') })
+    terminal: () => context.openRightTab('terminal', { instance: nextToolboxInstance('terminal') }),
+    // NOT a twin: one board per session tab, so a second click shows the same
+    // drawing instead of stacking an empty copy.
+    whiteboard: () => context.openRightTab('whiteboard')
   };
   return commands;
 }

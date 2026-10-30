@@ -231,7 +231,8 @@
     "browser": "Browser",
     "terminal": "Terminal",
     "webSearch": "Web Search",
-    "i18n": "Language"
+    "i18n": "Language",
+    "whiteboard": "Whiteboard"
   },
   "config": {
     "agent": {
@@ -621,7 +622,8 @@
     "scopeEmpty": "No tabs in this group",
     "recentClosed": "Recently closed tabs",
     "recentClosedEmpty": "No recently closed tabs",
-    "i18n": "Language"
+    "i18n": "Language",
+    "whiteboard": "Whiteboard"
   },
   "progressFloat": {
     "status": {
@@ -751,5 +753,20 @@
     "fork": "Branch from here",
     "forkedFrom": "Forked from {parent}",
     "backToParent": "Back to the parent branch"
+  },
+  "whiteboard": {
+    "namePlaceholder": "Board name",
+    "pen": "Pen",
+    "eraser": "Eraser",
+    "width": "Line width",
+    "undo": "Undo",
+    "redo": "Redo",
+    "clear": "Clear",
+    "addToChat": "Add to chat",
+    "empty": "Draw freely here, then use “Add to chat” to send it to the assistant",
+    "unsupported": "This browser has no Canvas support, so the whiteboard is unavailable",
+    "exportFailed": "Could not export the drawing",
+    "addedToChat": "Added to the chat's pending images",
+    "maxStrokes": "Too many strokes — clear or undo some first"
   }
 }

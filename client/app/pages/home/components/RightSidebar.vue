@@ -218,6 +218,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   trajectory: defineAsyncComponent(() => import('./TrajectoryPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
+  whiteboard: defineAsyncComponent(() => import('./WhiteboardPanel.vue')),
   sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
 };
 
@@ -261,6 +262,7 @@ const activeTabPayload = computed<
       instance?: string;
       url?: string;
       sessionId?: string;
+      boardId?: string;
       parentSessionId?: string;
       inherited?: boolean;
       quote?: string;

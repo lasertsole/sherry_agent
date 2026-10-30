@@ -231,7 +231,8 @@
     "browser": "브라우저",
     "terminal": "터미널",
     "webSearch": "모델 검색",
-    "i18n": "국제화"
+    "i18n": "국제화",
+    "whiteboard": "화이트보드"
   },
   "config": {
     "agent": {
@@ -621,7 +622,8 @@
     "scopeEmpty": "이 그룹에 탭이 없습니다",
     "recentClosed": "최근 닫은 탭",
     "recentClosedEmpty": "최근에 닫은 탭이 없습니다",
-    "i18n": "국제화"
+    "i18n": "국제화",
+    "whiteboard": "화이트보드"
   },
   "progressFloat": {
     "status": {
@@ -751,5 +753,20 @@
     "fork": "여기서 분기",
     "forkedFrom": "{parent}에서 분기됨",
     "backToParent": "상위 분기로 돌아가기"
+  },
+  "whiteboard": {
+    "namePlaceholder": "보드 이름",
+    "pen": "펜",
+    "eraser": "지우개",
+    "width": "선 두께",
+    "undo": "실행 취소",
+    "redo": "다시 실행",
+    "clear": "지우기",
+    "addToChat": "대화에 추가",
+    "empty": "여기에서 자유롭게 그린 뒤 「대화에 추가」로 어시스턴트에게 보내세요",
+    "unsupported": "이 브라우저는 Canvas를 지원하지 않아 화이트보드를 사용할 수 없습니다",
+    "exportFailed": "이미지 내보내기에 실패했습니다",
+    "addedToChat": "대화의 전송 대기 이미지에 추가했습니다",
+    "maxStrokes": "획이 너무 많습니다. 먼저 지우거나 실행 취소하세요"
   }
 }

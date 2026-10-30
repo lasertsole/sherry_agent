@@ -8,10 +8,11 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
  * settings-menu editors and the notification list (a top-bar-only button).
  */
 const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
-  // The toolbox dialog's two entries (the hammer button) open working panels
-  // rather than settings ones.
+  // The toolbox dialog's entries (the hammer button) open working panels
+  // rather than settings ones: the browser, the terminal and the whiteboard.
   ['browser', 'browser'],
   ['terminal', 'terminal'],
+  ['whiteboard', 'whiteboard'],
   ['logs', 'logs'],
   ['stats', 'stats'],
   ['knowledgeGraph', 'knowledgeGraph'],
@@ -54,7 +55,19 @@ describe('buildHomeToolbarCommands', () => {
     }
   });
 
-  it('gives every toolbox click its own instance key', () => {
+  it('opens the whiteboard as ONE board tab (no instance twin)', () => {
+    const openRightTab = vi.fn();
+    const commands = buildHomeToolbarCommands({ openRightTab });
+
+    commands.whiteboard?.();
+    commands.whiteboard?.();
+
+    // Unlike the browser/terminal, a second toolbox click must show the SAME
+    // drawing instead of stacking an empty board.
+    expect(openRightTab.mock.calls).toEqual([['whiteboard'], ['whiteboard']]);
+  });
+
+  it('gives every toolbox twin click its own instance key', () => {
     const openRightTab = vi.fn();
     const commands = buildHomeToolbarCommands({ openRightTab });
 

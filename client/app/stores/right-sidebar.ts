@@ -34,6 +34,8 @@ export type RightSidebarPanelKind =
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
   | 'terminal'
+  /** The toolbox's freehand whiteboard (one board per session tab). */
+  | 'whiteboard'
   /** A helper session opened from a quoted chat selection (an ordinary session). */
   | 'sideChat';
 
@@ -70,6 +72,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',
+  // The whiteboard draws on the session's conversation: it belongs to the
+  // session like the file viewer does.
+  whiteboard: 'session',
   account: 'global',
   notification: 'global',
   sessionPreset: 'session',
@@ -104,7 +109,9 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'heartbeat',
   'cron',
   'extend',
-  'taskDetail'
+  'taskDetail',
+  // A drawing surface needs room; 420px leaves the 16:10 board tiny.
+  'whiteboard'
 ]);
 
 /** Narrowest usable sidebar: below this the panels are cramped rather than small. */
@@ -169,6 +176,11 @@ export interface RightSidebarTabPayload {
   quote?: string;
   /** The quote's localized source label (the chip's tooltip). */
   source?: string;
+  /**
+   * Whiteboard identity: one board per key. Omitted = `default`, so clicking the
+   * toolbox entry again activates the SAME board instead of stacking a twin.
+   */
+  boardId?: string;
   /**
    * Whether a `sideChat` panel prefills the quote chip on mount. Initial opens
    * default to true; reopening a closed side chat from the recent list sets
@@ -371,6 +383,7 @@ export const useRightSidebarStore = defineStore(
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
       const url = payload?.url ?? null;
+      const boardId = payload?.boardId ?? null;
       const sessionId = payload?.sessionId ?? null;
       const scope = SCOPE_BY_KIND[kind];
       // A side-chat tab belongs to its PARENT session; every other session tab
@@ -385,6 +398,7 @@ export const useRightSidebarStore = defineStore(
           (tab.payload?.hash ?? null) === hash &&
           (tab.payload?.instance ?? null) === instance &&
           (tab.payload?.url ?? null) === url &&
+          (tab.payload?.boardId ?? null) === boardId &&
           (tab.payload?.sessionId ?? null) === sessionId
       );
       if (existing) {

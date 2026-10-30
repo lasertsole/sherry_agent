@@ -231,7 +231,8 @@
     "browser": "浏览器",
     "terminal": "终端",
     "webSearch": "模型联网",
-    "i18n": "国际化"
+    "i18n": "国际化",
+    "whiteboard": "白板"
   },
   "config": {
     "agent": {
@@ -621,7 +622,8 @@
     "scopeEmpty": "该分组暂无标签页",
     "recentClosed": "最近关闭的标签页",
     "recentClosedEmpty": "最近没有关闭的标签页",
-    "i18n": "国际化"
+    "i18n": "国际化",
+    "whiteboard": "白板"
   },
   "progressFloat": {
     "status": {
@@ -751,5 +753,20 @@
     "fork": "从此处分叉",
     "forkedFrom": "从 {parent} 分支",
     "backToParent": "回到父分支"
+  },
+  "whiteboard": {
+    "namePlaceholder": "白板名称",
+    "pen": "画笔",
+    "eraser": "橡皮",
+    "width": "线宽",
+    "undo": "撤销",
+    "redo": "重做",
+    "clear": "清空",
+    "addToChat": "加入对话",
+    "empty": "在这里自由手绘，画完点「加入对话」发给助手",
+    "unsupported": "当前浏览器不支持 Canvas，白板不可用",
+    "exportFailed": "导出图片失败",
+    "addedToChat": "已加入对话的待发送图片",
+    "maxStrokes": "笔画过多，请先清空或撤销"
   }
 }

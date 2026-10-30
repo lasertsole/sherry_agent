@@ -27,12 +27,13 @@ describe('buildToolbarCommandEntries', () => {
     expect(entries.map(entry => entry.label)).toEqual([...headerTools, ...toolboxTools].map(tool => tool.toolName));
   });
 
-  it('files the two toolbox surfaces under navigation and the rest under tools', () => {
+  it('files the toolbox surfaces under navigation and the rest under tools', () => {
     const entries = buildToolbarCommandEntries({ openRightTab: vi.fn() }, t);
     const section = (id: string) => entries.find(entry => entry.id === id)?.section;
 
     expect(section('toolbar.browser')).toBe('navigate');
     expect(section('toolbar.terminal')).toBe('navigate');
+    expect(section('toolbar.whiteboard')).toBe('navigate');
     expect(section('toolbar.systemConfig')).toBe('tools');
     expect(section('toolbar.skills')).toBe('tools');
   });

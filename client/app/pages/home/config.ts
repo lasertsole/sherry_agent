@@ -41,6 +41,13 @@ export const toolboxTools: Tool[] = [
     title: 'toolbar.terminal',
     event: 'terminal',
     label: 'toolbar.terminal'
+  },
+  {
+    toolName: 'toolbar.whiteboard',
+    icon: 'pi pi-pen-to-square',
+    title: 'toolbar.whiteboard',
+    event: 'whiteboard',
+    label: 'toolbar.whiteboard'
   }
 ];
 

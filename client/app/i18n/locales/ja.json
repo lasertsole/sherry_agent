@@ -231,7 +231,8 @@
     "browser": "ブラウザ",
     "terminal": "ターミナル",
     "webSearch": "モデル検索",
-    "i18n": "国際化"
+    "i18n": "国際化",
+    "whiteboard": "ホワイトボード"
   },
   "config": {
     "agent": {
@@ -621,7 +622,8 @@
     "scopeEmpty": "このグループにタブはありません",
     "recentClosed": "最近閉じたタブ",
     "recentClosedEmpty": "最近閉じたタブはありません",
-    "i18n": "国際化"
+    "i18n": "国際化",
+    "whiteboard": "ホワイトボード"
   },
   "progressFloat": {
     "status": {
@@ -751,5 +753,20 @@
     "fork": "ここから分岐",
     "forkedFrom": "{parent} から分岐",
     "backToParent": "親ブランチに戻る"
+  },
+  "whiteboard": {
+    "namePlaceholder": "ボード名",
+    "pen": "ペン",
+    "eraser": "消しゴム",
+    "width": "線幅",
+    "undo": "元に戻す",
+    "redo": "やり直す",
+    "clear": "クリア",
+    "addToChat": "会話に追加",
+    "empty": "ここに自由に描き、「会話に追加」でアシスタントへ送れます",
+    "unsupported": "このブラウザは Canvas に対応していないため、ホワイトボードは使えません",
+    "exportFailed": "画像の書き出しに失敗しました",
+    "addedToChat": "会話の送信待ち画像に追加しました",
+    "maxStrokes": "ストロークが多すぎます。先にクリアか元に戻してください"
   }
 }

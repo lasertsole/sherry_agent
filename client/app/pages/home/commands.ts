@@ -14,7 +14,7 @@ import { buildHomeToolbarCommands, type HomeToolbarContext } from './dialogs';
  */
 
 /** Events that read as navigation rather than settings (the toolbox surfaces). */
-const NAVIGATE_EVENTS = new Set(['browser', 'terminal']);
+const NAVIGATE_EVENTS = new Set(['browser', 'terminal', 'whiteboard']);
 
 /**
  * One command per grid / toolbox entry.

@@ -787,14 +787,16 @@ ref-chip menu (or in a terminal, or a commit/reset outside the session) still
 reaches the AGENT as the git notice described under Project Directory Binding:
 the next turn's transcript gets one `git_head` card before the human message.
 
-The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
-same dialog shape the settings menu uses, and both entries open a right-sidebar tab
-in the SESSION group PER CLICK (a fresh `instance` key in the tab payload — the
-strip numbers the twins 浏览器 1 / 浏览器 2, and each panel keeps its own history /
-scrollback under `<sessionId>::<instance>`); the settings entries keep deduping on
-their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
-same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
-grids and the commands in step). The browser is an address bar over an iframe with
+The taskbar's **hammer button opens a three-entry toolbox** (浏览器 / 终端 /
+白板) as the same dialog shape the settings menu uses. The browser and the
+terminal open a right-sidebar tab in the SESSION group PER CLICK (a fresh
+`instance` key in the tab payload — the strip numbers the twins 浏览器 1 /
+浏览器 2, and each panel keeps its own history / scrollback under
+`<sessionId>::<instance>`); the whiteboard is deliberately NOT a twin (one board
+per session tab: a second click must show the same drawing), and the settings
+entries keep deduping on their empty payload (`toolboxTools` in
+`pages/home/config.ts`, wired through the same `HOME_TOOLBAR_EVENTS` registry as
+the settings grid — a pinned test keeps the grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay
 blank, which the empty state says), a **free-size mode** that emulates a mobile
 device viewport (resizable frame with edge/corner handles), and 打开调试工具,
@@ -807,7 +809,26 @@ through `/bin/sh -c` there with a scrubbed environment, bounded by
 exit code instead of raising. It is a one-shot console, not a PTY — an interactive
 full-screen program has nothing to attach to — and it is NOT the agent's
 `terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
-human's own shell, loopback-only via the gateway). The browser panel's address bar
+human's own shell, loopback-only via the gateway). **The whiteboard** (`WhiteboardPanel.vue`) is a freehand Canvas2D board:
+`composables/use-whiteboard-canvas.ts` owns the drawing math (a stroke is a
+polyline of points NORMALIZED to the fixed 1280×800 logical canvas, so CSS size
+changes never alter the drawing; one point paints a dot; the eraser paints the
+paper colour; the PNG export always renders at the logical size on an offscreen
+canvas) and `stores/whiteboard.ts` owns the boards (in memory, keyed by the
+tab's `boardId`, undo/redo as two stacks — a new stroke clears the redo stack —
+plus a 5 000-stroke cap; closing the tab does not delete the board). The tab is
+SESSION-scoped and opened at the wide 640px width; there are no text/shape tools
+and no persistence (a reload starts empty). **加入对话** exports the board to a
+PNG, strips the data-URL prefix and emits `chat:add-image` with
+`{sessionId, payload: {base64, name}}` — the SAME mitt relay shape as
+`chat:file-mention`; `[sid].vue` pushes it into the pending `selectedImages`
+tray (its frozen `mySid` filter keeps KeepAlive-cached pages from stealing the
+drawing, and it enforces the 10-image cap), and the send path then carries it
+like any pasted image. The board must never build a `MultiModalMessage`
+directly: `handleSend` re-reads the tray and would drop it. A browser without
+Canvas2D shows a fallback line instead of crashing.
+
+The browser panel's address bar
 suggests the persistent VISIT HISTORY: every navigation (iframe mode from
 `stores/toolbox.ts::navigate`, CDP mode from the `page` frame the server reports —
 the devtools frontend is excluded) records one row in the Dexie `browserVisits`
