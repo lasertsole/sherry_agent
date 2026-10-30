@@ -2076,7 +2076,7 @@ const handleApply = async () => {
           "middlewaresNone": "Middlewares: all on",
           "models": "Subagent models: {names}"
         },
-        "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
+        "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
       },
       "save": "Save",
       "cancel": "Cancel",

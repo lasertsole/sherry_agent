@@ -79,4 +79,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-サンドボックス下でライブ子系统を採点——6 チェック：クールダウン再起動存活、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。
+サンドボックス下でライブサブシステムを採点——6 チェック：クールダウン再起動後の生存、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。

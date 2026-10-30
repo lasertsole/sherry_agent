@@ -5,6 +5,7 @@ import en from '../../i18n/locales/en.json';
 import ja from '../../i18n/locales/ja.json';
 import ko from '../../i18n/locales/ko.json';
 import zh from '../../i18n/locales/zh.json';
+import { cjkRunsIn, localeLeaves, simplifiedOnlyIn } from './locale-language';
 
 type Dict = { [key: string]: unknown };
 type Locale = 'en' | 'zh' | 'ja' | 'ko';
@@ -82,6 +83,33 @@ describe('i18n inline block parity (SFC <i18n lang="json">)', () => {
         }
       });
     }
+  });
+});
+
+describe('i18n inline block value language', () => {
+  const filesWithBlocks = vueFiles.filter(entry => entry.blocks.length > 0);
+
+  // The blocks carry the same leak risk as the central dictionaries: they are
+  // written from the Chinese copy and reach the user verbatim.
+  it('内联块的 en 值不含 CJK，ja/ko 值不含简体中文专用字', () => {
+    const violations: string[] = [];
+    for (const { file, blocks } of filesWithBlocks) {
+      blocks.forEach((block, index) => {
+        for (const leaf of localeLeaves(block.en ?? {})) {
+          const runs = cjkRunsIn(leaf.value);
+          if (runs.length > 0) violations.push(`${rel(file)} block #${index + 1} en ${leaf.path}: ${runs.join(' ')}`);
+        }
+        for (const locale of ['ja', 'ko'] as const) {
+          for (const leaf of localeLeaves(block[locale] ?? {})) {
+            const offenders = simplifiedOnlyIn(leaf.value);
+            if (offenders.length > 0) {
+              violations.push(`${rel(file)} block #${index + 1} ${locale} ${leaf.path}: ${offenders.join('')}`);
+            }
+          }
+        }
+      });
+    }
+    expect(violations).toEqual([]);
   });
 });
 

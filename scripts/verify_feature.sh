@@ -10,6 +10,7 @@
 #   repo   · pytest gate                  tests/run_tests_split.py (unit + integration + regression)
 #   repo   · docs parity                  four-language README structure/metrics
 #   repo   · doc links                    Markdown dead links + anchors
+#   repo   · docs language                each page in its own language (en: no CJK; ja/ko: no Simplified-only)
 #
 # Usage:
 #   scripts/verify_feature.sh              # everything (a few minutes)
@@ -78,7 +79,7 @@ if [ "$RUN_BACKEND" = 1 ]; then
     "$ROOT_DIR" uv run --no-sync python scripts/check_docs_parity.py
   run_step "repo · doc links" \
     "$ROOT_DIR" uv run --no-sync python scripts/check_doc_links.py
-  run_step "repo · English docs language" \
+  run_step "repo · docs language (en/ja/ko)" \
     "$ROOT_DIR" uv run --no-sync python scripts/check_doc_language.py
 fi
 

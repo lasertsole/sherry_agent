@@ -90,7 +90,7 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 メインツール `compact_now` が `SUMMARIZATION_COMPACT_REQUESTED` を書き込みます。次のモデル呼び出しの T2 ディスパッチが trigger `USER` で 1 回圧縮し、anti-thrash を迂回して `{trigger: user_requested, phase: standalone_turn}` を記録します。ツールであり（ユーザーの要求時にモデルが呼ぶ）、クライアントの `/compact` コマンドではありません。
 
 ### ModelDownshift
-session のモデル profile は `context_window`（クライアント descriptor の十进制文字列、バックエンド sanitizer が検証）を宣言できます。`_session_context_window(session_id)` がそのウィンドウを保持予算と overflow 予算に使い、小さいモデルへ切り替えると次の pre-request チェックで圧縮します。compact イベントは `reason=model_downshift` を持ちます。未宣言なら env ウィンドウのままです。
+session のモデル profile は `context_window`（クライアント descriptor の10 進数文字列、バックエンド sanitizer が検証）を宣言できます。`_session_context_window(session_id)` がそのウィンドウを保持予算と overflow 予算に使い、小さいモデルへ切り替えると次の pre-request チェックで圧縮します。compact イベントは `reason=model_downshift` を持ちます。未宣言なら env ウィンドウのままです。
 
 ### Phase と reason の観測性
 すべての compact 経路は trajectory `compact` イベントを 1 つ発行し、`phase`（`standalone_turn` / `pre_request` / `post_response` / `reactive` / `mid_turn`）、`reason`（`context_limit` / `provider_overflow` / `user_requested` / `model_downshift`）、不変の `trigger`（`T1`–`T5` / `USER`）、`messages_before`、`messages_after`、`route` を持ちます。T1/T2/T3/ユーザー要求は `_finish_compact` を共有し、T4/T5 forced-recovery は `_finish_forced_recovery` から記録するため、ラベルは実トリガーから導出されドリフトしません。
