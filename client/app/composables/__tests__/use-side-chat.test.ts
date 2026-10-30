@@ -96,7 +96,12 @@ describe('createSideChatSession', () => {
     expect(projectSession.setProjectDirectory).toHaveBeenCalledWith(sessionId, '/work/project');
     // The child is an ordinary list row: cache it and announce it immediately.
     expect(db.cacheSessionMeta).toHaveBeenCalledWith(meta);
-    expect(mitt.emit).toHaveBeenCalledWith('session:created', meta);
+    // The announced row carries the parent so the sidebar can show the branch
+    // mark immediately (a side chat has no fork turn: forkTurnNum is undefined).
+    expect(mitt.emit).toHaveBeenCalledWith(
+      'session:created',
+      expect.objectContaining({ ...meta, parentSessionId: 'parent', forkTurnNum: undefined })
+    );
   });
 
   it('still creates the session when the parent has no preset row', async () => {
