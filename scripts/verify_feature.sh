@@ -78,6 +78,8 @@ if [ "$RUN_BACKEND" = 1 ]; then
     "$ROOT_DIR" uv run --no-sync python scripts/check_docs_parity.py
   run_step "repo · doc links" \
     "$ROOT_DIR" uv run --no-sync python scripts/check_doc_links.py
+  run_step "repo · English docs language" \
+    "$ROOT_DIR" uv run --no-sync python scripts/check_doc_language.py
 fi
 
 echo ""

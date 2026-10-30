@@ -117,6 +117,9 @@ jobs:
       - name: Check Markdown links and anchors
         run: uv run --no-sync python scripts/check_doc_links.py
 
+      - name: Check English docs carry no CJK labels
+        run: uv run --no-sync python scripts/check_doc_language.py
+
   security-scan:
     name: Security scans (bandit + pip-audit)
     needs: changes

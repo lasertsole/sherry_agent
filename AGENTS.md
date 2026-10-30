@@ -17,6 +17,7 @@ uv run --no-sync pytest tests/ -m "not llm_e2e" --cov=agent --cov=server --cov=c
   --cov=pub --cov=runtime --cov=workspace --cov-report=term-missing   # coverage report (single process; use run_tests_split.py -- --cov-append for the gate grouping)
 uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
 uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
+uv run --no-sync python scripts/check_doc_language.py # English README/wiki pages carry no CJK labels
 uv run --no-sync python scripts/dev/mock_searxng.py 8888  # throwaway SearXNG stand-in (the exercise-the-fallback instance)
 uv run --no-sync lint-imports                        # import-linter contract check
 uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
@@ -2152,6 +2153,19 @@ each suite is the version-controlled reference (threshold + model id).
 - **Middleware hooks**: `abefore_model(self, state, runtime=None)`, `aafter_agent(self, state, runtime=None)` — LangChain 1.3.9 signatures; after_agent runs in REVERSE list order
 - **Tool registration**: `@tool("name")` + `build_*_tools()` factory + `_MAIN_TOOLS_BUILDERS` list in `agent/tools/__init__.py`
 - **Test fixtures**: `isolated_db` (tmp SQLite), `build_main_tools_real` (stub-tolerant), `scan_skills_real`
+- **English docs language** (`scripts/check_doc_language.py`): the parity gate compares
+  STRUCTURE across the four languages and the link gate only resolves targets, so a
+  Chinese UI label inside an English sentence (模型配置, 继续生成 …) used to pass every
+  gate — live-verified in the English README's Runtime section and six English wiki
+  pages. This gate scans ONLY the English documents (`README.md` plus every
+  `wiki/**/README.md`, nested pages included) and ignores what is not prose: fenced
+  blocks, inline code spans, HTML comments and markdown link TARGETS (a link may point
+  at a Chinese-named file); the four language names (中文 / 简体中文 / 日本語 / 한국어)
+  are allow-listed for the language switcher. The localized siblings and `AGENTS.md`
+  are never scanned — the first are supposed to be non-English, the second quotes the
+  Chinese labels on purpose. A genuine label goes in a code span, never the allowlist.
+  `tests/scripts/test_check_doc_language.py` pins prose findings, the non-prose
+  exemptions, the allowlist and the file selection.
 - **Docs parity** (`scripts/check_docs_parity.py`): gates every four-language README group on structure plus semantic metrics — link-target sets with per-target language variants (a translation that links a foreign README the EN reference does not link fails, while the language switcher and own-language links pass), per-section body-length ratio plus a non-empty check for even the smallest EN sections, a language-independent heading-marker sequence (inline code spans + link targets, order-canonicalized) that fails a heading reordered under an unchanged level sequence, and a per-section invariant-token multiset (code spans + file paths + ENV names + numbers, matched by substring so dropped backticks are not drift) that fails a long but stale translation which lost ≥2 code-span/path tokens or all of them. Section pairing matches headings by marker fingerprint first, then occurrence index (the index-fallback count and the marker-less-reorder residual limitation are printed in the summary). The ratio band is a calibration snapshot: `--calibrate` prints the per-language distribution and its margin, and `tests/scripts/test_check_docs_parity.py` pins the smallest legitimate ratio at ≥1.15× the band so a denser legitimate section turns the test red before the band silently narrows — re-run `--calibrate` and update the constants' comment before changing any band. Exempting a group via `ALLOWLIST` is a last resort: the reason must contain an explicit "Fixing the document(s) is wrong because …" clause followed by a substantive rationale, be ≥40 chars, and may not open with placeholder text; stale entries fail the gate, and tests pin the mapping empty so every addition requires an explicit test edit
 - **Commits**: angular conventional (commitlint enforced), pathspec-only (`git commit -- <files>`)
 - **File naming**: snake_case enforced by pre-commit hook
