@@ -79,7 +79,8 @@
     "codeZoom": "放大",
     "continueGeneration": "继续生成",
     "editMessage": "编辑消息",
-    "editingMessage": "正在编辑已发送的消息；发送后将重跑该轮"
+    "editingMessage": "正在编辑已发送的消息；发送后将重跑该轮",
+    "forkFromHere": "从此回答分叉出新会话"
   },
   "chat": {
     "backgroundMessage": "后台任务",
@@ -116,7 +117,8 @@
     "breakpointStale": "断点已失效，无法继续生成",
     "continueBusy": "当前对话进行中，无法继续生成",
     "editBusy": "对话进行中，暂时无法编辑",
-    "editCompacted": "该消息已超出可编辑范围（历史已被压缩）"
+    "editCompacted": "该消息已超出可编辑范围（历史已被压缩）",
+    "forkFailed": "创建分支失败，请重试"
   },
   "connection": {
     "offline": "网络已断开",
@@ -744,5 +746,10 @@
     "statusKilled": "已终止",
     "kill": "终止该命令（不影响对话）",
     "killRefused": "已结束，无法终止"
+  },
+  "session": {
+    "fork": "从此处分叉",
+    "forkedFrom": "从 {parent} 分支",
+    "backToParent": "回到父分支"
   }
 }

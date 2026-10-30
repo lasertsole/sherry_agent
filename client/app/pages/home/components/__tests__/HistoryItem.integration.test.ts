@@ -84,3 +84,27 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
     expect(wrapper.emitted('chooseSession')).toBeFalsy();
   });
 });
+
+describe('HistoryItem.vue: the branch mark', () => {
+  it('marks a forked session and jumps back to its parent', async () => {
+    const wrapper = mountItem({
+      historyRecord: { ...record, parentSessionId: 'parent-1', parentTitle: '父会话', forkTurnNum: 2 },
+      isActive: false
+    });
+
+    const badge = wrapper.find('[data-test="session-fork-badge"]');
+    expect(badge.exists()).toBe(true);
+    expect(badge.attributes('title')).toContain('父会话');
+
+    await badge.trigger('click');
+
+    // The badge must not ALSO select the fork row (click.stop).
+    expect(wrapper.emitted('chooseSession')).toEqual([['parent-1']]);
+  });
+
+  it('renders no branch mark for a root session', () => {
+    const wrapper = mountItem({ historyRecord: record, isActive: false });
+
+    expect(wrapper.find('[data-test="session-fork-badge"]').exists()).toBe(false);
+  });
+});

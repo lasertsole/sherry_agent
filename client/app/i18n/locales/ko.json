@@ -79,7 +79,8 @@
     "codeZoom": "확대",
     "continueGeneration": "이어서 생성",
     "editMessage": "메시지 편집",
-    "editingMessage": "보낸 메시지를 편집 중입니다. 보내면 해당 턴을 다시 실행합니다"
+    "editingMessage": "보낸 메시지를 편집 중입니다. 보내면 해당 턴을 다시 실행합니다",
+    "forkFromHere": "이 답변에서 새 세션 분기"
   },
   "chat": {
     "backgroundMessage": "백그라운드 작업",
@@ -116,7 +117,8 @@
     "breakpointStale": "중단된 답변을 더 이상 이어갈 수 없습니다",
     "continueBusy": "응답 중에는 이어서 생성할 수 없습니다",
     "editBusy": "응답 중이라 편집할 수 없습니다",
-    "editCompacted": "이 메시지는 편집 가능한 범위를 벗어났습니다(기록이 압축됨)"
+    "editCompacted": "이 메시지는 편집 가능한 범위를 벗어났습니다(기록이 압축됨)",
+    "forkFailed": "분기 생성에 실패했습니다. 다시 시도하세요"
   },
   "connection": {
     "offline": "네트워크 연결 끊김",
@@ -744,5 +746,10 @@
     "statusKilled": "중지됨",
     "kill": "이 명령 중지(대화는 계속됨)",
     "killRefused": "이미 종료됨"
+  },
+  "session": {
+    "fork": "여기서 분기",
+    "forkedFrom": "{parent}에서 분기됨",
+    "backToParent": "상위 분기로 돌아가기"
   }
 }

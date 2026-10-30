@@ -16,12 +16,14 @@
           :loading-older="loadingOlder"
           :selection-enabled="!hitlRequest"
           :can-edit="!isSending"
+          :can-fork="!isSending && !isForkChild"
           @reach-top="loadOlderHistory"
           @release-head="onReleaseHead"
           @selection-add="onSelectionAdd"
           @selection-side-chat="onSelectionSideChat"
           @edit-message="onEditMessage"
-          @continue-generation="handleContinueGeneration" />
+          @continue-generation="handleContinueGeneration"
+          @fork-turn="onForkTurn" />
         <!-- Background commands the agent started (terminal(run_in_background=True)):
              a command-level stop lives here, so the chat keeps running while a
              single long command is cancelled. Renders nothing when there are none. -->
@@ -452,7 +454,7 @@ import { ChatInputBox } from '#components';
 // function
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
 import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
@@ -460,6 +462,10 @@ import type { ChatController } from '@/composables/messages';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
 import type { SelectionPayload } from '~/composables/use-chat-selection';
 import { logUtil } from '~/utils/log';
+// Bridge modules are not auto-imported (same explicit-import convention as the
+// composables that call them).
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { fetchSessionLink } from '~/composables/bridge/session';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -477,6 +483,8 @@ const { openPreview } = useImagePreview();
 
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
+const localePath = useLocalePath();
 
 /** Current session ID (from the [sid] route param) */
 const sessionId = computed(() => String(route.params.sid ?? ''));
@@ -1029,6 +1037,18 @@ const handleCreateSession = () => {
 };
 
 /**
+ * Whether THIS session is itself a fork (a side chat or a branch).
+ *
+ * The server refuses to fork a fork (no nested side chats), so the AI rows hide
+ * the branch action here instead of offering an action that must fail. The link
+ * is fetched once per session load; an unreachable server reads as "root".
+ *
+ * Declared BEFORE `doLoadFor`: the session watch below is `immediate`, so
+ * setup reaches `refreshBranchLink` before the rest of the setup body runs.
+ */
+const isForkChild = ref(false);
+
+/**
  * Load history for the specified session for this instance (clears local state, then rebuilds). Only called on new sessions / exception fallback paths.
  * @param sid
  */
@@ -1047,6 +1067,9 @@ const doLoadFor = (sid: string) => {
   clearMediaSelection();
   // Load this session's locked character snapshot (if none, lock using the global profile)
   ensureSessionCharacter(sid);
+  // "Am I a branch child?" — one lookup per session load (fail-open; a root
+  // session reads as false and keeps the fork action visible).
+  void refreshBranchLink(sid);
   // One round trip: history + the running turn's snapshot. Frames arriving
   // during the request are held and flushed after the snapshot is applied.
   void stream.syncHistory(sid);
@@ -1149,6 +1172,39 @@ function onSelectionAdd(payload: SelectionPayload): void {
  * when this tab closes (or this parent session is deleted).
  * @param payload The quoted selection.
  */
+/**
+ * Refresh the branch flag for a session (fail-open: unknown reads as root).
+ * @param sid
+ */
+async function refreshBranchLink(sid: string): Promise<void> {
+  isForkChild.value = false;
+  if (!sid) return;
+  try {
+    isForkChild.value = (await fetchSessionLink(sid)) !== null;
+  } catch (e) {
+    logUtil.w('[Branch] parent link lookup failed:', e);
+  }
+}
+
+/**
+ * Branch from one AI answer: create the child at that turn and SWITCH to it.
+ *
+ * Unlike a quote side chat (which opens a right-sidebar panel), a branch is a
+ * session of its own — the page navigates there, carrying the parent's model,
+ * thinking, directory and agent config (the server copies them).
+ * @param turnNum The answered turn to fork at (1-based).
+ */
+async function onForkTurn(turnNum: number): Promise<void> {
+  if (isSending.value || isForkChild.value || !mySid || turnNum <= 0) return;
+  try {
+    const { sessionId: childSid } = await createSideChatSession(mySid, '', turnNum);
+    await router.push(localePath(`/home/${childSid}`));
+  } catch (e) {
+    logUtil.e('[Branch] Failed to create the branch:', e);
+    toastError(t('errors.forkFailed'), e instanceof Error ? e.message : String(e));
+  }
+}
+
 async function onSelectionSideChat(payload: SelectionPayload): Promise<void> {
   if (!payload?.text || creatingSideChat.value || !mySid) return;
   creatingSideChat.value = true;

@@ -16,7 +16,11 @@ from pub.func.validator import is_safe_session_id
 from server.DAO import side_chat_store
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, not_found, ok, read_body
-from server.service.side_chat_service import create_side_chat, delete_side_chat
+from server.service.side_chat_service import (
+    create_side_chat,
+    delete_side_chat,
+    list_session_links,
+)
 
 
 @app.post("/sessions/side_chat")
@@ -33,12 +37,49 @@ async def create_side_chat_handler(request):
     client_request_id = str(body.get("client_request_id") or "").strip()
     if len(client_request_id) > 128:
         return bad_request("client_request_id is too long")
+    # Optional BRANCH fork point: the parent turn the child is branched from.
+    # Absent = a side chat (the parent's last answer); the service validates it.
+    fork_turn_num = body.get("fork_turn_num")
     try:
-        result = await create_side_chat(parent_session_id, client_request_id or None)
+        result = await create_side_chat(parent_session_id, client_request_id or None, fork_turn_num)
     except ValueError as exc:
         logger.info("Side chat rejected: parent={} reason={}", parent_session_id, exc)
         return bad_request(str(exc) or "invalid parent_session_id")
     return ok({"success": True, **result})
+
+
+@app.get("/sessions/side_chat/link")
+async def get_side_chat_link_handler(request):
+    """One session's parent link (a page asks this once per opened session).
+
+    A root session answers ``{}`` (no parent) — the client reads that as "this
+    is not a side chat / branch".
+    """
+    query = request.query_params or {}
+    session_id = str(query.get("session_id", "") or "").strip()
+    if not session_id or not is_safe_session_id(session_id):
+        return bad_request("invalid session_id")
+    row = side_chat_store.get_side_chat(session_id)
+    if row is None:
+        return ok({"success": True})
+    return ok(
+        {
+            "success": True,
+            "parent_session_id": str(row.get("parent_session_id") or ""),
+            "fork_turn_num": row.get("fork_turn_num"),
+            "fork_mode": int(row.get("fork_mode") or 0),
+        }
+    )
+
+
+@app.get("/sessions/side_chat/links")
+async def list_side_chat_links_handler(request):
+    """Every (child → parent) branch link, for the session list's branch marks.
+
+    One small table read: the left sidebar marks branched sessions and offers
+    "back to the parent" without one request per row.
+    """
+    return ok({"success": True, "links": list_session_links()})
 
 
 @app.get("/sessions/side_chat")

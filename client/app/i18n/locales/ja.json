@@ -79,7 +79,8 @@
     "codeZoom": "拡大",
     "continueGeneration": "生成を続ける",
     "editMessage": "メッセージを編集",
-    "editingMessage": "送信済みメッセージを編集中。送信するとそのターンを再実行します"
+    "editingMessage": "送信済みメッセージを編集中。送信するとそのターンを再実行します",
+    "forkFromHere": "この回答から新しいセッションを分岐"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",
@@ -116,7 +117,8 @@
     "breakpointStale": "中断した回答は続行できなくなりました",
     "continueBusy": "応答中は続行できません",
     "editBusy": "応答中のため編集できません",
-    "editCompacted": "このメッセージは編集可能な範囲外です（履歴が圧縮されました）"
+    "editCompacted": "このメッセージは編集可能な範囲外です（履歴が圧縮されました）",
+    "forkFailed": "ブランチの作成に失敗しました。もう一度お試しください"
   },
   "connection": {
     "offline": "ネットワークが切断されました",
@@ -744,5 +746,10 @@
     "statusKilled": "停止済み",
     "kill": "このコマンドを停止（会話は継続）",
     "killRefused": "すでに終了しています"
+  },
+  "session": {
+    "fork": "ここから分岐",
+    "forkedFrom": "{parent} から分岐",
+    "backToParent": "親ブランチに戻る"
   }
 }

@@ -287,6 +287,10 @@ import GitGraphPanel from './GitGraphPanel.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
+// Bridge modules are not auto-imported; the session list asks for its branch
+// links the same way it asks for sessions.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { listSideChatLinks } from '~/composables/bridge/session';
 // `useVirtualRows` and the row builders come from Nuxt's composable
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
@@ -312,7 +316,13 @@ const newSession = useNewSessionStore();
 const onSessionCreated = (meta: unknown) => {
   const row = meta as SessionRecord | null;
   if (!row?.id || historyList.value.some(item => item.id === row.id)) return;
-  historyList.value = [row, ...historyList.value];
+  // A branch/side chat announces its parent: resolve the parent's title here
+  // (the list owns it) so the row shows "forked from …" immediately, without
+  // waiting for the next list refresh's link merge.
+  const parentTitle = row.parentSessionId
+    ? historyList.value.find(item => item.id === row.parentSessionId)?.title
+    : undefined;
+  historyList.value = [{ ...row, parentTitle }, ...historyList.value];
 };
 on('session:created', onSessionCreated);
 onBeforeUnmount(() => off('session:created', onSessionCreated));
@@ -518,7 +528,15 @@ const isIndeterminate = computed(() => {
  */
 const loadSessionList = async () => {
   try {
-    const sessions = await getSessionList();
+    // Sessions + their branch links in parallel: the links are one small table
+    // read, fetched once per list refresh (never per row).
+    const [sessions, branchLinks] = await Promise.all([
+      getSessionList(),
+      listSideChatLinks().catch(e => {
+        logUtil.w('[loadSessionList] 分支关系查询失败：', e);
+        return [];
+      })
+    ]);
     // Merge locally created sessions that don't exist on server yet (IndexedDB placeholders, can still recover after refresh):
     // 1) Read persisted placeholder sessions in IndexedDB (new empty sessions not yet sent messages);
     // 2) Sessions with server records (messages sent) are kept directly from memory list, and their placeholders are cleared;
@@ -548,6 +566,23 @@ const loadSessionList = async () => {
     historyList.value = [...localPlaceholders, ...sessions].map(item =>
       overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
     );
+    // Branch marks: a row whose child link exists shows "forked from <parent>"
+    // and jumps back to the parent. The parent's TITLE is resolved from this
+    // same list (a parent is always a normal session here).
+    if (branchLinks.length > 0) {
+      const linkByChild = new Map(branchLinks.map(link => [link.childSessionId, link]));
+      const titleById = new Map(historyList.value.map(row => [row.id, row.title]));
+      historyList.value = historyList.value.map(row => {
+        const link = linkByChild.get(row.id);
+        if (!link) return row;
+        return {
+          ...row,
+          parentSessionId: link.parentSessionId,
+          forkTurnNum: link.forkTurnNum ?? undefined,
+          parentTitle: titleById.get(link.parentSessionId)
+        };
+      });
+    }
   } catch (error) {
     // When server unreachable: current session memory state preserved, try to recover persisted placeholder sessions from IndexedDB
     logUtil.w('[loadSessionList] 拉取会话列表失败：', error);

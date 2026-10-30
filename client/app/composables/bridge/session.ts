@@ -76,40 +76,109 @@ export async function clearSession(sessionId: string): Promise<void> {
 export interface CreatedSideChat {
   sessionId: string;
   parentSessionId: string;
+  /** The parent turn the child was branched from (null = a side chat). */
+  forkTurnNum: number | null;
   /** Whether the child carries a parent transcript snapshot. */
   inherited: boolean;
   /** True when the idempotency key matched an earlier creation (same child). */
   deduplicated: boolean;
 }
 
+/** Creation options shared by side chats and branches. */
+export interface CreateSideChatOptions {
+  /**
+   * Idempotency key: the same (parent, key) pair answers the SAME child instead
+   * of building a second complete fork. Omitted = the legacy every-call-forks path.
+   */
+  clientRequestId?: string;
+  /**
+   * BRANCH fork point: a 1-based parent turn. Omitted = a side chat, which
+   * inherits the parent's last completed answer.
+   */
+  forkTurnNum?: number;
+}
+
 /**
- * Create a side-chat session and its parent link.
+ * Create a side-chat session (or a branch) and its parent link.
  *
  * The server forks the parent's checkpoint transcript for model-only
  * inheritance; the UI history still starts empty.
- * @param parentSessionId The main session the selection came from.
- * @param clientRequestId
+ * @param parentSessionId The main session the selection/fork came from.
+ * @param options Idempotency key and the optional branch fork turn.
  */
-export async function createSideChat(parentSessionId: string, clientRequestId?: string): Promise<CreatedSideChat> {
+export async function createSideChat(
+  parentSessionId: string,
+  options: CreateSideChatOptions = {}
+): Promise<CreatedSideChat> {
   const res = await fetchApiPayload<{
     success?: boolean;
     session_id?: string;
     parent_session_id?: string;
+    fork_turn_num?: number | null;
     inherited?: boolean;
     deduplicated?: boolean;
   }>({
     url: '/sessions/side_chat',
     method: 'post',
-    // The idempotency key: a retried creation answers the SAME child instead
-    // of building a second complete fork (legacy requests omit it entirely).
-    opts: { parent_session_id: parentSessionId, client_request_id: clientRequestId }
+    opts: {
+      parent_session_id: parentSessionId,
+      client_request_id: options.clientRequestId,
+      ...(options.forkTurnNum != null ? { fork_turn_num: options.forkTurnNum } : {})
+    }
   });
   if (!res.session_id) throw new Error('side chat creation returned no session_id');
   return {
     sessionId: res.session_id,
     parentSessionId: res.parent_session_id ?? parentSessionId,
+    forkTurnNum: typeof res.fork_turn_num === 'number' ? res.fork_turn_num : null,
     inherited: res.inherited === true,
     deduplicated: res.deduplicated === true
+  };
+}
+
+/** One (child → parent) branch link, as the session list needs it. */
+export interface SessionBranchLink {
+  childSessionId: string;
+  parentSessionId: string;
+  /** The parent turn the child was branched from (null = a side chat). */
+  forkTurnNum: number | null;
+}
+
+/**
+ * Every branch/side-chat link (one small table read; the sidebar marks rows).
+ * @returns The links, newest-agnostic; empty when the server is unreachable.
+ */
+export async function listSideChatLinks(): Promise<SessionBranchLink[]> {
+  const res = await fetchApiPayload<{
+    links?: Array<{ child_session_id?: string; parent_session_id?: string; fork_turn_num?: number | null }>;
+  }>({ url: '/sessions/side_chat/links', method: 'get' });
+  return (res.links ?? [])
+    .filter(link => !!link.child_session_id && !!link.parent_session_id)
+    .map(link => ({
+      childSessionId: String(link.child_session_id),
+      parentSessionId: String(link.parent_session_id),
+      forkTurnNum: typeof link.fork_turn_num === 'number' ? link.fork_turn_num : null
+    }));
+}
+
+/**
+ * The branch link of ONE session ("am I a side chat / branch, and from where?").
+ * @param sessionId Session to inspect.
+ * @returns The parent link, or null for a root session.
+ */
+export async function fetchSessionLink(sessionId: string): Promise<SessionBranchLink | null> {
+  const res = await fetchApiPayload<{
+    parent_session_id?: string;
+    fork_turn_num?: number | null;
+  }>({
+    url: `/sessions/side_chat/link?session_id=${encodeURIComponent(sessionId)}`,
+    method: 'get'
+  });
+  if (!res.parent_session_id) return null;
+  return {
+    childSessionId: sessionId,
+    parentSessionId: String(res.parent_session_id),
+    forkTurnNum: typeof res.fork_turn_num === 'number' ? res.fork_turn_num : null
   };
 }
 

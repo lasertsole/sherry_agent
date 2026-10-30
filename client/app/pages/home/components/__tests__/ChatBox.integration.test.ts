@@ -881,3 +881,44 @@ describe('ChatBox selection menu (integration)', () => {
     wrapper.unmount();
   });
 });
+
+describe('ChatBox.vue: branch from an answer', () => {
+  it('offers the fork action on a settled AI answer and emits its turn', async () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 2 }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'a', turn_num: 2 })
+        ]
+      }
+    });
+
+    const button = wrapper.find('[data-test="chat-fork-turn"]');
+    expect(button.exists()).toBe(true);
+    await button.trigger('click');
+
+    expect(wrapper.emitted('fork-turn')).toEqual([[2]]);
+  });
+
+  it('never offers forking on a user row, a streaming row, or a branch child', () => {
+    const user = mount(ChatBox, {
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 1 })] }
+    });
+    expect(user.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+
+    const streaming = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 2, role: CHAT_ROLE.AI, content: 'partial', turn_num: 1, streaming: true })]
+      }
+    });
+    expect(streaming.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+
+    const child = mount(ChatBox, {
+      props: {
+        canFork: false,
+        messages: [base({ id: 3, role: CHAT_ROLE.AI, content: 'a', turn_num: 1 })]
+      }
+    });
+    expect(child.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+  });
+});

@@ -30,6 +30,7 @@ __all__ = [
     "delete_side_chat",
     "get_checkpoint_fork_for_turn",
     "get_context_for_turn",
+    "list_session_links",
     "purge_side_chat_children",
 ]
 
@@ -199,6 +200,52 @@ def _completed_history(messages: list[BaseMessage]) -> list[BaseMessage]:
     return []
 
 
+def _history_up_to_turn(messages: list[BaseMessage], turn_num: int | None) -> list[BaseMessage]:
+    """Cut a parent transcript at a fork point.
+
+    ``turn_num is None`` keeps the legacy side-chat rule (the last completed,
+    call-less assistant answer). ``turn_num=N`` cuts after the Nth USER turn's
+    last call-less assistant answer — the branch fork point.
+
+    Turn boundaries are counted over non-internal ``HumanMessage``s: reminder
+    blocks and workspace notices are injected humans that belong to the turn
+    they precede, and the client's ``turn_num`` (which the fork button sends)
+    never counts them.
+
+    Returns ``[]`` when turn N is not in the transcript (compacted away); the
+    caller then falls back to the bounded text snapshot. A turn whose answer was
+    still mid-tool when it was cut off has no safe assistant boundary, so the
+    fork stops at the turn's FIRST message: replaying the parent's dangling tool
+    call would make the child's first turn execute it.
+    """
+    if turn_num is None:
+        return _completed_history(messages)
+
+    human_count = 0
+    turn_start: int | None = None
+    turn_end = len(messages)
+    for index, message in enumerate(messages):
+        if message.type != "human":
+            continue
+        metadata = getattr(message, "metadata", None) or {}
+        if metadata.get("internal") is True:
+            continue
+        human_count += 1
+        if human_count == turn_num:
+            turn_start = index
+        elif human_count == turn_num + 1:
+            turn_end = index
+            break
+    if turn_start is None:
+        return []
+
+    for offset in range(turn_end - turn_start - 1, -1, -1):
+        message = messages[turn_start + offset]
+        if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
+            return list(messages[: turn_start + offset + 1])
+    return list(messages[:turn_start])
+
+
 async def get_checkpoint_fork_for_turn(session_id: str) -> list[BaseMessage] | None:
     """The parent's checkpoint messages for a forked side chat's FIRST turn.
 
@@ -222,12 +269,16 @@ async def get_checkpoint_fork_for_turn(session_id: str) -> list[BaseMessage] | N
         return None
 
     parent_session_id = str(row.get("parent_session_id") or "")
+    fork_turn_num = row.get("fork_turn_num")
     parent_messages: list[BaseMessage] = []
     if parent_session_id:
         try:
             from agent.state_port import read_messages
 
-            parent_messages = _completed_history(list(await read_messages(parent_session_id)))
+            parent_messages = _history_up_to_turn(
+                list(await read_messages(parent_session_id)),
+                int(fork_turn_num) if fork_turn_num is not None else None,
+            )
         except Exception as exc:  # noqa: BLE001 - fall back to the text snapshot
             logger.warning(
                 "side chat: parent checkpoint read failed for {}: {}", parent_session_id, exc
@@ -254,8 +305,48 @@ async def get_checkpoint_fork_for_turn(session_id: str) -> list[BaseMessage] | N
     return None
 
 
+def _resolve_fork_turn(parent_session_id: str, fork_turn_num: int) -> int | None:
+    """Map a clicked row's persisted turn to the parent's USER-turn ordinal.
+
+    The client sends the AI answer row's ``turn_num`` — and a persisted
+    ``turn_num`` is a per-BATCH number (one user turn spans several batches when
+    the agent makes tool rounds: user=1, answer=3 …). The checkpoint cut counts
+    USER turns, so the two must be translated: ``find_user_turn_cut`` (the same
+    helper the message edit uses) answers the ordinal of the user row at or
+    before that turn. ``None`` = the row is no longer persisted (compacted
+    away): the caller then keeps the legacy last-answer cut.
+    """
+    from context_engine.store.core import find_user_turn_cut
+
+    try:
+        cut = find_user_turn_cut(parent_session_id, fork_turn_num)
+    except Exception as exc:  # noqa: BLE001 - a lookup failure degrades, never blocks
+        logger.warning("side chat: fork-turn lookup failed for {}: {}", parent_session_id, exc)
+        return None
+    if cut is None:
+        return None
+    return int(cut[0])
+
+
+def _validated_fork_turn(fork_turn_num: int | None) -> int | None:
+    """Validate a branch fork point (a 1-based parent turn), or ``None``."""
+    if fork_turn_num is None:
+        return None
+    if isinstance(fork_turn_num, bool):  # bools are ints; a flag is not a turn
+        raise ValueError("invalid fork_turn_num")
+    try:
+        value = int(fork_turn_num)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid fork_turn_num") from exc
+    if value < 1:
+        raise ValueError("invalid fork_turn_num")
+    return value
+
+
 async def create_side_chat(
-    parent_session_id: str, client_request_id: str | None = None
+    parent_session_id: str,
+    client_request_id: str | None = None,
+    fork_turn_num: int | None = None,
 ) -> dict[str, Any]:
     """Create a child id + parent link + checkpoint-fork inheritance.
 
@@ -263,9 +354,27 @@ async def create_side_chat(
     a retried POST — a timed-out response, a re-click after a network blip —
     returns the child the first attempt created instead of building a second
     complete fork. Without one the legacy path applies (every call forks).
+
+    ``fork_turn_num`` turns the same creation into a BRANCH: the child inherits
+    the parent transcript up to that USER turn instead of the parent's last
+    answer. It arrives as the clicked row's persisted turn number (a per-batch
+    number) and is translated to the checkpoint's user-turn ordinal before it is
+    stored — the stored value is what the cut consumes, so a restart re-derives
+    the same point. ``None`` keeps a side chat's behaviour byte-for-byte.
     """
     if not is_safe_session_id(parent_session_id):
         raise ValueError("invalid parent_session_id")
+    fork_turn_num = _validated_fork_turn(fork_turn_num)
+    if fork_turn_num is not None:
+        resolved = await asyncio.to_thread(_resolve_fork_turn, parent_session_id, fork_turn_num)
+        if resolved is None:
+            logger.info(
+                "side chat: fork turn {} has no persisted user row for {}; "
+                "falling back to the last completed answer",
+                fork_turn_num,
+                parent_session_id,
+            )
+        fork_turn_num = resolved
     if side_chat_store.get_side_chat(parent_session_id) is not None:
         raise ValueError("a side chat cannot parent another side chat")
 
@@ -282,6 +391,7 @@ async def create_side_chat(
             return {
                 "session_id": str(existing["child_session_id"]),
                 "parent_session_id": parent_session_id,
+                "fork_turn_num": existing.get("fork_turn_num"),
                 "inherited": True,
                 "deduplicated": True,
             }
@@ -295,6 +405,7 @@ async def create_side_chat(
             context_text,
             fork_mode=True,
             client_request_id=request_id,
+            fork_turn_num=fork_turn_num,
         )
     except Exception:
         # Two concurrent creators with the same request id: the unique index
@@ -310,24 +421,39 @@ async def create_side_chat(
             return {
                 "session_id": str(existing["child_session_id"]),
                 "parent_session_id": parent_session_id,
+                "fork_turn_num": existing.get("fork_turn_num"),
                 "inherited": True,
                 "deduplicated": True,
             }
         raise
     copied = _copy_parent_session_settings(parent_session_id, child_session_id)
     logger.info(
-        "side chat created: child={} parent={} context_chars={} settings={}",
+        "side chat created: child={} parent={} fork_turn={} context_chars={} settings={}",
         child_session_id,
         parent_session_id,
+        fork_turn_num,
         len(context_text),
         copied,
     )
     return {
         "session_id": child_session_id,
         "parent_session_id": parent_session_id,
+        "fork_turn_num": fork_turn_num,
         "inherited": True,
         "deduplicated": False,
     }
+
+
+def list_session_links() -> list[dict[str, Any]]:
+    """Every parent link, for the client's branch marks (one small table)."""
+    return [
+        {
+            "child_session_id": str(row.get("child_session_id") or ""),
+            "parent_session_id": str(row.get("parent_session_id") or ""),
+            "fork_turn_num": row.get("fork_turn_num"),
+        }
+        for row in side_chat_store.all_side_chats()
+    ]
 
 
 def get_context_for_turn(session_id: str) -> str | None:

@@ -523,6 +523,42 @@ works.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 
+**会话分支 / Branch (`fork_turn_num`).** A branch is the same fork machinery
+with its fork point parameterized. `POST /sessions/side_chat` accepts an
+optional `fork_turn_num`; the link table stores it, and an older
+`side_chats.db` gains the missing columns on first connect (additive
+`ALTER TABLE` guarded by a PRAGMA check — the VERY first release lacked
+`client_request_id` too, and a file without it 500'd every side-chat request
+with "no such column", live-verified; old rows read NULL = the legacy "last
+completed answer" point). `create_side_chat` validates it (int >= 1; a bool is
+not a turn) and answers it back, dedupe included. The incoming number is the
+clicked AI row's PERSISTED `turn_num`, which is a per-BATCH number — one user
+turn spans several batches (user=1, tool=2, answer=3) — while the checkpoint
+cut counts USER turns; `create_side_chat` therefore translates it with
+`context_engine.store.core.find_user_turn_cut` (the message edit's own helper)
+BEFORE storing it, and an unresolvable row (compacted away) degrades to the
+legacy cut. Storing the raw batch number silently misses the checkpoint and
+falls back to the full text snapshot (live-verified: the child then answered
+with the parent's SECOND turn too). `_history_up_to_turn` cuts the parent
+checkpoint after turn N's last call-less AI answer, counting NON-internal
+`HumanMessage`s —
+reminder blocks and workspace notices belong to the turn that follows them, so
+the count matches the client's `turn_num`. A turn cut off mid-tool has no safe
+answer boundary, so the cut stops BEFORE that turn's work instead of replaying
+the parent's dangling tool call; a compacted turn yields an empty cut and falls
+back to the bounded text snapshot. `fork_turn_num=None` keeps a quote side chat
+byte-for-byte. The UI entry is the AI bubble's 分叉 button (hover, beside copy;
+emits the row's turn number) — unlike a quote side chat it opens no panel: the
+page creates the child and `router.push`es to it. It is hidden while a turn
+streams (the parent checkpoint must be settled) and inside a child session
+(`GET /sessions/side_chat/link` once per session load; the server refuses a side
+chat parenting another, so a fork cannot be forked). The client's idempotency
+key is scoped per CREATION (`sidechat:<parent>[:fork:<turn>]`, 30 s reuse
+window), so forking two turns never collapses into one child. The left sidebar
+marks branched rows from ONE bulk read (`GET /sessions/side_chat/links`) and the
+branch badge navigates back to the parent; a branch child's visible history
+starts empty exactly like a side chat's (the inherited transcript is model-only).
+
 ## Voice Input (`use-voice-input.ts` / `server/service/audio_transcribe_service.py`)
 
 The composer's mic button (`inputBox.vue`, in the `sendActions` cluster) records,

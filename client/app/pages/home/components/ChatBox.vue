@@ -182,6 +182,22 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
+                  <!-- Branch from this answer: fork the session at the turn the
+                       answer belongs to and continue there. Sits beside the copy
+                       button (an AI row has no edit action), fades in with the
+                       bubble hover, and is hidden while a turn streams (the
+                       parent checkpoint must be settled) or when this session is
+                       itself a fork (the server refuses nested side chats). -->
+                  <button
+                    v-if="canForkMessage(message)"
+                    type="button"
+                    class="absolute top-2 right-11 flex h-7 w-7 items-center justify-center rounded-full border border-solid border-gray-200 bg-white/70 text-gray-400 opacity-0 shadow-sm transition-opacity duration-200 hover:bg-white hover:text-gray-600 focus-visible:opacity-100 group-hover:opacity-100 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                    :title="t('chatBox.forkFromHere')"
+                    :aria-label="t('chatBox.forkFromHere')"
+                    data-test="chat-fork-turn"
+                    @click="emit('fork-turn', message.turn_num)">
+                    <i class="pi pi-code-branch text-xs"></i>
+                  </button>
                   <!-- Rewrite a SENT user message (pencil floats beside the copy
                        button, fades in with the bubble hover). The backend
                        truncates that turn onward and re-runs the edited text.
@@ -371,6 +387,8 @@ interface Props {
   allowSideChat?: boolean;
   /** Whether a settled row may be edited (false while a turn streams). */
   canEdit?: boolean;
+  /** Whether an AI answer may be branched from (false for a branch child). */
+  canFork?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -381,7 +399,8 @@ const props = withDefaults(defineProps<Props>(), {
   loadingOlder: false,
   selectionEnabled: true,
   allowSideChat: true,
-  canEdit: true
+  canEdit: true,
+  canFork: true
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -439,6 +458,7 @@ const emit = defineEmits<{
   (e: 'selection-side-chat', payload: SelectionPayload): void;
   (e: 'edit-message', message: MessageItem): void;
   (e: 'continue-generation', turnNum: number): void;
+  (e: 'fork-turn', turnNum: number): void;
 }>();
 
 /**
@@ -452,6 +472,18 @@ const emit = defineEmits<{
  */
 const canEditMessage = (message: MessageItem): boolean =>
   props.canEdit && props.selectionEnabled && message.role === CHAT_ROLE.USER && message.id > 0 && message.turn_num > 0;
+
+/**
+ * Whether this AI row offers "branch from here".
+ *
+ * Only a SETTLED, persisted answer qualifies: a streaming row's turn is still
+ * being written (the fork reads the checkpoint), and a turn without a number is
+ * an optimistic placeholder. `canFork` is false for a branch child, which the
+ * server refuses to fork again (no nested side chats).
+ * @param message Candidate row.
+ */
+const canForkMessage = (message: MessageItem): boolean =>
+  props.canFork && message.role === CHAT_ROLE.AI && message.turn_num > 0 && !message.streaming;
 
 /** The `[interrupted]` marker the backend prefixes onto a cut-off answer. */
 const INTERRUPTED_MARKER = /^\[interrupted(?::[a-z_]+)?\]/i;

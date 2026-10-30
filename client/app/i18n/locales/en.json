@@ -79,7 +79,8 @@
     "codeZoom": "Zoom",
     "continueGeneration": "Continue generating",
     "editMessage": "Edit message",
-    "editingMessage": "Editing a sent message — sending re-runs that turn"
+    "editingMessage": "Editing a sent message — sending re-runs that turn",
+    "forkFromHere": "Branch a new session from this answer"
   },
   "chat": {
     "backgroundMessage": "Background task",
@@ -116,7 +117,8 @@
     "breakpointStale": "The interrupted answer can no longer be continued",
     "continueBusy": "A turn is running; try again once it finishes",
     "editBusy": "A turn is running; editing is unavailable",
-    "editCompacted": "This message is outside the editable range (its history was compacted)"
+    "editCompacted": "This message is outside the editable range (its history was compacted)",
+    "forkFailed": "Could not create the branch — try again"
   },
   "connection": {
     "offline": "Network offline",
@@ -744,5 +746,10 @@
     "statusKilled": "Stopped",
     "kill": "Stop this command (the conversation keeps running)",
     "killRefused": "Already finished"
+  },
+  "session": {
+    "fork": "Branch from here",
+    "forkedFrom": "Forked from {parent}",
+    "backToParent": "Back to the parent branch"
   }
 }
