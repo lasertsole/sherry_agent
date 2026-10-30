@@ -30,7 +30,7 @@ the provider's `usage_metadata` and are exact; the cost is an estimate.
   `MODEL_PRICING["budget_warn_threshold"]` (0.80) and `budget_limited` once when
   the cap is first reached; both are best-effort.
 
-- The 系统配置 → Token 预算 tab (`TokenBudgetPanel.vue`) edits the open session's cap and resets usage; it follows the shell's active session and shows a no-session state when none is open.
+- The **System Config** → **Token Budget** tab (`TokenBudgetPanel.vue`) edits the open session's cap and resets usage; it follows the shell's active session and shows a no-session state when none is open.
 ## 🧮 Pricing Lookup
 
 The price table is user-configurable in `.models`:

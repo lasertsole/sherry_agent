@@ -162,7 +162,7 @@ rerun/skip decision), and something to continue from (visible text or
 reasoning). `stopped` and `done` frames carry an additive `resumable` boolean;
 `done` carries it because a heartbeat timeout ends the turn normally.
 
-The client's 继续生成 button sends `continue_generation`. The server validates
+The client's **Continue generating** button sends `continue_generation`. The server validates
 the breakpoint against the live transcript (marker still trailing, turn count
 unchanged), refuses with `stale`/`busy` otherwise, consumes it (one resume per
 interruption), rewrites the marker to the clean partial text and replays the

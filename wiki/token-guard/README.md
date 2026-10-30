@@ -109,7 +109,7 @@ Consequences worth memorizing:
 
 ### Fix a failing config
 
-1. Open `.models` at the repo root, or use System Config then the 模型配置 (Model Config) tab in the UI.
+1. Open `.models` at the repo root, or use **System Config** → the **Model Config** tab in the UI.
 2. Set both keys to `>= 200000`:
 
 ```bash
