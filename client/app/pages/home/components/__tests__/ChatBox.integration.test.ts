@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { nextTick } from 'vue';
 import { mount, flushPromises } from '@vue/test-utils';
 import ChatBox from '@/pages/home/components/ChatBox.vue';
 import { DEFAULT_PLACEHOLDER_AVATAR } from '~/composables/defaultCharacter';
@@ -920,5 +921,85 @@ describe('ChatBox.vue: branch from an answer', () => {
       }
     });
     expect(child.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+  });
+});
+
+describe('ChatBox.vue: in-conversation find', () => {
+  const transcript: MessageItem[] = [
+    base({ id: 1, role: CHAT_ROLE.USER, content: 'first question', turn_num: 1 }),
+    base({ id: 2, role: CHAT_ROLE.AI, content: 'the needle lives here', turn_num: 1 }),
+    base({ id: 3, role: CHAT_ROLE.USER, content: 'another needle', turn_num: 2 })
+  ];
+
+  it('opens the bar, counts the hits and rings the first match', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+
+    expect(wrapper.find('[data-test="conversation-find-bar"]').exists()).toBe(true);
+
+    await wrapper.find('[data-test="conversation-find-input"]').setValue('needle');
+    await new Promise(resolve => setTimeout(resolve, 350));
+
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('1/2');
+    // The ring lands on the row holding the current match (id 2).
+    expect(wrapper.html()).toContain('ring-theme-main/50');
+    wrapper.unmount();
+  });
+
+  it('steps to the next match and reports a miss without throwing', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+    const input = wrapper.find('[data-test="conversation-find-input"]');
+
+    await input.setValue('needle');
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await wrapper.find('[data-test="conversation-find-next"]').trigger('click');
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('2/2');
+
+    await input.setValue('absent');
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('0/0');
+    wrapper.unmount();
+  });
+
+  it('closes the bar with Esc', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+
+    await wrapper.find('[data-test="conversation-find-input"]').trigger('keydown', { key: 'Escape' });
+
+    expect(wrapper.find('[data-test="conversation-find-bar"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe('ChatBox.vue: jumps into folded history', () => {
+  const foldedTurn = (): MessageItem[] => [
+    base({ id: 1, role: CHAT_ROLE.USER, content: 'go' }),
+    base({ id: 2, role: CHAT_ROLE.AI, content: 'working on it' }),
+    base({
+      id: 3,
+      role: CHAT_ROLE.TOOL,
+      content: 'file body',
+      toolName: 'read_file',
+      toolStatus: 'done',
+      toolDurationMs: 900
+    }),
+    base({ id: 4, role: CHAT_ROLE.AI, content: 'final answer' })
+  ];
+
+  it('expands the collapsed work when the jump targets a hidden row', async () => {
+    const wrapper = mount(ChatBox, { props: { messages: foldedTurn() } });
+    // Collapsed: the tool card is behind the fold summary.
+    expect(wrapper.text()).not.toContain('read_file');
+
+    (wrapper.vm as unknown as { scrollToMessage: (id: number) => void }).scrollToMessage(3);
+    await nextTick();
+
+    expect(wrapper.text()).toContain('read_file');
+    expect(wrapper.find('.ring-theme-main\\/50').exists()).toBe(true);
   });
 });

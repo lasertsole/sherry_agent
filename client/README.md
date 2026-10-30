@@ -92,6 +92,7 @@ client/
 │   ├── common/utils.ts            # Shared utilities (dayjs setup, formatCompactTimeString, ...)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # Chat input box component (i18n-aware)
+│   │   ├── chat/ConversationFindBar.vue# In-conversation find bar (Ctrl+Shift+F): floating over the list, never in its flow
 │   │   ├── chat/DiffPreview.vue   # Inline colored unified diff for patch_file / write_file results (tool card)
 │   │   └── ImagePreviewOverlay.vue# Full-screen image preview overlay (Teleport to body)
 │   ├── composables/               # Vue 3 composable logic (+ unit tests under __tests__/)

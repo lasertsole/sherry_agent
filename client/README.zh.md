@@ -93,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共享工具函数（dayjs 配置、formatCompactTimeString、……）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 聊天输入框组件（支持 i18n）
+│   │   ├── chat/ConversationFindBar.vue# 会话内搜索栏（Ctrl+Shift+F）：浮在列表上方，不占文档流
 │   │   ├── chat/DiffPreview.vue   # 工具卡片内 patch_file / write_file 结果的彩色内联 diff
 │   │   └── ImagePreviewOverlay.vue# 全屏图片预览浮层（Teleport 到 body）
 │   ├── composables/               # Vue 3 组合式逻辑（单元测试位于 __tests__/）

@@ -6,6 +6,16 @@
        expanded panel is 320px against a ~280px column — and an unclipped overlay spills over the
        session list. Clipping at the column edge hides the overflow instead. -->
   <div class="relative flex flex-col flex-1 min-h-0 overflow-hidden">
+    <!-- In-conversation search (Ctrl+Shift+F): floats over the list, so opening
+         it never re-flows the virtual rows underneath. -->
+    <ConversationFindBar
+      :visible="find.visible.value"
+      :total="find.total.value"
+      :current-index="find.currentIndex.value"
+      @search="onFindSearch"
+      @next="onFindStep('next')"
+      @previous="onFindStep('previous')"
+      @close="closeFind" />
     <!-- [scrollbar-gutter:stable]: always reserves a gutter for the (classic) scrollbar,
          preventing content from shifting horizontally when switching between the no-scrollbar and
          scrollbar states (e.g. empty state "start a new conversation" → messages accumulate) -->
@@ -172,7 +182,10 @@
                       ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
                       : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
                     {
-                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))
+                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index)),
+                      // Jump target ring: the find bar (and the toolbar's
+                      // running-command jump) mark the row they landed on.
+                      'ring-2 ring-theme-main/50 transition-shadow': focusedMessageId === message.id
                     }
                   ]">
                   <ChatCopyButton
@@ -366,6 +379,8 @@ import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
 import ChatTurnHistoryStatus from '@/components/chat/ChatTurnHistoryStatus.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
 import ProgressFloat from './ProgressFloat.vue';
+import ConversationFindBar from '@/components/chat/ConversationFindBar.vue';
+import type { FindMatch } from '~/composables/use-conversation-find';
 
 const { t } = useI18n();
 
@@ -389,6 +404,14 @@ interface Props {
   canEdit?: boolean;
   /** Whether an AI answer may be branched from (false for a branch child). */
   canFork?: boolean;
+  /**
+   * Page one window of older history in. The find bar uses it when a match sits
+   * in a row the memory cap already released: the row can only come back by
+   * pulling the page it belongs to.
+   */
+  loadOlderHistory?: () => Promise<void>;
+  /** Allow paging again after the head was released (the page's pagination latch). */
+  resetExhausted?: () => void;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -400,7 +423,9 @@ const props = withDefaults(defineProps<Props>(), {
   selectionEnabled: true,
   allowSideChat: true,
   canEdit: true,
-  canFork: true
+  canFork: true,
+  loadOlderHistory: undefined,
+  resetExhausted: undefined
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -767,21 +792,93 @@ let focusTimer: ReturnType<typeof setTimeout> | undefined;
  * ever passes an id of a row it just read from this session's message list.
  * @param messageId Client message id of the TOOL row.
  */
-const scrollToMessage = (messageId: number): void => {
+const revealMessage = (messageId: number): boolean => {
   const index = rows.value.findIndex(row => row.group.some(message => message.id === messageId));
-  if (index < 0) return;
+  if (index < 0) return false;
+  // The row may be hidden twice over: a tool card is collapsed by default, and
+  // a settled turn folds its whole work history behind the final answer.
   expandedToolCards.add(messageId);
+  const fold = groupFold(index);
+  if (fold.eligible) expandedTurnHistory.add(fold.key);
   scrollToRow(index);
   focusedMessageId.value = messageId;
   clearTimeout(focusTimer);
   focusTimer = setTimeout(() => {
     focusedMessageId.value = null;
   }, 2400);
+  return true;
 };
 
-onBeforeUnmount(() => clearTimeout(focusTimer));
+const scrollToMessage = (messageId: number): void => {
+  revealMessage(messageId);
+};
 
-defineExpose({ scrollToMessage });
+/** Find bar state over the loaded transcript (see `use-conversation-find`). */
+const find = useConversationFind(() => props.messages ?? []);
+let findDebounce: ReturnType<typeof setTimeout> | undefined;
+
+/** Debounce window for the scan (the array walk is O(N), typing is not). */
+const FIND_DEBOUNCE_MS = 300;
+
+/**
+ * Reveal one match, paging older history in when the row was already released.
+ *
+ * A match always comes from the loaded messages, but the memory cap can drop
+ * its row between the scan and the jump; that row then only comes back with the
+ * page it belongs to, so the retry is bounded to one page per jump.
+ * @param match The occurrence to bring under the ring.
+ * @param retried Whether one pagination attempt was already made.
+ */
+const jumpToMatch = async (match: FindMatch, retried = false): Promise<void> => {
+  if (revealMessage(match.messageId)) return;
+  if (retried || !props.loadOlderHistory) return;
+  const before = rows.value.length;
+  props.resetExhausted?.();
+  await props.loadOlderHistory();
+  if (rows.value.length === before) return;
+  await nextTick();
+  await jumpToMatch(match, true);
+};
+
+/**
+ * Search input (debounced): rescan, then reveal the first hit.
+ * @param query The query as typed (the composable trims it for matching).
+ */
+const onFindSearch = (query: string): void => {
+  clearTimeout(findDebounce);
+  findDebounce = setTimeout(() => {
+    find.search(query);
+    if (find.current.value) void jumpToMatch(find.current.value);
+  }, FIND_DEBOUNCE_MS);
+};
+
+/**
+ * Enter / Shift+Enter and the bar's arrows: step through the matches.
+ * @param direction Which way to step (wraps at both ends).
+ */
+const onFindStep = (direction: 'next' | 'previous'): void => {
+  if (direction === 'next') find.next();
+  else find.previous();
+  if (find.current.value) void jumpToMatch(find.current.value);
+};
+
+/** Open the bar (Ctrl+Shift+F). */
+const openFind = (): void => {
+  find.open();
+};
+
+/** Close the bar and drop the query. */
+const closeFind = (): void => {
+  clearTimeout(findDebounce);
+  find.close();
+};
+
+onBeforeUnmount(() => {
+  clearTimeout(focusTimer);
+  clearTimeout(findDebounce);
+});
+
+defineExpose({ scrollToMessage, openFind });
 </script>
 
 <style scoped>

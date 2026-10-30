@@ -11,6 +11,12 @@
     "delete": "삭제",
     "cancel": "취소"
   },
+  "chatFind": {
+    "placeholder": "대화에서 검색",
+    "previous": "이전 일치",
+    "next": "다음 일치",
+    "close": "검색 닫기"
+  },
   "chatInput": {
     "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
     "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",

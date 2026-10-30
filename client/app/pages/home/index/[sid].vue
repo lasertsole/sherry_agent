@@ -24,7 +24,9 @@
           @selection-side-chat="onSelectionSideChat"
           @edit-message="onEditMessage"
           @continue-generation="handleContinueGeneration"
-          @fork-turn="onForkTurn" />
+          @fork-turn="onForkTurn"
+          :load-older-history="loadOlderHistory"
+          :reset-exhausted="resetExhausted" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -522,7 +524,7 @@ const openTaskDetail = (runId?: string) => {
 };
 
 /** The chat list, so the toolbar's terminal entry can reveal a command's card. */
-const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void }>('chatBoxRef');
+const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void; openFind: () => void }>('chatBoxRef');
 
 /**
  * A row of the toolbar's terminal entry was picked: show where that work lives.
@@ -907,9 +909,29 @@ const onEditModeKeydown = (event: KeyboardEvent) => {
   if (!editingTurn.value || event.key !== 'Escape') return;
   cancelEditMessage();
 };
+/**
+ * Ctrl/Cmd+Shift+F opens the conversation's find bar.
+ *
+ * The PAGE owns the gesture, not ChatBox: every KeepAlive-cached session keeps
+ * a ChatBox mounted, so a per-instance listener would open a bar in sessions
+ * the reader cannot see. Here the active instance (`isActive`) answers alone.
+ * @param event
+ */
+const onFindKeydown = (event: KeyboardEvent): void => {
+  if (!(event.ctrlKey || event.metaKey) || !event.shiftKey) return;
+  if (event.key.toLowerCase() !== 'f') return;
+  if (!isActive.value || !mySid) return;
+  event.preventDefault();
+  chatBoxRef.value?.openFind();
+};
+
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onEditModeKeydown);
-  onUnmounted(() => window.removeEventListener('keydown', onEditModeKeydown));
+  window.addEventListener('keydown', onFindKeydown);
+  onUnmounted(() => {
+    window.removeEventListener('keydown', onEditModeKeydown);
+    window.removeEventListener('keydown', onFindKeydown);
+  });
 }
 
 const stream = useChatStream({

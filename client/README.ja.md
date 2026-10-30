@@ -93,6 +93,7 @@ client/
 │   ├── common/utils.ts            # 共有ユーティリティ（dayjs セットアップ、formatCompactTimeString、...）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # チャット入力ボックスコンポーネント（i18n 対応）
+│   │   ├── chat/ConversationFindBar.vue# 会話内検索バー（Ctrl+Shift+F）：一覧の上に浮かせ、レイアウトを動かさない
 │   │   ├── chat/DiffPreview.vue   # ツールカード内の patch_file / write_file 結果のカラーインライン diff
 │   │   └── ImagePreviewOverlay.vue# フルスクリーン画像プレビューオーバーレイ（body へ Teleport）
 │   ├── composables/               # Vue 3 コンポーザブルロジック（ユニットテストは __tests__/ 配下）

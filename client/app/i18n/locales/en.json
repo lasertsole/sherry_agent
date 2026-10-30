@@ -11,6 +11,12 @@
     "delete": "Delete",
     "cancel": "Cancel"
   },
+  "chatFind": {
+    "placeholder": "Search in conversation",
+    "previous": "Previous match",
+    "next": "Next match",
+    "close": "Close search"
+  },
   "chatInput": {
     "maxImages": "You can upload at most {count} images",
     "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",

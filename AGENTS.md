@@ -560,6 +560,16 @@ marks branched rows from ONE bulk read (`GET /sessions/side_chat/links`) and the
 branch badge navigates back to the parent; a branch child's visible history
 starts empty exactly like a side chat's (the inherited transcript is model-only).
 
+## In-Conversation Search (`use-conversation-find.ts` / `ConversationFindBar.vue`)
+
+Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED transcript (`chatMessages`), never the DOM: a turn's tool cards and intermediate text sit folded behind the final answer, and virtual rows outside the window are not mounted at all, so the in-memory list is the only complete view of what the reader can reach. Matching is plain case-insensitive substring per message with one entry per OCCURRENCE (a message may hold several), stepping wraps at both ends, and a query with no hits reads `0/0` with a red box and disabled arrows — an empty query cannot throw. The scan is debounced 300 ms in ChatBox, not in the bar: the bar's input must stay instant while the walk is O(N) over up to `MAX_LOADED_ROWS` (400) rows.
+
+- The bar (`components/chat/ConversationFindBar.vue`) is a controlled view: query, matches and index belong to `useConversationFind`; the bar owns only its draft string and focuses/selects itself on open. It is absolutely positioned over the list so opening it never re-flows a single virtual row.
+- The PAGE owns the gesture (`index/[sid].vue::onFindKeydown`, window listener): every KeepAlive-cached session keeps a ChatBox mounted, so a per-instance listener would open a bar in a session the reader cannot see — the handler answers only while the page's `isActive` is true. ChatBox exposes `openFind()`; Enter/Shift+Enter and the arrows step, Esc closes and forgets the query.
+- A jump (`revealMessage`) does what `scrollToMessage` already did (scroll the row in, ring it for 2.4 s) plus two things it needed: it expands the target turn's FOLD (`expandedTurnHistory.add(fold.key)` — otherwise a match in folded history would be ringed on a row the fold hides) and it expands the target tool card. The ring is drawn on the message BUBBLE as well (`ring-2 ring-theme-main/50`): `focusedMessageId` used to have a visible effect on tool cards only, so a text match in an answer would have landed with no marker at all.
+- A match in a row the memory cap already RELEASED is not in `chatMessages` any more: `jumpToMatch` therefore asks the page for `resetExhausted()` + `loadOlderHistory()` once and retries; no row growth ⇒ give up (the occurrence no longer exists anywhere the reader can scroll to).
+- Labels are the central `chatFind.*` keys (four languages). Deliberately NOT done: regex, cross-session search, searching tool args/results, and the plan's advanced full-text `<mark>` highlighting (markdown output makes DOM text-node mapping non-trivial) — the MVP marks the current match by the ring alone.
+
 ## Voice Input (`use-voice-input.ts` / `server/service/audio_transcribe_service.py`)
 
 The composer's mic button (`inputBox.vue`, in the `sendActions` cluster) records,
