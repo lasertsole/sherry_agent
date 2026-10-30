@@ -297,6 +297,92 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(sidebarApi.activateTab).not.toHaveBeenCalled();
   });
 
+  it('gives every tab the SAME width band and fades long titles instead of truncating', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+
+    const tabs = wrapper.findAll('button.group');
+    expect(tabs.length).toBe(2);
+    for (const tab of tabs) {
+      const classes = tab.classes().join(' ');
+      // Equal-width model: a 156px basis with a 60px floor, and no `shrink-0`
+      // (which is what used to make a tab keep its width and scroll instead).
+      expect(classes).toContain('flex-[1_1_9.75rem]');
+      expect(classes).toContain('min-w-15');
+      expect(classes).toContain('max-w-39');
+      expect(classes).not.toContain('shrink-0');
+      // The title is the flexible item and fades at its right edge.
+      const title = tab.find('span');
+      expect(title.classes()).toContain('min-w-0');
+      expect(title.attributes('style')).toContain('mask-image');
+      expect(title.classes().join(' ')).not.toContain('truncate');
+    }
+  });
+
+  it('shows the close × for the active tab and only on hover for the others', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+
+    const activeX = wrapper.get('[data-test="tab-close-logs"]');
+    const idleX = wrapper.get('[data-test="tab-close-stats"]');
+    expect(activeX.classes()).toContain('opacity-100');
+    expect(idleX.classes()).toContain('opacity-0');
+    expect(idleX.classes()).toContain('group-hover:opacity-60');
+  });
+
+  it('measures the strip overflow from its floor width and shows the fade masks', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' },
+      { id: 'cron-1', kind: 'cron', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+    const viewport = wrapper.get('[data-test="tabs-viewport"]');
+
+    // happy-dom reports a zero-width scroller: give it a real box, then let the
+    // resize listener re-measure (the composable coalesces into a frame).
+    Object.defineProperty(viewport.element, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(viewport.element, 'scrollWidth', { value: 320, configurable: true });
+    Object.defineProperty(viewport.element, 'scrollLeft', { value: 0, configurable: true, writable: true });
+    window.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+
+    // 3 tabs at their 60px floor + 2 gaps = 188 <= 200: no overflow.
+    expect(viewport.attributes('data-overflowing')).toBe('false');
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(false);
+
+    Object.defineProperty(viewport.element, 'clientWidth', { value: 120, configurable: true });
+    window.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+
+    // 188 > 120: the strip scrolls, and the right side is cut off.
+    expect(viewport.attributes('data-overflowing')).toBe('true');
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tabs-mask-left"]').exists()).toBe(false);
+
+    // Scrolled to the end: the cut-off side flips.
+    (viewport.element as HTMLElement).scrollLeft = 200;
+    viewport.element.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+    expect(wrapper.find('[data-test="tabs-mask-left"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(false);
+  });
+
   it('maximizes to the whole viewport from the button LEFT of the group pills', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 't1', kind: 'stats', scope: 'global' }];

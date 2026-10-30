@@ -1602,6 +1602,20 @@ The shell is one flex row — left session column, conversation, right sidebar �
 - **Writability**: the composable writes the two `collapsed` refs, so they must come from `storeToRefs`; a `computed(() => store.collapsed)` throws on write (Vue only warns) and the collapse silently never happens.
 - **Not Splitter-based (deliberate).** The conversation and the right column are two flex items, not a PrimeVue `Splitter` pair: when the conversation reaches its 320px floor the RIGHT column starts shrinking, instead of both shrinking proportionally from the start. The layout guarantees minimums, not a ratio. Switching to a fractional split was considered and dropped — the browser/terminal/settings panels host their own resizers, and a second split model on top of them made every nested drag ambiguous.
 - **Collapsed is not a width**: the left column's collapsed state stays `w-0` (the parent owns the flag) and expanding returns to the persisted width. The right column keeps its `maximized` mode (`fixed inset-0`), which the `shrink min-w-[280px]` classes must not touch — the class list keeps them in the expanded branch only.
+- **The right sidebar's tab strip is an equal-width, proportional-shrink row**
+  (`RightSidebar.vue` + `composables/use-tabs-overflow.ts`): every tab is
+  `flex-[1_1_9.75rem] min-w-15 max-w-39` — a 156px basis and ceiling, a 60px
+  floor — so a tab's width never follows its title (白板 and 浏览器 2 are the
+  same width) and a crowded strip narrows ALL tabs equally before anything
+  scrolls. Only when N tabs at their 60px floor no longer fit
+  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with the
+  scrollbar hidden and a gradient fade mask (`tabs-mask-left/right`, anchored
+  to the wrapper so they do not scroll with the content) marking the cut-off
+  side. The title fades at its right edge with a `mask-image` instead of an
+  ellipsis (the span is the tab's flexible item, so the close button's width is
+  already excluded — no per-state offset), and the close X is always in the
+  layout but only fully opaque on the ACTIVE tab (idle tabs show it on hover),
+  so hovering never shifts the title.
 
 The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the 菜单 button. The interface language lives in the 菜单's FIRST entry, 系统配置, as its LAST tab (国际化): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 

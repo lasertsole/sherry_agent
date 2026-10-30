@@ -28,6 +28,18 @@
   --z-index-3: 3;
 }
 
+/* A scroll container with no visible scrollbar (the right sidebar's tab strip:
+   the fade masks are the affordance instead). Tailwind v4 has no built-in
+   utility for this, so it is a real `@utility` — usable as `scrollbar-hide`. */
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /* ==========================================================================
    Global reset / base layer
    ==========================================================================
