@@ -1,10 +1,11 @@
 """Background terminal tasks: the spawn contract, the registry, the two tools.
 
 ``terminal(run_in_background=True)`` returns immediately with a task id while
-the child keeps running; its output goes to a RETAINED file (readable while it
-runs and after it exits), a watcher records the exit and notifies, and the two
-query tools let the agent ask about it later. Everything is fail-open: a lost
-notification must never lose the task.
+the child keeps running; its output goes to its own log file (readable while it
+runs), a watcher records the exit, frees the command's disk (the log is deleted
+and only a bounded tail is kept in memory) and notifies; the two query tools let
+the agent ask about it later — including reading that tail. Everything is
+fail-open: a lost notification must never lose the task.
 """
 
 from __future__ import annotations
@@ -115,6 +116,31 @@ class TestRegistry:
 
         assert [t.task_id for t in registry.list_session(SESSION)] == ["bg-3", "bg-2", "bg-1"]
 
+    def test_finished_records_are_bounded_per_session(self, sessions_root: Path):
+        from config.features import TERMINAL_BG
+
+        registry = BackgroundTaskRegistry()
+        cap = int(TERMINAL_BG["max_tasks_per_session"])
+        for index in range(cap + 3):
+            registry.register(
+                BackgroundTask(
+                    task_id=f"bg-old-{index}",
+                    session_id=SESSION,
+                    pid=index,
+                    command=f"cmd {index}",
+                    output_path=None,
+                    started_at=float(index),
+                    status="completed",
+                    exit_code=0,
+                )
+            )
+
+        finished = [t for t in registry.list_session(SESSION) if t.status != "running"]
+        assert len(finished) == cap
+        # Newest survive: the oldest of the over-cap batch is gone.
+        assert registry.get("bg-old-0") is None
+        assert registry.get(f"bg-old-{cap + 2}") is not None
+
     def test_kill_session_tasks_signals_and_marks(self, sessions_root: Path, monkeypatch):
         registry = BackgroundTaskRegistry()
         killed: list[tuple[int, int | None]] = []
@@ -212,6 +238,40 @@ class TestWatcher:
         assert turned and "exited with code 0" in turned[0]
 
     @pytest.mark.asyncio
+    async def test_the_exit_releases_the_log_and_keeps_a_bounded_tail(self, sessions_root: Path):
+        """A finished command must not keep its log on disk (one file per run)."""
+        registry = BackgroundTaskRegistry()
+        path = open_background_output(SESSION, "bg-rel")
+        assert path is not None
+        path.write_text("building...\nOK\n", encoding="utf-8")
+        task = BackgroundTask(
+            task_id="bg-rel",
+            session_id=SESSION,
+            pid=1,
+            command="make",
+            output_path=path,
+            started_at=time.monotonic(),
+        )
+        registry.register(task)
+
+        class _Proc:
+            returncode = 0
+
+            async def wait(self) -> int:
+                return 0
+
+        registry.start_watcher("bg-rel", _Proc(), SESSION)
+        for _ in range(50):
+            if task.status != "running":
+                break
+            await asyncio.sleep(0.02)
+
+        assert task.status == "completed"
+        assert not path.exists(), "the log file is deleted at exit"
+        assert task.output_path is None
+        assert task.output_tail == "building...\nOK\n"
+
+    @pytest.mark.asyncio
     async def test_a_failing_exit_is_reported_as_failed(self, sessions_root: Path):
         registry = BackgroundTaskRegistry()
         task = BackgroundTask(
@@ -277,7 +337,7 @@ class TestQueryTools:
             {"task_id": "bg-other", "session_id": SESSION}
         )
 
-    def test_the_output_tool_reads_the_retained_file(self, sessions_root: Path):
+    def test_the_output_tool_reads_the_live_file_while_running(self, sessions_root: Path):
         path = open_background_output(SESSION, "bg-read")
         assert path is not None
         path.write_text("compiling...\ndone\n", encoding="utf-8")
@@ -289,12 +349,29 @@ class TestQueryTools:
                 command="build",
                 output_path=path,
                 started_at=time.monotonic(),
-                status="completed",
-                exit_code=0,
             )
         )
 
         assert terminal_bg_output.invoke({"task_id": "bg-read", "session_id": SESSION}) == (
+            "compiling...\ndone\n"
+        )
+
+    def test_the_output_tool_reads_the_retained_tail_after_release(self, sessions_root: Path):
+        background_registry.register(
+            BackgroundTask(
+                task_id="bg-tail",
+                session_id=SESSION,
+                pid=1,
+                command="build",
+                output_path=None,
+                started_at=time.monotonic(),
+                status="completed",
+                exit_code=0,
+                output_tail="compiling...\ndone\n",
+            )
+        )
+
+        assert terminal_bg_output.invoke({"task_id": "bg-tail", "session_id": SESSION}) == (
             "compiling...\ndone\n"
         )
 
@@ -336,9 +413,11 @@ class TestSpawn:
         assert "Background task started." in out and task_id.startswith("bg-")
         assert elapsed < 3.0, "the tool must not wait for the command"
         task = background_registry.get(task_id)
-        assert task is not None and task.output_path is not None
+        assert task is not None
         assert task.status == "completed" and task.exit_code == 0
-        assert "bg-done" in task.output_path.read_text(encoding="utf-8")
+        # The log is released at exit; the bounded tail outlives it.
+        assert task.output_path is None
+        assert "bg-done" in (task.output_tail or "")
 
     @pytest.mark.timeout(30)
     def test_the_session_cap_refuses_a_further_spawn(self, sessions_root: Path):

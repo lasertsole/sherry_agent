@@ -128,7 +128,7 @@ client/
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
 │   │       └── components/        # 61 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media；选中文字右键可引用）
-│   │           ├── BackgroundCommandsSection.vue#     # 终端入口弹框的第三段：agent 的后台命令（terminal(run_in_background=True)）——状态、pid，以及不影响对话的单命令「终止」
+│   │           ├── BackgroundCommandsSection.vue#     # 终端入口弹框的第三段：仍在运行的 agent 后台命令（terminal(run_in_background=True)）——pid，以及不影响对话的单命令「终止」（已结束的命令不再列出）
 │   │           ├── SideChatPanel.vue          # 辅助会话标签页：右键引用新建普通子会话，独立消息流 + HITL 审批
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow 扁平步骤列表，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）

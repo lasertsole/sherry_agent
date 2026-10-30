@@ -611,10 +611,13 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
     ) -> str:
         """Spawn without waiting: register the task, return its id, notify on exit.
 
-        The child's stdout goes to a RETAINED file (never a temp file, never a
-        pipe) so the output can be read while it runs and after it exits; the
-        watcher in ``terminal_bg_registry`` owns the exit notification. The
-        session's live-task count is capped by ``TERMINAL_BG``.
+        The child's stdout goes to its own file under the session's
+        ``evicted/`` directory (never a temp file, never a pipe) so the output
+        can be read while it runs; the watcher in ``terminal_bg_registry`` owns
+        the exit notification AND the cleanup that follows it — at exit the log
+        is reduced to a bounded in-memory tail and the file is deleted, so a
+        finished command costs no disk. The session's live-task count is capped
+        by ``TERMINAL_BG``.
         """
         import time as _time
         import uuid as _uuid

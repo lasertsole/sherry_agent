@@ -90,7 +90,6 @@
            session never backgrounded a command. -->
       <BackgroundCommandsSection
         :tasks="backgroundTasks"
-        :running-count="backgroundRunning"
         :killing="backgroundKilling"
         :kill-refusal="backgroundKillRefusal"
         :kill="backgroundKill" />

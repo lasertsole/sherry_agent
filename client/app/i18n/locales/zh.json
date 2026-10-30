@@ -741,11 +741,8 @@
   },
   "backgroundTasks": {
     "title": "后台命令",
-    "runningCount": "运行中 {running} / 共 {total}",
+    "runningOnly": "运行中 {count}",
     "statusRunning": "运行中",
-    "statusCompleted": "已完成",
-    "statusFailed": "失败",
-    "statusKilled": "已终止",
     "statusStopping": "终止中…",
     "kill": "终止该命令（不影响对话）",
     "killRefused": "已结束，无法终止"

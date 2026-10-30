@@ -741,11 +741,8 @@
   },
   "backgroundTasks": {
     "title": "Background commands",
-    "runningCount": "{running} running / {total} total",
+    "runningOnly": "{count} running",
     "statusRunning": "Running",
-    "statusCompleted": "Done",
-    "statusFailed": "Failed",
-    "statusKilled": "Stopped",
     "statusStopping": "Stopping…",
     "kill": "Stop this command (the conversation keeps running)",
     "killRefused": "Already finished"
