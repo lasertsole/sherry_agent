@@ -315,6 +315,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # GitHub caps a single release asset at 2 GiB and the optional CUDA pack
+      # is larger than that; it stays downloadable from the Actions artifact.
+      - name: Drop the oversized CUDA pack before publishing
+        run: rm -f artifacts/sherry-cuda-pack-linux-x86_64.tar.gz
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
