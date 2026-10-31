@@ -298,15 +298,16 @@ describe('PersonaPanel role tab', () => {
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
   });
 
-  it('lists the four built-ins and loads 编程助手 without any role', async () => {
+  it('lists the five built-ins and loads 编程助手 without any role', async () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    // The whole spectrum, top to bottom: Pure / Coding Assistant (the default) / Companion / Full.
+    // The whole spectrum, top to bottom: Pure / Coding Assistant / Companion / Daily (the default) / Full.
     expect(builtinRows.map(row => row.attributes('data-test'))).toEqual([
       'builtin-pure',
       'builtin-coding',
       'builtin-companion',
+      'builtin-daily',
       'builtin-sherry'
     ]);
     // Non-deletable: the virtual rows never carry a delete button.

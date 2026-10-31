@@ -375,6 +375,23 @@ def _has_active_boulder(session_id: str | None = None) -> bool:
 # ── Middleware ─────────────────────────────────────────────────────────────
 
 
+#: Tools the task-intent steering text actually tells the model to use. A
+#: session missing any of them (Daily / a custom partial config) must not be
+#: steered into a plan it cannot execute; a set that merely intersects this
+#: list is not enough.
+_TASK_STEERING_TOOLS: frozenset[str] = frozenset(
+    {"todowrite", "taskflow_flow", "taskflow_step", "sessions_spawn"}
+)
+
+
+def _task_steering_enabled(session_id: str) -> bool:
+    """Whether the session can follow the task-intent steering prompt."""
+    from agent.middlewares.tool_selection.core import enabled_tool_names
+
+    enabled = enabled_tool_names(session_id)
+    return enabled is None or _TASK_STEERING_TOOLS <= enabled
+
+
 class TaskIntentMiddleware(AgentMiddleware):
     """``before_model``: arming + plan-active steering.
 
@@ -428,6 +445,12 @@ class TaskIntentMiddleware(AgentMiddleware):
             if _has_active_boulder(session_id):
                 logger.info("TaskIntentMiddleware: plan-active reminder for session {}", session_id)
                 return {"messages": [_task_intent_message(_PLAN_ACTIVE_REMINDER.strip())]}
+
+            # The steering below names todowrite / taskflow / sessions_spawn; a
+            # preset with those groups off must not receive it. The plan-active
+            # branch above is independent (plan mode), so it stays.
+            if not _task_steering_enabled(session_id):
+                return None
 
             # ── First arming / short reminder ──────────────────────────────
             is_armed = bool(session_id) and session_id in _armed_sessions

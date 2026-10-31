@@ -1464,8 +1464,9 @@ false` = under `skills/plugins/`); each tool entry also carries the
   snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
   the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
-  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
-  情感陪伴 pin `nudge: false`.
+  nudge back. Of the built-ins only 全量 and 日常 leave it alone (absent = on): 纯净 /
+  编程助手 / 情感陪伴 pin `nudge: false`. 日常 also leaves every optional middleware
+  at its default (its agent block writes only `tools` / `skills`).
 - **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
   — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
   `agent_switch._RENAMED_MIDDLEWARES` — `TaskIntentMiddleware`,
@@ -1498,7 +1499,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
 - **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
   内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag), 代理模型 = 主代理 /
   子代理. The pills are a VIEW filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
-- **Four built-in presets**, in display order — the whole spectrum
+- **Five built-in presets**, in display order — the whole spectrum
   (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
   persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
   off), 编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool
@@ -1510,13 +1511,28 @@ false` = under `skills/plugins/`); each tool entry also carries the
   heading/label filter pinned by a test that reads the four shipped templates — and the
   couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
   `COMPANION_DROPPED_RELATIONSHIP_MARKERS`, the same per-language-template pin, so a companion
-  session keeps the persona's warmth without the shipped templates' romantic pairing) and 全量 (the
-  DEFAULT — the same full persona with everything on and every skill in the index).
+  session keeps the persona's warmth without the shipped templates' romantic pairing), 日常 (the
+  DEFAULT — the full persona with the 任务与计划 / 子代理 groups off, `ORCHESTRATION_SKILLS` —
+  taskflow / todolist / ulw-execute — removed while bugfix-contract / code-wiki stay, the
+  task-orchestration sections stripped from 运行守则, SOUL untouched, and **every optional
+  middleware + the Summarization nudge left at their defaults**) and 全量 (the same full persona
+  with everything on and every skill in the index).
   Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
   (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
   throws instead of silently applying every tool. The `sherry` id names 全量 (the label
-  changed; sessions already bound to it keep the stored name), and its shipped character is
-  still 橘雪莉.
+  changed; sessions already bound to it keep the stored name), the `daily` id names 日常 (the
+  default badge moved to it), and their shipped character is still 橘雪莉.
+- **Orchestration gating**: a session whose tool face lacks the tasks / subagents groups gets no
+  task-intent steering (`TaskIntentMiddleware` checks the exact
+  `{todowrite, taskflow_flow, taskflow_step, sessions_spawn}` set via `enabled_tool_names`), no
+  todo / taskflow / knowledge reminders (the three builders are wrapped with `_tasks_gated` in
+  `reminder_catalog/sources.py`; the project-AGENTS, project-directory, continuity and boulder
+  sources stay), and no plan continuation (`PlanContinuationEnforcer` checks
+  `{todowrite, taskflow_flow, taskflow_step}` and returns before the budget accounting). The
+  boulder plan-active reminder is not gated (it belongs to plan mode). `enabled_tool_names` is
+  mem-only and `None` (= all tools) when the session has no stored config, so the turn start
+  must have primed `AGENT_CONFIG` (the tool-selection path already does). 日常 is the first
+  preset that exercises this.
 
 ## User Login (`server/service/auth_service.py`)
 

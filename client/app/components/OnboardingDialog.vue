@@ -257,6 +257,7 @@ const finish = async (): Promise<void> => {
         "pure": "无预设配置，最小化工具面",
         "coding": "代码任务专用，关闭记忆",
         "companion": "角色扮演，关闭任务编排",
+        "daily": "任务编排与子代理默认关闭，可在会话中开启",
         "sherry": "全部能力开启"
       },
       "guideTitle": "核心操作",
@@ -283,6 +284,7 @@ const finish = async (): Promise<void> => {
         "pure": "No preset configuration, minimal tool surface",
         "coding": "For code work; memory off",
         "companion": "Role-play; task orchestration off",
+        "daily": "Task orchestration and subagents are off by default; enable them in a session",
         "sherry": "Everything on"
       },
       "guideTitle": "The essentials",
@@ -309,6 +311,7 @@ const finish = async (): Promise<void> => {
         "pure": "プリセット設定なし、最小限のツール",
         "coding": "コード作業向け、記憶はオフ",
         "companion": "ロールプレイ、タスク編成はオフ",
+        "daily": "タスク編成とサブエージェントは既定でオフです。セッションで有効にできます",
         "sherry": "すべての機能を有効"
       },
       "guideTitle": "基本操作",
@@ -335,6 +338,7 @@ const finish = async (): Promise<void> => {
         "pure": "프리셋 없음, 최소 도구 구성",
         "coding": "코드 작업용, 기억 기능 끔",
         "companion": "역할극, 작업 오케스트레이션 끔",
+        "daily": "작업 오케스트레이션과 하위 에이전트는 기본적으로 꺼져 있으며 세션에서 켤 수 있습니다",
         "sherry": "모든 기능 켜짐"
       },
       "guideTitle": "핵심 조작",
