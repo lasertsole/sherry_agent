@@ -49,7 +49,8 @@
     "dragHint": "Drag to move",
     "restore": "Restore",
     "expand": "Expand conversation",
-    "resize": "Drag to resize"
+    "resize": "Drag to resize",
+    "collapse": "Collapse to input"
   },
   "chatInput": {
     "maxImages": "You can upload at most {count} images",

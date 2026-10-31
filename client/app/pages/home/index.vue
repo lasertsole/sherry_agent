@@ -72,6 +72,15 @@
         <span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('chatFloat.title') }}</span>
         <span class="flex-1" />
         <Button
+          v-if="composerDockHeight > 0"
+          size="small"
+          text
+          icon="pi pi-chevron-down"
+          :label="t('chatFloat.collapse')"
+          data-test="chat-float-collapse"
+          @pointerdown.stop
+          @click="collapseChatFloat" />
+        <Button
           size="small"
           text
           :label="t('chatFloat.restore')"
@@ -79,20 +88,21 @@
           @pointerdown.stop
           @click="dockChatFloat" />
       </div>
-      <!-- Input-only bar: no header/toolbar, just the composer. The expand
-           control appears on hover/focus so the bar stays clean at rest. -->
+      <!-- Input-only bar: no header/toolbar, just the composer. A visible pill
+           just above the bar is the one-click way back to the normal window. -->
       <button
         v-if="chatFloat.floating && collapsedView"
         type="button"
-        class="absolute -top-6 right-2 z-20 flex h-6 w-6 items-center justify-center rounded-md bg-white/85 text-gray-500 opacity-80 shadow-sm transition-opacity hover:opacity-100 dark:bg-[#181820]/85 dark:text-gray-400"
+        class="absolute -top-8 right-3 z-20 flex h-7 items-center gap-1 rounded-md border border-solid border-gray-light bg-white px-2 text-xs text-gray-600 shadow-sm transition-colors hover:text-theme-main dark:border-gray-dark dark:bg-[#181820] dark:text-gray-300"
         data-test="chat-float-expand"
         :title="t('chatFloat.expand')"
         :aria-label="t('chatFloat.expand')"
         @pointerdown.stop
         @click="expandChatFloat">
         <i
-          class="pi pi-chevron-up text-xs"
+          class="pi pi-chevron-up text-[10px]"
           aria-hidden="true" />
+        <span>{{ t('chatFloat.expand') }}</span>
       </button>
       <!-- Resize edges: left/right adjust the width, bottom sets the height and
            snaps into the input-only bar when dragged to the lower bound. Thin
@@ -875,6 +885,20 @@ const finishFloatResize = (event: PointerEvent, commit: boolean): void => {
 
 const endFloatResize = (event: PointerEvent): void => finishFloatResize(event, true);
 const cancelFloatResize = (event: PointerEvent): void => finishFloatResize(event, false);
+
+/** Collapse the normal window into the input-only bar (one click). */
+const collapseChatFloat = (): void => {
+  if (!chatFloat.floating || collapsedView.value || composerDockHeight.value <= 0) return;
+  // Same geometry as a drag-collapse: keep the composer's bottom in place.
+  const width = floatSize.value.width;
+  const bottom = floatPosition.value.top + floatSize.value.height;
+  chatFloat.setCollapsed(true);
+  resizePosition.value = clampFloatingPosition(
+    { left: floatPosition.value.left, top: bottom - collapsedHeight.value },
+    floatSlot.value,
+    { width, height: collapsedHeight.value }
+  );
+};
 
 /** Leave the input-only bar, restoring the stored/default height. */
 const expandChatFloat = (): void => {

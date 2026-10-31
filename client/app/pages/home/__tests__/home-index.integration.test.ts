@@ -687,6 +687,29 @@ describe('home/index.vue — floating conversation column', () => {
   /** Wait one animation frame (the composer-dock bind is nextTick + rAF). */
   const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+  it('collapses from the header button and expands from the pill', async () => {
+    const wrapper = mountHome();
+    appendComposerDock(wrapper);
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    await nextTick();
+    await nextFrame();
+    await nextTick();
+
+    // One click on the normal window's top button drops to the input-only bar.
+    await wrapper.get('[data-test="chat-float-collapse"]').trigger('click');
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(true);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain('height: 160px');
+
+    // The pill just above the bar is the way back.
+    await wrapper.get('[data-test="chat-float-expand"]').trigger('click');
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(false);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+  });
+
   it('collapses into the input-only bar at the lower bound and expands again', async () => {
     const wrapper = mountHome();
     appendComposerDock(wrapper);
