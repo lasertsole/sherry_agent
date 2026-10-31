@@ -47,7 +47,9 @@
   "chatFloat": {
     "title": "会話",
     "dragHint": "ドラッグして移動",
-    "restore": "元に戻す"
+    "restore": "元に戻す",
+    "expand": "会話を展開",
+    "resize": "ドラッグしてサイズ変更"
   },
   "chatInput": {
     "maxImages": "最大 {count} 枚の画像をアップロードできます",

@@ -47,7 +47,9 @@
   "chatFloat": {
     "title": "对话",
     "dragHint": "拖动以移动",
-    "restore": "恢复原样"
+    "restore": "恢复原样",
+    "expand": "展开对话",
+    "resize": "拖动调整大小"
   },
   "chatInput": {
     "maxImages": "最多只能上传 {count} 张图片",

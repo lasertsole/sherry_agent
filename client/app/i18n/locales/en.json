@@ -47,7 +47,9 @@
   "chatFloat": {
     "title": "Conversation",
     "dragHint": "Drag to move",
-    "restore": "Restore"
+    "restore": "Restore",
+    "expand": "Expand conversation",
+    "resize": "Drag to resize"
   },
   "chatInput": {
     "maxImages": "You can upload at most {count} images",

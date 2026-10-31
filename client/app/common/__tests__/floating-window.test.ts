@@ -4,7 +4,11 @@ import {
   FLOATING_ANCHORS,
   FLOATING_DRAG_CLICK_THRESHOLD_PX,
   FLOATING_MARGIN_PX,
+  FLOATING_RESIZE_HEIGHT_MIN_PX,
+  FLOATING_RESIZE_WIDTH_MAX_PX,
+  FLOATING_RESIZE_WIDTH_MIN_PX,
   FLOATING_WIDTH_MAX_PX,
+  clampCollapsedHeight,
   clampFloatingPosition,
   distributeSideExtra,
   isFloatingAvailable,
@@ -40,6 +44,35 @@ describe('resolveFloatingSize', () => {
 
   it('never returns a negative box for a zero slot', () => {
     expect(resolveFloatingSize({ left: 0, top: 0, width: 0, height: 0 })).toEqual({ width: 0, height: 0 });
+  });
+
+  it('adopts a user-resized size inside the wider drag band', () => {
+    expect(resolveFloatingSize({ left: 0, top: 0, width: 1440, height: 1000 }, { width: 900, height: 700 })).toEqual({
+      width: 900,
+      height: 700
+    });
+  });
+
+  it('clamps a user-resized size to the drag bounds and the slot', () => {
+    expect(resolveFloatingSize(SLOT, { width: 100, height: 100 })).toEqual({
+      width: FLOATING_RESIZE_WIDTH_MIN_PX,
+      height: FLOATING_RESIZE_HEIGHT_MIN_PX
+    });
+    expect(resolveFloatingSize(SLOT, { width: 5000, height: 5000 })).toEqual({
+      width: FLOATING_RESIZE_WIDTH_MAX_PX,
+      height: SLOT.height - FLOATING_MARGIN_PX * 2
+    });
+  });
+});
+
+describe('clampCollapsedHeight', () => {
+  it('uses the measured composer height as the input-only bar', () => {
+    expect(clampCollapsedHeight(160, SLOT)).toBe(160);
+  });
+
+  it('caps the bar at the slot and never goes negative', () => {
+    expect(clampCollapsedHeight(2000, SLOT)).toBe(688);
+    expect(clampCollapsedHeight(-10, SLOT)).toBe(0);
   });
 });
 

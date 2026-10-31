@@ -87,22 +87,96 @@ export const FLOATING_DRAG_CLICK_THRESHOLD_PX = 4;
 /** Below this viewport width the float is not offered (it would cover the shell). */
 export const FLOATING_MIN_VIEWPORT_WIDTH_PX = 640;
 
+/** Narrowest the user may shrink the window to by dragging. */
+export const FLOATING_RESIZE_WIDTH_MIN_PX = 360;
+/** Widest the user may grow the window to by dragging. */
+export const FLOATING_RESIZE_WIDTH_MAX_PX = 1200;
+/** Shortest EXPANDED window; dragging below this snaps into the input-only bar. */
+export const FLOATING_RESIZE_HEIGHT_MIN_PX = 260;
+/** Tallest the user may grow the window to by dragging. */
+export const FLOATING_RESIZE_HEIGHT_MAX_PX = 900;
+
+/** A size the caller wants instead of the ratio default (0 / absent = "use the default"). */
+export interface FloatingPreferredSize {
+  readonly width?: number;
+  readonly height?: number;
+}
+
 /**
- * The float's size for a slot: 45% × 78% of the slot, kept inside the min/max
- * band and always 16px clear of the edges. A slot narrower than the band wins
- * over the minimum (a float wider than the window helps nobody).
+ * Adopt a user-chosen size inside the drag-resize band and the slot.
+ * @param size Requested size in px.
  * @param slot The shell's content rect.
- * @returns The float's width and height in px.
+ * @returns The size clamped to 360–1200 × 260–900 and 16px inside the slot.
  */
-export function resolveFloatingSize(slot: FloatingRect): FloatingSize {
-  const maxWidth = Math.max(0, Math.min(FLOATING_WIDTH_MAX_PX, slot.width - FLOATING_MARGIN_PX * 2));
-  const maxHeight = Math.max(0, Math.min(FLOATING_HEIGHT_MAX_PX, slot.height - FLOATING_MARGIN_PX * 2));
-  const width = Math.max(FLOATING_WIDTH_MIN_PX, Math.round(slot.width * FLOATING_WIDTH_RATIO));
-  const height = Math.max(FLOATING_HEIGHT_MIN_PX, Math.round(slot.height * FLOATING_HEIGHT_RATIO));
+export function clampFloatingSize(size: FloatingSize, slot: FloatingRect): FloatingSize {
+  const maxWidth = Math.max(0, Math.min(FLOATING_RESIZE_WIDTH_MAX_PX, slot.width - FLOATING_MARGIN_PX * 2));
+  const maxHeight = Math.max(0, Math.min(FLOATING_RESIZE_HEIGHT_MAX_PX, slot.height - FLOATING_MARGIN_PX * 2));
+  const width = Math.max(FLOATING_RESIZE_WIDTH_MIN_PX, Math.round(size.width));
+  const height = Math.max(FLOATING_RESIZE_HEIGHT_MIN_PX, Math.round(size.height));
   return {
     width: Math.min(width, maxWidth),
     height: Math.min(height, maxHeight)
   };
+}
+
+/**
+ * The input-only (collapsed) bar's height: the composer dock's measured height,
+ * capped by the slot. The dock is intrinsic, so no minimum is applied here.
+ * @param dockHeight Measured height of the composer dock in px.
+ * @param slot The shell's content rect.
+ * @returns The bar height.
+ */
+export function clampCollapsedHeight(dockHeight: number, slot: FloatingRect): number {
+  const maxHeight = Math.max(0, Math.min(FLOATING_RESIZE_HEIGHT_MAX_PX, slot.height - FLOATING_MARGIN_PX * 2));
+  return Math.max(0, Math.min(Math.max(0, Math.round(dockHeight)), maxHeight));
+}
+
+/**
+ * The float's size for a slot: 45% × 78% of the slot, kept inside the min/max
+ * band and always 16px clear of the edges. A slot narrower than the band wins
+ * over the minimum (a float wider than the window helps nobody). A preferred
+ * (user-resized) dimension replaces the ratio for that axis and uses the wider
+ * drag-resize band.
+ * @param slot The shell's content rect.
+ * @param preferred User-chosen size; 0 / absent axes keep the ratio default.
+ * @returns The float's width and height in px.
+ */
+export function resolveFloatingSize(slot: FloatingRect, preferred: FloatingPreferredSize = {}): FloatingSize {
+  const preferredWidth = preferred.width ?? 0;
+  const preferredHeight = preferred.height ?? 0;
+  if (preferredWidth > 0 || preferredHeight > 0) {
+    return clampFloatingSize(
+      {
+        width: preferredWidth > 0 ? preferredWidth : defaultFloatingWidth(slot),
+        height: preferredHeight > 0 ? preferredHeight : defaultFloatingHeight(slot)
+      },
+      slot
+    );
+  }
+  return {
+    width: defaultFloatingWidth(slot),
+    height: defaultFloatingHeight(slot)
+  };
+}
+
+/**
+ * The ratio default for the width axis (clamped to the small-window band).
+ * @param slot The shell's content rect.
+ * @returns Default width in px.
+ */
+function defaultFloatingWidth(slot: FloatingRect): number {
+  const maxWidth = Math.max(0, Math.min(FLOATING_WIDTH_MAX_PX, slot.width - FLOATING_MARGIN_PX * 2));
+  return Math.min(Math.max(FLOATING_WIDTH_MIN_PX, Math.round(slot.width * FLOATING_WIDTH_RATIO)), maxWidth);
+}
+
+/**
+ * The ratio default for the height axis (clamped to the small-window band).
+ * @param slot The shell's content rect.
+ * @returns Default height in px.
+ */
+function defaultFloatingHeight(slot: FloatingRect): number {
+  const maxHeight = Math.max(0, Math.min(FLOATING_HEIGHT_MAX_PX, slot.height - FLOATING_MARGIN_PX * 2));
+  return Math.min(Math.max(FLOATING_HEIGHT_MIN_PX, Math.round(slot.height * FLOATING_HEIGHT_RATIO)), maxHeight);
 }
 
 /**

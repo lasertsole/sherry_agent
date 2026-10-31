@@ -27,152 +27,159 @@
           @fork-turn="onForkTurn"
           :load-older-history="loadOlderHistory"
           :reset-exhausted="resetExhausted" />
-        <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
-        <template v-if="selectedImages.length > 0">
-          <div
-            class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+        <!-- Composer dock = EVERYTHING below the transcript: attachment previews,
+             the reconnect banner / HITL card / edit banner and the input box. The
+             floating conversation measures this block so dragging its lower bound
+             can collapse the window to exactly the input area. -->
+        <div
+          data-test="chat-composer-dock"
+          class="flex shrink-0 flex-col">
+          <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
+          <template v-if="selectedImages.length > 0">
             <div
-              v-for="(img, idx) in selectedImages"
-              :key="idx"
-              class="relative shrink-0 group">
-              <img
-                :src="`data:image/*;base64,${img.base64}`"
-                :alt="img.name"
-                class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
-                role="button"
-                tabindex="0"
-                :aria-label="t('a11y.previewImage')"
-                @click="openPreview(`data:image/*;base64,${img.base64}`)"
-                @keydown.enter.prevent="openPreview(`data:image/*;base64,${img.base64}`)"
-                @keydown.space.prevent="openPreview(`data:image/*;base64,${img.base64}`)" />
-              <button
-                type="button"
-                :title="t('chatBox.removeImage')"
-                class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                @click="removeImage(idx)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </template>
-        <!-- Audio preview area (kept separate above the input box, at the same level as the image preview area) -->
-        <template v-if="selectedAudios.length > 0">
-          <div
-            class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-            <div
-              v-for="(audio, idx) in selectedAudios"
-              :key="idx"
-              class="relative shrink-0 group">
+              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
               <div
-                class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-gray-800">
-                <span class="pi pi-volume-down text-xs text-[#6B7280]"></span>
-                <span class="text-xs font-medium text-[#111827] dark:text-[#E5E7EB] max-w-32 truncate">{{
-                  audio.name
+                v-for="(img, idx) in selectedImages"
+                :key="idx"
+                class="relative shrink-0 group">
+                <img
+                  :src="`data:image/*;base64,${img.base64}`"
+                  :alt="img.name"
+                  class="w-16 h-16 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark cursor-pointer hover:opacity-80 transition-opacity duration-200"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="t('a11y.previewImage')"
+                  @click="openPreview(`data:image/*;base64,${img.base64}`)"
+                  @keydown.enter.prevent="openPreview(`data:image/*;base64,${img.base64}`)"
+                  @keydown.space.prevent="openPreview(`data:image/*;base64,${img.base64}`)" />
+                <button
+                  type="button"
+                  :title="t('chatBox.removeImage')"
+                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+                  @click="removeImage(idx)">
+                  ✕
+                </button>
+              </div>
+            </div>
+          </template>
+          <!-- Audio preview area (kept separate above the input box, at the same level as the image preview area) -->
+          <template v-if="selectedAudios.length > 0">
+            <div
+              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+              <div
+                v-for="(audio, idx) in selectedAudios"
+                :key="idx"
+                class="relative shrink-0 group">
+                <div
+                  class="flex items-center gap-2 px-3 py-2 rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-gray-800">
+                  <span class="pi pi-volume-down text-xs text-[#6B7280]"></span>
+                  <span class="text-xs font-medium text-[#111827] dark:text-[#E5E7EB] max-w-32 truncate">{{
+                    audio.name
+                  }}</span>
+                </div>
+                <button
+                  type="button"
+                  :title="t('chatBox.removeAudio')"
+                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+                  @click="removeAudio(idx)">
+                  ✕
+                </button>
+              </div>
+            </div>
+          </template>
+          <!-- Video preview area (kept separate above the input box, at the same level as the image/audio preview areas) -->
+          <template v-if="selectedVideos.length > 0">
+            <div
+              class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
+              <div
+                v-for="(video, idx) in selectedVideos"
+                :key="idx"
+                class="relative shrink-0 group">
+                <video
+                  :src="`data:video/*;base64,${video.base64}`"
+                  class="w-32 h-20 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark"
+                  muted
+                  playsinline
+                  preload="metadata" />
+                <button
+                  type="button"
+                  :title="t('chatBox.removeVideo')"
+                  class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
+                  @click="removeVideo(idx)">
+                  ✕
+                </button>
+              </div>
+            </div>
+          </template>
+          <!-- Chat input box area (position:relative parent, used as the anchor for other floating elements) -->
+          <div class="relative">
+            <!-- WS stream reconnect banner: shown while sendChatMessageWs is in exponential-backoff reconnection (browser mode);
+              overlays the toolbar row, disappears automatically after a successful reconnect or a reconnect failure -->
+            <Transition name="reconn-fade">
+              <div
+                v-if="reconnectState"
+                class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-xs font-medium bg-amber-400/90 text-gray-900 shadow-sm"
+                role="status"
+                aria-live="polite">
+                <i
+                  class="pi pi-sync"
+                  aria-hidden="true"></i>
+                <span>{{
+                  t('connection.reconnecting', { attempt: reconnectState.attempt, max: reconnectState.max })
                 }}</span>
               </div>
-              <button
-                type="button"
-                :title="t('chatBox.removeAudio')"
-                class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                @click="removeAudio(idx)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </template>
-        <!-- Video preview area (kept separate above the input box, at the same level as the image/audio preview areas) -->
-        <template v-if="selectedVideos.length > 0">
-          <div
-            class="flex items-center gap-2 px-2 py-2 border-t border-solid border-gray-light dark:border-gray-dark overflow-x-auto">
-            <div
-              v-for="(video, idx) in selectedVideos"
-              :key="idx"
-              class="relative shrink-0 group">
-              <video
-                :src="`data:video/*;base64,${video.base64}`"
-                class="w-32 h-20 object-cover rounded-lg border border-solid border-gray-light dark:border-gray-dark"
-                muted
-                playsinline
-                preload="metadata" />
-              <button
-                type="button"
-                :title="t('chatBox.removeVideo')"
-                class="absolute top-0.5 right-0.5 z-10 w-6 h-6 flex items-center justify-center rounded-full bg-[#ef4444] text-white text-sm leading-none shadow-md cursor-pointer"
-                @click="removeVideo(idx)">
-                ✕
-              </button>
-            </div>
-          </div>
-        </template>
-        <!-- Chat input box area (position:relative parent, used as the anchor for other floating elements) -->
-        <div class="relative">
-          <!-- WS stream reconnect banner: shown while sendChatMessageWs is in exponential-backoff reconnection (browser mode);
-              overlays the toolbar row, disappears automatically after a successful reconnect or a reconnect failure -->
-          <Transition name="reconn-fade">
-            <div
-              v-if="reconnectState"
-              class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-xs font-medium bg-amber-400/90 text-gray-900 shadow-sm"
-              role="status"
-              aria-live="polite">
-              <i
-                class="pi pi-sync"
-                aria-hidden="true"></i>
-              <span>{{
-                t('connection.reconnecting', { attempt: reconnectState.attempt, max: reconnectState.max })
-              }}</span>
-            </div>
-          </Transition>
-          <!-- Queue list: one row per message the backend has enqueued for this busy session
+            </Transition>
+            <!-- Queue list: one row per message the backend has enqueued for this busy session
               (browser WS mode). Each row shows its position, its text (editable before delivery),
               立刻 (interrupt the running turn and deliver this one next) and cancel. Hidden while a
               HITL decision occupies the input slot — a decision is what unblocks the session. -->
-          <Transition name="reconn-fade">
-            <div
-              v-if="queueBadgeList.length > 0 && !hitlRequest"
-              class="absolute top-0 left-0 right-0 z-20 bg-sky-600/90 text-white shadow-sm max-h-32 overflow-y-auto"
-              role="status"
-              aria-live="polite">
+            <Transition name="reconn-fade">
               <div
-                v-for="badge in queueBadgeList"
-                :key="badge.msgId"
-                class="flex items-center gap-2 py-1.5 px-3 text-xs font-medium border-b border-white/10 last:border-b-0">
-                <i
-                  class="pi pi-clock"
-                  aria-hidden="true"></i>
-                <span class="shrink-0">
-                  {{
-                    t('chatInput.queuedPosition', {
-                      position: badge.position,
-                      queueSize: badge.queueSize
-                    })
-                  }}
-                </span>
-                <input
-                  v-model="badge.text"
-                  class="flex-1 min-w-0 rounded bg-white/10 px-1.5 py-0.5 outline-none focus:bg-white/20"
-                  :aria-label="t('chatInput.editQueued')"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
-                  @blur="editQueuedMessage(badge.msgId, badge.text)" />
-                <button
-                  class="shrink-0 rounded bg-white/20 px-2 py-0.5 font-medium transition-colors hover:bg-white/30"
-                  @click="sendNow(badge.msgId)">
-                  {{ t('chatInput.sendNow') }}
-                </button>
-                <button
-                  class="shrink-0 rounded bg-red-500/40 px-1.5 py-0.5 transition-colors hover:bg-red-500/60"
-                  :aria-label="t('chatInput.cancelQueued')"
-                  @click="cancelQueuedMessage(badge.msgId)">
+                v-if="queueBadgeList.length > 0 && !hitlRequest"
+                class="absolute top-0 left-0 right-0 z-20 bg-sky-600/90 text-white shadow-sm max-h-32 overflow-y-auto"
+                role="status"
+                aria-live="polite">
+                <div
+                  v-for="badge in queueBadgeList"
+                  :key="badge.msgId"
+                  class="flex items-center gap-2 py-1.5 px-3 text-xs font-medium border-b border-white/10 last:border-b-0">
                   <i
-                    class="pi pi-times"
-                    style="font-size: 0.6rem"
+                    class="pi pi-clock"
                     aria-hidden="true"></i>
-                </button>
+                  <span class="shrink-0">
+                    {{
+                      t('chatInput.queuedPosition', {
+                        position: badge.position,
+                        queueSize: badge.queueSize
+                      })
+                    }}
+                  </span>
+                  <input
+                    v-model="badge.text"
+                    class="flex-1 min-w-0 rounded bg-white/10 px-1.5 py-0.5 outline-none focus:bg-white/20"
+                    :aria-label="t('chatInput.editQueued')"
+                    @keydown.enter="($event.target as HTMLInputElement).blur()"
+                    @blur="editQueuedMessage(badge.msgId, badge.text)" />
+                  <button
+                    class="shrink-0 rounded bg-white/20 px-2 py-0.5 font-medium transition-colors hover:bg-white/30"
+                    @click="sendNow(badge.msgId)">
+                    {{ t('chatInput.sendNow') }}
+                  </button>
+                  <button
+                    class="shrink-0 rounded bg-red-500/40 px-1.5 py-0.5 transition-colors hover:bg-red-500/60"
+                    :aria-label="t('chatInput.cancelQueued')"
+                    @click="cancelQueuedMessage(badge.msgId)">
+                    <i
+                      class="pi pi-times"
+                      style="font-size: 0.6rem"
+                      aria-hidden="true"></i>
+                  </button>
+                </div>
               </div>
-            </div>
-          </Transition>
-          <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
-          <div class="flex flex-col h-40">
-            <!-- Chat tools (hidden while a HITL request occupies the input slot).
+            </Transition>
+            <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
+            <div class="flex flex-col h-40">
+              <!-- Chat tools (hidden while a HITL request occupies the input slot).
                  [@container]: with both sidebars open this row narrows to ~280px
                  while its content needs ~472px, so below 500px only the three
                  anchors survive — the media (+) entry, the access-mode list and
@@ -181,249 +188,250 @@
                  `hidden!` is the important form: PrimeVue's own display rules and
                  the sibling `flex` utility are unlayered/later, so the plain
                  variant loses the tie. -->
-            <div
-              v-show="!hitlRequest"
-              class="@container h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-              <!-- Media entry: image / audio / video uploads collapsed into one
+              <div
+                v-show="!hitlRequest"
+                class="@container h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
+                <!-- Media entry: image / audio / video uploads collapsed into one
                    dropdown (same trigger + popup shape as the model picker) -->
-              <MediaMenu @select="event => handleOperate('toolBar', event)" />
-              <!-- Access mode: one position right of the media entry, showing the
+                <MediaMenu @select="event => handleOperate('toolBar', event)" />
+                <!-- Access mode: one position right of the media entry, showing the
                    current mode's shield (confirm changes / auto-edit / full
                    access). -->
-              <AccessModePicker
-                v-if="mySid"
-                :session-id="mySid" />
-              <!-- Running background work of this session (terminal entry): the
+                <AccessModePicker
+                  v-if="mySid"
+                  :session-id="mySid" />
+                <!-- Running background work of this session (terminal entry): the
                    badge counts sub-agents, foreground tool calls AND detached
                    background commands; the popover lists all three and is where a
                    detached command is watched and stopped.
                    Thinned away on a narrow column (see the row's @container note). -->
-              <TasksButton
-                v-if="mySid"
-                class="@max-[500px]:hidden!"
-                :session-id="mySid"
-                :background-tasks="backgroundTasks"
-                :background-running="backgroundTasksRunning"
-                :background-killing="backgroundTasksKilling"
-                :background-kill-refusal="backgroundTasksKillRefusal"
-                :background-reload="loadBackgroundTasks"
-                :background-kill="stopBackgroundTask"
-                @focus="onTasksFocus" />
-              <!-- Per-session model + thinking controls (right side of the media
-                   toolbar). Switching is allowed at any time; a mid-turn change
-                   is parked by the backend and lands on the next turn. -->
-              <div
-                v-if="mySid"
-                class="ml-auto flex items-center">
-                <!-- Context ring sits immediately left of the model picker (it
-                     reports what that model's window holds). -->
-                <ContextUsageButton
+                <TasksButton
+                  v-if="mySid"
                   class="@max-[500px]:hidden!"
                   :session-id="mySid"
-                  :used-tokens="lastPromptTokens" />
-                <SessionModelPicker
-                  class="@max-[500px]:hidden!"
-                  :session-id="mySid" />
-                <ThinkingToggle
-                  class="@max-[500px]:hidden!"
-                  :session-id="mySid" />
-                <!-- Project directory: the root every file tool, shell command
-                     and path check resolves against. -->
-                <ProjectDirectoryChip :session-id="mySid" />
-              </div>
-              <!-- Hidden image file input: triggered by the media menu's image entry via triggerImagePicker() -->
-              <input
-                ref="imageFileInputRef"
-                type="file"
-                accept="image/*"
-                multiple
-                class="hidden"
-                @change="onImageSelected" />
-              <!-- Hidden audio file input: triggered by the media menu's audio entry via triggerAudioPicker() -->
-              <input
-                ref="audioFileInputRef"
-                type="file"
-                accept="audio/*"
-                multiple
-                class="hidden"
-                @change="onAudioSelected" />
-              <!-- Hidden video file input: triggered by the media menu's video entry via triggerVideoPicker() -->
-              <input
-                ref="videoFileInputRef"
-                type="file"
-                accept="video/*"
-                multiple
-                class="hidden"
-                @change="onVideoSelected" />
-            </div>
-            <!-- HITL panel occupies the same slot as the input box; the two are mutually exclusive (v-show) -->
-            <div
-              v-show="hitlRequest"
-              class="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
-              <!-- question tool: selectable options + a trailing custom-input row -->
-              <template v-if="isQuestionHitl">
-                <div class="text-sm font-semibold">{{ questionHeader || t('hitl.title') }}</div>
+                  :background-tasks="backgroundTasks"
+                  :background-running="backgroundTasksRunning"
+                  :background-killing="backgroundTasksKilling"
+                  :background-kill-refusal="backgroundTasksKillRefusal"
+                  :background-reload="loadBackgroundTasks"
+                  :background-kill="stopBackgroundTask"
+                  @focus="onTasksFocus" />
+                <!-- Per-session model + thinking controls (right side of the media
+                   toolbar). Switching is allowed at any time; a mid-turn change
+                   is parked by the backend and lands on the next turn. -->
                 <div
-                  v-if="questionText"
-                  class="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
-                  {{ questionText }}
+                  v-if="mySid"
+                  class="ml-auto flex items-center">
+                  <!-- Context ring sits immediately left of the model picker (it
+                     reports what that model's window holds). -->
+                  <ContextUsageButton
+                    class="@max-[500px]:hidden!"
+                    :session-id="mySid"
+                    :used-tokens="lastPromptTokens" />
+                  <SessionModelPicker
+                    class="@max-[500px]:hidden!"
+                    :session-id="mySid" />
+                  <ThinkingToggle
+                    class="@max-[500px]:hidden!"
+                    :session-id="mySid" />
+                  <!-- Project directory: the root every file tool, shell command
+                     and path check resolves against. -->
+                  <ProjectDirectoryChip :session-id="mySid" />
                 </div>
-                <div class="flex flex-col gap-1.5">
-                  <button
-                    v-for="(option, idx) in questionOptions"
-                    :key="idx"
-                    type="button"
-                    class="text-left px-3 py-1.5 rounded-lg border border-solid transition-colors cursor-pointer"
-                    :class="
-                      isMultipleQuestion && selectedQuestionOptions.includes(option.label)
-                        ? 'border-theme-main bg-theme-main/10'
-                        : 'border-gray-light dark:border-gray-dark hover:bg-gray-50 dark:hover:bg-[#1a1d21]'
-                    "
-                    @click="selectQuestionOption(option.label)">
-                    <span class="text-sm font-medium">{{ option.label }}</span>
+                <!-- Hidden image file input: triggered by the media menu's image entry via triggerImagePicker() -->
+                <input
+                  ref="imageFileInputRef"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  class="hidden"
+                  @change="onImageSelected" />
+                <!-- Hidden audio file input: triggered by the media menu's audio entry via triggerAudioPicker() -->
+                <input
+                  ref="audioFileInputRef"
+                  type="file"
+                  accept="audio/*"
+                  multiple
+                  class="hidden"
+                  @change="onAudioSelected" />
+                <!-- Hidden video file input: triggered by the media menu's video entry via triggerVideoPicker() -->
+                <input
+                  ref="videoFileInputRef"
+                  type="file"
+                  accept="video/*"
+                  multiple
+                  class="hidden"
+                  @change="onVideoSelected" />
+              </div>
+              <!-- HITL panel occupies the same slot as the input box; the two are mutually exclusive (v-show) -->
+              <div
+                v-show="hitlRequest"
+                class="flex-1 min-h-0 overflow-y-auto p-2 flex flex-col gap-2">
+                <!-- question tool: selectable options + a trailing custom-input row -->
+                <template v-if="isQuestionHitl">
+                  <div class="text-sm font-semibold">{{ questionHeader || t('hitl.title') }}</div>
+                  <div
+                    v-if="questionText"
+                    class="text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-200">
+                    {{ questionText }}
+                  </div>
+                  <div class="flex flex-col gap-1.5">
+                    <button
+                      v-for="(option, idx) in questionOptions"
+                      :key="idx"
+                      type="button"
+                      class="text-left px-3 py-1.5 rounded-lg border border-solid transition-colors cursor-pointer"
+                      :class="
+                        isMultipleQuestion && selectedQuestionOptions.includes(option.label)
+                          ? 'border-theme-main bg-theme-main/10'
+                          : 'border-gray-light dark:border-gray-dark hover:bg-gray-50 dark:hover:bg-[#1a1d21]'
+                      "
+                      @click="selectQuestionOption(option.label)">
+                      <span class="text-sm font-medium">{{ option.label }}</span>
+                      <span
+                        v-if="option.description"
+                        class="text-xs text-gray-400 ml-2">
+                        {{ option.description }}
+                      </span>
+                    </button>
+                    <!-- trailing custom-input row -->
+                    <div class="flex items-center gap-2">
+                      <input
+                        v-model="customAnswer"
+                        type="text"
+                        class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
+                        :placeholder="t('hitl.customPlaceholder')"
+                        @keydown.enter.prevent="submitCustomAnswer" />
+                      <Button
+                        :label="t('hitl.submit')"
+                        size="small"
+                        :disabled="!customAnswer.trim() && selectedQuestionOptions.length === 0"
+                        @click="submitCustomAnswer" />
+                      <Button
+                        :label="t('hitl.reject')"
+                        size="small"
+                        severity="danger"
+                        variant="text"
+                        @click="handleHitlDecision('reject')" />
+                    </div>
+                  </div>
+                </template>
+                <!-- exit_plan_mode: the plan for approval (approve / request changes) -->
+                <template v-else-if="isPlanHitl">
+                  <div class="text-sm font-semibold">
+                    {{ t('hitl.planTitle') }}
                     <span
-                      v-if="option.description"
+                      v-if="planRevision"
                       class="text-xs text-gray-400 ml-2">
-                      {{ option.description }}
+                      {{ planRevision }}
                     </span>
-                  </button>
-                  <!-- trailing custom-input row -->
+                  </div>
+                  <pre
+                    class="flex-1 min-h-0 overflow-auto text-xs whitespace-pre-wrap bg-gray-50 dark:bg-gray-800 p-2 rounded-lg m-0"
+                    >{{ planText }}</pre>
                   <div class="flex items-center gap-2">
                     <input
-                      v-model="customAnswer"
+                      v-model="planFeedback"
                       type="text"
                       class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
-                      :placeholder="t('hitl.customPlaceholder')"
-                      @keydown.enter.prevent="submitCustomAnswer" />
+                      :placeholder="t('hitl.planFeedbackPlaceholder')"
+                      @keydown.enter.prevent="revisePlan" />
                     <Button
-                      :label="t('hitl.submit')"
+                      :label="t('hitl.planRevise')"
                       size="small"
-                      :disabled="!customAnswer.trim() && selectedQuestionOptions.length === 0"
-                      @click="submitCustomAnswer" />
+                      severity="warn"
+                      variant="text"
+                      :disabled="!planFeedback.trim()"
+                      @click="revisePlan" />
+                    <Button
+                      :label="t('hitl.planApprove')"
+                      icon="pi pi-check"
+                      size="small"
+                      @click="approvePlan" />
+                  </div>
+                </template>
+                <!-- other tools: generic approval card -->
+                <template v-else>
+                  <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
+                  <div class="text-sm text-gray-500">
+                    {{ t('hitl.tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
+                  </div>
+                  <div
+                    v-if="hitlRequest?.description"
+                    class="text-sm whitespace-pre-wrap">
+                    {{ hitlRequest.description }}
+                  </div>
+                  <div
+                    v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
+                    class="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-24">
+                    <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
+                  </div>
+                  <div class="mt-auto flex gap-2 justify-end">
                     <Button
                       :label="t('hitl.reject')"
-                      size="small"
+                      icon="pi pi-times"
                       severity="danger"
-                      variant="text"
+                      size="small"
                       @click="handleHitlDecision('reject')" />
+                    <Button
+                      :label="t('hitl.yolo')"
+                      icon="pi pi-bolt"
+                      severity="warn"
+                      size="small"
+                      :title="t('hitl.yoloTooltip')"
+                      @click="handleHitlDecision('yolo')" />
+                    <Button
+                      v-if="(hitlRequest?.allowed_decisions ?? []).includes('approve_dir')"
+                      :label="t('hitl.approveDir')"
+                      icon="pi pi-folder"
+                      severity="secondary"
+                      size="small"
+                      :title="t('hitl.approveDirTooltip')"
+                      @click="handleHitlDecision('approve_dir')" />
+                    <Button
+                      v-if="(hitlRequest?.allowed_decisions ?? []).includes('session')"
+                      :label="t('hitl.approveSession')"
+                      icon="pi pi-bookmark"
+                      severity="secondary"
+                      size="small"
+                      :title="t('hitl.approveSessionTooltip')"
+                      @click="handleHitlDecision('session')" />
+                    <Button
+                      :label="t('hitl.approve')"
+                      icon="pi pi-check"
+                      size="small"
+                      @click="handleHitlDecision('approve')" />
                   </div>
-                </div>
-              </template>
-              <!-- exit_plan_mode: the plan for approval (approve / request changes) -->
-              <template v-else-if="isPlanHitl">
-                <div class="text-sm font-semibold">
-                  {{ t('hitl.planTitle') }}
-                  <span
-                    v-if="planRevision"
-                    class="text-xs text-gray-400 ml-2">
-                    {{ planRevision }}
-                  </span>
-                </div>
-                <pre
-                  class="flex-1 min-h-0 overflow-auto text-xs whitespace-pre-wrap bg-gray-50 dark:bg-gray-800 p-2 rounded-lg m-0"
-                  >{{ planText }}</pre>
-                <div class="flex items-center gap-2">
-                  <input
-                    v-model="planFeedback"
-                    type="text"
-                    class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
-                    :placeholder="t('hitl.planFeedbackPlaceholder')"
-                    @keydown.enter.prevent="revisePlan" />
-                  <Button
-                    :label="t('hitl.planRevise')"
-                    size="small"
-                    severity="warn"
-                    variant="text"
-                    :disabled="!planFeedback.trim()"
-                    @click="revisePlan" />
-                  <Button
-                    :label="t('hitl.planApprove')"
-                    icon="pi pi-check"
-                    size="small"
-                    @click="approvePlan" />
-                </div>
-              </template>
-              <!-- other tools: generic approval card -->
-              <template v-else>
-                <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
-                <div class="text-sm text-gray-500">
-                  {{ t('hitl.tool') }}: <span class="font-bold">{{ hitlRequest?.tool_name }}</span>
-                </div>
-                <div
-                  v-if="hitlRequest?.description"
-                  class="text-sm whitespace-pre-wrap">
-                  {{ hitlRequest.description }}
-                </div>
-                <div
-                  v-if="hitlRequest?.tool_args && Object.keys(hitlRequest.tool_args).length > 0"
-                  class="text-xs bg-gray-50 dark:bg-gray-800 p-2 rounded-lg overflow-auto max-h-24">
-                  <pre class="m-0">{{ JSON.stringify(hitlRequest.tool_args, null, 2) }}</pre>
-                </div>
-                <div class="mt-auto flex gap-2 justify-end">
-                  <Button
-                    :label="t('hitl.reject')"
-                    icon="pi pi-times"
-                    severity="danger"
-                    size="small"
-                    @click="handleHitlDecision('reject')" />
-                  <Button
-                    :label="t('hitl.yolo')"
-                    icon="pi pi-bolt"
-                    severity="warn"
-                    size="small"
-                    :title="t('hitl.yoloTooltip')"
-                    @click="handleHitlDecision('yolo')" />
-                  <Button
-                    v-if="(hitlRequest?.allowed_decisions ?? []).includes('approve_dir')"
-                    :label="t('hitl.approveDir')"
-                    icon="pi pi-folder"
-                    severity="secondary"
-                    size="small"
-                    :title="t('hitl.approveDirTooltip')"
-                    @click="handleHitlDecision('approve_dir')" />
-                  <Button
-                    v-if="(hitlRequest?.allowed_decisions ?? []).includes('session')"
-                    :label="t('hitl.approveSession')"
-                    icon="pi pi-bookmark"
-                    severity="secondary"
-                    size="small"
-                    :title="t('hitl.approveSessionTooltip')"
-                    @click="handleHitlDecision('session')" />
-                  <Button
-                    :label="t('hitl.approve')"
-                    icon="pi pi-check"
-                    size="small"
-                    @click="handleHitlDecision('approve')" />
-                </div>
-              </template>
-            </div>
-            <!-- Edit mode banner: the composer is about to rewrite a sent
+                </template>
+              </div>
+              <!-- Edit mode banner: the composer is about to rewrite a sent
                  user message (and re-run that turn) instead of sending a new
                  one. Esc or ✕ leaves edit mode without touching the transcript. -->
-            <div
-              v-if="editingTurn"
-              class="mx-2 mb-1 flex items-center gap-2 rounded-md border border-solid border-amber-300/70 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300"
-              data-test="chat-edit-banner">
-              <i class="pi pi-pencil text-[10px]"></i>
-              <span class="flex-1">{{ t('chatBox.editingMessage') }}</span>
-              <button
-                type="button"
-                class="underline"
-                data-test="chat-edit-cancel"
-                @click="cancelEditMessage">
-                {{ t('common.cancel') }}
-              </button>
+              <div
+                v-if="editingTurn"
+                class="mx-2 mb-1 flex items-center gap-2 rounded-md border border-solid border-amber-300/70 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300"
+                data-test="chat-edit-banner">
+                <i class="pi pi-pencil text-[10px]"></i>
+                <span class="flex-1">{{ t('chatBox.editingMessage') }}</span>
+                <button
+                  type="button"
+                  class="underline"
+                  data-test="chat-edit-cancel"
+                  @click="cancelEditMessage">
+                  {{ t('common.cancel') }}
+                </button>
+              </div>
+              <!-- Input box: hidden while a HITL request occupies the same slot -->
+              <ChatInputBox
+                v-show="!hitlRequest"
+                ref="chatInputBoxRef"
+                v-model:draft="draft"
+                :sending="isSending"
+                :disabled="!!hitlRequest"
+                :disabled-text="t('chatInput.waitingApproval')"
+                @send="onComposerSend"
+                @stop="handleStop" />
             </div>
-            <!-- Input box: hidden while a HITL request occupies the same slot -->
-            <ChatInputBox
-              v-show="!hitlRequest"
-              ref="chatInputBoxRef"
-              v-model:draft="draft"
-              :sending="isSending"
-              :disabled="!!hitlRequest"
-              :disabled-text="t('chatInput.waitingApproval')"
-              @send="onComposerSend"
-              @stop="handleStop" />
           </div>
         </div>
       </div>

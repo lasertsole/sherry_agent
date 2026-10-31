@@ -36,6 +36,7 @@
          ABOVE the right sidebar's maximized overlay (z-40), so it stays visible
          while that panel covers the shell. -->
     <div
+      ref="middleColumnRef"
       data-test="chat-column"
       :data-presentation="chatFloat.floating ? 'floating' : 'docked'"
       :class="[
@@ -43,16 +44,17 @@
         chatFloat.floating
           ? [
               'fixed z-50 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
-              draggingFloat ? 'select-none transition-none' : 'transition-all duration-150'
+              draggingFloat || resizingFloat ? 'select-none transition-none' : 'transition-all duration-150'
             ]
           : 'relative flex-1 bg-transparent dark:bg-transparent'
       ]"
       :style="middleColumnStyle">
       <!-- Floating header: the drag handle + the explicit restore button. Only
            the window has it; in the docked layout the toolbar below is the
-           top edge. Dragging is ignored when the pointer starts on a control. -->
+           top edge. Dragging is ignored when the pointer starts on a control.
+           Hidden in the input-only bar (collapsed by dragging the lower bound). -->
       <div
-        v-if="chatFloat.floating"
+        v-if="chatFloat.floating && !collapsedView"
         class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-light px-3 h-9 dark:border-gray-dark"
         :class="draggingFloat ? 'cursor-grabbing' : 'cursor-grab'"
         data-test="chat-float-header"
@@ -77,6 +79,60 @@
           @pointerdown.stop
           @click="dockChatFloat" />
       </div>
+      <!-- Input-only bar: no header/toolbar, just the composer. The expand
+           control appears on hover/focus so the bar stays clean at rest. -->
+      <button
+        v-if="chatFloat.floating && collapsedView"
+        type="button"
+        class="absolute -top-6 right-2 z-20 flex h-6 w-6 items-center justify-center rounded-md bg-white/85 text-gray-500 opacity-80 shadow-sm transition-opacity hover:opacity-100 dark:bg-[#181820]/85 dark:text-gray-400"
+        data-test="chat-float-expand"
+        :title="t('chatFloat.expand')"
+        :aria-label="t('chatFloat.expand')"
+        @pointerdown.stop
+        @click="expandChatFloat">
+        <i
+          class="pi pi-chevron-up text-xs"
+          aria-hidden="true" />
+      </button>
+      <!-- Resize edges: left/right adjust the width, bottom sets the height and
+           snaps into the input-only bar when dragged to the lower bound. Thin
+           and translucent so they never cover the composer's controls. -->
+      <div
+        v-if="chatFloat.floating"
+        class="absolute left-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+        data-test="chat-float-resize-left"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-label="t('chatFloat.resize')"
+        :title="t('chatFloat.resize')"
+        @pointerdown="event => startFloatResize(event, 'left')"
+        @pointermove="moveFloatResize"
+        @pointerup="endFloatResize"
+        @pointercancel="cancelFloatResize" />
+      <div
+        v-if="chatFloat.floating"
+        class="absolute right-0 top-1/2 z-20 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+        data-test="chat-float-resize-right"
+        role="separator"
+        aria-orientation="vertical"
+        :aria-label="t('chatFloat.resize')"
+        :title="t('chatFloat.resize')"
+        @pointerdown="event => startFloatResize(event, 'right')"
+        @pointermove="moveFloatResize"
+        @pointerup="endFloatResize"
+        @pointercancel="cancelFloatResize" />
+      <div
+        v-if="chatFloat.floating"
+        class="absolute bottom-0 left-1/2 z-20 h-1.5 w-10 -translate-x-1/2 cursor-ns-resize rounded-full bg-gray-400/30 hover:bg-gray-400/60"
+        data-test="chat-float-resize-bottom"
+        role="separator"
+        aria-orientation="horizontal"
+        :aria-label="t('chatFloat.resize')"
+        :title="t('chatFloat.resize')"
+        @pointerdown="event => startFloatResize(event, 'bottom')"
+        @pointermove="moveFloatResize"
+        @pointerup="endFloatResize"
+        @pointercancel="cancelFloatResize" />
       <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
@@ -93,6 +149,7 @@
            `@max-[480px]:hidden` would be dead on a `Button` (probe-verified: the same class
            hides a plain element and does nothing to `p-button`). -->
       <div
+        v-if="!collapsedView"
         class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- Left: collapse/expand the sidebar, then the body switch
              (sessions ↔ project files) -->
@@ -338,13 +395,20 @@ import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import {
   FLOATING_DRAG_CLICK_THRESHOLD_PX,
+  FLOATING_MARGIN_PX,
+  FLOATING_RESIZE_HEIGHT_MAX_PX,
+  FLOATING_RESIZE_HEIGHT_MIN_PX,
+  FLOATING_RESIZE_WIDTH_MAX_PX,
+  FLOATING_RESIZE_WIDTH_MIN_PX,
+  clampCollapsedHeight,
   clampFloatingPosition,
   distributeSideExtra,
   isFloatingAvailable,
   resolveFloatingPosition,
   resolveFloatingSize,
   resolveNearestFloatingAnchor,
-  type FloatingPosition
+  type FloatingPosition,
+  type FloatingSize
 } from '@/common/floating-window';
 import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
@@ -497,15 +561,69 @@ const viewportSize = ref({
 });
 /** The shell's content area: the float stays inside it. */
 const floatSlot = computed(() => ({ left: 0, top: 0, ...viewportSize.value }));
-const floatSize = computed(() => resolveFloatingSize(floatSlot.value));
+/** The middle column element (the composer dock is measured inside it). */
+const middleColumnRef = ref<HTMLElement | null>(null);
+/** Measured height of the composer dock (0 = no session page / not measured yet). */
+const composerDockHeight = ref(0);
+let composerDockObserver: ResizeObserver | null = null;
+let observedDock: HTMLElement | null = null;
+
+/** The resting size: the user's saved size, or the viewport-ratio default. */
+const baseFloatSize = computed(() =>
+  resolveFloatingSize(floatSlot.value, { width: chatFloat.width, height: chatFloat.height })
+);
+/** The input-only bar's height: the composer dock (a fallback while unmeasured). */
+const collapsedHeight = computed(() =>
+  clampCollapsedHeight(composerDockHeight.value > 0 ? composerDockHeight.value : 160, floatSlot.value)
+);
+/** True while a downward resize has crossed the expanded minimum. */
+const resizingCollapsed = ref(false);
+/** The input-only presentation: persisted, or previewed live during a resize. */
+const collapsedView = computed(() => chatFloat.floating && (chatFloat.collapsed || resizingCollapsed.value));
+/** Live resize preview (null = no resize in progress). */
+const resizeDraft = shallowRef<FloatingSize | null>(null);
+/** The window's size: the input-only bar, a live resize, or the resting size. */
+const floatSize = computed<FloatingSize>(() => {
+  const width = resizeDraft.value?.width ?? baseFloatSize.value.width;
+  if (collapsedView.value) return { width, height: collapsedHeight.value };
+  return resizeDraft.value ?? baseFloatSize.value;
+});
 /** Whether this window is wide enough to offer the float at all. */
 const canFloatChat = computed(() => isFloatingAvailable(viewportSize.value.width));
 /** Live drag position (null = resting on the anchor). */
 const dragPosition = shallowRef<FloatingPosition | null>(null);
-/** The window's current corner: the drag position while dragging, the anchor otherwise. */
+/** Top-left corner kept after a resize (the anchor re-applies on the next move). */
+const resizePosition = shallowRef<FloatingPosition | null>(null);
+/** The window's current corner: dragging > resizing > the anchor. */
 const floatPosition = computed(
-  () => dragPosition.value ?? resolveFloatingPosition(chatFloat.anchor, floatSlot.value, floatSize.value)
+  () =>
+    dragPosition.value ??
+    resizePosition.value ??
+    resolveFloatingPosition(chatFloat.anchor, floatSlot.value, floatSize.value)
 );
+
+/** (Re)bind the composer-dock observer to the active session page's dock. */
+const bindComposerDock = (): void => {
+  const dock = middleColumnRef.value?.querySelector<HTMLElement>('[data-test="chat-composer-dock"]') ?? null;
+  composerDockHeight.value = dock ? Math.round(dock.getBoundingClientRect().height) : 0;
+  if (dock === observedDock) return;
+  composerDockObserver?.disconnect();
+  composerDockObserver = null;
+  observedDock = dock;
+  if (!dock || typeof ResizeObserver === 'undefined') return;
+  composerDockObserver = new ResizeObserver(() => {
+    composerDockHeight.value = Math.round(dock.getBoundingClientRect().height);
+  });
+  composerDockObserver.observe(dock);
+};
+
+/** Stop measuring the dock (the float is docked, or the page is gone). */
+const unbindComposerDock = (): void => {
+  composerDockObserver?.disconnect();
+  composerDockObserver = null;
+  observedDock = null;
+  composerDockHeight.value = 0;
+};
 /**
  * The middle column's box. Docked it keeps the conversation's double floor;
  * floating it takes the window's geometry and drops the floor (`minWidth: 0`),
@@ -603,11 +721,173 @@ const finishFloatDrag = (event: PointerEvent, snap: boolean): void => {
   draggingFloat.value = false;
   const dropped = dragPosition.value ?? floatPosition.value;
   dragPosition.value = null;
-  if (snap) chatFloat.setAnchor(resolveNearestFloatingAnchor(dropped, floatSlot.value, floatSize.value));
+  if (snap) {
+    chatFloat.setAnchor(resolveNearestFloatingAnchor(dropped, floatSlot.value, floatSize.value));
+    // The anchor now owns the position; a resize offset from before must not win.
+    resizePosition.value = null;
+  }
 };
 
 const endFloatDrag = (event: PointerEvent): void => finishFloatDrag(event, true);
 const cancelFloatDrag = (event: PointerEvent): void => finishFloatDrag(event, false);
+
+type FloatResizeMode = 'left' | 'right' | 'bottom';
+
+/** True while an edge is being dragged (disables the snap transition). */
+const resizingFloat = ref(false);
+let floatResize: {
+  pointerId: number;
+  mode: FloatResizeMode;
+  startX: number;
+  startY: number;
+  startWidth: number;
+  startHeight: number;
+  startLeft: number;
+  startTop: number;
+  moved: boolean;
+} | null = null;
+
+/**
+ * Start dragging one edge. The opposite edge (and the top) stay put; the
+ * position override is captured so a width drag never re-centers the window.
+ * @param event The pointerdown event.
+ * @param mode Which edge is being dragged.
+ */
+const startFloatResize = (event: PointerEvent, mode: FloatResizeMode): void => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const edge = event.currentTarget as HTMLElement;
+  try {
+    edge.setPointerCapture?.(event.pointerId);
+  } catch {
+    // Pointer capture is an enhancement (and absent in a bare test DOM).
+  }
+  resizePosition.value = floatPosition.value;
+  floatResize = {
+    pointerId: event.pointerId,
+    mode,
+    startX: event.clientX,
+    startY: event.clientY,
+    startWidth: floatSize.value.width,
+    startHeight: collapsedView.value ? collapsedHeight.value : floatSize.value.height,
+    startLeft: floatPosition.value.left,
+    startTop: floatPosition.value.top,
+    moved: false
+  };
+  resizingFloat.value = true;
+};
+
+const moveFloatResize = (event: PointerEvent): void => {
+  const session = floatResize;
+  if (!session || session.pointerId !== event.pointerId) return;
+  const dx = event.clientX - session.startX;
+  const dy = event.clientY - session.startY;
+  if (!session.moved && Math.hypot(dx, dy) < FLOATING_DRAG_CLICK_THRESHOLD_PX) return;
+  session.moved = true;
+  const slot = floatSlot.value;
+  if (session.mode === 'bottom') {
+    const rawHeight = session.startHeight + dy;
+    // Below the expanded minimum the window becomes the input-only bar. Keep
+    // the composer (the bar's bottom) where it was, so the input box does not
+    // jump when the message area disappears.
+    if (composerDockHeight.value > 0 && rawHeight < FLOATING_RESIZE_HEIGHT_MIN_PX) {
+      resizingCollapsed.value = true;
+      resizePosition.value = {
+        left: session.startLeft,
+        top: Math.max(0, session.startTop + session.startHeight - collapsedHeight.value)
+      };
+      resizeDraft.value = { width: session.startWidth, height: collapsedHeight.value };
+      return;
+    }
+    resizingCollapsed.value = false;
+    const maxHeight = Math.max(
+      FLOATING_RESIZE_HEIGHT_MIN_PX,
+      Math.min(FLOATING_RESIZE_HEIGHT_MAX_PX, slot.height - session.startTop - FLOATING_MARGIN_PX)
+    );
+    resizeDraft.value = {
+      width: session.startWidth,
+      height: Math.min(maxHeight, Math.max(FLOATING_RESIZE_HEIGHT_MIN_PX, rawHeight))
+    };
+    return;
+  }
+  let width: number;
+  if (session.mode === 'right') {
+    const maxWidth = Math.max(
+      FLOATING_RESIZE_WIDTH_MIN_PX,
+      Math.min(FLOATING_RESIZE_WIDTH_MAX_PX, slot.width - session.startLeft - FLOATING_MARGIN_PX)
+    );
+    width = Math.min(maxWidth, Math.max(FLOATING_RESIZE_WIDTH_MIN_PX, session.startWidth + dx));
+  } else {
+    // Left edge: the right edge stays fixed.
+    const rightEdge = session.startLeft + session.startWidth;
+    const minLeft = Math.max(FLOATING_MARGIN_PX, rightEdge - FLOATING_RESIZE_WIDTH_MAX_PX);
+    const maxLeft = rightEdge - FLOATING_RESIZE_WIDTH_MIN_PX;
+    const left = Math.min(maxLeft, Math.max(minLeft, session.startLeft + dx));
+    width = rightEdge - left;
+    resizePosition.value = { left, top: session.startTop };
+  }
+  resizeDraft.value = {
+    width,
+    height: collapsedView.value ? collapsedHeight.value : session.startHeight
+  };
+};
+
+/**
+ * Finish a resize: commit the size (or the input-only state) on release, drop
+ * the preview on cancel.
+ * @param event The pointerup / pointercancel event.
+ * @param commit Whether to persist the draft.
+ */
+const finishFloatResize = (event: PointerEvent, commit: boolean): void => {
+  const session = floatResize;
+  if (!session || session.pointerId !== event.pointerId) return;
+  floatResize = null;
+  try {
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+  } catch {
+    // The pointer is already gone; nothing to release.
+  }
+  if (!session.moved) {
+    resizeDraft.value = null;
+    resizingCollapsed.value = false;
+    resizingFloat.value = false;
+    return;
+  }
+  const draft = resizeDraft.value;
+  if (commit && draft) {
+    if (session.mode === 'bottom') {
+      if (resizingCollapsed.value) {
+        // Keep the last expanded height so the expand control restores it.
+        chatFloat.setCollapsed(true);
+      } else {
+        chatFloat.setCollapsed(false);
+        chatFloat.setSize({ width: chatFloat.width, height: draft.height });
+      }
+    } else {
+      chatFloat.setSize({ width: draft.width, height: chatFloat.height });
+    }
+  }
+  resizeDraft.value = null;
+  resizingCollapsed.value = false;
+  resizingFloat.value = false;
+};
+
+const endFloatResize = (event: PointerEvent): void => finishFloatResize(event, true);
+const cancelFloatResize = (event: PointerEvent): void => finishFloatResize(event, false);
+
+/** Leave the input-only bar, restoring the stored/default height. */
+const expandChatFloat = (): void => {
+  // Grow upward: the bar's bottom (the composer) stays put.
+  const bottom = floatPosition.value.top + collapsedHeight.value;
+  const nextSize = baseFloatSize.value;
+  chatFloat.setCollapsed(false);
+  resizePosition.value = clampFloatingPosition(
+    { left: floatPosition.value.left, top: bottom - nextSize.height },
+    floatSlot.value,
+    nextSize
+  );
+};
 
 /**
  * Extra width each side column receives while the chat floats: the docked
@@ -772,9 +1052,16 @@ const { measure: measureAutoCollapse } = useAutoCollapse({
  */
 function dockChatFloat(): void {
   chatFloat.dock();
+  // Docking resets the input-only state: the next open is the normal window.
+  chatFloat.setCollapsed(false);
   dragPosition.value = null;
+  resizePosition.value = null;
+  resizeDraft.value = null;
+  resizingCollapsed.value = false;
+  resizingFloat.value = false;
   pendingDrag = null;
   draggingFloat.value = false;
+  unbindComposerDock();
   if (dragFrame) {
     cancelAnimationFrame(dragFrame);
     dragFrame = 0;
@@ -793,6 +1080,30 @@ function toggleChatFloat(): void {
   if (!canFloatChat.value) return;
   chatFloat.open();
 }
+
+// The input-only bar needs the composer dock's measured height: bind when the
+// window opens, on a session switch, and on a reload that persisted an open
+// float (the immediate call runs before mount, so the bind is deferred a frame).
+watch(
+  () => chatFloat.floating,
+  floating => {
+    if (!floating) {
+      unbindComposerDock();
+      return;
+    }
+    // The page is already mounted when a click opens the float; the rAF retry
+    // covers the persisted-open boot and a just-switched session page.
+    void nextTick(() => {
+      bindComposerDock();
+      requestAnimationFrame(bindComposerDock);
+    });
+  },
+  { immediate: true }
+);
+watch(openSessionId, () => {
+  if (!chatFloat.floating) return;
+  void nextTick(() => requestAnimationFrame(bindComposerDock));
+});
 
 /**
  * The right sidebar's global expand covers the shell, so the conversation has
@@ -838,7 +1149,14 @@ watch(
 /** Keep the float's geometry valid when the window changes size. */
 const onViewportResize = (): void => {
   viewportSize.value = { width: window.innerWidth, height: window.innerHeight };
-  if (chatFloat.floating && !isFloatingAvailable(window.innerWidth)) dockChatFloat();
+  if (chatFloat.floating && !isFloatingAvailable(window.innerWidth)) {
+    dockChatFloat();
+    return;
+  }
+  // A resized window keeps its corner; the computed size already re-clamps.
+  if (resizePosition.value) {
+    resizePosition.value = clampFloatingPosition(resizePosition.value, floatSlot.value, floatSize.value);
+  }
 };
 
 /**
@@ -879,6 +1197,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize);
+  unbindComposerDock();
   unregisterGlobalHandler('command-palette', openCommandPalette);
   unregisterGlobalHandler('new-session');
   unregisterGlobalHandler('toggle-sidebar');

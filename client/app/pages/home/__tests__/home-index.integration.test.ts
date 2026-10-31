@@ -560,6 +560,8 @@ describe('home/index.vue — floating conversation column', () => {
     const store = useChatFloatStore();
     store.dock();
     store.setAnchor('center');
+    store.setSize({ width: 0, height: 0 });
+    store.setCollapsed(false);
   });
 
   /**
@@ -664,6 +666,110 @@ describe('home/index.vue — floating conversation column', () => {
       uninstall();
       ui.restore();
     }
+  });
+
+  /**
+   * A fake composer dock inside the middle column (NuxtPage is stubbed in tests).
+   * @param wrapper
+   * @param height
+   */
+  const appendComposerDock = (wrapper: ReturnType<typeof mountHome>, height = 160): HTMLElement => {
+    const column = wrapper.get('[data-test="chat-column"]').element as HTMLElement;
+    const dock = document.createElement('div');
+    dock.setAttribute('data-test', 'chat-composer-dock');
+    Object.defineProperty(dock, 'getBoundingClientRect', {
+      value: () => ({ height }) as unknown as DOMRect
+    });
+    column.appendChild(dock);
+    return dock;
+  };
+
+  /** Wait one animation frame (the composer-dock bind is nextTick + rAF). */
+  const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+  it('collapses into the input-only bar at the lower bound and expands again', async () => {
+    const wrapper = mountHome();
+    appendComposerDock(wrapper);
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    await nextTick();
+    await nextFrame();
+    await nextTick();
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+
+    const grip = wrapper.get('[data-test="chat-float-resize-bottom"]').element;
+    pointer(grip, 'pointerdown', 500, 600);
+    pointer(grip, 'pointermove', 500, 200);
+    pointer(grip, 'pointerup', 500, 200);
+    await nextTick();
+
+    expect(useChatFloatStore().collapsed).toBe(true);
+    // Input only: the window header AND the shell toolbar are gone.
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="toolbar-left"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain('height: 160px');
+    expect(wrapper.find('[data-test="chat-float-expand"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="chat-float-expand"]').trigger('click');
+    await nextTick();
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(false);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain(
+      `height: ${resolveFloatingSize(slot).height}px`
+    );
+  });
+
+  it('resizes the width from the right edge within the lower and upper bounds', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const size = resolveFloatingSize(slot);
+    const start = resolveFloatingPosition('center', slot, size);
+    const grip = wrapper.get('[data-test="chat-float-resize-right"]').element;
+
+    pointer(grip, 'pointerdown', start.left + size.width, start.top + 100);
+    pointer(grip, 'pointermove', start.left + size.width + 1000, start.top + 100);
+    pointer(grip, 'pointerup', start.left + size.width + 1000, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(Math.min(1200, window.innerWidth - start.left - 16));
+
+    pointer(grip, 'pointerdown', start.left + size.width, start.top + 100);
+    pointer(grip, 'pointermove', -2000, start.top + 100);
+    pointer(grip, 'pointerup', -2000, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(360);
+  });
+
+  it('resizes the width from the left edge with the right side fixed', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const size = resolveFloatingSize(slot);
+    const start = resolveFloatingPosition('center', slot, size);
+    const grip = wrapper.get('[data-test="chat-float-resize-left"]').element;
+
+    pointer(grip, 'pointerdown', start.left, start.top + 100);
+    pointer(grip, 'pointermove', start.left - 100, start.top + 100);
+    pointer(grip, 'pointerup', start.left - 100, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(size.width + 100);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain(`left: ${start.left - 100}px`);
+  });
+
+  it('ignores a sub-threshold resize nudge', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const grip = wrapper.get('[data-test="chat-float-resize-right"]').element;
+    pointer(grip, 'pointerdown', 500, 300);
+    pointer(grip, 'pointermove', 502, 300);
+    pointer(grip, 'pointerup', 502, 300);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(0);
   });
 
   it('drags by the header and snaps to the nearest anchor; a 2px nudge is a click', async () => {

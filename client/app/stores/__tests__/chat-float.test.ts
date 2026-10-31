@@ -12,6 +12,24 @@ describe('stores/chat-float', () => {
     const store = useChatFloatStore();
     expect(store.floating).toBe(false);
     expect(store.anchor).toBe('center');
+    expect(store.width).toBe(0);
+    expect(store.height).toBe(0);
+    expect(store.collapsed).toBe(false);
+  });
+
+  it('stores a resized size and the input-only state', () => {
+    const store = useChatFloatStore();
+    store.setSize({ width: 640, height: 480 });
+    expect(store.width).toBe(640);
+    expect(store.height).toBe(480);
+    store.setCollapsed(true);
+    expect(store.collapsed).toBe(true);
+    store.setCollapsed(false);
+    expect(store.collapsed).toBe(false);
+    // 0 restores the ratio default for that axis.
+    store.setSize({ width: 0, height: 0 });
+    expect(store.width).toBe(0);
+    expect(store.height).toBe(0);
   });
 
   it('opens, docks and toggles', () => {
