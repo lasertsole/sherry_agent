@@ -58,7 +58,11 @@ const primevueStubs = {
     template: '<div class="dlg"><slot /><slot name="footer" /></div>'
   },
   TabView: { name: 'TabView', props: ['activeIndex'], template: '<div class="tv"><slot /></div>' },
-  TabPanel: { name: 'TabPanel', props: ['value', 'header'], template: '<div class="tp"><slot /></div>' },
+  TabPanel: {
+    name: 'TabPanel',
+    props: ['value', 'header'],
+    template: '<div class="tp"><span class="tp-header">{{ header }}</span><slot /></div>'
+  },
   InputText: {
     name: 'InputText',
     props: ['modelValue'],
@@ -165,7 +169,6 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
   });
 });
 
-
 describe('ConfigPanel shortcut-bindings tab', () => {
   it('renders the bindings section and hides the shared footer there', async () => {
     const wrapper = mount(ConfigPanel, {
@@ -174,10 +177,21 @@ describe('ConfigPanel shortcut-bindings tab', () => {
     });
     const vm = wrapper.vm as unknown as ConfigPanelVm;
 
+    // The token budget left the settings for a session tab: the headers are
+    // exactly background / env / app / language / shortcuts.
+    expect(wrapper.findAll('.tp-header').map(node => node.text())).toEqual([
+      '背景图片',
+      '模型配置',
+      '应用配置',
+      '国际化',
+      '快捷键'
+    ]);
+
     // The tab body is the (stubbed) section; it saves on its own, so the
     // footer's Save/Cancel pair must be gone while it is active.
     expect(wrapper.find('.shortcut-section').exists()).toBe(true);
-    vm.activeTab = 5;
+    // 背景 0 · 模型 1 · 应用 2 · 国际化 3 · 快捷键 4 (budget moved to a session tab).
+    vm.activeTab = 4;
     await flushPromises();
     expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);
     expect(wrapper.findAll('button').filter(b => b.text() === '保存')).toHaveLength(0);

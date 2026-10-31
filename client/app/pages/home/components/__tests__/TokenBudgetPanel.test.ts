@@ -1,5 +1,6 @@
 /**
- * TokenBudgetPanel: the per-session cap/reset controls inside System Config.
+ * TokenBudgetPanel: the per-session cap/reset controls, now a session-scoped
+ * right-sidebar tab (it takes the session from the tab payload).
  *
  * The bridge is mocked; the test asserts the panel loads the current session's
  * state, saves a cap and resets the accumulated usage.
@@ -56,7 +57,7 @@ const state = {
 
 async function mountPanel() {
   const wrapper = mount(TokenBudgetPanel, {
-    props: { sessionId: 's1' },
+    props: { payload: { sessionId: 's1' } },
     global: { stubs: primevueStubs }
   });
   await flushPromises();

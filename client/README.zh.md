@@ -157,7 +157,7 @@ client/
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件；可拖拽进输入框——落下即插入 @./path 引用 chip——行右键菜单在此接线）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
-│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、Token 预算、国际化）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、国际化、快捷键）
 │   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
@@ -185,7 +185,7 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
 │   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
 │   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
-│   │           ├── TokenBudgetPanel.vue      # 系统配置 tab：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
+│   │           ├── TokenBudgetPanel.vue      # 会话级标签页（从上下文指标弹框打开）：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置：回放门白名单编辑器（GET/PUT /sherry-config/list/<key>，增删可执行文件名）
 │   │           ├── CudaPackCard.vue          # 模型配置：可选 CUDA 加速包卡片（仅 Linux——检测、断点续传下载，然后重启后端）
 │   │           ├── RecentClosedTabsMenu.vue  # 右栏标签条最左的控件：最近关闭的标签，两组（当前会话 / 全局）

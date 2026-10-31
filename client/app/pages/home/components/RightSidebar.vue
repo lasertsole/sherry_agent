@@ -271,6 +271,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
   contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue')),
   trajectory: defineAsyncComponent(() => import('./TrajectoryPanel.vue')),
+  tokenBudget: defineAsyncComponent(() => import('./TokenBudgetPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
   whiteboard: defineAsyncComponent(() => import('./WhiteboardPanel.vue')),

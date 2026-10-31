@@ -156,7 +156,7 @@ client/
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file; draggable into the composer — the drop inserts an @./path mention chip — and the row's right-click menu is wired here)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
-│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, Token 预算, 国际化)
+│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, 国际化, 快捷键)
 │   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
@@ -184,7 +184,7 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
 │   │           ├── SubagentRunDetail.vue      # Single subagent run detail
 │   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
-│   │           ├── TokenBudgetPanel.vue      # 系统配置 tab: the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
+│   │           ├── TokenBudgetPanel.vue      # Session-scoped tab (opened from the context ring's popover): the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置: the finish-replay allowlist editor (GET/PUT /sherry-config/list/<key>, add/remove executable names)
 │   │           ├── CudaPackCard.vue          # 模型配置: the optional CUDA pack card (Linux only — detect, download with resume, then restart the backend)
 │   │           ├── RecentClosedTabsMenu.vue  # The right-sidebar tab strip's leftmost control: recently closed tabs in two groups (当前会话 / 全局)

@@ -87,8 +87,12 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+// The bridge needs a stable module specifier so tests can vi.mock it (the
+// unimport injection is compile-time and leaves bare symbols unmockable), the
+// same exception `stores/context-usage.ts` carries.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import {
   fetchTokenBudget,
   resetTokenBudgetUsage,
@@ -97,7 +101,14 @@ import {
 } from '~/composables/bridge/session';
 import { logUtil } from '~/utils/log';
 
-const props = defineProps<{ sessionId?: string }>();
+/**
+ * The session this budget belongs to. Mounted as a session-scoped right-sidebar
+ * tab, so it arrives in the tab payload (the way ContextViewerPanel takes its
+ * session) rather than as a bare prop.
+ */
+const props = defineProps<{ payload?: { sessionId?: string } }>();
+/** The owning session id ('' when the tab was opened without one). */
+const sessionId = String(props.payload?.sessionId || '');
 const { t } = useI18n({ useScope: 'local' });
 
 const state = ref<TokenBudgetState | null>(null);
@@ -150,7 +161,6 @@ const applyState = (next: TokenBudgetState) => {
 
 /** Load the current session's budget (the panel can be opened before a session). */
 const load = async () => {
-  const sessionId = props.sessionId ?? '';
   loadError.value = '';
   if (!sessionId) {
     state.value = null;
@@ -166,7 +176,6 @@ const load = async () => {
 
 /** Persist the cap (null = unlimited); a mid-turn change is parked for the next turn. */
 const saveCap = async () => {
-  const sessionId = props.sessionId ?? '';
   if (!sessionId || busy.value) return;
   let cap: number | null = null;
   if (!unlimited.value) {
@@ -192,7 +201,6 @@ const saveCap = async () => {
 
 /** Clear USED/COST/LIMITED, preserving the cap. */
 const resetUsage = async () => {
-  const sessionId = props.sessionId ?? '';
   if (!sessionId || busy.value) return;
   busy.value = true;
   loadError.value = '';
@@ -206,13 +214,11 @@ const resetUsage = async () => {
   }
 };
 
-watch(
-  () => props.sessionId,
-  () => {
-    void load();
-  },
-  { immediate: true }
-);
+// The tab is per session (a session-scoped sidebar tab), so the id is fixed for
+// this mount: load once.
+onMounted(() => {
+  void load();
+});
 </script>
 
 <i18n lang="json">

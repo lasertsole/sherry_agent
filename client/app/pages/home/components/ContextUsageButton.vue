@@ -1,7 +1,7 @@
 <template>
   <!-- Ring entry: the arc is the share of the context window in use; clicking opens
        the breakdown above the toolbar. -->
-  <ToolbarPopover>
+  <ToolbarPopover ref="popover">
     <template #trigger="{ toggle }">
       <button
         type="button"
@@ -121,12 +121,26 @@
         <span class="text-gray-600 dark:text-gray-300">{{ t('contextUsage.cacheHit') }}</span>
         <span class="font-medium text-gray-700 dark:text-gray-200">{{ cacheHitLabel }}</span>
       </div>
+      <!-- Footer entry: the token budget caps THIS conversation, so it lives in
+           the session's own tab group and is opened from here (the ring is what
+           shows the window being filled). -->
+      <button
+        type="button"
+        class="flex cursor-pointer items-center justify-center gap-1.5 border-t border-solid border-gray-100 pt-2 text-xs font-medium text-theme-main transition-colors hover:text-theme-main/80 dark:border-gray-800"
+        data-test="context-usage-open-budget"
+        :aria-label="t('contextUsage.openBudget')"
+        @click="openBudgetTab">
+        <i
+          class="pi pi-wallet text-[0.7rem]"
+          aria-hidden="true"></i>
+        {{ t('contextUsage.openBudget') }}
+      </button>
     </div>
   </ToolbarPopover>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ToolbarPopover from './ToolbarPopover.vue';
 
@@ -139,6 +153,17 @@ const props = defineProps<{
 const { t } = useI18n({ useScope: 'local' });
 
 const store = useContextUsageStore();
+const rightSidebar = useRightSidebarStore();
+const popover = ref<{ close: () => void }>();
+
+/**
+ * Open the session's token-budget tab (the cap belongs to THIS conversation, so
+ * it lives in the session's own right-sidebar group) and dismiss the popover.
+ */
+const openBudgetTab = (): void => {
+  rightSidebar.openTab('tokenBudget', { sessionId: props.sessionId });
+  popover.value?.close();
+};
 
 /** Ring geometry: r = 9 in a 24-box, so the dash length is the circumference. */
 const RING_LENGTH = 2 * Math.PI * 9;
@@ -298,6 +323,7 @@ watch(
       "system": "系统提示词",
       "tools": "工具列表",
       "compressAt": "压缩阈值 {percent}%",
+      "openBudget": "Token 预算设置",
       "cacheHit": "平均缓存命中率"
     }
   },
@@ -314,6 +340,7 @@ watch(
       "system": "System prompt",
       "tools": "Tool list",
       "compressAt": "Compaction threshold {percent}%",
+      "openBudget": "Token budget settings",
       "cacheHit": "Average cache hit rate"
     }
   },
@@ -330,6 +357,7 @@ watch(
       "system": "システムプロンプト",
       "tools": "ツール一覧",
       "compressAt": "圧縮しきい値 {percent}%",
+      "openBudget": "トークン予算の設定",
       "cacheHit": "平均キャッシュヒット率"
     }
   },
@@ -345,6 +373,7 @@ watch(
       "skills": "스킬 색인",
       "system": "시스템 프롬프트",
       "tools": "도구 목록",
+      "openBudget": "토큰 예산 설정",
       "cacheHit": "평균 캐시 적중률",
       "compressAt": "압축 임계값 {percent}%"
     }

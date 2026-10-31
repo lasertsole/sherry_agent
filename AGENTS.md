@@ -1658,10 +1658,13 @@ response it accumulates the provider-reported `usage_metadata` into
 to the mem + DB registers so a restart does not lose the counters. The cap/park
 twin (`TOKEN_BUDGET_CAP_PENDING`) uses the same busy → park / turn-end promote
 rule as the thinking/model controls; `POST /sessions/budget/reset` clears
-USED/COST/LIMITED but keeps the cap. The 系统配置 panel's Token 预算 tab
-(`client/app/pages/home/components/TokenBudgetPanel.vue`) edits the open
-session's cap and resets its usage; it follows the shell's active session and
-shows a no-session state when none is open.
+USED/COST/LIMITED but keeps the cap. The UI is a SESSION-scoped right-sidebar tab
+(`tokenBudget`, `client/app/pages/home/components/TokenBudgetPanel.vue`): the cap
+belongs to one conversation, so it is NOT a 系统配置 tab any more. It is opened
+from the context-ring popover's footer entry (`ContextUsageButton.vue` →
+`openTab('tokenBudget', { sessionId })`, which also closes the popover) and takes
+its session from the tab payload like every other session panel; it shows a
+no-session state only if the payload lacks one.
 
 Pricing is USER-CONFIGURABLE, not hardcoded: `.models` carries
 `MODEL_PRICING_TABLE` (a JSON object serialized as a JSON string so the flat

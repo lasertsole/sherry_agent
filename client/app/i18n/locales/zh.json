@@ -673,6 +673,7 @@
     "recentClosed": "最近关闭的标签页",
     "recentClosedEmpty": "最近没有关闭的标签页",
     "i18n": "国际化",
+    "tokenBudget": "Token 预算",
     "whiteboard": "白板"
   },
   "progressFloat": {

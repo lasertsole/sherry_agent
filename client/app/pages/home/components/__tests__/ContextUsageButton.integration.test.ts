@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 // The stub `vue-i18n` resolves the current locale's messages; drive it directly.
 import { locale as i18nLocale } from 'vue-i18n';
 import ContextUsageButton from '@/pages/home/components/ContextUsageButton.vue';
+import { useRightSidebarStore } from '~/stores/right-sidebar';
 
 // The store is a Nuxt auto-import (like the toolbar's other stores): shadow it so
 // the ring's geometry and the popover contents can be asserted directly.
@@ -40,6 +42,13 @@ beforeEach(() => {
     usageFor: () => usageApi.usage,
     refresh: usageApi.refresh
   }));
+  // The footer entry opens a real right-sidebar tab: keep a real store so the
+  // tab's kind/scope/payload can be asserted (the component resolves the
+  // auto-imported store through the global, like the rest of the toolbar).
+  setActivePinia(createPinia());
+  const sidebar = useRightSidebarStore();
+  sidebar.setActiveSession('sid-1');
+  vi.stubGlobal('useRightSidebarStore', () => sidebar);
 });
 
 // The locale is a shared stub: a test that switches it hands it back.
@@ -332,6 +341,30 @@ describe('ContextUsageButton.vue (integration, store mocked)', () => {
     // The ring itself never shows a tick at 0°, and the popover has no red label.
     expect(wrapper.find('line').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('压缩阈值');
+  });
+
+  it('opens the session\u2019s token-budget tab from the popover footer', async () => {
+    const wrapper = mountButton(0);
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+
+    const entry = wrapper.find('[data-test="context-usage-open-budget"]');
+    expect(entry.exists()).toBe(true);
+    expect(entry.text()).toContain('Token 预算设置');
+
+    await entry.trigger('click');
+    await flushPromises();
+
+    const store = useRightSidebarStore();
+    const tab = store.tabs.find(candidate => candidate.kind === 'tokenBudget');
+    expect(tab).toBeTruthy();
+    // The cap is per conversation: session group, this session, its id in the payload.
+    expect(tab?.scope).toBe('session');
+    expect(tab?.sessionId).toBe('sid-1');
+    expect(tab?.payload?.sessionId).toBe('sid-1');
+    expect(store.activeTabId).toBe(tab?.id);
+    // The popover closes so the tab it opened is visible.
+    expect(wrapper.find('[data-test="toolbar-popover"]').exists()).toBe(false);
   });
 
   it('names itself for screen readers', () => {

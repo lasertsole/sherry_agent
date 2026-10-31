@@ -651,6 +651,7 @@
     "recentClosed": "Recently closed tabs",
     "recentClosedEmpty": "No recently closed tabs",
     "i18n": "Language",
+    "tokenBudget": "Token budget",
     "whiteboard": "Whiteboard"
   },
   "progressFloat": {

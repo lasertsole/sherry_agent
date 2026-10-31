@@ -651,6 +651,7 @@
     "recentClosed": "최근 닫은 탭",
     "recentClosedEmpty": "최근에 닫은 탭이 없습니다",
     "i18n": "국제화",
+    "tokenBudget": "토큰 예산",
     "whiteboard": "화이트보드"
   },
   "progressFloat": {

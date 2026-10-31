@@ -185,7 +185,7 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
 │   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
 │   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
-│   │           ├── TokenBudgetPanel.vue      # 시스템 설정 tab: 열린 세션의 Token 상한, 사용량/비용, 초기화(GET/POST /sessions/budget)
+│   │           ├── TokenBudgetPanel.vue      # 세션 범위 탭(컨텍스트 지표 팝오버에서 열기): 열린 세션의 Token 상한, 사용량/비용, 초기화(GET/POST /sessions/budget)
 │   │           ├── ReplayAllowlistEditor.vue # 시스템 설정: 피니시 재생 허용 목록 편집기(GET/PUT /sherry-config/list/<key>, 실행 파일 이름 추가/삭제)
 │   │           ├── CudaPackCard.vue          # 모델 설정: 선택적 CUDA 팩 카드(Linux 전용——감지, 이어받기 다운로드, 이후 백엔드 재시작)
 │   │           ├── RecentClosedTabsMenu.vue  # 오른쪽 사이드바 탭 스트립의 맨 왼쪽 컨트롤: 최근 닫은 탭을 두 그룹(현재 세션 / 전역)으로 표시

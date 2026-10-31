@@ -327,14 +327,6 @@
           </div>
         </TabPanel>
 
-        <!-- Token budget tab: the per-session cap on cumulative model tokens.
-             It saves/resets on its own (no footer button), and follows the
-             session the shell is showing. -->
-        <TabPanel
-          value="budget"
-          :header="t('config.tabs.budget')">
-          <TokenBudgetPanel :session-id="budgetSessionId" />
-        </TabPanel>
         <!-- Interface language: an app-wide (browser-profile) setting, so it sits
              with the other system settings instead of in the toolbar. Appended
              LAST on purpose: the footer / embedder / dirty-state logic below is
@@ -359,13 +351,14 @@
 
     <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
          scrolls), and only the background / sherry tabs use it — every env item
-         saves or applies on its own inside its own group card, the budget tab
-         owns its Save/Reset pair, and the language list applies on click.
-         (角色配置 moved to the 预设 panel together with the persona presets.)
-         Index-keyed like the rest of this panel's tab logic: env 1, budget 3,
-         i18n 4, shortcuts 5. -->
+         saves or applies on its own inside its own group card and the language
+         list applies on click. (角色配置 moved to the 预设 panel together with
+         the persona presets; Token 预算 became a session tab opened from the
+         context ring, because the cap is per conversation.)
+         Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
+         shortcuts 4. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -403,22 +396,16 @@ import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import CudaPackCard from './CudaPackCard.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
-import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
-import { useRightSidebarStore } from '~/stores/right-sidebar';
 import { logUtil } from '~/utils/log';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
 const chatBackgroundStore = useChatBackgroundStore();
 const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
 const setBackground = chatBackgroundStore.setBackground;
-
-/** The session the System Config tab is acting on (the shell keeps the store in sync). */
-const rightSidebarStore = useRightSidebarStore();
-const budgetSessionId = computed(() => rightSidebarStore.activeSessionId || '');
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -1110,7 +1097,6 @@ onBeforeUnmount(onHide);
         "user": "用户信息",
         "env": "模型配置",
         "sherry": "应用配置",
-        "budget": "Token 预算",
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "memoryAgent": "记忆·Agent",
@@ -1442,7 +1428,6 @@ onBeforeUnmount(onHide);
         "user": "User Profile",
         "env": "Model Config",
         "sherry": "App Config",
-        "budget": "Token Budget",
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "memoryAgent": "Memory · Agent",
@@ -1774,7 +1759,6 @@ onBeforeUnmount(onHide);
         "user": "ユーザー情報",
         "env": "モデル設定",
         "sherry": "アプリ設定",
-        "budget": "Token 予算",
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "memoryAgent": "記憶・Agent",
@@ -2106,7 +2090,6 @@ onBeforeUnmount(onHide);
         "user": "사용자 정보",
         "env": "모델 설정",
         "sherry": "앱 설정",
-        "budget": "Token 예산",
         "i18n": "국제화",
         "shortcuts": "단축키",
         "memoryAgent": "메모리·Agent",

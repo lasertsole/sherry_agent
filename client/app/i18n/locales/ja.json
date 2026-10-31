@@ -651,6 +651,7 @@
     "recentClosed": "最近閉じたタブ",
     "recentClosedEmpty": "最近閉じたタブはありません",
     "i18n": "国際化",
+    "tokenBudget": "トークン予算",
     "whiteboard": "ホワイトボード"
   },
   "progressFloat": {
