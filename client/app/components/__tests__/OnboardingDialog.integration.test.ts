@@ -51,7 +51,11 @@ function mountTour() {
   return mount(OnboardingDialog, { props: { visible: true }, global: { stubs } });
 }
 
-/** Click by the visible (translated) label. */
+/**
+ * Click by the visible (translated) label.
+ * @param wrapper
+ * @param label
+ */
 async function clickLabel(wrapper: ReturnType<typeof mount>, label: string) {
   const button = wrapper.findAll('button').find(candidate => candidate.text() === label);
   if (!button) throw new Error(`no button labelled ${label}`);

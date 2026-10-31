@@ -215,22 +215,34 @@ const modeOptions = [
   { label: t('safetyFilter.modeAlways'), value: MODE_ALWAYS }
 ];
 
-/** Format one event timestamp as a local time-of-day. */
+/**
+ * Format one event timestamp as a local time-of-day.
+ * @param at
+ */
 const formatTime = (at: number): string => new Date(at * 1000).toLocaleTimeString();
 
-/** Master switch: apply the new value first, then persist. */
+/**
+ * Master switch: apply the new value first, then persist.
+ * @param value
+ */
 const onMasterChange = (value: unknown): void => {
   enabled.value = Boolean(value);
   void saveSwitches();
 };
 
-/** LLM switch: off writes the `off` mode; on restores the chosen strategy. */
+/**
+ * LLM switch: off writes the `off` mode; on restores the chosen strategy.
+ * @param value
+ */
 const onLlmSwitchChange = (value: unknown): void => {
   llmOn.value = Boolean(value);
   void saveSwitches();
 };
 
-/** Strategy select (only meaningful while the LLM switch is on). */
+/**
+ * Strategy select (only meaningful while the LLM switch is on).
+ * @param value
+ */
 const onModeChange = (value: unknown): void => {
   llmMode.value = String(value);
   void saveSwitches();

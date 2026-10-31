@@ -178,7 +178,10 @@ const error = ref('');
 /** Built-in presets only: a first-run user has no saved presets yet. */
 const entries = computed<PresetEntry[]>(() => catalogEntries([]));
 
-/** Whether the locale carries a description for this preset id. */
+/**
+ * Whether the locale carries a description for this preset id.
+ * @param id
+ */
 const hasPresetDesc = (id: string): boolean => te(`onboarding.presetDesc.${id}`);
 
 /** The three controls the tour points at. */

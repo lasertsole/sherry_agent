@@ -61,7 +61,11 @@ export interface ShortcutBinding {
  */
 const plain = (key: string): KeyCombo => ({ ctrl: false, shift: false, alt: false, meta: false, key });
 
-/** Ctrl/Cmd + one key. */
+/**
+ * Ctrl/Cmd + one key.
+ * @param key
+ * @param shift
+ */
 const ctrlKey = (key: string, shift = false): KeyCombo => ({
   ctrl: true,
   shift,
