@@ -250,9 +250,22 @@
           value="sherry"
           :header="t('config.tabs.sherry')">
           <div class="flex flex-col gap-4">
-            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('config.sherry.restartHint') }}
-            </p>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.sherry.restartHint') }}
+              </p>
+              <Button
+                v-if="sherryEntries.length"
+                :label="t('config.sherry.resetDefaults')"
+                icon="pi pi-replay"
+                size="small"
+                text
+                severity="secondary"
+                :title="t('config.sherry.resetDefaultsHint')"
+                :disabled="sherryAtDefaults"
+                data-test="sherry-reset-defaults"
+                @click="resetSherryDefaults" />
+            </div>
 
             <div
               v-if="sherryLoadError || envLoadError"
@@ -266,8 +279,21 @@
               <div
                 v-for="entry in sherryEntries"
                 :key="entry.key"
-                class="flex flex-col gap-1">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                class="flex flex-col gap-1"
+                :data-test="`sherry-entry-${entry.key}`">
+                <!-- A human label + one-line explanation per key: the raw key alone
+                     told the reader nothing about what the setting does. -->
+                <div class="flex flex-wrap items-baseline gap-x-2">
+                  <span class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                    {{ sherryEntryLabel(entry.key) }}
+                  </span>
+                  <span class="font-mono text-[0.65rem] text-gray-400">{{ entry.key }}</span>
+                </div>
+                <span
+                  v-if="sherryEntryHint(entry.key)"
+                  class="text-[0.7rem] leading-snug text-gray-400 dark:text-gray-500">
+                  {{ sherryEntryHint(entry.key) }}
+                </span>
                 <InputText
                   v-model="entry.value"
                   :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
@@ -670,6 +696,60 @@ const sherryLoaded = ref(false);
 const sherryHasChanges = computed(() =>
   sherryEntries.value.some(entry => entry.value !== originalSherryValues.value[entry.key])
 );
+
+/**
+ * Human label/hint slugs for the sherry.jsonc keys the panel shows.
+ *
+ * Keyed by the dotted registry key; an UNKNOWN key (added by a later release)
+ * still renders — its raw key becomes the label and it simply has no hint — so
+ * the panel never hides a setting it does not know about yet.
+ */
+const SHERRY_ENTRY_SLUGS: Record<string, string> = {
+  TOOL_CALL_TIMEOUT_MINUTES: 'toolCallTimeout',
+  TOKEN_BUDGET_DEFAULT_CAP: 'tokenBudgetDefaultCap',
+  LOG_LEVEL: 'logLevel',
+  project_dir: 'projectDir',
+  WORKSPACE_TEMPLATE_LANG: 'workspaceTemplateLang',
+  'heartbeat.enabled': 'heartbeatEnabled',
+  'curator.enabled': 'curatorEnabled',
+  'curator.interval_hours': 'curatorIntervalHours',
+  'curator.min_idle_hours': 'curatorMinIdleHours',
+  'curator.stale_after_days': 'curatorStaleAfterDays',
+  'curator.archive_after_days': 'curatorArchiveAfterDays',
+  'curator.consolidate': 'curatorConsolidate',
+  'curator.prune_builtins': 'curatorPruneBuiltins',
+  'hooks.enabled': 'hooksEnabled'
+};
+
+/**
+ * Localized label of one App Config entry.
+ * @param key Dotted sherry.jsonc key.
+ */
+const sherryEntryLabel = (key: string): string => {
+  const slug = SHERRY_ENTRY_SLUGS[key];
+  return slug ? t(`config.sherry.entries.${slug}.label`) : key;
+};
+
+/**
+ * Localized one-line explanation of one App Config entry ('' when unknown).
+ * @param key Dotted sherry.jsonc key.
+ */
+const sherryEntryHint = (key: string): string => {
+  const slug = SHERRY_ENTRY_SLUGS[key];
+  return slug ? t(`config.sherry.entries.${slug}.hint`) : '';
+};
+
+/** Whether every entry already shows its registry default (the reset is a no-op). */
+const sherryAtDefaults = computed(() =>
+  sherryEntries.value.every(entry => entry.default === undefined || entry.value === entry.default)
+);
+
+/** Fill the form with the registry defaults; the footer's 保存 still writes them. */
+const resetSherryDefaults = (): void => {
+  for (const entry of sherryEntries.value) {
+    if (entry.default !== undefined) entry.value = entry.default;
+  }
+};
 
 /** Lazily loads the sherry.jsonc config when the sherry tab is opened (backend GET /sherry-config) */
 const loadSherryConfig = async () => {
@@ -1178,6 +1258,51 @@ onBeforeUnmount(onHide);
         "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
       },
       "sherry": {
+        "resetDefaults": "重置为默认值",
+        "resetDefaultsHint": "把本页每个字段填回出厂默认值，随后点「保存」写入。",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "工具调用超时（分钟）",
+            "hint": "仅作记录，当前工具执行不读取此值（实际超时由 TOOLS_TIMEOUTS 决定）。"
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "默认 Token 上限",
+            "hint": "新建或未单独设置的会话继承此上限；0 表示不限制。会话自己的设置优先。"
+          },
+          "logLevel": {
+            "label": "日志级别",
+            "hint": "控制台与信息日志的输出级别：TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL。"
+          },
+          "projectDir": { "label": "默认工作目录", "hint": "未绑定项目目录的会话默认在此工作；留空表示仓库根目录。" },
+          "workspaceTemplateLang": {
+            "label": "角色模板语言",
+            "hint": "首次创建会话时从 workspace/template 复制的模板语言：en / zh / ja / ko。"
+          },
+          "heartbeatEnabled": {
+            "label": "心跳总开关",
+            "hint": "允许心跳调度器定期唤起角色；关闭后不会自动运行，投递仍按渠道单独控制。"
+          },
+          "curatorEnabled": {
+            "label": "技能整理总开关",
+            "hint": "允许后台自动整理 agent 创建的技能（合并、标记过期、归档）。"
+          },
+          "curatorIntervalHours": {
+            "label": "技能整理间隔（小时）",
+            "hint": "两次技能整理之间的最短间隔，默认 168 小时（7 天）。"
+          },
+          "curatorMinIdleHours": {
+            "label": "空闲触发阈值（小时）",
+            "hint": "需要空闲多少小时后才允许触发整理，默认 2 小时。"
+          },
+          "curatorStaleAfterDays": { "label": "标记过期天数", "hint": "技能多少天未使用会被标记为过期，默认 30 天。" },
+          "curatorArchiveAfterDays": { "label": "归档天数", "hint": "技能多少天未使用会被归档，默认 90 天。" },
+          "curatorConsolidate": { "label": "合并整理", "hint": "是否用模型把窄小的技能合并成更大的技能包。" },
+          "curatorPruneBuiltins": { "label": "清理内置技能记录", "hint": "是否清理内置技能的使用记录。" },
+          "hooksEnabled": {
+            "label": "生命周期 Hook 总开关",
+            "hint": "允许运行 sherry.jsonc 里配置的钩子命令；钩子会执行本机命令，默认关闭。"
+          }
+        },
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
@@ -1509,6 +1634,66 @@ onBeforeUnmount(onHide);
         "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
       },
       "sherry": {
+        "resetDefaults": "Restore defaults",
+        "resetDefaultsHint": "Fill every field on this page with its built-in default; press Save to write it.",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "Tool-call timeout (minutes)",
+            "hint": "Recorded only — tool execution does not read this value (real timeouts come from TOOLS_TIMEOUTS)."
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "Default token cap",
+            "hint": "Conversations with no cap of their own inherit this. 0 means unlimited; a conversation’s own setting wins."
+          },
+          "logLevel": {
+            "label": "Log level",
+            "hint": "Output level for the console and info logs: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL."
+          },
+          "projectDir": {
+            "label": "Default working directory",
+            "hint": "Sessions without their own project directory work here. Empty means the repository root."
+          },
+          "workspaceTemplateLang": {
+            "label": "Persona template language",
+            "hint": "Language of the workspace/template copy a new session starts from: en / zh / ja / ko."
+          },
+          "heartbeatEnabled": {
+            "label": "Heartbeat master switch",
+            "hint": "Lets the heartbeat scheduler wake the character periodically. Off means it never fires; delivery is still gated per channel."
+          },
+          "curatorEnabled": {
+            "label": "Skill curator master switch",
+            "hint": "Lets the background curator maintain agent-created skills (merge, mark stale, archive)."
+          },
+          "curatorIntervalHours": {
+            "label": "Curator interval (hours)",
+            "hint": "Minimum time between curator runs. Default 168 (7 days)."
+          },
+          "curatorMinIdleHours": {
+            "label": "Idle threshold (hours)",
+            "hint": "How long the agent must be idle before the curator may run. Default 2."
+          },
+          "curatorStaleAfterDays": {
+            "label": "Stale after (days)",
+            "hint": "Days without use before a skill is marked stale. Default 30."
+          },
+          "curatorArchiveAfterDays": {
+            "label": "Archive after (days)",
+            "hint": "Days without use before a skill is archived. Default 90."
+          },
+          "curatorConsolidate": {
+            "label": "Consolidation pass",
+            "hint": "Use the model to merge narrow skills into larger umbrella skills."
+          },
+          "curatorPruneBuiltins": {
+            "label": "Prune built-in usage records",
+            "hint": "Clean up usage records for the built-in skills."
+          },
+          "hooksEnabled": {
+            "label": "Lifecycle hooks master switch",
+            "hint": "Allow the hook commands configured in sherry.jsonc to run. Hooks execute local commands, so this is off by default."
+          }
+        },
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
@@ -1840,6 +2025,66 @@ onBeforeUnmount(onHide);
         "maxTokenHint": "200000 (200K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
       "sherry": {
+        "resetDefaults": "既定に戻す",
+        "resetDefaultsHint": "このページの各項目を組み込みの既定値に戻します（「保存」で書き込み）。",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "ツール呼び出しタイムアウト（分）",
+            "hint": "記録用の値です。実際のタイムアウトは TOOLS_TIMEOUTS が決めます。"
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "既定の Token 上限",
+            "hint": "独自の上限を設定していないセッションはこの値を使います。0 は無制限。セッション側の設定が優先されます。"
+          },
+          "logLevel": {
+            "label": "ログ レベル",
+            "hint": "コンソールと情報ログの出力レベル: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL。"
+          },
+          "projectDir": {
+            "label": "既定の作業ディレクトリ",
+            "hint": "プロジェクト ディレクトリを指定していないセッションはここで作業します。空欄はリポジトリ直下です。"
+          },
+          "workspaceTemplateLang": {
+            "label": "ペルソナ テンプレート言語",
+            "hint": "新しいセッションが workspace/template から複製する言語: en / zh / ja / ko。"
+          },
+          "heartbeatEnabled": {
+            "label": "ハートビートの総合スイッチ",
+            "hint": "ハートビート スケジューラが定期的にキャラクターを起こすことを許可します。オフなら発火せず、配信はチャネルごとに別途制御されます。"
+          },
+          "curatorEnabled": {
+            "label": "スキル整理の総合スイッチ",
+            "hint": "バックグラウンドで agent 作成スキルを整理（統合・期限切れ・アーカイブ）することを許可します。"
+          },
+          "curatorIntervalHours": {
+            "label": "整理の間隔（時間）",
+            "hint": "整理を実行する最小間隔。既定は 168 時間（7 日）。"
+          },
+          "curatorMinIdleHours": {
+            "label": "アイドルしきい値（時間）",
+            "hint": "整理を実行する前に必要なアイドル時間。既定は 2 時間。"
+          },
+          "curatorStaleAfterDays": {
+            "label": "期限切れまでの日数",
+            "hint": "未使用のまま何日で期限切れにするか。既定は 30 日。"
+          },
+          "curatorArchiveAfterDays": {
+            "label": "アーカイブまでの日数",
+            "hint": "未使用のまま何日でアーカイブするか。既定は 90 日。"
+          },
+          "curatorConsolidate": {
+            "label": "統合パス",
+            "hint": "モデルを使って狭いスキルをより大きな傘スキルに統合します。"
+          },
+          "curatorPruneBuiltins": {
+            "label": "組み込みスキル記録の削除",
+            "hint": "組み込みスキルの使用記録を削除します。"
+          },
+          "hooksEnabled": {
+            "label": "ライフサイクル フックの総合スイッチ",
+            "hint": "sherry.jsonc に設定したフック コマンドの実行を許可します。ローカルでコマンドを実行するため既定はオフです。"
+          }
+        },
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
@@ -2171,6 +2416,60 @@ onBeforeUnmount(onHide);
         "maxTokenHint": "200000 (200K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
       "sherry": {
+        "resetDefaults": "기본값으로",
+        "resetDefaultsHint": "이 페이지의 모든 항목을 기본값으로 채웁니다. 「저장」을 눌러 기록하세요.",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "도구 호출 제한 시간(분)",
+            "hint": "기록용 값입니다. 실제 제한 시간은 TOOLS_TIMEOUTS가 정합니다."
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "기본 Token 상한",
+            "hint": "자체 상한이 없는 세션이 이 값을 따릅니다. 0 은 무제한이며, 세션 설정이 우선합니다."
+          },
+          "logLevel": {
+            "label": "로그 수준",
+            "hint": "콘솔과 정보 로그의 출력 수준: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL."
+          },
+          "projectDir": {
+            "label": "기본 작업 디렉터리",
+            "hint": "프로젝트 디렉터리를 지정하지 않은 세션이 여기서 작업합니다. 비우면 저장소 루트입니다."
+          },
+          "workspaceTemplateLang": {
+            "label": "페르소나 템플릿 언어",
+            "hint": "새 세션이 workspace/template 에서 복사하는 언어: en / zh / ja / ko."
+          },
+          "heartbeatEnabled": {
+            "label": "하트비트 총 스위치",
+            "hint": "하트비트 스케줄러가 주기적으로 캐릭터를 깨우도록 허용합니다. 끄면 실행되지 않으며 전달은 채널별로 따로 제어됩니다."
+          },
+          "curatorEnabled": {
+            "label": "스킬 정리 총 스위치",
+            "hint": "백그라운드에서 agent 가 만든 스킬을 정리(병합·만료·보관)하도록 허용합니다."
+          },
+          "curatorIntervalHours": {
+            "label": "정리 간격(시간)",
+            "hint": "정리 실행 사이의 최소 간격. 기본 168시간(7일)."
+          },
+          "curatorMinIdleHours": {
+            "label": "유휴 임계값(시간)",
+            "hint": "정리를 실행하기 전에 필요한 유휴 시간. 기본 2시간."
+          },
+          "curatorStaleAfterDays": {
+            "label": "만료 표시 기간(일)",
+            "hint": "사용하지 않은 채 며칠이 지나면 만료로 표시할지. 기본 30일."
+          },
+          "curatorArchiveAfterDays": {
+            "label": "보관 기간(일)",
+            "hint": "사용하지 않은 채 며칠이 지나면 보관할지. 기본 90일."
+          },
+          "curatorConsolidate": { "label": "병합 정리", "hint": "모델로 좁은 스킬을 더 큰 우산 스킬로 병합합니다." },
+          "curatorPruneBuiltins": { "label": "내장 스킬 기록 정리", "hint": "내장 스킬의 사용 기록을 정리합니다." },
+          "hooksEnabled": {
+            "label": "생애주기 Hook 총 스위치",
+            "hint": "sherry.jsonc 에 설정한 훅 명령 실행을 허용합니다. 로컬 명령을 실행하므로 기본은 꺼짐입니다."
+          }
+        },
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",

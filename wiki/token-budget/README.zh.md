@@ -19,7 +19,14 @@ model call，不再请求 provider。该 turn 以“请总结”的提示结束�
 - `PUT /sessions/budget` 设置上限（`null` 清除，`0` 表示不限）。turn 运行中
   的修改会 PARK 到 `TOKEN_BUDGET_CAP_PENDING`，在 turn 边界 promote——与
   thinking/model 控件相同。
-- `GET /sessions/budget` 返回 `{cap, used, cost, limited, pending}`。
+- `GET /sessions/budget` 返回 `{cap, session_cap, default_cap, inherited, used, cost, limited, pending}`：
+  `cap` 是下一回合真正生效的上限（含继承来的默认值），`session_cap` 是会话自己的
+  选择（`null` 表示从未设置，`0` 表示显式不限），`inherited` 表示是否正在使用
+  `default_cap`。
+- 从未设置上限的会话继承 `sherry.jsonc` 的 `TOKEN_BUDGET_DEFAULT_CAP`
+  （0 表示不限，出厂即如此）。会话自己的值优先，所以把会话清成 `0` 就是显式不限、
+  不会被正的默认值重新套上；`null` 则表示恢复继承。该值每个进程只读一次
+  （文件需重启生效），因为它位于每次模型调用的热路径上。
 - `POST /sessions/budget/reset` 清空 `TOKEN_BUDGET_USED`、
   `TOKEN_BUDGET_COST`、`TOKEN_BUDGET_LIMITED`；上限保留。
 - `TOKEN_BUDGET_USED` / `TOKEN_BUDGET_COST` 跨 turn 累计，双写 mem + DB
@@ -28,7 +35,7 @@ model call，不再请求 provider。该 turn 以“请总结”的提示结束�
 - `budget_warning` 在 `MODEL_PRICING["budget_warn_threshold"]`（0.80）触发一次；
   `budget_limited` 在上限首次触达时触发一次；两者都是 best-effort WS 推送。
 
-- 系统配置 → Token 预算 标签（`TokenBudgetPanel.vue`）编辑当前会话的上限并重置用量；它跟随 shell 的活动会话，未打开会话时显示空状态。
+- **Token 预算** 是当前会话的右栏标签（`TokenBudgetPanel.vue`，右栏 →「当前会话」），编辑该会话的上限并重置用量。入口在上下文指标弹框底部；面板会说明上限是继承应用配置还是本会话单独设置，上限输入框留空保存即为不限，只有标签载荷缺少会话时才显示空状态。
 ## 🧮 价格查找
 
 价格表在 `.models` 中由用户配置：

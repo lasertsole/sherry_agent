@@ -11,6 +11,9 @@ SAMPLE = """// app settings
   // timeout in minutes
   "TOOL_CALL_TIMEOUT_MINUTES": 5,
 
+  // default session cap (0 = unlimited)
+  "TOKEN_BUDGET_DEFAULT_CAP": 0,
+
   "LOG_LEVEL": "INFO",
 
   "project_dir": "",
@@ -262,3 +265,40 @@ class TestListSettings:
 
         with pytest.raises(ValueError, match="multi-line top-level object"):
             service.write_sherry_list("yolo_deny_paths", ["~/.docker/"])
+
+
+class TestDefaultsAndMissingKeys:
+    def test_every_entry_carries_its_registry_default(self, sherry_file):
+        payload = read_sherry_config()
+        by_key = {e["key"]: e for e in payload["entries"]}
+
+        assert by_key["TOOL_CALL_TIMEOUT_MINUTES"]["default"] == "5"
+        assert by_key["LOG_LEVEL"]["default"] == "INFO"
+        assert by_key["heartbeat.enabled"]["default"] == "false"
+        assert by_key["TOKEN_BUDGET_DEFAULT_CAP"]["default"] == "0"
+
+    def test_a_registered_key_missing_from_the_file_is_still_listed(self, tmp_path, monkeypatch):
+        path = tmp_path / "sherry.jsonc"
+        # An older file: no TOKEN_BUDGET_DEFAULT_CAP line at all.
+        path.write_text('{\n  "LOG_LEVEL": "DEBUG"\n}\n', encoding="utf-8")
+        monkeypatch.setattr("server.service.sherry_config.SHERRY_CONFIG_PATH", path)
+
+        payload = read_sherry_config()
+        by_key = {e["key"]: e for e in payload["entries"]}
+
+        assert by_key["LOG_LEVEL"]["value"] == "DEBUG"
+        cap = by_key["TOKEN_BUDGET_DEFAULT_CAP"]
+        assert cap["value"] == "0" and cap["default"] == "0"
+        # File order first, then the missing registry keys.
+        assert [e["key"] for e in payload["entries"]][0] == "LOG_LEVEL"
+
+    def test_writing_a_missing_key_appends_its_line(self, tmp_path, monkeypatch):
+        path = tmp_path / "sherry.jsonc"
+        path.write_text('{\n  "LOG_LEVEL": "DEBUG"\n}\n', encoding="utf-8")
+        monkeypatch.setattr("server.service.sherry_config.SHERRY_CONFIG_PATH", path)
+
+        write_sherry_config({"TOKEN_BUDGET_DEFAULT_CAP": "250000"})
+
+        text = path.read_text(encoding="utf-8")
+        assert '"TOKEN_BUDGET_DEFAULT_CAP": 250000' in text
+        assert json5.loads(text)["TOKEN_BUDGET_DEFAULT_CAP"] == 250000

@@ -46,6 +46,10 @@ if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
 # sherry.jsonc is git-tracked and must never hold an API key.
 SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "TOOL_CALL_TIMEOUT_MINUTES": 5,
+    # Default cumulative-token cap for a session that never set its own
+    # (0 = unlimited, the historical behaviour). A session's own cap wins; a
+    # session that sets 0 stays unlimited even when this key is positive.
+    "TOKEN_BUDGET_DEFAULT_CAP": 0,
     "LOG_LEVEL": "INFO",
     # Persisted process-level default project directory ("where the agent
     # works"). Empty = unset -> ROOT_DIR. SHERRY_PROJECT_DIR still wins over
@@ -79,6 +83,7 @@ SHERRY_SETTING_KEYS: tuple[str, ...] = tuple(SHERRY_SETTING_DEFAULTS)
 _INT_KEYS = frozenset(
     {
         "TOOL_CALL_TIMEOUT_MINUTES",
+        "TOKEN_BUDGET_DEFAULT_CAP",
         "curator.interval_hours",
         "curator.stale_after_days",
         "curator.archive_after_days",

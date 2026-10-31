@@ -300,3 +300,87 @@ class TestCacheAwareCost:
         assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_COST) == pytest.approx(
             (1000 * 3.0 + 9000 * 0.3) / 1_000_000
         )
+
+
+class TestInheritedDefaultCap:
+    """A session that never set its own cap inherits the app-config default."""
+
+    def test_effective_cap_prefers_the_session_value(self, registers, monkeypatch):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 900_000)
+
+        # No session value → the app default.
+        assert budget_core.effective_cap(SESSION) == 900_000
+
+        # An explicit 0 means "unlimited", NOT "inherit".
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 0)
+        assert budget_core.effective_cap(SESSION) == 0
+
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 5000)
+        assert budget_core.effective_cap(SESSION) == 5000
+
+    def test_the_default_is_read_from_sherry_jsonc_once(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        budget_core.clear_default_token_cap_cache()
+        calls: list[int] = []
+
+        def _load():
+            calls.append(1)
+            return {"TOKEN_BUDGET_DEFAULT_CAP": 12_000}
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_settings", _load)
+
+        assert budget_core.default_token_cap() == 12_000
+        assert budget_core.default_token_cap() == 12_000
+        assert len(calls) == 1, "the value is cached for the process"
+
+        budget_core.clear_default_token_cap_cache()
+
+    def test_a_broken_setting_reads_as_unlimited(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        budget_core.clear_default_token_cap_cache()
+
+        def _boom():
+            raise RuntimeError("no config")
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_settings", _boom)
+        assert budget_core.default_token_cap() == 0
+        budget_core.clear_default_token_cap_cache()
+
+    @pytest.mark.asyncio
+    async def test_an_inherited_default_short_circuits_the_model_call(
+        self, registers, events, monkeypatch
+    ):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 1000)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_USED, 1000)
+        called: list[bool] = []
+
+        async def handler(_request):
+            called.append(True)
+            return _ai(input_tokens=1, output_tokens=1)
+
+        result = await TokenBudget().awrap_model_call(_request(), handler)
+
+        assert "Token budget exhausted" in result.content
+        assert called == []
+        assert events and events[0][2]["cap"] == 1000
+
+    @pytest.mark.asyncio
+    async def test_an_explicitly_unlimited_session_ignores_a_positive_default(
+        self, registers, events, monkeypatch
+    ):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 10)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 0)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_USED, 1_000_000)
+
+        async def handler(_request):
+            return _ai(input_tokens=5, output_tokens=5)
+
+        result = await TokenBudget().awrap_model_call(_request(), handler)
+
+        assert result.content == "ok", "no budget message: the session is unlimited"
+        assert events == []

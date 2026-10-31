@@ -1666,6 +1666,27 @@ from the context-ring popover's footer entry (`ContextUsageButton.vue` →
 its session from the tab payload like every other session panel; it shows a
 no-session state only if the payload lacks one.
 
+**Inheritance** (`TOKEN_BUDGET_DEFAULT_CAP` in `sherry.jsonc`, 0 = unlimited):
+the session's OWN value always wins — `0` there means explicitly unlimited, so a
+positive app default never resurrects a session the operator cleared — and only
+a session that never set anything inherits the default
+(`agent/middlewares/token_budget/core.py::effective_cap`, cached per process
+because the value sits on the per-model-call path and sherry.jsonc applies
+values after a restart). `apply_token_budget_choice(None)` clears the session's
+override (back to inheriting); `0` is the explicit-unlimited choice the panel's
+toggle / an emptied cap field writes. `GET /sessions/budget` reports
+`{cap (enforced), session_cap (own choice), default_cap, inherited, used, cost,
+limited, pending}` so the panel can say where the cap comes from.
+
+**App Config tab** (`config/sherry_settings.py` registry → `GET /sherry-config`):
+each entry now returns its typed `default` alongside `value`, a registered key
+the file does not carry yet is still LISTED (with its default; the next write
+appends its line before the closing brace and fixes the previous comma), and the
+panel renders a localized label + one-line hint per key from
+`SHERRY_ENTRY_SLUGS` (an unknown key falls back to its raw key with no hint).
+「重置为默认值」 fills the form with those defaults (the footer's 保存 still
+writes them), and it is disabled once nothing differs.
+
 Pricing is USER-CONFIGURABLE, not hardcoded: `.models` carries
 `MODEL_PRICING_TABLE` (a JSON object serialized as a JSON string so the flat
 key/value file editor keeps working; seeded from `.models.example`, and an

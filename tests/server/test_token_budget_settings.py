@@ -115,7 +115,16 @@ async def test_reset_clears_usage_but_keeps_the_cap(registers):
 
     state = service.reset_token_budget(SESSION)
 
-    assert state == {"cap": 5000, "used": 0, "cost": 0.0, "limited": False, "pending": False}
+    assert state == {
+        "cap": 5000,
+        "session_cap": 5000,
+        "default_cap": 0,
+        "inherited": False,
+        "used": 0,
+        "cost": 0.0,
+        "limited": False,
+        "pending": False,
+    }
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_CAP) == 5000
 
 
@@ -130,3 +139,34 @@ async def test_clearing_the_cap_clears_the_latched_flag(registers):
     assert pending is False
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_CAP) is None
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_LIMITED) is None
+
+
+@pytest.mark.asyncio
+async def test_state_reports_inheritance_and_the_app_default(
+    registers, monkeypatch: pytest.MonkeyPatch
+):
+    # The service holds its own reference to the helper (module-scope import).
+    monkeypatch.setattr(service, "default_token_cap", lambda: 9000)
+
+    state = service.get_token_budget_state(SESSION)
+    assert state["inherited"] is True
+    assert state["session_cap"] is None
+    assert state["default_cap"] == 9000
+    assert state["cap"] == 9000, "the inherited cap is what gets enforced"
+
+    # A session's own cap wins…
+    await service.apply_token_budget_choice(SESSION, 4000)
+    own = service.get_token_budget_state(SESSION)
+    assert own["inherited"] is False and own["session_cap"] == 4000 and own["cap"] == 4000
+    assert own["default_cap"] == 9000
+
+    # …and an explicit 0 is "unlimited", not "inherit".
+    await service.apply_token_budget_choice(SESSION, 0)
+    unlimited = service.get_token_budget_state(SESSION)
+    assert unlimited["inherited"] is False and unlimited["session_cap"] == 0
+    assert unlimited["cap"] is None
+
+    # Clearing the choice goes back to inheriting the default.
+    await service.apply_token_budget_choice(SESSION, None)
+    inherited_again = service.get_token_budget_state(SESSION)
+    assert inherited_again["inherited"] is True and inherited_again["cap"] == 9000

@@ -13,6 +13,7 @@ str) before writing. Grouped entries are addressed with dotted keys
 
 import json
 import re
+from typing import Any
 
 from config.sherry_settings import (
     SHERRY_CONFIG_PATH,
@@ -73,6 +74,13 @@ def _scan_lines(text: str):
             yield line, None
 
 
+def _display(value: Any) -> str:
+    """Render one typed setting as the UI string the panel edits (bools as true/false)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def read_sherry_config() -> dict:
     """Return the sherry.jsonc entries in file order.
 
@@ -89,20 +97,41 @@ def read_sherry_config() -> dict:
 
     text = SHERRY_CONFIG_PATH.read_text(encoding="utf-8")
     entries: list[dict] = []
+    seen: set[str] = set()
     for _line, entry in _scan_lines(text):
         if entry is None:
             continue
         key, m = entry
+        seen.add(key)
         raw_value = m.group(2)
         try:
             typed = json.loads(raw_value)
         except ValueError:
             typed = raw_value
-        if isinstance(typed, bool):
-            display = "true" if typed else "false"
-        else:
-            display = str(typed)
-        entries.append({"key": key, "value": display, "value_edited": False})
+        entries.append(
+            {
+                "key": key,
+                "value": _display(typed),
+                # The registry default, so the panel's 重置为默认值 button does
+                # not have to hardcode a second copy of it.
+                "default": _display(SHERRY_SETTING_DEFAULTS[key]),
+                "value_edited": False,
+            }
+        )
+    # A registered key the file does not carry yet (an older sherry.jsonc, or a
+    # key added in a later release) is still shown — with its default — so the
+    # panel can edit it; the next write appends the missing line.
+    for key in SHERRY_SETTING_KEYS:
+        if key in seen:
+            continue
+        entries.append(
+            {
+                "key": key,
+                "value": _display(SHERRY_SETTING_DEFAULTS[key]),
+                "default": _display(SHERRY_SETTING_DEFAULTS[key]),
+                "value_edited": False,
+            }
+        )
 
     return {"entries": entries}
 
@@ -149,9 +178,25 @@ def write_sherry_config(changes: dict[str, str]) -> None:
         comma = "," if had_comma else ""
         out.append(f'{indent}"{m.group(1)}": {typed_changes[key]}{comma}')
         updated_keys.discard(key)
-    # Defensively append any key that had no line in the file.
-    for key in sorted(updated_keys):
-        out.append(f'"{key}": {typed_changes[key]},')
+    # Defensively append any key that had no line in the file. The lines go
+    # BEFORE the closing brace (appending after it would produce invalid
+    # JSON5), and the entry above the brace gets its comma if the file's last
+    # line had none.
+    if updated_keys:
+        new_lines = [f'  "{key}": {typed_changes[key]},' for key in sorted(updated_keys)]
+        closing = next(
+            (index for index in range(len(out) - 1, -1, -1) if out[index].strip() == "}"), None
+        )
+        if closing is None:
+            out.extend(new_lines)
+        else:
+            for index in range(closing - 1, -1, -1):
+                if not out[index].strip():
+                    continue
+                if not out[index].rstrip().endswith(","):
+                    out[index] = out[index].rstrip() + ","
+                break
+            out[closing:closing] = new_lines
 
     trailing_newline = "\n" if text.endswith("\n") else ""
     SHERRY_CONFIG_PATH.write_text("\n".join(out) + trailing_newline, encoding="utf-8")

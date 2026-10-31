@@ -41,6 +41,14 @@
           <span class="text-sm text-gray-600 dark:text-gray-300">{{ t('budget.unlimited') }}</span>
         </div>
 
+        <!-- Where the cap in force comes from: the app-config default for a
+             session that never set one, or this session's own choice. -->
+        <small
+          class="text-xs text-gray-400 dark:text-gray-500"
+          data-test="budget-source">
+          {{ state?.inherited ? t('budget.inheritHint', { cap: defaultCapLabel }) : t('budget.ownHint') }}
+        </small>
+
         <div
           v-if="!unlimited"
           class="flex flex-col gap-1">
@@ -150,14 +158,26 @@ function formatCost(value: number): string {
   return `$${Math.max(0, value).toFixed(4)}`;
 }
 
-/** Apply a loaded payload to the edit fields and the dirty baseline. */
+/**
+ * Apply a loaded payload to the edit fields and the dirty baseline.
+ *
+ * The form edits the SESSION's own choice (``session_cap``): null = it inherits
+ * the app-config default (that cap is what the source hint shows), 0 =
+ * explicitly unlimited, >0 = a cap of its own.
+ */
 const applyState = (next: TokenBudgetState) => {
   state.value = next;
-  const isUnlimited = next.cap === null || next.cap <= 0;
+  const own = next.session_cap;
+  const isUnlimited = own === 0 || (own === null && next.cap === null);
   unlimited.value = isUnlimited;
-  capInput.value = isUnlimited ? null : next.cap;
+  capInput.value = isUnlimited ? null : (own ?? next.cap);
   original.value = { unlimited: isUnlimited, cap: capInput.value };
 };
+
+/** The app-config default as the source hint shows it (0 → unlimited). */
+const defaultCapLabel = computed(() =>
+  (state.value?.default_cap ?? 0) > 0 ? formatTokens(state.value!.default_cap) : t('budget.unlimitedShort')
+);
 
 /** Load the current session's budget (the panel can be opened before a session). */
 const load = async () => {
@@ -174,17 +194,26 @@ const load = async () => {
   }
 };
 
-/** Persist the cap (null = unlimited); a mid-turn change is parked for the next turn. */
+/**
+ * Persist the session's own cap; a mid-turn change is parked for the next turn.
+ *
+ * Unlimited (the toggle, or an EMPTIED cap field) writes an explicit ``0``:
+ * "unlimited even when the app config carries a default". The toggle is the
+ * explicit act; clearing the field means the same thing.
+ */
 const saveCap = async () => {
   if (!sessionId || busy.value) return;
-  let cap: number | null = null;
+  let cap = 0;
   if (!unlimited.value) {
     const value = capInput.value;
-    if (value === null || !Number.isInteger(value) || value <= 0) {
+    if (value === null) {
+      unlimited.value = true;
+    } else if (!Number.isInteger(value) || value <= 0) {
       loadError.value = t('budget.invalidCap');
       return;
+    } else {
+      cap = value;
     }
-    cap = value;
   }
   busy.value = true;
   loadError.value = '';
@@ -234,7 +263,9 @@ onMounted(() => {
       "unlimitedShort": "不限制",
       "cap": "Token 上限",
       "capPlaceholder": "例如 500000",
-      "capHint": "按累计输入 + 输出 token 计算，跨回合累计；修改在下一回合生效。",
+      "inheritHint": "沿用应用配置的默认上限：{cap}",
+      "ownHint": "本会话单独设置（不沿用应用配置）",
+      "capHint": "按累计输入 + 输出 token 计算，跨回合累计；留空保存即不限制；修改在下一回合生效。",
       "used": "已用 {used} / {cap}",
       "cost": "估算费用 {cost}",
       "reset": "重置用量",
@@ -256,7 +287,9 @@ onMounted(() => {
       "unlimitedShort": "Unlimited",
       "cap": "Token cap",
       "capPlaceholder": "e.g. 500000",
-      "capHint": "Counts cumulative input + output tokens across turns; changes apply from the next turn.",
+      "inheritHint": "Following the app-config default cap: {cap}",
+      "ownHint": "Set for this conversation (the app default does not apply)",
+      "capHint": "Counts cumulative input + output tokens across turns; leave it empty to save as unlimited; changes apply from the next turn.",
       "used": "Used {used} / {cap}",
       "cost": "Estimated cost {cost}",
       "reset": "Reset usage",
@@ -278,7 +311,9 @@ onMounted(() => {
       "unlimitedShort": "無制限",
       "cap": "Token 上限",
       "capPlaceholder": "例: 500000",
-      "capHint": "入力 + 出力トークンの累積で、ターンをまたいで計算されます。変更は次のターンから適用されます。",
+      "inheritHint": "アプリ設定の既定上限に従います: {cap}",
+      "ownHint": "このセッション専用の設定です（アプリ設定の既定は適用されません）",
+      "capHint": "累積の入力 + 出力トークンで数えます。空欄で保存すると無制限。変更は次のターンから反映されます。",
       "used": "使用済み {used} / {cap}",
       "cost": "推定費用 {cost}",
       "reset": "使用量をリセット",
@@ -300,7 +335,9 @@ onMounted(() => {
       "unlimitedShort": "무제한",
       "cap": "Token 상한",
       "capPlaceholder": "예: 500000",
-      "capHint": "입력 + 출력 토큰의 누적이며 턴을 넘어 계산됩니다. 변경은 다음 턴부터 적용됩니다.",
+      "inheritHint": "앱 설정의 기본 상한을 따릅니다: {cap}",
+      "ownHint": "이 세션에만 적용되는 설정입니다(앱 기본값은 적용되지 않음)",
+      "capHint": "누적 입력 + 출력 토큰으로 계산합니다. 비워 두고 저장하면 무제한이며, 변경은 다음 턴부터 적용됩니다.",
       "used": "사용 {used} / {cap}",
       "cost": "예상 비용 {cost}",
       "reset": "사용량 초기화",

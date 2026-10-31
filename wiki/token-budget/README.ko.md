@@ -19,7 +19,15 @@
 - `PUT /sessions/budget`으로 상한 설정(`null` 해제, `0` 무제한). 턴 실행 중
   변경은 `TOKEN_BUDGET_CAP_PENDING`에 PARK되고 턴 경계에서 promote됩니다
   (thinking/model 제어와 동일).
-- `GET /sessions/budget`은 `{cap, used, cost, limited, pending}` 반환.
+- `GET /sessions/budget`은 `{cap, session_cap, default_cap, inherited, used, cost, limited, pending}`을
+  반환합니다. `cap`은 다음 턴에 실제로 적용되는 상한(상속된 기본값 포함),
+  `session_cap`은 세션 자체의 선택(`null` = 설정한 적 없음, `0` = 명시적 무제한),
+  `inherited`는 `default_cap`을 상속 중인지 여부입니다.
+- 상한을 설정한 적 없는 세션은 `sherry.jsonc`의 `TOKEN_BUDGET_DEFAULT_CAP`을
+  상속합니다(0 = 무제한, 출하 기본값). 세션 자체 값이 항상 우선하므로 세션을 `0`으로
+  지우면 명시적 무제한이 되어 양수 기본값으로 되살아나지 않고, `null`은 상속으로
+  되돌립니다. 이 값은 모델 호출 경로에 있으므로 프로세스당 한 번만 읽습니다
+  (파일은 재시작 후 적용).
 - `POST /sessions/budget/reset`은 `TOKEN_BUDGET_USED` /
   `TOKEN_BUDGET_COST` / `TOKEN_BUDGET_LIMITED`를 지우고 상한은 유지.
 - `TOKEN_BUDGET_USED` / `TOKEN_BUDGET_COST`는 턴을 넘어 누적되고 mem + DB
@@ -28,7 +36,7 @@
 - `budget_warning`은 `MODEL_PRICING["budget_warn_threshold"]`(0.80)에서 1회,
   `budget_limited`는 상한 최초 도달 시 1회 WS로 best-effort 전송됩니다.
 
-- 시스템 설정 → Token 예산 탭(`TokenBudgetPanel.vue`)에서 열린 세션의 상한을 편집하고 사용량을 초기화합니다. 셸의 활성 세션을 따르며, 세션이 없으면 빈 상태를 표시합니다.
+- **Token 예산**은 세션 단위 오른쪽 패널 탭(`TokenBudgetPanel.vue`, 오른쪽 패널 → 「현재 세션」)으로 해당 대화의 상한을 편집하고 사용량을 초기화합니다. 입구는 컨텍스트 지표 팝오버 하단이며, 상한이 앱 설정을 상속하는지 이 세션 전용인지 보여 주고 상한 입력란을 비워 저장하면 무제한이 됩니다. 탭 페이로드에 세션이 없을 때만 빈 상태를 표시합니다.
 ## 🧮 가격 조회
 
 가격표는 `.models`에서 사용자가 설정합니다:

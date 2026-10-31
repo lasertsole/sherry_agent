@@ -6,8 +6,14 @@
   // PYTHON_REPL_TIMEOUT=30): config/features/agent_side/tools_timeouts.py
   "TOOL_CALL_TIMEOUT_MINUTES": 5,
 
+  // Default cumulative-token cap for a conversation that never set its own.
+  // 0 = unlimited (the default). A session's own cap always wins; clear it in
+  // the session's Token 预算 tab to go back to this value's behaviour.
+  "TOKEN_BUDGET_DEFAULT_CAP": 0,
+
   // Log level for console output and info log files: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL
   "LOG_LEVEL": "INFO",
+
 
   // Process-level default project directory — where the agent works when a
   // session has no explicit binding. Empty = the repository root (the historical

@@ -1,6 +1,8 @@
 export interface SherryEntry {
   key: string;
   value: string;
+  /** The registry default (the App Config panel's 重置为默认值 restores this). */
+  default?: string;
   value_edited: boolean;
 }
 

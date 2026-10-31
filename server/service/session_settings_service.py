@@ -43,6 +43,7 @@ from typing import Any
 
 from agent.tools.subagent.registry.session_state import is_session_busy
 from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
+from agent.middlewares.token_budget import default_token_cap
 from runtime import StateKey, state_register_db, state_register_mem
 from pub.func.validator import is_safe_session_id
 
@@ -724,11 +725,21 @@ async def apply_search_backend_choice(session_id: str, backend: str | None) -> b
 
 
 def get_token_budget_state(session_id: str) -> dict[str, Any]:
-    """Return ``{cap, used, cost, limited, pending}`` for the session.
+    """Return the session's budget state.
 
-    ``cap`` is the EFFECTIVE next-turn cap (a parked mid-turn choice included),
-    ``None`` when unlimited. ``used`` / ``cost`` accumulate across turns;
-    ``cost`` is an estimate. ``pending`` reports that a cap change is parked.
+    Shape: ``{cap, session_cap, default_cap, inherited, used, cost, limited,
+    pending}``.
+
+    * ``cap`` — the cap that will be ENFORCED on the next turn, ``None`` when
+      unlimited. A parked mid-turn choice counts (it lands at the turn end).
+    * ``session_cap`` — the session's OWN value: ``None`` = it never set one
+      (it inherits), ``0`` = explicitly unlimited, ``>0`` = a cap.
+    * ``default_cap`` — the app-config default (``sherry.jsonc``'s
+      ``TOKEN_BUDGET_DEFAULT_CAP``; ``0`` = unlimited).
+    * ``inherited`` — ``session_cap is None``.
+
+    ``used`` / ``cost`` accumulate across turns (``cost`` is an estimate);
+    ``pending`` reports that a cap change is parked.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
@@ -736,12 +747,17 @@ def get_token_budget_state(session_id: str) -> dict[str, Any]:
         promote_pending_settings_sync(session_id)
     parked, parked_value = _pending_value(session_id, StateKey.TOKEN_BUDGET_CAP_PENDING)
     live_cap = _read_value(session_id, StateKey.TOKEN_BUDGET_CAP)
-    cap = parked_value if parked else live_cap
+    session_cap = parked_value if parked else live_cap
+    default_cap = default_token_cap()
+    effective = int(session_cap) if session_cap is not None else default_cap
     used = _read_value(session_id, StateKey.TOKEN_BUDGET_USED) or 0
     cost = _read_value(session_id, StateKey.TOKEN_BUDGET_COST) or 0.0
     limited = bool(_read_value(session_id, StateKey.TOKEN_BUDGET_LIMITED) or False)
     return {
-        "cap": int(cap) if cap is not None else None,
+        "cap": effective if effective > 0 else None,
+        "session_cap": int(session_cap) if session_cap is not None else None,
+        "default_cap": default_cap,
+        "inherited": session_cap is None,
         "used": int(used),
         "cost": round(float(cost), 6),
         "limited": limited,
@@ -765,9 +781,11 @@ def _write_budget_cap(session_id: str, cap: int | None) -> None:
 async def apply_token_budget_choice(session_id: str, cap: int | None) -> bool:
     """HTTP entry for ``PUT /sessions/budget``; returns ``pending``.
 
-    ``None`` clears the cap (unlimited). A positive integer caps the session's
-    accumulated token usage. The same park/promote rule as the other controls:
-    a change made mid-turn lands on the next turn.
+    ``None`` clears the session's own cap — it goes back to INHERITING the
+    app-config default (``TOKEN_BUDGET_DEFAULT_CAP``). ``0`` makes it explicitly
+    unlimited even when that default is positive. A positive integer caps the
+    session's accumulated token usage. The same park/promote rule as the other
+    controls: a change made mid-turn lands on the next turn.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from functools import lru_cache
 from typing import Any, override
 from collections.abc import Awaitable, Callable
 
@@ -51,6 +52,42 @@ _WARNED: set[str] = set()
 def reset_budget_notice(session_id: str) -> None:
     """Forget the warning latch so a reset budget can warn again."""
     _WARNED.discard(session_id)
+
+
+@lru_cache(maxsize=1)
+def default_token_cap() -> int:
+    """The app-config cap for sessions that never set their own (0 = unlimited).
+
+    Read once per process on purpose: ``sherry.jsonc`` declares that its values
+    apply after a backend restart, and this sits on the per-model-call hot path.
+    """
+    try:
+        from config.sherry_settings import load_sherry_settings
+
+        return max(0, int(load_sherry_settings().get("TOKEN_BUDGET_DEFAULT_CAP", 0) or 0))
+    except Exception:  # noqa: BLE001 - a broken setting must never block a model call
+        return 0
+
+
+def clear_default_token_cap_cache() -> None:
+    """Forget the cached default (tests, and any future live-reload path)."""
+    default_token_cap.cache_clear()
+
+
+def effective_cap(session_id: str) -> int:
+    """The cap in force for one session (0 = unlimited).
+
+    A session's OWN value always wins — ``0`` there means explicitly unlimited,
+    so a positive app default never resurrects a session the operator cleared.
+    Only a session that never set anything inherits ``default_token_cap()``.
+    """
+    raw = _read_state(session_id, StateKey.TOKEN_BUDGET_CAP, None)
+    if raw is None:
+        return default_token_cap()
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _read_state(session_id: str, key: str, default: Any) -> Any:
@@ -234,7 +271,7 @@ class TokenBudget(AgentMiddleware):
         session_id = _session_id(state)
         if not session_id:
             return None
-        cap = int(_read_state(session_id, StateKey.TOKEN_BUDGET_CAP, 0) or 0)
+        cap = effective_cap(session_id)
         if cap <= 0:
             return None
         used = int(_read_state(session_id, StateKey.TOKEN_BUDGET_USED, 0) or 0)
@@ -280,7 +317,7 @@ class TokenBudget(AgentMiddleware):
             _write_state(session_id, StateKey.TOKEN_BUDGET_USED, used)
             _write_state(session_id, StateKey.TOKEN_BUDGET_COST, round(cost, 6))
 
-            cap = int(_read_state(session_id, StateKey.TOKEN_BUDGET_CAP, 0) or 0)
+            cap = effective_cap(session_id)
             if cap <= 0:
                 return
             limited = bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False))

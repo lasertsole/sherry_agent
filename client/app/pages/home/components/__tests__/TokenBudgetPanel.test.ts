@@ -49,6 +49,9 @@ interface PanelVm {
 
 const state = {
   cap: 1_000_000,
+  session_cap: 1_000_000,
+  default_cap: 0,
+  inherited: false,
   used: 250_000,
   cost: 0.1234,
   limited: false,
@@ -105,12 +108,72 @@ describe('TokenBudgetPanel', () => {
     expect(wrapper.text()).toContain('0 / ');
   });
 
-  it('clears the cap when unlimited is selected', async () => {
+  it('writes an explicit 0 (unlimited) when the toggle selects it', async () => {
     const wrapper = await mountPanel();
     const vm = wrapper.vm as unknown as PanelVm;
     vm.unlimited = true;
 
     await vm.saveCap();
-    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', null);
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0);
+  });
+
+  it('treats an emptied cap field as unlimited', async () => {
+    const wrapper = await mountPanel();
+    const vm = wrapper.vm as unknown as PanelVm;
+    vm.unlimited = false;
+    vm.capInput = null;
+    // The save reloads the state: the backend now reports the explicit 0.
+    budgetApi.fetchTokenBudget.mockResolvedValue({
+      ...state,
+      cap: null,
+      session_cap: 0,
+      inherited: false,
+      used: 0,
+      cost: 0
+    });
+
+    await vm.saveCap();
+
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0);
+    expect(vm.unlimited).toBe(true);
+  });
+
+  it('says when the cap is inherited from the app config', async () => {
+    budgetApi.fetchTokenBudget.mockResolvedValue({
+      ...state,
+      cap: 900_000,
+      session_cap: null,
+      default_cap: 900_000,
+      inherited: true,
+      used: 1000,
+      cost: 0
+    });
+    const wrapper = await mountPanel();
+
+    // The inherited cap is what applies, and the hint names its source.
+    expect(wrapper.text()).toContain('900,000');
+    expect(wrapper.find('[data-test="budget-source"]').text()).toContain('沿用');
+    expect(wrapper.find('[data-test="budget-source"]').text()).toContain('900,000');
+  });
+
+  it('says when the session carries its own choice', async () => {
+    const wrapper = await mountPanel();
+
+    expect(wrapper.find('[data-test="budget-source"]').text()).toContain('本会话单独设置');
+  });
+
+  it('shows an inherited UNLIMITED default as unlimited', async () => {
+    budgetApi.fetchTokenBudget.mockResolvedValue({
+      ...state,
+      cap: null,
+      session_cap: null,
+      default_cap: 0,
+      inherited: true,
+      used: 0,
+      cost: 0
+    });
+    const wrapper = await mountPanel();
+
+    expect(wrapper.find('[data-test="budget-source"]').text()).toContain('不限制');
   });
 });

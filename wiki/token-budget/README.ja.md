@@ -19,7 +19,15 @@
 - `PUT /sessions/budget` で上限を設定（`null` で解除、`0` は無制限）。ターン
   実行中の変更は `TOKEN_BUDGET_CAP_PENDING` に PARK され、ターン境界で
   promote されます（thinking/model コントロールと同じ）。
-- `GET /sessions/budget` は `{cap, used, cost, limited, pending}`。
+- `GET /sessions/budget` は `{cap, session_cap, default_cap, inherited, used, cost, limited, pending}`
+  を返します。`cap` は次のターンに実際に適用される上限（継承した既定値を含む）、
+  `session_cap` はセッション自身の選択（`null` は未設定、`0` は明示的な無制限）、
+  `inherited` は `default_cap` を継承しているかどうかです。
+- 上限を設定していないセッションは `sherry.jsonc` の `TOKEN_BUDGET_DEFAULT_CAP`
+  を継承します（0 は無制限で、出荷時の既定値）。セッション自身の値が常に優先される
+  ため、`0` にすると明示的な無制限となり、正の既定値で復活することはありません。
+  `null` は継承に戻します。この値はプロセスごとに 1 回だけ読み込みます
+  （ファイルは再起動後に反映）。モデル呼び出しごとの経路にあるためです。
 - `POST /sessions/budget/reset` は `TOKEN_BUDGET_USED` /
   `TOKEN_BUDGET_COST` / `TOKEN_BUDGET_LIMITED` をクリアし、上限は保持。
 - `TOKEN_BUDGET_USED` / `TOKEN_BUDGET_COST` はターンを跨いで累積し、mem + DB
@@ -28,7 +36,7 @@
 - `budget_warning` は `MODEL_PRICING["budget_warn_threshold"]`（0.80）で 1 回、
   `budget_limited` は上限初到達時に 1 回、WS へ best-effort で送られます。
 
-- システム設定 → Token 予算 タブ（`TokenBudgetPanel.vue`）で開いているセッションの上限を編集し、使用量をリセットできます。シェルのアクティブセッションに追従し、セッションがない場合は空状態を表示します。
+- **Token 予算** はセッション単位の右パネル タブ（`TokenBudgetPanel.vue`、右パネル →「現在のセッション」）で、その会話の上限を編集し使用量をリセットします。入口はコンテキスト指標のポップオーバー下部です。上限がアプリ設定の継承かこのセッション専用かを表示し、上限欄を空にして保存すると無制限になります。タブのペイロードにセッションがない場合のみ空状態を表示します。
 ## 🧮 価格の解決
 
 価格表は `.models` でユーザーが設定します：

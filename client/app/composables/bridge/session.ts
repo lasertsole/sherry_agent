@@ -931,7 +931,14 @@ export async function setSessionModel(
  * ``limited`` latches once the cap is reached.
  */
 export interface TokenBudgetState {
+  /** The cap enforced on the next turn (inherited default included); null = unlimited. */
   cap: number | null;
+  /** The session's OWN cap: null = never set (inherits), 0 = explicitly unlimited. */
+  session_cap: number | null;
+  /** The app-config default (`sherry.jsonc` TOKEN_BUDGET_DEFAULT_CAP; 0 = unlimited). */
+  default_cap: number;
+  /** Whether the session is inheriting `default_cap`. */
+  inherited: boolean;
   used: number;
   cost: number;
   limited: boolean;
@@ -944,8 +951,12 @@ export interface TokenBudgetState {
  */
 function toTokenBudgetState(res: Partial<TokenBudgetState> | null): TokenBudgetState {
   const cap = res?.cap;
+  const sessionCap = res?.session_cap;
   return {
     cap: typeof cap === 'number' ? cap : null,
+    session_cap: typeof sessionCap === 'number' ? sessionCap : null,
+    default_cap: Number(res?.default_cap ?? 0),
+    inherited: res?.inherited === true,
     used: Number(res?.used ?? 0),
     cost: Number(res?.cost ?? 0),
     limited: res?.limited === true,
