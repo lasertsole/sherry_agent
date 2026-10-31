@@ -32,7 +32,9 @@
          (`fixed` must REPLACE `relative` — same-specificity position utilities);
          the middle column then takes no flex width and the two side columns
          share the freed space (see sideExtra). minWidth must be 0 or the 35%
-         floor would win over the computed window width. -->
+         floor would win over the computed window width. z-50 puts the window
+         ABOVE the right sidebar's maximized overlay (z-40), so it stays visible
+         while that panel covers the shell. -->
     <div
       data-test="chat-column"
       :data-presentation="chatFloat.floating ? 'floating' : 'docked'"
@@ -40,7 +42,7 @@
         'flex flex-col h-full',
         chatFloat.floating
           ? [
-              'fixed z-40 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
+              'fixed z-50 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
               draggingFloat ? 'select-none transition-none' : 'transition-all duration-150'
             ]
           : 'relative flex-1 bg-transparent dark:bg-transparent'

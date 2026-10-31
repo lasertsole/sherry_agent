@@ -608,6 +608,8 @@ describe('home/index.vue — floating conversation column', () => {
       expect(column.attributes('data-presentation')).toBe('floating');
       expect(column.classes()).toContain('fixed');
       expect(column.classes()).not.toContain('relative');
+      // Above the right sidebar's maximized overlay (z-40).
+      expect(column.classes()).toContain('z-50');
       const slot = { left: 0, top: 0, width: 1440, height: 900 };
       const size = resolveFloatingSize(slot);
       expect(column.attributes('style')).toContain(`width: ${size.width}px`);
