@@ -91,15 +91,24 @@ const rebindingId = ref<string | null>(null);
 /** The binding the last rejected candidate collided with. */
 const conflict = ref<ShortcutBinding | null>(null);
 
-/** Bindings of one category, in table order. */
+/**
+ * Bindings of one category, in table order.
+ * @param category
+ */
 const byCategory = (category: ShortcutCategory): readonly ShortcutBinding[] =>
   shortcuts.bindings.filter(binding => binding.category === category);
 
-/** The chord in force for one binding (override ?? default). */
+/**
+ * The chord in force for one binding (override ?? default).
+ * @param id
+ */
 const currentKeys = (id: string): KeyCombo =>
   shortcuts.effectiveKeys(id) ?? shortcuts.bindings.find(b => b.id === id)!.defaultKeys;
 
-/** Whether the user overrode this binding (drives the reset button). */
+/**
+ * Whether the user overrode this binding (drives the reset button).
+ * @param id
+ */
 const hasOverride = (id: string): boolean => Boolean(shortcuts.overrides[id]);
 
 /** Whether any override exists (drives 全部恢复默认). */

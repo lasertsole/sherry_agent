@@ -18,7 +18,11 @@ import {
 
 const plain = { ctrl: false, shift: false, alt: false, meta: false };
 
-/** A keydown as the browser reports it. */
+/**
+ * A keydown as the browser reports it.
+ * @param k
+ * @param over
+ */
 const key = (k: string, over: Partial<KeyboardEventInit> = {}): KeyboardEvent =>
   new KeyboardEvent('keydown', { key: k, bubbles: true, ...over });
 

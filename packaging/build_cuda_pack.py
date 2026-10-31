@@ -38,6 +38,9 @@ import build_backend as bb  # the shared PyInstaller recipe (same lock, same fla
 ROOT = bb.ROOT
 PACK_DIR = bb.DIST_DIR / "sherry-cuda-pack"
 WORK_DIR = ROOT / "build" / "pyinstaller-cuda"
+#: PyInstaller refuses a dist path that equals the work path (the onedir name
+#: would collide with the spec's work directory), so the tree lands beside it.
+DIST_DIR = ROOT / "build" / "pyinstaller-cuda-dist"
 
 #: The CUDA payload: directories copied WHOLE from the built ``_internal`` tree
 #: (preserving torch's relative layout), plus torch's own CUDA binaries.
@@ -70,7 +73,7 @@ def _build_tree() -> Path:
         "--name",
         "sherry-backend",
         "--distpath",
-        str(WORK_DIR),
+        str(DIST_DIR),
         "--workpath",
         str(WORK_DIR),
         "--specpath",
@@ -96,7 +99,7 @@ def _build_tree() -> Path:
     result = subprocess.run(args, cwd=ROOT, check=False)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
-    return WORK_DIR / "sherry-backend" / "_internal"
+    return DIST_DIR / "sherry-backend" / "_internal"
 
 
 def _harvest(internal: Path, pack: Path) -> int:
@@ -137,6 +140,7 @@ def main() -> int:
     files = _harvest(internal, PACK_DIR)
     # The multi-GiB CUDA backend tree was only a harvester: drop it.
     shutil.rmtree(WORK_DIR, ignore_errors=True)
+    shutil.rmtree(DIST_DIR, ignore_errors=True)
 
     if not files:
         print("refusing: nothing was harvested — the pack would be empty", file=sys.stderr)

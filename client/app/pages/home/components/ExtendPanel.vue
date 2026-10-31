@@ -20,7 +20,7 @@
         "sourceBundled": "bundled",
         "parseError": "Parse error",
         "dropHint": "Drop MCP configs into {dir} — they load on the next backend start.",
-        "shapeHint": "Two shapes: mcp_servers/<name>.json (flat), or mcp_servers/<name>/config.json ($here/ points at the folder)."
+        "shapeHint": "Two shapes: mcp_servers/name.json (flat), or mcp_servers/name/config.json ($here/ points at the folder)."
       }
     }
   },
@@ -44,7 +44,7 @@
         "sourceBundled": "内蔵",
         "parseError": "解析エラー",
         "dropHint": "{dir} に MCP 設定を置くと、次回のバックエンド起動時に読み込まれます。",
-        "shapeHint": "2 つの形：mcp_servers/<名前>.json（フラット）、または mcp_servers/<名前>/config.json（$here/ はそのフォルダを指します）。"
+        "shapeHint": "2 つの形：mcp_servers/名前.json（フラット）、または mcp_servers/名前/config.json（$here/ はそのフォルダを指します）。"
       }
     }
   },
@@ -68,7 +68,7 @@
         "sourceBundled": "내장",
         "parseError": "구문 오류",
         "dropHint": "{dir} 에 MCP 설정을 넣으면 다음 백엔드 시작 시 로드됩니다.",
-        "shapeHint": "두 형태: mcp_servers/<이름>.json(플랫) 또는 mcp_servers/<이름>/config.json($here/는 해당 폴더를 가리킵니다)."
+        "shapeHint": "두 형태: mcp_servers/이름.json(플랫) 또는 mcp_servers/이름/config.json($here/는 해당 폴더를 가리킵니다)."
       }
     }
   },
@@ -92,7 +92,7 @@
         "sourceBundled": "内置",
         "parseError": "解析失败",
         "dropHint": "把 MCP 配置放进 {dir}，重启后端后自动加载。",
-        "shapeHint": "两种形态：mcp_servers/<名字>.json（扁平），或 mcp_servers/<名字>/config.json（$here/ 指向该文件夹）。"
+        "shapeHint": "两种形态：mcp_servers/名字.json（扁平），或 mcp_servers/名字/config.json（$here/ 指向该文件夹）。"
       }
     }
   }

@@ -143,7 +143,11 @@ export const useLlmProfilesStore = defineStore(
     const byId = (group: string, id: string | null): LlmProfile | undefined =>
       id === null ? undefined : listFor(group).find(p => p.id === id);
 
-    /** First non-empty env-config parameter among *keys*. */
+    /**
+     * First non-empty env-config parameter among *keys*.
+     * @param profile
+     * @param {...any} keys
+     */
     const pickParam = (profile: LlmProfile, ...keys: string[]): string | undefined => {
       for (const key of keys) {
         const value = profile.params[key];

@@ -164,6 +164,7 @@ function formatCost(value: number): string {
  * The form edits the SESSION's own choice (``session_cap``): null = it inherits
  * the app-config default (that cap is what the source hint shows), 0 =
  * explicitly unlimited, >0 = a cap of its own.
+ * @param next
  */
 const applyState = (next: TokenBudgetState) => {
   state.value = next;

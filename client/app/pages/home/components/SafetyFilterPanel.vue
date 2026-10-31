@@ -215,22 +215,34 @@ const modeOptions = [
   { label: t('safetyFilter.modeAlways'), value: MODE_ALWAYS }
 ];
 
-/** Format one event timestamp as a local time-of-day. */
+/**
+ * Format one event timestamp as a local time-of-day.
+ * @param at
+ */
 const formatTime = (at: number): string => new Date(at * 1000).toLocaleTimeString();
 
-/** Master switch: apply the new value first, then persist. */
+/**
+ * Master switch: apply the new value first, then persist.
+ * @param value
+ */
 const onMasterChange = (value: unknown): void => {
   enabled.value = Boolean(value);
   void saveSwitches();
 };
 
-/** LLM switch: off writes the `off` mode; on restores the chosen strategy. */
+/**
+ * LLM switch: off writes the `off` mode; on restores the chosen strategy.
+ * @param value
+ */
 const onLlmSwitchChange = (value: unknown): void => {
   llmOn.value = Boolean(value);
   void saveSwitches();
 };
 
-/** Strategy select (only meaningful while the LLM switch is on). */
+/**
+ * Strategy select (only meaningful while the LLM switch is on).
+ * @param value
+ */
 const onModeChange = (value: unknown): void => {
   llmMode.value = String(value);
   void saveSwitches();
@@ -364,12 +376,12 @@ onMounted(() => {
       "rules": "关键词规则",
       "rulesHint": "规则文件由你维护，应用不内置任何词表。type: exact / contains / regex；action: block / replace / warn；scope: input / output / both。保存后立即生效。",
       "rulesCount": "已加载 {count} 条规则",
-      "rulesFormat": "格式：{\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}",
+      "rulesFormat": "格式：{'{\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}'}",
       "saveRules": "保存规则",
       "rulesSaved": "关键词规则已保存",
       "rulesError": "关键词规则保存失败",
       "rulesWriteFailed": "关键词规则保存失败",
-      "rulesJsonInvalid": "JSON 格式不合法（需要 {\"rules\": [...]}）",
+      "rulesJsonInvalid": "JSON 格式不合法（需要 {'{\"rules\": [...]}'}）",
       "test": "规则测试",
       "testPlaceholder": "输入一段文本，查看会命中哪些输出规则",
       "testRun": "测试",
@@ -396,12 +408,12 @@ onMounted(() => {
       "rules": "Keyword rules",
       "rulesHint": "You own the rules file; no word list ships with the app. type: exact / contains / regex; action: block / replace / warn; scope: input / output / both. Saving applies immediately.",
       "rulesCount": "{count} rule(s) loaded",
-      "rulesFormat": "Format: {\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}",
+      "rulesFormat": "Format: {'{\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}'}",
       "saveRules": "Save rules",
       "rulesSaved": "Keyword rules saved",
       "rulesError": "Could not save the keyword rules",
       "rulesWriteFailed": "Could not save the keyword rules",
-      "rulesJsonInvalid": "Invalid JSON (expected {\"rules\": [...]})",
+      "rulesJsonInvalid": "Invalid JSON (expected {'{\"rules\": [...]}'})",
       "test": "Rule test",
       "testPlaceholder": "Type text to see which output rules it hits",
       "testRun": "Test",
@@ -428,12 +440,12 @@ onMounted(() => {
       "rules": "キーワード ルール",
       "rulesHint": "ルール ファイルはご自身で管理します（語リストは同梱していません）。type: exact / contains / regex、action: block / replace / warn、scope: input / output / both。保存するとすぐ反映されます。",
       "rulesCount": "{count} 件のルールを読み込み済み",
-      "rulesFormat": "形式: {\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}",
+      "rulesFormat": "形式: {'{\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}'}",
       "saveRules": "ルールを保存",
       "rulesSaved": "キーワード ルールを保存しました",
       "rulesError": "キーワード ルールを保存できませんでした",
       "rulesWriteFailed": "キーワード ルールを保存できませんでした",
-      "rulesJsonInvalid": "JSON が不正です（{\"rules\": [...]} が必要）",
+      "rulesJsonInvalid": "JSON が不正です（{'{\"rules\": [...]}'} が必要）",
       "test": "ルールのテスト",
       "testPlaceholder": "テキストを入力すると、一致する出力ルールを表示します",
       "testRun": "テスト",
@@ -460,12 +472,12 @@ onMounted(() => {
       "rules": "키워드 규칙",
       "rulesHint": "규칙 파일은 사용자가 관리합니다(단어 목록은 포함되지 않음). type: exact / contains / regex, action: block / replace / warn, scope: input / output / both. 저장하면 즉시 적용됩니다.",
       "rulesCount": "{count}개 규칙 로드됨",
-      "rulesFormat": "형식: {\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}",
+      "rulesFormat": "형식: {'{\"rules\": [{\"pattern\": \"…\", \"type\": \"contains\", \"action\": \"block\", \"scope\": \"both\"}]}'}",
       "saveRules": "규칙 저장",
       "rulesSaved": "키워드 규칙을 저장했습니다",
       "rulesError": "키워드 규칙을 저장하지 못했습니다",
       "rulesWriteFailed": "키워드 규칙을 저장하지 못했습니다",
-      "rulesJsonInvalid": "JSON 형식이 잘못되었습니다({\"rules\": [...]} 필요)",
+      "rulesJsonInvalid": "JSON 형식이 잘못되었습니다({'{\"rules\": [...]}'} 필요)",
       "test": "규칙 테스트",
       "testPlaceholder": "텍스트를 입력하면 어떤 출력 규칙에 걸리는지 보여 줍니다",
       "testRun": "테스트",
