@@ -15,7 +15,7 @@ import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate
+from context_engine.store.db import build_schema_v1
 from server.service import messages as m
 from server.service.stream_driver import StreamDriver
 from pub.types.message import MultiModalMessage
@@ -44,14 +44,14 @@ async def _collect(agen) -> list[dict]:
 
 @pytest.fixture()
 def store_db(monkeypatch, tmp_path) -> sqlite3.Connection:
-    """An isolated, fully migrated DB wired into store_core._db (test_store_origin pattern)."""
+    """An isolated, current-schema DB wired into store_core._db (test_store_origin pattern)."""
     conn = sqlite3.connect(
         tmp_path / "mes_memory_test.db",
         check_same_thread=False,
         isolation_level=None,
     )
     conn.row_factory = sqlite3.Row
-    _migrate(conn)
+    build_schema_v1(conn)
     monkeypatch.setattr(store_core, "_db", conn)
     yield conn
     conn.close()
@@ -242,7 +242,7 @@ class TestReasoningTokenPersistence:
 
     def test_old_schema_rows_stay_null_safe(self, store_db):
         # Simulate a row written before the column existed: the nullable
-        # column reads back NULL and add_messages on the migrated schema works.
+        # column reads back NULL and add_messages on the current schema works.
         store_db.execute(
             "INSERT INTO messages (turn_num, session_id, role, content, timestamp, ts_ms) "
             "VALUES (1, ?, 'ai', '\"old\"', '20260101000000', 0)",

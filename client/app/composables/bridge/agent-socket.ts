@@ -253,6 +253,36 @@ class SessionAgentSocket implements AgentSocket {
   }
 
   /**
+   * Continue the session's interrupted answer (the chat row's 继续生成 button).
+   * The backend validates the breakpoint and answers `continue_generation_ack`
+   * first; only an `ok` ack is followed by chunks.
+   */
+  sendContinueGeneration(): void {
+    this.sendFrame(JSON.stringify({ type: 'continue_generation', session_id: this.sessionId }));
+  }
+
+  /**
+   * Edit a SENT user message: the backend truncates that turn onward and re-runs
+   * the edited text as a new turn. Failures arrive as `edit_message_ack`.
+   * @param turnNum The edited message's turn number.
+   * @param newText The replacement text.
+   * @param msgId A FRESH client msg id (the queue dedupes by it).
+   * @param rowId The persisted row id (identifies the exact message).
+   */
+  sendEditMessage(turnNum: number, newText: string, msgId: string, rowId?: number): void {
+    this.sendFrame(
+      JSON.stringify({
+        type: 'edit_message',
+        session_id: this.sessionId,
+        turn_num: turnNum,
+        new_text: newText,
+        msg_id: msgId,
+        ...(rowId && rowId > 0 ? { row_id: rowId } : {})
+      })
+    );
+  }
+
+  /**
    * Edit a queued message's text before it is delivered.
    * @param msgId
    * @param message
@@ -276,6 +306,17 @@ class SessionAgentSocket implements AgentSocket {
    */
   sendNow(msgId: string): void {
     this.sendFrame(JSON.stringify({ type: 'send_now', session_id: this.sessionId, msg_id: msgId }));
+  }
+
+  /**
+   * Stop ONE background command of this session. Command-level: the turn keeps
+   * streaming and the session's other background tasks are untouched. The
+   * backend answers `terminal_bg_kill_ack` (signal landed) and later
+   * `terminal_bg_exit` (the final state).
+   * @param taskId The task id from terminal(run_in_background=True).
+   */
+  sendTerminalBgKill(taskId: string): void {
+    this.sendFrame(JSON.stringify({ type: 'terminal_bg_kill', session_id: this.sessionId, task_id: taskId }));
   }
 
   private sendFrame(frame: string): void {

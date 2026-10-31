@@ -42,7 +42,7 @@ def captured_records(monkeypatch):
     frame values — straight into the log. ``monkeypatch`` restores the previous
     hook afterwards, so the global logger is left as it was found.
     """
-    from agent.security.redact_formatter import redact_record
+    from pub.security.redact_formatter import redact_record
 
     messages: list[str] = []
     sink_id = logger.add(lambda message: messages.append(message), level="DEBUG")

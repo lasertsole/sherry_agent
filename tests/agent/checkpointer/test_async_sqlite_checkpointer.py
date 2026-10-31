@@ -26,6 +26,19 @@ class FakeConnection:
         self.executed: list[str] = []
         self._fail_on_execute = fail_on_execute
 
+    def __await__(self):
+        """Real ``aiosqlite.connect`` is a coroutine factory; stay awaitable.
+
+        The production helper awaits the connection (it must run the
+        busy_timeout PRAGMA before handing it out), so a fake that only
+        supported ``async with`` no longer mirrors the library.
+        """
+
+        async def _self() -> "FakeConnection":
+            return self
+
+        return _self().__await__()
+
     async def __aenter__(self) -> "FakeConnection":
         return self
 

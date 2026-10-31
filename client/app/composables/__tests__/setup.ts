@@ -279,7 +279,7 @@ vi.mock('@tanstack/vue-virtual', async () => {
 // auto-imported store; bare Vitest mounts have no Nuxt store auto-import, so a
 // no-op default keeps those mounts working. Suites that assert profile
 // behaviour override this with their own `vi.stubGlobal` in `beforeEach`.
-// `useAgentConfigStore` backs the 预设 panel's 工具 / 中间件 / 子代理模型 tabs:
+// `useAgentConfigStore` backs the Presets & Role panel's Tools / Middlewares / Subagent models tabs:
 // catalog lists come from the backend, the per-session config is mirrored from
 // `GET/PUT /sessions/agent_config`. The default stub is an empty, all-default
 // state; suites that exercise the tabs override it per file.
@@ -388,7 +388,7 @@ vi.stubGlobal('useNotificationStore', () =>
 );
 
 // `useWebSearchStore` mirrors the per-session search backend and turns the
-// downgrade frame into a 通知 entry; the shell subscribes to it on mount, so the
+// downgrade frame into a Notifications entry; the shell subscribes to it on mount, so the
 // default stub carries the surface either side touches.
 vi.stubGlobal('useWebSearchStore', () =>
   Vue.reactive({
@@ -466,6 +466,17 @@ vi.stubGlobal('useSubagentStore', () =>
 // override it with their own `vi.stubGlobal` in `beforeEach`.
 // `reactive` mirrors Pinia's contract: state refs are auto-unwrapped on access
 // (`store.tabs.find(...)`, not `store.tabs.value.find(...)`).
+// `useSidebarWidthStore` backs the home shell's LEFT column width (draggable,
+// persisted). Same shape as the right-sidebar stub: a reactive object whose
+// properties are plain values, so `store.width` reads directly.
+vi.stubGlobal('useSidebarWidthStore', () =>
+  Vue.reactive({
+    width: 360,
+    setWidth: () => {},
+    fitToViewport: () => {}
+  })
+);
+
 vi.stubGlobal('useRightSidebarStore', () =>
   Vue.reactive({
     collapsed: true,

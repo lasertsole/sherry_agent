@@ -132,11 +132,11 @@ _GOAL_GATE_SYSTEM_PROMPT = (
 async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     """Return an ``Error:`` text when the flow's evidence is failing/stale/broken.
 
-    The flow's evidence is the AGGREGATE over the sessions that did its work:
-    every dispatched step's ``child_session_key`` plus the flow's creator
-    (evidence rows carry a session key, never a flow id — see
-    ``pub_base/evidence_ledger.py``). A flow that never dispatched a step has
-    no keys and therefore no evidence, which passes.
+    The gate reads ONE flow's rows by ``flow_id``. A step child is stamped at
+    spawn; during this finish call the creator session is temporarily stamped
+    too, so its replay rows (and any direct verification it runs) carry the
+    flow. The previous creator value is restored in ``finally``. A flow with no
+    stamped rows has no evidence and passes.
 
     Before reading the summary, the regression gate replays the flow's passed
     verification commands once (finish-time batch, not per announce): a pass
@@ -148,28 +148,56 @@ async def _evidence_gate(flow: dict, steps: list[dict]) -> str | None:
     passes (``None``) — an optional probe must never block a finish.
     """
     creator_key = str((flow.get("state") or {}).get("creator_session_key") or "")
+    flow_id = str(flow.get("flow_id") or "")
     keys = [str(step.get("child_session_key") or "") for step in steps]
     keys.append(creator_key)
-    try:
-        from agent.tools.pub_base.regression_gate import (
-            prioritized_sessions,
-            reverify_flow_evidence,
-        )
 
-        priority = prioritized_sessions(steps, keys, creator_session_key=creator_key)
-        await reverify_flow_evidence(
-            keys,
-            creator_session_key=creator_key,
-            priority_session_keys=priority,
-        )
-    except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
-        logger.warning("Regression gate skipped (fail-open): {}", exc)
-    try:
-        from ..evidence_collector import collect_evidence_summary
+    previous_flow_id = ""
+    if creator_key and flow_id:
+        from runtime import StateKey, state_register_mem
 
-        evidence = collect_evidence_summary(session_keys=keys)
-    except Exception:  # noqa: BLE001 - optional probe; never block a finish
-        return None
+        previous_flow_id = str(
+            state_register_mem.get_state(creator_key, StateKey.FLOW_ID, "") or ""
+        )
+        state_register_mem.set_state(creator_key, StateKey.FLOW_ID, flow_id)
+    try:
+        try:
+            from agent.tools.pub_base.regression_gate import (
+                prioritized_sessions,
+                reverify_flow_evidence,
+            )
+
+            priority = prioritized_sessions(steps, keys, creator_session_key=creator_key)
+            await reverify_flow_evidence(
+                keys,
+                creator_session_key=creator_key,
+                priority_session_keys=priority,
+            )
+        except Exception as exc:  # noqa: BLE001 - the replay is an optional probe
+            logger.warning("Regression gate skipped (fail-open): {}", exc)
+        try:
+            from ..evidence_collector import collect_evidence_summary
+
+            evidence = collect_evidence_summary(flow_id=flow_id)
+            if not evidence:
+                # A restart clears the in-memory flow stamps (``StateKey.FLOW_ID``
+                # has no persisted twin), so every row of a still-open flow reads
+                # as unstamped and the strict flow-scoped read comes back empty.
+                # Falling back to the flow's OWN sessions (its step children plus
+                # the creator) is the only way to see evidence that still exists;
+                # it never widens to the whole session beyond those keys.
+                evidence = collect_evidence_summary(session_keys=keys)
+        except Exception:  # noqa: BLE001 - optional probe; never block a finish
+            return None
+    finally:
+        if creator_key and flow_id:
+            from runtime import StateKey, state_register_mem
+
+            if previous_flow_id:
+                state_register_mem.set_state(creator_key, StateKey.FLOW_ID, previous_flow_id)
+            else:
+                state_register_mem.delete_state(creator_key, StateKey.FLOW_ID)
+
     if not evidence:
         return None
     if "FAIL" in evidence:
@@ -212,9 +240,11 @@ async def _auto_fail_finish(
 ) -> str:
     """Terminal failure for a finish loop that exhausted one independent budget.
 
-    Children are NOT killed: still-running ones are recorded as detached, which
-    ``taskflow_summary`` surfaces. The flow becomes failed so the LLM cannot
-    keep spending finish calls on it.
+    Still-running children are recorded as detached (``taskflow_summary``
+    surfaces them) and then killed when ``TASKFLOW_INFRA["auto_kill_on_detach"]``
+    is on: a failed flow can never collect their results, so leaving them alive
+    only burns lane slots. The flow becomes failed so the LLM cannot keep
+    spending finish calls on it.
     """
     state["failure_reason"] = reason
     detached = detached_child_keys(list(state.get("steps") or []))
@@ -246,6 +276,10 @@ async def _auto_fail_finish(
         return conflict_error(exc)
     except FlowNotFoundError:
         return not_found_error(flow_id)
+    from ._shared import notify_flow_todos_cancelled
+
+    await notify_flow_todos_cancelled(session_id, flow_id)
+    await _kill_detached_children(detached)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow auto-failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
@@ -253,6 +287,28 @@ async def _auto_fail_finish(
         "fresh plan, or taskflow_inspect(action='summary') to inspect. Children still running are recorded "
         "as detached, not killed."
     )
+
+
+async def _kill_detached_children(child_session_keys: list[str]) -> None:
+    """Kill the children a failed flow left running (fail-open, per child).
+
+    The flow is already terminal here, so a kill problem must never turn the
+    failure answer into an error: an unknown key (a child already cleaned up) or
+    a refused control check is skipped and logged.
+    """
+    if not child_session_keys or not TASKFLOW_INFRA["auto_kill_on_detach"]:
+        return
+    from agent.tools.subagent.control.kill import kill_subagent_run_with_cascade
+    from agent.tools.subagent.registry.queries import get_run_by_child_session_key
+
+    for key in child_session_keys:
+        try:
+            run = get_run_by_child_session_key(key)
+            if run is None:
+                continue
+            await kill_subagent_run_with_cascade(run.run_id, reason="taskflow_detached")
+        except Exception:
+            logger.warning("taskflow: failed to kill detached child {}", key, exc_info=True)
 
 
 @tool("taskflow_finish")
@@ -416,6 +472,9 @@ async def taskflow_finish(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    from ._shared import notify_flow_todos_completed
+
+    await notify_flow_todos_completed(session_id, flow_id)
     await push_taskflow_progress(session_id)
     return (
         f"TaskFlow finished: flow_id={flow_id}, revision={updated['expected_revision']}, "

@@ -1,5 +1,5 @@
 /**
- * The left sidebar's 工作目录 body: the two section headers (文件树 / Git Graph)
+ * The left sidebar's working-directory body: the two section headers (Files / Git Graph)
  * share ONE row in EVERY open/close combination, and the Splitter exists ONLY
  * while both panels do.
  *
@@ -92,6 +92,17 @@ function headerRowClass(wrapper: Awaited<ReturnType<typeof mountSidebar>>): stri
 describe('SessionSidebar working-directory sections', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('adds the float share to its rendered width and hides the resize grip', async () => {
+    ui = makeUiStore();
+    vi.stubGlobal('useUiStore', () => ui);
+    const wrapper = mount(SessionSidebar, { props: { extraWidth: 120 }, global: { stubs } });
+    await flushPromises();
+
+    // Stored width is 360 (shared setup stub); the DOM shows 480.
+    expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain('width: 480px');
+    expect(wrapper.find('[data-test="session-sidebar-resize"]').exists()).toBe(false);
   });
 
   it('keeps both headers on one horizontal row while both panels are open', async () => {

@@ -144,7 +144,14 @@ async def knowledge(
 
 
 # Nudge allowlist + subagent tool-policy tags (mirrors skill_manage).
-knowledge.metadata = {**(knowledge.metadata or {}), "nudge": True, "scope": "main_only"}
+knowledge.metadata = {
+    **(knowledge.metadata or {}),
+    "nudge": True,
+    "scope": "main_only",
+    "idempotent": False,
+    # read/list are lookups; write mutates the plan's knowledge file.
+    "idempotent_actions": ("read", "list"),
+}
 
 
 __all__ = ["Layer", "knowledge"]

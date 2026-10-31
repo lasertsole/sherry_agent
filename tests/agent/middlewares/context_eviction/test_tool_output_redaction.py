@@ -18,7 +18,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 
 from agent.middlewares.context_eviction.core import ContextEvictionMiddleware
-from agent.security.redact import REDACTED
+from pub.security.redact import REDACTED
 from config.features import TOOL_RESULT_EVICTION
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]

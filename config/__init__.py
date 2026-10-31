@@ -18,6 +18,7 @@ from .path import (
     USER_SKILLS_DIR as USER_SKILLS_DIR,
     APP_HOME as APP_HOME,
     LOG_DIR as LOG_DIR,
+    MCP_SERVERS_DIR as MCP_SERVERS_DIR,
     is_allowed_skill_path as is_allowed_skill_path,
     resolve_app_path as resolve_app_path,
     app_relative as app_relative,

@@ -92,6 +92,7 @@ export function useWs(options?: { onReconnect?: () => void }): {
   const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
     notification: data => emit('ws:notification', data.content ?? ''),
     todo_updated: data => emit('ws:todo_updated', data),
+    load_warning: data => emit('ws:load_warning', data),
     taskflow_updated: data => emit('ws:taskflow_updated', data),
     model_retry: data => emit('ws:model_retry', data),
     model_download_updated: data => emit('ws:model_download_updated', data),

@@ -128,6 +128,43 @@ class BackgroundTaskRegistry:
             self.update(task.task_id, status="killed")
         return killed
 
+    def kill_task(self, task_id: str, session_id: str | None = None) -> bool:
+        """Kill ONE background task's process tree (command-level cancel).
+
+        ``kill_session_tasks``' tree-kill, scoped to a single id: the same
+        SIGTERM→bounded-SIGKILL on the process group recorded at spawn, so a
+        shell's children die with it. The watcher still owns the EXIT side — it
+        observes the death and pushes the notification — which is why the status
+        is set here first: the UI shows "killed" the moment the signal lands,
+        and ``_watch`` must not overwrite it (see there).
+
+        Refused (``False``, nothing signalled) when the id is unknown, belongs to
+        another session, or its process already exited — the caller reports that
+        as a normal failure, never as an exception (F5/F6).
+        """
+        from types import SimpleNamespace
+
+        from agent.tools.pub_base.process_reap import kill_process_tree
+
+        task = self._tasks.get(str(task_id or "").strip())
+        if task is None:
+            return False
+        if session_id is not None and task.session_id != str(session_id or ""):
+            return False
+        if task.status != "running" or task.pid is None:
+            return False
+        try:
+            kill_process_tree(
+                SimpleNamespace(pid=task.pid),
+                pgid=task.pgid or task.pid,
+                grace=1.0,
+            )
+        except (OSError, ProcessLookupError):
+            pass  # already dead: the watcher records that
+        self.update(task.task_id, status="killed")
+        logger.info("background task {} ({}) killed on request", task.task_id, task.command[:80])
+        return True
+
     # ── the watcher ──────────────────────────────────────────────────────────
 
     def start_watcher(
@@ -150,21 +187,50 @@ class BackgroundTaskRegistry:
         task = self._tasks.get(task_id)
         if task is None:
             return
-        self.update(
-            task_id,
-            status="completed" if exit_code == 0 else "failed",
-            exit_code=exit_code,
-        )
+        if task.status == "killed":
+            # A killed process exits non-zero, but "failed" is the wrong story:
+            # the user/agent stopped it. Keep the status, record only the code.
+            task.exit_code = exit_code
+            task.live = False
+        else:
+            self.update(
+                task_id,
+                status="completed" if exit_code == 0 else "failed",
+                exit_code=exit_code,
+            )
         logger.info(
-            "background task {} (session {}) exited with code {}",
+            "background task {} (session {}) exited with code {} (status {})",
             task_id,
             session_id,
             exit_code,
+            task.status,
         )
         if not TERMINAL_BG["notify_on_exit"]:
             return
         await self._push_exit_notification(task)
         await self._trigger_auto_turn(task)
+
+    async def push_started(self, task: BackgroundTask) -> None:
+        """Best-effort ``terminal_bg_started`` frame (the UI's "a task exists" edge).
+
+        Pushed after registration so a panel that is already open adds the row
+        without polling; a failure only logs (a socket problem must never cost a
+        spawn).
+        """
+        try:
+            from runtime.session.ws_push import broadcast_to_session
+
+            await broadcast_to_session(
+                task.session_id,
+                {
+                    "event": "terminal_bg_started",
+                    "session_id": task.session_id,
+                    "content": task.to_dict(),
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - a dead socket must not matter
+            logger.debug("background task {}: started push failed: {}", task.task_id, exc)
 
     async def _push_exit_notification(self, task: BackgroundTask) -> None:
         """Best-effort WS frame (same shape/pattern as the TaskFlow progress push)."""
@@ -178,6 +244,10 @@ class BackgroundTaskRegistry:
                     "task_id": task.task_id,
                     "exit_code": task.exit_code,
                     "command": task.command,
+                    # The panel's terminal state: running → one of these. `reason`
+                    # separates "stopped by a person" from "the command failed".
+                    "status": task.status,
+                    "reason": "killed" if task.status == "killed" else "exited",
                 },
             }
             await broadcast_to_session(task.session_id, payload, ensure_ascii=False)
@@ -195,12 +265,15 @@ class BackgroundTaskRegistry:
             if trigger is None:
                 return  # evals / tests: no server owns the trigger
             session_key = f"agent:main:session:{task.session_id}"
-            status = "exited" if task.exit_code == 0 else "FAILED"
+            if task.status == "killed":
+                headline = "Background task stopped by user"
+            else:
+                headline = f"Background task {'exited' if task.exit_code == 0 else 'FAILED'}"
             await trigger(
                 session_key,
                 HumanMessage(
                     content=(
-                        f"[Background task {status}] {task.task_id} "
+                        f"[{headline}] {task.task_id} "
                         f"(command: {task.command}) exited with code {task.exit_code}. "
                         f"Read its output with terminal_bg(action='output', task_id='{task.task_id}')."
                     ),
@@ -213,11 +286,6 @@ class BackgroundTaskRegistry:
 
 #: The process-level singleton (tasks are children of THIS process).
 background_registry = BackgroundTaskRegistry()
-
-
-def output_read_limit() -> int:
-    """Tail bytes ``terminal_bg(action='output')`` returns (from the registry config)."""
-    return int(TERMINAL_BG["output_max_read_bytes"])
 
 
 def read_output_tail(path: Path, max_bytes: int | None = None) -> str:

@@ -371,16 +371,6 @@ def _mutate(skill_name: str, mutator) -> None:
 # ---------------------------------------------------------------------------
 
 
-def bump_view(skill_name: str) -> None:
-    """Bump view_count and last_viewed_at. Called from skill_view()."""
-
-    def _apply(rec: dict[str, Any]) -> None:
-        rec["view_count"] = int(rec.get("view_count") or 0) + 1
-        rec["last_viewed_at"] = _now_iso()
-
-    _mutate(skill_name, _apply)
-
-
 def bump_use(skill_name: str) -> None:
     """Bump use_count and last_used_at. Called when a skill is actively used
     (e.g. loaded into the prompt path or referenced from an assistant turn)."""
@@ -427,13 +417,6 @@ def set_state(skill_name: str, state: str) -> None:
             rec["archived_at"] = _now_iso()
         elif state == STATE_ACTIVE:
             rec["archived_at"] = None
-
-    _mutate(skill_name, _apply)
-
-
-def set_pinned(skill_name: str, pinned: bool) -> None:
-    def _apply(rec: dict[str, Any]) -> None:
-        rec["pinned"] = bool(pinned)
 
     _mutate(skill_name, _apply)
 

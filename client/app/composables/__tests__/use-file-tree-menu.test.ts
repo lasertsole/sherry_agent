@@ -66,20 +66,15 @@ describe('canOpenInBuiltInBrowser', () => {
 });
 
 describe('absolutePathOf', () => {
-  it('joins the root and a relative path', () => {
-    expect(absolutePathOf('/proj', 'src/foo.py')).toBe('/proj/src/foo.py');
-  });
-
-  it('does not double a trailing separator', () => {
-    expect(absolutePathOf('/proj/', 'src/foo.py')).toBe('/proj/src/foo.py');
-  });
-
-  it('keeps a Windows root in its own separator style', () => {
-    expect(absolutePathOf('C:\\proj', 'src/foo.py')).toBe('C:\\proj\\src\\foo.py');
-  });
-
-  it('returns empty for an unknown root', () => {
-    expect(absolutePathOf('', 'src/foo.py')).toBe('');
+  it.each([
+    ['/proj', 'src/foo.py', '/proj/src/foo.py'],
+    // A trailing separator must not be doubled.
+    ['/proj/', 'src/foo.py', '/proj/src/foo.py'],
+    // A Windows root keeps its own separator style.
+    ['C:\\proj', 'src/foo.py', 'C:\\proj\\src\\foo.py'],
+    ['', 'src/foo.py', '']
+  ])('absolutePathOf(%j, %j) -> %j', (root, rel, expected) => {
+    expect(absolutePathOf(root, rel)).toBe(expected);
   });
 });
 

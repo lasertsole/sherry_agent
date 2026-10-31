@@ -106,7 +106,7 @@ _TASK_KEYWORDS = {
     "增强",
     "重写",
     "转换",
-    # 日本語（漢字 + カタカナ + ひらがな）
+    # Japanese (kanji + katakana + hiragana)
     "実装",
     "修正",
     "作成",
@@ -388,7 +388,7 @@ class TaskIntentMiddleware(AgentMiddleware):
         from agent.middlewares.agent_switch import middleware_enabled
 
         if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op。
+            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             messages = state.get("messages", []) if isinstance(state, dict) else []
             if not messages:

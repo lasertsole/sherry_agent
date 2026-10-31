@@ -45,6 +45,8 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
     "DynamicReminderMiddleware",
+    "InputSafetyFilter",
+    "LLMModerationMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ThinkingControlMiddleware",
@@ -52,6 +54,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "HumanInTheLoop",
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
+    "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
 )
@@ -67,6 +70,11 @@ GATEABLE_MIDDLEWARES: frozenset[str] = frozenset(
         "TaskIntentMiddleware",
         "DynamicReminderMiddleware",
         "SubagentCompletionDrainMiddleware",
+        # Live-stream safety: the GLOBAL switch (sherry.jsonc) owns the feature;
+        # a session config may still switch the safety layer off for itself.
+        "InputSafetyFilter",
+        "LLMModerationMiddleware",
+        "OutputSafetyFilter",
     }
 )
 

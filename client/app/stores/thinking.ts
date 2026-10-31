@@ -20,7 +20,7 @@ import { fetchThinkingState, setThinkingValue } from '~/composables/bridge/sessi
  * current session's explicit choice for the toolbar control and pushes changes
  * via `PUT /sessions/thinking`. An absent key means "not hydrated yet". The
  * control mode is a property of the configured MODEL (process-global): switch
- * models use a boolean, always-think gateways use a 低/高/最高 selector.
+ * models use a boolean, always-think gateways use a low/high/max selector.
  */
 export const useThinkingStore = defineStore('thinking', () => {
   /** The configured model's control mode (hydrated with the first session). */

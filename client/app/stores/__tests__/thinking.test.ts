@@ -77,7 +77,7 @@ describe('stores/thinking', () => {
       level: null
     });
     await store.hydrate('sid-null');
-    // unset level displays as 高 (the server-side default level)
+    // unset level displays as 高 ("High", the server-side default level)
     expect(store.current('sid-null')).toBe('high');
   });
 
@@ -88,7 +88,7 @@ describe('stores/thinking', () => {
       enabled: null,
       level: null,
       // MAIN_LLM_ENABLE_THINKING=true: the model still thinks, so the switch
-      // must read 开启 even though the session never chose explicitly.
+      // must read 开启 ("On") even though the session never chose explicitly.
       defaultEnabled: true,
       defaultLevel: 'high'
     });

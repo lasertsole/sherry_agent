@@ -102,6 +102,51 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
         });
       }
     },
+    terminal_bg_started: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.task_id !== 'string' || !content.task_id) return;
+      ctx.handlers.onTerminalBgStarted?.({
+        task_id: content.task_id,
+        command: typeof content.command === 'string' ? content.command : '',
+        status: typeof content.status === 'string' ? content.status : 'running',
+        pid: typeof content.pid === 'number' ? content.pid : null,
+        exit_code: typeof content.exit_code === 'number' ? content.exit_code : null,
+        session_id: data.session_id ?? ctx.sessionId,
+        output_path: typeof content.output_path === 'string' ? content.output_path : null
+      });
+    },
+    terminal_bg_exit: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.task_id !== 'string' || !content.task_id) return;
+      ctx.handlers.onTerminalBgExit?.({
+        taskId: content.task_id,
+        // Older backends sent no status: an exit frame with a zero code is a
+        // completion, anything else a failure — the kill reason arrives only
+        // from a backend that reports it.
+        status: typeof content.status === 'string' ? content.status : 'completed',
+        reason: typeof content.reason === 'string' ? content.reason : 'exited',
+        exitCode: typeof content.exit_code === 'number' ? content.exit_code : null
+      });
+    },
+    safety_filter: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.layer !== 'string' || typeof content.action !== 'string') return;
+      ctx.handlers.onSafetyFilter?.({
+        layer: content.layer,
+        action: content.action,
+        ruleCount: typeof content.rule_count === 'number' ? content.rule_count : 0,
+        message: typeof content.message === 'string' ? content.message : '',
+        snippet: typeof content.snippet === 'string' ? content.snippet : undefined
+      });
+    },
+    terminal_bg_kill_ack: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      ctx.handlers.onTerminalBgKillAck?.({
+        taskId: typeof content.task_id === 'string' ? content.task_id : '',
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
+    },
     queued_cancelled: data => {
       ctx.handlers.onQueuedCancelled?.({
         sessionId: data.session_id ?? ctx.sessionId,
@@ -136,6 +181,12 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       });
     },
     done: data => {
+      // A heartbeat timeout ends the turn NORMALLY (the timeout notice arrives as
+      // a chunk), so the resumable flag rides the done frame — emitted before
+      // onDone so the chat slice still sees the streaming turn it decorates.
+      if (data.resumable === true) {
+        emit('ws:resumable', { sessionId: data.session_id ?? ctx.sessionId });
+      }
       ctx.settleResolve(turnMessageIds(ctx, data.message_ids));
       ctx.setActiveTurn(null);
       ctx.handlers.onDone?.({
@@ -151,9 +202,30 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.setActiveTurn(null);
     },
     stopped: data => {
+      // `resumable` is set when the interrupted answer is a PURE-TEXT one (no
+      // dangling tool calls): the chat row then offers 继续生成.
+      if (data.resumable === true) {
+        emit('ws:resumable', { sessionId: data.session_id ?? ctx.sessionId });
+      }
       ctx.settleResolve(turnMessageIds(ctx, data.message_ids));
       ctx.setActiveTurn(null);
       ctx.flushStopResolvers();
+    },
+    continue_generation_ack: data => {
+      const content = (data.content ?? {}) as { ok?: unknown; reason?: unknown };
+      emit('ws:continue_ack', {
+        sessionId: data.session_id ?? ctx.sessionId,
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
+    },
+    edit_message_ack: data => {
+      const content = (data.content ?? {}) as { ok?: unknown; reason?: unknown };
+      emit('ws:edit_ack', {
+        sessionId: data.session_id ?? ctx.sessionId,
+        ok: content.ok === true,
+        reason: typeof content.reason === 'string' ? content.reason : null
+      });
     },
     stream_resume: data => {
       const content = (data.content ?? {}) as {
@@ -189,6 +261,7 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       emit('stream:resumed', { sessionId: data.session_id ?? ctx.sessionId, status });
     },
     todo_updated: data => emit('ws:todo_updated', data),
+    load_warning: data => emit('ws:load_warning', data),
     taskflow_updated: data => emit('ws:taskflow_updated', data),
     model_retry: data => emit('ws:model_retry', data),
     model_download_updated: data => emit('ws:model_download_updated', data),

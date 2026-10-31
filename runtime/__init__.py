@@ -26,7 +26,7 @@ from .lane.core import (
     set_drain_check,
 )
 
-# 向后兼容别名：旧代码引用 ``runtime.Register``
+# Backward-compatibility alias: older code references ``runtime.Register``
 Register = SessionRegister
 
 __all__ = [

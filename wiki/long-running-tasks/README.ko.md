@@ -28,7 +28,7 @@
 - [판정 게이트](gates/README.ko.md)
 - [증거 원장](gates/evidence-ledger/README.ko.md)
 - [동시성 레인](lanes/README.ko.md)
-- [삼색 고아 GC](#-삼색-고아-gc)
+- [미참조 플로 고아 GC](#-미참조-플로-고아-gc)
 - [디스패치 직렬화와 멱등 플래닝](#-dispatch-serialization--idempotent-planning)
 - [설정 레지스트리](#-설정-레지스트리)
 - [아키텍처 다이어그램](#-아키텍처-다이어그램)
@@ -47,26 +47,28 @@
 | 3 | **데드라인** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **유휴 감지** | sweeper `_scan_stale_waiting_taskflows` | `wait_json`의 오래된 마커 |
 | 5 | **연속성 / 자동 재개** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 프롬프트 블록 |
-| 6 | **삼색 고아 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 활성 `todos` |
+| 6 | **미참조 플로 고아 GC** | sweeper `_unreferenced_flow_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 활성 `todos` |
 
 전체를 관통하는 설계 계약은 **오류를 텍스트로 반환**하는 것입니다: 도구는 비즈니스 오류를 모델에 던지지 않고 `Error:`로 시작하는 사람이 읽을 수 있는 문자열을 반환합니다. 모든 백그라운드 훅은 **페일오픈(fail-open)**입니다 — 레지스트리를 쓸 수 없거나 sweeper가 죽어도 "장시간 작업 컨텍스트 없음"으로 퇴화할 뿐, 턴을 깨뜨리지 않습니다.
 
-## ♻️ 삼색 고아 GC
+## ♻️ 미참조 플로 고아 GC
 
-TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action="create")`와 `taskflow_flow(action="plan")`은 생성 시 플로우 수준 `pending` todo를 한 행 바인딩하며(`step_id` 없음), 이 todo는 플로우가 터미널이 된 뒤에만 완료할 수 있습니다. `todowrite`는 이를 이어서 포함해야 합니다. sweeper는 부팅 시와 매 tick마다 두 개의 보완 패스를 실행합니다:
+TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action="create")`와 `taskflow_flow(action="plan")`은 생성 시 플로우 수준 `pending` todo를 한 행 바인딩하며(`step_id` 없음), 이 todo는 플로우가 터미널이 된 뒤에만 완료할 수 있습니다. `todowrite`는 이를 이어서 포함해야 합니다. 로컬 `patch`/`add`/`remove` action을 우선하세요(`todo_id`와 `flow_id`를 보존합니다). 전체 `replace`는 id를 다시 발급하므로 루트 todo가 고아가 될 수 있습니다. sweeper는 부팅 시와 매 tick마다 두 개의 보완 패스를 실행합니다:
 
 | 패스 | 조건 | 동작 |
 | :--- | :--- | :--- |
-| 삼색 mark | todo 상태가 `pending`/`in_progress`이고 `flow_id`가 있음 | 해당 플로우를 검정(도달 가능)으로 표시 |
-| 삼색 sweep | 비터미널·supersede되지 않음·활성 루트 없음, `updated_at`이 `tri_color_grace_seconds`(300초)보다 오래됨 | `failed` / `orphan_unreferenced` |
+| 미참조 마크 | todo 상태가 `pending`/`in_progress`이고 `flow_id`가 있음 | 해당 플로우를 도달 가능으로 표시 |
+| 미참조 스윕 | 비터미널·supersede되지 않음·활성 루트 없음, `updated_at`이 `unreferenced_flow_grace_seconds`(300초)보다 오래됨 | `failed` / `orphan_unreferenced` |
 | 자식 세션 liveness | session key가 `agent:*:subagent:*` 또는 `agent:*:swarm:*`, 라이브 run 없음, 같은 grace 초과 | `failed` / `session_dead` |
 | 플로우 liveness | 메인 세션이 `stale_action_hours`(12시간) 무활동, 라이브 자식 없음 | `failed` / `stale_swept` 또는 `session_dead` |
 | 좀비 todo | 활성 todo가 failed/cancelled 플로우를 참조 | todo를 `cancelled` |
 | prune | 터미널/superseded 행이 `max_total_flows_per_session`(200) 초과 | 가장 오래된 행 삭제 |
 
-라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록합니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 mark 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
+라이브 자식은 수집을 거부합니다. grace는 `todos.db`와 `taskflow_registry.db` 사이의 생성/바인드 경쟁을 덮고, 세션 수준 liveness는 이미 만료된 플로우만 대상으로 하므로 socket이 없는 부팅에서 최근 작업을 대량으로 오살하지 않습니다. 모든 mutation은 `updated_at`을 갱신하고, 터미널 전이는 `terminal_reason`을 기록합니다. superseded 전임자는 `cancelled` / `superseded`가 됩니다. `taskflow_flow(action="finish")`에는 세 개의 독립 예산(nudge, 연속 실패, 프로토콜 위반)이 있어 초과 시 자동 실패하고 detached 자식을 기록하며, `auto_kill_on_detach`가 켜져 있으면 **kill**합니다——실패한 flow는 결과를 받을 수 없으므로 살려 두면 레인만 차지합니다. `depends_on` 순환은 생성/갱신 시 거부되며(깊이 우선, id는 이미 검증됨) 비활성 스윕까지 flow를 붙잡지 않습니다. `supersede`는 `expected_revision`을 올리므로 이전 리비전을 가진 작성자는 취소된 flow를 되살리는 대신 CAS에 실패합니다. stale-WAITING 마커는 `updated_at`을 건드리지 않고 페이로드를 씁니다——그 컬럼이 바로 스윕이 읽는 비활성 시계입니다. `todowrite` 전체 교체는 하나의 트랜잭션이므로 루트 쿼리는 DELETE와 INSERT 사이의 빈 창을 보지 않습니다.
 
-출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
+전체 교체가 루트 todo를 버리면 유예 기간을 기다리지 않고 `update_todos`가 고아 flow를 즉시 보상한다(정책: `TODOLIST_INFRA["orphan_flow_on_drop"]`). 곧바로 세션 범위 sweep이 실행되고, flow가 종료 상태가 되면 루트 todo에 즉시 알린다. 활성 flow와 비슷한 목표의 생성은 `ack_dup`이 없으면 경고한다.
+
+출처: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`, `config/features/agent_side/taskflow_infra.py`; 테스트: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
@@ -83,13 +85,13 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 | 부분 | 내용 |
 | :--- | :--- |
-| `config/features/agent_side/` | **54**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
-| `config/features/infra_side/` | **28**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드) |
+| `config/features/agent_side/` | **57**개 에이전트 측 설정 모듈(미들웨어, 도구, LLM 클라이언트, 메모리, TaskFlow, 도구 병렬 안전) |
+| `config/features/infra_side/` | **30**개 인프라 측 설정 모듈(서버, 로그인, 큐, 스킬, 컨텍스트 엔진, 런타임, 웹 검색, 모델 가격, 로컬 모델 다운로드, 로그 보존, WS 속도 제한) |
 | `config/features/_env.py` | 유일한 공유 환경 헬퍼 |
 
 각 모듈은 `class XxxConfig(TypedDict)`와 모듈 수준 상수 `XXX: XxxConfig = {…}`를 정의합니다. 환경 인식 모듈은 빌더 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`를 정의하고 `env or os.environ`을 읽어 임포트 시 상수를 구체화합니다. 환경 헬퍼는 `_env_int(name, default, env)`(`config/features/_env.py:9`)이며, `1/true/yes/on`과 `0/false/no/off/""`를 받아들이고 예외를 던지지 않습니다.
 
-레지스트리는 현재 **82개 feature 객체**를 보유합니다 — 에이전트 측 54 + 인프라 측 28 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
+레지스트리는 현재 **87개 feature 객체**를 보유합니다 — 에이전트 측 57 + 인프라 측 30 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
 
 이 문서와 가장 관련 있는 상수:
 
@@ -280,7 +282,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
-- **레지스트리 규모는 82입니다.** 설정 레지스트리는 82개 feature 객체(에이전트 측 54 + 인프라 측 28)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`를 빠뜨립니다(환경에서 오는 기본값은 전용 빌더 테스트가 커버합니다).
+- **레지스트리 규모는 87입니다.** 설정 레지스트리는 87개 feature 객체(에이전트 측 57 + 인프라 측 30)를 보유합니다. 인프라 측 계약 테스트는 그중 21개(GATEWAY + 20개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`, `LOGS`, `WS_RATE_LIMIT`를 빠뜨립니다(기본값은 전용 테스트 또는 각 feature의 테스트 스위트가 커버합니다).
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_step(action="dispatch")`와 `taskflow_step(action="wait_all")`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
 - **TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_step(action="resume")`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.

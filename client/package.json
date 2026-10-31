@@ -22,7 +22,7 @@
     "@nuxtjs/i18n": "10.6.0",
     "@pinia/nuxt": "^1.0.3",
     "@primevue/themes": "^4.5.4",
-    "@tanstack/vue-virtual": "^3.13.48",
+    "@tanstack/vue-virtual": "^3.13.40",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "2.7.3",
     "@tauri-apps/plugin-opener": "2.5.5",

@@ -70,9 +70,9 @@
 
 バインドされたプロジェクトは**もう**リポジトリに初期化されません。sherry はユーザーの `.git` で `git init` / `add` / `commit` / `reset` / `checkout` / worktree を実行しません。各ターンの最初の書き込みで `shadow_git.ensure_checkpoint()`（write_file、patch_file、terminal、python_repl）が `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` を分離し、`.sherry/shadow-git/` にスナップショットします。失敗しても書き込みは続行します（fail-open）。
 
-store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（20）個だけ保持します。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
+store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude` に秘密情報・大きなディレクトリ・shadow store 自身の除外を `git add -A` の前に書き、最新 `SHADOW_GIT["max_snapshots"]`（100）個だけ保持します——store はプロジェクトルート単位で全セッション（サブエージェント含む）が共有するため、枠が小さいと並行ファンアウトで直近 1〜2 ステップまで縮みました。復元前に `pre-restore` スナップショットを取り（undo の undo）、単一ファイル/全体を復元できます。`checkpoint` ツールが list / show / restore を公開し、git graph はこのチェーン（ブランチ表示 `checkpoint`）を読みます。
 
-読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。
+読み取りはゲートされず、非 git ディレクトリも正常な結果です。shadow store はプロジェクトと一緒に移動し、`SHADOW_GIT["enabled"]=False` で全フックが no-op になります。 `SHADOW_GIT["store_dir"]`（または `SHERRY_SHADOW_GIT_DIR`）で store をプロジェクト外へ移せます。eval harness は run 単位のディレクトリを使うため、インスタンスの checkout に `.sherry` は現れません。`wait_for_idle()` と `freeze()` が teardown のバリアで、進行中のスナップショットを待ち、遅れて来る書き込みを止めてから revert します。
 
 ## 📖 読み取り先行ライセンス
 
@@ -116,7 +116,32 @@ store は `refs/heads/main` の `commit-tree` チェーンです。`info/exclude
 - 新規ファイルは空きにのみ作成されます；削除は親が依然一致することを要します；シンボリックリンクは決して貫通マージされません（スキップして報告）；
 - マージされる各コードファイル（Python / TS / TSX / JS / JSX / Rust / Go）は書き込みの前に**シンボル単位**で比較されます——改名（同じ kind、同じ所属クラス、名前距離 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`）、削除、追加は完了返信の **Interface changes** 節に載ります。別のサブエージェントのファイルがまだ**古い名前**を呼んでいる可能性があるためです。この比較は fail-open で（巨大なファイルや解析不能なファイルはその節に注記されるだけで、決して致命的にはなりません）、上限もあります（10 ファイル、種類ごとに 20 件）。
 
+
+### シンボル面（そしてそれを迂回する shell）
+
+テキスト CAS が守るのはバイトであり呼び出し側ではありません: `foo(a, b)` → `foo(a, b, *, timeout)` は衝突なくマージされ、すべての import を壊します。4 つの追加がその隙間を埋めます——いずれも書き込みを止めず、すべてフェイルオープンです：
+
+- **呼び出し形状の変化を報告。** シンボルの `(kind, name, parent)` が残ったまま引数/戻り値の形状が変わると、`changed: foo(a, b) → foo(a, b, *, timeout=1)` として節に載ります（現状 Python のみ：正規化した引数テキスト＋戻り値注記の有無。空白は畳むため純粋な整形は変更になりません）。モジュールレベルの代入も `variable` シンボルとして面に入ります——モジュール定数の改名は関数改名と同様に importer を壊します。この面は**インターフェース比較専用**の opt-in で、コード索引（callers/explore）は従来どおり関数・メソッド・クラスのみを列挙します。
+- **レポートが呼び出し元を名指し。** コード索引の `import_edges` が「誰がこの名前を import しているか」を**読み取り専用**・上限付きの逆引き（`agent/tools/code_intel/indexer.py::importers_of_names`）で答えます。索引が無ければ空——マージが索引構築を起こすことは決してありません。影響ファイルは `affected importers` に列挙され、同時に証跡台帳で stale になります。これにより、変更されたモジュールを一度も触っていない「純 import ユーザー」の緑の証跡が残りません。
+- **任意のマージ時判定。** `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]`（既定**オフ**）は、影響 importer をカバーする親セッションの passed コマンドを 1 回だけ再実行し（`merge_reverify_max_commands` = 5 で上限）、broken/unmark を追記します——「この改名で呼び出し元が壊れたか」がマージ時点で分かり、何ターンも先の finish ゲートを待ちません。安全仕様は finish ゲートと同じ（許可リスト、シェル無し、1 回）。ループ防止は構造的に成立します：再実行は台帳行を読みイベントを追記するだけで、追記されたイベントが再実行やマージを引き起こすことはありません。
+- **shell の書き込みも記帳。** `terminal` / `python_repl` はファイルツールが見えない経路で書き（許可も CAS も無し）、従来は台帳行を一切残さず、そのセッションの `modified_files` は空のままでした。コマンド前の状態は shadow store にあるので、`git diff --name-only` が変更点を名指しし（内容比較なので `touch -d` では騙せません）、各パスは `write_file` と同じ `mark_evidence_stale` 経路を通ります。REPL の制限 builtins は `open` を止めますが、クラス内省で `os` に到達できます——比較は結果を見るのでどちらも捕捉します。
+
+**再実行ゲートは書き換える formatter を実行しません。** `black`、`prettier`、`ruff format` は許可リストにあり、記録された `black foo.py`（`--check` 無し）は finish 時の再実行で許可/CAS スタック全体を迂回してファイルを書き換えていました。formatter は報告専用の形（`--check` / `--diff`、または `ruff check`）でのみ検証コマンドとして扱われ、裸の呼び出しは**スキップ**されます（失敗にはしない）ので、使えない記録がフローを止めることはありません。
+
 きれいなマージは worktree を登録解除し、そのブランチを削除してワークスペースを消します。衝突のあるマージは `<workspace>/tree` を検査用に残し、マニフェストを消費します——同じツリーが二度マージされることは決してありません。親が読む完了返信には報告が添えられ（`applied`、`created`、`deleted`、インターフェース変更、そしてパスごとの全衝突）、マージされたパスは親の証跡台帳で古いものとして印されます。
+
+## 🤝 エージェント間の協調（クレーム + 発見ボード）
+
+上の層は**機械的**です：バイトレベルの喪失を止めますが、誰の意図も知りません。2 つの advisory かつ opt-in の面がその意図を補います——いずれも既定で**オフ**（`COORDINATION`、環境変数 `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`）、読み取り中心で、**書き込みを拒否することは決してありません**：
+
+- **パスのクレーム**（`claim_scope`）——「これからこれらのパスを書く」。同じパスを書く仲間はツール結果に**1 行**の注意（`claim_notice`）を受け取り、書き込みは成功します。注意は (session, path) 単位で 10 分窓のうち 1 回（エージェント層は turn id を見られません——それはサーバーの turn scope にあります——が、窓が同じノイズ抑制を新たな結合なしで実現します）。クレームは `COORDINATION["claim_ttl_seconds"]`（1800 秒）で失効し、`release=true` でタスク終了時に解放、失効行は次のクレーム書き込み時に掃除されます。
+- **仲間の発見**（`share_finding` / `peers_findings`）——兄弟エージェントが `FAIL`（試したが駄目）、`FACT`（確認済み）、`PATCH`（このファイルのインターフェースが変わった）を共有します。読み取り側は通常のクエリです（空白区切りの全語がテキストまたはファイルパスに一致、任意の kind フィルタ、上限あり）。ボードが有効ならマージも `PATCH` を自動公開するため、「誰が何を変え、インターフェースが動いたか」を親に聞かずに答えられます。
+
+保存は**プロジェクトごとに 1 つ**の SQLite ファイル `<project>/.sherry/coordination.db`（`claims` + `findings`、`busy_timeout` 30 秒、WAL、現行スキーマのみ）。遅延作成で、**読み取りでは作成しません**：`.sherry/` が無いプロジェクトは空を返すため、クエリがユーザーのツリーを汚すことはありません。**ボードの内容は system prompt に決して入れません**——書き込みごとに変わるため、入れるとプロバイダのプレフィックスキャッシュが壊れます。ツール呼び出しだけで出入りします。
+
+両スイッチがオフのとき、`build_main_tools()` はこの機能の無いビルドと**バイト単位で同一**で、`GET /agent/catalog` に coordination グループも出ません：既定のツール面、そのトークンコスト、すべてのプリセット payload が変わりません。
+
+専用ロールもこのボードを使えます。4 つの機能ロール定義はいずれもツールを一覧に明記しています。この一覧は許可リストであり、載っていないツールはメインエージェントの設定にかかわらず子には見えないためです。唯一の書き手である executor が 3 つすべてを明記し（パスをクレームできるのはこのロールだけです）、researcher・reviewer・librarian は共有／読み取りの 2 つだけを明記するため、読み取り専用ロールが書き込み意思を表明することはありません。ボードが有効なときだけ子のツール面に現れ、両スイッチがオフなら子が見るものは以前とまったく同じです。
 
 ## ⚖️ 代替案と実測
 

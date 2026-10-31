@@ -34,7 +34,7 @@ export const DEFAULT_AI_AVATAR = '/avatar/assistant.jpg';
  *
  * Every render site falls back to it when a role has no avatar of its own — an
  * EMPTY avatar field means "no avatar", never "no image": the role tab's reset
- * button clears the field to it, and 编程助手's preset carries empty avatars so
+ * button clears the field to it, and the Coding Assistant preset carries empty avatars so
  * the plain assistant shows the placeholder on both sides.
  */
 export const DEFAULT_PLACEHOLDER_AVATAR = '/avatar/default.svg';

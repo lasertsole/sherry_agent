@@ -73,6 +73,29 @@ _ALLOWED_EXECUTABLES = frozenset(
 _PYTHON_MODULES = frozenset({"pytest", "ruff", "mypy", "pyright", "basedpyright", "unittest"})
 _PACKAGE_RUNNERS = frozenset({"npm", "pnpm", "yarn"})
 
+#: Formatters rewrite files in place. As a RECORDED verification command they
+#: would be replayed by this gate and rewrite a teammate's concurrent edit with
+#: no write license, no CAS and no accounting — a one-shot write that bypasses
+#: the whole file-tool safety stack. They are replayed only in a
+#: report-only form (``--check`` / ``--diff``); a bare invocation is skipped
+#: (never failed), so the flow is not pinned by an unusable row.
+_FORMATTERS = frozenset({"black", "prettier", "ruff"})
+_READ_ONLY_FLAGS = frozenset({"--check", "--diff", "-c"})
+
+
+def _formatter_is_read_only(executable: str, argv: list[str]) -> bool:
+    """Whether a formatter invocation only REPORTS (never rewrites).
+
+    ``ruff`` counts as a formatter only for its ``format`` subcommand (``ruff
+    check`` is a linter and is inherently read-only); ``black``/``prettier``
+    always rewrite unless told otherwise.
+    """
+    if executable == "ruff":
+        # `ruff check` / `ruff --check ...` lint; `ruff format` rewrites.
+        if len(argv) < 2 or argv[1] != "format":
+            return True
+    return any(token in _READ_ONLY_FLAGS for token in argv[1:])
+
 
 @dataclass(frozen=True)
 class ReverifyResult:
@@ -87,6 +110,30 @@ class ReverifyResult:
 def _executable_name(token: str) -> str:
     name = Path(token).name.lower()
     return name[:-4] if name.endswith(".exe") else name
+
+
+#: The sherry.jsonc list key users extend the verifier allowlist with.
+#: Also the key the list-settings API accepts (``server/service/sherry_config.py``).
+ALLOWED_EXECUTABLES_SETTING = "regression_gate_allowed_executables"
+
+
+def _get_allowed_executables() -> frozenset[str]:
+    """The verifier allowlist: code defaults + the user's sherry.jsonc extras.
+
+    Same shape as the YOLO deny list (``path_utils._get_yolo_deny_paths``): the
+    caller owns the defaults, ``load_sherry_list_setting`` contributes the user
+    entries, and the merge is read per call so an edited file applies on the
+    next replay without a restart. Entries are lower-cased because the check
+    compares ``_executable_name`` output.
+    """
+    from config.sherry_settings import load_sherry_list_setting
+
+    merged: set[str] = set(_ALLOWED_EXECUTABLES)
+    for name in load_sherry_list_setting(ALLOWED_EXECUTABLES_SETTING):
+        candidate = name.strip().lower()
+        if candidate:
+            merged.add(candidate)
+    return frozenset(merged)
 
 
 def _is_python_executable(name: str) -> bool:
@@ -111,9 +158,10 @@ def _safe_argv(command: str) -> list[str] | None:
         return None
     if not argv:
         return None
+    allowed = _get_allowed_executables()
     executable = _executable_name(argv[0])
     python = _is_python_executable(executable)
-    if not python and executable not in _ALLOWED_EXECUTABLES:
+    if not python and executable not in allowed:
         return None
     if python:
         if len(argv) < 3 or argv[1] != "-m" or _executable_name(argv[2]) not in _PYTHON_MODULES:
@@ -125,17 +173,27 @@ def _safe_argv(command: str) -> list[str] | None:
         if _is_python_executable(target):
             if len(argv) < 5 or argv[3] != "-m" or _executable_name(argv[4]) not in _PYTHON_MODULES:
                 return None
-        elif target not in _ALLOWED_EXECUTABLES:
+        elif target not in allowed:
             return None
     elif executable in _PACKAGE_RUNNERS:
         if len(argv) < 2 or argv[1] not in {"test", "run", "exec", "x"}:
             return None
-        if argv[1] in {"exec", "x"} and (
-            len(argv) < 3 or _executable_name(argv[2]) not in _ALLOWED_EXECUTABLES
-        ):
+        if argv[1] in {"exec", "x"} and (len(argv) < 3 or _executable_name(argv[2]) not in allowed):
             return None
     elif executable == "npx":
-        if len(argv) < 2 or _executable_name(argv[1]) not in _ALLOWED_EXECUTABLES:
+        if len(argv) < 2 or _executable_name(argv[1]) not in allowed:
+            return None
+    # A formatter that would REWRITE is not a verification command: replaying it
+    # would overwrite a concurrent edit outside the write-license/CAS stack.
+    if executable in _FORMATTERS and not _formatter_is_read_only(executable, argv):
+        return None
+    if executable in _PACKAGE_RUNNERS and len(argv) >= 3:
+        target = _executable_name(argv[2])
+        if target in _FORMATTERS and not _formatter_is_read_only(target, argv[2:]):
+            return None
+    if executable == "npx" and len(argv) >= 2:
+        target = _executable_name(argv[1])
+        if target in _FORMATTERS and not _formatter_is_read_only(target, argv[1:]):
             return None
     return argv
 
@@ -428,4 +486,84 @@ async def reverify_flow_evidence(
         return []
 
 
-__all__ = ["ReverifyResult", "prioritized_sessions", "reverify_flow_evidence"]
+async def reverify_affected_paths(
+    session_key: str,
+    paths: Sequence[str],
+    *,
+    max_commands: int = 5,
+) -> list[ReverifyResult]:
+    """Replay ONE session's passed commands whose evidence covers *paths*.
+
+    The merge-time half of the gate: an isolated merge that renames or reshapes
+    a symbol leaves the importing files broken, and the finish-time pass may be
+    many turns away. This replays what the session already verified on those
+    files now, so the announcement's "affected importers" line carries a
+    verdict instead of a guess.
+
+    Safety is identical to the finish pass: whitelisted executables only, no
+    shell, one attempt, capped. The anti-loop invariant holds by construction —
+    this reads ledger rows and APPENDS events; an appended event never triggers
+    a replay or a merge (the merge itself happens once per run, its manifest
+    consumed).
+    """
+    if not EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]:
+        return []
+    key = str(session_key or "").strip()
+    wanted = [str(path).lstrip("./") for path in paths if str(path or "").strip()]
+    if not key or not wanted:
+        return []
+    try:
+        records = EvidenceLedger.read_for_keys([key]).get(key) or []
+        targets: list[str] = []
+        for record in records:
+            if record.get("event") or record.get("status") != "passed":
+                continue
+            command = str(record.get("command") or "").strip()
+            if not command or command in targets:
+                continue
+            covered = {str(item).lstrip("./") for item in record.get("modified_files") or []}
+            if covered & set(wanted):
+                targets.append(command)
+        if not targets:
+            return []
+        root = session_workspace_root(key)
+        if root is None or not root.exists():
+            return []
+        timeout_s = max(1, int(EVIDENCE_REGRESSION_GATE["reverify_timeout_s"]))
+        results: list[ReverifyResult] = []
+        for command in targets[: max(1, int(max_commands))]:
+            argv = _safe_argv(command)
+            if argv is None:
+                results.append(ReverifyResult(command, "skipped", detail="unsafe command"))
+                continue
+            exit_code, output = await _run(argv, root, timeout_s)
+            if exit_code is None:
+                results.append(ReverifyResult(command, "skipped", detail=output[:500]))
+                continue
+            if exit_code == 0:
+                _append_unmark(key, command)
+                results.append(ReverifyResult(command, "passed", exit_code=exit_code))
+            else:
+                _append_broken(key, command, exit_code, output)
+                results.append(
+                    ReverifyResult(command, "failed", exit_code=exit_code, detail=output[:500])
+                )
+        if results:
+            logger.info(
+                "merge re-verify: {} command(s) against {} affected path(s) ({} failed)",
+                len(results),
+                len(wanted),
+                sum(result.outcome == "failed" for result in results),
+            )
+        return results
+    except Exception as exc:  # noqa: BLE001 - a merge must never fail on its report
+        logger.warning("merge re-verify failed (fail-open): {}", exc)
+        return []
+
+
+__all__ = [
+    "ReverifyResult",
+    "prioritized_sessions",
+    "reverify_affected_paths",
+    "reverify_flow_evidence",
+]

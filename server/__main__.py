@@ -82,7 +82,7 @@ def main() -> None:
         )
 
     # MAX_TOKEN gate (config.features.token_guard): both agents must run on a
-    # >= 128K context window. Fail fast BEFORE any agent-core work, so a
+    # >= 200K context window. Fail fast BEFORE any agent-core work, so a
     # misconfigured .env can never serve a crippled agent.
     from config.features import (
         LLM_CLIENT_DEFAULTS,
@@ -95,20 +95,23 @@ def main() -> None:
 
     # Resolve effective values (mirrors main_llm.py / auxiliary_llm/core.py logic):
     # an unset AUXILIARY_LLM_MAX_TOKEN falls back to
-    # LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 128K), so leaving
+    # LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072 (< 200K), so leaving
     # it unset blocks startup too. Local mode (AUXILIARY_LLM_MODEL_LOCAL=true)
     # is NOT exempt.
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
-    # The DESKTOP app (the Tauri shell sets SHERRY_DESKTOP=1) ships with an
+    # The DESKTOP app (the Tauri shell passes the bare --sherry-desktop flag;
+    # SHERRY_DESKTOP=1 is the transitional env fallback) ships with an
     # empty configuration on purpose: the user's first run has no API keys yet,
     # so refusing to serve would leave a window that can never be configured.
-    # An UNCONFIGURED model serves + warns (the 模型配置 panel writes the .env,
+    # An UNCONFIGURED model serves + warns (the Model Config panel writes the .env,
     # and the next launch picks it up); a CONFIGURED-but-invalid one still
     # aborts, exactly like a server.
     _unconfigured = _main_val is None and not _aux_raw
-    _desktop = os.getenv("SHERRY_DESKTOP", "").strip().lower() in {"1", "true", "yes", "on"}
+    from config.path import SHERRY_DESKTOP
+
+    _desktop = SHERRY_DESKTOP
     _main_out_raw = os.getenv("MAIN_LLM_MAX_OUTPUT_TOKEN", "").strip()
     _aux_out_raw = os.getenv("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "").strip()
     # Optional independent families: only a SET value is validated — an unset
@@ -231,6 +234,26 @@ def main() -> None:
 
     hooks.register(hooks.BROWSER_MANAGER, get_browser_manager)
     atexit.register(shutdown_browser_blocking)
+
+    # Checkpoint housekeeping: the ONE global keep-latest prune runs here, at
+    # boot — it used to run inside built_agent(), i.e. every turn, which made
+    # the shared checkpoint DB take a competing writer per turn (SQLITE_BUSY
+    # turn failures) and let a concurrent commit land between the prune's
+    # SELECT and DELETE. Fail-open: a locked DB never blocks startup.
+    from server.service.checkpoint_maintenance import clean_checkpoints_at_boot
+
+    asyncio.run(clean_checkpoints_at_boot())
+
+    # Boot reconciliation: HITL-pending flags, dangling tool calls and CLAIMED
+    # queue rows all live in memory (or in a turn that died), so a restart
+    # silently forgets them. Every step is fail-open and the scan is capped —
+    # a broken session costs its own probe, never startup.
+    from server.service.boot_recovery import reconcile_at_boot
+
+    try:
+        asyncio.run(reconcile_at_boot())
+    except Exception:
+        logger.exception("boot recovery failed; starting anyway")
 
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle

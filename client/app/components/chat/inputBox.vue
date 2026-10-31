@@ -16,10 +16,7 @@
       :placeholder="placeholderText"
       ref="inputDom"
       @input.stop="inputFunc($event)"
-      @keydown.enter.stop.prevent="handleKeyEnter($event)"
-      @keydown.up.stop.prevent="handleKeyArrowUp"
-      @keydown.down.stop.prevent="handleKeyArrowDown"
-      @keydown.escape.stop.prevent="handleKeyEscape"></div>
+      @keydown.stop="onComposerKeydown"></div>
 
     <div class="sendActions">
       <!-- Voice input: mic → record → transcribe → insert at the caret, fully
@@ -56,6 +53,7 @@
         v-debounce:click.500="handleSend"
         :label="t('chatInput.send')"
         class="send"
+        :title="sendTitle"
         :disabled="!sendingAllowed || disabled" />
     </div>
   </div>
@@ -358,6 +356,44 @@ function inputFunc(event: Event): void {
 }
 
 /**
+ * The composer's shortcut dispatch.
+ *
+ * The chords come from the shortcut table (rebindable in 菜单 → 系统设置), so
+ * the element carries ONE handler instead of compile-time key modifiers: a
+ * chord that matches is applied and its default prevented; everything else
+ * falls through to the browser (typing, Shift+Enter's newline, caret movement
+ * once the history chord has been rebound away from the arrows).
+ * @param event
+ */
+function onComposerKeydown(event: KeyboardEvent): void {
+  if (matchesBinding(event, 'send-message')) {
+    event.preventDefault();
+    handleKeyEnter(event);
+    return;
+  }
+  if (matchesBinding(event, 'history-prev')) {
+    event.preventDefault();
+    handleKeyArrowUp();
+    return;
+  }
+  if (matchesBinding(event, 'history-next')) {
+    event.preventDefault();
+    handleKeyArrowDown();
+    return;
+  }
+  if (matchesBinding(event, 'cancel-input')) {
+    event.preventDefault();
+    handleKeyEscape();
+  }
+}
+
+/** Send-button tooltip: the label plus the LIVE chord (follows a rebind). */
+const sendTitle = computed(() => {
+  const keys = effectiveKeys('send-message');
+  return keys ? `${t('chatInput.send')} (${formatCombo(keys)})` : t('chatInput.send');
+});
+
+/**
  * Enter sends (without Shift); Shift+Enter keeps the line break
  * @param event
  */
@@ -476,7 +512,15 @@ function insertVoiceText(text: string): void {
   inputDom.value.dispatchEvent(new InputEvent('input', { bubbles: true }));
 }
 
-defineExpose({ clearHistory, addFileMention, addQuoteChip, insertVoiceText });
+defineExpose({
+  clearHistory,
+  addFileMention,
+  addQuoteChip,
+  insertVoiceText,
+  // Edit mode prefills the composer and wants the caret ready: the same
+  // write-and-focus path the ↑ history browser uses.
+  setDraftText: writeDraftToInput
+});
 </script>
 
 <style lang="scss" scoped>

@@ -6,6 +6,16 @@
        expanded panel is 320px against a ~280px column — and an unclipped overlay spills over the
        session list. Clipping at the column edge hides the overflow instead. -->
   <div class="relative flex flex-col flex-1 min-h-0 overflow-hidden">
+    <!-- In-conversation search (Ctrl+Shift+F): floats over the list, so opening
+         it never re-flows the virtual rows underneath. -->
+    <ConversationFindBar
+      :visible="find.visible.value"
+      :total="find.total.value"
+      :current-index="find.currentIndex.value"
+      @search="onFindSearch"
+      @next="onFindStep('next')"
+      @previous="onFindStep('previous')"
+      @close="closeFind" />
     <!-- [scrollbar-gutter:stable]: always reserves a gutter for the (classic) scrollbar,
          preventing content from shifting horizontally when switching between the no-scrollbar and
          scrollbar states (e.g. empty state "start a new conversation" → messages accumulate) -->
@@ -158,7 +168,9 @@
                   :result-label="t('chatBox.toolResult')"
                   :running-label="t('chatBox.toolRunning')"
                   :no-output-label="t('chatBox.toolNoOutput')"
-                  @toggle="toggleToolCard(message.id)" />
+                  :trajectory-label="t('chatBox.openTrajectory')"
+                  @toggle="toggleToolCard(message.id)"
+                  @open-trajectory="openTrajectory" />
                 <!-- Conversation content bubble: skipped when the message has nothing to
                      put in it — an AI turn that only produced reasoning keeps its thinking
                      block and metadata, but must not leave an empty white box behind. -->
@@ -170,7 +182,10 @@
                       ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
                       : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
                     {
-                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index))
+                      'rounded-xl': isConsecutive(message.id) && !isFoldedFinal(message, rowGroup(vRow.index)),
+                      // Jump target ring: the find bar (and the toolbar's
+                      // running-command jump) mark the row they landed on.
+                      'ring-2 ring-theme-main/50 transition-shadow': focusedMessageId === message.id
                     }
                   ]">
                   <ChatCopyButton
@@ -180,6 +195,37 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
+                  <!-- Branch from this answer: fork the session at the turn the
+                       answer belongs to and continue there. Sits beside the copy
+                       button (an AI row has no edit action), fades in with the
+                       bubble hover, and is hidden while a turn streams (the
+                       parent checkpoint must be settled) or when this session is
+                       itself a fork (the server refuses nested side chats). -->
+                  <button
+                    v-if="canForkMessage(message)"
+                    type="button"
+                    class="absolute top-2 right-11 flex h-7 w-7 items-center justify-center rounded-full border border-solid border-gray-200 bg-white/70 text-gray-400 opacity-0 shadow-sm transition-opacity duration-200 hover:bg-white hover:text-gray-600 focus-visible:opacity-100 group-hover:opacity-100 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                    :title="t('chatBox.forkFromHere')"
+                    :aria-label="t('chatBox.forkFromHere')"
+                    data-test="chat-fork-turn"
+                    @click="emit('fork-turn', message.turn_num)">
+                    <i class="pi pi-code-branch text-xs"></i>
+                  </button>
+                  <!-- Rewrite a SENT user message (pencil floats beside the copy
+                       button, fades in with the bubble hover). The backend
+                       truncates that turn onward and re-runs the edited text.
+                       Persisted user rows only: a streaming row has a temp id, and
+                       an approval card owns the composer. -->
+                  <button
+                    v-if="canEditMessage(message)"
+                    type="button"
+                    class="absolute top-2 right-11 flex h-7 w-7 items-center justify-center rounded-full border border-solid border-white/20 bg-blue-700/40 text-blue-100 opacity-0 transition-opacity duration-200 hover:bg-blue-600/50 hover:text-white focus-visible:opacity-100 group-hover:opacity-100"
+                    :title="t('chatBox.editMessage')"
+                    :aria-label="t('chatBox.editMessage')"
+                    data-test="chat-edit-message"
+                    @click="emit('edit-message', message)">
+                    <i class="pi pi-pencil text-xs"></i>
+                  </button>
                   <!-- A streaming row renders only its TAIL while it grows: one
                        multi-thousand-line row being re-laid-out on every flush starved
                        the page (menus, timers and fetches froze for tens of seconds on
@@ -240,6 +286,18 @@
                   "
                   :title="t('chatBox.contextTip')"
                   @open-context="openContextViewer" />
+                <!-- The answer was cut off (Stop / heartbeat timeout) but the
+                     backend still holds its partial text: continue it instead of
+                     re-sending the question. Only the LAST row qualifies. -->
+                <button
+                  v-if="continueTurn !== null && message.turn_num === continueTurn"
+                  type="button"
+                  class="mt-1 flex items-center gap-1 text-xs text-[#2563EB] hover:underline"
+                  data-test="chat-continue-generation"
+                  @click="emit('continue-generation', message.turn_num)">
+                  <i class="pi pi-play text-[10px]"></i>
+                  {{ t('chatBox.continueGeneration') }}
+                </button>
               </div>
             </div>
           </div>
@@ -321,6 +379,8 @@ import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
 import ChatTurnHistoryStatus from '@/components/chat/ChatTurnHistoryStatus.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
 import ProgressFloat from './ProgressFloat.vue';
+import ConversationFindBar from '@/components/chat/ConversationFindBar.vue';
+import type { FindMatch } from '~/composables/use-conversation-find';
 
 const { t } = useI18n();
 
@@ -340,6 +400,18 @@ interface Props {
   selectionEnabled?: boolean;
   /** Whether the menu offers "ask in side session" (the side panel itself only re-quotes). */
   allowSideChat?: boolean;
+  /** Whether a settled row may be edited (false while a turn streams). */
+  canEdit?: boolean;
+  /** Whether an AI answer may be branched from (false for a branch child). */
+  canFork?: boolean;
+  /**
+   * Page one window of older history in. The find bar uses it when a match sits
+   * in a row the memory cap already released: the row can only come back by
+   * pulling the page it belongs to.
+   */
+  loadOlderHistory?: () => Promise<void>;
+  /** Allow paging again after the head was released (the page's pagination latch). */
+  resetExhausted?: () => void;
 }
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [] as MessageItem[],
@@ -349,7 +421,11 @@ const props = withDefaults(defineProps<Props>(), {
   aiName: '',
   loadingOlder: false,
   selectionEnabled: true,
-  allowSideChat: true
+  allowSideChat: true,
+  canEdit: true,
+  canFork: true,
+  loadOlderHistory: undefined,
+  resetExhausted: undefined
 });
 
 const rightSidebar = useRightSidebarStore();
@@ -360,6 +436,14 @@ const rightSidebar = useRightSidebarStore();
  */
 const openContextViewer = (): void => {
   rightSidebar.openTab('contextViewer');
+};
+
+/**
+ * Open (or focus) the session's trajectory panel. Like the context viewer it
+ * is session-scoped, and the store dedupes by kind.
+ */
+const openTrajectory = (): void => {
+  rightSidebar.openTab('trajectory');
 };
 
 /** User display name: falls back to the i18n default when the prop is empty */
@@ -397,7 +481,54 @@ const emit = defineEmits<{
   (e: 'release-head', messageIds: number[]): void;
   (e: 'selection-add', payload: SelectionPayload): void;
   (e: 'selection-side-chat', payload: SelectionPayload): void;
+  (e: 'edit-message', message: MessageItem): void;
+  (e: 'continue-generation', turnNum: number): void;
+  (e: 'fork-turn', turnNum: number): void;
 }>();
+
+/**
+ * Whether this row offers "edit and re-run".
+ *
+ * Only PERSISTED user messages (a positive row id): the streaming pair carries
+ * temporary negative ids, and its turn is not written yet. The composer is
+ * disabled while an approval card owns it, and editing under a pending approval
+ * would interleave two transcripts.
+ * @param message Candidate row.
+ */
+const canEditMessage = (message: MessageItem): boolean =>
+  props.canEdit && props.selectionEnabled && message.role === CHAT_ROLE.USER && message.id > 0 && message.turn_num > 0;
+
+/**
+ * Whether this AI row offers "branch from here".
+ *
+ * Only a SETTLED, persisted answer qualifies: a streaming row's turn is still
+ * being written (the fork reads the checkpoint), and a turn without a number is
+ * an optimistic placeholder. `canFork` is false for a branch child, which the
+ * server refuses to fork again (no nested side chats).
+ * @param message Candidate row.
+ */
+const canForkMessage = (message: MessageItem): boolean =>
+  props.canFork && message.role === CHAT_ROLE.AI && message.turn_num > 0 && !message.streaming;
+
+/** The `[interrupted]` marker the backend prefixes onto a cut-off answer. */
+const INTERRUPTED_MARKER = /^\[interrupted(?::[a-z_]+)?\]/i;
+
+/**
+ * The turn number of the answer that can be continued, or null.
+ *
+ * Only the LAST message of the list qualifies: a continuation appends to the
+ * interrupted answer, so a later row means the transcript moved on. Two sources
+ * agree: the live `resumable` flag (terminal frame) and the persisted
+ * `[interrupted]` marker prefix (after a reload the flag is recomputed from the
+ * content). A streaming row keeps its button hidden until the turn settles.
+ */
+const continueTurn = computed<number | null>(() => {
+  const list = props.messages ?? [];
+  const last = list[list.length - 1];
+  if (!last || last.role !== CHAT_ROLE.AI || last.streaming) return null;
+  const flagged = last.resumable === true || INTERRUPTED_MARKER.test(last.content.trimStart());
+  return flagged ? last.turn_num : null;
+});
 
 /** The one selection menu instance (a per-row popup would mount one per message). */
 const selectionMenuRef = useTemplateRef<{ show: (event: Event) => void }>('selectionMenuRef');
@@ -574,9 +705,9 @@ const LONG_MESSAGE_PREVIEW_LINES = 60;
 interface BubbleView {
   /** The markdown source this render shows. */
   text: string;
-  /** Streaming tail-only preview (shows the 流式 hint line). */
+  /** Streaming tail-only preview (shows the 流式 "streaming" hint line). */
   truncated: boolean;
-  /** Settled long answer shown collapsed (shows the 展开全文 button). */
+  /** Settled long answer shown collapsed (shows the 展开全文 "expand" button). */
   collapsed: boolean;
   /** Total character count (symbols and spaces included), for the expand label. */
   chars: number;
@@ -589,7 +720,7 @@ interface BubbleView {
  * row is re-laid-out on every flush, and one enormous row starves the page
  * (measured on a 2000-line answer: menus, timers and fetches all froze for tens
  * of seconds until the page caught up). Settled rows render a head PREVIEW and
- * an 展开全文 control instead — the starvation comes from having multi-thousand-
+ * an expand-full-text control instead — the starvation comes from having multi-thousand-
  * character rows at all, and the window usually holds several of them, so the cap
  * has to apply after the turn ends too (the same collapse idiom the tool cards
  * and thinking blocks already use). Both caps count CHARACTERS, symbols and
@@ -661,21 +792,93 @@ let focusTimer: ReturnType<typeof setTimeout> | undefined;
  * ever passes an id of a row it just read from this session's message list.
  * @param messageId Client message id of the TOOL row.
  */
-const scrollToMessage = (messageId: number): void => {
+const revealMessage = (messageId: number): boolean => {
   const index = rows.value.findIndex(row => row.group.some(message => message.id === messageId));
-  if (index < 0) return;
+  if (index < 0) return false;
+  // The row may be hidden twice over: a tool card is collapsed by default, and
+  // a settled turn folds its whole work history behind the final answer.
   expandedToolCards.add(messageId);
+  const fold = groupFold(index);
+  if (fold.eligible) expandedTurnHistory.add(fold.key);
   scrollToRow(index);
   focusedMessageId.value = messageId;
   clearTimeout(focusTimer);
   focusTimer = setTimeout(() => {
     focusedMessageId.value = null;
   }, 2400);
+  return true;
 };
 
-onBeforeUnmount(() => clearTimeout(focusTimer));
+const scrollToMessage = (messageId: number): void => {
+  revealMessage(messageId);
+};
 
-defineExpose({ scrollToMessage });
+/** Find bar state over the loaded transcript (see `use-conversation-find`). */
+const find = useConversationFind(() => props.messages ?? []);
+let findDebounce: ReturnType<typeof setTimeout> | undefined;
+
+/** Debounce window for the scan (the array walk is O(N), typing is not). */
+const FIND_DEBOUNCE_MS = 300;
+
+/**
+ * Reveal one match, paging older history in when the row was already released.
+ *
+ * A match always comes from the loaded messages, but the memory cap can drop
+ * its row between the scan and the jump; that row then only comes back with the
+ * page it belongs to, so the retry is bounded to one page per jump.
+ * @param match The occurrence to bring under the ring.
+ * @param retried Whether one pagination attempt was already made.
+ */
+const jumpToMatch = async (match: FindMatch, retried = false): Promise<void> => {
+  if (revealMessage(match.messageId)) return;
+  if (retried || !props.loadOlderHistory) return;
+  const before = rows.value.length;
+  props.resetExhausted?.();
+  await props.loadOlderHistory();
+  if (rows.value.length === before) return;
+  await nextTick();
+  await jumpToMatch(match, true);
+};
+
+/**
+ * Search input (debounced): rescan, then reveal the first hit.
+ * @param query The query as typed (the composable trims it for matching).
+ */
+const onFindSearch = (query: string): void => {
+  clearTimeout(findDebounce);
+  findDebounce = setTimeout(() => {
+    find.search(query);
+    if (find.current.value) void jumpToMatch(find.current.value);
+  }, FIND_DEBOUNCE_MS);
+};
+
+/**
+ * Enter / Shift+Enter and the bar's arrows: step through the matches.
+ * @param direction Which way to step (wraps at both ends).
+ */
+const onFindStep = (direction: 'next' | 'previous'): void => {
+  if (direction === 'next') find.next();
+  else find.previous();
+  if (find.current.value) void jumpToMatch(find.current.value);
+};
+
+/** Open the bar (Ctrl+Shift+F). */
+const openFind = (): void => {
+  find.open();
+};
+
+/** Close the bar and drop the query. */
+const closeFind = (): void => {
+  clearTimeout(findDebounce);
+  find.close();
+};
+
+onBeforeUnmount(() => {
+  clearTimeout(focusTimer);
+  clearTimeout(findDebounce);
+});
+
+defineExpose({ scrollToMessage, openFind });
 </script>
 
 <style scoped>

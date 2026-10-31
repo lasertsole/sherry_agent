@@ -28,10 +28,16 @@ export type RightSidebarPanelKind =
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
   | 'contextViewer'
+  /** The session's trajectory ledger: one event timeline per turn. */
+  | 'trajectory'
+  /** The open session's cumulative token cap (was a system-config tab). */
+  | 'tokenBudget'
   /** The toolbox's browser: a URL bar over an embedded page. */
   | 'browser'
   /** The toolbox's user terminal: commands typed by the operator. */
   | 'terminal'
+  /** The toolbox's freehand whiteboard (one board per session tab). */
+  | 'whiteboard'
   /** A helper session opened from a quoted chat selection (an ordinary session). */
   | 'sideChat';
 
@@ -68,6 +74,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',
+  // The whiteboard draws on the session's conversation: it belongs to the
+  // session like the file viewer does.
+  whiteboard: 'session',
   account: 'global',
   notification: 'global',
   sessionPreset: 'session',
@@ -75,6 +84,10 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   gitDiff: 'session',
   // The live context is read from the session's own checkpoint.
   contextViewer: 'session',
+  // The trajectory ledger is per session, like the context it records.
+  trajectory: 'session',
+  // The token budget caps THIS conversation's cumulative spend.
+  tokenBudget: 'session',
   // The browser and the terminal work on the session's own project (the
   // terminal's cwd IS that directory), so both live in its group.
   browser: 'session',
@@ -100,13 +113,22 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'heartbeat',
   'cron',
   'extend',
-  'taskDetail'
+  'taskDetail',
+  // A drawing surface needs room; 420px leaves the 16:10 board tiny.
+  'whiteboard'
 ]);
 
-/** Narrowest usable sidebar (below this the panels get unusable). */
+/** Narrowest usable sidebar: below this the panels are cramped rather than small. */
 export const RIGHT_SIDEBAR_MIN_WIDTH = 280;
-/** Widest allowed sidebar: a drag can never swallow more than this (or ~half of a narrow window). */
-export const RIGHT_SIDEBAR_MAX_WIDTH = 760;
+/**
+ * Widest allowed sidebar, as a fraction of the viewport. The band is
+ * PROPORTIONAL at both ends for the shell's columns: a fixed pixel maximum meant
+ * a 4K display could never give the panel more than 760px, while a laptop could
+ * give it 60% of its width.
+ */
+export const RIGHT_SIDEBAR_MAX_WIDTH_RATIO = 0.65;
+/** Fallback ceiling when no viewport is known (SSR / a test that passes none). */
+export const RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH = 760;
 /** Default width for a fresh profile. */
 export const RIGHT_SIDEBAR_DEFAULT_WIDTH = 420;
 /** Laying-out floor of a panel body: narrower than this it scrolls sideways instead of squeezing. */
@@ -115,17 +137,30 @@ export const RIGHT_SIDEBAR_PANEL_MIN_WIDTH = 420;
 export const RIGHT_SIDEBAR_PANEL_MIN_HEIGHT = 360;
 
 /**
- * Clamp a requested width into the allowed band, also keeping the panel below
- * ~55% of the viewport so it can never crowd the chat out on small screens.
+ * Clamp a requested width into the allowed band.
+ *
+ * Two PROPORTIONAL ceilings apply: the 65% viewport cap (the side pane must
+ * never crowd the chat out) and whatever the rest of the shell still needs —
+ * ``reserved`` is the left column plus the conversation's floor in px, so the
+ * drag stops where the layout actually stops instead of storing a width the flex
+ * row silently refuses to render. There is no fixed pixel maximum: on a large
+ * display the panel scales with the window, exactly like the left column's 50%
+ * ceiling and the conversation's 35% floor.
  * @param width Requested width in px.
  * @param viewportWidth Current window width (defaults to `window.innerWidth`).
+ * @param reserved Pixels the other columns need at minimum.
  */
 export function clampSidebarWidth(
   width: number,
-  viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth
+  viewportWidth: number = typeof window === 'undefined' ? 0 : window.innerWidth,
+  reserved: number = 0
 ): number {
-  const viewportCap = viewportWidth > 0 ? Math.floor(viewportWidth * 0.55) : RIGHT_SIDEBAR_MAX_WIDTH;
-  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(RIGHT_SIDEBAR_MAX_WIDTH, viewportCap));
+  const hasViewport = viewportWidth > 0;
+  const ratioCap = hasViewport
+    ? Math.floor(viewportWidth * RIGHT_SIDEBAR_MAX_WIDTH_RATIO)
+    : RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH;
+  const roomCap = hasViewport ? viewportWidth - Math.max(0, reserved) : RIGHT_SIDEBAR_FALLBACK_MAX_WIDTH;
+  const cap = Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.min(ratioCap, roomCap));
   return Math.round(Math.min(cap, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, width)));
 }
 
@@ -146,6 +181,11 @@ export interface RightSidebarTabPayload {
   /** The quote's localized source label (the chip's tooltip). */
   source?: string;
   /**
+   * Whiteboard identity: one board per key. Omitted = `default`, so clicking the
+   * toolbox entry again activates the SAME board instead of stacking a twin.
+   */
+  boardId?: string;
+  /**
    * Whether a `sideChat` panel prefills the quote chip on mount. Initial opens
    * default to true; reopening a closed side chat from the recent list sets
    * false, so its retained history is shown without re-inserting the quote.
@@ -162,7 +202,7 @@ export interface RightSidebarTab {
   id: string;
   /** Which panel component the tab renders. */
   kind: RightSidebarPanelKind;
-  /** Which group tab the tab sits under (当前会话 / 全局). */
+  /** Which group tab the tab sits under (This session / Global). */
   scope: RightSidebarScope;
   /**
    * Owning session for a SESSION-scoped tab (undefined for global tabs). The
@@ -259,19 +299,19 @@ export const useRightSidebarStore = defineStore(
     );
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
-    /** The session whose 当前会话 tab group is on screen ('' when on home). */
+    /** The session whose This-session tab group is on screen ('' when on home). */
     const activeSessionId = ref('');
     /** Last active session-scoped tab per session (in-memory, restored on switch). */
     const lastActiveSessionTab = ref<Record<string, string | null>>({});
     /**
-     * Which group tab is shown. 全局 by default: every pre-existing panel is a
+     * Which group tab is shown. Global by default: every pre-existing panel is a
      * global tool, so an untouched sidebar keeps exactly its old behaviour.
      */
     const activeScope = ref<RightSidebarScope>('global');
     /** Panel width in px (draggable, clamped; persisted). */
     const width = ref(RIGHT_SIDEBAR_DEFAULT_WIDTH);
     /**
-     * Whether the panel fills the whole viewport (the strip's 放大 button).
+     * Whether the panel fills the whole viewport (the strip's Zoom button).
      * Persisted like ``collapsed``: the choice is a workspace mode, not a
      * transient hover, and a reload should not silently undo it.
      */
@@ -297,18 +337,20 @@ export const useRightSidebarStore = defineStore(
      * Set the panel width from a drag (clamped into the allowed band).
      * @param next Requested width in px.
      * @param viewportWidth Current window width (tests pass it explicitly).
+     * @param reserved
      */
-    function setWidth(next: number, viewportWidth?: number): void {
-      width.value = clampSidebarWidth(next, viewportWidth);
+    function setWidth(next: number, viewportWidth?: number, reserved: number = 0): void {
+      width.value = clampSidebarWidth(next, viewportWidth, reserved);
     }
 
     /**
      * Re-clamp the stored width against the viewport, e.g. after the window
      * shrank past the cap the width was saved under (no-op while it still fits).
      * @param viewportWidth Current window width.
+     * @param reserved
      */
-    function fitToViewport(viewportWidth: number): void {
-      const next = clampSidebarWidth(width.value, viewportWidth);
+    function fitToViewport(viewportWidth: number, reserved: number = 0): void {
+      const next = clampSidebarWidth(width.value, viewportWidth, reserved);
       if (next !== width.value) width.value = next;
     }
 
@@ -345,6 +387,7 @@ export const useRightSidebarStore = defineStore(
       const hash = payload?.hash ?? null;
       const instance = payload?.instance ?? null;
       const url = payload?.url ?? null;
+      const boardId = payload?.boardId ?? null;
       const sessionId = payload?.sessionId ?? null;
       const scope = SCOPE_BY_KIND[kind];
       // A side-chat tab belongs to its PARENT session; every other session tab
@@ -359,6 +402,7 @@ export const useRightSidebarStore = defineStore(
           (tab.payload?.hash ?? null) === hash &&
           (tab.payload?.instance ?? null) === instance &&
           (tab.payload?.url ?? null) === url &&
+          (tab.payload?.boardId ?? null) === boardId &&
           (tab.payload?.sessionId ?? null) === sessionId
       );
       if (existing) {
@@ -403,7 +447,7 @@ export const useRightSidebarStore = defineStore(
     }
 
     /**
-     * Switch the session whose 当前会话 tab group is shown.
+     * Switch the session whose This-session tab group is shown.
      *
      * GLOBAL tabs are shared and stay active. When the group on screen is the
      * session group, it switches to that session's last active tab (or clears

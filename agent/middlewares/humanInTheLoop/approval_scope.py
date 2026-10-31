@@ -54,6 +54,20 @@ def current_operator() -> str | None:
     return value if isinstance(value, str) else None
 
 
+def no_operator_in_scope() -> bool:
+    """True when a scope IS set and it names nobody (a headless turn).
+
+    Distinct from :func:`current_operator` returning ``None``: NO scope at all
+    means the caller runs outside the HITL wrap (a unit test, an auxiliary
+    graph, a tool invoked directly), and those paths must keep the old
+    suspend-and-wait behaviour. Only an explicit empty scope — which the HITL
+    middleware sets for a cron / auto-turn / subagent-carrier turn — means
+    "nobody can answer", and a tool that would suspend must refuse instead.
+    """
+    value = _operator_var.get()
+    return value is not _UNSET and not isinstance(value, str)
+
+
 @contextmanager
 def operator_scope(operator: str | None) -> Iterator[None]:
     """Run a block with *operator* as the active approval scope."""

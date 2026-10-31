@@ -42,6 +42,8 @@ from collections.abc import Callable
 from typing import Any
 
 from agent.tools.subagent.registry.session_state import is_session_busy
+from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
+from agent.middlewares.token_budget import default_token_cap
 from runtime import StateKey, state_register_db, state_register_mem
 from pub.func.validator import is_safe_session_id
 
@@ -317,27 +319,27 @@ def clear_thinking_value(session_id: str) -> None:
     _delete_value(session_id, StateKey.LLM_THINKING_ENABLED_PENDING)
 
 
-def get_thinking_enabled(session_id: str) -> bool | None:
-    """Backward-compatible read of the boolean flag (on_off models)."""
-    return get_thinking_state(session_id)["enabled"]
-
-
-def set_thinking_enabled(session_id: str, enabled: bool) -> None:
-    """Backward-compatible write of the boolean flag (on_off models)."""
-    set_thinking_value(session_id, enabled)
-
-
-def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
+def sanitize_main_model_override(
+    descriptor: object, *, allow_max_output: bool = False
+) -> dict[str, str]:
     """Validate/normalize a profile descriptor (``ValueError`` on junk).
 
     Only the whitelisted string fields survive; ``model`` is mandatory, blank
     optional fields are dropped (so the builder falls back to the env value)
     and over-long values are rejected instead of being truncated into a
     different credential.
+
+    ``allow_max_output`` opens the subagent-only ``max_output_tokens`` field
+    (a decimal string). It defaults to the 8192 output floor when omitted; the
+    main-model override deliberately does NOT accept it (its output budget is
+    the env family's).
     """
+    allowed: set[str] = set(_OVERRIDE_FIELDS)
+    if allow_max_output:
+        allowed.add("max_output_tokens")
     if not isinstance(descriptor, dict):
         raise ValueError("'profile' must be an object or null")
-    unknown = sorted(set(descriptor) - set(_OVERRIDE_FIELDS))
+    unknown = sorted(set(descriptor) - allowed)
     if unknown:
         raise ValueError(f"unknown profile field(s): {', '.join(unknown)}")
     model = descriptor.get("model")
@@ -366,6 +368,22 @@ def sanitize_main_model_override(descriptor: object) -> dict[str, str]:
                 raise ValueError("'profile.context_window' must be positive")
             value = str(window)
         cleaned[field] = value
+    if allow_max_output:
+        raw_output = descriptor.get("max_output_tokens")
+        if raw_output is None or (isinstance(raw_output, str) and not raw_output.strip()):
+            output_tokens = MIN_MAX_OUTPUT_TOKEN
+        else:
+            if isinstance(raw_output, bool) or not isinstance(raw_output, (int, str)):
+                raise ValueError("'profile.max_output_tokens' must be an integer")
+            try:
+                output_tokens = int(str(raw_output).strip())
+            except ValueError:
+                raise ValueError("'profile.max_output_tokens' must be an integer") from None
+            if output_tokens < MIN_MAX_OUTPUT_TOKEN:
+                raise ValueError(
+                    f"'profile.max_output_tokens' must be >= {MIN_MAX_OUTPUT_TOKEN} (8K)"
+                )
+        cleaned["max_output_tokens"] = str(output_tokens)
     return cleaned
 
 
@@ -617,7 +635,7 @@ def _validate_custom_mapping(mapping: dict) -> dict:
             raise ValueError("'thinking_budgets' must be an object")
         from models.LLMs import main_llm as _main_llm
 
-        ceiling = int(getattr(_main_llm, "max_tokens", 0) or 0) or 131072
+        ceiling = int(getattr(_main_llm, "max_tokens", 0) or 0) or 200000
         budgets: dict[str, int] = {}
         for key, value in raw_budgets.items():
             if key not in THINKING_LEVELS:
@@ -707,11 +725,21 @@ async def apply_search_backend_choice(session_id: str, backend: str | None) -> b
 
 
 def get_token_budget_state(session_id: str) -> dict[str, Any]:
-    """Return ``{cap, used, cost, limited, pending}`` for the session.
+    """Return the session's budget state.
 
-    ``cap`` is the EFFECTIVE next-turn cap (a parked mid-turn choice included),
-    ``None`` when unlimited. ``used`` / ``cost`` accumulate across turns;
-    ``cost`` is an estimate. ``pending`` reports that a cap change is parked.
+    Shape: ``{cap, session_cap, default_cap, inherited, used, cost, limited,
+    pending}``.
+
+    * ``cap`` — the cap that will be ENFORCED on the next turn, ``None`` when
+      unlimited. A parked mid-turn choice counts (it lands at the turn end).
+    * ``session_cap`` — the session's OWN value: ``None`` = it never set one
+      (it inherits), ``0`` = explicitly unlimited, ``>0`` = a cap.
+    * ``default_cap`` — the app-config default (``sherry.jsonc``'s
+      ``TOKEN_BUDGET_DEFAULT_CAP``; ``0`` = unlimited).
+    * ``inherited`` — ``session_cap is None``.
+
+    ``used`` / ``cost`` accumulate across turns (``cost`` is an estimate);
+    ``pending`` reports that a cap change is parked.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
@@ -719,12 +747,17 @@ def get_token_budget_state(session_id: str) -> dict[str, Any]:
         promote_pending_settings_sync(session_id)
     parked, parked_value = _pending_value(session_id, StateKey.TOKEN_BUDGET_CAP_PENDING)
     live_cap = _read_value(session_id, StateKey.TOKEN_BUDGET_CAP)
-    cap = parked_value if parked else live_cap
+    session_cap = parked_value if parked else live_cap
+    default_cap = default_token_cap()
+    effective = int(session_cap) if session_cap is not None else default_cap
     used = _read_value(session_id, StateKey.TOKEN_BUDGET_USED) or 0
     cost = _read_value(session_id, StateKey.TOKEN_BUDGET_COST) or 0.0
     limited = bool(_read_value(session_id, StateKey.TOKEN_BUDGET_LIMITED) or False)
     return {
-        "cap": int(cap) if cap is not None else None,
+        "cap": effective if effective > 0 else None,
+        "session_cap": int(session_cap) if session_cap is not None else None,
+        "default_cap": default_cap,
+        "inherited": session_cap is None,
         "used": int(used),
         "cost": round(float(cost), 6),
         "limited": limited,
@@ -748,9 +781,11 @@ def _write_budget_cap(session_id: str, cap: int | None) -> None:
 async def apply_token_budget_choice(session_id: str, cap: int | None) -> bool:
     """HTTP entry for ``PUT /sessions/budget``; returns ``pending``.
 
-    ``None`` clears the cap (unlimited). A positive integer caps the session's
-    accumulated token usage. The same park/promote rule as the other controls:
-    a change made mid-turn lands on the next turn.
+    ``None`` clears the session's own cap — it goes back to INHERITING the
+    app-config default (``TOKEN_BUDGET_DEFAULT_CAP``). ``0`` makes it explicitly
+    unlimited even when that default is positive. A positive integer caps the
+    session's accumulated token usage. The same park/promote rule as the other
+    controls: a change made mid-turn lands on the next turn.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")

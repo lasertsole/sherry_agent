@@ -30,20 +30,29 @@ __all__ = [
     "heal_trailing_tool_calls",
     "read_interrupt",
     "read_messages",
+    "restore_interrupt_marker",
+    "truncate_messages_after_turn",
 ]
 
 InterruptReason = Literal["cancelled", "heartbeat_timeout"]
 
 
 class InterruptMarkerWrite:
-    """What :func:`heal_interrupted_turn` did (the caller persists the rest)."""
+    """What :func:`heal_interrupted_turn` did (the caller persists the rest).
 
-    __slots__ = ("marker_id", "wrote_checkpointer", "healed_calls")
+    ``turn_seq`` is the human-message count the marker id was derived from; the
+    resumable-breakpoint writer stores it as the validation fingerprint.
+    """
 
-    def __init__(self, marker_id: str, wrote_checkpointer: bool, healed_calls: int) -> None:
+    __slots__ = ("healed_calls", "marker_id", "turn_seq", "wrote_checkpointer")
+
+    def __init__(
+        self, marker_id: str, wrote_checkpointer: bool, healed_calls: int, turn_seq: int = 0
+    ) -> None:
         self.marker_id = marker_id
         self.wrote_checkpointer = wrote_checkpointer
         self.healed_calls = healed_calls
+        self.turn_seq = turn_seq
 
 
 async def _resolve_graph(
@@ -176,7 +185,9 @@ async def _heal_with_graph(
             "(idempotent rewrite)",
             marker_id,
         )
-        return InterruptMarkerWrite(marker_id, wrote_checkpointer=False, healed_calls=0)
+        return InterruptMarkerWrite(
+            marker_id, wrote_checkpointer=False, healed_calls=0, turn_seq=turn_seq
+        )
 
     marker = AIMessage(
         content=f"[interrupted] {partial_text}".strip(),
@@ -201,7 +212,9 @@ async def _heal_with_graph(
         len(partial_text),
         len(placeholders),
     )
-    return InterruptMarkerWrite(marker_id, wrote_checkpointer=True, healed_calls=len(placeholders))
+    return InterruptMarkerWrite(
+        marker_id, wrote_checkpointer=True, healed_calls=len(placeholders), turn_seq=turn_seq
+    )
 
 
 def heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> list[ToolMessage]:
@@ -251,3 +264,116 @@ def heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> lis
         placeholder.id = f"{marker_id}-heal-{call_id}"
         placeholders.append(placeholder)
     return placeholders
+
+
+async def restore_interrupt_marker(
+    session_id: str,
+    config: RunnableConfig,
+    marker_id: str,
+    content: str,
+    graph: CompiledStateGraph[Any, Any, Any, Any] | None = None,
+) -> bool:
+    """Rewrite an interrupt marker's content back to the CLEAN partial answer.
+
+    A continuation reuses the max-tokens continuation path, which assumes the
+    trailing ``AIMessage`` holds exactly what the model produced so far. The
+    interrupt marker instead reads ``"[interrupted] {partial}"``; rewriting it
+    (same id, so the ``add_messages`` reducer upserts in place) removes the
+    prefix without touching the MesMemory row that records the interruption.
+    The replacement carries no ``interrupted`` metadata — the continuation turn
+    owns the tail from here on.
+
+    Returns ``False`` when the marker is no longer in state (a later turn moved
+    the transcript on): the caller then refuses the continuation instead of
+    appending text after an unrelated message.
+    """
+    resolved, leased = await _resolve_graph(graph)
+    try:
+        snapshot = await resolved.aget_state(config=config)
+        messages: list[BaseMessage] = list((snapshot.values or {}).get("messages", []))
+        if not any(getattr(m, "id", None) == marker_id for m in messages):
+            return False
+        await resolved.aupdate_state(
+            config,
+            {"messages": [AIMessage(id=marker_id, content=content)]},
+            as_node="model",
+        )
+        return True
+    finally:
+        if leased:
+            from agent import core as agent_core
+
+            agent_core.release_agent(resolved)
+
+
+async def truncate_messages_after_turn(
+    session_id: str,
+    turn_num: int,
+    graph: CompiledStateGraph[Any, Any, Any, Any] | None = None,
+    config: RunnableConfig | None = None,
+) -> int:
+    """Delete turn ``turn_num`` and everything after it from the live checkpoint.
+
+    The checkpoint history is pruned to the newest top-level checkpoint after
+    every turn (``turn_runner.on_turn_finished``), so ``aget_state_history``
+    rewind is not available. This instead reads the ONE live checkpoint and
+    removes the trailing messages by id through the ``add_messages`` reducer's
+    ``RemoveMessage`` support.
+
+    Turn boundaries are counted over NON-internal ``HumanMessage``s: reminder
+    blocks and workspace notices are injected human messages that belong to the
+    turn they precede, never a turn of their own.
+
+    ``config`` is a test seam (an explicit per-thread config); production
+    passes nothing and resolves the session's own config.
+
+    Returns the number of removed messages, ``0`` when the turn exists but has
+    no id-bearing tail, and ``-1`` when turn ``turn_num`` is no longer in the
+    checkpoint (compacted away — the caller refuses the edit).
+    """
+    from langchain_core.messages import RemoveMessage
+
+    runnable_config = config if config is not None else _config(session_id)
+    resolved, leased = await _resolve_graph(graph)
+    try:
+        snapshot = await resolved.aget_state(config=runnable_config)
+        messages: list[BaseMessage] = list((snapshot.values or {}).get("messages", []))
+
+        seen = 0
+        cut_index: int | None = None
+        for index, message in enumerate(messages):
+            if message.type != "human":
+                continue
+            metadata: dict[str, Any] = getattr(message, "metadata", None) or {}
+            if metadata.get("internal") is True:
+                continue
+            seen += 1
+            if seen == turn_num:
+                cut_index = index
+                break
+        if cut_index is None:
+            return -1
+
+        removals = [
+            RemoveMessage(id=message.id)
+            for message in messages[cut_index:]
+            if getattr(message, "id", None)
+        ]
+        if not removals:
+            return 0
+        await resolved.aupdate_state(
+            config=runnable_config, values={"messages": removals}, as_node="model"
+        )
+        return len(removals)
+    finally:
+        if leased:
+            from agent import core as agent_core
+
+            agent_core.release_agent(resolved)
+
+
+def _config(session_id: str) -> RunnableConfig:
+    """The session's runnable config (imported lazily to keep this module light)."""
+    from pub.func import build_agent_config
+
+    return build_agent_config(session_id)

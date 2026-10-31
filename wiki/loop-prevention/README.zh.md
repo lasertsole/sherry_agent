@@ -19,7 +19,7 @@
 |---|---|---|
 | **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | 按模型族的采样惩罚（`frequency_penalty` / `presence_penalty`）→ `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
-| **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / worker 60 次，合并计数） |
+| **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / 执行者 90 次 / 其他 worker 60 次，合并计数） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
 | **溢出重试螺旋** | 超长上下文被拒绝 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错 | `Summarization`：先做不调 LLM 的溢出尾部裁剪，再走既有溢出路由，最后强制恢复 |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
@@ -46,19 +46,19 @@
 |---|---|---|---|---|
 | 完全相同的失败重复 | 同一工具 + 相同（哈希后的）参数持续失败 | 2 | 5 | 5 次时 HALT |
 | 同工具失败风暴 | 同一工具持续失败，参数可以不同 | 3 | 8 | 8 次时 HALT |
-| 幂等无进展 | 同一幂等工具返回它在本回合中已产出过的结果哈希 | 2 | 5 | 5 次时 HALT |
+| 幂等无进展 | 同一幂等工具（或分组工具的幂等 action）返回它在本回合中已产出过的结果哈希 | 2 | 5 | 5 次时 HALT |
 | 乒乓 | 不间断的 A → B → A → B 往返，且相邻两次调用均无进展 | 4 | 6 | 6 次时 HALT |
 | 参数翻新 | 同一幂等工具轮换参数变体但结果不变（无进展） | 3 种变体 | 5 种变体 | 5 种时 HALT |
 
 值得注意的细节：
 
 - **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT。实际效果：一个受管的重试窗口，而不是一堵立即竖起的墙。想要严格的无恢复行为就设 `recovery_mode_enabled=False`，或者设 `hard_stop_enabled=True` 把每个 BLOCK 阈值都变成 HALT（见上表）。
-- **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
+- **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。分组工具可以不声明整体幂等，而声明 `idempotent_actions`：只有 `action` 参数落在白名单里的调用才会被哈希（TaskFlow 哈希 `create`/`plan`/`update_steps`/`resume`；`checkpoint` 哈希 `list`/`show`；`knowledge` 哈希 `read`/`list`）。白名单优先于整体标记，未列出或缺失的 action 一律不视为可重复调用。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
 - 护栏状态严格**回合作用域**：`before_agent` 会重置它，新回合从干净状态开始。
 
 ### 回合级：`IterationBudget`
 
-每回合把模型调用和工具调用**合并**计数。主 Agent 90 次，worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+每回合把模型调用和工具调用**合并**计数。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

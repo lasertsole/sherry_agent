@@ -6,9 +6,6 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock('@/composables/i18nRuntime', () => ({ resolveRuntimeT: runtime.resolveRuntimeT }));
 
-// The shared Vitest setup imports `safeT` (through the v-safe-html directive)
-// before this file's mock is installed. A fresh module graph after the mock
-// makes the module under test observe the stub, without relying on import order.
 let safeT: (key: string) => string;
 let _setClientFlag: (client: boolean) => void;
 

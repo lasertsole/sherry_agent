@@ -1,5 +1,6 @@
 """Statistical summaries and formatting for sub-agent run results."""
 
+from ..output_caps import resolve_subagent_output_caps
 from ..types.registry import SubagentRunRecord, RunOutcomeStatus
 
 
@@ -20,8 +21,9 @@ def build_child_completion_findings(run: SubagentRunRecord) -> str:
 
     if run.completion.result_text:
         result = run.completion.result_text
-        if len(result) > 2000:  # Truncate long results in summary
-            result = result[:2000] + "\n... [truncated]"
+        limit = resolve_subagent_output_caps(run.max_output_tokens).summary_chars
+        if len(result) > limit:
+            result = result[:limit] + "\n... [truncated]"
         parts.append(f"Result:\n{result}")
 
     return "\n".join(parts)

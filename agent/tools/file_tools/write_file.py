@@ -179,7 +179,7 @@ class FormattedWriteFileTool(BaseTool):
         (2026-10-24): the model reads JSON fine (``patch_file`` precedent) and
         the client renders the diff inline.
         """
-        root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
+        root, resolved, error = resolve_tool_path(file_path, session_id, "write file", mode="write")
         if error is not None or resolved is None or root is None:
             return error or tool_error("Could not resolve the path")
 
@@ -233,16 +233,19 @@ class FormattedWriteFileTool(BaseTool):
             new_content = self._read_preview_text(resolved)
             if new_content is not None:
                 diff = _unified_diff(old_content, new_content, display_path(resolved, root))
-        return json.dumps(
-            {
-                "success": True,
-                "path": display_path(resolved, root),
-                "append": append,
-                "isNew": not existed,
-                "diff": diff,
-            },
-            ensure_ascii=False,
-        )
+        payload: dict[str, object] = {
+            "success": True,
+            "path": display_path(resolved, root),
+            "append": append,
+            "isNew": not existed,
+            "diff": diff,
+        }
+        # Cross-agent coordination (opt-in): a peer's claim on this path is a
+        # one-line ADVISORY — the write already succeeded and is never refused.
+        notice = _claim_notice(session_id, root, resolved)
+        if notice:
+            payload["claim_notice"] = notice
+        return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
     def _read_preview_text(resolved: Path) -> str | None:
@@ -390,6 +393,16 @@ class FormattedWriteFileTool(BaseTool):
     ) -> str:
         session_id = resolve_tool_session_id(session_id, run_manager)
         return await asyncio.to_thread(self._core, file_path, text, append, session_id)
+
+
+def _claim_notice(session_id: str, root: Path, resolved: Path) -> str | None:
+    """The advisory claim line for a successful write, or ``None`` (fail-open)."""
+    try:
+        from agent.tools.coordination_tools import claim_notice_for
+
+        return claim_notice_for(session_id, root, resolved)
+    except Exception:  # noqa: BLE001 - advisory only, never a write precondition
+        return None
 
 
 def build_write_file_tool() -> BaseTool:

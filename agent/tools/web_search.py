@@ -26,8 +26,15 @@ from config.features import TOOLS_TIMEOUTS
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
-from agent.tools.web_search_push import push_search_fallback
-from agent.tools.web_search_searxng import searxng_available, searxng_search
+from agent.tools.web_search_push import push_search_fallback, push_searxng_cooldown
+from agent.tools.web_search_searxng import (
+    consume_searxng_recovery,
+    record_searxng_outcome,
+    searxng_available,
+    searxng_cooling_down,
+    searxng_failure_streak,
+    searxng_search_outcome,
+)
 
 # Bound to the feature registry (single source of truth); names preserved.
 WEB_SEARCH_TIMEOUT = TOOLS_TIMEOUTS["web_search_timeout_seconds"]
@@ -113,6 +120,17 @@ def _error_envelope(result: object) -> BaseException | None:
     return None
 
 
+def _searxng_serving() -> bool:
+    """Whether SearXNG may serve a call NOW: configured AND not cooling down.
+
+    During the failure cooldown the instance reads as "not configured" to the
+    resolver, so the existing rules take over naturally: an explicit session
+    choice stops counting, a default-searxng deployment with a Tavily key
+    switches to Tavily, and the Tavily fallback branch stops aiming at it.
+    """
+    return searxng_available() and not searxng_cooling_down()
+
+
 def resolve_preferred_backend(session_id: str) -> str:
     """The backend this call should try first (see the module docstring).
 
@@ -128,7 +146,7 @@ def resolve_preferred_backend(session_id: str) -> str:
         explicit = str(state_register_mem.get_state(session_id, StateKey.SEARCH_BACKEND) or "")
     if explicit == "tavily" and tavily_available():
         return "tavily"
-    if explicit == "searxng" and searxng_available():
+    if explicit == "searxng" and _searxng_serving():
         return "searxng"
 
     from config.features import WEB_SEARCH_CONFIG
@@ -136,11 +154,52 @@ def resolve_preferred_backend(session_id: str) -> str:
     default = str(WEB_SEARCH_CONFIG["default_backend"] or "tavily").lower()
     if default not in ("tavily", "searxng"):
         default = "tavily"
-    if default == "tavily" and not tavily_available() and searxng_available():
+    if default == "tavily" and not tavily_available() and _searxng_serving():
         return "searxng"
-    if default == "searxng" and not searxng_available() and tavily_available():
+    if default == "searxng" and not _searxng_serving() and tavily_available():
         return "tavily"
     return default
+
+
+async def _search_via_searxng(query: str, session_id: str) -> str:
+    """One SearXNG attempt with the failure breaker around it.
+
+    While the breaker is open the dial is SKIPPED (no timeout tail) and a
+    readable stub comes back instead. An expiry observed here is probed for
+    real; the OPEN / RECOVERED notices ride the existing fallback frame, fired
+    only on transitions this call observed itself.
+    """
+    from config.features import WEB_SEARCH_CONFIG
+
+    if searxng_cooling_down():
+        threshold, cooldown = (
+            WEB_SEARCH_CONFIG["searxng_failure_threshold"],
+            WEB_SEARCH_CONFIG["searxng_cooldown_seconds"],
+        )
+        logger.info(
+            "web_search: SearXNG cooling down (streak={}, ~{:.0f}s left); dial skipped",
+            searxng_failure_streak(),
+            cooldown,
+        )
+        return (
+            "SearXNG search is temporarily unavailable: the instance failed "
+            f"{threshold} consecutive times, so calls to it are paused for about "
+            f"{int(cooldown)} s (it will be probed again automatically). "
+            "Use Tavily if configured, or answer without web search."
+        )
+
+    recovered = consume_searxng_recovery()
+    reachable, text = await asyncio.to_thread(searxng_search_outcome, query)
+    record_searxng_outcome(reachable)
+    if not reachable and searxng_cooling_down():
+        await push_searxng_cooldown(
+            session_id,
+            opened=True,
+            cooldown_seconds=WEB_SEARCH_CONFIG["searxng_cooldown_seconds"],
+        )
+    elif recovered and reachable:
+        await push_searxng_cooldown(session_id, opened=False)
+    return text
 
 
 def build_web_search_tool():
@@ -188,7 +247,7 @@ def build_web_search_tool():
                     # The session (or the config) picked the self-hosted backend:
                     # it is the primary, and its failures are reported as its own.
                     logger.info("web_search: SearXNG preferred (session={})", session_id or "-")
-                    return await asyncio.to_thread(searxng_search, query)
+                    return await _search_via_searxng(query, session_id)
 
                 call_kwargs = {
                     key: value
@@ -258,7 +317,7 @@ def build_web_search_tool():
                 if searxng_available():
                     logger.info("web_search: falling back to SearXNG ({})", fallback_reason)
                     await push_search_fallback(session_id, "searxng", fallback_reason)
-                    return await asyncio.to_thread(searxng_search, query)
+                    return await _search_via_searxng(query, session_id)
 
                 return (
                     f"Web search failed after {RETRY_MAX_ATTEMPTS} attempts. "
@@ -271,7 +330,7 @@ def build_web_search_tool():
         )
         # ONE tool name across every branch. TavilySearch's own default is
         # ``tavily_search``, which would make the backend swap visible as a
-        # DIFFERENT tool (the per-session tool selection, the 工具 tab and the
+        # DIFFERENT tool (the per-session tool selection, the Tools tab and the
         # model's tool list all know this tool as ``web_search``). Transcripts
         # persisted before this rename may still carry ``tavily_search`` — the
         # untrusted-output / redaction sets keep covering that name.
@@ -284,10 +343,20 @@ def build_web_search_tool():
 
     elif searxng_available():
 
-        @tool("web_search", args_schema=WebSearchSchema)
-        async def web_search(query: str) -> str:
+        class SearxngWebSearchInput(WebSearchSchema):
+            """The plain schema plus the injected session id.
+
+            Same mechanism as the keyed branch above: the breaker notices need a
+            session to push to, and ``tool_call_schema`` strips injected fields
+            so the model's view is unchanged.
+            """
+
+            session_id: Annotated[str, InjectedState("session_id")] = ""
+
+        @tool("web_search", args_schema=SearxngWebSearchInput)
+        async def web_search(query: str, session_id: str = "") -> str:
             """Search the web for information through the configured SearXNG instance."""
-            return await asyncio.to_thread(searxng_search, query)
+            return await _search_via_searxng(query, session_id)
 
         web_search.handle_tool_error = True
         web_search.metadata = {"idempotent": False}

@@ -151,7 +151,7 @@ middleware = [
             ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
         ],
     ),
-    IterationBudget(60),
+    IterationBudget(执行者 ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
@@ -292,7 +292,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/iteration_budget/core.py` · **类：** `IterationBudget(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
 
-对**一个回合内模型调用 + 工具调用总和**的硬上限。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 注册 `IterationBudget(90)`，worker Agent 注册 `IterationBudget(60)`。
+对**一个回合内模型调用 + 工具调用总和**的硬上限。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 与执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
 
 - `before_agent` 在 `state_register_mem` 中重置计数器：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` 每次模型调用消耗 1；预算耗尽时直接返回终止 `AIMessage`，**不再调用模型**。
@@ -816,7 +816,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 配置项                                              | 位置                               | 作用                                                                                                                                                                                         |
 | --------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 与 `ContextLimitGuardWrapper.context_window` 传入。必须 >= 131072 (128K)：token guard 会在启动与图构建阶段阻止低于该值 |
+| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 主 Agent 摘要触发点 = 该值的 80 %；同时作为 `main_llm_context_window` 与 `ContextLimitGuardWrapper.context_window` 传入。必须 >= 200000 (200K)：token guard 会在启动与图构建阶段阻止低于该值 |
 | `MAIN_LLM_OUTPUT_MAX_TOKEN`                         | `.env` → `models/LLMs/main_llm.py` | 输出 token 预算（默认 8192）：MaxTokensBoost boost base 的第 2 层，也是思考预算膨胀叠加的基数                                                                                                |
 | `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()`  | `LLMRetryMiddleware` 的模型回退链候选（i = 1…，遇到第一个缺失的 `NAME` 即停止）                                                                                                              |
 
@@ -826,7 +826,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 模块                      | 旋钮                                                                                                                                                                                                            |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                                                         |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`、`executor_max_iterations=90`、`worker_max_iterations=60`、`default_max_iterations=50`                                                                                           |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`（`"true"` / `"false"` / `"auto"`；其它值走 fail-safe 技能路径）、`main_llm_silent_degradation_detection=True`、`max_media_bytes=20 MiB`、`multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80`，以及 `Summarization` 与 `summarization/nudges.py` 读取的保留/尝试/冷却/阈值常量                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`、`evict_threshold_chars=20 000`、预览头尾各 5 行、`human_evict_enabled=True`、`human_evict_threshold_chars=200 000`                                                                              |

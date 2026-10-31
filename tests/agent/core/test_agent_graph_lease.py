@@ -57,8 +57,8 @@ def graphs(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     monkeypatch.setattr(agent_core, "_agent", None)
     monkeypatch.setattr(agent_core, "_agent_loop", None)
     monkeypatch.setattr(agent_core, "_agent_holders", {})
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     return created
 
 

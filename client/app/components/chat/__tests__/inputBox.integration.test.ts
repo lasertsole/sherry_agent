@@ -1,7 +1,10 @@
+// Must come before anything that constructs the Dexie singleton (use-shortcuts).
+import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import inputBox from '@/components/chat/inputBox.vue';
 import { fetchVoiceStatus, requestTranscription } from '~/composables/bridge/voice';
+import { resetShortcutBinding, saveShortcutBinding } from '~/composables/use-shortcuts';
 
 // The voice bridge is the network seam: availability follows the faked status,
 // the transcript is a fixed string the round-trip test asserts on.
@@ -74,7 +77,7 @@ function mountInput(props: Record<string, unknown> = {}) {
 describe('inputBox.vue (integration, backend mocked)', () => {
   it('tells the user that typing queues a message while the agent is working', () => {
     // The backend accepts a send during a running turn and QUEUES it, so the
-    // placeholder must say so ("继续输入消息以排队") — the old "AI is thinking..."
+    // placeholder must say so ("继续输入消息以排队" — keep typing to queue) — the old "AI is thinking..."
     // only reported busy-ness and hid the queueing affordance.
     const idle = mountInput({ sending: false });
     const busy = mountInput({ sending: true });
@@ -227,5 +230,69 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
     await Promise.resolve();
 
     expect(inputEl.textContent).toContain('existing追加');
+  });
+});
+
+describe('inputBox.vue composer shortcuts (rebindable)', () => {
+  /**
+   * Put text in the composer the way a user does (input event, not innerHTML).
+   * @param wrapper
+   * @param text
+   */
+  const typeInto = async (wrapper: ReturnType<typeof mountInput>, text: string): Promise<HTMLElement> => {
+    const el = wrapper.find('.inputBox').element as HTMLElement;
+    el.innerHTML = text;
+    el.dispatchEvent(new InputEvent('input', { inputType: 'insertText', bubbles: true }));
+    await Promise.resolve();
+    return el;
+  };
+
+  const press = (el: HTMLElement, init: KeyboardEventInit): KeyboardEvent => {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+    el.dispatchEvent(event);
+    return event;
+  };
+
+  afterEach(async () => {
+    await resetShortcutBinding('send-message');
+  });
+
+  it('Enter sends and prevents the default; Shift+Enter is left to the browser', async () => {
+    const wrapper = mountInput();
+    const el = await typeInto(wrapper, 'hello');
+
+    const shifted = press(el, { key: 'Enter', shiftKey: true });
+    await Promise.resolve();
+    expect(wrapper.emitted('send')).toBeUndefined();
+    expect(shifted.defaultPrevented).toBe(false);
+
+    const plain = press(el, { key: 'Enter' });
+    await Promise.resolve();
+    expect(wrapper.emitted('send')).toEqual([['hello']]);
+    expect(plain.defaultPrevented).toBe(true);
+  });
+
+  it('follows a rebind: the old chord stops sending, the new chord sends', async () => {
+    await saveShortcutBinding('send-message', { ctrl: true, shift: false, alt: false, meta: false, key: 'enter' });
+    const wrapper = mountInput();
+    const el = await typeInto(wrapper, 'rebound');
+
+    press(el, { key: 'Enter' });
+    await Promise.resolve();
+    expect(wrapper.emitted('send')).toBeUndefined();
+
+    press(el, { key: 'Enter', ctrlKey: true });
+    await Promise.resolve();
+    expect(wrapper.emitted('send')).toEqual([['rebound']]);
+  });
+
+  it('shows the live chord in the send button tooltip', async () => {
+    const before = mountInput();
+    // The mic button shares the stub class, so target the send button by its own.
+    expect(before.find('button.send').attributes('title')).toContain('Enter');
+
+    await saveShortcutBinding('send-message', { ctrl: true, shift: false, alt: false, meta: false, key: 's' });
+    const after = mountInput();
+    expect(after.find('button.send').attributes('title')).toContain('Ctrl+S');
   });
 });

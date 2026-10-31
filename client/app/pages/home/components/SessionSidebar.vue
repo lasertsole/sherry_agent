@@ -1,17 +1,44 @@
 <template>
   <!-- Left side - history records area -->
-  <!-- Mobile: fixed positioning, hidden by default, toggled via a button -->
-  <!-- md: fixed positioning, width 280px -->
-  <!-- lg: relative positioning, width 360px -->
+  <!-- In-flow column whose width is a persisted store value (drag the right
+       edge to resize: 280px floor, half the viewport at most; the fresh-profile
+       default is 360px on a desktop-width window and 280px below it).
+       Collapsed = width 0, the outer overflow-hidden clips the fixed inner
+       width wholesale. -->
   <div
     :class="[
       'relative h-full overflow-hidden transition-all duration-300',
       collapsed
         ? 'w-0 border-r-0'
-        : 'w-[280px] md:w-[280px] lg:w-[360px] border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
-    ]">
-    <!-- Fixed content width: when collapsed the outer overflow-hidden clips it wholesale, inner elements are never squeezed or wrapped -->
-    <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
+        : 'shrink-0 border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
+    ]"
+    :style="{ width: collapsed ? '0px' : displayWidth + 'px' }"
+    data-test="session-sidebar">
+    <!-- Right-edge resize handle: dragging right widens the column (it is
+         left-anchored). The store clamps every step, so the drag can never go
+         below the 280px floor or past half the viewport. Hidden while
+         collapsed — there is no width to drag — and while the chat column is
+         floated (the extra width is a presentation override, not this column's
+         stored width, so a drag would move a width the user cannot see). -->
+    <div
+      v-if="!collapsed && extraWidth <= 0"
+      class="group absolute right-0 top-0 z-10 flex h-full w-2 items-center justify-center cursor-col-resize"
+      :class="{ 'bg-gray-400/20': resizing }"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="t('sidebar.resize')"
+      :title="t('sidebar.resize')"
+      data-test="session-sidebar-resize"
+      @pointerdown="startResize">
+      <span
+        class="h-8 w-1 rounded-full transition-colors"
+        :class="resizing ? 'bg-gray-500' : 'bg-gray-400/70 group-hover:bg-gray-400'"></span>
+    </div>
+    <!-- Content width follows the column so the list reflows while dragging;
+         when collapsed the outer overflow-hidden clips it wholesale. -->
+    <div
+      class="flex flex-col px-4 h-full"
+      :style="{ width: displayWidth + 'px' }">
       <!-- LOGO area (the theme switch and the language picker live in the top
            toolbar, immediately left of the menu button). -->
       <div
@@ -259,14 +286,19 @@ import HistoryItem from './HistoryItem.vue';
 import ProjectFileTree from './ProjectFileTree.vue';
 import GitGraphPanel from './GitGraphPanel.vue';
 // function
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
+// Bridge modules are not auto-imported; the session list asks for its branch
+// links the same way it asks for sessions.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { listSideChatLinks } from '~/composables/bridge/session';
 // `useVirtualRows` and the row builders come from Nuxt's composable
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
-import { useRightSidebarStore } from '@/stores/right-sidebar';
+import { RIGHT_SIDEBAR_MIN_WIDTH, useRightSidebarStore } from '@/stores/right-sidebar';
+import { useSidebarWidthStore } from '@/stores/sidebar-width';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { discardSideChatSession } from '~/composables/use-side-chat';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -286,7 +318,13 @@ const newSession = useNewSessionStore();
 const onSessionCreated = (meta: unknown) => {
   const row = meta as SessionRecord | null;
   if (!row?.id || historyList.value.some(item => item.id === row.id)) return;
-  historyList.value = [row, ...historyList.value];
+  // A branch/side chat announces its parent: resolve the parent's title here
+  // (the list owns it) so the row shows "forked from …" immediately, without
+  // waiting for the next list refresh's link merge.
+  const parentTitle = row.parentSessionId
+    ? historyList.value.find(item => item.id === row.parentSessionId)?.title
+    : undefined;
+  historyList.value = [{ ...row, parentTitle }, ...historyList.value];
 };
 on('session:created', onSessionCreated);
 onBeforeUnmount(() => off('session:created', onSessionCreated));
@@ -300,10 +338,83 @@ const localePath = useLocalePath();
 /** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
 
+/**
+ * Extra width added by the shell while the conversation column is floated: the
+ * middle column leaves the flex row and its width is shared between the side
+ * columns. This is a PRESENTATION override — the stored width below is never
+ * written — so docking the chat restores the column exactly.
+ */
+const props = withDefaults(defineProps<{ extraWidth?: number }>(), { extraWidth: 0 });
+
+// ── Width (draggable, persisted) ───────────────────────────────────────────
+/** The shell's left-column width, shared with the layout's auto-collapse. */
+const sidebarWidthStore = useSidebarWidthStore();
+const sidebarWidth = computed(() => sidebarWidthStore.width);
+/** What the DOM actually renders: the stored width plus the float's share. */
+const displayWidth = computed(() => sidebarWidth.value + Math.max(0, props.extraWidth));
+const rightSidebar = useRightSidebarStore();
+
+/**
+ * Pixels the rest of the shell needs at minimum: the conversation's 320px
+ * floor plus the right column's floor while it is open. The drag ceiling
+ * shrinks by this much, so a wide left column can never push the other two
+ * past their own minimums (which would overflow the window instead).
+ */
+const shellReservedWidth = computed(() => 320 + (rightSidebar.collapsed ? 0 : RIGHT_SIDEBAR_MIN_WIDTH));
+
+/** Whether a pointer drag is in progress (drives the grip's highlighted state). */
+const resizing = ref(false);
+let resizeStartX = 0;
+let resizeStartWidth = 0;
+
+/**
+ * Follow the pointer: the column is left-anchored, so moving RIGHT (dx > 0)
+ * widens it. `setWidth` clamps each step, so the drag never leaves the band.
+ * @param event Pointer move event.
+ */
+const onResizeMove = (event: PointerEvent) => {
+  if (!resizing.value) return;
+  sidebarWidthStore.setWidth(
+    resizeStartWidth + (event.clientX - resizeStartX),
+    window.innerWidth,
+    shellReservedWidth.value
+  );
+};
+
+/** End the drag and detach the window listeners. */
+const stopResize = () => {
+  if (!resizing.value) return;
+  resizing.value = false;
+  window.removeEventListener('pointermove', onResizeMove);
+  window.removeEventListener('pointerup', stopResize);
+  window.removeEventListener('pointercancel', stopResize);
+};
+
+/**
+ * Start a width drag from the right-edge handle.
+ * @param event Pointer down event on the handle.
+ */
+const startResize = (event: PointerEvent) => {
+  resizing.value = true;
+  resizeStartX = event.clientX;
+  resizeStartWidth = sidebarWidth.value;
+  window.addEventListener('pointermove', onResizeMove);
+  window.addEventListener('pointerup', stopResize);
+  window.addEventListener('pointercancel', stopResize);
+  event.preventDefault();
+};
+
+/**
+ * Keep the column inside its band when the window shrinks: a width saved on a
+ * wide window would otherwise overflow a narrower one (mirrors the right
+ * sidebar's `fitToViewport`).
+ */
+const fitWidthToViewport = () => sidebarWidthStore.fitToViewport(window.innerWidth, shellReservedWidth.value);
+
 /** Which body the sidebar shows; the top bar's folder button flips it. */
 const ui = useUiStore();
 
-/** The two 工作目录 sections: their headers share one row, each toggles its panel. */
+/** The two working-directory sections: their headers share one row, each toggles its panel. */
 const sidebarSections = computed<Array<{ id: string; icon: string; label: string; open: boolean; toggle: () => void }>>(
   () => [
     {
@@ -370,11 +481,19 @@ const {
   virtualizer: sessionVirtualizer,
   virtualRows: sessionVirtualRows,
   totalSize: sessionTotalSize,
-  rowAt: sessionRowAt
+  rowAt: sessionRowAt,
+  remeasure: remeasureSessions
 } = useVirtualRows(
   sessionsScrollRef,
   () => sessionRows.value,
   () => SESSION_ROW_ESTIMATE_PX
+);
+
+// The float widens this column: titles wrap differently, so the virtual rows'
+// measured heights change — re-measure once the new width is on screen.
+watch(
+  () => props.extraWidth,
+  () => remeasureSessions()
 );
 
 /**
@@ -429,7 +548,15 @@ const isIndeterminate = computed(() => {
  */
 const loadSessionList = async () => {
   try {
-    const sessions = await getSessionList();
+    // Sessions + their branch links in parallel: the links are one small table
+    // read, fetched once per list refresh (never per row).
+    const [sessions, branchLinks] = await Promise.all([
+      getSessionList(),
+      listSideChatLinks().catch(e => {
+        logUtil.w('[loadSessionList] 分支关系查询失败：', e);
+        return [];
+      })
+    ]);
     // Merge locally created sessions that don't exist on server yet (IndexedDB placeholders, can still recover after refresh):
     // 1) Read persisted placeholder sessions in IndexedDB (new empty sessions not yet sent messages);
     // 2) Sessions with server records (messages sent) are kept directly from memory list, and their placeholders are cleared;
@@ -459,6 +586,23 @@ const loadSessionList = async () => {
     historyList.value = [...localPlaceholders, ...sessions].map(item =>
       overrides.has(item.id) ? { ...item, title: overrides.get(item.id) ?? item.title, renamed: true } : item
     );
+    // Branch marks: a row whose child link exists shows "forked from <parent>"
+    // and jumps back to the parent. The parent's TITLE is resolved from this
+    // same list (a parent is always a normal session here).
+    if (branchLinks.length > 0) {
+      const linkByChild = new Map(branchLinks.map(link => [link.childSessionId, link]));
+      const titleById = new Map(historyList.value.map(row => [row.id, row.title]));
+      historyList.value = historyList.value.map(row => {
+        const link = linkByChild.get(row.id);
+        if (!link) return row;
+        return {
+          ...row,
+          parentSessionId: link.parentSessionId,
+          forkTurnNum: link.forkTurnNum ?? undefined,
+          parentTitle: titleById.get(link.parentSessionId)
+        };
+      });
+    }
   } catch (error) {
     // When server unreachable: current session memory state preserved, try to recover persisted placeholder sessions from IndexedDB
     logUtil.w('[loadSessionList] 拉取会话列表失败：', error);
@@ -694,6 +838,13 @@ ensureSessionCharacter('default');
 // ensureSessionCharacter from local Dexie).
 onMounted(() => {
   loadSessionList();
+  fitWidthToViewport();
+  window.addEventListener('resize', fitWidthToViewport);
+});
+
+onBeforeUnmount(() => {
+  stopResize();
+  window.removeEventListener('resize', fitWidthToViewport);
 });
 
 // Stronger guarantee: use the session_id at the end of the browser URL as the 'single source of truth' for the active state.

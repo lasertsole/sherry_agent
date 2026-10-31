@@ -47,3 +47,16 @@ def string_to_unique_int(s: str) -> int:
 def rand_str_to_int(s: str, slice_len: int = 8) -> int:
     """Legacy alias (MD5 based). Value-stable: do not change."""
     return string_to_int(s, algorithm="md5", slice_len=slice_len)
+
+
+def session_thread_id(session_id: str) -> int:
+    """The checkpointer ``thread_id`` for a session — ONE mapping, used everywhere.
+
+    Persisted values depend on this exact algorithm (``rand_str_to_int``, i.e.
+    MD5's first 8 hex chars), so it must never change. It exists as a named
+    function because a second, hand-rolled spelling of the same idea is what
+    broke the session-directory sweep: it queried ``thread_id = <session_id>``
+    (a string) against an INTEGER column, found nothing, and deleted the folder
+    of every session whose only remaining record was its checkpoint.
+    """
+    return rand_str_to_int(session_id)

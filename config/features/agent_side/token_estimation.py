@@ -33,7 +33,7 @@ TOKEN_ESTIMATION: TokenEstimationConfig = {
     # Audio / video carry no duration metadata at estimation time, so a real
     # token count is not derivable. These values are deliberately conservative
     # (over-estimate rather than leak the base64 char count) yet tiny against
-    # the 128K window: audio charges a short utterance's transcription cost,
+    # the 200K window: audio charges a short utterance's transcription cost,
     # video charges roughly twelve sampled image frames.
     "tokens_per_audio_block": 256,
     "tokens_per_video_block": 1024,

@@ -12,8 +12,8 @@ Contract after the fix:
 
 1. Concurrent first calls return ONE shared connection (exactly one
    ``sqlite3.connect`` call), even when connect is artificially slow.
-2. A transient "database is locked" OperationalError during connect/migrate
-   is retried with backoff instead of failing the caller.
+2. A transient "database is locked" OperationalError during connect/schema
+   setup is retried with backoff instead of failing the caller.
 3. The connection is created with a busy timeout of at least 5 seconds.
 """
 
@@ -34,8 +34,8 @@ def fresh_singleton(tmp_path, monkeypatch):
     """Reset the module singleton state around a test, restoring afterwards.
 
     ``_db_path`` is repointed at a tmp file FIRST: without it, a test that
-    forces a fresh ``get_db()`` runs the schema self-heal + migration against
-    the REAL ``src/store/mes_memory/mes_memory.db``.
+    forces a fresh ``get_db()`` builds the schema against the REAL
+    ``src/store/mes_memory/mes_memory.db``.
     """
     saved_db = db_mod._db
     saved_lock = getattr(db_mod, "_db_lock", None)

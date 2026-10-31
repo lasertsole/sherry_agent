@@ -67,7 +67,10 @@ def _completion_gate_violated(session_key: str) -> bool:
         return False
     if not evidence:
         return True
-    return "FAIL" in evidence
+    # A stale or re-verified-broken row is not a pass: the gate must read the
+    # same signals the finish gates do, or a child whose work was invalidated by
+    # a later write would drain without the parent ever being told.
+    return "FAIL" in evidence or "[broken]" in evidence or "[stale]" in evidence
 
 
 def _is_internal_completion(msg: Any) -> bool:
@@ -128,7 +131,7 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
         from agent.middlewares.agent_switch import middleware_enabled
 
         if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op。
+            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             # Lazy: agent.tools.subagent imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.

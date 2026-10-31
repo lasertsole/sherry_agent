@@ -36,3 +36,36 @@ CODE_INTEL_ROLES: frozenset[FunctionalRole] = frozenset(
 #: injection (spawn/core.py) and the prompt guidance (spawn/system_prompt.py)
 #: read this single set, so the tool face and its prompt section cannot drift.
 PTC_ROLES: frozenset[FunctionalRole] = frozenset({FunctionalRole.EXECUTOR})
+
+#: The roles a specialized parent may spawn, per parent role.
+#:
+#: An ABSENT key means "same role only" — the legacy rule, unchanged for
+#: researcher / reviewer / librarian. MAIN (no run record) and GENERAL
+#: (``tools: inherit`` = every tool) never read this map: they short-circuit
+#: in ``spawn/core.py::_check_role_containment`` because every specialized
+#: whitelist is already a subset of theirs.
+#:
+#: Two invariants hold for every entry, both pinned by tests:
+#:
+#: 1. the value CONTAINS the parent role (same-role fan-out stays explicit);
+#: 2. every permitted non-parent child is a READ-ONLY role — never a
+#:    write-capable one. That single-hop rule is what makes multi-hop safe:
+#:    a write role can only ever reach write roles, and a read-only role can
+#:    only spawn its own kind, so no path returns to a write capability.
+#:    It is also why adding a ``RESEARCHER: {…, EXECUTOR}`` entry (a cycle)
+#:    fails the invariant instead of opening an escalation path.
+#:
+#: The one deliberate deviation from "child tools ⊆ parent tools": an
+#: executor's researcher/librarian children DO carry read-only extras the
+#: executor lacks (``search_files``, ``web_search``, code-intel, LSP). That
+#: is the point — read-only research before writing — and containment exists
+#: to stop WRITE escalation, not read-only information access.
+SPAWN_ALLOWED_CHILD_ROLES: dict[FunctionalRole, frozenset[FunctionalRole]] = {
+    FunctionalRole.EXECUTOR: frozenset(
+        {
+            FunctionalRole.EXECUTOR,  # same-role fan-out (explicit)
+            FunctionalRole.RESEARCHER,  # read-only codebase/web research before writing
+            FunctionalRole.LIBRARIAN,  # read-only external-codebase lookup
+        }
+    ),
+}

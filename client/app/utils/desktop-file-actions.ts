@@ -10,6 +10,7 @@
  * @module utils/desktop-file-actions
  */
 import { isTauriRuntime } from './project-directory';
+import { logUtil } from '~/utils/log';
 
 /**
  * Whether the desktop-only actions are available in this runtime.
@@ -33,6 +34,28 @@ export async function revealPathInFileManager(path: string): Promise<boolean> {
     await revealItemInDir(path);
     return true;
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Open a DIRECTORY in the OS file manager (Tauri desktop only).
+ *
+ * Distinct from {@link revealPathInFileManager}: that one reveals an ITEM
+ * inside its parent (selects the row); this one opens the folder itself as
+ * the browse target — what the MCP drop folder and similar "put your files
+ * here" surfaces want. The web build has no file manager: always false.
+ * @param path Absolute path of the directory to open.
+ * @returns True when the opener ran; false outside the Tauri runtime or on failure.
+ */
+export async function openPathInFileManager(path: string): Promise<boolean> {
+  if (!isTauriRuntime() || !path) return false;
+  try {
+    const { openPath } = await import('@tauri-apps/plugin-opener');
+    await openPath(path);
+    return true;
+  } catch (e) {
+    logUtil.w('[DesktopFileActions] openPath failed:', e);
     return false;
   }
 }

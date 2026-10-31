@@ -61,7 +61,7 @@ export const useAccessModeStore = defineStore('accessMode', () => {
   /**
    * Mirror a bypass-all the BACKEND already applied: answering an approval card
    * with "approve all" sets the session's YOLO flag server-side, so the control
-   * must show 完全访问 immediately instead of waiting for a reload. Nothing is
+   * must show Full access immediately instead of waiting for a reload. Nothing is
    * written here — the card's decision is what sets the flag.
    * @param sessionId
    */

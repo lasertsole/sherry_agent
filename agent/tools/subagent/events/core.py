@@ -65,16 +65,6 @@ class EventBus:
             len(msg.content),
         )
 
-    def publish_internal_sync(self, msg: InboundMessage) -> None:
-        """Thread-safe publish: works from any thread/event loop."""
-        self._buffer.append(msg)
-        logger.debug(
-            "EventBus.publish_internal_sync: channel={}, session_id={}, content_length={}",
-            msg.channel,
-            msg.session_id,
-            len(msg.content),
-        )
-
     async def consume(self) -> InboundMessage:
         """Consume the next message (blocks until available).
 

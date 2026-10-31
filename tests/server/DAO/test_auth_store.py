@@ -4,8 +4,8 @@ Contract under test: ONE account row exists at most (password-only login — the
 schema pins ``id = 1``, so a second INSERT cannot create a second account), a
 password change updates that row in place, the settings row is a singleton that
 reads as "disabled" when absent (fresh install), the boot seed writes it only
-once (the menu owns it afterwards), blacklist entries expire out of the table at
-their own ``exp``, and a username-era database is migrated at init.
+once (the menu owns it afterwards), and blacklist entries expire out of the table at
+their own ``exp``.
 """
 
 from __future__ import annotations
@@ -55,47 +55,6 @@ async def test_delete_account(isolated_auth_store) -> None:
     assert await auth_store.account_exists() is False
     assert await auth_store.get_account() is None
     assert await auth_store.delete_account() is False
-
-
-@pytest.mark.asyncio
-async def test_a_username_era_database_is_migrated(isolated_auth_store, tmp_path) -> None:
-    """A legacy ``auth_users`` row (lowest id wins) becomes the account, and the
-    legacy table is dropped — the password keeps working across the upgrade."""
-    import sqlite3
-
-    legacy = tmp_path / "legacy.db"
-    con = sqlite3.connect(legacy)
-    con.execute(
-        "CREATE TABLE auth_users (id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        " username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,"
-        " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"
-    )
-    con.execute(
-        "INSERT INTO auth_users (username, password_hash, created_at, updated_at)"
-        " VALUES ('admin', 'scrypt$old', 111, 222)"
-    )
-    con.commit()
-    con.close()
-
-    # Point the store at the legacy file and let its init run the migration.
-    import asyncio
-
-    from server.DAO import auth_store as store
-
-    isolated_auth_store.write_bytes(legacy.read_bytes())
-    store._initialized = False
-    store._init_loop = None
-    store._init_lock = asyncio.Lock()
-    store._sync_tables_ready = False
-
-    account = await store.get_account()
-    assert account is not None and account["password_hash"] == "scrypt$old"
-
-    con = sqlite3.connect(isolated_auth_store)
-    tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    con.close()
-    assert "auth_users" not in tables
-    assert "auth_account" in tables
 
 
 @pytest.mark.asyncio

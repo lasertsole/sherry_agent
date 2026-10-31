@@ -4,7 +4,7 @@ import type { MessageItem } from '@/pages/home/type';
 import type { AgentConfig } from './bridge/agent-config';
 import type { SessionModelProfile } from './bridge/session';
 
-/** The preset's agent block (工具 / 中间件 / 子代理模型) — re-exported for consumers. */
+/** The preset's agent block (Tools / Middlewares / Agent models) — re-exported for consumers. */
 export type { AgentConfig };
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
@@ -241,13 +241,13 @@ export interface PersonaPreset {
   content: Record<string, string>;
   /**
    * Character display info captured with the preset (both role names + avatars) —
-   * the 角色配置 part of the preset. Optional: presets saved before the role tab
+   * the Character Setup part of the preset. Optional: presets saved before the role tab
    * moved into the persona panel carry none, and applying one leaves the current
    * character untouched.
    */
   character?: PresetCharacter;
   /**
-   * Agent config captured with the preset (预设 的工具 / 中间件 / 子代理模型 tabs):
+   * Agent config captured with the preset (its Tools / Middlewares / Agent models tabs):
    * the enabled tool list, the disabled middleware names and the per-role model
    * profiles. Optional — presets saved before those tabs existed carry none, and
    * applying one writes "every default" (all tools, all switches on, role tiers).
@@ -255,7 +255,7 @@ export interface PersonaPreset {
    */
   agent?: AgentConfig;
   /**
-   * The MAIN agent's model choice (the 代理模型 tab's 主代理 sub-tab): a profile
+   * The MAIN agent's model choice (the Agent models tab's Main agent sub-tab): a profile
    * descriptor, or null for "follow the environment config". Optional — a preset
    * saved before the sub-tab existed leaves the session's model untouched.
    * Non-indexed, so it rides along without a Dexie version bump.
@@ -281,7 +281,7 @@ export interface PresetCharacter {
  * Purely local bookkeeping — the persona itself is frozen into the session's
  * prompt snapshot at its first build, so this row only powers the display (the
  * top-bar preset button). A session created before the binding existed has no
- * row and reads as "未选择".
+ * row and reads as "未选择" (nothing selected).
  */
 export interface SessionPresetBinding {
   /** Session id (primary key) */
@@ -311,6 +311,25 @@ export interface BrowserVisit {
   title: string;
   /** Visit time (epoch ms). */
   visitedAt: number;
+}
+
+/**
+ * One executed palette command (the Ctrl+K panel's search history).
+ *
+ * A snapshot of what the user ran — the label and icon are copied so a deleted
+ * skill or a renamed command still reads correctly in the history.
+ */
+export interface CommandHistoryEntry {
+  /** Auto-increment primary key. */
+  id?: number;
+  /** The command's registry id (`toolbar.skills`, `skill.<name>`…). */
+  commandId: string;
+  /** Label at execution time. */
+  label: string;
+  /** Icon class at execution time. */
+  icon?: string;
+  /** Execution time (epoch ms); the history orders by this. */
+  executedAt: number;
 }
 
 /** Primary key of the global pending profile in the character table (not a real session ID) */
@@ -351,6 +370,12 @@ class HistoryDb extends Dexie {
   sessionPresets!: Table<SessionPresetBinding, string>;
   /** Browser visit history (auto-increment id, see {@link BrowserVisit}) */
   browserVisits!: Table<BrowserVisit, number>;
+  /** Executed palette commands (auto-increment id, see {@link CommandHistoryEntry}) */
+  commandHistory!: Table<CommandHistoryEntry, number>;
+  /** User shortcut overrides, keyed by shortcut id (see {@link ShortcutRow}) */
+  shortcuts!: Table<ShortcutRow, string>;
+  /** App-level flags, keyed by name (see {@link AppFlag}) */
+  appFlags!: Table<AppFlag, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -390,13 +415,90 @@ class HistoryDb extends Dexie {
     this.version(3).stores({
       browserVisits: '++id, url, visitedAt, sessionId'
     });
+    // version(4): the command palette's search history. Same additive bump — only
+    // the new table is declared; every earlier table keeps its v1-v3 shape.
+    this.version(4).stores({
+      commandHistory: '++id, commandId, executedAt'
+    });
+    // version(5): user shortcut overrides. Same additive bump.
+    this.version(5).stores({
+      shortcuts: 'id'
+    });
+    // version(6): app-level flags (onboarding seen bit …). Additive bump.
+    this.version(6).stores({
+      appFlags: 'key'
+    });
   }
 }
 
 /**
  * Global unique Dexie database instance (used to cache conversation history).
  */
+/**
+ * One shortcut override.
+ *
+ * The id is the `SHORTCUT_BINDINGS` id ('send-message', 'command-palette' …) and
+ * `keys` is the JSON form of its `KeyCombo`. Removing a row restores the
+ * built-in default, so the table only ever holds what the user changed.
+ */
+/**
+ * One app-level flag (the onboarding "seen" bit and anything else that must
+ * survive a reload). Small scalars only — this is a key/value switchboard, not
+ * a cache.
+ */
+export interface AppFlag {
+  key: string;
+  value: unknown;
+}
+
+export interface ShortcutRow {
+  id: string;
+  keys: string;
+}
+
 export const db = new HistoryDb();
+
+/**
+ * Read one app flag (undefined when it was never written).
+ * @param key Flag name.
+ */
+export async function readAppFlag(key: string): Promise<unknown> {
+  const row = await db.appFlags.get(key);
+  return row?.value;
+}
+
+/**
+ * Write one app flag (upsert).
+ * @param key Flag name.
+ * @param value Any JSON-serializable value.
+ */
+export async function writeAppFlag(key: string, value: unknown): Promise<void> {
+  await db.appFlags.put({ key, value });
+}
+
+/**
+ * Every persisted shortcut override (the settings panel / the boot loader read
+ * them through this wrapper: composables must not import the singleton).
+ */
+export async function readShortcutRows(): Promise<ShortcutRow[]> {
+  return await db.shortcuts.toArray();
+}
+
+/**
+ * Upsert one shortcut override.
+ * @param row The shortcut id and its JSON-encoded combination.
+ */
+export async function writeShortcutRow(row: ShortcutRow): Promise<void> {
+  await db.shortcuts.put(row);
+}
+
+/**
+ * Drop one shortcut override (the binding falls back to its built-in default).
+ * @param id Shortcut id.
+ */
+export async function deleteShortcutRow(id: string): Promise<void> {
+  await db.shortcuts.delete(id);
+}
 
 /**
  * Merge server-returned message rows into the cache (deduplicated by `id`).
@@ -407,6 +509,31 @@ export const db = new HistoryDb();
 export async function cacheMessages(rows: CachedMessage[]): Promise<void> {
   if (!rows || rows.length === 0) return;
   await db.messages.bulkPut(rows);
+}
+
+/**
+ * Drop cached message rows at or after `fromTurnNum` for one session.
+ *
+ * The message edit truncates the transcript server-side (the edited turn and
+ * everything after it are deleted and re-run). Without this the Dexie cache
+ * still holds the deleted rows, and `mergeDedup` re-adds them on the next
+ * history load — the deleted turns would visibly come back.
+ *
+ * @param sessionId  Session whose tail turns are dropped.
+ * @param fromTurnNum First turn to drop (inclusive).
+ */
+export async function clearCachedMessagesFromTurn(sessionId: string, fromTurnNum: number): Promise<void> {
+  if (!sessionId || !Number.isFinite(fromTurnNum)) return;
+  try {
+    const keys = await db.messages
+      .where('[session_id+turn_num]')
+      .between([sessionId, fromTurnNum], [sessionId, MAX_KEY], true, true)
+      .primaryKeys();
+    if (keys.length) await db.messages.bulkDelete(keys);
+  } catch {
+    // Cache unavailable (private mode): the next merge is merely stale, the
+    // server rows still win for ids they return.
+  }
 }
 
 /**

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS todos (
     flow_id      TEXT    DEFAULT NULL,
     step_id      TEXT    DEFAULT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    todo_id      INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
 );
 ```
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `plan_ref` | 연결된 계획 파일 경로 — 세션 스코프 `workspace/sessions/<session_id>/plans/*.md` |
 | `flow_id`  | 연결된 TaskFlow flow id (DAG는 TaskFlow가 소유)                    |
 | `step_id`  | 연결된 TaskFlow step id (예: `step-2`), DAG 상태 재읽기용          |
+| `todo_id`  | 세션별 안정 식별자(`#N`). 로컬 patch/remove/reattach가 이 값으로 대상을 지정하며 `position`은 표시 순서만 담당 |
 
 > **설계 경계**: `todos.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_inspect(action="summary", flow_id)`로 재읽기합니다.
 
@@ -112,4 +114,13 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """TaskFlow flow에 연결된 todo 읽기 (DAG 상태를 UI로 매핑)"""
+
+async def add_todo(session_id, todo, *, after_todo_id=None) -> dict | None:
+    """끝에 추가하거나 안정 todo_id 앵커 뒤에 삽입"""
+
+async def patch_todo_by_id(session_id, todo_id, **fields) -> dict | None:
+    """한 행만 수정. flow_id/step_id/plan_ref는 유지"""
+
+async def remove_todo_by_id(session_id, todo_id) -> dict | None:
+    """안정 id로 한 행 삭제"""
 ```

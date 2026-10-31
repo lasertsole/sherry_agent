@@ -37,10 +37,11 @@ Completion is then verified by four always-on layers, ordered from the single ch
 1. **The axes never merge.** A functional role cannot grant spawn permission, and the depth role cannot change the tool allow-list or the prompt. Both compose on every spawn.
 2. **`general` is the identity role.** With no functional-role hint, spawn behavior is unchanged: no definition is loaded, and the depth role supplies the LLM tier.
 3. **Spawn privilege is depth-gated twice** — at assembly time (tool-policy intersection) and at call time (a permission check inside the tool itself).
-4. **Completion gates are always on.** There is no enable/disable switch anywhere in the stack; only budgets and criteria are inputs.
-5. **Fail-open means model error, unparseable output, or an unavailable lookup — never a negative verdict.** A parsed `RETRY`, `BLOCK`, or failing evidence row still blocks.
-6. **Child context is isolated.** A child starts from its own empty message list; the parent transcript is never inherited, and there is no mode that changes this.
-7. **Completion carriers are claims, not verified results.** The parent turn receives the child's report as a claim; when the session has no passing evidence, the drain gate appends a mandatory-verification message.
+4. **Role spawning is allow-listed per hop, never chain-walked.** A specialized parent may spawn its own role plus the read-only extras its `SPAWN_ALLOWED_CHILD_ROLES` entry lists; the invariant is single-hop (no permitted non-parent child may be write-capable), which is what makes multi-hop safe without ancestor traversal.
+5. **Completion gates are always on.** There is no enable/disable switch anywhere in the stack; only budgets and criteria are inputs.
+6. **Fail-open means model error, unparseable output, or an unavailable lookup — never a negative verdict.** A parsed `RETRY`, `BLOCK`, or failing evidence row still blocks.
+7. **Child context is isolated.** A child starts from its own empty message list; the parent transcript is never inherited, and there is no mode that changes this.
+8. **Completion carriers are claims, not verified results.** The parent turn receives the child's report as a claim; when the session has no passing evidence, the drain gate appends a mandatory-verification message.
 
 ## 🧭 Two Role Axes
 
@@ -64,10 +65,10 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 | Role | Purpose | Effective LLM tier | Role tool set |
 |------|---------|--------------------|---------------|
 | `general` | Default worker; identity role (its package definition is never loaded) | depth role | all tools + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `librarian` | Read-only external codebase retrieval: clone, index, and search third-party repos | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `executor` | Write-capable implementation and command execution; the one role that may also spawn read-only `researcher` / `librarian` children | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `claim_scope`, `share_finding`, `peers_findings` |
+| `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `librarian` | Read-only external codebase retrieval: clone, index, and search third-party repos | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite`. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` / `semantic_code_search` go to the two code-intel roles, `researcher` and `librarian`, because they need the symbol index; `semantic_code_search` is the embedding-backed concept search over that index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` reach the same two roles for the same reason: they need a running language server, which the child starts lazily and stops when idle. `lsp_rename` and `lsp_format` preview by default, `lsp_diagnostics` waits for the asynchronous diagnostics notification, and `lsp_status` reports availability without starting anything. The `execute_code` tool (Programmatic Tool Calling) is executor-only: the executor role receives it, and no other functional role does.
 
@@ -77,12 +78,13 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 
 ### ⚙️ What a Role Drives
 
-**LLM selection.** An explicit `model_override` wins; otherwise a non-`general` role's `model_tier` applies; otherwise the depth role decides (ORCHESTRATOR → main LLM, LEAF → auxiliary LLM).
+**LLM selection.** A per-role model profile wins (it also carries the child's own `max_output_tokens`, default 8192); otherwise an explicit `model_override` applies; otherwise a non-`general` role's `model_tier` applies; otherwise the depth role decides (ORCHESTRATOR → main LLM, LEAF → auxiliary LLM).
 
 ```text
-explicit model_override
-  └─► functional-role model_tier ("main" | "auxiliary")
-        └─► depth role (ORCHESTRATOR → main LLM, LEAF → auxiliary LLM)
+per-role model profile (own max_output_tokens, default 8192)
+  └─► explicit model_override
+        └─► functional-role model_tier ("main" | "auxiliary")
+              └─► depth role (ORCHESTRATOR → main LLM, LEAF → auxiliary LLM)
 ```
 
 **System prompt.** A non-`general` role (or any non-empty role description/body) adds the `{ROLE}` specialization line to `## Your Role` and appends a `## Role Instructions` section carrying the definition body.
@@ -91,7 +93,7 @@ explicit model_override
 
 ## 🔒 Spawn Privilege Guards
 
-Spawn privilege is enforced at two independent points, so no single leak can escalate it:
+Depth-based spawn privilege is enforced at two independent points, so no single leak can escalate it (functional-role containment is a third, orthogonal gate — see the note below):
 
 - **Assembly time (primary gate).** After the final allow-list is built from the role whitelist and `extra_tools`, Phase 8.6 intersects it with `can_spawn_children(role)`: for any role that may not spawn, `sessions_spawn` and `sessions_yield` are stripped from the list. In inherit mode the list is empty and the default deny-list already blocks the pair, so the intersection is a no-op there.
 - **Call time (defense in depth).** `check_spawn_permission(session_id)` resolves the canonical caller key (child and swarm keys verbatim; any other id gets the `agent:main:session:` prefix), resolves depth from the run record first and the session-key shape second, then resolves the depth role and refuses non-spawning callers. It returns a `(allowed, reason)` tuple and never raises; the tool renders the refusal through its existing string contract.
@@ -103,9 +105,11 @@ call:      check_spawn_permission(session_id)            → "status=forbidden",
 
 The call-time guard backs `sessions_spawn` (the escalation path) in both the tool and the runtime spawn wrapper. `sessions_yield` is protected by assembly-time stripping alone.
 
+**Functional-role containment (a third, orthogonal gate).** Depth decides *whether* a worker may spawn; containment decides *which role* it may spawn. `_check_role_containment` (`spawn/core.py`) reads the requester's own run record — one hop, never the ancestor chain — and consults `SPAWN_ALLOWED_CHILD_ROLES` (`types/functional_role.py`): an absent entry means same-role only, which is what `researcher` / `reviewer` / `librarian` keep, and `MAIN` (no run record) plus `general` (`tools: inherit` = every tool) short-circuit as unrestricted because every specialized allow-list is already a subset of theirs. The one widened entry is `executor`, which may additionally spawn the READ-ONLY `researcher` / `librarian` so it can research before it writes. Multi-hop safety rests on a single-hop invariant, not on chain traversal: every permitted non-parent child must be read-only, so a write role can only reach write roles and a read-only role only its own kind — no path returns to a write capability, and a future entry that would form a cycle (say `researcher → executor`) fails the invariant test instead of opening a hole.
+
 ## 🧪 Completion Judge & Goal Loop
 
-The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
+The completion judge (`spawn/completion_judge.py`) is the subagent-level gate. An auxiliary LLM at temperature `0` receives the task, the child's latest response (capped at `8000` characters on the legacy baseline; scaled with the serving model's output budget), and the child session's verification-evidence summary, and returns `DONE` or `CONTINUE` with a one-sentence reason; a `CONTINUE` verdict also carries a short continuation prompt. Parsing degrades safely — JSON repair first, then a regex scan — and any model error or unusable output finalizes as `DONE` with an explicit fail-open reason.
 
 The goal loop runs on every spawn whose budget exceeds one turn, under `COMPLETION_JUDGE["goal_max_turns"]` (default `5`), which counts the first turn. A per-spawn `goal_max_turns` parameter overrides it. On `CONTINUE` the judge's prompt is injected as the next `HumanMessage` on the **same checkpoint thread**, so the continuation extends the same child conversation instead of starting a new one.
 
@@ -132,7 +136,9 @@ Four gates stack from the child run outward. All four are always on; the only in
 
 **Layer 3 — flow gates.** `taskflow_flow(action="finish")` refuses the `DONE` transition until Gate A sees every step `done` or `blocked`, Gate B sees no blocked steps, and Gate C sees no `FAIL` or `[stale]` flow evidence (plus the opt-in Gate E goal judge for a described flow of `GOAL_GATE["min_steps"]` steps or more).
 
-**Layer 4 — parent-turn gate.** When the drain injects queued completion carriers, it also checks the parent session's evidence. The carriers are injected verbatim; if the session has no passing evidence, a mandatory-verification message is appended after them. The check is unconditional — no configuration disables it — and it is fail-open only when the evidence lookup itself is unavailable.
+**Layer 4 — parent-turn gate.** When the drain injects queued completion carriers, it also checks the parent session's evidence. The carriers are injected verbatim; if the session has no passing evidence, a mandatory-verification message is appended after them. The check is unconditional — no configuration disables it — and it is fail-open only when the evidence lookup itself is unavailable. It reads the same invalidation marks the flow gates do: a `[stale]` or `[broken]` row is not a pass, so a child whose work a later write invalidated cannot drain as if it were verified.
+
+**Restart semantics.** No task survives a restart, so a RUNNING run restored from disk is terminalized as a TIMEOUT with `pause_reason=process_restart` (leaving it RUNNING made every liveness reader believe the child was alive), and every persisted monotonic timestamp is rebased onto the restore point — a value from the previous process can read as hours old or as a future time, which silently disabled each expiry check. Its delivery stays PENDING and the sweeper's undelivered scan announces it, so the owning step learns instead of staying DISPATCHED. Killing a run that is INTERRUPTED releases its per-session guard state here too: there is no live child agent whose `finally` would do it.
 
 A parsed negative verdict always blocks: fail-open covers model errors, unparseable output, and unavailable lookups, never a real `RETRY`, `BLOCK`, or failing evidence row. The gate-internals (breaker thresholds, announce retries, the evidence ledger) are detailed in the [Loop Prevention README](../loop-prevention/README.md) and the [Long-Running Tasks README](../long-running-tasks/README.md).
 
@@ -161,6 +167,9 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | workspace directory holding optional role overrides |
 | `max_spawn_depth` | `SubagentConfig` | `2` | depth at which the role flips to `LEAF` (hard cap `2`) |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format families | commands auto-recorded as verification evidence |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | legacy values | scales the stored/delivery/summary/judge/transcript caps by `W/8000` for a configured serving-model output budget `W`; unset keeps the legacy values |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | the role profile's own output cap (decimal string, min 8K); drives both the child request and its result-text caps, independent of the MAIN env budget |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | per-turn model+tool call budget for the executor child; other subagent roles keep `worker_max_iterations=60` |
 
 ## 🗺️ Test Map
 
@@ -169,6 +178,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | Role enum and loader | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py` |
 | Role-driven spawn behavior | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | Spawn privilege guard | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| Functional-role containment | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | Completion judge and drain | `tests/agent/tools/subagent/test_completion_judge.py`, `tests/agent/tools/subagent/test_completion_drain.py` |
 | Parent-turn gate | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | Step judge | `tests/agent/tools/taskflow/test_step_judge.py`, `tests/agent/tools/taskflow/test_resume_with_judge.py` |

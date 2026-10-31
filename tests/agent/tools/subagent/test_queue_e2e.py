@@ -71,7 +71,7 @@ from agent.tools.subagent.registry.pending_injections import (
     PendingInjectionStore,
 )
 from context_engine.store import core as mes_store_core
-from context_engine.store.db import _migrate as mes_migrate
+from context_engine.store.db import build_schema_v1 as mes_build_schema
 from pub.func.build_agent_config import build_agent_config
 from runtime.session.relation_register import relation_register
 from runtime.session.state_register import state_register_mem
@@ -323,7 +323,7 @@ def e2e_env(monkeypatch, tmp_path):
     monkeypatch.setattr(tr, "get_registry", lambda: registry)
 
     mes_conn = sqlite3.connect(tmp_path / "e2e-mesmemory.db")
-    mes_migrate(mes_conn)
+    mes_build_schema(mes_conn)
     monkeypatch.setattr(mes_store_core, "_db", mes_conn, raising=False)
 
     # Subagent-completion steering queue on tmp SQLite (AC-6): both the drain

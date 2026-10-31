@@ -36,6 +36,68 @@ function makeCtx(handlers: AgentSocketHandlers = {}, pendingKeys: string[] = ['p
 const fire = (ctx: AgentFrameContext, data: unknown) =>
   routeAgentFrame({ data: JSON.stringify(data) } as MessageEvent, ctx);
 
+describe('routeAgentFrame: resumable + ack frames', () => {
+  /**
+   * Collect one mitt channel for the duration of one frame.
+   * @param channel
+   */
+  function capture(channel: string): { events: unknown[]; stop: () => void } {
+    const events: unknown[] = [];
+    const handler = (payload: unknown) => events.push(payload);
+    on(channel, handler);
+    return { events, stop: () => off(channel, handler) };
+  }
+
+  it('a stopped frame with resumable emits ws:resumable for its session', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:resumable');
+    fire(ctx, { event: 'stopped', session_id: 's1', resumable: true, message_ids: ['p1'] });
+    seen.stop();
+
+    expect(seen.events).toEqual([{ sessionId: 's1' }]);
+  });
+
+  it('a stopped frame WITHOUT resumable stays silent', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:resumable');
+    fire(ctx, { event: 'stopped', session_id: 's1', resumable: false });
+    seen.stop();
+
+    expect(seen.events).toEqual([]);
+  });
+
+  it('a done frame carries resumable too (a heartbeat timeout ends the turn normally)', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:resumable');
+    fire(ctx, { event: 'done', session_id: 'sess', resumable: true });
+    seen.stop();
+
+    expect(seen.events).toEqual([{ sessionId: 'sess' }]);
+  });
+
+  it('continue_generation_ack maps ok/reason and defaults the session', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:continue_ack');
+    fire(ctx, { event: 'continue_generation_ack', content: { ok: false, reason: 'stale' } });
+    fire(ctx, { event: 'continue_generation_ack', session_id: 's2', content: { ok: true } });
+    seen.stop();
+
+    expect(seen.events).toEqual([
+      { sessionId: 'sess', ok: false, reason: 'stale' },
+      { sessionId: 's2', ok: true, reason: null }
+    ]);
+  });
+
+  it('edit_message_ack maps a refusal reason', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:edit_ack');
+    fire(ctx, { event: 'edit_message_ack', session_id: 'sess', content: { ok: false, reason: 'compacted' } });
+    seen.stop();
+
+    expect(seen.events).toEqual([{ sessionId: 'sess', ok: false, reason: 'compacted' }]);
+  });
+});
+
 describe('routeAgentFrame', () => {
   it('chunk: marks sends as chunked and forwards content/type/session/meta', () => {
     const onChunk = vi.fn();

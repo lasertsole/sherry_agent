@@ -8,7 +8,6 @@ the command never names it. Legacy rows keep the substring fallback.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -121,33 +120,3 @@ def test_purge_session_removes_verification_state():
     EvidenceLedger.purge_session(A)
 
     assert EvidenceLedger.changed_paths(A) == []
-
-
-def test_an_existing_ledger_gains_the_modified_files_column(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    path = tmp_path / "legacy.db"
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            """
-            CREATE TABLE evidence_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                event TEXT,
-                file_path TEXT,
-                command TEXT,
-                status TEXT,
-                exit_code INTEGER,
-                kind TEXT,
-                payload_json TEXT NOT NULL,
-                legacy_key TEXT UNIQUE
-            )
-            """
-        )
-    monkeypatch.setattr(EvidenceLedger, "LEDGER_PATH", str(path))
-
-    assert EvidenceLedger.read_all() == []
-    with sqlite3.connect(path) as conn:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(evidence_events)")}
-    assert "modified_files_json" in columns

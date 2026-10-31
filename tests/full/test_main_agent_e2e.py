@@ -44,7 +44,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from models import build_main_llm
 
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 
 
 class _E2EState(AgentState):

@@ -36,6 +36,7 @@ from agent.tools.pub_base import (
     resolve_tool_session_id,
     display_path,
     is_text_file,
+    enforce_self_path_policy,
     resolve_external_path,
     resolve_workspace_path,
 )
@@ -220,8 +221,17 @@ class SearchFilesTool(BaseTool):
         except PathOutOfBoundsError:
             try:
                 resolved = resolve_external_path(
-                    path, session_id=session_id, action_desc="search directory"
+                    path, session_id=session_id, action_desc="search directory", mode="read"
                 )
+            except PathOutOfBoundsError as e:
+                return tool_error(str(e))
+        else:
+            # In-root is not "safe" when the root IS the checkout: the sherry-self
+            # read policy still applies (credentials, memory, other sessions).
+            # Enforced OUTSIDE the geometry try so a policy refusal cannot fall
+            # through into the external path and ask the operator twice.
+            try:
+                enforce_self_path_policy(resolved, session_id, "search directory", "read")
             except PathOutOfBoundsError as e:
                 return tool_error(str(e))
 

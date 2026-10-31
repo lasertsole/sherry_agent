@@ -41,12 +41,28 @@ export const toolboxTools: Tool[] = [
     title: 'toolbar.terminal',
     event: 'terminal',
     label: 'toolbar.terminal'
+  },
+  {
+    toolName: 'toolbar.whiteboard',
+    icon: 'pi pi-pen-to-square',
+    title: 'toolbar.whiteboard',
+    event: 'whiteboard',
+    label: 'toolbar.whiteboard'
   }
 ];
 
 export const headerTools: Tool[] = [
-  // FIRST: the preset panel is where a session's identity is set up, so it
-  // leads the grid (its own name is 预设角色 / Presets & Role).
+  // FIRST: System Config. It holds the app-wide settings (interface language
+  // included), so it is the entry a user reaches for before anything else.
+  {
+    toolName: 'toolbar.systemConfig',
+    icon: 'pi pi-sliders-h',
+    title: 'toolbar.systemConfig',
+    event: 'systemConfig',
+    label: 'toolbar.systemConfig'
+  },
+  // SECOND: the preset panel is where a session's identity is set up, so it
+  // follows immediately (its own name is Presets & Role).
   {
     toolName: 'toolbar.persona',
     icon: 'pi pi-user',
@@ -97,13 +113,6 @@ export const headerTools: Tool[] = [
     title: 'toolbar.webSearch',
     event: 'webSearch',
     label: 'toolbar.webSearch'
-  },
-  {
-    toolName: 'toolbar.systemConfig',
-    icon: 'pi pi-sliders-h',
-    title: 'toolbar.systemConfig',
-    event: 'systemConfig',
-    label: 'toolbar.systemConfig'
   },
   {
     toolName: 'toolbar.memory',

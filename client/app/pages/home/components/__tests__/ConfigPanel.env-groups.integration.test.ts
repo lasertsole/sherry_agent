@@ -1,10 +1,10 @@
 /**
  * The settings panel renders a group by its declared KIND (backend-mocked).
  *
- * The 模型配置 tab merges the model families from `.models` (GET
+ * The Model Config tab merges the model families from `.models` (GET
  * /models-config) and the remaining `.network` groups (GET /network-config).
  * LANGSMITH and SHERRY_BROWSER (from `.network`) plus the `.env` catch-all
- * `other` moved to the 应用配置 tab, still as key/value cards. Model groups
+ * `other` moved to the App Config tab, still as key/value cards. Model groups
  * (MAIN_LLM, EMBEDDING, …) render the provider/model/api_key profile manager.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -82,7 +82,8 @@ const primevueStubs = {
   Divider: { name: 'Divider', template: '<div class="dv"></div>' },
   Button: { name: 'Button', props: ['label'], template: '<button class="btn">{{ label }}</button>' },
   Slider: { name: 'Slider', props: ['modelValue'], template: '<div class="sl"></div>' },
-  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' }
+  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' },
+  TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' }
 };
 
 interface ConfigPanelVm {

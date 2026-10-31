@@ -36,6 +36,11 @@ class SymbolDef:
     line_end: int
     parent_index: int | None = None
     doc_string: str | None = None
+    #: Shape of the declaration's interface (parameter list, and for Python
+    #: whether a return annotation exists), normalized to a compact string.
+    #: ``None`` when the language extractor does not capture it — the
+    #: interface diff then reports nothing rather than inventing a change.
+    signature: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +164,7 @@ class _Ctx:
         "class_stack",
         "impl_stack",
         "class_by_name",
+        "module_variables",
     )
 
     def __init__(self) -> None:
@@ -171,6 +177,9 @@ class _Ctx:
         self.class_stack: list[int | None] = []
         self.impl_stack: list[int | None] = []
         self.class_by_name: dict[str, int] = {}
+        #: Opt-in: also surface module-level assignments as ``variable`` symbols
+        #: (the interface diff needs them; the code index does not).
+        self.module_variables = False
 
 
 def _add_symbol(
@@ -181,10 +190,31 @@ def _add_symbol(
     line_end: int,
     parent: int | None,
     doc: str | None = None,
+    signature: str | None = None,
 ) -> int:
     idx = len(ctx.symbols)
-    ctx.symbols.append(SymbolDef(name, kind, line_start, line_end, parent, doc))
+    ctx.symbols.append(SymbolDef(name, kind, line_start, line_end, parent, doc, signature))
     return idx
+
+
+def _signature_text(node: Node) -> str | None:
+    """One function's parameter shape: ``(a, b=*, **kwargs) -> ret``.
+
+    Whitespace and comments collapse to a single space, so a pure reformat is
+    not reported as an interface change; the text is deliberately not parsed
+    further (the diff only needs equality, not semantics).
+    """
+    params = node.child_by_field_name("parameters")
+    if params is None:
+        for child in node.children:
+            if child.type in ("parameters", "formal_parameters", "parameter_list"):
+                params = child
+                break
+    if params is None:
+        return None
+    text = " ".join(params.text.decode("utf-8", errors="replace").split())
+    returns = node.child_by_field_name("return_type")
+    return f"{text} -> ret" if returns is not None else text
 
 
 def _record_call(ctx: _Ctx, callee_name: str | None, line: int) -> None:
@@ -314,6 +344,7 @@ def _python_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
             node.end_point[0] + 1,
             parent,
             _python_doc(node),
+            _signature_text(node),
         )
         ctx.sym_stack.append(idx)
         for child in node.children:
@@ -348,6 +379,28 @@ def _python_node(node: Node, ctx: _Ctx, node_type: str) -> bool:
         _record_call(
             ctx, _python_call_name(node.child_by_field_name("function")), node.start_point[0] + 1
         )
+        return False
+    if node_type == "expression_statement" and ctx.module_variables:
+        # Top-level assignments only (no function/class on either stack): a
+        # module constant renamed under its importers is exactly the break the
+        # interface diff could not see. Locals stay out of the surface.
+        if ctx.sym_stack or ctx.class_stack or ctx.impl_stack:
+            return False
+        for child in node.named_children:
+            if child.type != "assignment":
+                continue
+            target = child.child_by_field_name("left")
+            if target is None or target.type != "identifier":
+                continue
+            _add_symbol(
+                ctx,
+                _text(target),
+                "variable",
+                child.start_point[0] + 1,
+                child.end_point[0] + 1,
+                None,
+            )
+            return True
     return False
 
 
@@ -758,8 +811,15 @@ def _walk(node: Node, ctx: _Ctx, language: str) -> None:
         _walk(child, ctx, language)
 
 
-def extract_symbols(source: bytes, language: str) -> ExtractionResult:
-    """Parse *source* and return its symbols + call sites (never raises on grammar errors)."""
+def extract_symbols(
+    source: bytes, language: str, *, include_module_variables: bool = False
+) -> ExtractionResult:
+    """Parse *source* and return its symbols + call sites (never raises on grammar errors).
+
+    ``include_module_variables`` additionally surfaces top-level assignments as
+    ``variable`` symbols. It is OPT-IN because the code index (callers/explore)
+    must not start listing every module constant; only the interface diff asks.
+    """
     canonical = canonical_language(language)
     try:
         parser = get_parser(canonical)
@@ -771,6 +831,7 @@ def extract_symbols(source: bytes, language: str) -> ExtractionResult:
         # recorded in index_meta, never partially indexed.
         return ExtractionResult(error="syntax errors in file")
     ctx = _Ctx()
+    ctx.module_variables = include_module_variables
     _walk(tree.root_node, ctx, canonical)
     return ExtractionResult(
         symbols=ctx.symbols,

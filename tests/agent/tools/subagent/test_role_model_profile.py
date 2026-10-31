@@ -52,6 +52,7 @@ def wiring(monkeypatch: pytest.MonkeyPatch) -> dict:
     def _fake_create_agent(**kwargs):
         captured["model"] = kwargs.get("model")
         captured["tools"] = kwargs.get("tools", [])
+        captured["middleware"] = kwargs.get("middleware", [])
         return SimpleNamespace(name="child-graph")
 
     async def _fake_checkpointer(*_args, **_kwargs):
@@ -59,8 +60,8 @@ def wiring(monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr("langchain.agents.create_agent", _fake_create_agent)
     monkeypatch.setattr("agent.checkpointer.build_async_sqlite_checkpointer", _fake_checkpointer)
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: SimpleNamespace(kind="main"))
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: SimpleNamespace(kind="aux"))
@@ -82,12 +83,22 @@ def test_an_unset_config_means_follow_the_tier():
 
 
 def test_a_configured_role_returns_its_profile():
-    _set_models({"researcher": {"model": "glm-4.6", "provider": "zhipu", "api_key": "k"}})
+    _set_models(
+        {
+            "researcher": {
+                "model": "glm-4.6",
+                "provider": "zhipu",
+                "api_key": "k",
+                "max_output_tokens": "16384",
+            }
+        }
+    )
 
     assert resolve_role_model_profile(SESSION, FunctionalRole.RESEARCHER) == {
         "model": "glm-4.6",
         "provider": "zhipu",
         "api_key": "k",
+        "max_output_tokens": "16384",
     }
     # A role without an entry follows its tier, even when a sibling is configured.
     assert resolve_role_model_profile(SESSION, FunctionalRole.EXECUTOR) is None
@@ -153,8 +164,62 @@ def test_a_role_profile_builds_the_child_llm_from_the_descriptor(
         )
     )
 
-    assert calls == [{"provider": "zhipu", "model": "glm-4.6", "api_key": "k", "base_url": None}]
+    assert calls == [
+        {
+            "provider": "zhipu",
+            "model": "glm-4.6",
+            "api_key": "k",
+            "base_url": None,
+            "max_output_tokens": 8192,
+        }
+    ]
     assert getattr(wiring["model"], "kind", None) == "profile", "the child must use that LLM"
+
+
+def test_a_role_profile_passes_its_own_output_cap_to_the_builder(
+    wiring: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict] = []
+
+    def _fake_for_profile(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(kind="profile")
+
+    monkeypatch.setattr("models.build_main_llm_for_profile", _fake_for_profile)
+
+    asyncio.run(
+        _build_child_agent(
+            system_prompt="prompt",
+            tools=[_StubTool("read_file")],
+            tool_allow=None,
+            tool_deny=[],
+            role=SubagentSessionRole.LEAF,
+            functional_role=FunctionalRole.RESEARCHER,
+            model_profile={"model": "glm-4.6", "provider": "zhipu", "max_output_tokens": "16384"},
+        )
+    )
+
+    assert calls[0]["max_output_tokens"] == 16384
+
+
+def test_the_executor_child_gets_the_90_iteration_budget(
+    wiring: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.middlewares.iteration_budget import IterationBudget
+
+    asyncio.run(
+        _build_child_agent(
+            system_prompt="prompt",
+            tools=[_StubTool("read_file")],
+            tool_allow=None,
+            tool_deny=[],
+            role=SubagentSessionRole.LEAF,
+            functional_role=FunctionalRole.EXECUTOR,
+        )
+    )
+
+    budget = next(mw for mw in wiring["middleware"] if isinstance(mw, IterationBudget))
+    assert budget.max_iterations == 90
 
 
 def test_without_a_profile_the_role_tier_still_decides(

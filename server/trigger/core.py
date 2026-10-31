@@ -9,6 +9,7 @@ from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from runtime import relation_register, clear_all_register_sessions
 from server.trigger import auth
+from server.trigger import rate_limit
 from server.trigger.auth_user import user_auth_middleware, ws_user_check
 from server.trigger.cors import cors_origin_echo
 from server.trigger.csrf import csrf_guard_middleware
@@ -222,6 +223,16 @@ async def ws_handler(websocket: WebSocketAdapter):
         while True:
             try:
                 msg: str = await websocket.receive_text()
+                # Design concept #28: one token-bucket slot per inbound frame.
+                # A starved burst is answered ONCE (notify is the transition
+                # edge) — replying per dropped frame would amplify the flood.
+                allowed, notify = rate_limit.consume_frame(str(websocket.id))
+                if not allowed:
+                    if notify:
+                        await websocket.send_text(
+                            json.dumps({"event": "rate_limited", "content": None})
+                        )
+                    continue
                 obj: dict[str, Any] = json.loads(msg)
                 session_id: str | None = obj.get("session_id", None)
                 if session_id is None:

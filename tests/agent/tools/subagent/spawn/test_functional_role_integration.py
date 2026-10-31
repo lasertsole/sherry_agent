@@ -63,7 +63,14 @@ class TestSpawnFunctionalRole:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.RESEARCHER
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
-        assert run.inherited_tool_allow == ["read_file", "search_files", "terminal", "web_search"]
+        assert run.inherited_tool_allow == [
+            "read_file",
+            "search_files",
+            "terminal",
+            "web_search",
+            "share_finding",
+            "peers_findings",
+        ]
 
     def test_librarian_record_llm_tier_and_whitelist(self, _leaf_depth, _captured_lane):
         result = asyncio.run(_spawn(_captured_lane, functional_role_hint="librarian"))
@@ -71,7 +78,14 @@ class TestSpawnFunctionalRole:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.LIBRARIAN
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
-        assert run.inherited_tool_allow == ["read_file", "search_files", "terminal", "web_search"]
+        assert run.inherited_tool_allow == [
+            "read_file",
+            "search_files",
+            "terminal",
+            "web_search",
+            "share_finding",
+            "peers_findings",
+        ]
 
     def test_agent_id_librarian_resolves_at_resolver_level(self):
         from agent.tools.subagent.spawn.core import _resolve_functional_role
@@ -88,7 +102,12 @@ class TestSpawnFunctionalRole:
     def test_reviewer_whitelist_is_read_only(self, _leaf_depth, _captured_lane):
         asyncio.run(_spawn(_captured_lane, functional_role_hint="reviewer"))
         run = _captured_lane[-1]["run"]
-        assert run.inherited_tool_allow == ["read_file", "terminal"]
+        assert run.inherited_tool_allow == [
+            "read_file",
+            "terminal",
+            "share_finding",
+            "peers_findings",
+        ]
         assert "write_file" not in run.inherited_tool_allow
 
     def test_extra_tools_extend_whitelist(self, _leaf_depth, _captured_lane):
@@ -130,8 +149,8 @@ def _wiring(monkeypatch):
 
     main_llm = SimpleNamespace(kind="main")
     aux_llm = SimpleNamespace(kind="aux")
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
     monkeypatch.setattr("models.build_main_llm", lambda *a, **k: main_llm)
     monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: aux_llm)

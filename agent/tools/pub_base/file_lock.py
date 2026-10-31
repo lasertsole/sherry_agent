@@ -167,10 +167,3 @@ def file_read_lock(
     """
     with path_read_lock(target), flock_path(lock_path_for(target), timeout_s, shared=True):
         yield
-
-
-def describe_lock_dirs() -> str:  # pragma: no cover - diagnostic helper
-    """Where the lock files live (used in log lines and troubleshooting)."""
-    from config.path import file_locks_dir
-
-    return str(file_locks_dir())

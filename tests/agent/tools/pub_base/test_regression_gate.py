@@ -173,3 +173,78 @@ async def test_disabling_the_gate_does_nothing(monkeypatch: pytest.MonkeyPatch):
 )
 def test_the_replay_command_policy(command: str, allowed: bool):
     assert (regression_gate._safe_argv(command) is not None) is allowed
+
+
+class TestTheAllowlistIsConfigurable:
+    """The verifier allowlist = code defaults + the user's sherry.jsonc entries.
+
+    Same shape as the YOLO deny list: the consumer owns the defaults and the
+    user's list is merged per call, so a new language toolchain needs a config
+    line rather than a code change.
+    """
+
+    def test_defaults_apply_without_a_config_file(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        # A missing file is the always-boot path: the loader returns [].
+        monkeypatch.setattr(sherry_settings, "SHERRY_CONFIG_PATH", Path("/nonexistent.jsonc"))
+
+        assert regression_gate._get_allowed_executables() == regression_gate._ALLOWED_EXECUTABLES
+
+    def test_a_user_entry_is_merged_and_lowercased(self, monkeypatch, tmp_path):
+        import config.sherry_settings as sherry_settings
+
+        config = tmp_path / "sherry.jsonc"
+        config.write_text(
+            '{\n  "regression_gate_allowed_executables": ["Gradle", "  maven  "],\n}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sherry_settings, "SHERRY_CONFIG_PATH", config)
+
+        merged = regression_gate._get_allowed_executables()
+
+        assert {"gradle", "maven"} <= merged
+        assert regression_gate._ALLOWED_EXECUTABLES <= merged, "defaults always survive"
+
+    def test_the_configured_toolchain_replays(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        assert regression_gate._safe_argv("gradle test") is None, "not allowed by default"
+
+        def _user_entries(_key: str) -> list[str]:
+            return ["gradle"]
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_list_setting", _user_entries)
+
+        assert regression_gate._safe_argv("gradle test") == ["gradle", "test"]
+
+    def test_a_tool_that_is_still_unlisted_is_refused(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_list_setting", lambda _key: ["gradle"])
+
+        assert regression_gate._safe_argv("ruby spec.rb") is None
+        assert regression_gate._safe_argv("php artisan test") is None
+
+    def test_shell_metacharacters_stay_refused_even_when_allowed(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_list_setting", lambda _key: ["gradle"])
+
+        assert regression_gate._safe_argv("gradle test && rm -rf /") is None
+        assert regression_gate._safe_argv("gradle test; whoami") is None
+
+    def test_a_nested_runner_checks_the_inner_target(self, monkeypatch):
+        """``npx``/``pnpm exec`` resolve their target against the same merged set."""
+        import config.sherry_settings as sherry_settings
+
+        monkeypatch.setattr(
+            sherry_settings, "load_sherry_list_setting", lambda _key: ["playwright"]
+        )
+
+        assert regression_gate._safe_argv("npx playwright test") == [
+            "npx",
+            "playwright",
+            "test",
+        ]
+        assert regression_gate._safe_argv("npx definitely-not-a-verifier") is None

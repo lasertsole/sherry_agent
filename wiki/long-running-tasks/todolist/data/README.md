@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS todos (
     flow_id      TEXT    DEFAULT NULL,
     step_id      TEXT    DEFAULT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    todo_id      INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
 );
 ```
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `plan_ref` | Linked plan file path — session-scoped `workspace/sessions/<session_id>/plans/*.md` |
 | `flow_id`  | Linked TaskFlow flow id (DAG owned by TaskFlow)                    |
 | `step_id`  | Linked TaskFlow step id (e.g. `step-2`), for re-reading DAG status |
+| `todo_id`  | Stable per-session identity shown as `#N`; local patch/remove/reattach address it. `position` is display order only |
 
 > **Design boundary**: `todos.db` does **not** hold `depends_on` / DAG state / step status. The dependency graph, `blocked/ready/dispatched/done` and unlock logic are all provided by TaskFlow. The todo only points to the corresponding flow step via `flow_id`/`step_id`; DAG status is re-read via `taskflow_inspect(action="summary", flow_id)`.
 
@@ -117,4 +119,13 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """Read todos linked to a TaskFlow flow (map DAG status back to UI)"""
+
+async def add_todo(session_id, todo, *, after_todo_id=None) -> dict | None:
+    """Append, or insert after the stable todo_id anchor"""
+
+async def patch_todo_by_id(session_id, todo_id, **fields) -> dict | None:
+    """Patch one row; flow_id/step_id/plan_ref stay untouched"""
+
+async def remove_todo_by_id(session_id, todo_id) -> dict | None:
+    """Delete one row by stable id"""
 ```

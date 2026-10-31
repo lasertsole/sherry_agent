@@ -58,6 +58,13 @@ DATA = (
 #: Packages whose data files PyInstaller's built-in hooks miss.
 COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets", "onnxruntime")
 
+#: Imported LAZILY inside a function (the load gate's sampler), so the freezer's
+#: static analysis cannot see them from the entry point. ``psutil`` also ships a
+#: per-platform C extension, which a missing hidden import would break at
+#: runtime rather than at build time — the desktop workflow's packaging smoke
+#: step imports and calls it in the frozen tree for exactly that reason.
+HIDDEN_IMPORTS = ("psutil",)
+
 #: OUR packages, collected whole. They resolve parts of themselves through
 #: ``importlib.import_module`` (``models/__init__`` and ``models/LLMs/__init__``
 #: expose lazy attributes that way, and the tool packages build tools lazily), so
@@ -158,6 +165,8 @@ def main() -> int:
         args += ["--collect-all", package]
     for package in COLLECT_SUBMODULES:
         args += ["--collect-submodules", package]
+    for module in HIDDEN_IMPORTS:
+        args += ["--hidden-import", module]
     for module in EXCLUDES:
         args += ["--exclude-module", module]
     args.append(str(ROOT / "packaging" / "backend_entry.py"))

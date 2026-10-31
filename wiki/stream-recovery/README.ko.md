@@ -32,6 +32,30 @@
 
 읽기는 스트림 generator와 같은 이벤트 루프에서 실행되므로 텍스트와 시퀀스 번호가 같은 일관된 컷에서 읽히며 락이 필요 없습니다. 등록된 엔진이 없으면 실행 중 턴이 없고 스냅샷 함수는 `None`을 반환합니다. HTTP 히스토리 경로는 표시용 메타데이터로 `turn_num`(다음에 영속화될 턴 번호)을 덧붙입니다.
 
+## 영속 실행: 크래시 후에도 살아남는 것
+
+Sherry의 내구성 모델은 **"상태는 영속 + sweeper가 보완 + 새 turn이 재구동"**이며 Temporal식 액티비티 재실행이 아닙니다. 크래시는 재생할 수 없지만, 어떤 **상태**도 거짓말하지 않음을 보장할 수 있다면 복구에 진실된 근거가 생깁니다. 2026-10에 다섯 하위 시스템(HITL, 체크포인터, TaskFlow, 서브에이전트 레지스트리, 증거 원장)을 감사하고 첫 배치를 수정했습니다:
+
+| 결함 | 수정 |
+| :--- | :--- |
+| 레지스트리의 종료 판정이 문자열 리터럴(`COMPLETED`, `FAILED` 등)을 값이 `pending / running / interrupted / terminal`인 열거형과 비교——일치하지 않아 보존 상한이 동작하지 않고 메모리가 무한히 증가 | `ExecutionStatus.TERMINAL`과 비교. 상한은 활성 run은 유지하고 오래된 종료 run을 제거 |
+| 세션 디렉터리 스윕이 원시 session id로 checkpoint를 조회. 체크포인터는 `session_thread_id(session_id)`(INTEGER)를 저장하므로 checkpoint만 남은 폴더가 빈 것으로 오인되어 삭제됨 | `pub.func`의 단일 `session_thread_id()` 매핑을 스윕에서 사용 |
+| trajectory는 "쓰기 시 정리"라고 문서화했지만 `prune_session` 호출자가 없었고, 정렬도 훅이 항상 0을 쓰던 `MAX(seq)`라 임의의 turn 집합이 남음 | 쓰기 시 연결하고 세션당 60초로 제한해 실행, 삽입 순서(rowid) 정렬 |
+| 전역 keep-latest 정리가 `built_agent()`(즉 매 turn)에서, `busy_timeout` 없는 연결로 실행되고 keep-set을 삭제 전에 확정(그 사이 다른 세션이 커밋한 최신 checkpoint가 유실될 수 있음) | 부팅 시 1회(`server/service/checkpoint_maintenance.py`)로 이동, `BEGIN IMMEDIATE` 안에서 실행하고 keep은 최상위 행 우선 |
+| 모든 체크포인터 연결에 `busy_timeout`이 없음(WAL과 달리 연결 단위 PRAGMA) | 단일 헬퍼(`agent/checkpointer/pragmas.py`, 30초)로 통일 |
+| `delete_thread_history`에 보호가 없어 DB 잠금 시 메시지 저장소를 비운 뒤 purge가 중단——반쪽 삭제의 최악 | 각 단계를 보호하고 checkpoint 삭제를 가장 먼저 수행(재시도로 항상 완료 가능) |
+| 종료 run의 전달 상태가 30초 주기 flush로만 디스크에 도달했고 그 창의 크래시는 SQLite를 TERMINAL+PENDING으로 남김——재시도 경로가 없어 완료 결과가 영구 유실 | 전달 상태 전이(`delivered / failed / suspended / in_progress`)를 즉시 영속화(`set_run_durable`) |
+| auto-turn 드라이버가 빈 구현의 `apply_hitl_pending`을 상속해, headless turn 중단 후 그래프는 멈춰 있는데 세션은 idle로 보였음: 턴 종료 정리가 그 checkpoint를 지우고 drain이 새 메시지를 멈춘 그래프에 주입할 수 있었음 | 드라이버가 플래그를 설정. `submit_user_input`도 checkpoint의 interrupt를 busy로 간주(페일오픈 탐색). 재시작 후의 전형적 경우 |
+
+두 번째 배치가 감사의 남은 항목을 모두 닫았습니다. 그중 셋은 같은 통찰을 공유합니다——재시작이 무효화하는 것은 데이터뿐 아니라 **시계**와 **메모리에만 있는 플래그**이기도 합니다.
+
+- **부팅 시 조정**(`server/service/boot_recovery.py`, checkpoint를 가진 세션 디렉터리에 대한 상한 있는 1회 스캔): 그래프가 여전히 멈춰 있는 세션은 HITL pending 플래그를 재구성합니다(레지스터는 메모리에만 있어서, 그렇지 않으면 서버는 IDLE로 보고하고 다음 메시지가 `Command(resume=...)` 대신 일반 턴으로 디스패치됩니다). 마지막 어시스턴트 턴이 결과 없는 도구 호출을 가진 전사는 오류 자리표시자와 인터럽트 마커를 한 커밋으로 기록해 복구합니다(결정적 id). **완료될 수 없는** 턴이 클레임한 `CLAIMED` 큐 행은 24시간 만료까지 슬롯을 붙잡는 대신 `QUEUED`로 되돌립니다. 모든 단계는 페일오픈이고 스캔은 상한이 있어, 망가진 세션은 자기 탐색 비용만 치릅니다.
+- **복원된 RUNNING run은 살아 있지 않습니다.** 재시작을 넘겨 살아남는 태스크는 없으므로 로드 시 종료 상태로 만듭니다(`pause_reason=process_restart`, outcome TIMEOUT). RUNNING으로 두면 WAITING flow 스캔은 자식이 살아 있다고 믿고, 고아 복구는 결코 오지 않을 임계값을 기다립니다. 전달은 PENDING으로 남고 sweeper의 미전달 스캔이 공지하므로, 소유한 step은 DISPATCHED에 머무르지 않고 결과를 알게 됩니다.
+- **모든 영속 타임스탬프는 로드 시 재기준화**(`_rebase_restored_clock`)됩니다. `time.monotonic()`은 프로세스 상대라서 이전 프로세스의 값이 몇 시간 전으로도, 미래로도 읽혀 `now - timestamp` 만료 판정이 조용히 무효가 되었습니다. 마감(`archive_at`)에는 새 창을 줍니다(“지금”으로 재기준화하면 첫 스캔에서 아카이브됩니다).
+- **중단하는 도구는 headless 턴에서 거부합니다.** 승인 게이트는 이미 운영자가 없는 턴을 자동 거부했지만, 스스로 `interrupt()`를 호출하는 도구(`question`, `exit_plan_mode`, 자기 파일 승인, 일반 `interrupt_on` 전략, 샌드박스 바이패스)는 그대로 멈췄습니다——아무도 답할 수 없는 턴이 중단되는 것입니다. 이제는 거부하고 모델에게 계속(또는 중지)하라고 알리며, 절대 재시도하지 않습니다.
+- **trajectory 타임라인이 진짜가 되었습니다.** 훅 이벤트와 프레임 투영이 이제 하나의 턴 단위 시퀀스를 공유합니다(훅은 `seq=0`을 넘겨서 모든 훅 이벤트가 그 턴의 첫 프레임보다 앞에 정렬되었습니다). 타임스탬프는 밀리초 정밀도를 가지며, 실패한 스트림은 재던지기 전에 `error` 이벤트를 기록합니다——그냥 멈춘 타임라인은 “아직 실행 중”으로 보이기 때문입니다.
+
+
 ## 프레임 시퀀스와 워터마크
 
 `StreamTurn.run()`이 내보내는 모든 프레임은 yield 전에 턴 단위 단조 `_frame_seq`를 찍습니다:
@@ -99,6 +123,58 @@ WS handler `_handle_resume_stream`과 `stream_resume` 응답은 구버전 클라
 - **재접속 시 턴 재실행.** 도구 부작용과 token 소비를 중복시키고 답을 바꿀 수 있습니다.
 - **모든 델타 재생.** 시청자별 히스토리·커서·보존이 필요하며, `seq` 워터마크가 해결하는 경쟁이 다시 도입됩니다.
 - **ZCode의 7이벤트 앵커 프로토콜.** 더 세밀한 추론/도구 입력 복구를 제공하지만 프런트엔드 프로토콜과 영속 anchor/tail-discard 파이프라인이 필요합니다. Sherry의 스냅샷 프로토콜은 더 적은 기계장치로 사용자 가시 복구 목표를 충족하며, 세밀한 이벤트 타입은 설계상 미구현으로 남습니다.
+
+## 궤적 패널
+
+원장에는 UI 소비자도 있습니다. SESSION 범위의 오른쪽 사이드바 탭
+(`client/app/pages/home/components/TrajectoryPanel.vue`)이
+`GET /sessions/:session_id/trajectory`를 읽어 턴별 타임라인을 표시합니다. 재연결
+프로토콜이 아니라 디버그 뷰입니다. 열면 최신 500행 페이지를 두 번만 가져오고(최대 1000개
+이벤트, 초과 시 잘림 안내), 새로고침은 버튼이며 라이브 구독은 없습니다.
+
+이벤트는 `turn_id`로 묶고 `(ts, seq, event_id)`로 다시 정렬합니다. `read()`는 `seq`
+순서이고 모든 라이프사이클 이벤트(turn_start / turn_end / compact / model_retry /
+invalid_tool_call)가 `seq=0`이기 때문에, 다시 정렬하지 않으면 모두 도구 행보다 앞에
+모이고 `turn_end`가 맨 앞에 오게 됩니다. 도구 행은 이름/상태/시간과 펼칠 수 있는
+인수·결과 JSON을, 라이프사이클 행은 종류 배지와 펼칠 수 있는 payload를 보여줍니다.
+헤더에는 필터식 검색(n/m 카운트), 두 개의 접기 스위치(도구 행은 기본 접힘),
+모두 펼치기/접기, 턴 필터, 새로고침이 있습니다. 도구 카드의 기록 버튼은 `ChatBox.vue`를
+통해 같은 단일 탭을 엽니다.
+
+순수 함수(`groupTurns`, `summarizeTurns`, `formatDuration`, `previewOf`,
+`eventMatches`)는 `client/app/composables/use-trajectory.ts`에 있고, bridge 호출은
+`bridge/session.ts`의 `fetchTrajectory`입니다.
+
+## 중단된 답변 이어가기
+
+턴이 답변 도중 끝나는 경우는 두 가지입니다. 사용자가 중지를 눌렀거나, 하트비트
+유휴 타임아웃이 발생한 경우입니다. 둘 다 이미 체크포인트에
+`[interrupted] {partial}` 마커를 쓰고 MesMemory에 `[interrupted:<reason>]`
+행을 남깁니다. 그 위에서 중단된 턴은 **이어갈 수 있는** 상태가 될 수 있습니다.
+
+취소 경로는 `StateKey.RESUMABLE_BREAKPOINT`(mem + DB 이중 기록, 재시작 후에도
+유지)에 마커 id, 부분 텍스트, 마커 id를 유도한 인간 메시지 수를 기록합니다.
+기록하는 경우는 **순수 텍스트** 중단뿐입니다. 마커가 이번에 새로 쓰였고,
+치유된 도구 호출이 없으며(공중에 뜬 도구 호출은 재실행/건너뛰기 판단이 필요),
+이어갈 내용(보이는 텍스트나 추론)이 있어야 합니다. `stopped`와 `done` 프레임
+모두 추가 필드 `resumable`을 싣습니다. `done`에도 싣는 이유는 하트비트
+타임아웃이 턴을 정상 종료로 끝내기 때문입니다.
+
+클라이언트의 "이어서 생성" 버튼은 `continue_generation`을 보냅니다. 서버는
+실시간 트랜스크립트로 브레이크포인트를 검증하고(마커가 여전히 마지막, 턴 수
+동일), 아니면 `stale`/`busy`로 거절합니다. 검증을 통과하면 브레이크포인트를
+**소비하고**(중단 한 번당 재개 한 번), 마커를 깨끗한 부분 텍스트로 다시 쓴 뒤
+기존 max_tokens 이어쓰기 경로를 재사용합니다. 모델은 미완성 답변과 이어쓰기
+프롬프트를 보고 마무리합니다. 이어쓰기는 새 턴이며, 프롬프트에는
+`provenance: continuation`이 붙어 메시지 영속화가 사용자 행으로 그리지
+않습니다. 새 턴(사용자 메시지, HITL 재개, 자동 턴)은 브레이크포인트를 지우고,
+이어쓰기 자체가 중단되면 새 브레이크포인트를 기록합니다.
+
+같은 턴 경계 메커니즘이 **보낸 사용자 메시지 편집**도 떠받칩니다. 편집한 턴과
+그 이후를 라이브 체크포인트에서 제거하고(`RemoveMessage` — 최신 체크포인트만
+남기 때문), MesMemory에서도 물리 삭제한 뒤, 편집한 텍스트를 원래 턴 번호를
+재사용하는 새 턴으로 다시 실행합니다. 클라이언트도 Dexie 캐시의 해당 행을
+지웁니다. 그렇지 않으면 다음 기록 병합에서 되살아납니다.
 
 ## 코드 맵
 

@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS todos (
     flow_id      TEXT    DEFAULT NULL,
     step_id      TEXT    DEFAULT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    todo_id      INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
 );
 ```
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `plan_ref` | 关联的计划文件路径 —— 会话作用域 `workspace/sessions/<session_id>/plans/*.md` |
 | `flow_id`  | 关联的 TaskFlow flow id（DAG 由 TaskFlow 持有）                    |
 | `step_id`  | 关联的 TaskFlow step id（如 `step-2`），用于回读 DAG 状态          |
+| `todo_id`  | 每会话稳定身份，显示为 `#N`；局部 patch/remove/reattach 用它定位。`position` 只负责显示顺序 |
 
 > **设计边界**：`todos.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_inspect(action="summary", flow_id)` 回读。
 
@@ -115,4 +117,13 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """读取关联到某个 TaskFlow flow 的 todo（把 DAG 状态映射回 UI）"""
+
+async def add_todo(session_id, todo, *, after_todo_id=None) -> dict | None:
+    """追加，或插到稳定 todo_id 锚点之后"""
+
+async def patch_todo_by_id(session_id, todo_id, **fields) -> dict | None:
+    """局部修改单行；flow_id/step_id/plan_ref 保持不变"""
+
+async def remove_todo_by_id(session_id, todo_id) -> dict | None:
+    """按稳定 id 删除单行"""
 ```

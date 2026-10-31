@@ -26,8 +26,8 @@ def _call_handler() -> dict:
 
 
 def test_valid_when_both_values_at_minimum(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
 
     result = _call_handler()
 
@@ -41,7 +41,7 @@ def test_valid_when_both_values_at_minimum(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_invalid_when_main_below_minimum(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "65536")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
 
     result = _call_handler()
 
@@ -50,7 +50,7 @@ def test_invalid_when_main_below_minimum(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_unset_auxiliary_reports_default_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
     monkeypatch.delenv("AUXILIARY_LLM_MAX_TOKEN", raising=False)
 
     result = _call_handler()
@@ -61,7 +61,7 @@ def test_unset_auxiliary_reports_default_and_invalid(monkeypatch: pytest.MonkeyP
 
 def test_unset_main_reports_null_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MAIN_LLM_MAX_TOKEN", raising=False)
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
 
     result = _call_handler()
 

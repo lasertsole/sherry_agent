@@ -39,6 +39,8 @@ terminal / python_repl 跑了一条命令
 
 **Finish 时重验。** `taskflow_flow(action="finish")` 的 Gate C 会先调用 `regression_gate.reverify_flow_evidence()`：把 flow 各 session 里每条 passed 命令去重后重跑一次（allowlist 可执行文件、不走 shell、受 `max_reverify_commands` 与单命令超时约束），工作目录是 flow 的项目根。通过时对曾被 stale/broken 的命令追加 `unmark`；失败时追加 `broken`。这是唯一能捕获跨文件 import 破坏的路径——即使没有任何 stale 行点名被改的源文件，它也会重跑 A 的测试命令。step 可以声明 `file_deps`；当其他 step 的写入命中其中之一时，`prioritized_sessions()` 会把该 step 的命令排到 `max_reverify_commands` 上限之前（`file_deps_mode="prioritize"`，默认）。可选的 `file_deps_mode="filter"` 只重放声明命中的 session——更便宜，但可能漏掉未声明 step 的破坏。
 
+**验证器白名单可配置。** 只有首进程是已识别测试/lint/构建/类型检查工具的命令才会被回放，而这个集合 = 代码默认值 + `sherry.jsonc` 的 `regression_gate_allowed_executables`（与 `yolo_deny_paths` 相同的 list-setting 模式：默认值归消费方所有，用户条目按调用合并，所以改完下一次回放即生效，无需重启）。使用 gradle / maven / dotnet / rspec / swift 的用户只需追加**可执行文件名**，不必改代码。shell 元字符拒绝、命令上限与单命令超时均不变，且只有这条回放门读该列表——子代理能**记录**哪些命令是另一个面。系统配置 → 应用配置面板通过 `GET|PUT /sherry-config/list/regression_gate_allowed_executables` 编辑它；该端点只接受已注册的 list key 并校验每个条目（小写、无 shell 元字符、有上限），内置默认值无法从这里删除。
+
 ---
 
 ## 存储
@@ -50,11 +52,11 @@ terminal / python_repl 跑了一条命令
 | 格式 | SQLite 表 `evidence_events`；WAL 模式 + `busy_timeout=5000` |
 | 范围 | 仓库级（所有会话共享） |
 | 可变性 | 行只 INSERT、不 UPDATE；保留期会删除旧行（age TTL / 每会话上限 / 全局上限） |
-| 会话隔离 | 在带索引的 `session_id` 上 `WHERE session_id = ?`；行携带 SESSION key（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`）——绝不是 plan / todo / flow id |
+| 会话隔离 | 在带索引的 `session_id` 上 `WHERE session_id = ?`；行携带 SESSION key（主会话 id，或子代理的 `agent:{agent}:subagent:{uuid}`） |
+| flow 盖章 | `evidence_events.flow_id`（由 `idx_evidence_flow` 索引）。TaskFlow step 子会话在 spawn 时盖章；finish 调用期间临时给 creator 盖章并在结束时恢复；stale/broken/unmark 行继承目标 session 的活跃 flow。`NULL` = 非 TaskFlow 范围 |
 | 文件编辑记忆 | 同库的 `verification_state(session_id, changed_paths_json, last_edit_at)`；每会话上限，随 session/孤儿清理删除 |
-| 多 key 读取 | `read_for_keys(keys)` 走一次带索引的 `IN` 查询，并保留每个 key 的插入顺序（陈旧性只在单个会话的行序列内推导） |
+| 多 key 读取 | `read_for_keys(keys)` 走一次带索引的 `IN` 查询，并保留每个 key 的插入顺序；`read_for_flow(flow_id)` 走 flow 索引读取一个 flow 的全部行（陈旧性仍只在单个会话的行序列内推导） |
 | 并发 | WAL 允许读写重叠；写入通过 `busy_timeout` 重试 |
-| 旧 JSONL | 首次打开时导入一次（按行哈希去重），随后重命名为 `.migrated` |
 | 文件不存在 | `read_all()` 返回 `[]`；目录在首次访问时创建 |
 
 数据库保持仓库级、不是会话级：它是跨会话共享的验证审计轨迹。
@@ -86,6 +88,7 @@ terminal / python_repl 跑了一条命令
 2. 从结果字符串解析 `exit_code`（正则匹配 "Exit code N" / 失败前缀）。
 3. `status` = exit_code 为 0 时 `"passed"`，否则 `"failed"`。
 4. 追加一行，含 `output_snippet`（前 500 字符）和 `sandboxed` 标志。
+5. 从 session 状态寄存器读取 `StateKey.FLOW_ID`，写入该行的 `flow_id`；主会话/非 TaskFlow 会话保持 `NULL`。
 
 **Fail-open：** 每个记录器吞掉自己的异常——账本写入永远不中断工具。
 
@@ -113,6 +116,7 @@ terminal / python_repl 跑了一条命令
   "sandboxed": true,
   "modified_files": ["src/alpha.py"],
   "session_id": "agent:main:session:abc-123",
+  "flow_id": "plan-4f7c2a91d0",
   "timestamp": "2026-10-15T08:30:00.123456+00:00"
 }
 ```
@@ -174,7 +178,7 @@ def derive_evidence_state(records, index):
 
 ## 证据摘要格式
 
-`collect_evidence_summary(session_key=None, flow_id=None)` 返回多行字符串（无 evidence 行时返回 `None`）：
+`collect_evidence_summary(session_key=None, flow_id=None)` 返回多行字符串（无 evidence 行时返回 `None`）。传 `flow_id` 时只读取该 flow 盖章的行；`taskflow_finish` 只传 `flow_id`。没有 flow 上下文的调用方仍可传会话 key 集合：
 
 ```
   [pass] test: `pytest tests/test_foo.py`
@@ -210,7 +214,7 @@ def derive_evidence_state(records, index):
 
 ### 层级 3：per-flow（taskflow_flow(action="finish") Gate C）
 
-TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它每个已派发步的 `child_session_key` 加上 flow 的 `creator_session_key` 的并集（行按会话键存放，而一个 flow 横跨多个会话；从未派发过步的 flow 没有任何键，因此没有证据，放行）：
+TaskFlow 关流为 DONE 前，Gate C 只按 `flow_id` 读取该 flow 的行。step 子会话在 spawn 时盖章，finish 调用期间给 creator 盖章（结束后恢复），stale / broken / unmark 事件按目标 session 的活跃 flow 自动盖章。这条路径没有会话 key 兜底；未盖章行不属于该 flow。没有盖章行的 flow 没有证据，放行：
 
 | 条件 | 结果 |
 |------|------|
@@ -229,3 +233,4 @@ TaskFlow 关流为 DONE 前，Gate C 检查该 flow 的**聚合**证据——它
 2. **不可变事件行 + 读取时推导。** 已记录的行从不 UPDATE。过期在读取时从行的顺序计算。保留期可能删除旧行（age/会话/全局上限），但从不改写历史；reader 始终从幸存的行序列计算新鲜度。
 3. **路径引用，不是内容。** 账本记录命令字符串和输出摘要（500 字符），不记录文件内容。它记录*验证了什么*和*是否通过*，不是*文件里有什么*。
 4. **自动记录始终开启，两个派生层可开关。** 每条匹配分类法的 terminal/python_repl 调用都写一行，每次文件编辑都标记写入方自己的 session，没有 on/off 开关。跨 session 广播（`EVIDENCE_CROSS_SESSION_STALENESS["enabled"]`）与 finish 时重验（`EVIDENCE_REGRESSION_GATE["enabled"]`）是受门控的层，默认都开启；关闭它们即恢复原行为，且不改变账本 schema。
+5. **只支持当前 schema。** `_SCHEMA` 一次创建完整表、索引和 `verification_state`；没有增量迁移、没有旧 JSONL 导入、没有 schema 版本表。旧数据库不会在原地收敛。

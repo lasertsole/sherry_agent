@@ -4,8 +4,10 @@ PyInstaller needs a script; the real program is the ordinary server entry
 (``python -m server``), so this runs exactly that module as ``__main__`` —
 one behavior, no second boot path to keep in sync.
 
-``SHERRY_HOME`` decides where the backend writes (set by the Tauri shell to the
-OS app-data directory); see ``config/path.py``.
+The Tauri shell passes ``--sherry-home <app-data-dir>`` (plus the bare
+``--sherry-desktop`` flag) on the command line; ``config/path.py`` scans
+``sys.argv`` for them (the environment variables remain a transitional
+fallback for older shells and manual runs).
 """
 
 from __future__ import annotations

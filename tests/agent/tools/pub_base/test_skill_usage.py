@@ -8,11 +8,9 @@ from agent.tools.pub_base.skill_usage import (
     get_record,
     _mutate,
     bump_use,
-    bump_view,
     bump_patch,
     mark_agent_created,
     set_state,
-    set_pinned,
     forget,
     archive_skill,
     restore_skill,
@@ -118,18 +116,6 @@ class TestBumpFunctions:
             assert saved_data["test_skill"]["use_count"] == 1
             assert saved_data["test_skill"]["last_used_at"] is not None
 
-    def test_bump_view(self):
-        data = {"test_skill": _empty_record()}
-        data["test_skill"]["created_by"] = "agent"
-        with (
-            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
-            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
-            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
-        ):
-            bump_view("test_skill")
-            saved_data = mock_save.call_args[0][0]
-            assert saved_data["test_skill"]["view_count"] == 1
-
     def test_bump_patch(self):
         data = {"test_skill": _empty_record()}
         data["test_skill"]["created_by"] = "agent"
@@ -199,20 +185,6 @@ class TestSetState:
             set_state("test_skill", STATE_ACTIVE)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["archived_at"] is None
-
-
-class TestSetPinned:
-    def test_pin(self):
-        data = {"test_skill": _empty_record()}
-        data["test_skill"]["created_by"] = "agent"
-        with (
-            patch("agent.tools.pub_base.skill_usage.is_agent_created", return_value=True),
-            patch("agent.tools.pub_base.skill_usage.load_usage", return_value=data),
-            patch("agent.tools.pub_base.skill_usage.save_usage") as mock_save,
-        ):
-            set_pinned("test_skill", True)
-            saved_data = mock_save.call_args[0][0]
-            assert saved_data["test_skill"]["pinned"] is True
 
 
 class TestArchiveDelegation:

@@ -1,17 +1,20 @@
 <template>
-  <!-- Terminal entry: how many runs/commands this session still owns. Clicking
-       opens the summary panel above the toolbar; picking an item asks the session
-       page to show where that work actually lives — a sub-agent opens its live
-       context view, a command scrolls the chat to its tool card (its terminal
-       output) — instead of opening a panel of its own. -->
+  <!-- Terminal entry: how many runs/commands this session still owns — live
+       sub-agents, foreground tool calls AND the commands the agent detached
+       (terminal(run_in_background=True)). Clicking opens the summary panel above
+       the toolbar, which is where a detached command is watched and stopped;
+       picking a row asks the session page to show where that work actually lives
+       — a sub-agent opens its live context view, a command scrolls the chat to
+       its tool card (its terminal output) — instead of opening a panel of its
+       own. -->
   <ToolbarPopover ref="popover">
-    <template #trigger="{ toggle }">
+    <template #trigger="{ toggle, open }">
       <button
         type="button"
         class="relative flex cursor-pointer items-center justify-center rounded-full p-1 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
         :title="tooltip"
         :aria-label="t('tasksButton.label')"
-        @click="togglePopover($event, toggle)">
+        @click="togglePopover($event, toggle, open)">
         <i class="terminal-icon text-sm text-gray-500 dark:text-gray-400"></i>
         <span
           v-if="activeCount"
@@ -81,6 +84,15 @@
           {{ t('tasksButton.none') }}
         </span>
       </section>
+      <!-- Background commands the agent detached (terminal(run_in_background=True)).
+           They outlive the turn that started them, so their stop control lives
+           here rather than in the chat. The section renders nothing when the
+           session never backgrounded a command. -->
+      <BackgroundCommandsSection
+        :tasks="backgroundTasks"
+        :killing="backgroundKilling"
+        :kill-refusal="backgroundKillRefusal"
+        :kill="backgroundKill" />
     </div>
   </ToolbarPopover>
 </template>
@@ -89,10 +101,40 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import ToolbarPopover from './ToolbarPopover.vue';
+import BackgroundCommandsSection from './BackgroundCommandsSection.vue';
+import type { BackgroundTaskItem, KillRefusal } from '~/composables/use-background-tasks';
 import { isActiveRun } from '~/utils/subagent';
 import { formatElapsed } from '~/common/utils';
 
-const props = defineProps<{ sessionId: string }>();
+const props = withDefaults(
+  defineProps<{
+    sessionId: string;
+    /** Settled snapshot of this session's detached commands (`useBackgroundTasks`). */
+    backgroundTasks?: BackgroundTaskItem[];
+    /** How many of them still run (the badge counts them too). */
+    backgroundRunning?: number;
+    /** Task ids whose kill was acknowledged but whose exit has not arrived. */
+    backgroundKilling?: Set<string>;
+    /** The refusal the backend sent for the last kill (shown on that row once). */
+    backgroundKillRefusal?: KillRefusal | null;
+    /**
+     * (Re)pull this session's detached commands — the page owns the snapshot
+     * fetch. Called every time the popover OPENS: a command that settled while
+     * it was closed must not read as running.
+     */
+    backgroundReload?: () => void;
+    /** Kill one detached command (the page owns the socket). */
+    backgroundKill?: (taskId: string) => void;
+  }>(),
+  {
+    backgroundTasks: () => [],
+    backgroundRunning: 0,
+    backgroundKilling: () => new Set<string>(),
+    backgroundKillRefusal: null,
+    backgroundReload: () => {},
+    backgroundKill: () => {}
+  }
+);
 
 const emit = defineEmits<{
   /**
@@ -113,7 +155,9 @@ const activeRuns = computed(() => (store.taskRuns ?? []).filter(isActiveRun));
 /** Tool calls executing right now (fed by the session page). */
 const commands = computed(() => commandsStore.commands);
 
-const activeCount = computed(() => activeRuns.value.length + commands.value.length);
+/** The badge counts every unit of work that still owns a slot: sub-agents,
+ *  foreground tool calls and detached background commands. */
+const activeCount = computed(() => activeRuns.value.length + commands.value.length + props.backgroundRunning);
 
 /** Ticking clock for the elapsed columns (only while something is active). */
 const now = ref(Date.now());
@@ -147,14 +191,20 @@ onBeforeUnmount(() => {
 const popover = ref<{ close: () => void }>();
 
 /**
- * Open the summary panel (and refresh the run list behind it).
+ * Open or close the summary panel. Opening refreshes what the rows claim: the
+ * sub-agent list, and the page's snapshot of detached background commands (a
+ * command may have settled while the panel was closed, and the exit frame is
+ * best-effort — the panel must not keep calling a finished command "running").
  * @param event Click event from the trigger.
  * @param toggle The popover's own toggle (bound through the trigger slot).
+ * @param isOpen Whether the panel is open BEFORE this click.
  */
-const togglePopover = (event: Event, toggle: () => void) => {
+const togglePopover = (event: Event, toggle: () => void, isOpen: boolean) => {
   void event;
-  if (props.sessionId) void loadTaskRuns(props.sessionId);
   toggle();
+  if (isOpen) return;
+  if (props.sessionId) void loadTaskRuns(props.sessionId);
+  props.backgroundReload();
 };
 
 /** One line per active run/command for the hover tooltip. */
@@ -162,7 +212,10 @@ const tooltip = computed(() => {
   const header = t('tasksButton.label');
   const lines = [
     ...activeRuns.value.map(run => `${runName(run)} · ${formatElapsed(run.execution?.started_at, now.value)}`),
-    ...commands.value.map(command => `${command.summary} · ${formatElapsed(command.startedAtMs, now.value)}`)
+    ...commands.value.map(command => `${command.summary} · ${formatElapsed(command.startedAtMs, now.value)}`),
+    ...props.backgroundTasks
+      .filter(task => task.status === 'running')
+      .map(task => `${task.command || task.taskId} · ${t('backgroundTasks.statusRunning')}`)
   ];
   return lines.length ? [header, ...lines].join('\n') : `${header} · ${t('tasksButton.idle')}`;
 });

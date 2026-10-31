@@ -11,6 +11,12 @@ export interface SessionRecord {
   /** Whether the user has renamed it via editing: after editing, the title no longer follows the
    *  last user message and is displayed in a highlight color */
   renamed?: boolean;
+  /** The session this one was branched from (a side chat or a turn fork). */
+  parentSessionId?: string;
+  /** The parent's display title at list time (falls back to its id in the tooltip). */
+  parentTitle?: string;
+  /** The parent turn a branch was forked at (absent for a quote side chat). */
+  forkTurnNum?: number;
 }
 
 /** Toolbar tool */
@@ -108,6 +114,12 @@ export interface MessageItem {
    * existing user-bubble rendering.
    */
   origin?: string;
+  /**
+   * Whether this AI row is the tail of an interrupted PURE-TEXT answer the
+   * backend can continue (`stopped`/`done` frame flag). In-memory only: a
+   * history reload re-derives it from the `[interrupted]` marker content.
+   */
+  resumable?: boolean;
   /**
    * Live model-retry progress for this AI turn (from the `model_retry` WS frame).
    * Never persisted: it decorates the in-memory streaming row, so a history reload

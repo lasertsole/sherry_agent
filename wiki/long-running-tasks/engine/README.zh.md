@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列来自增量 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`_SESSION_ID_COLUMN_DDL`，`store_sqlite.py:83-107`）。`session_id` 是隔离列（由 `idx_taskflow_session_status` 索引）：创建时写入，之后每次读取/变更都按它过滤（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`agent/tools/pub_base/sqlite_store.py:79-139`）。
+DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列位于当前 `_CREATE_TABLE_SQL` schema。`session_id` 是隔离列（由 `idx_taskflow_session_status` 索引）：创建时写入，之后每次读取/变更都按它过滤（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`agent/tools/pub_base/sqlite_store.py:79-139`）。
 
 ### 步骤状态机
 
@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-表结构现在有 `updated_at` REAL 列（增量迁移；每次 `update_flow` 与 `create_flow` 都会写入）。`_last_activity_ts()` 先读该时钟，缺失时回退到旧活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（两者都没有时为 `-`）。空注册表返回 `No task flows found`。
+表结构有 `updated_at` REAL 列（每次 `update_flow` 与 `create_flow` 都会写入）。`_last_activity_ts()` 先读该时钟，缺失时回退到旧活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（两者都没有时为 `-`）。空注册表返回 `No task flows found`。
 
 ### 三个会话所有的规划工具族
 

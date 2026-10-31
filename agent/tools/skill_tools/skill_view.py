@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from loguru import logger
 from typing import Any
-from config import SKILLS_DIR, is_allowed_skill_path, skills_loader_roots
+from config import SKILLS_DIR, is_allowed_skill_path
 from config.features import TOOLS_TIMEOUTS
 from pydantic import BaseModel, Field
 from typing import override
@@ -75,23 +75,6 @@ def _parse_tags(tags_value) -> list[str]:
     if tags_value.startswith("[") and tags_value.endswith("]"):
         tags_value = tags_value[1:-1]
     return [t.strip().strip("\"'") for t in tags_value.split(",") if t.strip()]
-
-
-def _get_category_from_path(skill_path) -> str | None:
-    """The skill's category directory, whichever tree it lives in.
-
-    A packaged build keeps builtin skills under SKILLS_DIR (the read-only code
-    tree) and learned/uploaded ones under USER_SKILLS_DIR (the app-data tree),
-    so both are tried.
-    """
-    for root in skills_loader_roots():
-        try:
-            rel_path = skill_path.relative_to(root)
-        except (ValueError, Exception):  # noqa: S110
-            continue
-        if len(rel_path.parts) >= 1:
-            return rel_path.parts[0]
-    return None
 
 
 def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "main") -> str:

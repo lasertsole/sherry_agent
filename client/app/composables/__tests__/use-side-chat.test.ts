@@ -51,6 +51,7 @@ beforeEach(() => {
   projectSession.createSideChat.mockResolvedValue({
     sessionId: 'child-1',
     parentSessionId: 'parent',
+    forkTurnNum: null,
     inherited: true
   });
   db.readCachedSessionPreset.mockResolvedValue({
@@ -75,7 +76,10 @@ describe('createSideChatSession', () => {
   it('copies the parent preset, character and agent config into the server-created child', async () => {
     const { sessionId, parentSessionId, inherited, meta } = await createSideChatSession('parent', '辅助会话');
 
-    expect(projectSession.createSideChat).toHaveBeenCalledWith('parent');
+    expect(projectSession.createSideChat).toHaveBeenCalledWith('parent', {
+      clientRequestId: expect.any(String),
+      forkTurnNum: undefined
+    });
     expect(sessionId).toBe('child-1');
     expect(parentSessionId).toBe('parent');
     expect(inherited).toBe(true);
@@ -92,7 +96,12 @@ describe('createSideChatSession', () => {
     expect(projectSession.setProjectDirectory).toHaveBeenCalledWith(sessionId, '/work/project');
     // The child is an ordinary list row: cache it and announce it immediately.
     expect(db.cacheSessionMeta).toHaveBeenCalledWith(meta);
-    expect(mitt.emit).toHaveBeenCalledWith('session:created', meta);
+    // The announced row carries the parent so the sidebar can show the branch
+    // mark immediately (a side chat has no fork turn: forkTurnNum is undefined).
+    expect(mitt.emit).toHaveBeenCalledWith(
+      'session:created',
+      expect.objectContaining({ ...meta, parentSessionId: 'parent', forkTurnNum: undefined })
+    );
   });
 
   it('still creates the session when the parent has no preset row', async () => {
@@ -137,5 +146,52 @@ describe('createSideChatSession', () => {
 
     expect(projectSession.deleteSideChat).not.toHaveBeenCalled();
     expect(db.clearCachedCharacter).toHaveBeenCalledWith('child-1');
+  });
+
+  it('reuses the idempotency key for immediate re-creations on the same parent', async () => {
+    // A lost response followed by a re-click must name the SAME child — the
+    // server answers the first fork instead of building a second complete one.
+    await createSideChatSession('parent-idem-a', '辅助会话');
+    await createSideChatSession('parent-idem-a', '辅助会话');
+
+    const calls = projectSession.createSideChat.mock.calls.filter(c => c[0] === 'parent-idem-a');
+    expect(calls).toHaveLength(2);
+    const firstKey = (calls[0][1] as { clientRequestId?: string }).clientRequestId;
+    expect(firstKey).toBeTruthy();
+    expect((calls[1][1] as { clientRequestId?: string }).clientRequestId).toBe(firstKey);
+
+    // A different parent in the same window is a different, deliberate fork.
+    await createSideChatSession('parent-idem-b', '辅助会话');
+    const other = projectSession.createSideChat.mock.calls.find(c => c[0] === 'parent-idem-b');
+    expect((other?.[1] as { clientRequestId?: string }).clientRequestId).not.toBe(firstKey);
+  });
+
+  it('a branch sends its fork turn and keys idempotency on (parent, turn)', async () => {
+    await createSideChatSession('parent-branch', '', 2);
+    await createSideChatSession('parent-branch', '', 2);
+    await createSideChatSession('parent-branch', '', 3);
+    await createSideChatSession('parent-branch', 'quote');
+
+    const calls = projectSession.createSideChat.mock.calls.filter(c => c[0] === 'parent-branch');
+    expect(calls.map(call => (call[1] as { forkTurnNum?: number }).forkTurnNum)).toEqual([2, 2, 3, undefined]);
+    const keys = calls.map(call => (call[1] as { clientRequestId?: string }).clientRequestId);
+    // Same (parent, turn) inside the reuse window names ONE child …
+    expect(keys[1]).toBe(keys[0]);
+    // … a different turn (and a quote side chat) is a different creation.
+    expect(keys[2]).not.toBe(keys[0]);
+    expect(keys[3]).not.toBe(keys[0]);
+  });
+
+  it('reports the fork turn the server stored', async () => {
+    projectSession.createSideChat.mockResolvedValue({
+      sessionId: 'child-2',
+      parentSessionId: 'parent',
+      forkTurnNum: 4,
+      inherited: true
+    });
+
+    const created = await createSideChatSession('parent', '', 4);
+
+    expect(created.forkTurnNum).toBe(4);
   });
 });

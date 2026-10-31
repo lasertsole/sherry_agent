@@ -209,9 +209,10 @@ class TestAppHome:
     interpreter's own environment.
     """
 
-    def _run(self, env_home: str | None, expression: str) -> str:
+    def _run(self, env_home: str | None, expression: str, *cli_args: str) -> str:
         env = dict(os.environ)
         env.pop("SHERRY_HOME", None)
+        env.pop("SHERRY_DESKTOP", None)
         # Hermetic: the pytest process itself has hydrated the model / network
         # keys from the repo's real .models / .network. An inherited value would
         # outrank the file in the child (explicit process variables win), so drop
@@ -223,8 +224,10 @@ class TestAppHome:
             env.pop(key, None)
         if env_home is not None:
             env["SHERRY_HOME"] = env_home
+        # Trailing CLI args land in the child's sys.argv (after "-c"): the
+        # --sherry-home / --sherry-desktop flags the packaged shell passes.
         out = subprocess.run(
-            [sys.executable, "-c", expression],
+            [sys.executable, "-c", expression, *cli_args],
             cwd=ROOT,
             env=env,
             capture_output=True,
@@ -319,3 +322,101 @@ class TestAppHome:
             "print(USER_SKILLS_DIR in skills_loader_roots())",
         )
         assert out.splitlines() == ["2", "True", "True"]
+
+    # ── the CLI flags (the packaged shell's interface; the env vars stay as
+    #    the transitional fallback) ─────────────────────────────────────────
+
+    def test_the_cli_home_flag_moves_the_writable_tree(self, tmp_path):
+        home = tmp_path / "cli-home"
+        out = self._run(
+            None,
+            "from config.path import APP_HOME; print(APP_HOME)",
+            "--sherry-home",
+            str(home),
+        )
+        assert out == str(home)
+
+    def test_the_equals_form_of_the_home_flag_is_accepted(self, tmp_path):
+        home = tmp_path / "eq-home"
+        out = self._run(
+            None,
+            "from config.path import APP_HOME; print(APP_HOME)",
+            f"--sherry-home={home}",
+        )
+        assert out == str(home)
+
+    def test_the_cli_home_flag_outranks_the_env_fallback(self, tmp_path):
+        env_home = tmp_path / "env-home"
+        cli_home = tmp_path / "cli-home"
+        out = self._run(
+            str(env_home),
+            "from config.path import APP_HOME; print(APP_HOME)",
+            "--sherry-home",
+            str(cli_home),
+        )
+        assert out == str(cli_home), "the flag is the packaged interface; the env is legacy"
+
+    def test_the_env_home_fallback_still_works(self, tmp_path):
+        home = tmp_path / "env-home"
+        out = self._run(None, "from config.path import APP_HOME; print(APP_HOME)")
+        assert out != str(home)
+        out = self._run(str(home), "from config.path import APP_HOME; print(APP_HOME)")
+        assert out == str(home)
+
+    def test_the_desktop_home_seeds_the_mcp_folder(self, tmp_path):
+        home = tmp_path / "home"
+        self._run(
+            str(home),
+            "from config.path import MCP_SERVERS_DIR; "
+            "print(MCP_SERVERS_DIR.is_dir()); "
+            "print((MCP_SERVERS_DIR / 'README.md').is_file())",
+        )
+        # The seeding ran in the SUBPROCESS (import time); assert on disk here.
+        assert (home / "mcp_servers").is_dir()
+        assert (home / "mcp_servers" / "README.md").is_file()
+
+    def test_the_checkout_does_not_gain_an_mcp_folder(self):
+        # APP_HOME == ROOT_DIR: importing config must not drop an untracked
+        # directory into the repository.
+        out = self._run(
+            None,
+            "from config.path import APP_HOME, ROOT_DIR, MCP_SERVERS_DIR; "
+            "print(APP_HOME == ROOT_DIR); print(MCP_SERVERS_DIR.is_dir())",
+        )
+        assert out.splitlines() == ["True", "False"]
+
+    def test_the_desktop_flag_reads_the_bare_cli_flag(self):
+        out = self._run(
+            None,
+            "from config.path import SHERRY_DESKTOP; print(SHERRY_DESKTOP)",
+            "--sherry-desktop",
+        )
+        assert out == "True"
+
+    def test_the_desktop_env_fallback_still_works(self):
+        out = self._run(None, "from config.path import SHERRY_DESKTOP; print(SHERRY_DESKTOP)")
+        assert out == "False"
+        env = dict(os.environ)
+        env["SHERRY_DESKTOP"] = "1"
+        import subprocess
+        import sys as _sys
+
+        from config.models_settings import MODEL_SETTING_KEYS
+        from config.network_settings import NETWORK_SETTING_KEYS
+
+        for key in (*MODEL_SETTING_KEYS, *NETWORK_SETTING_KEYS):
+            env.pop(key, None)
+        out = subprocess.run(
+            [
+                _sys.executable,
+                "-c",
+                "from config.path import SHERRY_DESKTOP; print(SHERRY_DESKTOP)",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=True,
+        ).stdout.strip()
+        assert out == "True"

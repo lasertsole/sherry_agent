@@ -87,7 +87,7 @@ describe('ProgressFloat', () => {
 
   it('stays on screen with no plan work, and the panel says there is none', async () => {
     // The float used to disappear when neither half had data; the user asked for
-    // it to be permanent (始终显示，哪怕没执行任务). It must never leave the screen.
+    // it to be permanent (始终显示，哪怕没执行任务 — "always show, even with no task running"). It must never leave the screen.
     const wrapper = await mountFloat();
 
     expect(wrapper.find('[data-test="progress-float"]').exists()).toBe(true);
@@ -182,7 +182,7 @@ describe('ProgressFloat', () => {
   it('shows a flow-linked todo once — inside its flow, never as a second row', async () => {
     // The agent may mirror a TaskFlow step into the checklist (`flow_id` +
     // `step_id`). Both halves are the same plan item, so the box must not list
-    // it twice ("任务计划 和 计划清单不是一个东西吗").
+    // it twice ("任务计划 和 计划清单不是一个东西吗" — "aren't the task plan and the checklist the same thing?").
     const wrapper = await mountFloat();
     handlers().taskflow!(taskflowFrame([makeFlow()]));
     handlers().todo!({
@@ -213,7 +213,7 @@ describe('ProgressFloat', () => {
   it('gives a COMPLETED checklist row the same green tick as a done step', async () => {
     // The two halves speak different vocabularies (todos: completed; steps:
     // done). Mapping only one of them silently degraded every finished
-    // checklist row to a grey circle — "已完成的，前面没有绿色的打勾".
+    // checklist row to a grey circle — "已完成的，前面没有绿色的打勾" ("finished ones get no green check in front").
     const wrapper = await mountFloat();
     handlers().todo!({
       event: 'todo_updated',

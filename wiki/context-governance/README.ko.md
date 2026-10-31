@@ -145,6 +145,22 @@ FACTS.md는 전역이므로 디렉터리 전환이 메모리용 캐시 프롬프
 
 todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(`TodoContinuationEnforcer`에서 개명; 감독하는 "플랜" = todos + TaskFlow flows)는 `todowrite`를 호출하지 않은 턴 수를 세고, `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 넛지를 덧붙입니다 — 스냅샷 기반 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다).
 
+## 🧩 Provider 프롬프트 캐시 (Anthropic)
+
+sherry가 지원하는 provider 중 Anthropic만 프롬프트 캐시가 **명시적**입니다——요청에 `cache_control`을 쓰지 않으면 아무것도 캐시되지 않습니다. 위의 아키텍처(동결 시스템 프롬프트, 세션 내 안정적인 도구 면, 라이브 상태를 리마인더 층으로 내리는 설계)는 자동 캐시 provider를 전제로 만들어져 Anthropic에서는 이득이 0이었습니다. `models/LLMs/anthropic_cache.py`가 그 구멍을 메웁니다: provider가 `anthropic`일 때만 장착되는 `BaseChatModel` 래퍼(메인 클라이언트, 보조 클라이언트, `TASKFLOW_LLM` / `COMPRESSION_LLM` 두 패밀리)가 요청마다 최대 3개의 브레이크포인트를 붙입니다.
+
+| 브레이크포인트 | 붙는 위치 | 안정적인 이유 |
+|---|---|---|
+| BP1 | `SystemMessage`의 마지막 text 블록 | 세션 내 동결. Anthropic의 접두사 순서는 tools → system → messages이므로 이 하나로 도구 목록까지 캐시됩니다 |
+| BP2 | 마지막 tool 정의 | 세션 내 안정적인 도구 면(thinking 전환이나 agent-config 변경으로 시스템 프롬프트가 바뀌고 도구는 그대로일 때 실제로 이득) |
+| BP3 | 꼬리에서 거슬러 올라가 처음 만나는 실제 이력 메시지(AI 또는 tool) | 리마인더 블록과 새 사용자 입력보다 **앞**에 있어, 매 턴 바뀌는 리마인더가 무효화하지 않습니다 |
+
+**기존 무효화 지점은 그대로 옳습니다.** thinking 전환은 메모리 스냅샷을 다시 읽고 `SYSTEM_PROMPT`를 지우므로 BP1이 miss——바이트가 바뀌었으니 맞는 동작입니다. agent-config 변경은 BP1과 BP2를 함께 무효화합니다. 압축은 프롬프트와 메시지 목록을 다시 쓰므로 BP1·BP3가 함께 miss합니다. BP3는 지난 턴의 확정된 꼬리에 앵커하므로 리마인더 변화로는 깨지지 않습니다.
+
+**비용.** `MODEL_PRICING_TABLE` 항목은 `cache_read`(캐시 접두사 읽기)와 `cache_write`(캐시 쓰기) 두 단가를 선택적으로 가질 수 있습니다. `TokenBudget`은 한 응답의 `input_token_details`를 미캐시 / 캐시 읽기 / 캐시 쓰기로 나눠 각자의 단가로 계산합니다. 두 필드를 생략하면 캐시 토큰은 일반 input 단가——즉 기존 추정치이며, 없는 할인을 만들어내지 않습니다. OpenAI 형식 usage의 `input_tokens`는 캐시분을 **포함**하므로 미들웨어가 먼저 빼고 미캐시 단가를 적용합니다. Anthropic의 `input_tokens`는 포함하지 않습니다.
+
+**실패와 범위.** 주입 예외, 도구 변환 실패, `SHERRY_ANTHROPIC_CACHE=0`은 모두 그대로 통과하며 호출자의 메시지와 도구 목록은 절대 변경되지 않습니다(요청은 복사본으로 구성). 범위는 네이티브 `anthropic` 통합뿐입니다. Bedrock의 Claude는 `langchain-aws`(캐시 API가 다름)를 거치고, OpenRouter 경유 Claude는 OpenAI 형식 클라이언트가 마커를 버리므로 둘 다 보장하지 않습니다.
+
 ## 🧹 checkpoint 보존과 고아 세션 정리
 
 메인과 서브에이전트는 `src/checkpoints/sqlite.db`를 공유합니다. 메인 턴이 끝나면 `on_turn_finished`가 해당 세션의 thread를 최신 최상위 checkpoint와 그 writes(`aget_state`가 읽는 행)만 남깁니다. child의 `_release_child_resources`도 자기 thread에 같은 처리를 합니다. `tools:*` / `model:*` 행은 삭제되며, 최상위 행이 없으면 최신 행을 fallback으로 남깁니다. HITL pending 세션은 중단된 그래프를 턴 종료로 보지 않으므로 건너뜁니다. 메인 세션 삭제는 모든 하위 run을 억제·kill한 뒤 각 하위의 registry 행, checkpoint thread, 세션 디렉터리, 계획 데이터, 첨부를 삭제합니다. 부팅 시 `init_registry()` 후 한 번의 sweep이 루트 메인 세션이나 부모 run이 사라진 모든 run 하위 트리를 삭제합니다. 모든 cleanup 경로는 페일오픈이며 멱등입니다.

@@ -1,0 +1,25 @@
+# Characters used ONLY in Simplified Chinese.
+#
+# Shared by two gates so they cannot drift apart:
+#   * scripts/check_doc_language.py — the ja/ko pages of README and wiki must not
+#     carry Simplified Chinese text (the English pages ban CJK ideographs outright);
+#   * client/app/composables/__tests__/locales.test.ts and i18nBlocks.test.ts —
+#     a ja/ko locale value must not carry Simplified Chinese (an en value may not
+#     carry CJK at all).
+#
+# Curated, not exhaustive: every character here is a Simplified-only form that
+# does NOT occur in Japanese shinjitai (e.g. 时 vs 時, 图 vs 図, 问 vs 問) and is
+# not used in Korean prose, so a hit is a real mixed-language leak. Characters
+# whose simplified form coincides with a common Japanese word are deliberately
+# ABSENT: 后 (皇后), 万 (万歳), 号 (番号), 体 (体), 国 (国), 数 (数), 条 (条),
+# 断 (断), 制 (制), 写 (写), 些 (些細); and so are the simplified forms JAPANESE
+# USES TOO — 装 (実装 / 武装 / 偽装), 没 (没入 / 沈没), 据 (据える) — a live run
+# caught them as false positives. A label built only from shared characters
+# (模型配置, 分叉) is therefore not detectable — this gate targets mixed prose,
+# not every possible label.
+这 们 为 说 时 发 该 并 从 经 过 问 题 应 单 门 开 关 无 图 视 频 记 忆 复
+删 联 构 议 论 证 试 验 检 页 项 样 义 还 张 见 观 规 则 计 认 识 击 个 么 让
+请 你 哪 电 话 读 类 种 场 报 错 误 败 选 择 输 账 码 词 标 签 档 库 网 线
+连 层 显 隐 编 辑 备 录 暂 历 归 缓 预 设 简 转 换 贴 键 盘 闭 启 书 邮 对
+运 动 远 进 边 传 统 现 实 际 变 权 谢 级 给 终 风 飞 长 马 鸟 鱼 龙 东 乐 车
+买 卖 贝 头 页 请 谢

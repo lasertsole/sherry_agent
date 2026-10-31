@@ -38,6 +38,15 @@ class EvidenceRegressionGateConfig(TypedDict):
     # "prioritize": replay affected commands first, then the rest.
     # "filter": replay ONLY commands whose step declared a touched file_deps.
     file_deps_mode: str
+    #: MERGE-TIME targeted replay (off by default): when an isolated merge
+    #: changes a symbol that other files still import, replay the parent
+    #: session's passed commands covering those importer files right away,
+    #: instead of waiting for the flow's finish gate. Same safety shape as the
+    #: finish pass (whitelist, no shell, one-shot, capped); the replay only
+    #: consumes ledger rows and appends events, so it can never re-trigger
+    #: itself or a merge.
+    merge_reverify_enabled: bool
+    merge_reverify_max_commands: int
 
 
 EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
@@ -48,4 +57,8 @@ EVIDENCE_REGRESSION_GATE: EvidenceRegressionGateConfig = {
     "max_output_chars": 500,
     # Declarations reorder the batch; "filter" is the opt-in low-cost mode.
     "file_deps_mode": "prioritize",
+    # Merge-time replay is opt-in: it runs a subprocess during an announce, so
+    # an operator turns it on after watching the finish pass behave.
+    "merge_reverify_enabled": False,
+    "merge_reverify_max_commands": 5,
 }

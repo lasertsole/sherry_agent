@@ -15,11 +15,14 @@ Pipeline overview:
 
 import os
 import re
+import time
 import uuid
 import asyncio
 from pathlib import Path
 from loguru import logger
 from typing import Any, Literal
+
+from config.features import LANE_SYSTEM
 from ..config import get_config
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
@@ -43,6 +46,11 @@ from .plan import (
     resolve_model_and_thinking_plan,
     resolve_role_model_profile,
     resolve_run_timeout_seconds,
+)
+from ..output_caps import (
+    resolve_child_max_output_tokens,
+    resolve_profile_max_output_tokens,
+    resolve_subagent_output_caps,
 )
 from .task_name import normalize_subagent_task_name
 from .system_prompt import build_subagent_system_prompt
@@ -162,18 +170,21 @@ def _check_role_containment(
     requester_session_key: str,
     child_functional_role: FunctionalRole,
 ) -> str | None:
-    """Reject cross-role spawning from a specialized parent.
+    """Reject escalation-capable spawning from a specialized parent.
 
     MAIN (no run record) and general (``tools: inherit`` = every tool) impose no
     restriction: every specialized role's whitelist is a subset of theirs, so no
-    escalation is possible. A specialized parent (researcher / executor /
-    reviewer / librarian) may only spawn children of the SAME functional role —
-    same role = same whitelist = the child can do exactly what the parent can.
-    Without this, a read-only researcher could hire a write-capable executor.
+    escalation is possible. A specialized parent may spawn its OWN role plus any
+    roles listed in ``SPAWN_ALLOWED_CHILD_ROLES`` — an executor may therefore
+    spawn read-only researcher / librarian children to research before it
+    writes. The map only ever permits READ-ONLY extras, so no write-capable
+    escalation path opens, and a role ABSENT from the map keeps the legacy
+    same-role-only rule (a read-only researcher still cannot hire an executor).
 
     Returns the refusal text, or ``None`` when the spawn is allowed.
     """
     from ..registry import get_run_by_child_session_key
+    from ..types.functional_role import SPAWN_ALLOWED_CHILD_ROLES
 
     parent_run = get_run_by_child_session_key(requester_session_key)
     if parent_run is None:
@@ -181,12 +192,14 @@ def _check_role_containment(
     parent_role = getattr(parent_run, "functional_role", FunctionalRole.GENERAL)
     if parent_role == FunctionalRole.GENERAL:
         return None  # inherit mode: every specialized whitelist is a subset
-    if child_functional_role == parent_role:
+    allowed = SPAWN_ALLOWED_CHILD_ROLES.get(parent_role, frozenset({parent_role}))
+    if child_functional_role in allowed:
         return None
+    allowed_names = " / ".join(role.value for role in sorted(allowed, key=str))
     return (
         f"Capability containment: a {parent_role} subagent can only spawn "
-        f"{parent_role} children (requested {child_functional_role}). "
-        f'Pass functional_role="{parent_role}" for a same-role child; use a general '
+        f"these roles: {allowed_names} (requested {child_functional_role}). "
+        'Pass functional_role="<one of the allowed roles>"; use a general '
         "subagent or the main agent to spawn a different role."
     )
 
@@ -527,6 +540,8 @@ async def spawn_subagent_direct(
     functional_role_hint: str | None = None,
     extra_tools: list[str] | None = None,
     isolation: bool = False,
+    flow_id: str | None = None,
+    step_id: str | None = None,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
@@ -561,6 +576,9 @@ async def spawn_subagent_direct(
         isolation: Run the child in a private COPY of the project directory and
             merge its file changes back on completion (``isolation/``). Requires
             a project directory to copy.
+        flow_id: TaskFlow flow this child is executing. Stamped on the child
+            session's state so its verification evidence carries the flow id.
+        step_id: The TaskFlow step inside ``flow_id`` (optional, for diagnostics).
 
     Returns:
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
@@ -636,8 +654,10 @@ async def spawn_subagent_direct(
         load_role_definition(functional_role) if functional_role != FunctionalRole.GENERAL else None
     )
 
-    # --- Phase 4.6: capability containment (same-role derivation) ---
-    # Specialized role → same-role children only (see _check_role_containment).
+    # --- Phase 4.6: capability containment (role allow-list) ---
+    # Specialized role → the roles its allow-list permits (its own role; an
+    # executor also the read-only researcher / librarian). See
+    # _check_role_containment and SPAWN_ALLOWED_CHILD_ROLES.
     # Refused here, before the model plan and the attachment materialization, and
     # the isolated workspace a refusal may have cut is discarded like any other.
     containment_error = _check_role_containment(requester_session_key, functional_role)
@@ -668,7 +688,7 @@ async def spawn_subagent_direct(
     resolved_model_tier = model_plan.model_tier
     thinking_resolved = model_plan.thinking_override
 
-    # The requester session may pin a MODEL per functional role (预设-子代理模型):
+    # The requester session may pin a MODEL per functional role (preset subagent models):
     # a profile descriptor that outranks the role's model_tier. None = tier.
     role_model_profile = resolve_role_model_profile(requester_session_key, functional_role)
 
@@ -705,6 +725,13 @@ async def spawn_subagent_direct(
         cleanup=cleanup,
         agent_id=agent_id,
         thinking=thinking_resolved or thinking,
+        max_output_tokens=resolve_child_max_output_tokens(
+            model_profile=role_model_profile,
+            model_override=model,
+            functional_role=functional_role,
+            model_tier=resolved_model_tier,
+            role=role,
+        ),
         depth=child_depth,
         label=label,
         functional_role=functional_role,
@@ -720,6 +747,28 @@ async def spawn_subagent_direct(
         spawned_cwd=cwd,
         expects_completion_message=expects_completion_message,
         wake_on_descendant_settle=True,  # auto-resume parent when child tree settles
+    )
+
+    # TaskFlow context is a read-only marker for this child: the evidence
+    # recorder reads it when a terminal/python_repl verification runs, so a
+    # flow's finish gate can query by flow_id instead of first reconstructing
+    # the session set from its steps. Set AFTER registration (a refused spawn
+    # leaves no run and must not leave a stale marker).
+    _stamp_taskflow_context(child_session_key, flow_id, step_id)
+
+    caps = resolve_subagent_output_caps(run.max_output_tokens)
+    logger.info(
+        "Subagent run {}: functional_role={} max_output_tokens={} "
+        "result_caps(stored={}B delivery={}c summary={}c judge={}c transcript={}/{}t)",
+        run.run_id,
+        functional_role,
+        run.max_output_tokens,
+        caps.stored_bytes,
+        caps.delivery_chars,
+        caps.summary_chars,
+        caps.judge_chars,
+        caps.transcript_tokens,
+        caps.per_message_tokens,
     )
 
     # Track the expected terminal generation so orphan detection can notice if the run stalls
@@ -828,6 +877,109 @@ async def spawn_subagent_direct(
     )
 
 
+#: Runs already notified about a deferred dispatch. Module-level on purpose: the
+#: registry record has no generic metadata slot, and the throttle only has to
+#: survive this process. Cleaned when the run leaves the lane wrapper.
+_load_warned_runs: set[str] = set()
+
+
+def _is_run_killed(run: SubagentRunRecord) -> bool:
+    """Whether a deferred dispatch should stop waiting.
+
+    A PENDING run that is killed does NOT become TERMINAL (the kill path only
+    records ``kill_reconciliation``), so checking the status alone would keep
+    waiting for a run nobody will ever execute.
+    """
+    return run.execution.status == ExecutionStatus.TERMINAL or run.kill_reconciliation is not None
+
+
+def _fail_run_load_timeout(run: SubagentRunRecord, gate: Any) -> None:
+    """Terminalize a dispatch the load gate never let through.
+
+    MUST terminalize, not merely return: an abandoned PENDING run is an orphan,
+    and the sweeper's orphan recovery would re-dispatch it → another deferral →
+    a loop. ``ended_reason`` comes from the outcome status (``timeout``), and the
+    load-specific detail rides the outcome's error text.
+    """
+    from ..registry.run_manager import complete_run
+
+    complete_run(
+        run.run_id,
+        RunOutcome(
+            status=RunOutcomeStatus.TIMEOUT,
+            error=(
+                f"load_timeout: host load stayed above the gate for more than "
+                f"{LANE_SYSTEM['load_gate_max_defer_s']:.0f}s "
+                f"(cpu {gate.cpu:.0f}%, ram {gate.ram:.0f}%)"
+            ),
+        ),
+    )
+    logger.warning(
+        "subagent run {} terminalized: deferred by the load gate past the budget", run.run_id
+    )
+
+
+async def _notify_load_warning(run: SubagentRunRecord, gate: Any) -> None:
+    """Push the ``load_warning`` frame for this run ONCE (best effort)."""
+    if run.run_id in _load_warned_runs:
+        return
+    _load_warned_runs.add(run.run_id)
+    try:
+        from runtime.session.ws_push import broadcast_to_session
+
+        frame = {
+            "event": "load_warning",
+            "session_id": run.requester_session_key,
+            "content": {
+                "cpu": round(gate.cpu, 1),
+                "ram": round(gate.ram, 1),
+                "run_id": run.run_id,
+            },
+        }
+        await broadcast_to_session(run.requester_session_key, frame)
+    except Exception as e:  # noqa: BLE001 — a notice must never block the wait
+        logger.warning("Failed to push load_warning for run {}: {}", run.run_id, e)
+
+
+async def _wait_for_load_gate(run: SubagentRunRecord) -> bool:
+    """Wait out a stop verdict BEFORE taking a lane slot. False = give up.
+
+    Placed in front of ``lane_slot`` on purpose: a deferred dispatch must not
+    consume a slot it will not use. The wait reads the process-wide snapshot
+    (no per-run sampling), backs off ``load_gate_retry_s`` at a time, and gives
+    up either when the run is killed or when the deferral budget is spent (the
+    run is then terminalized — see :func:`_fail_run_load_timeout`).
+    """
+    if not LANE_SYSTEM["load_gate_enabled"]:
+        return True  # shipped-off: byte-for-byte the old behavior, no sampling
+
+    from agent.tools.pub_base.load_gate import get_load_gate
+
+    defer_started = time.monotonic()
+    while True:
+        gate = await get_load_gate()
+        if not gate.stop:
+            return True
+        elapsed = time.monotonic() - defer_started
+        budget = float(LANE_SYSTEM["load_gate_max_defer_s"])
+        if elapsed >= budget:
+            _fail_run_load_timeout(run, gate)
+            return False
+        logger.info(
+            "subagent run {} deferred by the load gate (cpu={:.0f}% ram={:.0f}%)",
+            run.run_id,
+            gate.cpu,
+            gate.ram,
+        )
+        await _notify_load_warning(run, gate)
+        # Never sleep past the budget: a short max_defer must be observed on time.
+        await asyncio.sleep(min(float(LANE_SYSTEM["load_gate_retry_s"]), budget - elapsed))
+        current = get_run(run.run_id)
+        if current is None or _is_run_killed(current):
+            logger.info("subagent run {} killed while deferred by the load gate", run.run_id)
+            return False
+
+
 async def _execute_subagent_with_lane(
     run: SubagentRunRecord,
     system_prompt: str,
@@ -851,6 +1003,9 @@ async def _execute_subagent_with_lane(
     from runtime.lane import LaneType, lane_slot
 
     try:
+        # The environment gate runs FIRST: a deferred dispatch holds no slot.
+        if not await _wait_for_load_gate(run):
+            return
         logger.debug("subagent run {} waiting for a SUBAGENT lane slot", run.run_id)
         async with lane_slot(LaneType.SUBAGENT):
             current = get_run(run.run_id)
@@ -882,6 +1037,7 @@ async def _execute_subagent_with_lane(
     finally:
         # Early return / cancellation paths never reach _execute_subagent's own
         # cleanup, so the task reference is released here exactly once.
+        _load_warned_runs.discard(run.run_id)
         from ..registry import remove_task
 
         remove_task(run.run_id)
@@ -902,6 +1058,19 @@ def _effective_child_deny(run: SubagentRunRecord) -> list[str]:
             if scope not in run.scopes and tool_name not in effective_deny:
                 effective_deny.append(tool_name)
     return effective_deny
+
+
+def _stamp_taskflow_context(
+    child_session_key: str, flow_id: str | None, step_id: str | None
+) -> None:
+    """Stamp a TaskFlow step child with the flow/step it is executing."""
+    if not flow_id:
+        return
+    from runtime import StateKey, state_register_mem
+
+    state_register_mem.set_state(child_session_key, StateKey.FLOW_ID, flow_id)
+    if step_id:
+        state_register_mem.set_state(child_session_key, StateKey.STEP_ID, step_id)
 
 
 def _bind_child_run_context(run: SubagentRunRecord) -> dict:
@@ -981,6 +1150,7 @@ async def _run_goal_loop(
             task_text=user_message,
             last_response=result_text or "",
             evidence_summary=evidence_summary,
+            max_chars=resolve_subagent_output_caps(run.max_output_tokens).judge_chars,
         )
         if judge_result.verdict == CompletionVerdict.DONE:
             return result_text, None
@@ -1016,6 +1186,52 @@ def _first_turn_self_evident(result_text: str | None, evidence_summary: str | No
         and "[stale]" not in evidence_summary
         and "[broken]" not in evidence_summary
     )
+
+
+def release_child_session_state(run: SubagentRunRecord) -> None:
+    """Drop the per-session state a child agent leaves in the mem register.
+
+    Split out of :func:`_release_child_resources` because a run that is killed
+    while INTERRUPTED (paused on HITL, possibly restored from disk after a
+    restart) has no live child agent to release — but its OutputRepetitionGuard
+    keys are still in the child's bucket and would leak once per run.
+    """
+    try:
+        from agent.middlewares.output_repetition_guard.repetition_state import (
+            SESSION_STATE_KEYS,
+        )
+        from runtime import state_register_mem
+
+        for _key in SESSION_STATE_KEYS:
+            state_register_mem.delete_state(run.child_session_key, _key)
+    except Exception:
+        logger.exception(
+            "Failed to release OutputRepetitionGuard state for session {}",
+            run.child_session_key,
+        )
+
+
+class _RunWallClock:
+    """One wall-clock budget shared by every turn a run makes.
+
+    ``run_timeout_seconds`` bounds the RUN, not each model call: the goal loop
+    may make ``goal_max_turns`` calls, and a per-call ``wait_for(timeout)``
+    multiplied the advertised bound by the turn budget. ``remaining()`` returns
+    the seconds left for the next call (``None`` when the budget is disabled by
+    ``timeout_seconds <= 0``) and raises ``TimeoutError`` once it is spent, so
+    the caller's normal timeout path finalizes the run as TIMEOUT.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        self.deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
+
+    def remaining(self) -> float | None:
+        if self.deadline is None:
+            return None
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        return remaining
 
 
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
@@ -1057,19 +1273,7 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
     # middlewares' top-level state (heartbeat_killed, summarization, tool
     # guardrails, iteration budget, ...). We delete exactly the 6 keys this
     # middleware owns, scoped to the child's own bucket via ``delete_state``.
-    try:
-        from agent.middlewares.output_repetition_guard.repetition_state import (
-            SESSION_STATE_KEYS,
-        )
-        from runtime import state_register_mem
-
-        for _key in SESSION_STATE_KEYS:
-            state_register_mem.delete_state(run.child_session_key, _key)
-    except Exception:
-        logger.exception(
-            "Failed to release OutputRepetitionGuard state for session {}",
-            run.child_session_key,
-        )
+    release_child_session_state(run)
 
     from ..registry import remove_task
 
@@ -1240,14 +1444,22 @@ async def _execute_subagent_scoped(
         # ``_invoke`` is reused by goal-loop continuation turns: the same config
         # keeps the same checkpoint thread, so a continuation extends the SAME
         # child conversation instead of starting a fresh one.
+        #
+        # The budget is ONE deadline for the whole run, not one per turn: the
+        # goal loop can spend up to ``goal_max_turns`` calls, and a per-turn
+        # ``wait_for(timeout_seconds)`` let five turns run five times the
+        # advertised ``run_timeout_seconds``.
+        budget = _RunWallClock(timeout_seconds)
+
         async def _invoke(msgs: list) -> dict:
             payload = {"session_id": run.child_session_key, "messages": msgs}
-            if timeout_seconds > 0:
-                return await asyncio.wait_for(
-                    child_agent.ainvoke(input=payload, config=agent_config),
-                    timeout=timeout_seconds,
-                )
-            return await child_agent.ainvoke(input=payload, config=agent_config)
+            remaining = budget.remaining()
+            if remaining is None:
+                return await child_agent.ainvoke(input=payload, config=agent_config)
+            return await asyncio.wait_for(
+                child_agent.ainvoke(input=payload, config=agent_config),
+                timeout=remaining,
+            )
 
         agent_result = await _invoke(messages)
 
@@ -1323,12 +1535,15 @@ def _build_child_middlewares(
     *,
     auxiliary_llm: Any,
     main_llm_context_window: int,
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
 ) -> list[Any]:
     """Assemble the child-agent middleware pipeline.
 
     ORDER IS A CONTRACT (the subagent side of the middleware-order tests).
     Extracted from :func:`_build_child_agent` so the scaffolding validation and
     its drift-guard test can inspect the exact list handed to ``create_agent``.
+    The executor is the write-capable worker and gets the larger iteration
+    budget; every other role keeps the standard worker budget.
     """
     from agent.middlewares import (
         HeartbeatStaleness,
@@ -1343,6 +1558,17 @@ def _build_child_middlewares(
     from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
     from config.features import ITERATION_BUDGET
 
+    iteration_limit = (
+        ITERATION_BUDGET["executor_max_iterations"]
+        if functional_role == FunctionalRole.EXECUTOR
+        else ITERATION_BUDGET["worker_max_iterations"]
+    )
+    logger.info(
+        "Subagent middleware budget: functional_role={} max_iterations={}",
+        functional_role,
+        iteration_limit,
+    )
+
     return [
         Summarization(
             model=auxiliary_llm,
@@ -1355,7 +1581,7 @@ def _build_child_middlewares(
                 ),
             ],
         ),
-        IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
+        IterationBudget(iteration_limit),
         ToolGuardrails(),
         # Same process/system and per-session interaction locks as the parent.
         ToolResourceLockMiddleware(),
@@ -1385,7 +1611,7 @@ def _build_child_middlewares(
 
 
 def _assert_child_token_floor() -> None:
-    """Subagent spawn bypasses ``built_agent()``, so validate the 128K floor here.
+    """Subagent spawn bypasses ``built_agent()``, so validate the 200K floor here.
 
     Child LLM construction would otherwise inherit the floor implicitly — this
     is the same guard the main agent applies.
@@ -1510,6 +1736,7 @@ def _select_child_llm(
                 model=model_profile["model"],
                 api_key=model_profile.get("api_key"),
                 base_url=model_profile.get("base_url"),
+                max_output_tokens=resolve_profile_max_output_tokens(model_profile),
             )
             logger.info(
                 "Subagent role model: functional_role={} model={} provider={}",
@@ -1623,6 +1850,7 @@ async def _build_child_agent(
     child_middleware = _build_child_middlewares(
         auxiliary_llm=child_llm,
         main_llm_context_window=main_llm_max_tokens,
+        functional_role=functional_role,
     )
     # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
     # middleware must abort the spawn, not ship a weakened child.

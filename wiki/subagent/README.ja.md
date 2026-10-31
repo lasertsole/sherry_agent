@@ -37,10 +37,11 @@
 1. **二つの軸は決して融合しない。** 機能ロールが spawn 権限を与えることはなく、深度ロールがツール許可リストやプロンプトを変えることもありません。すべての spawn で両者が合成されます。
 2. **`general` は恒等ロール。** 機能ロールのヒントがなければ spawn 挙動は不変です：定義は読み込まれず、LLM ティアは深度ロールが供給します。
 3. **spawn 権限は二度にわたり深度でゲートされる**——組み立て時（ツールポリシーの交差）と、呼び出し時（ツール自身の中の権限チェック）。
-4. **完了ゲートは常時有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
-5. **フェイルオープンはモデルエラー、解析不能な出力、利用不能な参照に限られ、否定的な判定には決して適用されない。** 解析済みの `RETRY`、`BLOCK`、失敗した証跡行は依然としてブロックします。
-6. **子コンテキストは常に独立。** 子は自身の空のメッセージリストから始まり、親のトランスクリプトを継承せず、これを変えるモードも存在しません。
-7. **完了キャリアは主張であり、検証済みの結果ではない。** 親ターンが受け取るのは子の自己申告です。セッションに合格証跡がなければ、drain ゲートが検証必須メッセージを追記します。
+4. **ロール派生はホップ単位の許可リストで、チェーンを辿らない。** 特化した親は自分のロールに加え、`SPAWN_ALLOWED_CHILD_ROLES` のエントリが列挙する読み取り専用の拡張を spawn できます。不変条件は単一ホップ（許可される親以外の子は書き込み能力を持ってはならない）であり、これが祖先走査なしで多段を安全にする理由です。
+5. **完了ゲートは常時有効。** スタックのどこにも有効/無効スイッチはなく、入力は予算と判定基準だけです。
+6. **フェイルオープンはモデルエラー、解析不能な出力、利用不能な参照に限られ、否定的な判定には決して適用されない。** 解析済みの `RETRY`、`BLOCK`、失敗した証跡行は依然としてブロックします。
+7. **子コンテキストは常に独立。** 子は自身の空のメッセージリストから始まり、親のトランスクリプトを継承せず、これを変えるモードも存在しません。
+8. **完了キャリアは主張であり、検証済みの結果ではない。** 親ターンが受け取るのは子の自己申告です。セッションに合格証跡がなければ、drain ゲートが検証必須メッセージを追記します。
 
 ## 🧭 二つの役割軸
 
@@ -64,10 +65,10 @@
 | ロール | 用途 | 有効 LLM ティア | ロールのツールセット |
 |--------|------|------------------|----------------------|
 | `general` | 既定 worker；恒等ロール（パッケージ定義は決して読み込まれない） | 深度ロール | 全ツール + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 書き込み可能な実装とコマンド実行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `reviewer` | 読み取り専用の diff・品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `librarian` | 読み取り専用の外部コードベース検索：サードパーティリポジトリの clone・索引・検索 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
+| `executor` | 書き込み可能な実装とコマンド実行。読み取り専用の `researcher` / `librarian` を追加で spawn できる唯一のロール | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`claim_scope`、`share_finding`、`peers_findings` |
+| `reviewer` | 読み取り専用の diff・品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
+| `librarian` | 読み取り専用の外部コードベース検索：サードパーティリポジトリの clone・索引・検索 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 協調（opt-in）`share_finding`、`peers_findings` |
 
 **ast-grep は全ロール共通、コードインテリジェンスは違う。** すべての機能ロール（`general` を含む）は ast-grep の構造検索/リライト `ast_grep_search`、`ast_grep_rewrite` も受け取ります。tree-sitter のコードインテリジェンス `explore` / `callers` / `callees` / `impact` / `semantic_code_search` はシンボル索引を要するため、`researcher` と `librarian` の二つのコード検索ロールに与えられます（`semantic_code_search` はその索引に対する埋め込みベースの概念検索です）。LSP ツール `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` も同じくこの二つのロールに与えられ、実行中の言語サーバーを必要とし、子エージェントが必要時に遅延起動しアイドル時に自動停止します。`lsp_rename` と `lsp_format` は既定でプレビューのみ、`lsp_diagnostics` は非同期の診断通知を待ち、`lsp_status` は何も起動せず可用性のみを報告します。`execute_code` ツール（Programmatic Tool Calling）は executor 専用で、executor ロールだけが受け取り、他の機能ロールは受け取りません。
 
@@ -77,12 +78,13 @@
 
 ### ⚙️ ロールが駆動するもの
 
-**LLM 選択。** 明示的な `model_override` が最優先。次に `general` 以外のロールの `model_tier` が適用され、それも無ければ深度ロールが決めます（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）。
+**LLM 選択。** ロール モデル プロファイルが最優先です（子エージェント自身の `max_output_tokens` も保持し、既定は 8192）。次に明示的な `model_override`、次に `general` 以外のロールの `model_tier`、それも無ければ深度ロールが決めます（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）。
 
 ```text
-明示的な model_override
-  └─► 機能ロールの model_tier（"main" | "auxiliary"）
-        └─► 深度ロール（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）
+ロール モデル プロファイル（独自の max_output_tokens、既定 8192）
+  └─► 明示的な model_override
+        └─► 機能ロールの model_tier（"main" | "auxiliary"）
+              └─► 深度ロール（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）
 ```
 
 **システムプロンプト。** `general` 以外のロール（または非空のロール説明/本文）は `## Your Role` に `{ROLE}` 特化行を加え、定義本文を運ぶ `## Role Instructions` 節を追記します。
@@ -91,7 +93,7 @@
 
 ## 🔒 spawn 権限ガード
 
-spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません：
+深度に基づく spawn 権限は二つの独立した地点で執行されるため、単一のリークで昇格することはありません（機能ロールの封じ込めは 3 つ目の直交ゲートです——下の注記を参照）：
 
 - **組み立て時（主ゲート）。** 最終的な許可リストがロール許可リストと `extra_tools` から構築された後、Phase 8.6 がそれを `can_spawn_children(role)` と交差させます：spawn できないロールでは `sessions_spawn` と `sessions_yield` がリストから剥がされます。継承モードではリストが空で既定の拒否リストが既にこのペアを塞いでいるため、交差はそこでは無操作です。
 - **呼び出し時（多層防御）。** `check_spawn_permission(session_id)` はまず正規の呼び出し元キーを解決し（子と swarm のキーはそのまま、それ以外の id には `agent:main:session:` を前置）、次に深度を解決し（実行レコード優先、セッションキー形状が次点）、最後に深度ロールを解決して spawn 不可の呼び出し元を拒否します。`(allowed, reason)` タプルを返し、決して例外を投げません。ツールは既存の文字列契約を通じて拒否を描画します。
@@ -103,9 +105,11 @@ spawn 権限は二つの独立した地点で執行されるため、単一の�
 
 呼び出し時のガードは `sessions_spawn`（昇格経路）をツール側とランタイム spawn ラッパーの両方で支えます。`sessions_yield` は組み立て時の剥がしのみで保護されます。
 
+**機能ロールの封じ込め（3 つ目・直交するゲート）。** 深度は子が spawn を*行えるか*を決め、封じ込めはそれ*が spawn できるロール*を決めます。`_check_role_containment`（`spawn/core.py`）は要求元自身の run レコードだけを見て（単一ホップ。祖先チェーンは辿りません）、`SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）を参照します：エントリが無いロールは「同じロールのみ」で、`researcher` / `reviewer` / `librarian` はそのままです。`MAIN`（run レコード無し）と `general`（`tools: inherit` = 全ツール）は無制限として短絡します——特化ロールの許可リストはすべてその部分集合だからです。唯一の拡張エントリは `executor` で、書く前の調査のため**読み取り専用**の `researcher` / `librarian` を追加で spawn できます。多段の安全性はチェーン走査ではなく単一ホップの不変条件に依ります：許可される**親以外の子は必ず読み取り専用**なので、書き込みロールは書き込みロールにしか、読み取り専用ロールは同種にしか到達せず、書き込み能力へ戻る経路は存在しません。将来サイクルを成すエントリ（例：`researcher → executor`）を足すと、穴を開けるのではなく不変条件テストで失敗します。
+
 ## 🧪 完了判定器と goal loop
 
-完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
+完了判定器（`spawn/completion_judge.py`）はサブエージェント層のゲートです。温度 `0` の補助 LLM が、タスク、子の最新応答（`8000` 文字に切り詰め。これは未設定時の旧基準で、serving model の出力予算に応じて拡大縮小します）、子セッションの検証証跡サマリを受け取り、`DONE` か `CONTINUE` を一文の理由とともに返します。`CONTINUE` 判定は短い継続プロンプトも運びます。解析は段階的に安全側へ倒れ——まず JSON 修復、次に正規表現スキャン——モデルエラーや使用不能な出力は明示的なフェイルオープン理由とともに `DONE` として確定します。
 
 goal loop は予算が 1 ターンを超えるすべての spawn で実行され、`COMPLETION_JUDGE["goal_max_turns"]`（既定 `5`）を予算とし、最初のターンも算入します。spawn ごとの `goal_max_turns` パラメータがこれを上書きします。`CONTINUE` のとき、判定器のプロンプトは**同じ checkpoint スレッド**上の次の `HumanMessage` として注入されるため、継続は新しい会話ではなく同じ子会話を延長します。
 
@@ -132,7 +136,9 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 
 **第 3 層——フローゲート。** `taskflow_flow(action="finish")` は次をすべて満たすまで `DONE` への遷移を拒否します：ゲート A が全ステップを `done` または `blocked` と見なし、ゲート B がブロック済みステップを見ず、ゲート C が `FAIL` や `[stale]` のフロー証跡を見ません（加えて、`description` を持つフローのステップ数が `GOAL_GATE["min_steps"]` 以上のときだけ走るオプトインの Gate E 目標判定）。
 
-**第 4 層——親ターンゲート。** drain が待機中の完了キャリアを注入するとき、親セッションの証跡も検査します。キャリアはそのまま注入され、セッションに合格証跡が無ければ検証必須メッセージがその後ろに追記されます。この検査は無条件で——どの設定でも無効化できず——証跡参照自体が利用不能なときにのみフェイルオープンします。
+**第 4 層——親ターンゲート。** drain が待機中の完了キャリアを注入するとき、親セッションの証跡も検査します。キャリアはそのまま注入され、セッションに合格証跡が無ければ検証必須メッセージがその後ろに追記されます。この検査は無条件で——どの設定でも無効化できず——証跡参照自体が利用不能なときにのみフェイルオープンします。読むのはフローゲートと同じ無効化マークです：`[stale]` や `[broken]` の行は合格ではなく、後続の書き込みで無効化された子の作業を検証済みとして drain することはできません。
+
+**再起動の意味論。** 再起動を越えて生き残るタスクは無いため、ディスクから復元された RUNNING run は `pause_reason=process_restart` 付きの TIMEOUT として終端化されます（RUNNING のままにすると、すべての生存判定が子を生きていると信じます）。また、永続化された単調タイムスタンプは復元点へ再基準化されます——前のプロセスの値は数時間前にも未来にも読め、各期限判定を静かに無効化していたためです。配信は PENDING のまま残り、sweeper の未配信走査が告知するので、所有する step は DISPATCHED のまま留まらず結果を知ります。INTERRUPTED の run を kill した場合も、ここでセッション単位のガード状態を解放します：`finally` でそれを行う生きた子エージェントはもう存在しません。
 
 解析された否定的判定は常にブロックします：フェイルオープンが覆うのはモデルエラー、解析不能な出力、利用不能な参照であり、実際の `RETRY`、`BLOCK`、失敗した証跡行ではありません。ゲート内部の詳細（ブレーカー閾値、announce 再試行、証跡台帳）は[暴走ループ防止 README](../loop-prevention/README.ja.md) と[長期タスク README](../long-running-tasks/README.ja.md) にあります。
 
@@ -161,6 +167,9 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 任意のロール上書きを置くワークスペースディレクトリ |
 | `max_spawn_depth` | `SubagentConfig` | `2` | ロールが `LEAF` に反転する深度（ハード上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format のコマンド群 | 検証証跡として自動記録されるコマンド |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 旧値 | 設定された serving model の出力予算 `W` により、保存/配信/要約/判定/読み戻しの上限を `W/8000` で拡大縮小します。未設定なら旧値のままです |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | ロール モデル プロファイル自身の出力上限（10 進文字列、最低 8K）。子エージェントのリクエストと結果テキスト上限の両方に使われ、MAIN 環境予算とは独立です |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 子エージェントのターンごとのモデル+ツール呼び出し予算。他のサブエージェント ロールは `worker_max_iterations=60` のままです |
 
 ## 🗺️ テストマップ
 
@@ -169,6 +178,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | ロール enum とローダー | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py` |
 | ロール駆動の spawn 挙動 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 権限ガード | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 機能ロールの封じ込め | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 完了判定器と drain | `tests/agent/tools/subagent/test_completion_judge.py`、`tests/agent/tools/subagent/test_completion_drain.py` |
 | 親ターンゲート | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | ステップ判定器 | `tests/agent/tools/taskflow/test_step_judge.py`、`tests/agent/tools/taskflow/test_resume_with_judge.py` |

@@ -38,6 +38,9 @@ from .middlewares import (
     MaxTokensBoostMiddleware,
     MessagePersistenceMiddleware,
     LLMRetryMiddleware,
+    InputSafetyFilter,
+    LLMModerationMiddleware,
+    OutputSafetyFilter,
     InvalidToolCallRepairMiddleware,
     validate_required_middleware,
     _MAIN_REQUIRED,
@@ -317,7 +320,7 @@ def _build_middlewares(
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
         WorkspaceNoticeMiddleware(),
-        # Per-session tool set (预设-工具 tab): narrows request.tools before the
+        # Per-session tool set (the preset Tools tab): narrows request.tools before the
         # model is bound and refuses a disabled tool at execution. Registered as
         # a real middleware (not gated) because it HAS no switch of its own — it
         # is what applies the switch, and an unset config is a no-op.
@@ -364,6 +367,12 @@ def _build_middlewares(
         # TaskIntent (whose dedup needs the user message still last when it
         # runs) and BEFORE everything that does not mind a trailing reminder.
         DynamicReminderMiddleware(),
+        # Live-stream safety (OFF by default): keyword rules on the user's
+        # message refuse a blocked turn WITHOUT a provider call, and an optional
+        # LLM review (only with a configured review model) runs inside them, so
+        # a keyword block never pays for the review.
+        InputSafetyFilter(),
+        LLMModerationMiddleware(),
         OutputRepetitionGuard(),
         MaxTokensBoostMiddleware(),
         # Per-session thinking toggle: swaps the per-call model for the
@@ -385,6 +394,11 @@ def _build_middlewares(
         # relative to Summarization (the retry loop wraps the
         # T4/T5 overflow recovery from outside).
         LLMRetryMiddleware(fallback_chain=fallback_chain),
+        # Output-side keyword rules (OFF by default). after_model hooks run in
+        # reverse registration order, so registering it AFTER
+        # MessagePersistence makes it run FIRST — the replaced text is what
+        # the transcript row stores.
+        OutputSafetyFilter(),
         Summarization(
             need_update_system_prompt=True,
             # COMPRESSION_LLM_* when configured, else the auxiliary instance
@@ -427,8 +441,12 @@ async def _build_graph(
     # create table before using
     await checkpointer.setup()
 
-    # Delete all checkpoints but keeps the latest checkpoint
-    await checkpointer.aclean_old_checkpoints()
+    # NOTE: no global checkpoint prune here. This function runs on EVERY turn
+    # (the graph is force-rebuilt), so pruning here made the shared checkpoint
+    # DB take a competing writer per turn — ordinary concurrency turned into
+    # SQLITE_BUSY turn failures, and a session committing a new checkpoint
+    # mid-prune could have it deleted. The one global prune now runs at boot
+    # (``server.service.checkpoint_maintenance``).
 
     main_llm = build_main_llm()
     auxiliary_llm = build_auxiliary_llm()

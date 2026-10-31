@@ -26,9 +26,6 @@ class SubagentIsolationConfig(TypedDict):
     include_symlink: list[str]
     #: Paths materialized as COPIES: live mutable state two trees must not share.
     include_copy: list[str]
-    #: Marker file name written into an auto-initialized project (documents how
-    #: to undo the initialization; never committed).
-    repo_marker_name: str
     #: `.git/info/exclude` patterns for the auto-init baseline commit.
     deny_patterns: list[str]
     #: Message of the auto-init baseline commit.
@@ -67,7 +64,6 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
     # Live mutable task state: a boulder/progress file shared by two concurrent
     # worktrees would corrupt, so it is copied and merged back.
     "include_copy": [".omo"],
-    "repo_marker_name": ".sherry/isolation-repo",
     # Secrets first (history keeps what was ever committed), then bulk, then the
     # repository's own state. The ``*.example`` templates stay as the intentional
     # samples; ``.models`` / ``.network`` are this project's gitignored secret

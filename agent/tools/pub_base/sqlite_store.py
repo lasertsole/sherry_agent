@@ -14,7 +14,9 @@ database, but all three duplicated the same connection lifecycle:
 
 This base class owns that skeleton. Each store keeps its own schema by
 overriding the ``_*_ddls`` hooks — no table, column or index definition moves
-here, so every DDL string stays byte-identical to what it was.
+here, so every DDL string stays byte-identical to what it was. A store's schema
+is the CURRENT one: there is no additive-migration hook, so an old database is
+not converged in place.
 
 Per-store process state and configuration (the database path/dir, the busy
 timeout and the once-per-process init flags) deliberately stay in the owning
@@ -64,10 +66,6 @@ class BaseSQLiteRepository(ABC):
     def _sync_table_ddls(self) -> tuple[str, ...]:
         """DDL statements the sync one-time init runs; defaults to the async set."""
         return self._table_ddls()
-
-    def _migration_ddls(self) -> tuple[str, ...]:
-        """Additive migration DDL; a duplicate-column error is the expected no-op."""
-        return ()
 
     def _index_ddls(self) -> tuple[str, ...]:
         """Idempotent ``CREATE INDEX IF NOT EXISTS`` statements."""
@@ -135,12 +133,6 @@ class BaseSQLiteRepository(ABC):
             await self.switch_to_wal_if_needed(db)
             for ddl in self._table_ddls():
                 await db.execute(ddl)
-            for ddl in self._migration_ddls():
-                try:
-                    await db.execute(ddl)
-                except aiosqlite.OperationalError:
-                    # Column already exists - nothing to do.
-                    pass
             for ddl in self._index_ddls():
                 await db.execute(ddl)
             await db.commit()
@@ -212,12 +204,6 @@ class BaseSQLiteRepository(ABC):
             try:
                 for ddl in self._sync_table_ddls():
                     conn.execute(ddl)
-                for ddl in self._migration_ddls():
-                    try:
-                        conn.execute(ddl)
-                    except sqlite3.OperationalError:
-                        # Column already exists - nothing to do.
-                        pass
                 for ddl in self._index_ddls():
                     conn.execute(ddl)
                 conn.commit()

@@ -5,7 +5,6 @@ from ..types.registry import (
     SubagentRunRecord,
     CompletionDeliveryState,
     DeliveryStatus,
-    CompletionState,
 )
 
 
@@ -14,24 +13,9 @@ def ensure_delivery_state(run: SubagentRunRecord) -> CompletionDeliveryState:
     return run.delivery
 
 
-def ensure_completion_state(run: SubagentRunRecord) -> CompletionState:
-    """Return the completion state of a run (identity accessor)."""
-    return run.completion
-
-
-def is_delivery_not_required(run: SubagentRunRecord) -> bool:
-    """Return True if delivery is marked NOT_REQUIRED."""
-    return run.delivery.status == DeliveryStatus.NOT_REQUIRED
-
-
 def is_delivery_pending(run: SubagentRunRecord) -> bool:
     """Return True if delivery is PENDING."""
     return run.delivery.status == DeliveryStatus.PENDING
-
-
-def is_delivery_in_progress(run: SubagentRunRecord) -> bool:
-    """Return True if delivery is IN_PROGRESS."""
-    return run.delivery.status == DeliveryStatus.IN_PROGRESS
 
 
 def is_delivery_delivered(run: SubagentRunRecord) -> bool:
@@ -49,11 +33,6 @@ def is_delivery_suspended(run: SubagentRunRecord) -> bool:
     return run.delivery.status == DeliveryStatus.SUSPENDED
 
 
-def is_delivery_discarded(run: SubagentRunRecord) -> bool:
-    """Return True if delivery has been DISCARDED."""
-    return run.delivery.status == DeliveryStatus.DISCARDED
-
-
 def is_delivery_terminal(run: SubagentRunRecord) -> bool:
     """Return True if delivery is in a terminal state (DELIVERED or DISCARDED)."""
     return run.delivery.status in (
@@ -65,11 +44,6 @@ def is_delivery_terminal(run: SubagentRunRecord) -> bool:
 def get_delivery_attempt_count(run: SubagentRunRecord) -> int:
     """Return the number of delivery attempts for this run."""
     return run.delivery.attempt_count
-
-
-def get_delivery_last_error(run: SubagentRunRecord) -> str | None:
-    """Return the last error message from a failed delivery attempt."""
-    return run.delivery.last_error
 
 
 def mark_delivery_pending(run: SubagentRunRecord) -> SubagentRunRecord:
@@ -152,11 +126,6 @@ def mark_delivery_discarded(
             )
         }
     )
-
-
-def clear_delivery_state(run: SubagentRunRecord) -> SubagentRunRecord:
-    """Reset the delivery state to its default (initial) values."""
-    return run.model_copy(update={"delivery": CompletionDeliveryState()})
 
 
 def should_retry_delivery(run: SubagentRunRecord, max_attempts: int = 10) -> bool:

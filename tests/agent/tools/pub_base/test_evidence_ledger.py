@@ -2,7 +2,7 @@
 
 The ledger is a class-level store, so tests redirect ``LEDGER_PATH`` into
 ``tmp_path`` and never touch the real repo ledger. SQLite-specific behavior
-(WAL, migration, pruning) has focused tests beside this file.
+(WAL, pruning) has focused tests beside this file.
 """
 
 import sqlite3
@@ -117,6 +117,36 @@ def test_read_for_session_isolates_sessions(tmp_path, monkeypatch: pytest.Monkey
     assert [r["command"] for r in EvidenceLedger.read_for_session("s2")] == ["ruff check ."]
 
 
+def test_read_for_flow_isolates_flows_and_excludes_unstamped_rows(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    _redirect(tmp_path, monkeypatch)
+    EvidenceLedger.for_session("s1").append(kind="test", command="pytest a.py", flow_id="f1")
+    EvidenceLedger.for_session("s2").append(kind="lint", command="ruff b.py", flow_id="f2")
+    EvidenceLedger.for_session("s3").append(kind="build", command="cargo build")
+
+    assert [r["command"] for r in EvidenceLedger.read_for_flow("f1")] == ["pytest a.py"]
+    assert [r["command"] for r in EvidenceLedger.read_for_flow("f2")] == ["ruff b.py"]
+    assert EvidenceLedger.read_for_flow("") == []
+
+
+def test_rows_stamp_the_session_flow_context(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Verification and stale rows both inherit the session's active flow id."""
+    from runtime import StateKey, state_register_mem
+
+    _redirect(tmp_path, monkeypatch)
+    state_register_mem.set_state("s1", StateKey.FLOW_ID, "f1")
+    try:
+        EvidenceLedger.for_session("s1").append(kind="test", command="pytest a.py", status="passed")
+        EvidenceLedger.for_session("s1").mark_stale_for_path("a.py")
+    finally:
+        state_register_mem.clear_session("s1")
+
+    rows = EvidenceLedger.read_for_flow("f1")
+    assert [row.get("event") for row in rows] == [None, "stale"]
+    assert all(row["flow_id"] == "f1" for row in rows)
+
+
 def test_session_ledger_append_injects_session_id(tmp_path, monkeypatch: pytest.MonkeyPatch):
     _redirect(tmp_path, monkeypatch)
 
@@ -165,27 +195,7 @@ def test_mark_stale_ignores_prior_stale_events(tmp_path, monkeypatch: pytest.Mon
     assert len(EvidenceLedger.read_all()) == 3
 
 
-# ── Migration / concurrency / grouping ─────────────────────────────────────
-
-
-def test_legacy_jsonl_is_imported_once_and_renamed(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    ledger = _redirect(tmp_path, monkeypatch)
-    legacy = ledger.with_suffix(".jsonl")
-    legacy.write_text(
-        '{"kind": "test", "command": "pytest -q", "status": "passed", '
-        '"session_id": "old", "timestamp": "2026-01-01T00:00:00+00:00"}\n'
-        '{"kind": "lint", "command": "ruff check .", "status": "passed", '
-        '"session_id": "old", "timestamp": "2026-01-01T00:00:01+00:00"}\n',
-        encoding="utf-8",
-    )
-
-    rows = EvidenceLedger.read_all()
-    assert [row["kind"] for row in rows] == ["test", "lint"]
-    assert legacy.with_suffix(".jsonl.migrated").exists()
-    assert not legacy.exists()
-
-    # A second open must not re-import (the legacy file is gone).
-    assert len(EvidenceLedger.read_all()) == 2
+# ── Concurrency / grouping ─────────────────────────────────────────────────
 
 
 def test_concurrent_appends_are_not_lost(tmp_path, monkeypatch: pytest.MonkeyPatch):

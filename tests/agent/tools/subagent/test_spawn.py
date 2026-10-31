@@ -6,7 +6,7 @@ from agent.tools.subagent.spawn.depth import (
     validate_global_concurrent,
 )
 from agent.tools.subagent.spawn.target_policy import validate_target_policy, is_target_allowed
-from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds, split_model_ref
+from agent.tools.subagent.spawn.plan import resolve_run_timeout_seconds
 from agent.tools.subagent.spawn.task_name import normalize_subagent_task_name
 from agent.tools.subagent.spawn.system_prompt import build_subagent_system_prompt
 from agent.tools.subagent.spawn.initial_message import build_subagent_initial_user_message
@@ -99,21 +99,6 @@ class TestPlan:
 
     def test_invalid_timeout_uses_default(self):
         assert resolve_run_timeout_seconds(-1) == 600.0
-
-    def test_split_model_ref_with_provider(self):
-        provider, model = split_model_ref("openai/gpt-4")
-        assert provider == "openai"
-        assert model == "gpt-4"
-
-    def test_split_model_ref_without_provider(self):
-        provider, model = split_model_ref("gpt-4")
-        assert provider is None
-        assert model == "gpt-4"
-
-    def test_split_model_ref_none(self):
-        provider, model = split_model_ref(None)
-        assert provider is None
-        assert model is None
 
 
 class TestTaskName:

@@ -31,6 +31,13 @@ class StateKey(StrEnum):
     TOOL_GUARDRAIL_STATE = "tool_guardrail_state"
     IS_STREAM_TURN = "is_stream_turn"
 
+    # The resumable breakpoint of an interrupted PURE-TEXT turn (user Stop or
+    # heartbeat timeout, no dangling tool calls): the marker id, the partial
+    # answer and enough identity to validate it before a continuation runs.
+    # ``{}``/absent = nothing to continue. Dual-written (mem + DB) so a restart
+    # keeps the breakpoint. A new turn clears it (one breakpoint, one resume).
+    RESUMABLE_BREAKPOINT = "resumable_breakpoint"
+
     LLM_STALE_STREAK = "llm_stale_streak"
     LLM_FALLBACK_INDEX = "llm_fallback_index"
     # Per-turn fallback-switch counter, reset by LLMRetryMiddleware.before_agent.
@@ -65,7 +72,7 @@ class StateKey(StrEnum):
     # Model choice made mid-turn: parked (same semantics as the thinking twin).
     LLM_MAIN_MODEL_PENDING = "llm_main_model_pending"
 
-    # Per-session AGENT CONFIG (预设-工具/中间件/子代理模型 三栏 → PUT
+    # Per-session AGENT CONFIG (the preset Tools/Middlewares/Subagent-models tabs → PUT
     # /sessions/agent_config): one JSON payload
     # ``{"tools": [...]|null, "middlewares_disabled": [...],
     #    "subagent_models": {"<role>": {profile}|null}}``.
@@ -180,6 +187,14 @@ class StateKey(StrEnum):
     CURRENT_TOOL_ID = "current_tool_id"
     REQUESTER_SESSION_KEY = "requester_session_key"
     CALLER_SCOPE = "caller_scope"
+    #: TaskFlow context stamped on a step's child session at spawn time. The
+    #: evidence recorder reads FLOW_ID to stamp rows, so a flow's finish gate can
+    #: query `WHERE flow_id = ?` instead of reconstructing the session set.
+    FLOW_ID = "flow_id"
+    STEP_ID = "step_id"
+    #: Transient model-facing warning produced by a full todo replacement that
+    #: dropped a flow root and auto-cancelled the orphaned flow(s).
+    TODO_REFERENCE_WARNING = "todo_reference_warning"
 
 
 def hitl_tool_approved_key(tool_name: str) -> str:

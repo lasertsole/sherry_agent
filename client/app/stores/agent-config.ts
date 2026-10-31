@@ -14,12 +14,12 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /**
- * The 预设-工具/中间件/子代理模型 three tabs' state.
+ * The state of the preset panel's three tabs: Tools / Middlewares / Agent models.
  *
  * Two halves:
  *
  * - the CATALOG (tools grouped, middleware lock flags, subagent roles, the skill
- *   list split 内置 / 第三方) is
+ *   list split Built-in / Third-party) is
  *   process-wide and fetched once — the client never hardcodes backend names;
  * - the CONFIG is per session and mirrored from the backend on tab open; a save
  *   writes the whole payload back (`PUT /sessions/agent_config`), which lands
@@ -36,7 +36,7 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
 export const FOLLOW_TIER_ID = 'tier';
 
 /**
- * Groups the 工具 tab offers as select-all / clear-all only — their membership
+ * Groups the Tools tab offers as select-all / clear-all only — their membership
  * moves together (the backend owns the list: ``agent.tools.catalog.BULK_ONLY_GROUPS``,
  * mirrored here because the catalogue response itself is per-tool).
  */
@@ -82,7 +82,7 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
   /** The subagent roles in catalogue order. */
   const subagentRoles = computed<AgentRoleEntry[]>(() => catalog.value.subagent_roles);
 
-  /** The skills split into the two 技能 sub-tabs (内置 / 第三方), each by name. */
+  /** The skills split into the two Skills sub-tabs (Built-in / Third-party), each by name. */
   const skills = computed<{ builtin: AgentSkillEntry[]; thirdParty: AgentSkillEntry[] }>(() => ({
     builtin: catalog.value.skills.filter(skill => skill.builtin),
     thirdParty: catalog.value.skills.filter(skill => !skill.builtin)

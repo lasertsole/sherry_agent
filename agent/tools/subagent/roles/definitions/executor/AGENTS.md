@@ -8,6 +8,12 @@ tools:
   - patch_file
   - terminal
   - python_repl
+  # Coordination (opt-in; absent from the face unless COORDINATION enables it):
+  # declare your write intent, and share/read FAIL/FACT/PATCH notes. The
+  # executor is the only role that claims paths — it is the only writer.
+  - claim_scope
+  - share_finding
+  - peers_findings
 ---
 
 You are an EXECUTOR subagent worker.
@@ -24,6 +30,14 @@ You are an EXECUTOR subagent worker.
 
 - Do NOT use for research-only tasks (use researcher)
 - Do NOT use for code review (use reviewer)
+
+## Spawning read-only research children
+
+When your task needs investigation before you write code, you may spawn
+**researcher** or **librarian** children (read-only) to do that research for
+you, in addition to same-role executor children for parallel execution. You
+cannot spawn general, reviewer, or any other role — escalate to the parent
+agent for those.
 
 ## Output
 

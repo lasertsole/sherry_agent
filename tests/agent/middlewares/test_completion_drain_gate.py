@@ -147,3 +147,23 @@ def test_sync_before_model_honours_the_gate(patched_drain: dict, ledger: Evidenc
     assert result is not None
     assert len(result["messages"]) == 2
     assert result["messages"][1].text == _VERIFICATION_GATE_MESSAGE
+
+
+def test_a_stale_row_is_not_a_pass(patched_drain: dict, ledger: EvidenceLedger):
+    """P3-11: the gate reads the same invalidation marks the finish gates do.
+
+    A pass whose evidence went stale (the code changed after verification) or
+    broken (a re-verified command now fails) is not proof of anything, so the
+    drain must still inject the gate rather than let the parent read the child's
+    report as verified work.
+    """
+    patched_drain["items"] = [SimpleNamespace(message=_carrier("report ready"))]
+    session = ledger.for_session(SID)
+    session.append(kind="test", command="pytest -q", status="passed")
+    session.append(kind="stale", command="pytest -q", event="stale", paths=["src/app.py"])
+
+    result = asyncio.run(_middleware().abefore_model({"session_id": SID}, None))
+
+    assert result is not None
+    assert len(result["messages"]) == 2
+    assert result["messages"][1].text == _VERIFICATION_GATE_MESSAGE

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS todos (
     flow_id      TEXT    DEFAULT NULL,
     step_id      TEXT    DEFAULT NULL,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    todo_id      INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
 );
 ```
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS todos (
 | `plan_ref` | リンクされた計画ファイルパス — セッションスコープ `workspace/sessions/<session_id>/plans/*.md` |
 | `flow_id`  | リンクされた TaskFlow flow id（DAG は TaskFlow が所有）            |
 | `step_id`  | リンクされた TaskFlow step id（例：`step-2`）、DAG ステータス再読取用 |
+| `todo_id`  | セッションごとの安定した識別子（`#N`）。ローカル patch/remove/reattach の対象指定に使う。`position` は表示順のみ |
 
 > **設計境界**：`todos.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_inspect(action="summary", flow_id)` で再読取します。
 
@@ -112,4 +114,13 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """TaskFlow flow に関連する todo を読取（DAG ステータスを UI にマッピング）"""
+
+async def add_todo(session_id, todo, *, after_todo_id=None) -> dict | None:
+    """末尾追加、または安定 todo_id アンカーの直後に挿入"""
+
+async def patch_todo_by_id(session_id, todo_id, **fields) -> dict | None:
+    """1 行だけ更新。flow_id/step_id/plan_ref は保持"""
+
+async def remove_todo_by_id(session_id, todo_id) -> dict | None:
+    """安定 id で 1 行削除"""
 ```

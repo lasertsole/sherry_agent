@@ -35,7 +35,7 @@ def _capture_real_dispatch_child() -> None:
 
     try:
         module = importlib.import_module("agent.tools.taskflow.tools._dispatch")
-    except Exception:  # pragma: no cover - import环境 problem: the opt-out fixture报错即可
+    except Exception:  # pragma: no cover - broken import environment: the opt-out fixture surfaces the error on its own
         return
     module.__dict__.setdefault("__real_dispatch_child__", module.dispatch_child)
 
@@ -192,8 +192,18 @@ def _isolated_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, 
         output_schema=None,
         step_model=None,
         step_timeout_seconds=None,
+        flow_id=None,
+        step_id=None,
     ) -> str:
-        spawned.append({"task": task, "requester": requester_session_key, "label": label})
+        spawned.append(
+            {
+                "task": task,
+                "requester": requester_session_key,
+                "label": label,
+                "flow_id": flow_id,
+                "step_id": step_id,
+            }
+        )
         return f"agent:auto:subagent:{len(spawned)}"
 
     monkeypatch.setattr(_dispatch, "dispatch_child", _fake_dispatch_child)

@@ -36,6 +36,18 @@
         :class="props.historyRecord.renamed ? 'text-amber-600 dark:text-amber-400' : ''">
         {{ props.historyRecord?.title || t('history.newSession') }}
       </div>
+      <!-- Branch mark: this row is a fork of another session. Clicking jumps to
+           the parent (the fork's own rows stay untouched). -->
+      <button
+        v-if="props.historyRecord.parentSessionId"
+        type="button"
+        class="shrink-0 cursor-pointer text-gray-500 hover:text-blue-500 dark:text-gray-400"
+        :aria-label="t('session.forkedFrom', { parent: parentTitle })"
+        :title="t('session.forkedFrom', { parent: parentTitle })"
+        data-test="session-fork-badge"
+        @click.stop="emits('chooseSession', props.historyRecord.parentSessionId!)">
+        <i class="pi pi-code-branch text-[10px]"></i>
+      </button>
       <!-- Rename entry: pencil icon pinned to the far right of the row; clicking enters inline editing -->
       <button
         v-if="!isEditing"
@@ -90,6 +102,9 @@ interface Props {
   isActive: boolean;
 }
 const props = defineProps<Props>();
+
+/** The parent's display name for the branch tooltip (id when the row is gone). */
+const parentTitle = computed(() => props.historyRecord.parentTitle || props.historyRecord.parentSessionId || '');
 
 const emits = defineEmits<{
   chooseSession: [id: string];

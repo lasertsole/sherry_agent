@@ -25,7 +25,7 @@ class ReminderCatalogConfig(TypedDict):
 
 REMINDER_CATALOG: ReminderCatalogConfig = {
     "enabled": True,
-    # 30 000 chars ≈ 7 500 tokens in the 128K+ window: generous enough for every
+    # 30 000 chars ≈ 7 500 tokens in the 200K+ window: generous enough for every
     # source at once (measured worst case ~15K), small enough that a runaway
     # source cannot eat the context.
     "total_budget_chars": 30_000,

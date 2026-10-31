@@ -11,6 +11,47 @@
     "delete": "削除",
     "cancel": "キャンセル"
   },
+  "shortcuts": {
+    "hint": "「再割り当て」を押してから新しい組み合わせを押します（Esc でキャンセル）。設定はこのブラウザに保存され、すぐに反映されます。",
+    "rebind": "再割り当て",
+    "cancelRebind": "キャンセル",
+    "listening": "キーを押してください…",
+    "reset": "既定に戻す",
+    "resetAll": "すべて既定に戻す",
+    "conflict": "「{name}」と競合しています（保存されません）",
+    "group": {
+      "composer": "入力欄",
+      "navigation": "セッションとサイドバー",
+      "global": "グローバル"
+    },
+    "sendMessage": "メッセージを送信",
+    "historyPrev": "前の質問履歴",
+    "historyNext": "次の質問履歴",
+    "cancelInput": "履歴参照を終了",
+    "commandPalette": "コマンド パレット",
+    "findInConversation": "会話内検索",
+    "newSession": "新しいセッション",
+    "toggleSidebar": "セッション サイドバーの折りたたみ"
+  },
+  "safety": {
+    "blocked": "内容は安全フィルターによりブロックされました",
+    "replaced": "一部の内容が安全ルールにより置き換えられました",
+    "event": "{count} 件のルールに一致"
+  },
+  "chatFind": {
+    "placeholder": "会話内を検索",
+    "previous": "前の一致",
+    "next": "次の一致",
+    "close": "検索を閉じる"
+  },
+  "chatFloat": {
+    "title": "会話",
+    "dragHint": "ドラッグして移動",
+    "restore": "元に戻す",
+    "expand": "会話を展開",
+    "resize": "ドラッグしてサイズ変更",
+    "collapse": "入力欄に折りたたむ"
+  },
   "chatInput": {
     "maxImages": "最大 {count} 枚の画像をアップロードできます",
     "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています",
@@ -63,6 +104,7 @@
     "thinking": "思考",
     "toolArgs": "引数",
     "toolNoOutput": "出力なし",
+    "openTrajectory": "軌跡を表示",
     "toolResult": "実行結果",
     "toolRunning": "実行中…",
     "turnHistoryTools": "実行したツール: {n}",
@@ -75,7 +117,11 @@
     "removeVideo": "動画を削除",
     "diffNewFile": "新規ファイル",
     "codeWrap": "折り返し",
-    "codeZoom": "拡大"
+    "codeZoom": "拡大",
+    "continueGeneration": "生成を続ける",
+    "editMessage": "メッセージを編集",
+    "editingMessage": "送信済みメッセージを編集中。送信するとそのターンを再実行します",
+    "forkFromHere": "この回答から新しいセッションを分岐"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",
@@ -100,7 +146,7 @@
     },
     "tokenGuard": {
       "title": "モデル設定が最小値未満",
-      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → モデル設定で修正してください。"
+      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 200K (200000) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → モデル設定で修正してください。"
     }
   },
   "errors": {
@@ -108,7 +154,12 @@
     "pageError": "ページエラー",
     "replyFailed": "（返信に失敗：{reason}）",
     "sendFailed": "（送信に失敗：{reason}）",
-    "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。"
+    "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。",
+    "breakpointStale": "中断した回答は続行できなくなりました",
+    "continueBusy": "応答中は続行できません",
+    "editBusy": "応答中のため編集できません",
+    "editCompacted": "このメッセージは編集可能な範囲外です（履歴が圧縮されました）",
+    "forkFailed": "ブランチの作成に失敗しました。もう一度お試しください"
   },
   "connection": {
     "offline": "ネットワークが切断されました",
@@ -163,7 +214,20 @@
     "refreshGraph": "再読み込み",
     "refreshGraphPrompt": "実行グラフを再取得して再描画",
     "noTasks": "バックグラウンドタスクはまだありません",
-    "tasksLoading": "タスクを読み込み中..."
+    "tasksLoading": "タスクを読み込み中...",
+    "resize": "ドラッグで幅を調整"
+  },
+  "commandPalette": {
+    "placeholder": "コマンド名を入力…",
+    "recent": "最近使用",
+    "noMatch": "一致するコマンドはありません",
+    "newSession": "新しい会話",
+    "section": {
+      "session": "会話",
+      "navigate": "移動",
+      "tools": "ツール",
+      "skills": "スキル"
+    }
   },
   "toolbar": {
     "newChat": "新しい会話",
@@ -198,6 +262,8 @@
     },
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開",
+    "floatChat": "会話をフローティング表示",
+    "restoreChat": "会話バーを元に戻す",
     "notification": "通知",
     "projectFiles": "プロジェクトファイル",
     "projectFilesHint": "プロジェクトファイル",
@@ -207,7 +273,9 @@
     "toolbox": "ツールボックス",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
-    "webSearch": "モデル検索"
+    "webSearch": "モデル検索",
+    "i18n": "国際化",
+    "whiteboard": "ホワイトボード"
   },
   "config": {
     "agent": {
@@ -297,6 +365,8 @@
         "followTier": "ロール既定に従う",
         "tier": "ロール既定: {tier}",
         "tierDepth": "ロール定義なし: 深度の既定",
+        "maxOutput": "最大出力",
+        "maxOutputHint": "このロールモデル自身の最大出力トークン（既定 8192）。子エージェントの結果保存・配信・要約・判定・読み戻し上限の拡大縮小に使われます。",
         "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
         "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
       },
@@ -404,14 +474,28 @@
       "saveFailed": "モデル設定の保存に失敗しました。",
       "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
       "noEnvFile": ".env ファイルが見つかりません。",
-      "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
-      "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+      "maxTokenError": "{key} は 200000 (200K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+      "maxTokenHint": "200000 (200K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
     },
     "sherry": {
       "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
       "saveFailed": "アプリ設定の保存に失敗しました。",
       "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
-      "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+      "noConfigFile": "sherry.jsonc ファイルが見つかりません。",
+      "allowlist": {
+        "title": "リプレイ許可リスト",
+        "hint": "finish 時のリプレイで自動実行を許す実行ファイル名を、組み込みの 5 ツールチェーンに追加します（再実行する検証コマンドにのみ影響）。",
+        "placeholder": "例: gradle",
+        "add": "追加",
+        "remove": "削除",
+        "reload": "再読込",
+        "empty": "追加項目はありません——組み込み許可リストが適用されます。",
+        "badChars": "空白やシェルメタ文字（;&|<>$`）は使えません",
+        "tooLong": "名前が長すぎます",
+        "duplicate": "既に登録済み",
+        "loadFailed": "読み込み失敗（バックエンドに到達できません）",
+        "saveFailed": "保存失敗"
+      }
     },
     "cron": {
       "addJob": "新規タスク",
@@ -492,13 +576,14 @@
       "penaltyRange": "-2.0 ~ 2.0 の数値を入力してください",
       "maxContextLabel": "コンテキストウィンドウ (MAX_TOKEN)",
       "maxOutputLabel": "最大出力ウィンドウ (MAX_OUTPUT_TOKEN)",
+      "maxOutputHint": "{min} 以上かつモデルのコンテキストウィンドウ未満。空欄はプロバイダ既定値",
+      "outputCapRange": "最大出力ウィンドウは {min} 以上かつモデルのコンテキストウィンドウ未満である必要があります",
       "groupHelpLabel": "{group} の用途と利用シーンを表示",
       "modelHelp": {
         "main": "メインチャットモデル：会話、ツール呼び出し、タスク計画、最終回答を担当。ツール使用が安定し、長いコンテキストを持つ最強の汎用モデル向け。",
         "auxiliary": "補助モデル：JSON 生成、判定、計画抽出などの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
         "taskflow": "TaskFlow 意思決定モデル：計画、再計画、ステップ判定、完了チェック（temperature 0）に使用。JSON を安定して守るモデル向け。",
         "compression": "圧縮モデル：長い会話の要約を担当します。長コンテキストで低コストなモデル向け。",
-        "reasoner": "推論モデル：複雑な分析、数学・論理推論、難問解決に使用。日常会話はメインモデルのままでよい。",
         "ittt": "画像→テキストモデル：画像を読み取りテキスト化。スクリーンショット理解、OCR、視覚 Q&A に使用。",
         "vttt": "動画→テキストモデル：動画内容を抽出・説明。動画要約やシーン理解に使用。",
         "tti": "テキスト→画像モデル：プロンプトから画像を生成。イラスト、ビジュアル草案、素材作成に使用。",
@@ -531,7 +616,21 @@
       "soul": "Agent 人格、トーン、性格",
       "user": "ユーザー情報と好み"
     },
-    "uploadAvatar": "アバターをアップロード"
+    "uploadAvatar": "アバターをアップロード",
+    "cuda": {
+      "title": "CUDA アクセラレーション（任意）",
+      "hint": "CUDA pack はローカル音声認識とドキュメント解析を GPU で実行します。CPU 版はそのまま完全に動作します。",
+      "supported": "アクセラレーション利用可：{gpu}（ドライバー {driver}）",
+      "unsupported": "利用可能な NVIDIA ドライバーが見つかりません",
+      "download": "CUDA Pack をダウンロード",
+      "uninstall": "CUDA pack をアンインストール",
+      "restart": "インストールしてバックエンドを再起動",
+      "installedHint": "インストール済み。バックエンドの再起動後に有効になります。"
+    },
+    "i18n": {
+      "title": "国際化",
+      "hint": "UI の言語を選びます。すぐに反映され、選択は記憶されます（セッションの内容には影響しません）。"
+    }
   },
   "rightSidebar": {
     "fileViewer": "プロジェクトファイル",
@@ -565,7 +664,10 @@
     },
     "scopeEmpty": "このグループにタブはありません",
     "recentClosed": "最近閉じたタブ",
-    "recentClosedEmpty": "最近閉じたタブはありません"
+    "recentClosedEmpty": "最近閉じたタブはありません",
+    "i18n": "国際化",
+    "tokenBudget": "トークン予算",
+    "whiteboard": "ホワイトボード"
   },
   "progressFloat": {
     "status": {
@@ -670,10 +772,43 @@
   },
   "searchFallback": {
     "notice": "Tavily を利用できません（{reason}）。{name} に切り替えました",
+    "cooldown": "SearXNG が連続で失敗したため、約{seconds}秒後に自動復帰するまで一時停止します",
+    "recovered": "SearXNG のクールダウンが終わり、再び有効になりました",
     "reason": {
       "tavily_auth_failed": "キーが無効か期限切れ",
       "tavily_timeout": "リクエストがタイムアウト",
       "tavily_error": "リクエストが失敗"
     }
+  },
+  "loadGate": {
+    "warning": "ホスト負荷が高すぎます（CPU {cpu}% / メモリ {ram}%）。サブエージェントの派遣を一時停止し、負荷が下がると自動で再開します。"
+  },
+  "backgroundTasks": {
+    "title": "バックグラウンド コマンド",
+    "runningOnly": "実行中 {count}",
+    "statusRunning": "実行中",
+    "statusStopping": "停止中…",
+    "kill": "このコマンドを停止（会話は継続）",
+    "killRefused": "すでに終了しています"
+  },
+  "session": {
+    "fork": "ここから分岐",
+    "forkedFrom": "{parent} から分岐",
+    "backToParent": "親ブランチに戻る"
+  },
+  "whiteboard": {
+    "namePlaceholder": "ボード名",
+    "pen": "ペン",
+    "eraser": "消しゴム",
+    "width": "線幅",
+    "undo": "元に戻す",
+    "redo": "やり直す",
+    "clear": "クリア",
+    "addToChat": "会話に追加",
+    "empty": "ここに自由に描き、「会話に追加」でアシスタントへ送れます",
+    "unsupported": "このブラウザは Canvas に対応していないため、ホワイトボードは使えません",
+    "exportFailed": "画像の書き出しに失敗しました",
+    "addedToChat": "会話の送信待ち画像に追加しました",
+    "maxStrokes": "ストロークが多すぎます。先にクリアか元に戻してください"
   }
 }

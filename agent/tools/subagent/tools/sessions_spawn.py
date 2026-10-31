@@ -53,7 +53,9 @@ class SessionsSpawnSchema(BaseModel):
         "general=full access, researcher=read-only search, "
         "executor=write+run, reviewer=read-only audit, "
         "librarian=read-only external codebase retrieval. "
-        "Omit to inherit the default role.",
+        "A specialized caller may only spawn its own role, except an executor "
+        "may also spawn researcher and librarian children for read-only "
+        "research before writing. Omit to inherit the default role.",
     )
     extra_tools: list[str] | None = Field(
         default=None,

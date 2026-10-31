@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent.tools.pub_base.path_utils import (
+    _rewrite_leading_slash_path,
     resolve_project_path,
     resolve_workspace_path,
     resolve_external_path,
@@ -955,3 +956,20 @@ class TestHelpers:
         from runtime import state_register_mem
 
         assert state_register_mem.get_state("s1", "external_path_allowlist") == [str(target)]
+
+
+def test_leading_slash_repo_paths_are_rewritten_inside_the_project(tmp_path):
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "mod.py").write_text("x", encoding="utf-8")
+
+    assert _rewrite_leading_slash_path("/pkg/mod.py", root) == str(root / "pkg" / "mod.py")
+    assert _rewrite_leading_slash_path("/pkg/new.py", root) == str(root / "pkg" / "new.py")
+
+
+def test_real_absolute_and_unrelated_paths_are_not_rewritten(tmp_path):
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    assert _rewrite_leading_slash_path("/etc/passwd", root) == "/etc/passwd"
+    assert _rewrite_leading_slash_path("/nope/mod.py", root) == "/nope/mod.py"
+    assert _rewrite_leading_slash_path("pkg/mod.py", root) == "pkg/mod.py"

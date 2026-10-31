@@ -75,6 +75,20 @@ class StreamDriver:
         raw = self.turn_info.get("message_ids") or []
         return [str(mid) for mid in raw if mid is not None]
 
+    def _resumable(self) -> bool:
+        """Whether an interrupted answer of this session can be continued.
+
+        Lazy import on purpose: this module stays stdlib+loguru so
+        ``turn_runner`` can import it eagerly (see the module docstring), and the
+        call itself is one register read on a terminal frame.
+        """
+        try:
+            from .resumable_breakpoint import has_breakpoint
+
+            return has_breakpoint(self.session_id)
+        except Exception:  # noqa: BLE001 - an additive flag must never fail a frame
+            return False
+
     async def _send_turn_started(self) -> None:
         await self.send_frame(
             {
@@ -166,6 +180,9 @@ class StreamDriver:
                             "reasoning_tokens", self.done_reasoning_tokens
                         ),
                         "finish_reason": meta.get("finish_reason", self.done_finish_reason),
+                        # Additive: a heartbeat timeout ends the turn normally, so
+                        # the client learns about a continue-able answer here.
+                        "resumable": self._resumable(),
                         "message_ids": self._message_ids(),
                     }
                 )
@@ -179,6 +196,7 @@ class StreamDriver:
                     "session_id": self.session_id,
                     "turn_id": self.turn_id,
                     "content": "Request cancelled",
+                    "resumable": self._resumable(),
                     "message_ids": self._message_ids(),
                 }
             )

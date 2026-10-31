@@ -39,6 +39,7 @@ def register_run(
     cleanup: str = "delete",
     agent_id: str = "main",
     thinking: str | None = None,
+    max_output_tokens: int | None = None,
     depth: int = 1,
     label: str | None = None,
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
@@ -75,6 +76,7 @@ def register_run(
         cleanup=cleanup,
         agent_id=agent_id,
         thinking=thinking,
+        max_output_tokens=max_output_tokens,
         depth=depth,
         role=role,
         control_scope=control_scope,
@@ -194,7 +196,10 @@ def complete_run(
         logger.debug("complete_run: run {} already terminal, skipping", run_id)
         return run
 
+    from ..output_caps import resolve_subagent_output_caps
     from .helpers import cap_frozen_result_text
+
+    caps = resolve_subagent_output_caps(run.max_output_tokens)
 
     runtime_ms = _compute_accumulated_runtime_ms(run)
     ended_reason = outcome_to_ended_reason(outcome.status).value
@@ -212,7 +217,7 @@ def complete_run(
             ),
             "completion": run.completion.model_copy(
                 update={
-                    "result_text": cap_frozen_result_text(result_text),
+                    "result_text": cap_frozen_result_text(result_text, caps.stored_bytes),
                     "captured_at": time.monotonic(),
                 }
             ),

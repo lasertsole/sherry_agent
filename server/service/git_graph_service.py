@@ -174,30 +174,6 @@ def _header(root: Path) -> tuple[bool, str, str, bool, int, bool]:
     return True, "", "checkpoint", False, dirty, capped
 
 
-def _local_branches(root: Path) -> list[str]:
-    """Local branch names, most recently committed first (the switcher's list).
-
-    ``--sort=-committerdate`` puts the branches the user is likely to want at the
-    top (the panel marks the current one), and the list is clipped so a
-    repository with thousands of branches cannot bloat the page.
-    """
-    refs = _run(
-        root,
-        [
-            "for-each-ref",
-            "--sort=-committerdate",
-            f"--count={GIT_GRAPH['max_branches']}",
-            "--format=%(refname:short)",
-            "refs/heads",
-        ],
-    )
-    if refs is None or refs.returncode != 0:
-        return []
-    return [_text(line) for line in refs.stdout.splitlines() if line.strip()][
-        : GIT_GRAPH["max_branches"]
-    ]
-
-
 def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> GraphPage:
     """One page of the session project's history (newest first).
 
@@ -247,14 +223,6 @@ def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> Grap
         has_more=has_more,
         branches=[],
     )
-
-
-def _stderr_tail(completed: subprocess.CompletedProcess[str] | None) -> str:
-    """A bounded, single-line git error message for the client."""
-    if completed is None:
-        return "git did not answer in time"
-    text = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")
-    return text[: GIT_GRAPH["max_text_chars"]] or "git refused the operation"
 
 
 def _require_repository(root: Path) -> None:

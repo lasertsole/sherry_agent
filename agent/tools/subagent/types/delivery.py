@@ -16,3 +16,5 @@ class DeliveryContext(BaseModel):
     run_id: str
     depth: int = 1
     is_requester_subagent: bool = False
+    #: Frozen serving-model output budget (None = legacy result caps).
+    max_output_tokens: int | None = None

@@ -70,9 +70,9 @@
 
 바인딩된 프로젝트는 더 이상 저장소로 초기화되지 않습니다. sherry는 사용자의 `.git`에서 `git init` / `add` / `commit` / `reset` / `checkout` / worktree를 실행하지 않습니다. 각 턴의 첫 쓰기에서 `shadow_git.ensure_checkpoint()`(write_file, patch_file, terminal, python_repl)가 `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`을 분리해 `.sherry/shadow-git/`에 스냅샷합니다. 실패해도 쓰기는 계속됩니다(fail-open).
 
-store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 비밀, 대용량 디렉터리, shadow store 자체를 `git add -A` 전에 기록하고 최근 `SHADOW_GIT["max_snapshots"]`(20)개만 유지합니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. `checkpoint` 도구가 list / show / restore를 제공하고 git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
+store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 비밀, 대용량 디렉터리, shadow store 자체를 `git add -A` 전에 기록하고 최근 `SHADOW_GIT["max_snapshots"]`(100)개만 유지합니다——store는 프로젝트 루트 단위로 모든 세션(서브에이전트 포함)이 공유하므로, 한도가 작으면 동시 팬아웃에서 최근 1~2단계로 줄어들었습니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. `checkpoint` 도구가 list / show / restore를 제공하고 git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
 
-읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다.
+읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다. `SHADOW_GIT["store_dir"]`(또는 `SHERRY_SHADOW_GIT_DIR`)로 store를 프로젝트 밖으로 옮길 수 있습니다. eval harness는 run 단위 디렉터리를 사용하므로 인스턴스 checkout에 `.sherry`가 생기지 않습니다. `wait_for_idle()`과 `freeze()`가 teardown 배리어로, 진행 중인 스냅샷을 기다린 뒤 늦은 쓰기를 막고 revert합니다.
 
 ## 📖 읽기 우선 라이선스
 
@@ -116,7 +116,32 @@ store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 �
 - 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다);
 - 병합되는 모든 코드 파일(Python / TS / TSX / JS / JSX / Rust / Go)은 쓰기 전에 **심볼 단위**로 비교됩니다——이름 변경(같은 kind, 같은 소속 클래스, 이름 거리 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`), 삭제, 추가가 완료 회신의 **Interface changes** 절에 실립니다. 다른 서브에이전트의 파일이 아직 **옛 이름**을 호출하고 있을 수 있기 때문입니다. 이 비교는 fail-open이며(거대하거나 해석할 수 없는 파일은 그 절에 기록될 뿐, 결코 치명적이지 않습니다), 상한도 있습니다(파일 10개, 종류별 20건).
 
+
+### 심볼 면(그리고 이를 우회하는 shell)
+
+텍스트 CAS는 바이트를 보호할 뿐 호출자를 보호하지 않습니다: `foo(a, b)` → `foo(a, b, *, timeout)`는 충돌 없이 병합되면서 모든 import를 깨뜨립니다. 네 가지 추가가 그 틈을 메웁니다——모두 쓰기를 막지 않고, 모두 페일오픈입니다:
+
+- **호출 형태 변화를 보고.** 심볼의 `(kind, name, parent)`는 그대로인데 인자/반환 형태가 바뀌면 `changed: foo(a, b) → foo(a, b, *, timeout=1)`로 절에 실립니다(현재 Python: 정규화된 인자 텍스트 + 반환 주석 유무. 공백은 접히므로 순수 재포맷은 변경이 아닙니다). 모듈 수준 대입도 `variable` 심볼로 면에 들어갑니다——모듈 상수 개명은 함수 개명과 똑같이 importer를 깨뜨립니다. 이 면은 **인터페이스 비교 전용** opt-in이며, 코드 인덱스(callers/explore)는 여전히 함수·메서드·클래스만 나열합니다.
+- **보고서가 호출자를 지목.** 코드 인덱스의 `import_edges`가 "누가 이 이름을 import하는가"를 **읽기 전용**·상한 있는 역조회(`agent/tools/code_intel/indexer.py::importers_of_names`)로 답합니다. 인덱스가 없으면 빈 결과——병합이 인덱스 구축을 유발하지 않습니다. 영향 파일은 `affected importers`에 나열되고 동시에 증거 원장에서 stale이 되므로, 변경된 모듈을 한 번도 건드리지 않은 "순수 import 사용자"의 초록 증거가 남지 않습니다.
+- **선택적 병합 시점 판정.** `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]`(기본 **꺼짐**)는 영향 importer를 커버하는 부모 세션의 passed 명령을 한 번 재실행하고(`merge_reverify_max_commands` = 5 상한) broken/unmark를 덧붙입니다——"이 개명이 호출자를 깨뜨렸는가"를 여러 턴 뒤의 finish 게이트가 아니라 병합 시점에 답합니다. 안전 사양은 finish 게이트와 동일(허용 목록, 셸 없음, 1회). 루프 방지는 구조적으로 성립합니다: 재실행은 원장 행을 읽고 이벤트만 덧붙이며, 덧붙인 이벤트가 재실행이나 병합을 유발하지 않습니다.
+- **shell 쓰기도 기록.** `terminal` / `python_repl`은 파일 도구가 보지 못하는 경로로 쓰고(라이선스·CAS 없음) 이전에는 원장 행을 전혀 남기지 않아 그 세션의 `modified_files`가 비어 있었습니다. 명령 전 상태는 이미 shadow store에 있으므로 `git diff --name-only`가 변경점을 지목하고(내용 비교이므로 `touch -d`로 속일 수 없습니다), 각 경로는 `write_file`과 같은 `mark_evidence_stale` 경로를 탑니다. REPL의 제한 builtins는 `open`을 막지만 클래스 내성으로 `os`에 닿을 수 있습니다——비교는 결과를 보므로 둘 다 잡습니다.
+
+**재실행 게이트는 파일을 다시 쓰는 formatter를 실행하지 않습니다.** `black`, `prettier`, `ruff format`은 허용 목록에 있고, 기록된 `black foo.py`(`--check` 없음)는 finish 재실행에서 라이선스/CAS 스택 전체를 우회해 파일을 다시 썼습니다. 이제 formatter는 보고 전용 형태(`--check` / `--diff`, 또는 `ruff check`)에서만 검증 명령으로 인정되며, 맨 호출은 **건너뜁니다**(실패시키지 않음) — 사용할 수 없는 기록이 flow를 붙잡지 않습니다.
+
 깨끗한 병합은 worktree를 등록 해제하고 그 브랜치를 지우고 워크스페이스를 제거합니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 인터페이스 변경, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
+
+## 🤝 에이전트 간 협업(클레임 + 발견 보드)
+
+위의 계층은 **기계적**입니다: 바이트 수준 손실을 막지만 누구의 의도도 알지 못합니다. 두 개의 advisory·opt-in 면이 그 의도를 보완합니다——둘 다 기본 **꺼짐**(`COORDINATION`, 환경 변수 `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`), 읽기 중심이며 **쓰기를 거부하지 않습니다**:
+
+- **경로 클레임**(`claim_scope`)——"곧 이 경로들을 쓴다". 같은 경로를 쓰는 동료는 도구 결과에 **한 줄** 안내(`claim_notice`)를 받고 쓰기는 그대로 성공합니다. 안내는 (session, path) 기준 10분 창에서 한 번만(에이전트 계층은 turn id를 볼 수 없습니다——서버의 turn scope에 있습니다——그래도 창이 동일한 소음 억제를 새 결합 없이 제공합니다). 클레임은 `COORDINATION["claim_ttl_seconds"]`(1800초) 후 만료되고, `release=true`로 작업 종료 시 해제하며, 만료 행은 다음 클레임 쓰기에서 청소됩니다.
+- **동료 발견**(`share_finding` / `peers_findings`)——형제 에이전트가 `FAIL`(시도했지만 안 됨), `FACT`(확인됨), `PATCH`(이 파일의 인터페이스가 바뀜)를 공유합니다. 읽기 쪽은 일반 쿼리입니다(공백으로 나눈 모든 단어가 텍스트나 파일 경로에 일치, 선택적 kind 필터, 상한). 보드가 켜져 있으면 병합도 `PATCH`를 자동 게시하므로 "누가 무엇을 바꿨고 인터페이스가 움직였는가"를 부모에게 묻지 않고 알 수 있습니다.
+
+저장은 **프로젝트당 하나**의 SQLite 파일 `<project>/.sherry/coordination.db`(`claims` + `findings`, `busy_timeout` 30초, WAL, 현재 스키마만). 지연 생성되며 **읽기로는 생성하지 않습니다**: `.sherry/`가 없는 프로젝트는 빈 결과를 돌려주므로 조회가 사용자 트리를 오염시키지 않습니다. **보드 내용은 system prompt에 절대 들어가지 않습니다**——쓰기마다 바뀌므로 넣으면 프로바이더 프리픽스 캐시가 깨집니다. 도구 호출로만 드나듭니다.
+
+두 스위치가 꺼져 있으면 `build_main_tools()`는 이 기능이 없는 빌드와 **바이트 단위로 동일**하고 `GET /agent/catalog`에도 coordination 그룹이 없습니다: 기본 도구 면, 그 토큰 비용, 모든 프리셋 payload가 변하지 않습니다.
+
+전용 역할도 이 보드를 쓸 수 있습니다. 네 기능 역할 정의가 모두 도구를 목록에 명시합니다. 그 목록은 허용 목록이므로, 적혀 있지 않은 도구는 메인 에이전트 설정과 무관하게 자식에게 보이지 않기 때문입니다. 유일한 작성자인 executor가 세 도구를 모두 명시하고(경로를 클레임할 수 있는 유일한 역할입니다), researcher·reviewer·librarian은 공유/읽기 쌍만 명시하므로 읽기 전용 역할이 쓰기 의도를 표현하지 않습니다. 보드가 켜져 있을 때만 자식의 도구 면에 나타나며, 두 스위치가 꺼져 있으면 자식이 보는 것은 이전과 정확히 같습니다.
 
 ## ⚖️ 대안과 실측
 

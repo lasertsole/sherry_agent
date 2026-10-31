@@ -4,7 +4,8 @@ The store is a module-level function API around module constants, so tests
 isolate via monkeypatched ``_DB_DIR``/``_DB_PATH`` + reset once-per-process init
 state (see conftest.py); the real data directory is never touched.
 
-Coverage: replace_all/get_todos round-trip ordered by position, session
+Coverage: replace_all/get_todos round-trip ordered by position, monotonic
+todo_ids, append/insert-after, todo_id lookups/patches/removals, session
 isolation, sync==async parity, empty-list clearing, field fidelity, flow
 filtering, concurrent two-session writes (busy_timeout/WAL), default
 degradation, replace (not append) semantics, and the no-event-loop sync path.
@@ -180,6 +181,94 @@ async def test_replace_all_replaces_previous_not_appends(isolated_db: Path):
 
 
 @pytest.mark.asyncio
+async def test_replace_all_assigns_monotonic_todo_ids(isolated_db: Path):
+    await store_sqlite.replace_all(
+        "sess-1", [_todo("first", position=0), _todo("second", position=1)]
+    )
+    first = await store_sqlite.get_todos("sess-1")
+    assert [t["todo_id"] for t in first] == [1, 2]
+
+    await store_sqlite.replace_all("sess-1", [_todo("rewritten", position=0)])
+
+    second = await store_sqlite.get_todos("sess-1")
+    assert [t["todo_id"] for t in second] == [3]
+
+
+@pytest.mark.asyncio
+async def test_append_todo_assigns_todo_id_and_tail_position(isolated_db: Path):
+    await store_sqlite.append_todo("sess-1", _todo("first"))
+    await store_sqlite.append_todo("sess-1", _todo("second"))
+
+    rows = await store_sqlite.get_todos("sess-1")
+
+    assert [(t["content"], t["position"], t["todo_id"]) for t in rows] == [
+        ("first", 0, 1),
+        ("second", 1, 2),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_add_todo_appends_or_inserts_after_a_stable_id(isolated_db: Path):
+    await store_sqlite.replace_all(
+        "sess-1",
+        [_todo("a", position=0), _todo("b", position=1), _todo("c", position=2)],
+    )
+
+    inserted = await store_sqlite.add_todo("sess-1", _todo("x"), after_todo_id=1)
+    appended = await store_sqlite.add_todo("sess-1", _todo("z"))
+
+    assert inserted is not None
+    assert inserted["todo_id"] == 4
+    assert inserted["position"] == 1
+    assert appended is not None and appended["todo_id"] == 5 and appended["position"] == 4
+
+    rows = await store_sqlite.get_todos("sess-1")
+    assert [(t["content"], t["position"], t["todo_id"]) for t in rows] == [
+        ("a", 0, 1),
+        ("x", 1, 4),
+        ("b", 2, 2),
+        ("c", 3, 3),
+        ("z", 4, 5),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_add_todo_returns_none_for_an_unknown_anchor(isolated_db: Path):
+    await store_sqlite.replace_all("sess-1", [_todo("a", position=0)])
+
+    assert await store_sqlite.add_todo("sess-1", _todo("x"), after_todo_id=99) is None
+    assert [t["content"] for t in await store_sqlite.get_todos("sess-1")] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_get_patch_remove_and_flow_binding_by_todo_id(isolated_db: Path):
+    await store_sqlite.replace_all(
+        "sess-1", [_todo("a", position=0, flow_id="flow-1", step_id="step-1")]
+    )
+
+    fetched = await store_sqlite.get_todo_by_id("sess-1", 1)
+    assert fetched is not None and fetched["content"] == "a"
+
+    patched = await store_sqlite.patch_todo_by_id(
+        "sess-1", 1, content="a2", status="in_progress", priority="high", category="deep"
+    )
+    assert patched is not None
+    assert patched["content"] == "a2"
+    assert patched["status"] == "in_progress"
+    assert patched["priority"] == "high"
+    assert patched["category"] == "deep"
+    assert patched["flow_id"] == "flow-1" and patched["step_id"] == "step-1"
+
+    rebound = await store_sqlite.set_todo_flow_id_by_id("sess-1", 1, "flow-2")
+    assert rebound is not None and rebound["flow_id"] == "flow-2"
+
+    removed = await store_sqlite.remove_todo_by_id("sess-1", 1)
+    assert removed is not None and removed["content"] == "a2"
+    assert await store_sqlite.get_todo_by_id("sess-1", 1) is None
+    assert await store_sqlite.get_todos("sess-1") == []
+
+
+@pytest.mark.asyncio
 async def test_missing_content_rejected(isolated_db: Path):
     with pytest.raises(ValueError):
         await store_sqlite.replace_all("sess-1", [{"position": 0}])
@@ -261,4 +350,5 @@ def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
         "step_id": "TEXT",
         "plan_ref": "TEXT",
         "created_at": "TIMESTAMP",
+        "todo_id": "INTEGER",
     }

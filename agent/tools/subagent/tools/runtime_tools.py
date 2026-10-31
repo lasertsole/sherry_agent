@@ -60,7 +60,8 @@ async def sessions_spawn_runtime_tool(
             "access), researcher (read-only search), executor (write + run), "
             "reviewer (read-only audit), librarian (read-only external-codebase "
             "retrieval). Omit for the default. A specialized caller may only "
-            "spawn its own role."
+            "spawn its own role, except an executor may also spawn researcher "
+            "and librarian children for read-only research before writing."
         ),
     ] = None,
     isolation: Annotated[

@@ -32,6 +32,30 @@
 
 读取与 流 generator 在同一事件循环上运行，因此文本和序号在同一个一致切面读取，无需锁。没有注册引擎时，会话没有运行中回合，快照函数返回 `None`。HTTP 历史路径额外附加 `turn_num`（下一个持久化回合号）作为展示元数据。
 
+## 持久化执行：崩溃后什么还活着
+
+Sherry 的持久化模型是**「状态持久 + sweeper 兜底 + 新 turn 重驱动」**，不是 Temporal 式的 activity 重放。崩溃无法重放；能保证的是没有任何**状态**在说谎，恢复才有可信的依据。2026-10 对五个子系统（HITL、checkpointer、TaskFlow、subagent registry、evidence ledger）的审计落地了第一批修复：
+
+| 缺陷 | 修复 |
+| :--- | :--- |
+| subagent registry 的终态判定用字符串字面量（`COMPLETED`、`FAILED`…）比对值为 `pending / running / interrupted / terminal` 的枚举——永不命中，保留上限形同虚设，内存无界增长 | 改为比对 `ExecutionStatus.TERMINAL`；上限现在保留活跃 run、驱逐旧的终态 run |
+| 会话目录清扫用原始 session id 探测 checkpoint，而 checkpointer 存的是 `session_thread_id(session_id)`（INTEGER）——只剩 checkpoint 的会话被当成空目录删掉 | `pub.func` 里唯一的 `session_thread_id()` 映射，清扫点统一调用 |
+| trajectory 文档写「写入时裁剪」，但 `prune_session` 没有调用者；其排序还用了钩子事件恒写 0 的 `MAX(seq)`，保留的是任意一批 turn | 写入时接线，按会话每 60 秒节流一次，按插入顺序（rowid）排序 |
+| 全局 keep-latest checkpoint 裁剪跑在 `built_agent()` 里——即**每一轮**——且连接没有 `busy_timeout`，keep-set 在删除前就已过期（期间别的会话提交的新 checkpoint 会被误删） | 改为启动时一次（`server/service/checkpoint_maintenance.py`），在 `BEGIN IMMEDIATE` 内执行，keep-set 偏向顶层行 |
+| 所有 checkpointer 连接都缺 `busy_timeout`（与 WAL 不同，它是每连接属性） | 统一走一个助手（`agent/checkpointer/pragmas.py`，30 秒） |
+| `delete_thread_history` 无异常保护，数据库被锁时会在消息库已清空之后中断清理——半删除里最糟的那一半 | 每一步都有保护；checkpoint 删除改为**最先**执行，重试总能补完 |
+| 终态 run 的交付状态只靠 30 秒周期 flush 落盘；崩溃落在窗口内会让 SQLite 停在 TERMINAL+PENDING——该状态没有重试路径，已完成的结果永久丢失 | 交付状态迁移（`delivered / failed / suspended / in_progress`）即时落盘（`set_run_durable`） |
+| auto-turn 驱动继承了空实现的 `apply_hitl_pending`，headless turn 中断后图悬挂但会话看似空闲：回合结束的裁剪可能删掉那个 checkpoint，drain 还会把新消息注入悬挂图 | 驱动改为设置标志；`submit_user_input` 也把 checkpoint 里的 interrupt 当作 busy（探测 fail-open），这正是重启后留下的情形 |
+
+第二批把审计剩余项全部落地，其中三项共享同一个洞察：重启失效的不只是数据，还有**时钟**与**仅存在于内存的标志**。
+
+- **启动对账**（`server/service/boot_recovery.py`，对被 checkpoint 覆盖的会话目录做一次有上限的扫描）：图仍挂起的会话重建 HITL pending 标志（该寄存器只在内存，否则服务端报 IDLE，下一条消息会被当作普通回合派发而不是 `Command(resume=...)`）；转录末尾若有带工具调用却无结果的助手回合，用错误占位符加中断标记一次提交修复（确定性 id）；被**已不可能完成**的回合认领的 `CLAIMED` 队列行退回 `QUEUED`，而不是占着槽位等到 24 小时过期。每一步都失败开放且扫描有上限，坏会话只花掉自己那一次探测。
+- **恢复出来的 RUNNING run 不是活的。** 没有任何任务能跨重启存活，因此加载时直接终态化（`pause_reason=process_restart`，outcome TIMEOUT）；继续留着 RUNNING 会让 WAITING flow 扫描以为子代理还活着，让孤儿回收等待一个永远不会到来的失联阈值。它的交付保持 PENDING，由 sweeper 的未交付扫描补发公告——拥有该 step 的 flow 因此能得知结果，而不是一直停在 DISPATCHED。
+- **所有持久化时间戳在加载时重基准**（`_rebase_restored_clock`）。`time.monotonic()` 是进程相对的：上个进程写的值在这里可能读成数小时前、也可能读成未来，于是每个 `now - timestamp` 的过期判定都静默失效。截止时间（`archive_at`）给一个新的窗口而不是重基准到“现在”，否则第一次扫描就会归档。
+- **会中断的工具在 headless 回合直接拒绝。** 审批门早已对无操作者的回合自动拒绝，但自己调用 `interrupt()` 的工具（`question`、`exit_plan_mode`、自我文件审批、通用 `interrupt_on` 策略、沙箱绕过）仍然挂起——一个无人能答的回合就此中断。现在它们拒绝并告诉模型继续（或停止），绝不重试。
+- **trajectory 时间线是真的了。** 钩子事件与帧投影现在共享**同一个**按回合递增的序号（钩子过去传 `seq=0`，于是每个钩子事件都排在该回合第一帧之前），时间戳带毫秒，失败的流在重新抛出前记一条 `error` 事件——一条直接停住的时间线看起来就像“还在运行”。
+
+
 ## 帧序号与水位
 
 `StreamTurn.run()` 产生的每一帧在 yield 之前都盖上按回合单调递增的 `_frame_seq`：
@@ -99,6 +123,52 @@ WS handler `_handle_resume_stream` 及其 `stream_resume` 回复作为旧客户�
 - **重连时重跑回合。** 重复工具副作用和 token 花费，且可能改变答案。
 - **重放全部增量。** 需要按观看者的历史、游标和保留策略；`seq` 水位解决的那个竞态会重新出现。
 - **ZCode 的七事件锚点协议。** 它能恢复更细的推理/工具输入，但需要前端协议和持久的 anchor/tail-discard 管线。Sherry 的快照协议用更少机制达到用户可见的恢复目标；更细的事件类型按设计仍未实现。
+
+## 轨迹面板
+
+账本也有前端消费者：一个 SESSION 作用域的右栏标签
+（`client/app/pages/home/components/TrajectoryPanel.vue`）读取
+`GET /sessions/:session_id/trajectory`，按 turn 渲染时间线。它是调试视图，不属于重连协议：
+打开时只取最新两页（每页 500 条，共 1000 条，触顶显示截断提示），刷新是按钮而不是
+实时订阅。
+
+事件按 `turn_id` 分组，再按 `(ts, seq, event_id)` 重排。原因是 `read()` 按 `seq`
+排序，而所有生命周期事件（turn_start / turn_end / compact / model_retry /
+invalid_tool_call）的 `seq=0`；不重排的话它们会全部排在工具行之前，`turn_end`
+甚至会出现在最前面。工具行显示名称/状态/时长，并可展开参数与结果 JSON；生命周期行显示
+kind 徽标与可展开 payload。头部提供过滤式搜索（n/m 计数）、两个折叠开关（工具行默认
+折叠）、全部展开/折叠、按 turn 过滤和刷新。工具卡片上的历史按钮通过 `ChatBox.vue`
+打开同一个去重标签。
+
+纯函数（`groupTurns`、`summarizeTurns`、`formatDuration`、`previewOf`、
+`eventMatches`）在 `client/app/composables/use-trajectory.ts`；bridge 调用是
+`bridge/session.ts` 的 `fetchTrajectory`。
+
+## 中断后续写
+
+一轮回答可能在两种情况下被截断：用户点了停止，或心跳空闲超时。两者都会把
+`[interrupted] {partial}` 标记写入 checkpoint，并在 MesMemory 里写一行
+`[interrupted:<reason>]`。在此之上，被中断的 turn 还可能是**可续写**的。
+
+取消路径会记录 `StateKey.RESUMABLE_BREAKPOINT`（mem + DB 双写，重启后仍在），
+内容是标记 id、已生成的文本、以及推导标记 id 时的人类消息计数。只有**纯文本**
+中断才记录：标记是本次新写入的、没有愈合的 tool call（悬空 tool call 需要先
+决定重跑还是跳过），且确实有内容可续（可见文本或推理）。`stopped` 与 `done`
+帧都带一个追加字段 `resumable`；`done` 也带它，因为心跳超时是以正常结束的方式
+终止 turn 的。
+
+前端的「继续生成」按钮发送 `continue_generation`。服务端先用实时 transcript 校验
+断点（标记仍在末尾、计数未变），不满足则回 `stale`/`busy`；校验通过后**消耗**
+断点（一次中断只能续一次），把标记改写成干净的部分文本，然后复用既有的
+max_tokens 续写路径：模型看到自己未完成的回答加一条续写提示，继续写完。续写是
+新的一轮；提示消息带 `provenance: continuation`，消息持久化会过滤它，不会渲染成
+用户气泡。任何新的 turn（用户消息、HITL 恢复、自动 turn）都会清除断点，而续写
+自身被中断时会写入新的断点。
+
+同一套 turn 边界机制也支撑**编辑已发送的用户消息**：被编辑的轮次及其之后的内容
+会从实时 checkpoint 中删除（`RemoveMessage`，因为只保留最新一个 checkpoint），
+并从 MesMemory 硬删，然后用新的一轮重跑编辑后的文本，复用原来的 turn 编号。
+客户端同时清掉 Dexie 缓存里的对应行，否则下一次历史合并会把它们复活。
 
 ## 代码地图
 

@@ -15,6 +15,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
+from collections.abc import Iterable
 from pathlib import Path
 
 from loguru import logger
@@ -661,3 +662,41 @@ def _snippet(lines: list[str], symbol: SymbolDef, snippet_lines: int) -> str | N
     if start >= stop:
         return None
     return "\n".join(lines[start:stop])
+
+
+def importers_of_names(db_path: str | Path, names: Iterable[str], *, cap: int = 50) -> list[str]:
+    """Files that import any of *names* — READ-ONLY, capped, fail-open.
+
+    The merge report needs this ("who still calls the symbol I just renamed?"),
+    and the code-index query layer is the wrong tool for it: ``importers_of``
+    BUILDS the index when it is missing, and a merge must not trigger an AST
+    scan. A missing/unreadable index simply answers ``[]`` — the report then
+    names the change without the callers, which is exactly today's behaviour.
+
+    Only the reverse direction is needed, so this hits the ``imported_name``
+    index directly and returns DISTINCT importer paths (project-relative, as
+    stored).
+    """
+    wanted = sorted({str(name).strip() for name in names if str(name).strip()})
+    if not wanted:
+        return []
+    path = Path(db_path)
+    if not path.is_file():
+        return []
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            placeholders = ",".join("?" for _ in wanted)
+            rows = conn.execute(
+                "SELECT DISTINCT file_path FROM import_edges "
+                f"WHERE imported_name IN ({placeholders}) "
+                "ORDER BY file_path LIMIT ?",
+                (*wanted, int(cap)),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - a report line must never fail the merge
+        return []
+    return [str(row[0]) for row in rows if row and row[0]]

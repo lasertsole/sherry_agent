@@ -57,6 +57,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 - 同时只有一个 in_progress
 - 不得在 subagent 返回前标记 completed（转换屏障）
 - 不得在未验证前标记 completed（Sisyphus）
+- 优先用 patch/add/remove 局部 action；replace 会重发所有 todo_id。
 
 ### E3: 续作强制器 — 事后闭环核心 ★★
 
@@ -101,6 +102,8 @@ turn ends (no tool_call, agent loop exits)
 ```
 
 **续作预算**：`mark_injected`——每条指令在 trigger 接受后必经的唯一节点——同时给该 turn 计数，因此这个计数器就是真正投递成功的连续续作 turn 数（被 trigger 拒绝的指令不计入，下一轮 turn 结束时重试；恢复指令同样计入）。到 15 时，强制器发出最后一条 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令、给会话上锁，并保持静默，直到出现一个不是本强制器注入的 turn——真实用户消息，或子代理完成通知（那是新事件，不是续作）——才重置计数器与锁。这条上限覆盖停滞检测看不见的形态：模型每轮都微改计划（改一个状态、加一个 step）让快照一直在动，streak 永远不触发。
+
+**最终校验提醒**：计划完成时（没有未完成 todo、也没有活跃 flow），门在把计划当作完成之前，花一个自动 turn 注入自查提示：重读 diff、真正跑测试/类型检查/lint、启动用户可见的改动。它是**提示而不是门**——不查证据、不阻塞。节流以已完成计划的指纹为键，agent 扩展计划后会得到新的提醒；投递被拒会重试。走 TaskFlow 的会话跳过它（由 flow 的 finish 门负责校验）。
 
 **文件**：`stagnation_tracker.py`（~190 行）+ `todo_continuation/core.py`（~545 行）+ `agent/core.py`（~2 行注册）。
 

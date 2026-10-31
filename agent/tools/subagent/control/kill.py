@@ -36,6 +36,11 @@ async def kill_subagent_run(
         logger.warning("kill_subagent_run: run {} not found", run_id)
         return None
 
+    # Captured before the terminal transition: an INTERRUPTED run (paused on a
+    # HITL prompt, or restored from disk after a restart) has no live child
+    # agent whose ``finally`` would release its per-session state.
+    was_interrupted = run.execution.status == ExecutionStatus.INTERRUPTED
+
     target_state = resolve_kill_target_state(run)
     if target_state == "terminal":
         logger.debug("kill_subagent_run: run {} already terminal", run_id)
@@ -76,6 +81,11 @@ async def kill_subagent_run(
         update={"aborted_last_run": True}
     )  # Flag for orphan recovery detection
     set_run(updated)
+
+    if was_interrupted:
+        from ..spawn.core import release_child_session_state
+
+        release_child_session_state(updated)
 
     logger.info("Killed subagent run {}: reason={}", run_id, reason)
     return updated

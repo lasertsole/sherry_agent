@@ -60,6 +60,7 @@ from agent.tools.pub_base import (
     resolve_tool_session_id,
 )
 from agent.tools.pub_base.shadow_git import ensure_checkpoint
+from pub.func.transcript_repair import EMPTY_TOOL_RESULT
 
 
 from agent.tools.pub_base.env_scrub import scrub_env
@@ -85,6 +86,32 @@ from agent.tools.pub_base.evidence_recorder import record_verification_evidence
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 #: Ceiling for a per-call ``timeout`` (see ``_resolve_timeout``).
 TERMINAL_MAX_TIMEOUT = TOOLS_TIMEOUTS["terminal_max_timeout_seconds"]
+
+
+def _record_shell_writes(session_id: str) -> None:
+    """Account for files a shell command changed (the shell blind spot).
+
+    ``terminal``/``python_repl`` write through routes the file tools never see:
+    no write license, no revision CAS and — before this — no ledger row, so the
+    session's evidence rows carried an EMPTY ``modified_files`` and a peer's
+    "passing" row stayed green after the shell broke it. The pre-command state
+    is already in the shadow store (``ensure_checkpoint``), so one diff names
+    every path the command touched, content-compared (a ``touch -d`` cannot
+    fake it). Fail-open throughout: accounting never fails the command.
+    """
+    session = (session_id or "").strip()
+    if not session:
+        return
+    try:
+        from agent.tools.pub_base.evidence_recorder import mark_evidence_stale
+        from agent.tools.pub_base.path_utils import session_workspace_root
+        from agent.tools.pub_base.shadow_git import diff_changed_paths
+
+        root = session_workspace_root(session)
+        for relative in diff_changed_paths(root):
+            mark_evidence_stale(str(root / relative), session)
+    except Exception as exc:  # noqa: BLE001 - never fail the command over bookkeeping
+        logger.debug("shell write accounting skipped: {}", exc)
 
 
 def _process_group_kwargs() -> dict[str, Any]:
@@ -204,8 +231,10 @@ class SafeShellInput(BaseModel):
         description=(
             "Run the command in the background and return immediately with a task id "
             "(the process keeps running; its output is captured to a file). Use "
-            "terminal_bg(action='list') to see this session's tasks and "
-            "terminal_bg(action='output', task_id=...) to read one's output. "
+            "terminal_bg(action='list') to see this session's tasks, "
+            "terminal_bg(action='output', task_id=...) to read one's output, and "
+            "terminal_bg(action='kill', task_id=...) to stop ONE task's process tree "
+            "(the current turn and the session's other tasks keep running). "
             "You are notified when it exits. Good for servers, "
             "watchers, and anything longer than the timeout."
         ),
@@ -317,9 +346,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         ``sandbox=False``); the ledger row then says so, which is the only
         durable trace an unsandboxed command leaves.
         """
-        record_verification_evidence(
-            command, result, _extract_session_id(run_manager), sandboxed=sandboxed
-        )
+        session = _extract_session_id(run_manager)
+        record_verification_evidence(command, result, session, sandboxed=sandboxed)
+        _record_shell_writes(session)
         return result
 
     def _session_writable_roots(self, session_id: str | None) -> list[Path]:
@@ -446,6 +475,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 read_or_evict_output(tmp_path, session_id, encoding, evict_prefix="terminal-")
             )
             tmp_path = None  # read or evicted: nothing left to clean
+            if not output:
+                output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
@@ -674,6 +705,9 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         task.live = True
         background_registry.register(task)
         background_registry.start_watcher(task_id, proc, session_id)
+        # The panel's "a task exists" edge: an open right-sidebar panel adds the
+        # row immediately instead of waiting for the exit. Fail-open inside.
+        await background_registry.push_started(task)
         logger.info(
             "terminal: background task {} started (pid {}, session {}): {}",
             task_id,
@@ -790,6 +824,8 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 )
             )
             tmp_path = None  # read or evicted: nothing left to clean
+            if not output:
+                output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
                 return self._record_verification(
                     cmd_str,

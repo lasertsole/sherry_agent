@@ -624,10 +624,15 @@ class TestTodolistFullPipeline:
         assert len(spy_auto_turn) == 1
         assert "still open" in spy_auto_turn[0][1].content
 
-        # Close the flow -> the plan is complete and the gate goes quiet.
+        # Close the flow -> the completed plan earns ONE final-verification
+        # reminder; the next turn end (same plan) goes quiet.
         spy_auto_turn.clear()
         finished = await flow_tools["taskflow_finish"].coroutine(flow_id=flow_id, session_id=sid)
         assert finished.startswith("TaskFlow finished"), finished
+        await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
+        assert len(spy_auto_turn) == 1
+        assert "FINAL VERIFICATION CHECK" in spy_auto_turn[0][1].content
+        spy_auto_turn.clear()
         await PlanContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 

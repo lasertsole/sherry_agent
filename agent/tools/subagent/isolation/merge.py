@@ -58,9 +58,17 @@ class MergeReport:
     deleted: list[str] = field(default_factory=list)
     conflicts: list[tuple[str, str]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-    #: Symbol-level changes per merged file (renamed / added / removed
-    #: functions, methods, classes) — see ``agent/tools/code_intel/symbol_diff.py``.
+    #: Symbol-level changes per merged file (renamed / added / removed /
+    #: re-shaped functions, methods, classes) — see
+    #: ``agent/tools/code_intel/symbol_diff.py``.
     interface_changes: list[InterfaceDelta] = field(default_factory=list)
+    #: Files that IMPORT a changed symbol (reverse index). The writer fills this
+    #: after the merge: naming the callers is what makes the announcement
+    #: actionable, and their evidence is marked stale with the merged paths.
+    affected_importers: list[str] = field(default_factory=list)
+    #: Merge-time re-verification outcomes ("failed: pytest -q …") when that
+    #: opt-in pass ran; empty otherwise.
+    merge_reverify: list[str] = field(default_factory=list)
 
     @property
     def is_clean(self) -> bool:

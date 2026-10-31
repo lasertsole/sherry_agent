@@ -152,7 +152,6 @@ SHERRY_SECRET_NAMES = frozenset(
         "MAIN_LLM_API_KEY",
         "TAVILY_API_KEY",
         "LANGSMITH_API_KEY",
-        "REASONER_LLM_API_KEY",
         "AUXILIARY_LLM_API_KEY",
         "ITTT_API_KEY",
         "VTTT_API_KEY",

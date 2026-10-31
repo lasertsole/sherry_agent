@@ -153,7 +153,7 @@ middleware = [
             ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
         ],
     ),
-    IterationBudget(60),
+    IterationBudget(executor ? 90 : 60),
     ToolGuardrails(),
     ToolResourceLockMiddleware(),
     OutputRepetitionGuard(),
@@ -296,7 +296,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/iteration_budget/core.py` · **클래스:** `IterationBudget(AgentMiddleware)`
 **후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
 
-한 턴 안의 **모델 호출 + 도구 호출 합계**에 대한 하드 상한. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트는 `IterationBudget(90)`, 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
+한 턴 안의 **모델 호출 + 도구 호출 합계**에 대한 하드 상한. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트와 executor 서브에이전트는 `IterationBudget(90)`, 그 외 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
 
 - `before_agent`는 `state_register_mem`의 카운터를 리셋: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call`은 모델 호출당 1 소모. 예산이 소진되면 **모델을 호출하지 않고** 종단 `AIMessage`를 반환합니다.
@@ -835,7 +835,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 
 | 노브                                                | 위치                               | 효과                                                                                                                                                                                                        |
 | --------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`와 `ContextLimitGuardWrapper.context_window`로도 전달. 131072 (128K) 이상이어야 합니다: token guard가 시작 및 그래프 구축 시 차단합니다 |
+| `MAIN_LLM_MAX_TOKEN`                                | `.env` → `models/LLMs/main_llm.py` | 메인 에이전트의 요약 트리거 = 이 값의 80%. `main_llm_context_window`와 `ContextLimitGuardWrapper.context_window`로도 전달. 200000 (200K) 이상이어야 합니다: token guard가 시작 및 그래프 구축 시 차단합니다 |
 | `MAIN_LLM_OUTPUT_MAX_TOKEN`                         | `.env` → `models/LLMs/main_llm.py` | 출력 토큰 예산(기본 8192): MaxTokensBoost 부스트 base의 레이어 2, 추론 예산 부풀림이 더해지는 베이스                                                                                                        |
 | `FALLBACK_LLM_{i}_{PROVIDER,NAME,API_KEY,API_BASE}` | `.env` → `build_fallback_chain()`  | `LLMRetryMiddleware`의 모델 폴백 체인 후보(i = 1…, 처음 `NAME`이 빠진 지점에서 중단)                                                                                                                        |
 
@@ -845,7 +845,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 
 | 모듈                      | 노브                                                                                                                                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `iteration_budget.py`     | `main_agent_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                                                           |
+| `iteration_budget.py`     | `main_agent_max_iterations=90`, `executor_max_iterations=90`, `worker_max_iterations=60`, `default_max_iterations=50`                                                                                             |
 | `media_pipeline.py`       | `main_llm_native_multimodal="auto"`(`"true"` / `"false"` / `"auto"`, 그 외 값은 페일세이프 스킬 경로), `main_llm_silent_degradation_detection=True`, `max_media_bytes=20 MiB`, `multimodal_temp_retention_days=7` |
 | `summarization.py`        | `compression_trigger_ratio=0.80` 및 `Summarization`과 `summarization/nudges.py`가 읽는 보존/시도/쿨다운/임계값 상수                                                                                               |
 | `tool_result_eviction.py` | `enabled=True`, `evict_threshold_chars=20 000`, 미리보기 머리/꼬리 5줄, `human_evict_enabled=True`, `human_evict_threshold_chars=200 000`                                                                         |

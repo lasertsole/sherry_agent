@@ -73,7 +73,7 @@ guessing a file's content from its name."""
 
 
 def _build_todo_block(session_id: str) -> str:
-    """Render the session todo list. Returns "" when empty or on any failure."""
+    """Render the session todo list (with each stable #todo_id), or "" on failure."""
     try:
         todos = _read_todos_sync(session_id)
         if not todos:
@@ -93,9 +93,11 @@ def _build_todo_block(session_id: str) -> str:
             if step_id:
                 tag_parts.append(step_id)
             tag = f"({', '.join(tag_parts)})"
+            todo_id = todo.get("todo_id")
+            id_prefix = f"#{todo_id} " if todo_id else ""
             content = todo.get("content", "")
             priority = todo.get("priority") or "medium"
-            lines.append(f"- [{icon}] {tag} {content} ({priority})")
+            lines.append(f"- [{icon}] {id_prefix}{tag} {content} ({priority})")
         # Deterrence notices: the continuation and transition barriers are enforced in code
         # (agent/core.py + service.update_todos); completion verification is recorded via SisyphusVerifier/EvidenceLedger.
         lines.append(

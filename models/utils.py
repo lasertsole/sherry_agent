@@ -1,13 +1,10 @@
 """Shared utilities for the models/ packages (dedup)."""
 
-import re
 import threading
 from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
-
-from config import ENV_PATH
 
 
 class LazyInstance[T]:
@@ -36,37 +33,6 @@ class LazyInstance[T]:
     def __getattr__(self, name: str) -> Any:
         """Forward attribute access (``invoke``, ``default``, ...) to the instance."""
         return getattr(self._resolve(), name)
-
-
-def read_env_file_value(key: str, default: str = "", env_path=None) -> str:
-    """Parse a value from the .env file only, avoiding os.environ.
-
-    Deliberately does NOT read ``os.environ`` or call ``load_dotenv``: callers
-    (embed/reranker model configuration) must observe exactly what the .env
-    file says, without load_dotenv side effects. The first matching
-    non-empty assignment wins; surrounding whitespace and one level of
-    matching quotes are stripped; unreadable/missing files yield ``default``.
-
-    Uses ``[ \\t]*`` (never ``\\s*``) around ``=`` so a match cannot cross a
-    newline — the original duplicated implementations swallowed the NEXT
-    line of the file when a key had an empty value (``EMPTY=`` + next line
-    returned the next line as the value).
-    """
-    path = env_path if env_path is not None else ENV_PATH
-    try:
-        text = path.read_text(encoding="utf-8")
-        for mobj in re.finditer(
-            rf"^[ \t]*(?:export[ \t]+)?{re.escape(key)}[ \t]*=[ \t]*(.*?)[ \t]*$",
-            text,
-            re.MULTILINE,
-        ):
-            raw = mobj.group(1)
-            raw = raw.strip("\"'").strip()
-            if raw:
-                return raw
-    except Exception:  # noqa: S110
-        pass
-    return default
 
 
 def resolve_gguf_path(

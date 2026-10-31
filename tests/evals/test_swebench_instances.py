@@ -9,6 +9,7 @@ from the dataset must fail loudly rather than silently shrink the slice.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +102,29 @@ def test_the_library_version_is_carried_for_shallow_clones():
     assert instance.version == "8.0"
 
 
+def test_revert_drops_the_shadow_snapshot_and_excludes_it_from_git_clean(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    snapshot = repo / ".sherry" / "shadow-git" / "objects"
+    snapshot.mkdir(parents=True)
+    (snapshot / "object").write_text("x", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, *, cwd, **kwargs):
+        calls.append(argv)
+        return ""
+
+    monkeypatch.setattr(instances, "_run", _fake_run)
+    instance = instances.to_instance(_ROW, repo_dir=repo)
+
+    instances.revert(instance)
+
+    assert not (repo / ".sherry").exists()
+    assert ["git", "checkout", "--", "."] in calls
+    clean = next(call for call in calls if call[:2] == ["git", "clean"])
+    assert "-e" in clean and ".sherry" in clean
+
+
 def test_the_spike_slice_is_sympy_only_and_non_empty():
     assert instances.SPIKE_INSTANCES, "the spike must select instances"
     assert all(i.startswith("sympy__") for i in instances.SPIKE_INSTANCES), (
@@ -108,3 +132,118 @@ def test_the_spike_slice_is_sympy_only_and_non_empty():
         "django's unittest labels are a second harness"
     )
     assert instances.INSTANCE_PYTHON == "3.11"
+
+
+def _git_repo(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "e@x"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "e"], cwd=repo, check=True)
+    (repo / "a.txt").write_text("one\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    return repo
+
+
+def test_repo_exclude_is_local_and_idempotent(tmp_path):
+    repo = _git_repo(tmp_path)
+    instances.ensure_repo_excludes(repo, ".sherry/")
+    instances.ensure_repo_excludes(repo, ".sherry/")
+
+    text = (repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert text.splitlines().count(".sherry/") == 1
+    assert not (repo / ".gitignore").exists()
+
+
+def test_diff_includes_untracked_files_and_excludes_sherry(tmp_path):
+    import subprocess
+
+    repo = _git_repo(tmp_path)
+    instances.ensure_repo_excludes(repo, ".sherry/")
+    (repo / "new_module.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / ".sherry" / "objects").mkdir(parents=True)
+    (repo / ".sherry" / "objects" / "ro").write_text("private\n", encoding="utf-8")
+    instance = instances.to_instance(_ROW, repo_dir=repo)
+
+    patch = instances.diff(instance)
+    changed = instances.changed_paths(instance)
+
+    assert "new_module.py" in patch
+    assert ".sherry" not in patch
+    assert changed == ["new_module.py"]
+    # The index is restored so the judge's test patch can still apply.
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    assert "?? new_module.py" in status
+    assert "A  new_module.py" not in status
+
+
+def test_revert_quarantines_sherry_and_restores_the_tree(tmp_path):
+    import stat
+
+    repo = _git_repo(tmp_path)
+    (repo / "a.txt").write_text("two\n", encoding="utf-8")
+    (repo / "junk.txt").write_text("junk\n", encoding="utf-8")
+    snapshot = repo / ".sherry" / "shadow-git" / "objects"
+    snapshot.mkdir(parents=True)
+    read_only = snapshot / "object"
+    read_only.write_text("x", encoding="utf-8")
+    read_only.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    instance = instances.to_instance(_ROW, repo_dir=repo)
+
+    instances.revert(instance, trash_root=tmp_path / "trash")
+
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "one\n"
+    assert not (repo / "junk.txt").exists()
+    assert not (repo / ".sherry").exists()
+
+
+def test_materialize_reuses_a_cached_checkout_and_venv(tmp_path, monkeypatch):
+    instance = instances.to_instance(_ROW, repo_dir=None)  # type: ignore[arg-type]
+    cache = tmp_path / "cache"
+    repo = cache / instance.instance_id
+    (repo / ".git" / "info").mkdir(parents=True)
+    python_exe = cache / f"{instance.instance_id}-venv" / "bin" / "python"
+    python_exe.parent.mkdir(parents=True)
+    python_exe.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(argv, *, cwd, **kwargs):
+        calls.append(argv)
+        if argv[:2] == ["git", "rev-parse"]:
+            return instance.base_commit + "\n"
+        return ""
+
+    installed: list[Path] = []
+    monkeypatch.setattr(instances, "_run", _fake_run)
+    monkeypatch.setattr(instances, "revert", lambda _instance: None)
+    monkeypatch.setattr(
+        instances, "_install", lambda repo_dir, *_a, **_k: installed.append(repo_dir)
+    )
+
+    built = instances.materialize(instance, tmp_path / "work", cache_dir=cache)
+
+    assert built.repo_dir == repo
+    assert built.python_exe == python_exe
+    assert installed == []
+    assert not any(argv[:2] == ["git", "fetch"] for argv in calls)
+
+
+def test_retry_run_retries_a_transient_failure(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_run(_argv, *, cwd, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("transient")
+        return "ok"
+
+    monkeypatch.setattr(instances, "_run", _fake_run)
+    monkeypatch.setattr(instances.time, "sleep", lambda _s: None)
+
+    assert instances._retry_run(["git", "fetch"], cwd=tmp_path) == "ok"
+    assert calls["n"] == 3

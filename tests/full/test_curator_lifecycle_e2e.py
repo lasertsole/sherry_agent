@@ -34,7 +34,7 @@ from context_engine.curator import usage as curator_usage
 from context_engine.curator.transitions import apply_automatic_transitions
 from runtime import data_provider
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(600)]
 
 
 @dataclass(frozen=True)

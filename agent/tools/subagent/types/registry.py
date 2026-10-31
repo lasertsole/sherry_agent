@@ -101,6 +101,9 @@ class SubagentRunRecord(BaseModel):
     cleanup: Literal["delete", "keep"] = "delete"
     agent_id: str = "main"
     thinking: str | None = None
+    #: The serving model's configured max-output budget, frozen at spawn. ``None``
+    #: = the user left it unset, so the legacy result caps apply.
+    max_output_tokens: int | None = None
 
     depth: int = 1
     role: SubagentSessionRole = SubagentSessionRole.LEAF

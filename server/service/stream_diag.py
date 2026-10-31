@@ -28,26 +28,6 @@ def stream_diag_init() -> dict[str, Any]:
     }
 
 
-def stream_diag_capture_response(diag: dict[str, Any], http_response: Any) -> None:
-    """Capture status + diagnostic headers from an http response object.
-
-    Duck-typed: works with ``httpx.Response`` or any object exposing
-    ``status_code`` / ``status`` and a mapping-like ``headers``. LangChain's
-    streaming stack does not surface the response object, so this stays
-    available for call sites that do have one.
-    """
-    status = getattr(http_response, "status_code", None) or getattr(http_response, "status", None)
-    if isinstance(status, int):
-        diag["http_status"] = status
-    headers = getattr(http_response, "headers", None)
-    if not headers:
-        return
-    lowered = {str(k).lower(): v for k, v in dict(headers).items()}
-    for name in STREAM_DIAG_HEADERS:
-        if name in lowered:
-            diag["headers"][name] = lowered[name]
-
-
 def flatten_exception_chain(error: BaseException) -> str:
     """Render ``error`` plus its ``__cause__``/``__context__`` chain on one line."""
     parts: list[str] = []

@@ -44,7 +44,18 @@ class TestBuiltinDefinitions:
         assert definition is not None
         assert definition.description.startswith("Read-only research")
         assert definition.model_tier == "auxiliary"
-        assert definition.tools == ["read_file", "search_files", "terminal", "web_search"]
+        assert definition.tools == [
+            "read_file",
+            "search_files",
+            "terminal",
+            "web_search",
+            # Coordination tools are opt-in at RUNTIME (the builder returns []
+            # unless COORDINATION enables them); the whitelist names them so a
+            # specialized child reaches the board when it is on. A read-only
+            # role shares and reads findings — only the executor claims.
+            "share_finding",
+            "peers_findings",
+        ]
 
     def test_general_inherits_all_tools(self):
         definition = load_role_definition(FunctionalRole.GENERAL)
@@ -60,6 +71,13 @@ class TestBuiltinDefinitions:
             "patch_file",
             "terminal",
             "python_repl",
+            # Coordination tools are opt-in at RUNTIME (the builder returns []
+            # unless COORDINATION enables them); the whitelist names them so a
+            # specialized child reaches the board when it is on. The executor is
+            # the only writer, so it is the only role that claims a path.
+            "claim_scope",
+            "share_finding",
+            "peers_findings",
         ]
 
     def test_reviewer_prompt_body_returned(self):
@@ -77,7 +95,17 @@ class TestBuiltinDefinitions:
     def test_librarian_tools_are_real_tool_names(self):
         definition = load_role_definition(FunctionalRole.LIBRARIAN)
         assert definition is not None
-        assert definition.tools == ["read_file", "search_files", "terminal", "web_search"]
+        assert definition.tools == [
+            "read_file",
+            "search_files",
+            "terminal",
+            "web_search",
+            # Coordination (opt-in at runtime; named here so the child reaches
+            # the board when COORDINATION enables it). Read-only roles share and
+            # read findings; only the executor claims a path.
+            "share_finding",
+            "peers_findings",
+        ]
         assert "web_fetch" not in definition.tools
         assert not {"write_file", "patch_file", "python_repl"} & set(definition.tools or [])
 

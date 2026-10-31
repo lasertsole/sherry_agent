@@ -181,7 +181,7 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
     entries = tool_catalog(tools=_real_builder_tools())
     # Group order: the catalogue's TOOL_ORDER decides where a group renders, so
     # the core working sets (skills / code / files / asking the user) come first
-    # and memory lands fifth — the order the 预设-工具 tab shows.
+    # and memory lands fifth — the order the preset Tools tab shows.
     rendered: list[str] = []
     for entry in entries:
         if not rendered or rendered[-1] != entry["group"]:
@@ -194,14 +194,14 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
     for group in ("skills", "files", "interaction"):
         assert all(tool_required(name) for name in TOOL_GROUPS[group]), group
 
-    # 终端与代码: the two exec tools are locked; the background-task queries ride
+    # Terminal & code: the two exec tools are locked; the background-task queries ride
     # the same group but stay optional (a session that never backgrounds anything
     # may switch them off).
     assert tool_required("terminal") is True
     assert tool_required("python_repl") is True
     assert tool_required("terminal_bg") is False
 
-    # 记忆与检索: `message_search` is locked, `memory` stays switchable.
+    # Memory & search: `message_search` is locked, `memory` stays switchable.
     assert tool_required("message_search") is True
     assert tool_required("memory") is False
 
@@ -403,7 +403,32 @@ def test_sanitize_accepts_a_gateable_middleware_and_a_role_profile():
 
     assert cleaned["middlewares_disabled"] == ["TaskIntentMiddleware"]
     assert cleaned["subagent_models"]["researcher"]["model"] == "deepseek-chat"
+    assert cleaned["subagent_models"]["researcher"]["max_output_tokens"] == "8192"
     assert cleaned["subagent_models"]["executor"] is None
+
+
+def test_sanitize_normalizes_a_role_profile_output_cap():
+    cleaned = service.sanitize_agent_config(
+        {
+            "subagent_models": {
+                "researcher": {"model": "m", "max_output_tokens": " 16384 "},
+                "executor": {"model": "m", "max_output_tokens": 32768},
+            }
+        }
+    )
+
+    assert cleaned["subagent_models"]["researcher"]["max_output_tokens"] == "16384"
+    assert cleaned["subagent_models"]["executor"]["max_output_tokens"] == "32768"
+
+
+@pytest.mark.parametrize("bad", ["8191", "0", "-1", "abc", "1.5", True, []])
+def test_sanitize_rejects_a_bad_role_profile_output_cap(bad):
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config(
+            {"subagent_models": {"researcher": {"model": "m", "max_output_tokens": bad}}}
+        )
+
+    assert "max_output_tokens" in str(exc.value)
 
 
 def test_sanitize_rejects_a_role_profile_without_a_model():
@@ -627,8 +652,8 @@ def test_catalog_handler_serves_the_four_lists(real_tool_names, monkeypatch):
     middleware_names = {entry["name"] for entry in data["middlewares"]}
     assert "HumanInTheLoop" in middleware_names
     assert any(role["role"] == "researcher" for role in data["subagent_roles"])
-    # The 技能 tab renders from the same response: name + description + the
-    # 内置/第三方 split, never a client-side hardcoded name.
+    # The Skills tab renders from the same response: name + description + the
+    # the Built-in / Third-party split, never a client-side hardcoded name.
     assert data["skills"], "the catalogue must carry the skill list"
     assert all({"name", "description", "builtin"} <= set(entry) for entry in data["skills"])
 

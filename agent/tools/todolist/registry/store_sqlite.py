@@ -6,7 +6,11 @@ status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'medium',
 position INTEGER NOT NULL, category TEXT NOT NULL DEFAULT 'quick',
 delegation TEXT NOT NULL DEFAULT 'self', subagent_id TEXT, flow_id TEXT,
 step_id TEXT, plan_ref TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-PRIMARY KEY (session_id, position)).
+todo_id INTEGER NOT NULL, PRIMARY KEY (session_id, position)).
+
+``position`` is only the display order; ``todo_id`` is the stable per-session
+identity used by the local patch/remove/reattach API. Inserting between rows
+shifts positions but never changes todo_id.
 
 Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
 (``BaseSQLiteRepository``, the shared skeleton also used by the taskflow and
@@ -57,11 +61,11 @@ _INIT_WAIT_TIMEOUT_S = TODOLIST_INFRA["store_init_wait_timeout_s"]
 # Column order is the contract for _row_to_todo; keep both in lockstep.
 _TODO_COLUMNS = (
     "session_id, content, status, priority, position, category, delegation, "
-    "subagent_id, flow_id, step_id, plan_ref, created_at"
+    "subagent_id, flow_id, step_id, plan_ref, created_at, todo_id"
 )
 _INSERT_COLUMNS = (
     "session_id, content, status, priority, position, category, delegation, "
-    "subagent_id, flow_id, step_id, plan_ref"
+    "subagent_id, flow_id, step_id, plan_ref, todo_id"
 )
 
 _CREATE_TABLE_SQL = f"""
@@ -78,13 +82,14 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     step_id TEXT,
     plan_ref TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    todo_id INTEGER NOT NULL,
     PRIMARY KEY (session_id, position)
 );
 """
 
 _SELECT_COLUMNS_SQL = f"SELECT {_TODO_COLUMNS} FROM {TABLE_NAME}"
 _INSERT_SQL = (
-    f"INSERT INTO {TABLE_NAME} ({_INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    f"INSERT INTO {TABLE_NAME} ({_INSERT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 # Once-per-process async schema-init state. asyncio primitives are single-loop
@@ -114,6 +119,7 @@ def _row_to_todo(row: tuple) -> dict:
         step_id,
         plan_ref,
         created_at,
+        todo_id,
     ) = row
     return {
         "session_id": session_id,
@@ -128,6 +134,7 @@ def _row_to_todo(row: tuple) -> dict:
         "step_id": step_id,
         "plan_ref": plan_ref,
         "created_at": created_at,
+        "todo_id": int(todo_id),
     }
 
 
@@ -161,13 +168,29 @@ def _normalize_rows(session_id: str, todos: list[dict]) -> list[tuple]:
     return rows
 
 
-# Query-coverage index (2026-09 SQLite index audit). get_todos_by_flow filters
+async def _next_todo_id(db, session_id: str) -> int:
+    """Allocate the next per-session todo_id (MAX+1). Call inside a transaction."""
+    async with db.execute(
+        f"SELECT COALESCE(MAX(todo_id), 0) + 1 FROM {TABLE_NAME} WHERE session_id = ?",
+        (session_id,),
+    ) as cursor:
+        result = await cursor.fetchone()
+    return int(result[0]) if result else 1
+
+
+def _with_todo_ids(rows: list[tuple], start_id: int) -> list[tuple]:
+    """Append a sequential todo_id to each normalized row."""
+    return [(*row, start_id + index) for index, row in enumerate(rows)]
+
+
+# Query-coverage indexes (2026-09 SQLite index audit). get_todos_by_flow filters
 # ``(session_id, flow_id)``; the ``(session_id, position)`` primary key only
 # covers the session_id prefix, so flow_id is otherwise matched row by row.
-# Created with ``IF NOT EXISTS`` on every schema init -- async and sync alike --
-# so a database that predates it converges on its next open, not just a fresh one.
+# ``idx_todolist_todo_id`` is the stable-identity lookup used by the local
+# patch/remove/reattach API. Both are ``IF NOT EXISTS`` on every schema init.
 _INDEX_DDL: tuple[str, ...] = (
     f"CREATE INDEX IF NOT EXISTS idx_todolist_session_flow ON {TABLE_NAME}(session_id, flow_id)",
+    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_todolist_todo_id ON {TABLE_NAME}(session_id, todo_id)",
 )
 
 
@@ -197,8 +220,10 @@ async def replace_all(session_id: str, todos: list[dict]) -> None:
     """Replace the session's entire todo list: DELETE + INSERT in one transaction.
 
     ``todos`` is the full list, not a delta. An empty list clears the session.
-    The DELETE and every INSERT commit together, so the tri-color sweep's mark
-    query can never observe the empty window between them.
+    The DELETE and every INSERT commit together, so the unreferenced-flow
+    sweep's root query can never observe the empty window between them. Every
+    replacement row receives a fresh todo_id above the pre-delete maximum, so an
+    old id can never point at a different todo after the rewrite.
     """
     session_id = (session_id or "").strip()
     if not session_id:
@@ -206,6 +231,13 @@ async def replace_all(session_id: str, todos: list[dict]) -> None:
     rows = _normalize_rows(session_id, todos)
     await ensure_db()
     async with _connect() as db:
+        async with db.execute(
+            f"SELECT COALESCE(MAX(todo_id), 0) + 1 FROM {TABLE_NAME} WHERE session_id = ?",
+            (session_id,),
+        ) as cursor:
+            result = await cursor.fetchone()
+        start_id = int(result[0]) if result else 1
+        rows = _with_todo_ids(rows, start_id)
         await db.execute(f"DELETE FROM {TABLE_NAME} WHERE session_id = ?", (session_id,))
         await db.executemany(_INSERT_SQL, rows)
         # aiosqlite defers until commit, so DELETE and INSERTs are one transaction.
@@ -255,10 +287,21 @@ async def get_active_flow_ids(session_id: str) -> set[str]:
 
 
 async def append_todo(session_id: str, todo: dict) -> None:
-    """Append one todo at the next free position (a single INSERT, no replace).
+    """Backward-compatible tail append; prefer :func:`add_todo`.
 
     Used by ``taskflow_create`` to bind a new flow to its GC root without
     clobbering a concurrent ``todowrite`` replacement.
+    """
+    await add_todo(session_id, todo)
+
+
+async def add_todo(session_id: str, todo: dict, *, after_todo_id: int | None = None) -> dict | None:
+    """Insert one todo, optionally directly after ``after_todo_id``.
+
+    ``after_todo_id=None`` appends at the tail. An existing anchor shifts every
+    later position by one (via a temporary offset, so the composite primary key
+    never collides); todo_ids stay stable. Returns the inserted row, or None
+    when the anchor id is not in this session.
     """
     session_id = (session_id or "").strip()
     if not session_id:
@@ -267,13 +310,125 @@ async def append_todo(session_id: str, todo: dict) -> None:
     await ensure_db()
     async with _connect() as db:
         async with db.execute(
-            f"SELECT COALESCE(MAX(position), -1) + 1 FROM {TABLE_NAME} WHERE session_id = ?",
+            f"SELECT COALESCE(MAX(position), -1) FROM {TABLE_NAME} WHERE session_id = ?",
             (session_id,),
         ) as cursor:
-            result = await cursor.fetchone()
-        row[4] = int(result[0]) if result else 0
+            max_position_result = await cursor.fetchone()
+        max_position = int(max_position_result[0]) if max_position_result else -1
+        if max_position >= int(TODOLIST_INFRA["position_shift_offset"]):
+            raise ValueError("todo position exceeds the insertion offset")
+        if after_todo_id is None:
+            target_position = max_position + 1
+        else:
+            async with db.execute(
+                f"SELECT position FROM {TABLE_NAME} WHERE session_id = ? AND todo_id = ?",
+                (session_id, after_todo_id),
+            ) as cursor:
+                anchor = await cursor.fetchone()
+            if anchor is None:
+                return None
+            target_position = int(anchor[0]) + 1
+            offset = int(TODOLIST_INFRA["position_shift_offset"])
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = position + ? "
+                "WHERE session_id = ? AND position >= ?",
+                (offset, session_id, target_position),
+            )
+            await db.execute(
+                f"UPDATE {TABLE_NAME} SET position = position - ? + 1 "
+                f"WHERE session_id = ? AND position >= ?",
+                (offset, session_id, offset + target_position),
+            )
+        todo_id = await _next_todo_id(db, session_id)
+        row[4] = target_position
+        row.append(todo_id)
         await db.execute(_INSERT_SQL, tuple(row))
         await db.commit()
+    return await get_todo_by_id(session_id, todo_id)
+
+
+async def get_todo_by_id(session_id: str, todo_id: int) -> dict | None:
+    """Read one todo by its stable per-session id."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL + " WHERE session_id = ? AND todo_id = ?",
+            (session_id, int(todo_id)),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return _row_to_todo(row) if row else None
+
+
+async def patch_todo_by_id(
+    session_id: str,
+    todo_id: int,
+    *,
+    content: str | None = None,
+    status: str | None = None,
+    priority: str | None = None,
+    category: str | None = None,
+) -> dict | None:
+    """Update selected fields of one todo; flow_id/step_id/plan_ref stay put."""
+    sets: list[str] = []
+    params: list[object] = []
+    if content is not None:
+        sets.append("content = ?")
+        params.append(content)
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if priority is not None:
+        sets.append("priority = ?")
+        params.append(priority)
+    if category is not None:
+        sets.append("category = ?")
+        params.append(category)
+    if not sets:
+        return await get_todo_by_id(session_id, todo_id)
+    params.extend([session_id, int(todo_id)])
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET {', '.join(sets)} WHERE session_id = ? AND todo_id = ?",
+            tuple(params),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return None
+    return await get_todo_by_id(session_id, todo_id)
+
+
+async def remove_todo_by_id(session_id: str, todo_id: int) -> dict | None:
+    """Delete one todo by id and return the removed row (None when absent)."""
+    await ensure_db()
+    async with _connect() as db:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL + " WHERE session_id = ? AND todo_id = ?",
+            (session_id, int(todo_id)),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        await db.execute(
+            f"DELETE FROM {TABLE_NAME} WHERE session_id = ? AND todo_id = ?",
+            (session_id, int(todo_id)),
+        )
+        await db.commit()
+    return _row_to_todo(row)
+
+
+async def set_todo_flow_id_by_id(session_id: str, todo_id: int, flow_id: str) -> dict | None:
+    """Bind one existing todo as a flow's GC root (only flow_id changes)."""
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET flow_id = ? WHERE session_id = ? AND todo_id = ?",
+            (flow_id, session_id, int(todo_id)),
+        )
+        await db.commit()
+        if cursor.rowcount == 0:
+            return None
+    return await get_todo_by_id(session_id, todo_id)
 
 
 async def cancel_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
@@ -289,6 +444,24 @@ async def cancel_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
             "WHERE session_id = ? AND status NOT IN (?, ?) "
             f"AND flow_id IN ({placeholders})",
             ("cancelled", session_id, "completed", "cancelled", *ids),
+        )
+        await db.commit()
+        return int(cursor.rowcount or 0)
+
+
+async def complete_todos_for_flows(session_id: str, flow_ids: list[str]) -> int:
+    """Mark active todos that reference a successfully finished flow completed."""
+    ids = [flow_id for flow_id in flow_ids if flow_id]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(
+            f"UPDATE {TABLE_NAME} SET status = ? "
+            "WHERE session_id = ? AND status NOT IN (?, ?) "
+            f"AND flow_id IN ({placeholders})",
+            ("completed", session_id, "completed", "cancelled", *ids),
         )
         await db.commit()
         return int(cursor.rowcount or 0)
@@ -330,10 +503,18 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 
 __all__ = [
+    "add_todo",
+    "append_todo",
+    "cancel_todos_for_flows",
+    "complete_todos_for_flows",
     "delete_todos_by_session",
     "ensure_db",
+    "get_todo_by_id",
     "get_todos",
     "get_todos_by_flow",
     "get_todos_sync",
+    "patch_todo_by_id",
+    "remove_todo_by_id",
     "replace_all",
+    "set_todo_flow_id_by_id",
 ]

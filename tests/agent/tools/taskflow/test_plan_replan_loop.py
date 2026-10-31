@@ -321,3 +321,33 @@ async def test_goal_gate_honours_the_switch(monkeypatch, planner):
     planner("GOAL_NOT_MET: nope")
 
     assert await finish_mod._goal_gate(_flow_with_results()) is None
+
+
+# ---------------------------------------------------------------------------
+# Create/plan duplicate guard (Todo↔TaskFlow reference integrity, P2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_plan_reports_a_similar_active_flow_and_ack_skips(isolated_db, planner):
+    planner([{"step_id": "step-1", "task": "collect", "depends_on": []}])
+
+    first = await plan_mod.taskflow_plan.coroutine(
+        goal="ship the quarterly report", flow_id="flow-dup-a", session_id=_SESSION
+    )
+    assert "TaskFlow planned" in first
+
+    out = await plan_mod.taskflow_plan.coroutine(
+        goal="ship the quarterly report", flow_id="flow-dup-b", session_id=_SESSION
+    )
+    assert "Possible duplicate" in out and "flow-dup-a" in out
+    assert await store_sqlite.get_flow("flow-dup-b", _SESSION) is None
+
+    acked = await plan_mod.taskflow_plan.coroutine(
+        goal="ship the quarterly report",
+        flow_id="flow-dup-b",
+        session_id=_SESSION,
+        ack_dup=True,
+    )
+    assert "TaskFlow planned" in acked
+    assert await store_sqlite.get_flow("flow-dup-b", _SESSION) is not None

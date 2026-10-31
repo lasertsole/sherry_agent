@@ -70,9 +70,9 @@ Only a hard kill between the temporary file's creation and the replace can leave
 
 A bound project directory is **never** turned into a repository: there is no `git init`, `add`, `commit`, `reset`, `checkout` or worktree in the user's `.git`. The first write of each turn calls `shadow_git.ensure_checkpoint()` (write_file, patch_file, terminal, python_repl), which snapshots the project into `.sherry/shadow-git/` with `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation. The snapshot is fail-open: a broken store logs a warning and the write proceeds.
 
-The store holds a single `refs/heads/main` chain of `commit-tree` snapshots. `info/exclude` carries the deny patterns (secrets, bulky directories and the shadow store itself) before `git add -A`; at most `SHADOW_GIT["max_snapshots"]` (20) are kept. Restore takes a `pre-restore` snapshot first (undo the undo), supports one file or the whole tree, and the `checkpoint` tool exposes list / show / restore to the agent. The git-graph panel reads this chain (branch label `checkpoint`); it no longer reads the user's history.
+The store holds a single `refs/heads/main` chain of `commit-tree` snapshots. `info/exclude` carries the deny patterns (secrets, bulky directories and the shadow store itself) before `git add -A`; at most `SHADOW_GIT["max_snapshots"]` (100) are kept — the store is per PROJECT ROOT and shared by every session including subagents, so a small budget collapsed to the last step or two during a concurrent fan-out. Restore takes a `pre-restore` snapshot first (undo the undo), supports one file or the whole tree, and the `checkpoint` tool exposes list / show / restore to the agent. The git-graph panel reads this chain (branch label `checkpoint`); it no longer reads the user's history.
 
-Reads are never gated, and a directory that is not a repository is a normal answer. The shadow store lives with the project, so it follows a clone; `SHADOW_GIT["enabled"]=False` makes every hook a no-op.
+Reads are never gated, and a directory that is not a repository is a normal answer. The shadow store lives with the project, so it follows a clone; `SHADOW_GIT["enabled"]=False` makes every hook a no-op. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`) moves the store outside the project; the eval harness uses a run-scoped directory so an instance checkout never contains `.sherry`. `wait_for_idle()` and `freeze()` are its teardown barrier: wait for in-flight snapshot writers, then block late ones before reverting.
 
 ## 📖 Read-before-write license
 
@@ -116,7 +116,55 @@ The merge is the same rule as everywhere else, applied in the other direction, u
 - a new file is created into empty space only; a deletion requires the parent to still match; symlinks are never merged through (they are skipped and reported);
 - every merged code file (Python / TS / TSX / JS / JSX / Rust / Go) is diffed at the **symbol level** before it is written — renames (same kind, same enclosing class, name distance ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`), removals and additions land in the completion reply as an **Interface changes** section, because another subagent's file may still call the OLD name. The diff is fail-open (an oversized or unparseable file is noted in the section, never fatal) and capped (10 files, 20 entries per kind).
 
+### The symbol surface (and the shell, which bypasses it)
+
+Text CAS protects bytes, not callers: `foo(a, b)` → `foo(a, b, *, timeout)` merges cleanly and breaks every import. Four additions close that gap — none of them blocks a write, all of them are fail-open:
+
+- **Call-shape changes are reported.** A symbol whose `(kind, name, parent)` survives but whose parameter/return shape changed lands in the section as `changed: foo(a, b) → foo(a, b, *, timeout=1)` (Python today: the normalized parameter text plus whether a return annotation exists; whitespace collapses, so a pure reformat is not a change). Module-level assignments are surfaced as `variable` symbols too — a renamed module constant breaks its importers exactly like a renamed function. That surface is OPT-IN for the diff only: the code index (callers/explore) still lists functions, methods and classes.
+- **The report names the callers.** The code index's `import_edges` answers "who imports this name?" through a READ-ONLY, capped lookup (`agent/tools/code_intel/indexer.py::importers_of_names`). A missing index answers empty — the merge never triggers an index build. The affected files are listed under `affected importers` AND marked stale in the evidence ledger, so a "pure import user" that never touched the changed module loses its green evidence; otherwise only path-level staleness existed and that session's PASS row survived.
+- **An optional merge-time verdict.** `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]` (default OFF) replays the parent session's passed commands that cover the affected importers once, capped by `merge_reverify_max_commands` (5), and appends broken/unmark — so "did the rename break a caller?" is answered at the merge instead of at a finish gate many turns later. Safety is the finish gate's: whitelisted executables, no shell, one attempt. The anti-loop invariant holds by construction: the replay reads ledger rows and appends events, and an appended event never triggers a replay or a merge.
+- **Shell writes are accounted.** `terminal` / `python_repl` write through routes the file tools never see (no license, no CAS), and used to leave no ledger row at all, so their session's `modified_files` stayed empty. The pre-command state is already in the shadow store, so one `git diff --name-only` against it names what the command changed (content-compared, so `touch -d` cannot fake it) and each path goes through the same `mark_evidence_stale` pipe as `write_file`. Restricted builtins block `open` in the REPL, but class introspection can reach `os` — the diff sees the result either way.
+
+**The replay gate refuses to run a rewriting formatter.** `black`, `prettier` and `ruff format` are allowlisted tools, and a recorded `black foo.py` (no `--check`) would have been replayed by the finish gate as a file rewrite outside the whole license/CAS stack. A formatter now counts as a verification command only in a report-only form (`--check` / `--diff`, or `ruff check`); a bare invocation is skipped, never failed, so an unusable row cannot pin a flow.
+
 A clean merge unregisters the worktree, deletes its branch and removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, the interface changes, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
+
+## 🤝 Cross-agent coordination (claims + findings board)
+
+The layers above are MECHANICAL: they stop byte-level loss without knowing
+anyone's intent. Two advisory, opt-in surfaces add the intent — both shipped OFF
+(`COORDINATION`, env `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`),
+both read-mostly, and neither can ever refuse a write:
+
+- **Path claims** (`claim_scope`) — "I am about to write these paths". A peer
+  that writes the same path gets ONE advisory line in its tool result
+  (`claim_notice`) and the write still succeeds; the notice is deduped per
+  (session, path) inside a 10-minute window (the agent layer cannot see a turn
+  id — it lives in the server's turn scope — so the window delivers the same
+  noise control without inventing a coupling). Claims expire after
+  `COORDINATION["claim_ttl_seconds"]` (1800 s), `release=true` drops them at
+  task end, and an expired row is swept on the next claim write.
+- **Peer findings** (`share_finding` / `peers_findings`) — sibling agents share
+  `FAIL` ("tried it, does not work"), `FACT` ("confirmed") and `PATCH` ("this
+  file's interface changed") notes; the read side is a plain query (every
+  whitespace-separated term must match text or file paths, optional kind
+  filter, capped). A merge publishes a `PATCH` entry on its own when the board
+  is on, so "who changed what, and did the interface move?" is answerable
+  without asking the parent.
+
+Storage is ONE per-project SQLite file, `<project>/.sherry/coordination.db`
+(`claims` + `findings`, `busy_timeout` 30 s, WAL, current schema only). It is
+created lazily and never by a read: a project without `.sherry/` simply answers
+empty, so a lookup cannot litter a user's tree. **Nothing from the board is ever
+rendered into the system prompt** — the content changes on every write, so
+putting it there would break the provider prefix cache; it moves only through
+tool calls.
+
+With both switches off, `build_main_tools()` is byte-identical to a build
+without this feature and `GET /agent/catalog` lists no coordination group: the
+default tool face, its token cost and every preset payload are unchanged.
+
+The specialized roles can use the board too: all four functional role definitions name its tools in their tool lists, because such a list is an allow-list — a tool it does not name is invisible to the child however the main agent is configured. The executor, the only writer, names all three (it is the only role that claims a path); researcher, reviewer and librarian name the sharing/reading pair, so a read-only role never expresses write intent. They appear in a child's face only while the board is enabled, so with both switches off a child sees exactly what it did before.
 
 ## ⚖️ Alternatives, measured
 

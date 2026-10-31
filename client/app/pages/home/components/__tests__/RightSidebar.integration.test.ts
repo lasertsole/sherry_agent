@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { nextTick, reactive, ref } from 'vue';
 import RightSidebar from '@/pages/home/components/RightSidebar.vue';
 import { RIGHT_SIDEBAR_PANEL_MIN_HEIGHT, RIGHT_SIDEBAR_PANEL_MIN_WIDTH } from '@/stores/right-sidebar';
+import { middleMinWidth } from '@/common/layout';
 
 // The store is a Nuxt auto-import: shadow it with a real-shaped double so the
 // strip's rendering and the tab actions can be asserted directly. `reactive`
@@ -40,6 +41,9 @@ let sidebarApi: {
 };
 
 const VIEWPORT_WIDTH = 1280;
+// The drag / fit ceiling reserves the other columns: the left-store stub's
+// width (360, see the shared setup) plus the conversation's max(320px, 35%).
+const RESERVED_WIDTH = 360 + middleMinWidth(VIEWPORT_WIDTH);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -169,6 +173,19 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(collapsedWrapper.find('aside').attributes('style')).toBeUndefined();
   });
 
+  it('adds the float share to the rendered width and drops the resize grip', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.width = 420;
+    const wrapper = mount(RightSidebar, { props: { extraWidth: 100 }, global: { stubs } });
+
+    // The share is presentation-only: the store keeps 420, the DOM shows 520.
+    expect(wrapper.find('aside').attributes('style')).toContain('width: 520px');
+    expect(wrapper.find('aside > div:last-child').attributes('style')).toContain('width: 520px');
+    expect(sidebarApi.width).toBe(420);
+    // A drag would move a width the user cannot see, so the grip is gone.
+    expect(wrapper.find('[role="separator"]').exists()).toBe(false);
+  });
+
   it('keeps the body mounted through the collapse animation, then drops it', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
@@ -222,7 +239,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     sidebarApi.activeScope = 'session';
     const wrapper = mountSidebar();
 
-    // Two tabs of one kind read `浏览器 1` / `浏览器 2`; a lone tab keeps the
+    // Two tabs of one kind read `浏览器 1` / `浏览器 2` ("Browser 1" / "Browser 2"); a lone tab keeps the
     // plain name (no pointless suffix).
     expect(wrapper.findAll('button.group').map(b => b.text())).toEqual(['浏览器 1', '浏览器 2', '终端']);
   });
@@ -237,7 +254,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     const wrapper = mountSidebar();
     await flushPromises();
 
-    // 全局 is the default group: the pre-existing tools are unchanged by grouping.
+    // Global is the default group: the pre-existing tools are unchanged by grouping.
     const scopeTabs = wrapper.findAll('[data-test^="scope-tab-"]');
     expect(scopeTabs.map(tab => tab.attributes('data-test'))).toEqual(['scope-tab-session', 'scope-tab-global']);
     // Pills: the active group carries the filled capsule, both animate the swap
@@ -291,6 +308,92 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(emitted).toHaveLength(1);
     expect(emitted[0]?.[0]).toMatchObject({ id: 'logs-1', kind: 'logs' });
     expect(sidebarApi.activateTab).not.toHaveBeenCalled();
+  });
+
+  it('gives every tab the SAME width band and fades long titles instead of truncating', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+
+    const tabs = wrapper.findAll('button.group');
+    expect(tabs.length).toBe(2);
+    for (const tab of tabs) {
+      const classes = tab.classes().join(' ');
+      // Equal-width model: a 156px basis with a 60px floor, and no `shrink-0`
+      // (which is what used to make a tab keep its width and scroll instead).
+      expect(classes).toContain('flex-[1_1_9.75rem]');
+      expect(classes).toContain('min-w-15');
+      expect(classes).toContain('max-w-39');
+      expect(classes).not.toContain('shrink-0');
+      // The title is the flexible item and fades at its right edge.
+      const title = tab.find('span');
+      expect(title.classes()).toContain('min-w-0');
+      expect(title.attributes('style')).toContain('mask-image');
+      expect(title.classes().join(' ')).not.toContain('truncate');
+    }
+  });
+
+  it('shows the close × for the active tab and only on hover for the others', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+
+    const activeX = wrapper.get('[data-test="tab-close-logs"]');
+    const idleX = wrapper.get('[data-test="tab-close-stats"]');
+    expect(activeX.classes()).toContain('opacity-100');
+    expect(idleX.classes()).toContain('opacity-0');
+    expect(idleX.classes()).toContain('group-hover:opacity-60');
+  });
+
+  it('measures the strip overflow from its floor width and shows the fade masks', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' },
+      { id: 'cron-1', kind: 'cron', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+    const viewport = wrapper.get('[data-test="tabs-viewport"]');
+
+    // happy-dom reports a zero-width scroller: give it a real box, then let the
+    // resize listener re-measure (the composable coalesces into a frame).
+    Object.defineProperty(viewport.element, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(viewport.element, 'scrollWidth', { value: 320, configurable: true });
+    Object.defineProperty(viewport.element, 'scrollLeft', { value: 0, configurable: true, writable: true });
+    window.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+
+    // 3 tabs at their 60px floor + 2 gaps = 188 <= 200: no overflow.
+    expect(viewport.attributes('data-overflowing')).toBe('false');
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(false);
+
+    Object.defineProperty(viewport.element, 'clientWidth', { value: 120, configurable: true });
+    window.dispatchEvent(new Event('resize'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+
+    // 188 > 120: the strip scrolls, and the right side is cut off.
+    expect(viewport.attributes('data-overflowing')).toBe('true');
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tabs-mask-left"]').exists()).toBe(false);
+
+    // Scrolled to the end: the cut-off side flips.
+    (viewport.element as HTMLElement).scrollLeft = 200;
+    viewport.element.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(50);
+    await nextTick();
+    expect(wrapper.find('[data-test="tabs-mask-left"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="tabs-mask-right"]').exists()).toBe(false);
   });
 
   it('maximizes to the whole viewport from the button LEFT of the group pills', async () => {
@@ -416,7 +519,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     // sees the live viewport so the drag can never outgrow the window.
     await handle.trigger('pointerdown', { clientX: 800 });
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: 700 }));
-    expect(sidebarApi.setWidth).toHaveBeenLastCalledWith(520, VIEWPORT_WIDTH);
+    expect(sidebarApi.setWidth).toHaveBeenLastCalledWith(520, VIEWPORT_WIDTH, RESERVED_WIDTH);
 
     // While dragging the grip highlights (mode-independent grey: the theme
     // accent is white in dark mode and vanished over a light panel).
@@ -435,7 +538,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
     window.dispatchEvent(new Event('resize'));
 
-    expect(sidebarApi.fitToViewport).toHaveBeenCalledWith(VIEWPORT_WIDTH);
+    expect(sidebarApi.fitToViewport).toHaveBeenCalledWith(VIEWPORT_WIDTH, RESERVED_WIDTH);
   });
 
   it('opens the recent-tabs menu with both groups and restores a closed side chat', async () => {

@@ -120,8 +120,7 @@ class DelegatedTaskHandle:
         Raises:
             RuntimeError: When called from a running event loop thread — the
                 synchronous poll loop would freeze the loop for the whole wait;
-                ``await`` :meth:`result_async` (or offload this call to a worker
-                thread) instead.
+                offload this call to a worker thread instead.
         """
         if not self.accepted or not self.run_id:
             return self
@@ -132,31 +131,9 @@ class DelegatedTaskHandle:
         else:
             raise RuntimeError(
                 "DelegatedTaskHandle.result() blocks its thread and must not be "
-                "called from a running event loop — await result_async() instead"
+                "called from a running event loop — offload it to a worker thread"
             )
         return _await_outside_loop(self, timeout=timeout, poll_interval=poll_interval)
-
-    async def result_async(
-        self, timeout: float | None = None, poll_interval: float = 0.25
-    ) -> DelegatedTaskHandle:
-        """Await twin of :meth:`result`: polls with ``await asyncio.sleep``.
-
-        Safe on an event loop thread — the loop keeps serving other work while
-        the child runs. Same deadline semantics as the sync twin: a run still
-        pending at the deadline returns early with whatever state is available
-        (never raises).
-        """
-        if not self.accepted or not self.run_id:
-            return self
-        import time
-
-        deadline = None if timeout is None else time.monotonic() + timeout
-        while self.is_running():
-            if deadline is not None and time.monotonic() >= deadline:
-                break
-            await asyncio.sleep(poll_interval)
-        self.poll()
-        return self
 
     def to_dict(self) -> dict[str, Any]:
         return {

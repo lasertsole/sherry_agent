@@ -4,8 +4,8 @@ import { useSessionLifecycle } from '../use-session-lifecycle';
 import { DEFAULT_CACHED_CHARACTER } from '../db';
 
 /**
- * The character snapshot mapping: a preset that names nobody (编程助手) must stay
- * nameless — substituting the built-in persona here showed 橘雪莉 / 远野汉娜 with
+ * The character snapshot mapping: a preset that names nobody (Coding Assistant) must stay
+ * nameless — substituting the built-in persona here showed the 橘雪莉 / 远野汉娜 pair with
  * their photos in a session the user had configured otherwise.
  */
 describe('use-session-lifecycle character mapping', () => {

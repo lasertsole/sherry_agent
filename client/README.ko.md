@@ -91,8 +91,10 @@ client/
 │   │   ├── main.css               # Tailwind v4 엔트리(@import 'tailwindcss') + @theme 토큰 + 리셋
 │   │   └── main.scss              # 전역 SCSS 엔트리(nuxt.config css에서 로드)
 │   ├── common/utils.ts            # 공유 유틸리티(dayjs 설정, formatCompactTimeString, ...)
+│   ├── common/floating-window.ts  # 플로팅 대화 열 지오메트리(앵커, 경계 클램프, 좌우 열 너비 분배)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 채팅 입력 박스 컴포넌트(i18n 지원)
+│   │   ├── chat/ConversationFindBar.vue# 대화 내 검색 바(Ctrl+Shift+F): 목록 위에 떠 있고 레이아웃을 밀지 않음
 │   │   ├── chat/DiffPreview.vue   # 도구 카드 내 patch_file / write_file 결과의 컬러 인라인 diff
 │   │   └── ImagePreviewOverlay.vue# 전체 화면 이미지 미리보기 오버레이(body로 Teleport)
 │   ├── composables/               # Vue 3 컴포저블 로직(단위 테스트는 __tests__/ 아래)
@@ -126,8 +128,9 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 50 개의 페이지 컴포넌트:
+│   │       └── components/        # 61 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유; 선택 텍스트 우클릭으로 인용)
+│   │           ├── BackgroundCommandsSection.vue#     # 터미널 진입점 팝오버의 세 번째 섹션: 아직 실행 중인 에이전트의 백그라운드 명령(terminal(run_in_background=True)) — pid, 턴을 멈추지 않는 명령 단위 중지(끝난 명령은 목록에서 사라짐)
 │   │           ├── SideChatPanel.vue          # 보조 세션 탭: 인용에서 일반 자식 세션을 만들고 독립 스트림 + HITL 승인
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow 플랫 단계 목록, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
@@ -138,22 +141,26 @@ client/
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
-│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령 / 백그라운드 명령(배지는 셋의 합계) — 팝오버 행은 페이지에 이동을 맡긴다(실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │   ├── SafetyFilterPanel.vue# 시스템 설정 탭: 라이브 안전 마스터 스위치, LLM 심사(모델 없으면 비활성), 키워드 규칙 편집 + 테스트 검사, 최근 필터 기록
+│   │   ├── OnboardingDialog.vue# 최초 실행 안내(환영 → 프리셋 → 핵심 조작 → 완료). 선택한 프리셋으로 세션을 만들고, 영속 플래그 onboarding_completed 로 한 번만 표시
+│   │   ├── ShortcutSettingsSection.vue# 시스템 설정의 단축키 바인딩 탭: 현재 조합, 키 입력으로 다시 지정, 충돌 검사, 기본값 복원
 │   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
-│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
+│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터). 오른쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 절반, 너비 영속)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드. 행 우클릭 메뉴: 열기 / 연결 프로그램 / 내장 브라우저로 열기 / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가)
 │   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
 │   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
+│   │           ├── TrajectoryPanel.vue       # 현재 세션 tab: 턴별 트래젝토리 원장(GET /sessions/:id/trajectory, turn별로 묶고 클라이언트에서 재정렬·페이지 처리)
 │   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다). 주소창은 영속 방문 기록(Dexie, 재시작 후에도 유지)을 URL / 제목 퍼지 매칭으로 제안합니다
 │   │           ├── BrowserHistoryDropdown.vue # 주소창의 기록 드롭다운: 최근/추천 방문(favicon, 제목, 상대 시간)과 지우기 동작
 │   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기. 컴포저로 드래그할 수 있고 드롭 시 @./path 멘션 chip 삽입, 행 우클릭 메뉴도 여기서 연결)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
-│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 모델 설정, 앱 설정, Token 예산, 국제화)
 │   │           ├── LlmModelManager.vue        # 모델 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .models에 쓰지 않음)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
@@ -168,7 +175,8 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 비밀번호 설정 / 교체 / 로그인 보호 해제(현재 비밀번호 필요)
-│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
+│   │           ├── I18nPanel.vue               # 국제화 tab 본문. 시스템 설정 패널의 마지막 탭으로 포함
+│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기). 왼쪽 가장자리가 드래그 핸들(하한 280px, 대화 영역이 320px / 35% 하한을 지킬 수 있는 범위가 상한, 모든 하한이 들어가지 않는 창에서는 하한까지 줄어듦)
 │   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file: 텍스트 + markdown, 이미지/PDF/docx는 GET /project/file/blob 경유)
 │   │           ├── PdfViewer.vue             # 파일 뷰어 내 PDF 미리보기(pdf.js, 페이지 탐색 + 너비 맞춤, GET /project/file/blob)
 │   │           ├── DocxViewer.vue            # 파일 뷰어 내 docx 미리보기(mammoth → HTML → DOMPurify, GET /project/file/blob)
@@ -180,9 +188,14 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
 │   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
 │   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
+│   │           ├── TokenBudgetPanel.vue      # 세션 범위 탭(컨텍스트 지표 팝오버에서 열기): 열린 세션의 Token 상한, 사용량/비용, 초기화(GET/POST /sessions/budget)
+│   │           ├── ReplayAllowlistEditor.vue # 시스템 설정: 피니시 재생 허용 목록 편집기(GET/PUT /sherry-config/list/<key>, 실행 파일 이름 추가/삭제)
+│   │           ├── CudaPackCard.vue          # 모델 설정: 선택적 CUDA 팩 카드(Linux 전용——감지, 이어받기 다운로드, 이후 백엔드 재시작)
+│   │           ├── RecentClosedTabsMenu.vue  # 오른쪽 사이드바 탭 스트립의 맨 왼쪽 컨트롤: 최근 닫은 탭을 두 그룹(현재 세션 / 전역)으로 표시
 │   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
 │   ├── stores/                    # Pinia 스토어
 │   │   ├── ui.ts               # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
+│   │   ├── chat-float.ts       # 플로팅 대화 열(열림/닫힘 + 스냅 앵커, 영속화)
 │   │   ├── subagent.ts         # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
 │   │   ├── todo.ts             # 세션 계획(todo) 목록 + 독 표시 여부
 │   │   ├── right-sidebar.ts    # 오른쪽 사이드바(접힘 / 너비 영속화, 열린 탭 종류)
@@ -390,7 +403,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 플로팅 대화 열(`chat-float.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 

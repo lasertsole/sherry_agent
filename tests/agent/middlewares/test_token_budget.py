@@ -180,3 +180,207 @@ async def test_limited_latch_fires_once(registers, events):
 
     limited = [event for event in events if event[1] == BUDGET_LIMITED_EVENT]
     assert len(limited) == 1
+
+
+class TestCacheAwareCost:
+    """Anthropic cache reads/writes are priced at their own rates (§6).
+
+    The estimate used to charge every input token at the plain input rate and
+    ignore the cache counters entirely, so a cached turn looked exactly as
+    expensive as an uncached one — the whole point of caching is the discount.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _prices(self, monkeypatch: pytest.MonkeyPatch):
+        from config.features.infra_side import model_pricing
+
+        table = {
+            "claude-sonnet-4": {
+                "input": 3.0,
+                "output": 15.0,
+                "cache_read": 0.3,
+                "cache_write": 3.75,
+            },
+            "_default": {"input": 0.5, "output": 1.5},
+        }
+        monkeypatch.setitem(model_pricing.MODEL_PRICING, "model_pricing_per_m_tokens", table)
+        return table
+
+    def test_a_cache_read_is_charged_the_discount_rate(self):
+        message = _ai(
+            input_tokens=1000,
+            output_tokens=100,
+            model="claude-sonnet-4",
+            usage_extra={"input_token_details": {"cache_read": 9000}},
+        )
+
+        cost = budget_core._cost_delta(message, message.usage_metadata, 1000, 100)
+
+        # 1000 uncached @3 + 9000 cached @0.3 + 100 out @15
+        assert cost == pytest.approx((1000 * 3.0 + 9000 * 0.3 + 100 * 15.0) / 1_000_000)
+
+    def test_a_cache_write_is_charged_the_premium_rate(self):
+        message = _ai(
+            input_tokens=0,
+            output_tokens=0,
+            model="claude-sonnet-4",
+            usage_extra={"input_token_details": {"cache_creation": 10000}},
+        )
+
+        cost = budget_core._cost_delta(message, message.usage_metadata, 0, 0)
+
+        assert cost == pytest.approx(10000 * 3.75 / 1_000_000)
+
+    def test_a_cached_turn_costs_less_than_the_same_tokens_as_fresh_input(self):
+        cached = _ai(
+            input_tokens=1000,
+            output_tokens=100,
+            model="claude-sonnet-4",
+            usage_extra={"input_token_details": {"cache_read": 9000}},
+        )
+        all_fresh = _ai(input_tokens=10000, output_tokens=100, model="claude-sonnet-4")
+
+        cached_cost = budget_core._cost_delta(cached, cached.usage_metadata, 1000, 100)
+        fresh_cost = budget_core._cost_delta(all_fresh, all_fresh.usage_metadata, 10000, 100)
+
+        assert cached_cost < fresh_cost
+
+    def test_a_table_without_cache_prices_keeps_the_old_estimate(self, monkeypatch):
+        from config.features.infra_side import model_pricing
+
+        monkeypatch.setitem(
+            model_pricing.MODEL_PRICING,
+            "model_pricing_per_m_tokens",
+            {
+                "claude-sonnet-4": {"input": 3.0, "output": 15.0},
+                "_default": {"input": 0.5, "output": 1.5},
+            },
+        )
+        message = _ai(
+            input_tokens=1000,
+            output_tokens=0,
+            model="claude-sonnet-4",
+            usage_extra={"input_token_details": {"cache_read": 9000}},
+        )
+
+        cost = budget_core._cost_delta(message, message.usage_metadata, 1000, 0)
+
+        # Cached tokens fall back to the input rate: no invented discount.
+        assert cost == pytest.approx((1000 * 3.0 + 9000 * 3.0) / 1_000_000)
+
+    def test_an_openai_shaped_usage_subtracts_the_cached_subset(self):
+        """OpenAI's ``input_tokens`` CONTAINS the cached ones; Anthropic's does not."""
+        message = _ai(
+            input_tokens=10000,
+            output_tokens=0,
+            model="claude-sonnet-4",
+            usage_extra={"input_token_details": {"cache_read": 9000}},
+        )
+        message.response_metadata["usage"] = {"prompt_tokens": 10000, "cached_tokens": 9000}
+
+        cost = budget_core._cost_delta(message, message.usage_metadata, 10000, 0)
+
+        # 1000 uncached @3 + 9000 cached @0.3 — not 10000 uncached.
+        assert cost == pytest.approx((1000 * 3.0 + 9000 * 0.3) / 1_000_000)
+
+    @pytest.mark.asyncio
+    async def test_the_middleware_accumulates_the_discounted_cost(self, registers, events):
+        mem, _db = registers
+
+        async def handler(_request):
+            return _ai(
+                input_tokens=1000,
+                output_tokens=0,
+                model="claude-sonnet-4",
+                usage_extra={"input_token_details": {"cache_read": 9000}},
+            )
+
+        await TokenBudget().awrap_model_call(_request(), handler)
+
+        assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_COST) == pytest.approx(
+            (1000 * 3.0 + 9000 * 0.3) / 1_000_000
+        )
+
+
+class TestInheritedDefaultCap:
+    """A session that never set its own cap inherits the app-config default."""
+
+    def test_effective_cap_prefers_the_session_value(self, registers, monkeypatch):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 900_000)
+
+        # No session value → the app default.
+        assert budget_core.effective_cap(SESSION) == 900_000
+
+        # An explicit 0 means "unlimited", NOT "inherit".
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 0)
+        assert budget_core.effective_cap(SESSION) == 0
+
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 5000)
+        assert budget_core.effective_cap(SESSION) == 5000
+
+    def test_the_default_is_read_from_sherry_jsonc_once(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        budget_core.clear_default_token_cap_cache()
+        calls: list[int] = []
+
+        def _load():
+            calls.append(1)
+            return {"TOKEN_BUDGET_DEFAULT_CAP": 12_000}
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_settings", _load)
+
+        assert budget_core.default_token_cap() == 12_000
+        assert budget_core.default_token_cap() == 12_000
+        assert len(calls) == 1, "the value is cached for the process"
+
+        budget_core.clear_default_token_cap_cache()
+
+    def test_a_broken_setting_reads_as_unlimited(self, monkeypatch):
+        import config.sherry_settings as sherry_settings
+
+        budget_core.clear_default_token_cap_cache()
+
+        def _boom():
+            raise RuntimeError("no config")
+
+        monkeypatch.setattr(sherry_settings, "load_sherry_settings", _boom)
+        assert budget_core.default_token_cap() == 0
+        budget_core.clear_default_token_cap_cache()
+
+    @pytest.mark.asyncio
+    async def test_an_inherited_default_short_circuits_the_model_call(
+        self, registers, events, monkeypatch
+    ):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 1000)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_USED, 1000)
+        called: list[bool] = []
+
+        async def handler(_request):
+            called.append(True)
+            return _ai(input_tokens=1, output_tokens=1)
+
+        result = await TokenBudget().awrap_model_call(_request(), handler)
+
+        assert "Token budget exhausted" in result.content
+        assert called == []
+        assert events and events[0][2]["cap"] == 1000
+
+    @pytest.mark.asyncio
+    async def test_an_explicitly_unlimited_session_ignores_a_positive_default(
+        self, registers, events, monkeypatch
+    ):
+        mem, _db = registers
+        monkeypatch.setattr(budget_core, "default_token_cap", lambda: 10)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_CAP, 0)
+        mem.set_state(SESSION, StateKey.TOKEN_BUDGET_USED, 1_000_000)
+
+        async def handler(_request):
+            return _ai(input_tokens=5, output_tokens=5)
+
+        result = await TokenBudget().awrap_model_call(_request(), handler)
+
+        assert result.content == "ok", "no budget message: the session is unlimited"
+        assert events == []

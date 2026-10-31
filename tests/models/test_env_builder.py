@@ -106,7 +106,6 @@ class TestPerModelKwargs:
             "AUXILIARY_LLM",
             "TASKFLOW_LLM",
             "COMPRESSION_LLM",
-            "REASONER_LLM",
         ):
             for kind in ("FREQUENCY_PENALTY", "PRESENCE_PENALTY"):
                 monkeypatch.delenv(f"{prefix}_{kind}", raising=False)
@@ -153,7 +152,7 @@ class TestPerModelKwargs:
         monkeypatch.setenv("MAIN_LLM_NAME", "gpt-4o-mini")
         monkeypatch.setenv("MAIN_LLM_API_KEY", "  ")
         monkeypatch.setenv("MAIN_LLM_API_BASE", "https://main.invalid/v1")
-        monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
+        monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
         monkeypatch.setenv("MAIN_LLM_ENABLE_THINKING", "false")
         module = _load("_main_env_builder", "models/LLMs/main_llm.py")
 
@@ -168,52 +167,10 @@ class TestPerModelKwargs:
             "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
             "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
-            "profile": {"max_input_tokens": 131072},
+            "profile": {"max_input_tokens": 200000},
             "frequency_penalty": 0.3,
             "presence_penalty": 0.2,
         }
-
-    def test_reasoner_kwargs(self, monkeypatch):
-        monkeypatch.setenv("REASONER_LLM_PROVIDER", "openai")
-        monkeypatch.setenv("REASONER_LLM_NAME", "o4-mini")
-        monkeypatch.setenv("REASONER_LLM_API_KEY", "sk-rea")
-        monkeypatch.setenv("REASONER_LLM_API_BASE", "https://rea.invalid/v1")
-        monkeypatch.setenv("REASONER_LLM_MAX_TOKEN", "64000")
-        module = _load("_reasoner_env_builder", "models/LLMs/reasoner_llm.py")
-
-        assert module.model_config == {
-            "model_provider": "openai",
-            "model": "o4-mini",
-            "api_key": "sk-rea",
-            "base_url": "https://rea.invalid/v1",
-            "temperature": 0.5,
-            "max_retries": LLM_CLIENT_DEFAULTS["reasoner_max_retries"],
-            "timeout": LLM_CLIENT_DEFAULTS["reasoner_timeout"],
-            "profile": {"max_input_tokens": 64000},
-            # o4-mini is an OpenAI reasoning model: its API rejects penalties.
-        }
-
-    def test_reasoner_kwargs_non_reasoning_model_gets_penalties(self, monkeypatch):
-        monkeypatch.setenv("REASONER_LLM_PROVIDER", "openai")
-        monkeypatch.setenv("REASONER_LLM_NAME", "gpt-4o-mini")
-        monkeypatch.setenv("REASONER_LLM_API_KEY", "sk-rea")
-        monkeypatch.setenv("REASONER_LLM_API_BASE", "https://rea.invalid/v1")
-        monkeypatch.setenv("REASONER_LLM_MAX_TOKEN", "64000")
-        module = _load("_reasoner_env_builder_penalty", "models/LLMs/reasoner_llm.py")
-
-        assert module.model_config["frequency_penalty"] == 0.3
-        assert module.model_config["presence_penalty"] == 0.2
-
-    def test_reasoner_output_cap_reaches_the_provider(self, monkeypatch):
-        monkeypatch.setenv("REASONER_LLM_PROVIDER", "openai")
-        monkeypatch.setenv("REASONER_LLM_NAME", "gpt-4o-mini")
-        monkeypatch.setenv("REASONER_LLM_API_KEY", "sk-rea")
-        monkeypatch.setenv("REASONER_LLM_API_BASE", "https://rea.invalid/v1")
-        monkeypatch.setenv("REASONER_LLM_MAX_TOKEN", "64000")
-        monkeypatch.setenv("REASONER_LLM_MAX_OUTPUT_TOKEN", "32768")
-        module = _load("_reasoner_env_builder_cap", "models/LLMs/reasoner_llm.py")
-
-        assert module.model_config["max_tokens"] == 32768
 
     def test_auxiliary_remote_kwargs(self, monkeypatch):
         monkeypatch.setenv("AUXILIARY_LLM_MODEL_LOCAL", "false")

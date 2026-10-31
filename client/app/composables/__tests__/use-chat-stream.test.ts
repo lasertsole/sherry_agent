@@ -5,7 +5,7 @@
  * busy is QUEUED, but `handleSend` used to overwrite `streamingTurn` with the
  * queued turn. The still-running turn's next `chunk` then cleared the queued
  * send's badge (the old `clearQueueBadgeForTurn` call in `handleSocketChunk`),
- * so "已排队 · 第 N 位" never rendered. Fix: `handleSocketChunk` never touches
+ * so "已排队 · 第 N 位" (queued · position N) never rendered. Fix: `handleSocketChunk` never touches
  * badge state; `handleSend` only claims `streamingTurn` when the session was
  * idle, and `turn_started` moves it to the batch's trailing turn.
  */
@@ -121,6 +121,8 @@ function makeDeps(): HarnessDeps {
     sendCancelQueued: vi.fn(),
     sendEditQueued: vi.fn(),
     sendNow: vi.fn(),
+    sendContinueGeneration: vi.fn(),
+    sendEditMessage: vi.fn(),
     dispose: vi.fn()
   };
 
@@ -415,7 +417,7 @@ describe('useChatStream queue badges', () => {
 // ---------------------------------------------------------------------------
 // Busy-state recovery: the composer must never stay "streaming" after the turn
 // ended. Live bug: a long answer was cut at its output cap, the server sent
-// `done`, the page never cleared isSending, and 停止 + "继续输入消息以排队"
+// `done`, the page never cleared isSending, and Stop + "继续输入消息以排队" (keep typing to queue)
 // stayed on until a manual reload.
 // ---------------------------------------------------------------------------
 describe('useChatStream busy-state recovery', () => {
@@ -792,5 +794,157 @@ describe('useChatStream — stream-resume snapshot', () => {
     harness.stream.onStreamResumed({ sessionId: 'other', status: 'ok', text: 'zzz' });
 
     expect(harness.chatMessages.value[0]!.content).toBe('abc');
+  });
+});
+
+/**
+ * The handler the most recently built harness registered on one mitt channel.
+ * @param channel Mitt event name.
+ */
+const lastHandler = (channel: string): ((payload: unknown) => void) | undefined =>
+  mittMocks.on.mock.calls.filter(call => call[0] === channel).at(-1)?.[1] as ((payload: unknown) => void) | undefined;
+
+/**
+ * One AI row shaped like the backend's interrupt marker.
+ * @param turnNum
+ * @param content
+ */
+const interruptedAi = (turnNum: number, content = '[interrupted:cancelled] half'): MessageItem => ({
+  session_id: 's1',
+  role: CHAT_ROLE.AI,
+  content,
+  reasoning: '',
+  id: -11,
+  turn_num: turnNum,
+  timestamp: '20260621004725'
+});
+
+/**
+ * One user row.
+ * @param turnNum
+ * @param content
+ */
+const userRow = (turnNum: number, content = 'question'): MessageItem => ({
+  session_id: 's1',
+  role: CHAT_ROLE.USER,
+  content,
+  id: -10,
+  turn_num: turnNum,
+  timestamp: '20260621004725'
+});
+
+describe('continue generation', () => {
+  it('continues the interrupted tail: strips the marker, claims the turn, sends the frame', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1), interruptedAi(1)];
+
+    harness.stream.handleContinueGeneration(1);
+
+    expect(harness.socket.sendContinueGeneration).toHaveBeenCalledTimes(1);
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(1);
+    const row = harness.chatMessages.value.at(-1)!;
+    expect(row.content).toBe('half');
+    expect(row.resumable).toBe(false);
+  });
+
+  it('ignores a continue request while a turn is already streaming', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1), interruptedAi(1)];
+    harness.isSending.value = true;
+
+    harness.stream.handleContinueGeneration(1);
+
+    expect(harness.socket.sendContinueGeneration).not.toHaveBeenCalled();
+  });
+
+  it('ws:resumable marks the streaming turn tail row', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1), interruptedAi(1, 'half')];
+    harness.streamingTurn.value = 1;
+
+    lastHandler('ws:resumable')!({ sessionId: 's1' });
+
+    expect(harness.chatMessages.value.at(-1)!.resumable).toBe(true);
+  });
+
+  it('ws:resumable still finds the tail row after Stop cleared the streaming turn', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(7), interruptedAi(7, 'Request cancelled')];
+    // The user's Stop already released the composer: no streaming turn is left.
+    harness.streamingTurn.value = null;
+
+    lastHandler('ws:resumable')!({ sessionId: 's1' });
+
+    expect(harness.chatMessages.value.at(-1)!.resumable).toBe(true);
+  });
+
+  it('a refused continue ack settles the page, hides the button and reloads history', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1), { ...interruptedAi(1, 'half'), resumable: true }];
+    harness.isSending.value = true;
+    harness.streamingTurn.value = 1;
+
+    lastHandler('ws:continue_ack')!({ sessionId: 's1', ok: false, reason: 'stale' });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+    expect(harness.chatMessages.value.at(-1)!.resumable).toBe(false);
+    expect(harness.deps.loadSessionHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('an accepted continue ack changes nothing (the chunks follow)', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1), { ...interruptedAi(1, 'half'), resumable: true }];
+    harness.isSending.value = true;
+    harness.streamingTurn.value = 1;
+
+    lastHandler('ws:continue_ack')!({ sessionId: 's1', ok: true });
+
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.chatMessages.value.at(-1)!.resumable).toBe(true);
+    expect(harness.deps.loadSessionHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe('message edit', () => {
+  it('truncates the edited turn onward and re-sends it under the same turn number', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1, 'q1'), interruptedAi(1, 'a1'), userRow(2, 'q2'), interruptedAi(2, 'a2')];
+
+    harness.stream.handleEdit(2, 'q2 edited', 42);
+
+    expect(harness.chatMessages.value.map(row => row.turn_num)).toEqual([1, 1, 2, 2]);
+    expect(harness.chatMessages.value[2]!.role).toBe(CHAT_ROLE.USER);
+    expect(harness.chatMessages.value[2]!.content).toBe('q2 edited');
+    expect(harness.chatMessages.value[3]!.role).toBe(CHAT_ROLE.AI);
+    expect(harness.chatMessages.value[3]!.content).toBe('');
+    expect(harness.socket.sendEditMessage).toHaveBeenCalledWith(2, 'q2 edited', expect.any(String), 42);
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(2);
+  });
+
+  it('does not edit while a turn streams', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1, 'q1'), interruptedAi(1, 'a1')];
+    harness.isSending.value = true;
+
+    harness.stream.handleEdit(1, 'changed');
+
+    expect(harness.socket.sendEditMessage).not.toHaveBeenCalled();
+    expect(harness.chatMessages.value[0]!.content).toBe('q1');
+  });
+
+  it('a refused edit ack settles the page and reloads history', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1, 'q1'), interruptedAi(1, 'a1')];
+    harness.isSending.value = true;
+    harness.streamingTurn.value = 1;
+
+    lastHandler('ws:edit_ack')!({ sessionId: 's1', ok: false, reason: 'compacted' });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+    expect(harness.deps.loadSessionHistory).toHaveBeenCalledTimes(1);
   });
 });

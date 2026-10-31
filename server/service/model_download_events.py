@@ -24,7 +24,7 @@ from runtime.session.ws_push import broadcast_to_all
 #: The WS event name, forwarded by the client as `ws:model_download_updated`.
 EVENT_NAME = "model_download_updated"
 
-#: `content.kind` values: the five 模型配置 local families vs the code embedder.
+#: `content.kind` values: the five Model Config local families vs the code embedder.
 KIND_LOCAL = "local"
 KIND_CODE_EMBEDDER = "code_embedder"
 

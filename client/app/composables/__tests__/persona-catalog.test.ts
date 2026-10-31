@@ -1,6 +1,6 @@
 /**
  * The shared persona preset catalogue — the one source of the preset list, the
- * built-in payloads and the ROLE.md statement, used by the 预设 panel, the
+ * built-in payloads and the ROLE.md statement, used by the Presets & Role panel, the
  * mandatory new-session dialog and the top-bar preset viewer.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -75,7 +75,7 @@ const TEMPLATE = {
   'ROLE.md': 'ignored — composed'
 };
 
-/** A 运行守则 template shaped like the shipped ones (task content included). */
+/** A 运行守则 ("Operating Instructions") template shaped like the shipped ones (task content included). */
 const TEMPLATE_WITH_TASKS = {
   ...TEMPLATE,
   'AGENTS.md': [
@@ -116,7 +116,7 @@ const FACTS = {
     'SubagentCompletionDrainMiddleware'
   ],
   // The required multimedia chain first (the backend serves it that way), then
-  // the work-flow skills 编程助手 picks and two it does not.
+  // the work-flow skills Coding Assistant picks and two it does not.
   skills: [
     { name: 'image_to_text', required: true },
     { name: 'speech_to_text', required: true },
@@ -132,7 +132,7 @@ const FACTS = {
   ]
 };
 
-/** Facts without a catalogue (全量 still composes; the rest throw). */
+/** Facts without a catalogue (Full still composes; the rest throw). */
 const NO_AGENT: PresetCatalogFacts = { tools: [], gateableMiddlewares: [], skills: [] };
 
 /** The required skill names of {@link FACTS} (kept by every preset). */
@@ -159,7 +159,7 @@ describe('persona catalogue', () => {
     expect(entries.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
     expect(entries.every(entry => entry.builtin)).toBe(true);
     expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '编程助手', '情感陪伴', '全量']);
-    // Only the default carries the 默认 badge; the other three read 内置.
+    // Only the default carries the 默认 badge ("Default"); the other three read 内置 ("Built-in").
     expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '内置', '默认']);
   });
 
@@ -187,7 +187,7 @@ describe('persona catalogue', () => {
 
     expect(composeRoleFile(character('小樱', '小明'), t)).toBe('# ROLE.md\n\n你将扮演小樱。\n用户将扮演小明。\n');
     expect(composeRoleFile(character('小樱', ''), t)).toBe('# ROLE.md\n\n你将扮演小樱。\n');
-    // Both blank ⇒ no statement at all (the 编程助手 default).
+    // Both blank ⇒ no statement at all (the Coding Assistant default).
     expect(composeRoleFile(character('', ''), t)).toBe('');
   });
 
@@ -227,7 +227,7 @@ describe('persona catalogue', () => {
       'ulw-execute'
     ]);
     expect(payload.agent!.middlewares_disabled).toBeUndefined();
-    // Every restricted preset turns the compression nudge off (only 全量 keeps it).
+    // Every restricted preset turns the compression nudge off (only Full keeps it).
     expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
     // No built-in pins a model: null = follow the environment config.
     expect(payload.mainModel).toBeNull();
@@ -242,7 +242,7 @@ describe('persona catalogue', () => {
     expect(payload.content['ROLE.md']).toBe('# ROLE.md\n\n你将扮演橘雪莉。\n用户将扮演远野汉娜。\n');
     expect(payload.character.aiName).toBe('橘雪莉');
     expect(payload.character.userName).toBe('远野汉娜');
-    // 全量 pins nothing: every tool, every switch on.
+    // Full pins nothing: every tool, every switch on.
     expect(payload.agent).toEqual({});
   });
 
@@ -265,7 +265,7 @@ describe('persona catalogue', () => {
 
     expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
     expect(payload.character.aiName).toBe('橘雪莉');
-    // Every tool EXCEPT the 任务与计划 / 子代理 groups keeps moving together.
+    // Every tool EXCEPT the Tasks & planning / Subagent groups keeps moving together.
     expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search', 'memory', 'web_search']);
     expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
     for (const name of ['taskflow_flow', 'todoread', 'sessions_spawn']) {
@@ -274,8 +274,8 @@ describe('persona catalogue', () => {
     // The disabled groups are the orchestration surfaces, and its nudge is off.
     expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
     expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
-    // The skills are the mirror image of 编程助手: the required chain plus every
-    // skill 编程助手 does NOT pick (clawhub / cron here).
+    // The skills are the mirror image of Coding Assistant: the required chain plus every
+    // skill Coding Assistant does NOT pick (clawhub / cron here).
     expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'clawhub', 'cron']);
   });
 
@@ -286,7 +286,7 @@ describe('persona catalogue', () => {
     expect(payload.content['AGENTS.md']).not.toContain('ORCHESTRATOR');
     expect(payload.content['AGENTS.md']).not.toContain('任务分配');
     expect(payload.content['AGENTS.md']).not.toContain('任务执行');
-    // The emptied 运行守则 heading goes with its bullets; 边界 stays intact.
+    // The emptied 运行守则 ("Operating Instructions") heading goes with its bullets; 边界 ("Boundaries") stays intact.
     expect(payload.content['AGENTS.md']).not.toContain('## 运行守则');
     expect(payload.content['AGENTS.md']).toContain('## 边界');
     expect(payload.content['AGENTS.md']).toContain('隐私保护');
@@ -350,8 +350,9 @@ describe('persona catalogue', () => {
       expect(stripped, lang).not.toMatch(/NEVER THE IMPLEMENTER|実装者では|구현자가/);
       expect(stripped.length, lang).toBeLessThan(template.length);
       expect(stripped, lang).toContain('# AGENTS.md');
-      // The 边界 section survives in every language (its last bullet).
-      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(4);
+      // The 边界 ("Boundaries") section survives in every language (its bullets), and
+      // so does the clarify-first rule: only 任务分配 / 任务执行 are stripped.
+      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(5);
     }
   });
 
@@ -360,7 +361,7 @@ describe('persona catalogue', () => {
     for (const id of ['pure', 'coding', 'companion'] as const) {
       expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
     }
-    // 全量 has no opinion at all, so it never needs the catalogue.
+    // Full has no opinion at all, so it never needs the catalogue.
     expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
   });
 
@@ -402,7 +403,7 @@ describe('persona catalogue', () => {
     await applyPresetPayload(payload);
 
     expect(bridge.writeSystemPrompt).toHaveBeenCalledWith(payload.content);
-    // The applied character is 全量's shipped default (both roles named).
+    // The applied character is Full's shipped default (both roles named).
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
       aiName: '橘雪莉',
@@ -416,7 +417,7 @@ describe('persona catalogue', () => {
     for (const id of ['pure', 'coding', 'companion'] as const) {
       const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
       expect(payload.agent).not.toEqual({});
-      // …and the nudge is the one option only 全量 leaves alone (absent = on).
+      // …and the nudge is the one option only Full leaves alone (absent = on).
       expect(payload.agent!.middleware_options).toEqual(
         id === 'sherry' ? undefined : { Summarization: { nudge: false } }
       );

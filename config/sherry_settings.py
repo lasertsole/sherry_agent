@@ -31,7 +31,7 @@ APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _COD
 
 SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
 if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
-    # Seed the editable copy from the shipped file so the 应用配置 panel has the
+    # Seed the editable copy from the shipped file so the App Config panel has the
     # full key list (comments included) to write into.
     template = _CODE_ROOT / "sherry.jsonc"
     if template.exists():
@@ -46,6 +46,10 @@ if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
 # sherry.jsonc is git-tracked and must never hold an API key.
 SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "TOOL_CALL_TIMEOUT_MINUTES": 5,
+    # Default cumulative-token cap for a session that never set its own
+    # (0 = unlimited, the historical behaviour). A session's own cap wins; a
+    # session that sets 0 stays unlimited even when this key is positive.
+    "TOKEN_BUDGET_DEFAULT_CAP": 0,
     "LOG_LEVEL": "INFO",
     # Persisted process-level default project directory ("where the agent
     # works"). Empty = unset -> ROOT_DIR. SHERRY_PROJECT_DIR still wins over
@@ -53,7 +57,16 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # config/path.py::resolve_default_project_dir).
     "project_dir": "",
     "WORKSPACE_TEMPLATE_LANG": "en",
-    # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off by
+    # Live-stream safety filter (keyword rules + optional LLM moderation).
+    # OFF by default: an untouched install behaves exactly as before. These are
+    # read LIVE (the 系统配置 → 直播安全 tab flips them from a switch), not only
+    # at boot.
+    "safety_filter.enabled": False,
+    "safety_filter.llm_moderation_mode": "off",
+    # Empty = no review model configured → LLM moderation stays off.
+    "safety_filter.llm_moderation_model": "",
+    "safety_filter.keyword_file": "sensitive_words.json",
+    # Global heartbeat scheduler switch (the Heartbeat panel's toggle). Off by
     # default: the periodic heartbeat is opt-in, and the boot path reads this
     # value, so a session that never touches the switch never wakes the agent.
     "heartbeat.enabled": False,
@@ -68,7 +81,7 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "curator.prune_builtins": True,
     # User-configurable lifecycle hooks (agent/middlewares/user_hooks): the
     # master switch for the ``hooks`` section's commands. OFF by default and
-    # registered here so the 应用配置 panel can flip it and the shipped
+    # registered here so the App Config panel can flip it and the shipped
     # sherry.jsonc stays complete; the per-event hook LISTS are read by
     # ``load_sherry_hooks`` (they are lists of objects, not scalars).
     "hooks.enabled": False,
@@ -79,6 +92,7 @@ SHERRY_SETTING_KEYS: tuple[str, ...] = tuple(SHERRY_SETTING_DEFAULTS)
 _INT_KEYS = frozenset(
     {
         "TOOL_CALL_TIMEOUT_MINUTES",
+        "TOKEN_BUDGET_DEFAULT_CAP",
         "curator.interval_hours",
         "curator.stale_after_days",
         "curator.archive_after_days",
@@ -87,6 +101,7 @@ _INT_KEYS = frozenset(
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 _BOOL_KEYS = frozenset(
     {
+        "safety_filter.enabled",
         "heartbeat.enabled",
         "hooks.enabled",
         "curator.enabled",
@@ -139,6 +154,16 @@ def load_sherry_settings() -> dict[str, Any]:
             except (TypeError, ValueError):
                 continue
     return settings
+
+
+#: The list settings the API accepts (``/sherry-config/list/<key>``). A list
+#: lives OUTSIDE the typed scalar registry: the consumer owns the defaults and
+#: merges the user's entries (``load_sherry_list_setting``). Only these keys may
+#: be written — a free-form key would let the UI author settings nobody reads.
+LIST_SETTING_KEYS: tuple[str, ...] = (
+    "regression_gate_allowed_executables",
+    "yolo_deny_paths",
+)
 
 
 def load_sherry_list_setting(key: str) -> list[str]:

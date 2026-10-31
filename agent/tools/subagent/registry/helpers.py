@@ -36,17 +36,6 @@ def resolve_announce_retry_delay_seconds(
     return resolve_announce_retry_delay_ms(attempt, base_ms) / 1000.0
 
 
-def log_announce_give_up(run: SubagentRunRecord) -> None:
-    """Log a warning that announce retries have been exhausted for a run."""
-    logger.warning(
-        "Announce give up for run {}: status={}, attempts={}, last_error={}",
-        run.run_id,
-        run.delivery.status,
-        run.delivery.attempt_count,
-        run.delivery.last_error,
-    )
-
-
 def resolve_archive_after_ms(config: SubagentConfig | None = None) -> int:
     """Return the archive-after threshold in milliseconds from config."""
     config = config or SubagentConfig()

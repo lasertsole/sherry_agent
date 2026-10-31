@@ -427,73 +427,8 @@ def test_get_all_flows_sync_failure_returns_empty(
 
 
 # ---------------------------------------------------------------------------
-# Additive migration + session purge
+# Session purge
 # ---------------------------------------------------------------------------
-
-_LEGACY_CREATE_TABLE_SQL = f"""
-CREATE TABLE {TABLE_NAME} (
-    flow_id TEXT PRIMARY KEY,
-    state_json TEXT NOT NULL,
-    wait_json TEXT,
-    expected_revision INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    child_session_key TEXT,
-    total_tokens INTEGER DEFAULT 0,
-    total_cost REAL DEFAULT 0.0,
-    token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL
-);
-"""
-
-
-def _create_pre_session_db(db_path: Path) -> None:
-    """A database created before session isolation: no session_id column."""
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(_LEGACY_CREATE_TABLE_SQL)
-        conn.execute(
-            f"INSERT INTO {TABLE_NAME} "
-            "(flow_id, state_json, wait_json, expected_revision, status, child_session_key) "
-            "VALUES ('flow-legacy', '{}', NULL, 1, ?, NULL)",
-            (TaskFlowStatus.RUNNING.value,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _table_columns(db_path: Path) -> set[str]:
-    conn = sqlite3.connect(db_path)
-    try:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({TABLE_NAME})")}
-    finally:
-        conn.close()
-
-
-def test_old_db_gains_session_column_and_keeps_rows(isolated_db: Path):
-    """The additive migration adds session_id; legacy rows stay readable."""
-    _create_pre_session_db(isolated_db)
-    assert "session_id" not in _table_columns(isolated_db)
-
-    # Any store call triggers the sync migration path.
-    legacy = store_sqlite.get_flow_sync("flow-legacy", "")
-
-    assert legacy is not None
-    assert legacy["session_id"] == ""
-    assert "session_id" in _table_columns(isolated_db)
-    # Legacy rows are invisible to every real session.
-    assert store_sqlite.get_flow_sync("flow-legacy", _SESSION) is None
-
-
-@pytest.mark.asyncio
-async def test_old_db_gains_session_column_via_async_init(isolated_db: Path):
-    _create_pre_session_db(isolated_db)
-
-    await store_sqlite.ensure_db()
-
-    assert "session_id" in _table_columns(isolated_db)
-    assert await store_sqlite.get_flow("flow-legacy", _SESSION) is None
-    assert await store_sqlite.get_flow("flow-legacy", "") is not None
 
 
 @pytest.mark.asyncio

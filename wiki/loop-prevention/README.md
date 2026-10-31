@@ -19,7 +19,7 @@ Two design rules run through every guard below:
 |---|---|---|
 | **Text death loop** (one model call) | Same sentence / character run streamed forever | Per-family sampling penalty (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
-| **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 60 worker combined calls) |
+| **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 90 executor / 60 other workers, combined calls) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
 | **Overflow retry spiral** | An oversized context is rejected → compression fires → the compacted context still overflows → the provider errors again | `Summarization`: no-LLM overflow tail clip first, then the existing overflow route, then forced recovery |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
@@ -46,19 +46,19 @@ Active on the main agent, worker agents, and nudge sub-agents. Every tool call r
 |---|---|---|---|---|
 | Exact-failure repetition | Same tool + same (hashed) args keeps failing | 2 | 5 | HALT at 5 |
 | Same-tool failure storm | Same tool keeps failing, args may vary | 3 | 8 | HALT at 8 |
-| Idempotent no-progress | Same idempotent tool returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
+| Idempotent no-progress | Same idempotent tool (or idempotent action of a grouped tool) returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
 | Ping-pong | Unbroken A → B → A → B bouncing where both consecutive calls are stagnant | 4 | 6 | HALT at 6 |
 | Argument churn | Same idempotent tool cycling argument variants whose result stays unchanged (stagnant) | 3 variants | 5 variants | HALT at 5 |
 
 Details that matter:
 
 - **Recovery mode** (`recovery_mode_enabled=True` by default): the first BLOCK does not brick the turn. The turn enters recovery, and the *precheck* path releases the blocked tool so the retry is evaluated fresh. Each further BLOCK increments a violation counter; once the counter exceeds `recovery_max_violations` (default 1), the action escalates to HALT. In effect: a managed retry window instead of an immediate wall. Set `recovery_mode_enabled=False` for strict no-recovery behavior, or `hard_stop_enabled=True` to turn every BLOCK threshold into HALT (see table).
-- **No progress means stagnation** (`is_stagnant`): a successful idempotent call is only no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
+- **No progress means stagnation** (`is_stagnant`): a successful idempotent call is only no-progress when the *same tool* already produced this exact result hash earlier in the turn; a changed result is progress. A grouped tool may declare `idempotent_actions` instead of a whole-tool flag: only a call whose `action` argument is in that allowlist is hashed (TaskFlow hashes `create`/`plan`/`update_steps`/`resume`; `checkpoint` hashes `list`/`show`; `knowledge` hashes `read`/`list`). The allowlist takes precedence over the scalar flag, and an unlisted or missing action is never treated as repeatable. **Ping-pong pairs** hash the two tool names of adjacent calls and accumulate only while *both* consecutive calls are stagnant. Any error, a changed (non-stagnant) result, or a successful non-idempotent (mutating) call zeroes every accumulated pair streak. A changed idempotent result likewise stops counting toward argument churn, and a successful non-idempotent call clears the argument-churn state entirely.
 - Guard state is strictly **turn-scoped**: `before_agent` resets it, so a fresh turn starts clean.
 
 ### Turn level: `IterationBudget`
 
-Counts model calls and tool calls **combined** per turn. Main agent 90, worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+Counts model calls and tool calls **combined** per turn. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 
@@ -103,7 +103,7 @@ The clip never removes, reorders, or injects a message: it replaces content thro
 
 ### Turn level: text death loops, sampling-time prevention + `OutputRepetitionGuard`
 
-**Prevention at sampling time** (`models/LLMs/provider_repetition_penalty.py`): every chat family sends `frequency_penalty` / `presence_penalty` (defaults 0.3 / 0.2) to OpenAI-compatible and Google providers, and Ollama's native `repeat_penalty` (1.1); Anthropic, Bedrock, an OpenAI reasoning model (o-series / gpt-5, whose API rejects the field) and an unknown gateway receive no field. The per-family `.models` keys (`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`, likewise for auxiliary, TaskFlow, compression and reasoner) override the global `REPETITION_PENALTY` one value at a time: empty means "use the default", and a set value must be a finite number in [-2, 2]. The model-configuration panel renders each pair as a number input that rejects non-numeric keystrokes and clamps out-of-range values. This lowers the probability of a repeated token *before* it is emitted; the guards below still react after the fact, so the two layers are complementary.
+**Prevention at sampling time** (`models/LLMs/provider_repetition_penalty.py`): every chat family sends `frequency_penalty` / `presence_penalty` (defaults 0.3 / 0.2) to OpenAI-compatible and Google providers, and Ollama's native `repeat_penalty` (1.1); Anthropic, Bedrock, an OpenAI reasoning model (o-series / gpt-5, whose API rejects the field) and an unknown gateway receive no field. The per-family `.models` keys (`MAIN_LLM_FREQUENCY_PENALTY` / `_PRESENCE_PENALTY`, likewise for auxiliary, TaskFlow and compression) override the global `REPETITION_PENALTY` one value at a time: empty means "use the default", and a set value must be a finite number in [-2, 2]. The model-configuration panel renders each pair as a number input that rejects non-numeric keystrokes and clamps out-of-range values. This lowers the probability of a repeated token *before* it is emitted; the guards below still react after the fact, so the two layers are complementary.
 
 **Cross-call detection** (`OutputRepetitionGuard`, middleware in the worker pipeline):
 

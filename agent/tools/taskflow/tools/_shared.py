@@ -68,8 +68,8 @@ async def bind_flow_todo(
 async def compensate_flow_without_todo(flow: dict, reason: str = "todo_bind_failed") -> None:
     """Best-effort failure for a flow whose GC root could not be created.
 
-    Fail-open: if the compensating write also fails, the tri-color sweep sees a
-    flow with no active reference and collects it after the grace window.
+    Fail-open: if the compensating write also fails, the unreferenced-flow sweep
+    sees a flow with no active reference and collects it after the grace window.
     """
     try:
         await store_sqlite.fail_flow_for_gc(flow, reason=reason)
@@ -79,6 +79,99 @@ async def compensate_flow_without_todo(flow: dict, reason: str = "todo_bind_fail
             flow.get("flow_id"),
             exc,
         )
+
+
+async def compensate_orphaned_flows(
+    session_id: str, flow_ids: list[str], reason: str
+) -> list[dict]:
+    """Fail active flows whose GC-root todo was dropped by a full replacement.
+
+    Terminal/missing flows are skipped; a failed flow's live detached children
+    are killed (fail-open), and one failure never blocks the rest (the
+    unreferenced-flow sweep remains the backstop). Returns the flows actually
+    failed, for the caller's warning.
+    """
+    cancelled: list[dict] = []
+    for flow_id in dict.fromkeys(str(fid) for fid in flow_ids if str(fid or "").strip()):
+        try:
+            flow = await store_sqlite.get_flow(flow_id, session_id)
+            if flow is None or is_terminal(str(flow.get("status") or "")):
+                continue
+            if await store_sqlite.fail_flow_for_gc(flow, reason=reason):
+                cancelled.append(flow)
+                await _kill_orphaned_children(flow, reason)
+        except Exception as exc:  # noqa: BLE001 - the sweep is the backstop
+            logger.warning(
+                "TaskFlow '{}' orphaned by todo replacement but compensation failed: {}",
+                flow_id,
+                exc,
+            )
+    if cancelled:
+        try:
+            await push_taskflow_progress(session_id)
+        except Exception:  # noqa: BLE001 - the push is best-effort
+            logger.debug("orphaned-flow progress push failed", exc_info=True)
+    return cancelled
+
+
+async def _kill_orphaned_children(flow: dict, reason: str) -> None:
+    """Kill the live children of a flow whose GC root was dropped.
+
+    A flow collected by the garbage collector is not merely cancelled: its
+    dispatched children must stop, or they keep producing work for a dead flow
+    (and may duplicate the work a new flow starts). Fail-open — a missing
+    registry or a refused kill leaves the flow terminal and the sweep's
+    ordinary handling in place.
+    """
+    try:
+        from agent.tools.subagent.control.kill import kill_subagent_run_with_cascade
+        from agent.tools.subagent.registry.queries import get_run_by_child_session_key
+        from agent.tools.subagent.types.registry import ExecutionStatus
+
+        steps = (flow.get("state") or {}).get("steps") or []
+        keys = {
+            str(step.get("child_session_key") or "").strip()
+            for step in steps
+            if isinstance(step, dict)
+        }
+        for key in sorted(keys):
+            if not key:
+                continue
+            run = get_run_by_child_session_key(key)
+            if run is None or run.execution.status == ExecutionStatus.TERMINAL:
+                continue
+            await kill_subagent_run_with_cascade(
+                run.run_id,
+                reason=f"flow root dropped: {reason}",
+                cascade=True,
+                requester_session_key=run.controller_session_key,
+            )
+    except Exception as exc:  # noqa: BLE001 - the flow is already terminal
+        logger.warning("orphaned-flow child cleanup failed: {}", exc)
+
+
+async def notify_flow_todos_completed(session_id: str, flow_id: str) -> int:
+    """Mark the finished flow's GC-root todo completed; fail-open."""
+    try:
+        from agent.tools.todolist.service import TodoService
+
+        return await TodoService.complete_todos_for_flows(session_id, [flow_id])
+    except Exception as exc:  # noqa: BLE001 - the sweeper/manual edit is the backstop
+        logger.warning("TaskFlow '{}' finished but todo auto-complete failed: {}", flow_id, exc)
+        return 0
+
+
+async def notify_flow_todos_cancelled(session_id: str, flow_id: str) -> int:
+    """Mark the failed/cancelled flow's GC-root todo cancelled; fail-open."""
+    try:
+        from agent.tools.todolist.service import TodoService
+
+        return await TodoService.cancel_todos_for_flows(session_id, [flow_id])
+    except Exception as exc:  # noqa: BLE001 - the sweeper/manual edit is the backstop
+        logger.warning(
+            "TaskFlow '{}' failed/cancelled but todo auto-cancel failed: {}", flow_id, exc
+        )
+        return 0
 
 
 def default_state(
@@ -598,4 +691,45 @@ def validate_steps_list(steps: list) -> str | None:
             dep_id = str(dep).strip()
             if dep_id not in seen:
                 return f"Error: step '{step_id}' depends_on references unknown step_id '{dep_id}'"
+    cycle = _find_dependency_cycle(steps)
+    if cycle is not None:
+        return f"Error: dependency cycle: {' -> '.join(cycle)}"
+    return None
+
+
+def _find_dependency_cycle(steps: list) -> list[str] | None:
+    """Return one dependency cycle as a step-id path, or ``None`` when acyclic.
+
+    Depth-first over the already-validated graph (ids exist, no self-edges).
+    Every step is a node here, whatever its status: a cycle among DONE steps is
+    still a malformed plan, and a terminal step's deps are never re-walked by
+    the scheduler, so a late-detected cycle would silently pin the flow.
+    """
+    graph: dict[str, list[str]] = {
+        str(step["step_id"]).strip(): [str(dep).strip() for dep in step.get("depends_on") or []]
+        for step in steps
+    }
+    WHITE, GREY, BLACK = 0, 1, 2  # noqa: N806 - tiny local colour marks
+    colour = dict.fromkeys(graph, WHITE)
+    path: list[str] = []
+
+    def _visit(node: str) -> list[str] | None:
+        colour[node] = GREY
+        path.append(node)
+        for dep in graph.get(node, ()):  # node -> its prerequisites
+            if colour.get(dep, WHITE) == GREY:
+                return path[path.index(dep) :] + [dep]
+            if colour.get(dep, WHITE) == WHITE:
+                found = _visit(dep)
+                if found is not None:
+                    return found
+        path.pop()
+        colour[node] = BLACK
+        return None
+
+    for node in graph:
+        if colour[node] == WHITE:
+            found = _visit(node)
+            if found is not None:
+                return found
     return None

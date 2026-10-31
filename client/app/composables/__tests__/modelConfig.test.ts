@@ -11,9 +11,9 @@ const fetchApiMock = vi.hoisted(() => vi.fn());
 vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
 
 const validPayload: ModelConfig = {
-  main_max_token: 131072,
-  aux_max_token: 131072,
-  min_required: 131072,
+  main_max_token: 200000,
+  aux_max_token: 200000,
+  min_required: 200000,
   valid: true
 };
 
@@ -45,7 +45,7 @@ describe('fetchModelConfig', () => {
     expect(result).toEqual({
       main_max_token: null,
       aux_max_token: null,
-      min_required: 131072,
+      min_required: 200000,
       valid: false
     });
   });

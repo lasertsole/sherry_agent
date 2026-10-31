@@ -22,9 +22,15 @@ _CHILD = "agent:main:subagent:child-1"
 
 
 class _StubRun:
-    def __init__(self, spawned_by: str | None, requester: str = "agent:main:session:owner"):
+    def __init__(
+        self,
+        spawned_by: str | None,
+        requester: str = "agent:main:session:owner",
+        max_output_tokens: int | None = None,
+    ):
         self.spawned_by = spawned_by
         self.requester_session_key = requester
+        self.max_output_tokens = max_output_tokens
 
 
 @pytest.fixture()
@@ -131,6 +137,18 @@ class TestRendering:
         assert rendered.startswith(f"## Subagent session: {_CHILD}")
         assert "[ai]" in rendered
 
+    def test_a_scaled_model_budget_raises_the_transcript_window(self):
+        from agent.tools.subagent.output_caps import resolve_subagent_output_caps
+        from pub.func.message.token_truncation import estimate_text_tokens
+
+        messages = [AIMessage(content="x" * 4000) for _ in range(20)]
+        caps = resolve_subagent_output_caps(16384)
+
+        rendered = sm.render_messages(messages, _CHILD, caps)
+
+        assert estimate_text_tokens(rendered) <= caps.transcript_tokens + 64
+        assert estimate_text_tokens(rendered) > 4000
+
 
 class TestTranscriptTool:
     @pytest.mark.asyncio
@@ -171,6 +189,25 @@ class TestTranscriptTool:
         assert "m9" in out and "m11" in out
         assert "m8" not in out
         assert "Showing the last 3 message(s)" in out
+
+    @pytest.mark.asyncio
+    async def test_the_run_budget_raises_the_tool_transcript_window(self, stub_run, monkeypatch):
+        from agent.tools.subagent.output_caps import resolve_subagent_output_caps
+        from pub.func.message.token_truncation import estimate_text_tokens
+
+        stub_run["run"] = _StubRun(spawned_by=_CALLER, max_output_tokens=16384)
+        history = [AIMessage(content="x" * 4000) for _ in range(20)]
+
+        async def _read(session_id, graph=None):
+            return history
+
+        monkeypatch.setattr("agent.state_port.read_messages", _read)
+
+        out = await sm.read_session_transcript("owner", _CHILD)
+
+        caps = resolve_subagent_output_caps(16384)
+        assert estimate_text_tokens(out) <= caps.transcript_tokens + 64
+        assert estimate_text_tokens(out) > 4000
 
     @pytest.mark.asyncio
     async def test_the_query_filter_keeps_only_matching_messages(self, stub_run, monkeypatch):

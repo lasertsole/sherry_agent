@@ -46,10 +46,6 @@ class GraphRagPathConfig(TypedDict):
     """Weight of the average edge weight in a beam candidate's score."""
     max_evidence_chunks: int
     """Source chunks quoted under the path section."""
-    max_description_chars: int
-    """Per-node / per-edge description truncation in the path section."""
-    max_chunk_chars: int
-    """Per-chunk truncation in the path section."""
 
 
 GRAPH_RAG_PATH: GraphRagPathConfig = {
@@ -84,6 +80,4 @@ GRAPH_RAG_PATH: GraphRagPathConfig = {
     "beam_max_hops": 5,
     "beam_edge_weight": 0.2,
     "max_evidence_chunks": 12,
-    "max_description_chars": 600,
-    "max_chunk_chars": 1_200,
 }

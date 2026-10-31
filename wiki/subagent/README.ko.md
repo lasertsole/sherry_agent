@@ -37,10 +37,11 @@
 1. **두 축은 결코 합쳐지지 않는다.** 기능 역할은 spawn 권한을 부여할 수 없고, 깊이 역할은 도구 허용 목록이나 프롬프트를 바꿀 수 없습니다. 모든 spawn에서 둘이 합성됩니다.
 2. **`general`은 항등 역할이다.** 기능 역할 힌트가 없으면 spawn 동작은 그대로입니다: 어떤 정의도 로드되지 않고 LLM 티어는 깊이 역할이 공급합니다.
 3. **spawn 권한은 두 번 깊이로 게이트된다**——조립 시점(도구 정책 교집합)과 호출 시점(도구 자체의 권한 검사).
-4. **완료 게이트는 상시 켜져 있다.** 스택 어디에도 활성/비활성 스위치가 없으며 입력은 예산과 판정 기준뿐입니다.
-5. **페일오픈은 모델 오류, 파싱 불가능한 출력, 이용 불가능한 조회에만 적용되며 부정적 판정에는 결코 적용되지 않는다.** 파싱된 `RETRY`, `BLOCK`, 실패한 증거 행은 여전히 차단합니다.
-6. **자식 컨텍스트는 항상 격리된다.** 자식은 자신의 빈 메시지 목록에서 시작하고 부모 트랜스크립트를 상속하지 않으며, 이를 바꾸는 모드도 없습니다.
-7. **완료 캐리어는 주장이지 검증된 결과가 아니다.** 부모 턴이 받는 것은 자식의 자기 보고입니다. 세션에 통과 증거가 없으면 drain 게이트가 필수 검증 메시지를 덧붙입니다.
+4. **역할 파생은 홉 단위 허용 목록이며 체인을 순회하지 않는다.** 전문화된 부모는 자기 역할에 더해 `SPAWN_ALLOWED_CHILD_ROLES` 항목이 나열한 읽기 전용 확장을 spawn할 수 있습니다. 불변식은 단일 홉(허용되는 부모 이외의 자식은 쓰기 능력을 가져서는 안 됨)이며, 이것이 조상 순회 없이 다단계를 안전하게 만드는 이유입니다.
+5. **완료 게이트는 상시 켜져 있다.** 스택 어디에도 활성/비활성 스위치가 없으며 입력은 예산과 판정 기준뿐입니다.
+6. **페일오픈은 모델 오류, 파싱 불가능한 출력, 이용 불가능한 조회에만 적용되며 부정적 판정에는 결코 적용되지 않는다.** 파싱된 `RETRY`, `BLOCK`, 실패한 증거 행은 여전히 차단합니다.
+7. **자식 컨텍스트는 항상 격리된다.** 자식은 자신의 빈 메시지 목록에서 시작하고 부모 트랜스크립트를 상속하지 않으며, 이를 바꾸는 모드도 없습니다.
+8. **완료 캐리어는 주장이지 검증된 결과가 아니다.** 부모 턴이 받는 것은 자식의 자기 보고입니다. 세션에 통과 증거가 없으면 drain 게이트가 필수 검증 메시지를 덧붙입니다.
 
 ## 🧭 두 개의 역할 축
 
@@ -64,10 +65,10 @@
 | 역할 | 용도 | 유효 LLM 티어 | 역할 도구 집합 |
 |------|------|----------------|----------------|
 | `general` | 기본 worker; 항등 역할(패키지 정의는 결코 로드되지 않음) | 깊이 역할 | 모든 도구 + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `librarian` | 읽기 전용 외부 코드베이스 검색: 서드파티 저장소 clone·색인·검색 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `executor` | 쓰기 가능한 구현과 명령 실행. 읽기 전용 `researcher` / `librarian`을 추가로 spawn할 수 있는 유일한 역할 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `claim_scope`, `share_finding`, `peers_findings` |
+| `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `librarian` | 읽기 전용 외부 코드베이스 검색: 서드파티 저장소 clone·색인·검색 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact` / `semantic_code_search`는 심볼 인덱스가 필요하므로 `researcher`와 `librarian` 두 코드 검색 역할에 주어집니다(`semantic_code_search`는 그 인덱스에 대한 임베딩 기반 개념 검색입니다). LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 역시 같은 이유로 이 두 역할에 주어지며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다. `lsp_rename`과 `lsp_format`은 기본적으로 미리보기만 하고, `lsp_diagnostics`는 비동기 진단 알림을 기다리며, `lsp_status`는 아무것도 시작하지 않고 가용성만 보고합니다. `execute_code` 도구(프로그래매틱 도구 호출)는 executor 전용이며, executor 역할만 받고 다른 기능 역할은 받지 않습니다.
 
@@ -77,12 +78,13 @@
 
 ### ⚙️ 역할이 결정하는 것
 
-**LLM 선택.** 명시적 `model_override`가 최우선이고, 그다음 `general`이 아닌 역할의 `model_tier`가 적용되며, 그마저 없으면 깊이 역할이 결정합니다(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM).
+**LLM 선택.** 역할 모델 프로필이 최우선이며(자식 에이전트 자체의 `max_output_tokens`도 보유, 기본 8192), 그다음 명시적 `model_override`, 그다음 `general`이 아닌 역할의 `model_tier`가 적용되고, 그마저 없으면 깊이 역할이 결정합니다(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM).
 
 ```text
-명시적 model_override
-  └─► 기능 역할 model_tier("main" | "auxiliary")
-        └─► 깊이 역할(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM)
+역할 모델 프로필(자체 max_output_tokens, 기본 8192)
+  └─► 명시적 model_override
+        └─► 기능 역할 model_tier("main" | "auxiliary")
+              └─► 깊이 역할(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM)
 ```
 
 **시스템 프롬프트.** `general`이 아닌 역할(또는 비어 있지 않은 역할 설명/본문)은 `## Your Role`에 `{ROLE}` 특수화 줄을 더하고 정의 본문을 담은 `## Role Instructions` 절을 덧붙입니다.
@@ -91,7 +93,7 @@
 
 ## 🔒 spawn 권한 가드
 
-spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 권한 상승이 불가능합니다:
+깊이 기반 spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 권한 상승이 불가능합니다(기능 역할 봉쇄는 세 번째 직교 게이트입니다——아래 주석 참조):
 
 - **조립 시점(주 게이트).** 최종 허용 목록이 역할 허용 목록과 `extra_tools`로 구축된 뒤, Phase 8.6이 이를 `can_spawn_children(role)`과 교집합합니다: spawn할 수 없는 모든 역할에서 `sessions_spawn`과 `sessions_yield`가 목록에서 제거됩니다. 상속 모드에서는 목록이 비어 있고 기본 거부 목록이 이미 이 쌍을 막으므로 교집합은 무연산입니다.
 - **호출 시점(심층 방어).** `check_spawn_permission(session_id)`는 먼저 정규 호출자 키를 해석하고(자식·swarm 키는 그대로, 다른 id는 `agent:main:session:` 접두사), 다음으로 깊이를 해석하며(실행 레코드 우선, 세션 키 형태 차선), 마지막으로 깊이 역할을 해석해 spawn할 수 없는 호출자를 거부합니다. `(allowed, reason)` 튜플을 반환하고 결코 예외를 던지지 않으며, 도구는 기존 문자열 계약으로 거부를 렌더링합니다.
@@ -103,9 +105,11 @@ spawn 권한은 두 개의 독립 지점에서 집행되므로 단일 누출로 
 
 호출 시점 가드는 `sessions_spawn`(권한 상승 경로)을 도구와 런타임 spawn 래퍼 양쪽에서 뒷받침합니다. `sessions_yield`는 조립 시점 제거만으로 보호됩니다.
 
+**기능 역할 봉쇄(세 번째, 직교 게이트).** 깊이는 자식이 spawn을 *할 수 있는지*를 정하고, 봉쇄는 *어떤 역할*을 spawn할 수 있는지를 정합니다. `_check_role_containment`(`spawn/core.py`)는 요청자 자신의 run 레코드만 읽고(단일 홉, 조상 체인을 순회하지 않습니다) `SPAWN_ALLOWED_CHILD_ROLES`(`types/functional_role.py`)를 참조합니다: 항목이 없는 역할은 ‘같은 역할만’이며 `researcher` / `reviewer` / `librarian`이 그대로이고, `MAIN`(run 레코드 없음)과 `general`(`tools: inherit` = 모든 도구)은 무제한으로 단락됩니다——전문화 역할의 허용 목록은 모두 그 부분집합이기 때문입니다. 유일하게 확장된 항목은 `executor`로, 쓰기 전 조사를 위해 **읽기 전용** `researcher` / `librarian`을 추가로 spawn할 수 있습니다. 다단계 안전성은 체인 순회가 아니라 단일 홉 불변식에 기댑니다: 허용되는 **부모 이외의 자식은 반드시 읽기 전용**이므로 쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 같은 종류에만 도달하며 쓰기 능력으로 돌아가는 경로가 없습니다. 앞으로 순환을 만드는 항목(예: `researcher → executor`)을 추가하면 구멍이 열리는 대신 불변식 테스트에서 실패합니다.
+
 ## 🧪 완료 판정기와 goal loop
 
-완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
+완료 판정기(`spawn/completion_judge.py`)는 서브에이전트 계층 게이트입니다. 온도 `0`의 보조 LLM이 작업, 자식의 최신 응답(`8000`자로 절단. 미설정 시 기존 기준이며 serving model 출력 예산에 따라 조정됩니다), 자식 세션의 검증 증거 요약을 받아 `DONE` 또는 `CONTINUE`를 한 문장 이유와 함께 반환합니다. `CONTINUE` 판정은 짧은 연속 프롬프트도 함께 전달합니다. 파싱은 단계적으로 안전하게 퇴화하며——먼저 JSON 복구, 다음으로 정규식 스캔——모델 오류나 사용할 수 없는 출력은 명시적 페일오픈 이유와 함께 `DONE`으로 확정됩니다.
 
 goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, `COMPLETION_JUDGE["goal_max_turns"]`(기본 `5`)를 예산으로 삼아 첫 턴까지 포함합니다. spawn별 `goal_max_turns` 파라미터가 이를 재정의합니다. `CONTINUE`일 때 판정기의 프롬프트는 **같은 checkpoint 스레드**의 다음 `HumanMessage`로 주입되므로, 연속은 새 대화가 아니라 같은 자식 대화를 연장합니다.
 
@@ -132,7 +136,9 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 
 **3계층——흐름 게이트.** `taskflow_flow(action="finish")`는 다음을 모두 만족할 때까지 `DONE` 전환을 거부합니다: 게이트 A가 모든 단계를 `done` 또는 `blocked`로 보고, 게이트 B가 차단된 단계를 보지 않고, 게이트 C가 `FAIL`이나 `[stale]` 흐름 증거를 보지 않습니다(그리고 `description`이 있는 흐름의 단계 수가 `GOAL_GATE["min_steps"]` 이상일 때만 도는 옵트인 Gate E 목표 판정).
 
-**4계층——부모 턴 게이트.** drain이 대기 중인 완료 캐리어를 주입할 때 부모 세션의 증거도 검사합니다. 캐리어는 그대로 주입되고, 세션에 통과 증거가 없으면 필수 검증 메시지가 그 뒤에 덧붙습니다. 이 검사는 무조건적이며——어떤 설정으로도 끌 수 없고——증거 조회 자체가 이용 불가능할 때만 페일오픈합니다.
+**4계층——부모 턴 게이트.** drain이 대기 중인 완료 캐리어를 주입할 때 부모 세션의 증거도 검사합니다. 캐리어는 그대로 주입되고, 세션에 통과 증거가 없으면 필수 검증 메시지가 그 뒤에 덧붙습니다. 이 검사는 무조건적이며——어떤 설정으로도 끌 수 없고——증거 조회 자체가 이용 불가능할 때만 페일오픈합니다.읽는 표시는 flow 게이트와 같습니다: `[stale]` 또는 `[broken]` 행은 통과가 아니므로, 이후 쓰기로 무효화된 자식의 작업을 검증된 것처럼 drain할 수 없습니다.
+
+**재시작 의미론.** 재시작을 넘겨 살아남는 태스크는 없으므로 디스크에서 복원된 RUNNING run은 `pause_reason=process_restart`가 붙은 TIMEOUT으로 종료 상태가 됩니다(RUNNING으로 두면 모든 생존 판정이 자식이 살아 있다고 믿습니다). 또한 영속된 단조 타임스탬프는 복원 지점으로 재기준화됩니다——이전 프로세스의 값이 몇 시간 전이나 미래로 읽혀 각 만료 판정을 조용히 무효화했기 때문입니다. 전달은 PENDING으로 남고 sweeper의 미전달 스캔이 공지하므로, 소유한 step은 DISPATCHED에 머무르지 않고 결과를 알게 됩니다. INTERRUPTED run을 kill할 때도 여기서 세션 단위 가드 상태를 해제합니다: `finally`에서 그것을 할 살아 있는 자식 에이전트가 더는 없습니다.
 
 파싱된 부정적 판정은 항상 차단합니다: 페일오픈이 덮는 것은 모델 오류, 파싱 불가능한 출력, 이용 불가능한 조회이며 실제 `RETRY`, `BLOCK`, 실패한 증거 행이 아닙니다. 게이트 내부 세부(브레이커 임계값, announce 재시도, 증거 원장)는 [런어웨이 루프 방지 README](../loop-prevention/README.ko.md)와 [장기 실행 작업 README](../long-running-tasks/README.ko.md)에 있습니다.
 
@@ -161,6 +167,9 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 선택적 역할 재정의를 두는 워크스페이스 디렉터리 |
 | `max_spawn_depth` | `SubagentConfig` | `2` | 역할이 `LEAF`로 뒤집히는 깊이(하드 상한 `2`) |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 명령군 | 검증 증거로 자동 기록되는 명령 |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 기존 값 | 설정된 serving model 출력 예산 `W`에 따라 저장/전달/요약/판정/읽기 상한을 `W/8000`으로 조정합니다. 미설정 시 기존 값 유지 |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 역할 모델 프로필 자체의 출력 상한(10진 문자열, 최소 8K)입니다. 자식 요청과 결과 텍스트 상한 모두에 사용되며 MAIN 환경 예산과 무관합니다 |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 자식의 턴당 모델+도구 호출 예산입니다. 다른 서브에이전트 역할은 `worker_max_iterations=60`을 유지합니다 |
 
 ## 🗺️ 테스트 맵
 
@@ -169,6 +178,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | 역할 enum과 로더 | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py` |
 | 역할 기반 spawn 동작 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 권한 가드 | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 기능 역할 봉쇄 | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 완료 판정기와 drain | `tests/agent/tools/subagent/test_completion_judge.py`, `tests/agent/tools/subagent/test_completion_drain.py` |
 | 부모 턴 게이트 | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | 단계 판정기 | `tests/agent/tools/taskflow/test_step_judge.py`, `tests/agent/tools/taskflow/test_resume_with_judge.py` |

@@ -123,6 +123,8 @@ class TestDoneAndInterrupt:
             "output_tokens": 22,
             "reasoning_tokens": 0,
             "finish_reason": "",
+            # Additive: no breakpoint exists for this session.
+            "resumable": False,
             "message_ids": [],
         }
 
@@ -141,6 +143,7 @@ class TestDoneAndInterrupt:
             "output_tokens": 0,
             "reasoning_tokens": 0,
             "finish_reason": "",
+            "resumable": False,
             "message_ids": [],
         }
 
@@ -220,6 +223,8 @@ class TestCancelAndError:
             "session_id": "s1",
             "turn_id": "",
             "content": "Request cancelled",
+            # Additive: whether the interrupted answer can be continued.
+            "resumable": False,
             "message_ids": [],
         }
         assert driver.logged_cancelled is True

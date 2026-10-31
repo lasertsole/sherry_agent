@@ -106,4 +106,4 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 **为什么丢弃尾部内容是安全的：** 每条工具结果在返回的瞬间就已刷入 MesMemory（`MessagePersistenceMiddleware`），并可通过 `message_search` 工具继续取回。被 P0-2 驱逐的结果在 stub 中保留自己的 `[evicted to: …]` 指针（因此 `read_file` 依然可用），被 P2-4 切片的 `read_file` 结果原样保留切片通知；而一条已 stub 的消息会终止可扫描批次 —— 第二次裁剪是 no-op，绝不会破坏这些标记。配置：`overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep`。
 
-窗口算术（测试契约）：窗口 `41 600` → usable `25 600`，两条线 `17 920` / `20 480`，截断预算 `15 360`。当测试固定值 `MAIN_LLM_MAX_TOKEN = 65536` 时（运行时 `.env` 值必须 >= 131072 / 128K），注册的 T2 子句落在 `52 428`。
+窗口算术（测试契约）：窗口 `41 600` → usable `25 600`，两条线 `17 920` / `20 480`，截断预算 `15 360`。当测试固定值 `MAIN_LLM_MAX_TOKEN = 65536` 时（运行时 `.env` 值必须 >= 200000 / 200K），注册的 T2 子句落在 `52 428`。

@@ -3,6 +3,7 @@ import zh from '../../i18n/locales/zh.json';
 import en from '../../i18n/locales/en.json';
 import ja from '../../i18n/locales/ja.json';
 import ko from '../../i18n/locales/ko.json';
+import { cjkRunsIn, localeLeaves, simplifiedOnlyIn } from './locale-language';
 
 type Dict = { [key: string]: unknown };
 
@@ -66,6 +67,39 @@ describe('i18n locale parity', () => {
     for (const other of others) {
       expect(Object.keys(other).sort()).toEqual(zhNamespaces);
     }
+  });
+});
+
+/**
+ * The values must be in the RIGHT language, not just present under the right
+ * key: the central dictionaries are authored from the Chinese copy, so a label
+ * like `config.agent.readonlyHint` shipped `菜单-预设角色` inside `en.json`
+ * (live-verified 2026-10-30) while every parity test above passed.
+ *
+ * The Simplified-only character list is the SAME file the docs gate reads
+ * (`scripts/data/simplified_chinese_only.txt`), so the two cannot drift.
+ */
+describe('i18n locale value language', () => {
+  it('en.json 的值不含 CJK（语言名白名单除外）', () => {
+    const violations = localeLeaves(en)
+      .map(leaf => ({ path: leaf.path, runs: cjkRunsIn(leaf.value) }))
+      .filter(entry => entry.runs.length > 0)
+      .map(entry => `${entry.path}: ${entry.runs.join(' ')}`);
+    expect(violations).toEqual([]);
+  });
+
+  it('ja.json / ko.json 的值不含简体中文专用字', () => {
+    const violations: string[] = [];
+    for (const [locale, dict] of [
+      ['ja', ja],
+      ['ko', ko]
+    ] as const) {
+      for (const leaf of localeLeaves(dict)) {
+        const offenders = simplifiedOnlyIn(leaf.value);
+        if (offenders.length > 0) violations.push(`${locale} ${leaf.path}: ${offenders.join('')}`);
+      }
+    }
+    expect(violations).toEqual([]);
   });
 });
 

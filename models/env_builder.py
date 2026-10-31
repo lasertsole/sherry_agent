@@ -1,6 +1,6 @@
 """Shared env→client-kwargs assembly for the model wrappers.
 
-Every remote model client (main / reasoner / auxiliary / ITTT / VTTT) performs
+Every remote model client (main / auxiliary / ITTT / VTTT) performs
 the same three steps: read a fixed set of env vars, place them in an
 ``init_chat_model`` kwargs dict next to model-specific keys, and drop every
 ``None``/empty-string entry before construction. This module owns that invariant
@@ -41,7 +41,7 @@ class ModelEnvBuilder:
 
     ``env_vars`` maps each produced key (``model_provider`` / ``model`` /
     ``api_key`` / ``base_url``) to the env var holding it. ``strip=False``
-    preserves models that read their env values verbatim (main / reasoner); the
+    preserves models that read their env values verbatim (main); the
     ``None``/empty filter runs either way.
     """
 

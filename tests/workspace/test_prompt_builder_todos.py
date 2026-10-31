@@ -169,6 +169,13 @@ class TestTodoBlock:
         assert "[○]" in prompt
         assert "(high)" in prompt
 
+    def test_todo_id_is_rendered_as_stable_marker(self, prompt_env):
+        _seed_todos(prompt_env, [_todo("Patch me", todo_id=42)])
+
+        prompt = _reminder("sess-todos", "todo_block")
+
+        assert "#42 (quick) Patch me" in prompt
+
     def test_flow_and_step_are_tagged_when_present(self, prompt_env):
         _seed_todos(
             prompt_env,

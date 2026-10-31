@@ -72,7 +72,7 @@ from context_engine.curator import constants as curator_constants
 from context_engine.curator import usage as curator_usage
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1500)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(1500)]
 
 _TEST_SYSTEM_PROMPT = "You are Sherry, an e2e test session agent. Follow the instructions exactly."
 _BROAD_SENTINEL = "BROAD-FACT-9137"

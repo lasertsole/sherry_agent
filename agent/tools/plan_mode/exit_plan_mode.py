@@ -181,6 +181,18 @@ class ExitPlanModeTool(BaseTool):
                 )
             ],
         )
+        # A headless turn has no approver: suspending would strand the graph in
+        # plan mode (read-only) with nobody able to answer. Refuse and tell the
+        # model to stop — retrying the same call cannot help.
+        from agent.middlewares.humanInTheLoop.approval_scope import no_operator_in_scope
+
+        if no_operator_in_scope():
+            logger.info("[ExitPlanModeTool] headless turn — refusing instead of suspending")
+            return (
+                "Error: no human operator is present to approve a plan in this "
+                "automated turn. Do not retry: stop here and report that the plan "
+                "needs a human to approve it."
+            )
         logger.debug("[ExitPlanModeTool] suspending graph for plan {}", revision)
         response = interrupt(hitl_request)
 

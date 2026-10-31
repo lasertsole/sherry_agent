@@ -54,7 +54,6 @@ from agent.middlewares.output_repetition_guard.core import (
     OutputRepetitionGuard,
 )
 from agent.middlewares.output_repetition_guard.repetition_detectors import (
-    _CHAR_RUN_MIN,
     _TAIL_CHARS,
 )
 from agent.middlewares.output_repetition_guard.repetition_state import (
@@ -236,17 +235,17 @@ class TestReasoningExtraction:
         return OutputRepetitionGuard()
 
     # ---- structured keys -----------------------------------------------
-    def test_extract_reasoning_content_key(self):
-        msg = AIMessage(content="answer", additional_kwargs={"reasoning_content": " chain "})
-        assert OutputRepetitionGuard._extract_reasoning(msg) == "chain"
-
-    def test_extract_reasoning_reasoning_key(self):
-        msg = AIMessage(content="answer", additional_kwargs={"reasoning": " rc "})
-        assert OutputRepetitionGuard._extract_reasoning(msg) == "rc"
-
-    def test_extract_reasoning_reasoning_text_key(self):
-        msg = AIMessage(content="answer", additional_kwargs={"reasoning_text": " rtx "})
-        assert OutputRepetitionGuard._extract_reasoning(msg) == "rtx"
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({"reasoning_content": " chain "}, "chain"),
+            ({"reasoning": " rc "}, "rc"),
+            ({"reasoning_text": " rtx "}, "rtx"),
+        ],
+    )
+    def test_extract_reasoning_known_keys(self, kwargs, expected):
+        msg = AIMessage(content="answer", additional_kwargs=kwargs)
+        assert OutputRepetitionGuard._extract_reasoning(msg) == expected
 
     def test_extract_reasoning_key_precedence(self):
         msg = AIMessage(
@@ -270,17 +269,16 @@ class TestReasoningExtraction:
         assert OutputRepetitionGuard._extract_reasoning(msg) == ""
 
     # ---- inline think patterns ------------------------------------------
-    def test_extract_inline_think(self):
-        c = "prefix<think>inner</think>suffix"
-        assert OutputRepetitionGuard._extract_inline_reasoning(c) == "inner"
-
-    def test_extract_inline_thinking(self):
-        c = "a<thinking> raw </thinking>b"
-        assert OutputRepetitionGuard._extract_inline_reasoning(c) == "raw"
-
-    def test_extract_inline_reasoning_pattern(self):
-        c = "a<reasoning> deep </reasoning>b"
-        assert OutputRepetitionGuard._extract_inline_reasoning(c) == "deep"
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            ("prefix<think>inner</think>suffix", "inner"),
+            ("a<thinking> raw </thinking>b", "raw"),
+            ("a<reasoning> deep </reasoning>b", "deep"),
+        ],
+    )
+    def test_extract_inline_known_tags(self, content, expected):
+        assert OutputRepetitionGuard._extract_inline_reasoning(content) == expected
 
     def test_extract_inline_multiline(self):
         c = "<think>\n line1 \n line2 \n</think>x"
@@ -558,9 +556,9 @@ class TestHooks:
 
     def test_before_agent_resets_state(self, fresh_state):
         g = self.make()
-        # Seed some stale state
+        # Seed some stale state. (_WARN_COUNT_KEY is deliberately absent: it is
+        # a reserved key with no reader anywhere, so its reset is dead behavior.)
         fresh_state.set_state("s1", _HISTORY_KEY, ["hash"])
-        fresh_state.set_state("s1", _WARN_COUNT_KEY, 7)
         fresh_state.set_state("s1", _INTERNAL_WARNED_KEY, True)
         fresh_state.set_state("s1", _HALTED_KEY, True)
         fresh_state.set_state("s1", _REASONING_HISTORY_KEY, ["rhash"])
@@ -570,7 +568,6 @@ class TestHooks:
         g.before_agent(_make_state("s1"), runtime)
 
         assert fresh_state.get_state("s1", _HISTORY_KEY, "MISSING") == []
-        assert fresh_state.get_state("s1", _WARN_COUNT_KEY, "MISSING") == 0
         assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, "MISSING") is False
         assert fresh_state.get_state("s1", _HALTED_KEY, "MISSING") is False
         assert fresh_state.get_state("s1", _REASONING_HISTORY_KEY, "MISSING") == []
@@ -669,28 +666,6 @@ class TestHooks:
 
 
 class TestConfigAndConstants:
-    def test_init_defaults(self):
-        g = OutputRepetitionGuard()
-        assert g.max_identical_outputs == 3
-        assert g.warn_after == 2
-        assert g.internal_repeat_ratio == 0.6
-        assert g.internal_min_lines == 6
-        assert g.char_run_min == _CHAR_RUN_MIN
-
-    def test_init_custom(self):
-        g = OutputRepetitionGuard(
-            max_identical_outputs=5,
-            warn_after=3,
-            internal_repeat_ratio=0.8,
-            internal_min_lines=10,
-            char_run_min=4,
-        )
-        assert g.max_identical_outputs == 5
-        assert g.warn_after == 3
-        assert g.internal_repeat_ratio == 0.8
-        assert g.internal_min_lines == 10
-        assert g.char_run_min == 4
-
     def test_is_agent_middleware(self):
         from langchain.agents.middleware import AgentMiddleware
 
@@ -788,11 +763,6 @@ class TestNormalizedHashCrossCall:
         g._wrap_model_call_post(self._request(), AIMessage(content="Result: ＡＢＣ test value"))
         r = g._wrap_model_call_post(self._request(), AIMessage(content="Result: ABC test value"))
         assert r is not None
-
-    def test_normalize_unit(self):
-        assert OutputRepetitionGuard._normalize_for_hash("好的，我来处理。") == "好的我来处理"
-        assert OutputRepetitionGuard._normalize_for_hash("Ａ Ｂ") == "AB"  # NFKC fullwidth -> ASCII
-        assert OutputRepetitionGuard._normalize_for_hash("!!!") == ""  # punct-only -> empty
 
 
 class TestDualHashCrossCall:

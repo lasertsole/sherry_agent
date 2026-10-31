@@ -140,7 +140,7 @@ MAIN_LLM_PROVIDER = "openai"
             "AUXILIARY_LLM_",
             "TASKFLOW_LLM_",
             "COMPRESSION_LLM_",
-            "REASONER_LLM_",
+            "ITTT_",
         )
         # The network file's groups render last, after the model families.
         assert SERVER_HTTP["env_group_prefixes"][-2:] == ("SHERRY_BROWSER_", "LANGSMITH_")

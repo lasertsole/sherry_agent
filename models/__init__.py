@@ -4,11 +4,12 @@ from typing import Any
 _MODULE_MAP = {
     "build_main_llm": ".LLMs",
     "build_main_llm_for_profile": ".LLMs",
-    "build_reasoner_model": ".LLMs",
     "build_auxiliary_llm": ".LLMs",
     "build_taskflow_llm": ".LLMs",
     "build_compression_llm": ".LLMs",
     "NormalizingChatModel": ".LLMs",
+    "AnthropicCacheControlChatModel": ".LLMs",
+    "maybe_wrap_anthropic_cache": ".LLMs",
     "ReasoningChatOpenAI": ".LLMs",
     "build_reasoning_kwargs": ".LLMs",
     "is_openai_reasoning_model": ".LLMs",
@@ -21,8 +22,6 @@ _MODULE_MAP = {
     "build_code_embed_model": ".embed_model",
     "reranker_model": ".reranker_model",
     "build_reranker_model": ".reranker_model",
-    "mineru_model": ".extract_model",
-    "build_mineru_model": ".extract_model",
 }
 
 __all__ = list(_MODULE_MAP.keys())

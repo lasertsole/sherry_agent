@@ -28,7 +28,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 - [Judgement Gates](gates/README.md)
 - [Evidence Ledger](gates/evidence-ledger/README.md)
 - [Concurrency Lanes](lanes/README.md)
-- [Tri-color Orphan GC](#-tri-color-orphan-gc)
+- [Unreferenced-Flow Orphan GC](#-unreferenced-flow-orphan-gc)
 - [Dispatch Serialization & Idempotent Planning](#-dispatch-serialization--idempotent-planning)
 - [Configuration Registry](#-configuration-registry)
 - [Architecture Diagram](#-architecture-diagram)
@@ -47,26 +47,28 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | 3 | **Deadline** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
 | 5 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
-| 6 | **Tri-color orphan GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
+| 6 | **Unreferenced-flow orphan GC** | sweeper `_unreferenced_flow_sweep` / `_liveness_sweep` | `task_flows.updated_at` / active `todos` |
 
 The design contract throughout is **error-as-text**: tools never raise business errors at the model; they return human-readable strings beginning with `Error:`. Every background hook is **fail-open** — an unavailable registry or crashed sweeper degrades to "no long-running-task context", never to a broken turn.
 
-## ♻️ Tri-color Orphan GC
+## ♻️ Unreferenced-Flow Orphan GC
 
-A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="create")` and `taskflow_flow(action="plan")` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. The sweeper then runs two complementary passes at boot and every tick:
+A TaskFlow is kept alive by an **active todo root**. `taskflow_flow(action="create")` and `taskflow_flow(action="plan")` bind a flow-level `pending` todo at birth (one row, no `step_id`); the todo may only be completed after the flow is terminal, and `todowrite` must carry it forward. Prefer the local `patch`/`add`/`remove` actions, which preserve `todo_id` and `flow_id`; a full `replace` reissues ids and can orphan the root. The sweeper then runs two complementary passes at boot and every tick:
 
 | Pass | Condition | Action |
 | :--- | :--- | :--- |
-| Tri-color mark | todo status `pending`/`in_progress` with a `flow_id` | the flow is black (reachable) |
-| Tri-color sweep | non-terminal, non-superseded flow with no active root and `updated_at` older than `tri_color_grace_seconds` (300 s) | `failed` / `orphan_unreferenced` |
+| Unreferenced-flow mark | todo status `pending`/`in_progress` with a `flow_id` | the flow is marked reachable |
+| Unreferenced-flow sweep | non-terminal, non-superseded flow with no active root and `updated_at` older than `unreferenced_flow_grace_seconds` (300 s) | `failed` / `orphan_unreferenced` |
 | Child liveness | session key is `agent:*:subagent:*` or `agent:*:swarm:*`, no live run, older than the same grace | `failed` / `session_dead` |
 | Flow liveness | main session inactive for `stale_action_hours` (12 h), no live child | `failed` / `stale_swept` or `session_dead` |
 | Zombie todo | active todo references a failed/cancelled flow | todo `cancelled` |
 | Prune | more than `max_total_flows_per_session` (200) terminal/superseded rows | oldest deleted |
 
-A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail and record detached children. `todowrite` full replacement is one transaction, so the mark query never sees the empty window between DELETE and INSERT.
+A live child vetoes collection; the grace window covers the create/bind race between `todos.db` and `taskflow_registry.db`; session-level liveness only acts on already-stale flows, so a boot with no sockets cannot mass-fail recent work. Every mutation stamps `updated_at`; terminal transitions record `terminal_reason`; a superseded predecessor becomes `cancelled` / `superseded`. `taskflow_flow(action="finish")` has three independent budgets (nudge, consecutive failures, protocol violations) that auto-fail, record detached children, and KILL them unless `auto_kill_on_detach` is off — a failed flow can never collect their results, so leaving one alive only holds a lane. A `depends_on` cycle is refused at create/update time (depth-first, ids already validated) instead of pinning the flow until the inactivity sweep; `supersede` bumps `expected_revision`, so a writer holding the pre-supersede revision loses its CAS instead of resurrecting a cancelled flow; and the stale-WAITING marker writes its payload WITHOUT touching `updated_at`, because that column is the very inactivity clock the sweep reads. `todowrite` full replacement is one transaction, so the root query never sees the empty window between DELETE and INSERT.
 
-Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_tri_color_gc.py`.
+A full replacement that drops a root no longer waits for the grace window: `update_todos` compensates the orphaned flow immediately (policy: `TODOLIST_INFRA["orphan_flow_on_drop"]`), a session-scoped sweep runs right after it, and a terminal flow notifies its root todo at once. Creating a flow whose goal resembles an active one is warned about unless `ack_dup` is set.
+
+Source: `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/tools/todolist/service.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`, `config/features/agent_side/taskflow_infra.py`; tests: `tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`.
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
@@ -83,13 +85,13 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 | Part | Contents |
 | :--- | :--- |
-| `config/features/agent_side/` | **54** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow, tool parallel safety) |
-| `config/features/infra_side/` | **28** infra-side config modules (server, login, queues, skills, context engine, runtime, web search, model pricing, local model downloads) |
+| `config/features/agent_side/` | **57** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow, tool parallel safety) |
+| `config/features/infra_side/` | **30** infra-side config modules (server, login, queues, skills, context engine, runtime, web search, model pricing, local model downloads, log retention, WS rate limits) |
 | `config/features/_env.py` | The single shared env helper |
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **82 feature objects** — 54 agent-side + 28 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **87 feature objects** — 57 agent-side + 30 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -243,7 +245,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit`
 
 | Test file | Covers |
 | :--- | :--- |
-| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), additive `session_id` migration, session purge |
+| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), current-schema columns, session purge |
 | `test_step_graph.py` | `deps_satisfied`, `mark_step_done`, `unlock_dependents`, legacy status derivation, self-dependency guard |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")` DAG rendering |
 | `test_resume_dag.py` | Resume marks done, unlocks dependents, partial completion, idempotent no-op |
@@ -288,7 +290,7 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **Idle detection is advisory.** The sweeper stamps `stale_detected_at` / `stale_child_session_key` into `wait_json` but never auto-fails a stale `waiting` flow; a human or the model must act on the marker.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 82.** The config registry holds 82 feature objects (54 agent-side + 28 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG` and `MODEL_DOWNLOADS` (its env-sourced defaults are covered by a dedicated builder test).
+- **Registry size is 87.** The config registry holds 87 feature objects (57 agent-side + 30 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY`, `SESSION_DIRS`, `WEB_SEARCH_CONFIG`, `MODEL_DOWNLOADS`, `LOGS` and `WS_RATE_LIMIT` (their defaults are covered by dedicated tests or the feature's own suite).
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_step(action="dispatch")` and `taskflow_step(action="wait_all")` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_step(action="resume")` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.

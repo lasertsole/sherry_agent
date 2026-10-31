@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-Twelve of the SESSION memory plan's 13 capabilities (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) remain implemented — the pre-compression memory flush was retired because the compression-time memory review subsumes it — plus the long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
+Twelve of the SESSION memory plan's 13 capabilities (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) remain implemented — the pre-compression memory flush was retired because the compression-time memory review subsumes it — plus the long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory schema — never a parallel store.
 
 > Status (2026-09-13): plan retired. This README is the reference.
 
@@ -11,16 +11,16 @@ Twelve of the SESSION memory plan's 13 capabilities (borrowed from opencode-dev,
 | Capability | Where |
 |---|---|
 | Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization/core.py` |
-| SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, migration v10 |
+| SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, current schema |
 | One-line tool-output summaries | `pub/func/message/tool_output_prune.py` |
-| Compaction checkpoints + restore | migration v15, `restore_compaction_checkpoint` |
-| Idempotent message persistence | migration v11 (`idempotency_key` + partial unique index) |
-| `context_eligible` history projection | migration v12; retrieval filters ineligible rows by default |
-| Message tree + zero-copy forking | migration v14 (`parent_message_id`, `session_leafs`) |
-| Append-only event log + projector | migration v16, `context_engine/events/` |
-| Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
+| Compaction checkpoints + restore | current schema, `restore_compaction_checkpoint` |
+| Idempotent message persistence | current schema (`idempotency_key` + partial unique index) |
+| `context_eligible` history projection | current schema; retrieval filters ineligible rows by default |
+| Message tree + zero-copy forking | current schema (`parent_message_id`, `session_leafs`) |
+| Append-only event log + projector | current schema, `context_engine/events/` |
+| Context epoch snapshots | current schema (`context_epoch` table), `ContextEpoch` |
 | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
+| Vector semantic search | current schema, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow orchestration | `wiki/long-running-tasks/` |
 
 ## Memory Files
@@ -33,18 +33,20 @@ The three single-file memory stores are loaded by `MemoryStore.load_from_disk()`
 | `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge) |
 | `workspace/memory/FACTS.md` | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
 
-## MesMemory Migrations (v10–v17)
+## MesMemory Schema
 
-| Version | Schema |
+| Schema object | Purpose |
 |---|---|
-| v10 | `compression_locks` — per-session compaction lock (PRIMARY KEY = mutex) |
-| v11 | `messages.idempotency_key` + partial unique index (crash-retry dedup) |
-| v12 | `messages.context_eligible` — context projection flag (default 1) |
-| v13 | `message_embeddings` — vector index for semantic search |
-| v14 | `messages.parent_message_id` + `session_leafs` — message tree |
-| v15 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` |
-| v16 | `events` — append-only log, gapless per-session `seq` |
-| v17 | `context_epoch` — system-context baseline / snapshot |
+| `compression_locks` | per-session compaction lock (PRIMARY KEY = mutex) |
+| `messages.idempotency_key` + partial unique index | crash-retry dedup |
+| `messages.context_eligible` | context projection flag (default 1) |
+| `message_embeddings` | vector index for semantic search |
+| `messages.parent_message_id` + `session_leafs` | message tree |
+| `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | compaction restore points |
+| `events` | append-only log, gapless per-session `seq` |
+| `context_epoch` | system-context baseline / snapshot |
+
+`build_schema_v1` creates this complete schema in one call; there is no versioned migration chain.
 
 ## Key Components
 

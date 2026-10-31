@@ -24,7 +24,7 @@ const props = defineProps<{ sessionId: string }>();
 
 const { t } = useI18n();
 
-/** The right sidebar hosts the preset view as a tab (当前会话 group). */
+/** The right sidebar hosts the preset view as a tab (This session group). */
 const rightSidebar = useRightSidebarStore();
 
 /** This session's preset binding (`null` = created before the binding existed). */

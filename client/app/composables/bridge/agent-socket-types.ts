@@ -36,13 +36,50 @@ export interface TurnStartedInfo {
   messageIds: string[];
 }
 
+/** One background command as the server reports it (started frame / HTTP list). */
+export interface TerminalBgTaskInfo {
+  task_id: string;
+  command: string;
+  status: 'running' | 'completed' | 'failed' | 'killed' | string;
+  pid?: number | null;
+  exit_code?: number | null;
+  session_id?: string;
+  output_path?: string | null;
+}
+
+/** A background command's exit frame: the panel's terminal state. */
+export interface TerminalBgExitInfo {
+  taskId: string;
+  status: string;
+  /** `killed` when a person/agent stopped it, `exited` when it ran to an end. */
+  reason: 'killed' | 'exited' | string;
+  exitCode: number | null;
+}
+
+/** The acknowledgement of one user-issued kill. */
+/** One safety-filter event (`safety_filter` frame). */
+export interface SafetyFilterInfo {
+  /** input_keyword | output_keyword | stream_cut | llm_moderation */
+  layer: string;
+  /** block | replace | warn */
+  action: string;
+  ruleCount: number;
+  message: string;
+  snippet?: string;
+}
+
+export interface TerminalBgKillAckInfo {
+  taskId: string;
+  ok: boolean;
+  reason?: string | null;
+}
+
 /**
  * Session-level handlers set once by the page: every frame of the session is
  * routed here regardless of which `send()` produced it.
  */
 export interface AgentSocketHandlers {
-  /** One invocation per `chunk` frame. */
-  onChunk?: OnChunkCallback;
+  /** One invocation per `chunk` frame. */ onChunk?: OnChunkCallback;
   /** `hitl_request` -> approval card. */
   onHitl?: OnHitlCallback;
   /** `turn_started` -> consolidate placeholders / clear member badges. */
@@ -57,6 +94,14 @@ export interface AgentSocketHandlers {
   onSendNowAck?: (info: QueuedAckInfo) => void;
   /** `done` -> turn succeeded (carries model metadata). */
   onDone?: OnDoneCallback;
+  /** `terminal_bg_started` -> a background command exists (add its row). */
+  onTerminalBgStarted?: (info: TerminalBgTaskInfo) => void;
+  /** `terminal_bg_exit` -> that command reached its terminal state. */
+  onTerminalBgExit?: (info: TerminalBgExitInfo) => void;
+  /** `terminal_bg_kill_ack` -> the kill signal landed (or was refused). */
+  onTerminalBgKillAck?: (info: TerminalBgKillAckInfo) => void;
+  /** `safety_filter` -> a live-stream filter decision (banner/toast). */
+  onSafetyFilter?: (info: SafetyFilterInfo) => void;
 }
 
 /**
@@ -70,6 +115,8 @@ export interface AgentSocket {
   send(request: ChatRequest): { controller: StreamController; promise: Promise<void> };
   /** Send a stop frame on the SAME socket (never closes it). */
   stop(): Promise<void>;
+  /** Stop ONE background command (command-level cancel; the turn keeps running). */
+  sendTerminalBgKill(taskId: string): void;
   /** Send a HITL decision on the SAME socket (never opens a new connection). */
   sendHitlResponse(response: HitlResponse): void;
   /**
@@ -97,6 +144,10 @@ export interface AgentSocket {
   sendEditQueued(msgId: string, message: string): void;
   /** Interrupt the running turn and deliver this queued message next. */
   sendNow(msgId: string): void;
+  /** Continue an interrupted pure-text answer from its breakpoint. */
+  sendContinueGeneration(): void;
+  /** Rewrite a sent user message and re-run it (truncates that turn onward). */
+  sendEditMessage(turnNum: number, newText: string, msgId: string, rowId?: number): void;
   /** Tear the connection down and settle every pending send (page unmount). */
   dispose(): void;
 }

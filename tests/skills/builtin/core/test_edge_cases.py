@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate
+from context_engine.store.db import build_schema_v1
 from langchain_core.messages import ToolMessage
 
 pytestmark = [pytest.mark.regression, pytest.mark.timeout(120)]
@@ -23,7 +23,7 @@ def store_db(tmp_path):
 
     db = sqlite3.connect(str(tmp_path / "store.db"), check_same_thread=False)
     db.row_factory = sqlite3.Row
-    _migrate(db)
+    build_schema_v1(db)
     saved = store_core._db
     store_core._db = db
     yield db
@@ -318,22 +318,6 @@ class TestLoaderBounds:
 # ---------------------------------------------------------------------------
 # EC-13 .env parsing semantics
 # ---------------------------------------------------------------------------
-
-
-class TestEnvFileSemantics:
-    def test_empty_value_does_not_swallow_next_line(self, tmp_path):
-        from models.utils import read_env_file_value
-
-        p = tmp_path / ".env"
-        p.write_text("EMPTY=\nNEXT_LINE=real\n", encoding="utf-8")
-        assert read_env_file_value("EMPTY", "fallback", env_path=p) == "fallback"
-
-    def test_export_prefix_and_quotes(self, tmp_path):
-        from models.utils import read_env_file_value
-
-        p = tmp_path / ".env"
-        p.write_text('export K="v"\n', encoding="utf-8")
-        assert read_env_file_value("K", env_path=p) == "v"
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
-"""MIN_MAX_TOKEN guard: enforces both agents' context window >= 128K."""
+"""MIN_MAX_TOKEN guard: enforces both agents' context window >= 200K."""
 
-MIN_REQUIRED_MAX_TOKEN: int = 131_072
+MIN_REQUIRED_MAX_TOKEN: int = 200_000
 
 #: Business floor for a per-request OUTPUT cap (distinct from the context
 #: window floor above). Thinking-mode reasoning and the visible answer share
@@ -20,10 +20,10 @@ def assert_max_token_valid(key: str, value: int | None) -> None:
         value: The parsed integer value, or None when unset.
     """
     if value is None:
-        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (128K)")
+        raise TokenGuardError(f"{key} is not set; must be >= {MIN_REQUIRED_MAX_TOKEN} (200K)")
     if value < MIN_REQUIRED_MAX_TOKEN:
         raise TokenGuardError(
-            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (128K); "
+            f"{key} = {value} is below the minimum {MIN_REQUIRED_MAX_TOKEN} (200K); "
             f"agent startup is blocked"
         )
 

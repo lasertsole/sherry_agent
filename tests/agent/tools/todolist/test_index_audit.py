@@ -46,8 +46,8 @@ def _create_pre_audit_db(db_path: Path) -> None:
         conn.execute(store_sqlite._CREATE_TABLE_SQL)
         conn.execute(
             f"INSERT INTO {TABLE_NAME} "
-            "(session_id, content, status, priority, position, flow_id) "
-            "VALUES ('sess-legacy', 'legacy todo', 'pending', 'medium', 0, 'flow-legacy')"
+            "(session_id, content, status, priority, position, flow_id, todo_id) "
+            "VALUES ('sess-legacy', 'legacy todo', 'pending', 'medium', 0, 'flow-legacy', 1)"
         )
         conn.commit()
     finally:
@@ -77,9 +77,9 @@ def _seed_todos(db_path: Path, count: int = 2000) -> None:
     try:
         conn.executemany(
             f"INSERT INTO {TABLE_NAME} "
-            "(session_id, content, status, priority, position, flow_id) "
-            "VALUES (?, ?, 'pending', 'medium', ?, ?)",
-            [(f"sess-{i % 20}", f"todo-{i}", i, f"flow-{i % 7}") for i in range(count)],
+            "(session_id, content, status, priority, position, flow_id, todo_id) "
+            "VALUES (?, ?, 'pending', 'medium', ?, ?, ?)",
+            [(f"sess-{i % 20}", f"todo-{i}", i, f"flow-{i % 7}", i + 1) for i in range(count)],
         )
         conn.execute("ANALYZE")
         conn.commit()

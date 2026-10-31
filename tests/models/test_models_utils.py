@@ -8,58 +8,8 @@ os.environ, to avoid load_dotenv side effects).
 
 import pytest
 
-from models.utils import read_env_file_value
-
 
 pytestmark = [pytest.mark.module]
-
-
-@pytest.fixture()
-def env_file(tmp_path):
-    p = tmp_path / ".env"
-    p.write_text(
-        "\n".join(
-            [
-                "# comment",
-                "SIMPLE=value1",
-                'QUOTED="quoted value"',
-                "EXPORTED=exported_value",
-                "SPACED =  spaced value  ",
-                "EMPTY=",
-                "EMBEDDING_MODEL_LOCAL=false",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    return p
-
-
-class TestReadEnvFileValue:
-    def test_reads_simple_value(self, env_file):
-        assert read_env_file_value("SIMPLE", env_path=env_file) == "value1"
-
-    def test_strips_quotes(self, env_file):
-        assert read_env_file_value("QUOTED", env_path=env_file) == "quoted value"
-
-    def test_supports_export_prefix(self, env_file):
-        assert read_env_file_value("EXPORTED", env_path=env_file) == "exported_value"
-
-    def test_strips_surrounding_whitespace(self, env_file):
-        assert read_env_file_value("SPACED", env_path=env_file) == "spaced value"
-
-    def test_missing_key_returns_default(self, env_file):
-        assert read_env_file_value("ABSENT", "fallback", env_path=env_file) == "fallback"
-
-    def test_empty_value_returns_default(self, env_file):
-        assert read_env_file_value("EMPTY", "fallback", env_path=env_file) == "fallback"
-
-    def test_missing_file_returns_default(self, tmp_path):
-        assert read_env_file_value("ANY", "fallback", env_path=tmp_path / "nope.env") == "fallback"
-
-    def test_first_match_wins(self, tmp_path):
-        p = tmp_path / ".env"
-        p.write_text("K=first\nK=second\n", encoding="utf-8")
-        assert read_env_file_value("K", env_path=p) == "first"
 
 
 class TestConfigWiring:

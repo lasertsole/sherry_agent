@@ -34,6 +34,51 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 `_resolve_main_concurrency()` mirrors OpenClaw's CPU scaling — `min(16, max(8, CPU))` — then clamps **up** to the hard invariant `SUBAGENT + NUDGE` (8 + 4 = 12), so the shipped default is valid on any CPU count. `validate_lane_config()` is called once at server startup (never at import) by `install_lane_lifecycle()` (`server/service/lane_lifecycle.py`); it raises when `main_max_concurrent < subagent + nudge` or when any lane limit is `< 1`. `lane_wait_warn_ms` controls the "waited too long for a slot" warning and `lane_drain_timeout_seconds` is the default for `LaneManager.drain_all()`. `LaneManager.set_concurrency(lane, n)` hot-updates a limit — in-flight slots keep their permits, only new acquires see the new limit.
 
+### Environment gate in front of the SUBAGENT lane
+
+A lane is **counting** backpressure — it answers "are all 8 slots busy?". It
+cannot answer "is the machine still able to carry one more", so a dispatch at
+99% CPU used to enter the lane anyway and make everything slower. The load gate
+(`agent/tools/pub_base/load_gate.py`) adds that missing half. The two are
+orthogonal and ordered: the gate runs BEFORE `lane_slot(SUBAGENT)`, so a
+deferred dispatch holds **no** slot while it waits.
+
+| Host load | Behavior |
+| :--- | :--- |
+| both < warn | proceed |
+| either ≥ warn (90%) and < stop | proceed — the lane cap already throttles here; the gate only logs |
+| either ≥ stop (95%) | **defer**: the run stays PENDING, no slot is taken, one `load_warning` frame tells the session, and the dispatch is re-checked after `load_gate_retry_s` |
+
+```text
+spawn ─► load gate (defer while stop) ─► lane_slot(SUBAGENT) ─► PENDING→RUNNING ─► execute
+              │ stop & budget spent
+              └─► terminalize (timeout / "load_timeout")   ← never a bare return
+```
+
+**The deferral is bounded, and the bound terminalizes.** Leaving a deferred run
+PENDING would create an orphan — and orphan recovery re-dispatches it, which
+defers again: a loop. Past `load_gate_max_defer_s` (600 s) the run is finalized
+with outcome `TIMEOUT` and an error naming `load_timeout` (`ended_reason` stays
+the enum's `timeout`; the load-specific detail rides the error text). A kill
+during the wait is observed through `kill_reconciliation` (a killed PENDING run
+is NOT marked TERMINAL) and ends the wait immediately.
+
+**The snapshot is shared and the sampling never blocks the loop.** One sample
+costs three CPU intervals (~4.5 s at the default 1.5 s), so it runs in
+`asyncio.to_thread` and at most once per `load_gate_snapshot_ttl_s` (5 s) for
+the whole process: concurrent waiters read the same verdict, and a lock with a
+double-check makes N callers trigger exactly one sample.
+
+**Fail-open, but only for the monitor.** A psutil failure (missing library, a
+backend without `/proc`) returns an ok verdict so dispatch never stalls; a
+working sample's `stop` is always honoured.
+
+**Shipped OFF.** `load_gate_enabled` defaults to `False`, so the first release
+behaves exactly as before. Enable it after confirming psutil made it into the
+frozen backend — the desktop workflow's "Verify psutil made it into the frozen
+tree" step exists for that, because the import is lazy and the freezer cannot
+see it (`HIDDEN_IMPORTS` in `packaging/build_backend.py`).
+
 ### Queueing semantics: `PENDING`
 
 Global concurrency is not a rejection counter. `spawn_subagent_direct` still enforces per-parent admission (`validate_spawn_depth`, `validate_concurrent_children`), but a spawn that exceeds the global limit is **accepted** and registered as `ExecutionStatus.PENDING`: `started_at` stays `None` and the run holds no lane slot. The SUBAGENT lane wrapper (`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`) waits for a slot, then promotes `PENDING → RUNNING` via `mark_run_running()`, stamping `started_at` only at that moment — queue wait is never counted as run time. `validate_global_concurrent()` and `SubagentConfig.max_concurrent` are retained for backward compatibility and are not called by the spawn pipeline.

@@ -28,13 +28,13 @@ from loguru import logger
 
 import agent.core as agent_core
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
-from agent.security.redact import REDACTED
+from pub.security.redact import REDACTED
 from config import SESSIONS_DIR
 from context_engine import delete_messages_by_session
 from pub.func.build_agent_config import build_agent_config
 from runtime import clear_all_register_sessions
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(600)]
 
 #: A clearly fake key with a real vendor shape.
 _FAKE_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

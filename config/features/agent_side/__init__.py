@@ -27,6 +27,10 @@ from .user_hooks import (
     UserHooksConfig as UserHooksConfig,
     USER_HOOKS as USER_HOOKS,
 )
+from .safety_filter import (
+    SafetyFilterConfig as SafetyFilterConfig,
+    SAFETY_FILTER as SAFETY_FILTER,
+)
 from .redaction import (
     RedactionConfig as RedactionConfig,
     REDACTION as REDACTION,
@@ -150,6 +154,14 @@ from .evidence_cross_session import (
 from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,
     STEP_JUDGE as STEP_JUDGE,
+)
+from .anthropic_cache import (
+    AnthropicCacheConfig as AnthropicCacheConfig,
+    ANTHROPIC_CACHE as ANTHROPIC_CACHE,
+)
+from .coordination import (
+    CoordinationConfig as CoordinationConfig,
+    COORDINATION as COORDINATION,
 )
 from .completion_judge import (
     CompletionJudgeConfig as CompletionJudgeConfig,

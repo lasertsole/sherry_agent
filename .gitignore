@@ -50,14 +50,24 @@ logs/*.log
 *.db
 *.db-shm
 *.db-wal
-# live persona workspace (root only); tests/workspace must stay trackable.
-# The two agent-written notes under memory/ are RUNTIME state — the memory tool
-# rewrites them mid-session — so they are deliberately untracked even though
-# USER.md (authored) stays versioned; file_sync recreates them from the
-# workspace/template copies on a fresh boot.
-/workspace/
+# Live workspace state (root only) — tracked product code (workspace/*.py,
+# persona files, template/) is deliberately NOT ignored here so ruff and the
+# import-linter see it; a previous whole-directory `/workspace/` rule silently
+# excluded three tracked Python modules from every lint. The runtime-written
+# paths are enumerated instead: session checkpoints, the knowledge index, the
+# composed ROLE.md, one-off generated reports, and the two agent-written notes
+# under memory/ (the memory tool rewrites them mid-session; file_sync recreates
+# them from the workspace/template copies on a fresh boot). USER.md (authored)
+# stays versioned.
+/workspace/sessions/
+/workspace/knowledge/
+/workspace/ROLE.md
+/workspace/line-count-report*.md
 /workspace/memory/FACTS.md
 /workspace/memory/MEMORY.md
+# flock sidecars live NEXT TO their target (file_lock.lock_path_for), so a
+# write to any workspace file drops a sibling <name>.lock — runtime state.
+/workspace/**/*.lock
 skills/auto
 skills/plugins/*.state.json
 # Generated GitHub-wiki build (scripts/sync_wiki.py) and the graphify code

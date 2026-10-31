@@ -16,7 +16,7 @@
 | :------------ | :--------- | :----- | :------- |
 | **Keep by exact name** | Case-insensitive exact name | Kept, wins over every deny rule | `PATH`, `HOME`, `USER`, `USERNAME`, `LANG`, `TERM`, `TMPDIR`, `TMP`, `TEMP`, `SHELL`, `LOGNAME`, `PYTHONPATH`, `PYTHONUTF8`, `VIRTUAL_ENV`, `COMPUTERNAME`, `SYSTEMROOT`, `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `PATHEXT`, `OS`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH` |
 | **Keep by prefix** | Name starts with `LC_`, `XDG_`, or `CONDA` | Kept, wins over every deny rule | `LC_ALL`, `XDG_CONFIG_HOME`, `CONDA_TOKEN` |
-| **Force-deny (project secrets)** | Case-insensitive exact name | Always dropped | `MAIN_LLM_API_KEY`, `REASONER_LLM_API_KEY`, `AUXILIARY_LLM_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`, `ITTT_API_KEY`, `VTTT_API_KEY`, `TTI_API_KEY`, `RERANKER_API_KEY`, `EMBEDDING_API_KEY`, `STT_API_KEY` |
+| **Force-deny (project secrets)** | Case-insensitive exact name | Always dropped | `MAIN_LLM_API_KEY`, `AUXILIARY_LLM_API_KEY`, `TAVILY_API_KEY`, `LANGSMITH_API_KEY`, `ITTT_API_KEY`, `VTTT_API_KEY`, `TTI_API_KEY`, `RERANKER_API_KEY`, `EMBEDDING_API_KEY`, `STT_API_KEY` |
 | **Substring block** | Name contains any of `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `CREDENTIAL`, `PASSWD`, `AUTH`, `DSN`, `WEBHOOK`, `BEARER`, `APIKEY` (case-insensitive) | Dropped | `MY_CUSTOM_TOKEN`, `AWS_SECRET_ACCESS_KEY` |
 | **Pass-through** | No rule matches | Kept unchanged | `EDITOR`, `GIT_AUTHOR_NAME` |
 

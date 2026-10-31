@@ -20,7 +20,16 @@ the provider's `usage_metadata` and are exact; the cost is an estimate.
   A change made while a turn is running is PARKED
   (`TOKEN_BUDGET_CAP_PENDING`) and promoted at the turn boundary, exactly like
   the thinking/model controls.
-- `GET /sessions/budget` returns `{cap, used, cost, limited, pending}`.
+- `GET /sessions/budget` returns `{cap, session_cap, default_cap, inherited, used, cost, limited, pending}`:
+  `cap` is what is ENFORCED next turn (an inherited default included),
+  `session_cap` is the session's own choice (`null` = it never set one, `0` =
+  explicitly unlimited), and `inherited` says whether `default_cap` applies.
+- A session that never set a cap INHERITS `TOKEN_BUDGET_DEFAULT_CAP` from
+  `sherry.jsonc` (0 = unlimited, the shipped default). A session's own value
+  always wins, so clearing a session writes `0` and is not resurrected by a
+  positive default; `null` returns it to inheriting. The value is read once per
+  process (the file applies after a restart) because it sits on the
+  per-model-call path.
 - `POST /sessions/budget/reset` clears `TOKEN_BUDGET_USED`,
   `TOKEN_BUDGET_COST` and `TOKEN_BUDGET_LIMITED`; the cap is preserved.
 - `TOKEN_BUDGET_USED` / `TOKEN_BUDGET_COST` accumulate across turns, are
@@ -30,6 +39,7 @@ the provider's `usage_metadata` and are exact; the cost is an estimate.
   `MODEL_PRICING["budget_warn_threshold"]` (0.80) and `budget_limited` once when
   the cap is first reached; both are best-effort.
 
+- The **Token Budget** SESSION tab (`TokenBudgetPanel.vue`, right sidebar's session group) edits that conversation's cap and resets usage. It opens from the context-ring popover's footer entry; the panel says whether the cap is inherited from the app config or set for this session, an emptied cap field saves as unlimited, and a no-session state appears only if the tab payload lacks a session.
 ## 🧮 Pricing Lookup
 
 The price table is user-configurable in `.models`:

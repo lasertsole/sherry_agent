@@ -91,8 +91,10 @@ client/
 │   │   ├── main.css               # Tailwind v4 エントリ（@import 'tailwindcss'）+ @theme トークン + リセット
 │   │   └── main.scss              # グローバル SCSS エントリ（nuxt.config の css で読み込み）
 │   ├── common/utils.ts            # 共有ユーティリティ（dayjs セットアップ、formatCompactTimeString、...）
+│   ├── common/floating-window.ts  # フローティング会話列のジオメトリ（吸着位置、境界クランプ、左右列の幅配分）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # チャット入力ボックスコンポーネント（i18n 対応）
+│   │   ├── chat/ConversationFindBar.vue# 会話内検索バー（Ctrl+Shift+F）：一覧の上に浮かせ、レイアウトを動かさない
 │   │   ├── chat/DiffPreview.vue   # ツールカード内の patch_file / write_file 結果のカラーインライン diff
 │   │   └── ImagePreviewOverlay.vue# フルスクリーン画像プレビューオーバーレイ（body へ Teleport）
 │   ├── composables/               # Vue 3 コンポーザブルロジック（ユニットテストは __tests__/ 配下）
@@ -126,8 +128,9 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 50 のページコンポーネント：
+│   │       └── components/        # 61 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由、選択テキストを右クリックで引用）
+│   │           ├── BackgroundCommandsSection.vue#     # ターミナル入口のポップオーバーの第 3 セクション：実行中のエージェントのバックグラウンド コマンド（terminal(run_in_background=True)）——pid、ターンを止めないコマンド単位の「停止」（終了したコマンドは一覧から消える）
 │   │           ├── SideChatPanel.vue          # 補助セッションタブ：引用から通常の子セッションを作成し、独立ストリーム + HITL 承認
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
 │   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow のフラットなステップ一覧、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
@@ -138,22 +141,26 @@ client/
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：トリガー（プランモード / 変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
-│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド（ポップオーバーの行はページにジャンプを委ねる：実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
+│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド / バックグラウンド コマンド（バッジは三者の合計）——ポップオーバーの行はページにジャンプを委ねる（実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
+│   │   ├── SafetyFilterPanel.vue# システム設定タブ: ライブ安全のマスター スイッチ、LLM 審査（モデル未設定なら無効）、キーワード ルール編集 + テスト走査、最近のフィルター記録
+│   │   ├── OnboardingDialog.vue# 初回ガイド（ようこそ → プリセット → 基本操作 → 完了）。選んだプリセットでセッションを作成し、永続フラグ onboarding_completed で一度だけ表示
+│   │   ├── ShortcutSettingsSection.vue# システム設定のショートカット バインド タブ：現在のキー、押下による再割り当て、競合検出、既定に戻す
 │   │           ├── ProjectDirectoryChip.vue   # セッションのプロジェクトディレクトリ用ツールバー項目（バインド / 解除、保留と拒否のヒント付き）
 │   │           ├── ProjectDirectoryPicker.vue # ブラウザ版の内蔵フォルダピッカー（GET /system/dirs。デスクトップ版は OS ダイアログ）
-│   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
+│   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）。右端はドラッグハンドル（下限 280px、上限はビューポートの半分、幅は永続化）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み。行の右クリックメニュー：開く / 別のアプリで開く / 内蔵ブラウザーで開く / ファイルマネージャーで表示 / 絶対・相対パスをコピー / チャットに追加）
 │   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。ヘッダーのブランチ名でブランチ切替、行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
 │   │           ├── GitDiffPanel.vue          # 右サイドバーのコミット差分（左右 2 カラム、赤=削除 / 緑=追加。追加・削除されたファイルは 1 カラム）
 │   │           ├── ContextViewerPanel.vue    # 右サイドバーのエージェント コンテキスト（GET /context/inspect: システム プロンプト / ツール定義 / ライブ メッセージ一覧、開いている間は自動更新）
+│   │           ├── TrajectoryPanel.vue       # 現在のセッション tab: ターン単位のトラジェクトリ台帳（GET /sessions/:id/trajectory、turn ごとにグループ化しクライアント側で再ソート・ページング）
 │   │           ├── BrowserPanel.vue          # ツールボックスのブラウザ：アドレスバー + 埋め込みページ（セッションごとの履歴、戻る / 進む / 再読み込み。フリーサイズはリサイズ可能な仮想デバイス枠を描画し、境界は ZCode と同じ。開発者ツールは新しいウィンドウで開きます — iframe は開発者ツールを内蔵できません）。エージェントのブラウザ機能を有効にすると CDP モードに切り替わります：バックエンドがヘッドレス Chromium をホストし、パネルは screencast のフレームを描画してポインタ / キーボード / ホイールを転送します（アドレスバーとナビは /browser/ws 経由。「開発者ツールを開く」はパネルで視聴できる本物のインスペクタページを開きます）。アドレスバーは永続化された閲覧履歴（Dexie、再起動後も保持）を URL / タイトルのあいまい一致でサジェストします
 │   │           ├── BrowserHistoryDropdown.vue # アドレスバーの履歴ドロップダウン：最近/候補の訪問（favicon、タイトル、相対時間）とクリア操作
 │   │           ├── TerminalPanel.vue         # ツールボックスのターミナル：ユーザーが入力するコマンドをセッションのプロジェクト ディレクトリで実行
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く。コンポーザーへドラッグでき、ドロップで @./path メンション chip を挿入。行の右クリックメニューもここで結線）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
-│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、言語など）
+│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、模型設定、アプリ設定、Token 予算、国際化）
 │   │           ├── LlmModelManager.vue        # モデル設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
@@ -168,7 +175,8 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
-│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
+│   │           ├── I18nPanel.vue               # 国際化 tab の本体。システム設定パネルの最後のタブとして埋め込み
+│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）。左端はドラッグハンドル（下限 280px、会話列が 320px / 35% の下限を保てる範囲が上限、すべての下限が収まらない窓では下限まで縮む）
 │   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file：テキスト + markdown、画像/PDF/docx は GET /project/file/blob 経由）
 │   │           ├── PdfViewer.vue             # ファイルビューア内の PDF プレビュー（pdf.js、ページ送り + 幅合わせ、GET /project/file/blob）
 │   │           ├── DocxViewer.vue            # ファイルビューア内の docx プレビュー（mammoth → HTML → DOMPurify、GET /project/file/blob）
@@ -180,9 +188,14 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 右サイドバー タブ：パネル内の SubagentTasksView（セッションへ戻る操作なし）
 │   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
 │   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
+│   │           ├── TokenBudgetPanel.vue      # セッション単位のタブ（コンテキスト指標のポップオーバーから開く）: 開いているセッションの Token 上限、使用量/コスト、リセット（GET/POST /sessions/budget）
+│   │           ├── ReplayAllowlistEditor.vue # システム設定: フィニッシュ時の再生許可リスト編集（GET/PUT /sherry-config/list/<key>、実行ファイル名の追加/削除）
+│   │           ├── CudaPackCard.vue          # モデル設定: 任意の CUDA パックカード（Linux のみ——検出、レジューム付きダウンロード、その後バックエンド再起動）
+│   │           ├── RecentClosedTabsMenu.vue  # 右サイドバーのタブストリップ左端のコントロール: 最近閉じたタブを 2 グループ（現在のセッション / グローバル）で表示
 │   │           └── AvatarCropDialog.vue       # アバターアップロード + 切り抜き（cropperjs）
 │   ├── stores/                    # Pinia ストア
 │   │   ├── ui.ts               # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）
+│   │   ├── chat-float.ts       # フローティング会話列（開閉 + 吸着位置を永続化）
 │   │   ├── subagent.ts         # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
 │   │   ├── todo.ts             # セッション計画（todo）リスト + ドック表示可否
 │   │   ├── right-sidebar.ts    # 右サイドバー（折りたたみ / 幅を永続化、開いているタブ種別）
@@ -390,7 +403,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 ### 状態とイベント
 
-- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）、Web 検索バックエンド（`web-search.ts`）
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、フローティング会話列（`chat-float.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）、Web 検索バックエンド（`web-search.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
 - **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 

@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)가 구현되어 있습니다 — 압축 전 메모리 플러시는 압축 시 memory review가 그 역할을 포함하므로 폐기되었습니다 — 여기에 장기 작업 편성이 더해집니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
+SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)가 구현되어 있습니다 — 압축 전 메모리 플러시는 압축 시 memory review가 그 역할을 포함하므로 폐기되었습니다 — 여기에 장기 작업 편성이 더해집니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 스키마)의 확장이며 병렬 스토어는 만들지 않습니다.
 
 > 상태(2026-09-13): 플랜 폐기. 이 README가 참조 기준입니다.
 
@@ -11,16 +11,16 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 | 기능 | 위치 |
 |---|---|
 | 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization/core.py`의 `_COOLDOWN_PERSIST_KEYS` |
-| SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 마이그레이션 v10 |
+| SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 현재 schema |
 | 도구 출력 한 줄 요약 | `pub/func/message/tool_output_prune.py` |
-| 압축 체크포인트 + 복원 | 마이그레이션 v15, `restore_compaction_checkpoint` |
-| 메시지 멱등 영속화 | 마이그레이션 v11(`idempotency_key` + 부분 유니크 인덱스) |
-| `context_eligible` 히스토리 프로젝션 | 마이그레이션 v12, 조회 시 기본 필터 |
-| 메시지 트리 + 제로카피 fork | 마이그레이션 v14(`parent_message_id`, `session_leafs`) |
-| 추가 전용 이벤트 로그 + 프로젝터 | 마이그레이션 v16, `context_engine/events/` |
-| Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
+| 압축 체크포인트 + 복원 | 현재 schema, `restore_compaction_checkpoint` |
+| 메시지 멱등 영속화 | 현재 schema(`idempotency_key` + 부분 유니크 인덱스) |
+| `context_eligible` 히스토리 프로젝션 | 현재 schema, 조회 시 기본 필터 |
+| 메시지 트리 + 제로카피 fork | 현재 schema(`parent_message_id`, `session_leafs`) |
+| 추가 전용 이벤트 로그 + 프로젝터 | 현재 schema, `context_engine/events/` |
+| Context Epoch 스냅샷 | 현재 schema(`context_epoch` 테이블), `ContextEpoch` |
 | steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
+| 벡터 의미 검색 | 현재 schema, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow 편성 | `wiki/long-running-tasks/` |
 
 ## 메모리 파일
@@ -33,18 +33,20 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 | `workspace/memory/USER.md` | 사용자 프로필: 선호, 소통 스타일, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`) | `memory` 도구(`user` 대상: memory review nudge) |
 | `workspace/memory/FACTS.md` | 시스템 수준 / 프로젝트 횡단 함정과 관례; 매 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`), 상한 초과 시 가장 오래된 항목부터 롤오프 | `memory` 도구(`facts` 대상: memory review / plan extraction nudge) |
 
-## MesMemory 마이그레이션(v10–v17)
+## MesMemory 스키마
 
-| 버전 | 스키마 |
+| 스키마 객체 | 용도 |
 |---|---|
-| v10 | `compression_locks` —— 세션별 압축 락(기본 키 = 상호 배제) |
-| v11 | `messages.idempotency_key` + 부분 유니크 인덱스(크래시 재시도 중복 제거) |
-| v12 | `messages.context_eligible` —— 컨텍스트 프로젝션 플래그(기본 1) |
-| v13 | `message_embeddings` —— 의미 검색 벡터 인덱스 |
-| v14 | `messages.parent_message_id` + `session_leafs` —— 메시지 트리 |
-| v15 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` |
-| v16 | `events` —— 추가 전용 로그, 세션별 무결 `seq` |
-| v17 | `context_epoch` —— 시스템 컨텍스트 베이스라인 / 스냅샷 |
+| `compression_locks` | 세션별 압축 락(기본 키 = 상호 배제) |
+| `messages.idempotency_key` + 부분 유니크 인덱스 | 크래시 재시도 중복 제거 |
+| `messages.context_eligible` | 컨텍스트 프로젝션 플래그(기본 1) |
+| `message_embeddings` | 의미 검색 벡터 인덱스 |
+| `messages.parent_message_id` + `session_leafs` | 메시지 트리 |
+| `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | 압축 복원 지점 |
+| `events` | 추가 전용 로그, 세션별 무결 `seq` |
+| `context_epoch` | 시스템 컨텍스트 베이스라인 / 스냅샷 |
+
+`build_schema_v1`이 이 완전한 스키마를 한 번에 만듭니다. 버전 관리되는 마이그레이션 체인은 없습니다.
 
 ## 주요 컴포넌트
 

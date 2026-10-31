@@ -43,6 +43,8 @@ def project(tmp_path: Path) -> Path:
     )
     for key in (CHILD_A, CHILD_B, CREATOR):
         state_register_mem.set_state(key, StateKey.PROJECT_DIR, str(root))
+    for key in (CHILD_A, CHILD_B):
+        state_register_mem.set_state(key, StateKey.FLOW_ID, FLOW)
     yield root
     for key in (CHILD_A, CHILD_B, CREATOR):
         state_register_mem.clear_session(key)

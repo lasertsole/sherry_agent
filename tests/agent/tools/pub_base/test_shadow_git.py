@@ -83,3 +83,109 @@ def test_a_broken_store_is_fail_open(project, monkeypatch):
     monkeypatch.setattr(shadow_git, "take_snapshot", _boom)
     shadow_git.new_turn("s")
     assert shadow_git.ensure_checkpoint("s", reason="before_write:write_file:a.txt") is False
+
+
+def test_store_dir_override_moves_the_store_out_of_the_project(project, tmp_path, monkeypatch):
+    from config.features import SHADOW_GIT
+
+    store_root = tmp_path / "shadow-store"
+    monkeypatch.setitem(SHADOW_GIT, "store_dir", str(store_root))
+
+    sha = shadow_git.take_snapshot(project, "manual:external", session_id="s")
+
+    assert sha
+    assert not (project / ".sherry").exists()
+    store = shadow_git.shadow_store(project)
+    assert store.is_relative_to(store_root)
+    assert (store / "HEAD").is_file()
+    tree = shadow_git.run_shadow(
+        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+    ).stdout.split()
+    assert tree == ["a.txt"]
+
+
+def test_freeze_blocks_new_snapshots_and_wait_for_idle_tracks_writers(project, monkeypatch):
+    import threading
+
+    shadow_git.freeze(project)
+    try:
+        assert shadow_git.take_snapshot(project, "manual:frozen") is None
+        assert not (project / ".sherry" / "shadow-git" / "HEAD").exists()
+        assert (
+            shadow_git.ensure_checkpoint(
+                "s", reason="before_write:write_file:a.txt", project_root=project
+            )
+            is True
+        )
+    finally:
+        shadow_git.unfreeze(project)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _slow(*_args, **_kwargs):
+        started.set()
+        release.wait(5)
+        return "sha"
+
+    monkeypatch.setattr(shadow_git, "_take_snapshot_locked", _slow)
+    thread = threading.Thread(
+        target=shadow_git.take_snapshot, args=(project, "manual:slow"), daemon=True
+    )
+    thread.start()
+    assert started.wait(5)
+    assert shadow_git.active_writers(project) == 1
+    assert shadow_git.wait_for_idle(project, timeout=0.05) is False
+    release.set()
+    thread.join(5)
+    assert shadow_git.wait_for_idle(project, timeout=1) is True
+    assert shadow_git.active_writers(project) == 0
+
+
+def _snapshot_count(project) -> int:
+    """The store's snapshot-chain length."""
+    out = shadow_git.run_shadow(
+        project, ["rev-list", "--count", shadow_git.SHADOW_REF]
+    ).stdout.strip()
+    return int(out)
+
+
+class TestSnapshotCap:
+    """The cap is PER PROJECT ROOT and shared by every session (subagents too).
+
+    A 20-snapshot budget was consumed in one or two rounds of a concurrent
+    fan-out, which collapsed the restore window to the last step or two.
+    """
+
+    def test_the_shipped_cap_is_one_hundred(self):
+        from config.features import SHADOW_GIT
+
+        assert SHADOW_GIT["max_snapshots"] == 100, (
+            "raise/lower this deliberately: the store is shared per project root"
+        )
+
+    def test_under_the_cap_nothing_is_pruned(self, project, monkeypatch):
+        from config.features import SHADOW_GIT
+
+        monkeypatch.setitem(SHADOW_GIT, "max_snapshots", 3)
+        for i in range(2):
+            shadow_git.take_snapshot(project, f"manual:s{i}")
+
+        assert _snapshot_count(project) == 2
+
+    def test_pruning_keeps_exactly_the_cap(self, project, monkeypatch):
+        from config.features import SHADOW_GIT
+
+        monkeypatch.setitem(SHADOW_GIT, "max_snapshots", 3)
+        for i in range(6):
+            shadow_git.take_snapshot(project, f"manual:s{i}")
+
+        assert _snapshot_count(project) == 3
+
+    @pytest.mark.timeout(180)
+    def test_a_hundred_and_one_snapshots_prune_to_the_shipped_cap(self, project):
+        """The plan's acceptance case, against the real default (no override)."""
+        for i in range(101):
+            shadow_git.take_snapshot(project, f"manual:s{i}")
+
+        assert _snapshot_count(project) == 100

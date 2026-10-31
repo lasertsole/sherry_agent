@@ -17,9 +17,9 @@ class TaskFlowInfraConfig(TypedDict):
     #: by the liveness sweep (inactivity timeout).
     stale_action_hours: int
     #: Grace before a flow unreferenced by any active todo is collected by the
-    #: tri-color sweep. The flow and its auto-created todo live in separate
-    #: SQLite files, so this window covers the create/bind race.
-    tri_color_grace_seconds: float
+    #: unreferenced-flow sweep. The flow and its auto-created todo live in
+    #: separate SQLite files, so this window covers the create/bind race.
+    unreferenced_flow_grace_seconds: float
     #: Finish-gate budgets. They are INDEPENDENT: a nudge does not consume the
     #: failure budget, and a protocol violation has its own streak.
     finish_nudge_max: int
@@ -38,6 +38,11 @@ class TaskFlowInfraConfig(TypedDict):
     #: ``taskflow_create`` and ``taskflow_plan``. Finished / cancelled / failed
     #: flows do not count — they no longer hold a lane of planning.
     max_flows_per_session: int
+    #: Kill the children a failed flow leaves running. A failed flow can never
+    #: collect their results, so a detached child only burns a SUBAGENT lane
+    #: slot and keeps writing to the tree; kill it (fail-open per child). Set
+    #: False to leave them running for inspection.
+    auto_kill_on_detach: bool
     #: How many step children ONE dispatch call may spawn at the same time. The
     #: SUBAGENT lane is the global backpressure (over-limit children queue as
     #: PENDING); this cap keeps a single dispatch wave from flooding it. 1
@@ -54,7 +59,8 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     "wait_all_default_poll_interval_seconds": 0.5,
     "waiting_timeout_hours": 24,
     "stale_action_hours": 12,
-    "tri_color_grace_seconds": 300.0,
+    "unreferenced_flow_grace_seconds": 300.0,
+    "auto_kill_on_detach": True,
     "finish_nudge_max": 2,
     "finish_failure_limit": 2,
     "finish_protocol_violation_limit": 3,

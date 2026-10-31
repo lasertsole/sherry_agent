@@ -71,7 +71,32 @@ export type AgentWsEventType =
    * The model-call retry loop scheduled / completed / exhausted a retry. The
    * chat row renders the attempt counter while the turn streams.
    */
-  | 'model_retry';
+  | 'model_retry'
+  /**
+   * The SUBAGENT lane's load gate deferred a dispatch (host CPU/memory at the
+   * hard-stop threshold). Best-effort, once per run: a notice, never a blocker.
+   */
+  | 'load_warning'
+  /**
+   * A background command (`terminal(run_in_background=True)`) started / ended,
+   * and the acknowledgement of a user-issued kill. Command-level: these frames
+   * never touch the turn.
+   */
+  | 'terminal_bg_started'
+  | 'terminal_bg_exit'
+  | 'terminal_bg_kill_ack'
+  /**
+   * The answer to a `continue_generation` request. `ok: false` carries a
+   * `reason` the client turns into one localized toast (`busy` / `stale` /
+   * `invalid`); `ok: true` means the continuation's chunks follow.
+   */
+  | 'continue_generation_ack'
+  /**
+   * The answer to an `edit_message` request. Only FAILURES ack (the success path
+   * is the re-run turn's normal frames): `reason` names why the edit was
+   * refused (`busy` / `compacted` / `not_found` / ...).
+   */
+  | 'edit_message_ack';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
@@ -131,6 +156,12 @@ export interface AgentWsEvent {
    * was no longer QUEUED. Only present on those ack frames.
    */
   ok?: boolean;
+  /**
+   * Whether an interrupted answer of this session can be continued (carried on
+   * `done` and `stopped`; additive — older clients ignore it). `done` carries it
+   * because a heartbeat timeout ends the turn NORMALLY.
+   */
+  resumable?: boolean;
   /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
   type?: AgentChunkType;
   /** Tool-call metadata (only present on "tool_result" chunks). */

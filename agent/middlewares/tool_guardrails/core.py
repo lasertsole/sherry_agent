@@ -104,10 +104,24 @@ class ToolGuardrails(AgentMiddleware):
         super().__init__()
         self.config = config or ToolCallGuardrailConfig()
 
-    def _is_idempotent(self, tool_name: str, tool: Any) -> bool:
-        if tool is not None and isinstance(getattr(tool, "metadata", None), dict):
-            if tool.metadata.get("idempotent") is not None:
-                return bool(tool.metadata["idempotent"])
+    def _is_idempotent(
+        self, tool_name: str, tool: Any, tool_args: dict[str, Any] | None = None
+    ) -> bool:
+        """Resolve idempotency for THIS call.
+
+        ``idempotent`` applies to the whole tool. A grouped tool whose actions
+        differ may instead declare ``idempotent_actions``; that allowlist is
+        checked against the call's ``action`` argument and takes precedence.
+        """
+        if tool is None or not isinstance(getattr(tool, "metadata", None), dict):
+            return False
+        metadata = tool.metadata
+        action_allowlist = metadata.get("idempotent_actions")
+        if isinstance(action_allowlist, (set, frozenset, list, tuple)):
+            action = tool_args.get("action") if isinstance(tool_args, dict) else None
+            return isinstance(action, str) and action in action_allowlist
+        if metadata.get("idempotent") is not None:
+            return bool(metadata["idempotent"])
         return False
 
     def _get_session_id(self, state: dict[str, Any]) -> str:
@@ -384,7 +398,7 @@ class ToolGuardrails(AgentMiddleware):
         tool_name: str = request.tool_call.get("name", "unknown")
         tool_args: dict[str, Any] = request.tool_call.get("args", {})
         args_digest = args_hash(tool_args)
-        is_idempotent = self._is_idempotent(tool_name, request.tool)
+        is_idempotent = self._is_idempotent(tool_name, request.tool, tool_args)
 
         is_error = str(getattr(result, "status", "")).lower() == "error"
         result_content = str(result.content) if result.content else ""

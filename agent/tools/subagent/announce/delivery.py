@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage
 
 from config.features import SUBAGENT_INFRA
 from runtime import hooks
+from ..output_caps import resolve_subagent_output_caps
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus
 from ..types.delivery import DeliveryContext
 from ..config import get_config
@@ -240,8 +241,9 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
         return  # the parent turn already consumed it — no double-inject
 
     content = run.completion.result_text or ""
-    if len(content) > 4000:  # mirrors the user-facing completion message budget
-        content = content[:4000] + "\n... [truncated]"
+    delivery_chars = resolve_subagent_output_caps(run.max_output_tokens).delivery_chars
+    if len(content) > delivery_chars:  # follows the run's serving-model budget
+        content = content[:delivery_chars] + "\n... [truncated]"
     builder_status = _resolve_builder_status(run)
     injection = build_completion_message(run, content, builder_status)
 
@@ -305,28 +307,29 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
         return AnnounceDeliveryResult(success=True)
 
     if not run.completion.required:
-        from ..registry import mark_delivery_delivered, set_run
+        from ..registry import mark_delivery_delivered, set_run_durable
 
         updated = mark_delivery_delivered(run)
-        set_run(updated)
+        set_run_durable(updated)
         return AnnounceDeliveryResult(success=True)
 
     from ..registry import (
         mark_delivery_in_progress,
         mark_delivery_delivered,
         mark_delivery_suspended,
-        set_run,
         count_pending_descendant_runs,
+        set_run,
+        set_run_durable,
     )
 
     pending_count = count_pending_descendant_runs(run.requester_session_key)
     if pending_count >= config.delivery_suspend_hard_cap:
         updated = mark_delivery_suspended(run)
-        set_run(updated)
+        set_run_durable(updated)
         return AnnounceDeliveryResult(success=False, suspended=True, error="Hard cap exceeded")
 
     updated = mark_delivery_in_progress(run)
-    set_run(updated)
+    set_run_durable(updated)
     run = updated
 
     target_key = run.requester_session_key
@@ -361,7 +364,7 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
         await _maybe_route_third_path(run, result)
         _mark_delivered(run)
         updated = mark_delivery_delivered(run)
-        set_run(updated)
+        set_run_durable(updated)
     elif not result.suspended:
         now = time.monotonic()
         from ..registry.delivery_state import should_discard_delivery
@@ -372,11 +375,11 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
             from ..registry import mark_delivery_discarded
 
             updated = mark_delivery_discarded(run, reason="max_retries_or_expiry")
-            set_run(updated)
+            set_run_durable(updated)
             result.terminal = True
         elif pending_count >= config.delivery_suspend_soft_cap:
             updated = mark_delivery_suspended(run)
-            set_run(updated)
+            set_run_durable(updated)
             result.suspended = True
 
     return result
@@ -414,11 +417,22 @@ async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
         owner_session_id = str(flow.get("session_id") or "").strip()
         if not owner_session_id:
             return False
+        # A run that timed out or was killed did NOT do the step's work, so the
+        # step must fail rather than be marked done with an empty/short result:
+        # a DONE step unlocks its dependents, and they would build on nothing.
+        outcome_status = getattr(getattr(run, "execution", None), "outcome", None)
+        outcome_status = getattr(outcome_status, "status", None)
+        declared_outcome = (
+            "failure"
+            if outcome_status in (RunOutcomeStatus.TIMEOUT, RunOutcomeStatus.KILLED)
+            else None
+        )
         answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
             flow_id=flow_id,
             child_session_key=run.child_session_key,
             result=result_text,
             session_id=owner_session_id,
+            step_outcome=declared_outcome,
         )
         first_line = answer.splitlines()[0] if answer else ""
         if isinstance(answer, str) and answer.startswith("Error:"):
@@ -475,10 +489,10 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
                 )
                 return AnnounceDeliveryResult(success=False, error=f"permanent: {error_str}")
 
-            from ..registry import mark_delivery_failed, set_run
+            from ..registry import mark_delivery_failed, set_run_durable
 
             updated = mark_delivery_failed(run, error_str)
-            set_run(updated)
+            set_run_durable(updated)
             run = updated
 
             if error_class == "transient":
@@ -515,6 +529,7 @@ def _build_delivery_context(run: SubagentRunRecord) -> DeliveryContext:
         run_id=run.run_id,
         depth=run.depth,
         is_requester_subagent=origin.is_requester_subagent,
+        max_output_tokens=run.max_output_tokens,
     )
 
 
@@ -567,8 +582,9 @@ async def _deliver_completion_message(ctx: DeliveryContext) -> None:
     content_parts.append(f"Task: {ctx.task}")
     if ctx.result_text:
         text = ctx.result_text
-        if len(text) > 4000:  # Truncate long results to prevent oversized messages
-            text = text[:4000] + "\n... [truncated]"
+        delivery_chars = resolve_subagent_output_caps(ctx.max_output_tokens).delivery_chars
+        if len(text) > delivery_chars:  # Truncate long results to prevent oversized messages
+            text = text[:delivery_chars] + "\n... [truncated]"
         content_parts.append(f"Result:\n{text}")
     elif ctx.outcome.status == "timeout":
         # No partial result to show: the first turn timed out before any text

@@ -444,20 +444,41 @@ async def test_update_payload_unknown_row_returns_none(store: UserInputQueue):
 
 @pytest.mark.asyncio
 async def test_prioritize_moves_a_queued_row_to_the_front(store: UserInputQueue):
-    """send-now re-stamps created_at so the NEXT claim is the prioritised row."""
+    """send-now stamps the row's priority so the NEXT claim is the prioritised row."""
     first, _ = await store.enqueue("s1", _payload("first"), source="user")
     second, _ = await store.enqueue("s1", _payload("second"), source="user")
     third, _ = await store.enqueue("s1", _payload("third"), source="user")
 
     assert await store.prioritize("s1", third.id) is True
 
-    # One ordering rule: list_active (position reporting) shows the same order
-    # claim_next will follow — the prioritised row first, the rest untouched.
+    # The timestamp stays a timestamp: priority carries the ordering, and the
+    # row's creation time is exactly what it was (design concept #27).
     rows = await store.list_active("s1")
     assert [r.id for r in rows] == [third.id, first.id, second.id]
+    by_id = {r.id: r for r in rows}
+    assert by_id[third.id].priority == 1
+    assert by_id[first.id].priority == 0
+    assert by_id[third.id].created_at == third.created_at
 
     claimed = await store.claim_next("s1")
     assert claimed is not None and claimed.payload == _payload("third")
+
+
+@pytest.mark.asyncio
+async def test_equal_priority_rows_stay_fifo_by_created_at(store: UserInputQueue):
+    """A prioritised row is a first among peers, not a new ordering rule."""
+    first, _ = await store.enqueue("s1", _payload("first"), source="user")
+    second, _ = await store.enqueue("s1", _payload("second"), source="user")
+    third, _ = await store.enqueue("s1", _payload("third"), source="user")
+    assert await store.prioritize("s1", second.id) is True
+
+    # One claim for the priority row; the remaining two (priority 0) keep FIFO.
+    first_claim = await store.claim_next("s1")
+    assert first_claim is not None and first_claim.id == second.id
+    second_claim = await store.claim_next("s1")
+    assert second_claim is not None and second_claim.id == first.id
+    third_claim = await store.claim_next("s1")
+    assert third_claim is not None and third_claim.id == third.id
 
 
 @pytest.mark.asyncio

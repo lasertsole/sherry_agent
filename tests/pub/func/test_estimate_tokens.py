@@ -74,7 +74,7 @@ class TestJsonEstimate:
 
     def test_ascii_structure_with_cjk_values_is_split_the_same_way(self):
         payload = '{"title": "中文标题", "note": "中文备注"}'
-        cjk_chars = 8  # 中文标题 + 中文备注
+        cjk_chars = 8  # the fixture title + note: 中文标题 + 中文备注
 
         assert estimate_json_tokens(payload) == (
             cjk_chars // CHARS_PER_TOKEN_CJK + (len(payload) - cjk_chars) // CHARS_PER_TOKEN_JSON

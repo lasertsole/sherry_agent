@@ -127,6 +127,13 @@ class TaskflowFlowInput(BaseModel):
     description: str | None = Field(
         default=None, description="Human-readable flow description (create)."
     )
+    ack_dup: bool | None = Field(
+        default=None,
+        description=(
+            "create/plan: set True to skip the duplicate-goal check after reviewing "
+            "the possible-duplicate warning."
+        ),
+    )
     initial_state: dict | None = Field(
         default=None, description="Initial state object stored on the flow (create)."
     )
@@ -416,7 +423,8 @@ class TaskflowFlowTool(_MergedTaskflowTool):
         "Required: create→flow_id; plan→goal; finish/fail/cancel/set_waiting/replan→flow_id; "
         "budget→flow_id (use budget_action=query|set, plus token_budget when set). "
         "Pass expected_revision on mutations to fail fast; a conflict returns the latest revision to inspect. "
-        "Terminal actions reject later mutations."
+        "create/plan warn about a similar ACTIVE flow in this session: reuse it, or re-call with ack_dup=true "
+        "when it is genuinely a different task. Terminal actions reject later mutations."
     )
     args_schema: type[BaseModel] = TaskflowFlowInput
     action_tools: ClassVar[dict[str, BaseTool]] = _FLOW_TOOLS

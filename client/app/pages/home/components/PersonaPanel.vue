@@ -179,7 +179,7 @@
               </div>
             </TabPanel>
 
-            <!-- 工具 tab: which main-agent tools this preset/session enables.
+            <!-- Tools tab: which main-agent tools this preset/session enables.
                  The catalogue comes from the backend (GET /agent/catalog) — the
                  client never hardcodes tool names. All checked = the default. -->
             <TabPanel
@@ -305,7 +305,7 @@
               </div>
             </TabPanel>
 
-            <!-- 中间件 tab: only the optional chain entries are listed, plus the
+            <!-- Middlewares tab: only the optional chain entries are listed, plus the
                 Summarization option row. The system-required baseline is NOT
                  rendered at all (nothing there is switchable); the backend still
                  refuses to store a required name as disabled. -->
@@ -395,7 +395,7 @@
               </div>
             </TabPanel>
 
-            <!-- 代理模型 tab: the main agent's model and one picker per functional
+            <!-- Agent models tab: the main agent's model and one picker per functional
                  subagent role. Both lists are the environment-config model
                  profiles (the same list the session-model picker uses). -->
             <TabPanel
@@ -456,21 +456,38 @@
                           }}
                         </div>
                       </div>
-                      <Select
-                        :model-value="agentRoleModelId(role.role)"
-                        :options="agentRoleModelOptions"
-                        option-label="label"
-                        option-value="value"
-                        class="w-56"
-                        :data-test="`agent-role-model-${role.role}`"
-                        @update:model-value="value => setRoleModel(role.role, value)" />
+                      <div class="flex shrink-0 flex-col items-stretch gap-1">
+                        <Select
+                          :model-value="agentRoleModelId(role.role)"
+                          :options="agentRoleModelOptions"
+                          option-label="label"
+                          option-value="value"
+                          class="w-56"
+                          :data-test="`agent-role-model-${role.role}`"
+                          @update:model-value="value => setRoleModel(role.role, value)" />
+                        <label
+                          v-if="agentRoleModelId(role.role) !== FOLLOW_TIER_ID"
+                          class="flex items-center justify-between gap-1 text-[11px] text-gray-400">
+                          <span>{{ t('config.agent.subagents.maxOutput') }}</span>
+                          <input
+                            type="number"
+                            min="8192"
+                            step="1024"
+                            class="w-24 rounded border border-solid border-gray-light bg-transparent px-1.5 py-0.5 text-right text-xs text-gray-600 outline-none focus:border-theme-main dark:border-[#555] dark:text-gray-300"
+                            :value="agentRoleMaxOutput(role.role)"
+                            :title="t('config.agent.subagents.maxOutputHint')"
+                            :aria-label="t('config.agent.subagents.maxOutput')"
+                            :data-test="`agent-role-max-output-${role.role}`"
+                            @change="event => setRoleModelMaxOutput(role.role, event)" />
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </template>
               </div>
             </TabPanel>
 
-            <!-- 技能 tab: which skills' index entries (`<available_skills>` in the
+            <!-- Skills tab: which skills' index entries (`<available_skills>` in the
                  system prompt) this preset keeps. Two sub-tabs split the shipped
                  skills from the uploaded third-party ones. -->
             <TabPanel
@@ -760,23 +777,23 @@ const originalContent = ref<Record<string, string>>({});
 
 // ── Role config (the first tab): both role names + avatars ─────────────────
 // The names are display info (Dexie global profile, locked per session on first
-// open) AND prompt content: 应用 composes ROLE.md from them in the active UI
+// open) AND prompt content: Apply composes ROLE.md from them in the active UI
 // language, so the agent reads who it plays and who the user plays.
-/** One catalogue tool-group row the 工具 tab renders. */
+/** One catalogue tool-group row the Tools tab renders. */
 interface AgentToolGroupEntry {
   group: string;
   tools: Array<{ name: string; description?: string; required?: boolean }>;
 }
 
-// ── 工具 / 中间件 / 子代理模型 drafts (the preset's `agent` block) ──────────
+// ── Tools / Middlewares / Agent models drafts (the preset's `agent` block) ──────
 // The catalog (tool groups, middleware lock flags, roles) comes from the backend
-// once; the drafts below are what 保存预设 stores and 应用 writes to the session.
+// once; the drafts below are what Save Preset stores and Apply writes to the session.
 const agentStore = useAgentConfigStore();
 const llmProfiles = useLlmProfilesStore();
 /** The session's main-model control (its own store: the toolbar picker's key). */
 const sessionModel = useSessionModelStore();
 const route = useRoute();
-/** The session an 应用 targets (the open chat's sid; empty on the bare shell). */
+/** The session an Apply targets (the open chat's sid; empty on the bare shell). */
 const panelSessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
 
 /** Enabled tool names (catalog order); the draft starts all-selected. */
@@ -785,6 +802,8 @@ const agentTools = ref<string[]>([]);
 const agentDisabledMiddlewares = ref<string[]>([]);
 /** role → chosen env-config profile id (`''` = follow the role tier). */
 const agentRoleModels = ref<Record<string, string>>({});
+/** role → the role profile's own output cap (decimal string, min 8192). */
+const agentRoleMaxOutputs = ref<Record<string, string>>({});
 /** Skill names whose index entries enter the prompt (`null` = every skill). */
 const agentSkills = ref<string[] | null>(null);
 /** Main-agent model for this preset (`ENV_MODEL_ID` = follow the env config). */
@@ -820,7 +839,7 @@ const agentMainModelOptions = computed<Array<{ label: string; value: string }>>(
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
 
-/** The profile id the 主代理 picker shows (an unknown id falls back to env). */
+/** The profile id the Main agent picker shows (an unknown id falls back to env). */
 const agentMainModelId = computed<string>(() =>
   llmProfiles.byId('MAIN_LLM', agentMainModel.value) ? agentMainModel.value : ENV_MODEL_ID
 );
@@ -888,16 +907,16 @@ const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boo
 const agentGroupFullyRequired = (group: AgentToolGroupEntry): boolean =>
   group.tools.length > 0 && group.tools.every(tool => tool.required === true);
 
-/** The two 工具 sub-tabs: the built-in groups and the MCP servers' tools. */
+/** The two Tools sub-tabs: the built-in groups and the MCP servers' tools. */
 const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
 
-/** The two 技能 sub-tabs: shipped skills and uploaded third-party ones. */
+/** The two Skills sub-tabs: shipped skills and uploaded third-party ones. */
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
 
-/** The two 代理模型 sub-tabs: the main agent and the functional subagents. */
+/** The two Agent models sub-tabs: the main agent and the functional subagents. */
 const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
 
-/** Which 代理模型 sub-tab is on screen. */
+/** Which Agent models sub-tab is on screen. */
 const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
 
 /** Group id the catalogue gives tools that arrive from an MCP server. */
@@ -906,10 +925,10 @@ const MCP_TOOL_GROUP = 'mcp';
 /** Tool the nudge option depends on (it writes memory through it). */
 const MEMORY_TOOL_NAME = 'memory';
 
-/** Which 工具 sub-tab is on screen (a view filter — the draft stays whole). */
+/** Which Tools sub-tab is on screen (a view filter — the draft stays whole). */
 const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
 
-/** Which 技能 sub-tab is on screen. */
+/** Which Skills sub-tab is on screen. */
 const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
 
 /** The tool groups of the active sub-tab. */
@@ -1050,6 +1069,9 @@ const toggleMiddleware = (name: string): void => {
     : [...agentDisabledMiddlewares.value, name];
 };
 
+/** The 8K business floor for a role profile's output cap. */
+const MIN_ROLE_MAX_OUTPUT_TOKENS = 8192;
+
 /**
  * The profile id a role's picker shows (`''` = follow the tier).
  * @param role
@@ -1057,15 +1079,48 @@ const toggleMiddleware = (name: string): void => {
 const agentRoleModelId = (role: string): string => agentRoleModels.value[role] || FOLLOW_TIER_ID;
 
 /**
- * Point one role at an env-config profile (or back at its tier).
+ * A role's output cap, defaulting to the 8K floor when the draft is empty.
+ * @param role Functional role.
+ */
+const agentRoleMaxOutput = (role: string): number => {
+  const parsed = Number(agentRoleMaxOutputs.value[role]);
+  return Number.isFinite(parsed) && parsed >= MIN_ROLE_MAX_OUTPUT_TOKENS ? parsed : MIN_ROLE_MAX_OUTPUT_TOKENS;
+};
+
+/**
+ * Point one role at an env-config profile (or back at its tier). Selecting a
+ * profile seeds the output cap from that profile (default 8192).
  * @param role Functional role.
  * @param profileId Chosen profile id (`''` = follow the tier).
  */
 const setRoleModel = (role: string, profileId: string): void => {
   const chosen = String(profileId ?? '');
+  const profile = chosen && chosen !== FOLLOW_TIER_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
   agentRoleModels.value = {
     ...agentRoleModels.value,
     [role]: chosen === FOLLOW_TIER_ID ? '' : chosen
+  };
+  agentRoleMaxOutputs.value = {
+    ...agentRoleMaxOutputs.value,
+    [role]: profile
+      ? (llmProfiles.toSubagentProfile(profile).max_output_tokens ?? String(MIN_ROLE_MAX_OUTPUT_TOKENS))
+      : ''
+  };
+};
+
+/**
+ * Update a role's output cap in the draft, clamped to the 8K floor.
+ * @param role Functional role.
+ * @param event Change event from the numeric input.
+ */
+const setRoleModelMaxOutput = (role: string, event: Event): void => {
+  const parsed = Number((event.target as HTMLInputElement).value);
+  const next = Number.isFinite(parsed)
+    ? Math.max(MIN_ROLE_MAX_OUTPUT_TOKENS, Math.trunc(parsed))
+    : MIN_ROLE_MAX_OUTPUT_TOKENS;
+  agentRoleMaxOutputs.value = {
+    ...agentRoleMaxOutputs.value,
+    [role]: String(next)
   };
 };
 
@@ -1084,7 +1139,8 @@ const buildAgentDraft = (): AgentConfig => {
       continue;
     }
     const profile = llmProfiles.byId('MAIN_LLM', profileId);
-    models[role.role] = profile ? llmProfiles.toSessionProfile(profile) : null;
+    const base = profile ? llmProfiles.toSubagentProfile(profile) : null;
+    models[role.role] = base ? { ...base, max_output_tokens: String(agentRoleMaxOutput(role.role)) } : null;
   }
   const anyModel = Object.values(models).some(value => value !== null);
   const block: AgentConfig = {};
@@ -1118,10 +1174,13 @@ const fillAgentDraft = (block: AgentConfig | undefined): void => {
   agentTools.value = configured ? allTools.filter(name => configured.includes(name)) : [...allTools];
   agentDisabledMiddlewares.value = [...(block?.middlewares_disabled ?? [])];
   const models: Record<string, string> = {};
+  const outputs: Record<string, string> = {};
   for (const [role, profile] of Object.entries(block?.subagent_models ?? {})) {
     models[role] = profile?.id ?? '';
+    outputs[role] = profile?.max_output_tokens ?? String(MIN_ROLE_MAX_OUTPUT_TOKENS);
   }
   agentRoleModels.value = models;
+  agentRoleMaxOutputs.value = outputs;
   agentSkills.value = Array.isArray(block?.skills) ? [...block.skills] : null;
   agentNudge.value = block?.middleware_options?.Summarization?.nudge !== false;
 };
@@ -1143,7 +1202,7 @@ const cropTarget = ref<'user' | 'assistant'>('user');
 
 // Preset state machine: editingPresetId = the user preset currently loaded into the
 // editor (null = built-in / new mode); activeBuiltin = which virtual built-in entry
-// is loaded. The DEFAULT preset (全量) starts highlighted; the list itself
+// is loaded. The DEFAULT preset (Full) starts highlighted; the list itself
 // (BUILTIN_PRESETS + the saved presets) is defined in the shared catalogue, so the
 // new-session dialog and the top-bar viewer render the identical order and badges.
 const editingPresetId = ref<number | null>(null);
@@ -1200,11 +1259,11 @@ const loadContent = async () => {
     }
 
     // Role names/avatars come from the local Dexie global profile (the same row
-    // the old 系统配置-角色配置 tab edited); ROLE.md itself is NOT parsed back —
+    // the old System Config → Character Setup tab edited); ROLE.md itself is NOT parsed back —
     // the compose direction is one-way (names -> sentence).
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
     // An explicitly EMPTY name/avatar stays empty (the input shows its
-    // placeholder): the nameless built-ins (纯净 / 编程助手) ship no names on
+    // placeholder): the nameless built-ins (Pure / Coding Assistant) ship no names on
     // purpose, and prefilling the shipped character here made the panel disagree
     // with the preset it had just applied.
     fillCharacter({
@@ -1222,15 +1281,15 @@ const loadContent = async () => {
 };
 
 /**
- * Gate for 保存预设 / 应用: every file tab within the char limit. Empty content
- * is LEGAL — the 编程助手 built-in ships an empty soul / user profile (a plain
+ * Gate for Save Preset / Apply: every file tab within the char limit. Empty content
+ * is LEGAL — the Coding Assistant built-in ships an empty soul / user profile (a plain
  * assistant without role-play) and an empty user role name means "the user
  * plays nothing" — so no non-empty requirement remains. The backend accepts
  * blank persona writes for the same reason.
  */
 const allTabsValid = computed(() => tabs.every(tab => (editContent.value[tab.file] ?? '').length <= MAX_CHARS));
 
-/** Enablement for both the 保存预设 ("Save Preset") and 应用 ("Apply") buttons. */
+/** Enablement for both the Save Preset and Apply buttons. */
 const actionEnabled = computed(
   () => allTabsValid.value && !loading.value && !saving.value && !applying.value && !restoring.value
 );
@@ -1359,7 +1418,7 @@ const onCropConfirmed = (dataUrl: string) => {
   cropVisible.value = false;
 };
 
-/** Reset the role tab to the built-in default names + avatars (mirrors 恢复默认). */
+/** Reset the role tab to the built-in default names + avatars (mirrors Restore Default). */
 const restoreRoleDefault = () => {
   fillCharacter({ ...DEFAULT_CACHED_CHARACTER });
 };
@@ -1369,7 +1428,7 @@ const restoreRoleDefault = () => {
  * default avatar"): the field becomes empty — an empty avatar means "no avatar
  * of its own" and every render site falls back to the auto-imported
  * `DEFAULT_PLACEHOLDER_AVATAR` gray silhouette. The name is left untouched, so
- * this is the per-avatar sibling of 恢复默认.
+ * this is the per-avatar sibling of Restore Default.
  * @param target Which role the avatar belongs to.
  */
 const resetAvatar = (target: 'user' | 'assistant') => {
@@ -1395,18 +1454,18 @@ const restoreDefault = async (tab: PersonaTab) => {
 /**
  * Click a built-in entry: load its shipped template through the shared catalogue
  * (the same payload the new-session dialog and the top-bar viewer use).
- * - 纯净 → nobody named, no persona content, and only the required tools;
- * - 编程助手 → the operating rules only: empty soul and user profile, and BOTH
+ * - Pure → nobody named, no persona content, and only the required tools;
+ * - Coding Assistant → the operating rules only: empty soul and user profile, and BOTH
  *   role names empty — a plain coding assistant, no role statement at all;
- * - 情感陪伴 / 全量 → the full language template plus the default names/avatars
- *   (情感陪伴 also pins the orchestration surfaces off).
+ * - Companion / Full → the full language template plus the default names/avatars
+ *   (Companion also pins the orchestration surfaces off).
  * @param id Which built-in entry was clicked.
  */
 const selectBuiltin = async (id: BuiltinPresetId) => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
-    // The catalogue feeds 纯净 / 情感陪伴's agent block; it is fetched once per
+    // The catalogue feeds Pure / Companion's agent block; it is fetched once per
     // process (the panel already awaited it during load, so this is a cache hit).
     await agentStore.loadCatalog();
     const template = await readSystemPromptTemplate(locale.value);
@@ -1443,7 +1502,7 @@ const selectPreset = (preset: PersonaPreset) => {
 };
 
 /**
- * Click 保存预设 ("Save Preset"):
+ * Click Save Preset:
  * - editing an existing preset → overwrite it directly (no name dialog);
  * - otherwise (default/new mode) → open the name dialog to save as a new preset.
  */
@@ -1458,7 +1517,7 @@ const savePreset = () => {
   }
 };
 
-/** Direct-overwrite path for 保存预设 ("Save Preset") while editing a user preset. */
+/** Direct-overwrite path for Save Preset while editing a user preset. */
 const overwriteEditingPreset = async () => {
   const id = editingPresetId.value;
   if (id === null) return;
@@ -1554,7 +1613,7 @@ const doRemovePreset = async (preset: PersonaPreset) => {
 /**
  * Write the role names/avatars to the local Dexie global profile when they
  * changed — the "global pending profile" new sessions copy their display
- * snapshot from, exactly as the old 系统配置-角色配置 tab wrote it.
+ * snapshot from, exactly as the old System Config → Character Setup tab wrote it.
  */
 const persistCharacter = async () => {
   const current = buildPresetCharacter();
@@ -1574,7 +1633,7 @@ const persistCharacter = async () => {
   originalChar.value = current;
 };
 
-/** Click 应用 ("Apply"): full-write the persona files (incl. the composed ROLE.md) + the role profile; success → toast + saved + close, failure → stay open. */
+/** Click Apply: full-write the persona files (incl. the composed ROLE.md) + the role profile; success → toast + saved + close, failure → stay open. */
 const handleApply = async () => {
   if (!actionEnabled.value) return;
   applying.value = true;
@@ -1591,8 +1650,8 @@ const handleApply = async () => {
       throw new Error('[PersonaPanel] applied content verification failed');
     }
     await persistCharacter();
-    // The agent config lands on the SESSION (this preset's 工具 / 中间件 /
-    // 子代理模型 go live for the open chat; the backend parks it until the turn
+    // The agent config lands on the SESSION (this preset's Tools / Middlewares /
+    // Agent models go live for the open chat; the backend parks it until the turn
     // boundary when one is in flight). A session-less panel skips it.
     if (panelSessionId.value) {
       await agentStore.save(panelSessionId.value, buildAgentDraft());
@@ -1701,6 +1760,8 @@ const handleApply = async () => {
           "followTier": "跟随角色默认",
           "tier": "角色默认：{tier}",
           "tierDepth": "无角色定义：按深度默认",
+          "maxOutput": "最大输出",
+          "maxOutputHint": "该角色模型自己的最大输出 token（默认 8192）；它决定子代理结果存储、投递、摘要、判别器和回读上限的缩放。",
           "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
           "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
         },
@@ -1808,8 +1869,8 @@ const handleApply = async () => {
         "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
-        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
-        "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+        "maxTokenError": "{key} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。",
+        "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
       },
       "sherry": {
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
@@ -1997,6 +2058,8 @@ const handleApply = async () => {
           "followTier": "Follow the role default",
           "tier": "Role default: {tier}",
           "tierDepth": "No role definition: depth default",
+          "maxOutput": "Max output",
+          "maxOutputHint": "This role model's own max-output tokens (default 8192); it scales the subagent result storage, delivery, summary, judge and transcript caps.",
           "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
           "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
         },
@@ -2013,7 +2076,7 @@ const handleApply = async () => {
           "middlewaresNone": "Middlewares: all on",
           "models": "Subagent models: {names}"
         },
-        "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
+        "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
       },
       "save": "Save",
       "cancel": "Cancel",
@@ -2104,8 +2167,8 @@ const handleApply = async () => {
         "saveFailed": "Failed to save model config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
-        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
-        "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+        "maxTokenError": "{key} must be >= 200000 (200K); current value does not meet the requirement, cannot save.",
+        "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
       },
       "sherry": {
         "loadError": "Failed to load app config. Please check the backend service.",
@@ -2293,6 +2356,8 @@ const handleApply = async () => {
           "followTier": "ロール既定に従う",
           "tier": "ロール既定: {tier}",
           "tierDepth": "ロール定義なし: 深度の既定",
+          "maxOutput": "最大出力",
+          "maxOutputHint": "このロールモデル自身の最大出力トークン（既定 8192）。子エージェントの結果保存・配信・要約・判定・読み戻し上限の拡大縮小に使われます。",
           "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
           "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
         },
@@ -2400,8 +2465,8 @@ const handleApply = async () => {
         "saveFailed": "モデル設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
-        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
-        "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+        "maxTokenError": "{key} は 200000 (200K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+        "maxTokenHint": "200000 (200K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
       "sherry": {
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
@@ -2589,6 +2654,8 @@ const handleApply = async () => {
           "followTier": "역할 기본값 따르기",
           "tier": "역할 기본값: {tier}",
           "tierDepth": "역할 정의 없음: 깊이 기본값",
+          "maxOutput": "최대 출력",
+          "maxOutputHint": "이 역할 모델 자체의 최대 출력 토큰(기본 8192)입니다. 하위 에이전트 결과 저장·전달·요약·판정·읽기 상한의 확대/축소에 사용됩니다.",
           "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
           "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
         },
@@ -2696,8 +2763,8 @@ const handleApply = async () => {
         "saveFailed": "모델 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
-        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
-        "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+        "maxTokenError": "{key}는 200000 (200K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
+        "maxTokenHint": "200000 (200K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
       "sherry": {
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
@@ -2813,9 +2880,9 @@ const handleApply = async () => {
   min-width: 100%;
 }
 
-/* 让面板内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
-   内部 flex 链（TabView → panels → panel → textarea）自适应伸缩，
-   避免 72vh 等固定高度把内容区撑出垂直滚动条。 */
+/* Make the panel body a flex column container: the root layout fills the body's
+   height exactly via flex-1, the inner flex chain (TabView → panels → panel →
+   textarea) stretches adaptively, so fixed heights like 72vh never push the body into a vertical scrollbar. */
 :deep(.p-tabview-panels) {
   display: flex;
   flex-direction: column;

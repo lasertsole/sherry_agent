@@ -34,6 +34,30 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 `_resolve_main_concurrency()` は OpenClaw の CPU スケーリング——`min(16, max(8, CPU))`——を踏襲し、さらにハード不変条件 `SUBAGENT + NUDGE`（8 + 4 = 12）以上へ**切り上げ**るため、出荷時の既定値はどの CPU 数でも有効です。`validate_lane_config()` はサーバー起動時に `install_lane_lifecycle()`（`server/service/lane_lifecycle.py`）から一度だけ呼ばれ（import 時には決して呼ばれません）、`main_max_concurrent < subagent + nudge` またはいずれかの上限が `< 1` のとき例外を送出します。`lane_wait_warn_ms` は「スロット待ちが長すぎる」警告を制御し、`lane_drain_timeout_seconds` は `LaneManager.drain_all()` の既定タイムアウトです。`LaneManager.set_concurrency(lane, n)` は上限をホット更新します——実行中のスロットは permit を保持したまま、新しい acquire だけが新しい上限を見ます。
 
+### SUBAGENT lane の手前にある負荷ゲート
+
+lane は**カウント型**の背圧——「8 スロットが埋まっているか」には答えますが、「機械はもう 1 つ受け入れられるか」には答えられず、CPU 99% でも派遣は lane に入り全体を遅くしていました。負荷ゲート（`agent/tools/pub_base/load_gate.py`）がその欠けた半分を補います。両者は直交し順序があります：ゲートは `lane_slot(SUBAGENT)` の**前**に走るため、延期された派遣は待機中にスロットを**占有しません**。
+
+| ホスト負荷 | 挙動 |
+| :--- | :--- |
+| いずれも < warn | 通過 |
+| どちらかが ≥ warn（90%）かつ < stop | 通過——ここは lane cap が既に絞っているので、ゲートはログのみ |
+| どちらかが ≥ stop（95%） | **延期**：run は PENDING のまま、スロットを取らず、`load_warning` を 1 回 push し、`load_gate_retry_s` 後に再検査 |
+
+```text
+spawn ─► 負荷ゲート（stop 中は延期）─► lane_slot(SUBAGENT) ─► PENDING→RUNNING ─► 実行
+              │ stop かつ予算超過
+              └─► 終端化（timeout / "load_timeout"）   ← 単なる return はしない
+```
+
+**延期には上限があり、超過時は終端化します。** 延期された run を PENDING のまま放置すると orphan になり、orphan recovery が再派遣 → また延期、の無限ループになります。`load_gate_max_defer_s`（600 秒）を超えたら `TIMEOUT` で終端化し、エラー文に `load_timeout` を明記します（`ended_reason` は列挙の `timeout` のまま、負荷固有の詳細はエラー文へ）。待機中の kill は `kill_reconciliation` で観測し（kill された PENDING run は TERMINAL にならない）、即座に待機を終えます。
+
+**スナップショットは共有で、サンプリングはイベントループを止めません。** 1 回のサンプリングは 3 つの CPU 間隔（既定 1.5 秒なら約 4.5 秒）なので `asyncio.to_thread` で実行し、プロセス全体で `load_gate_snapshot_ttl_s`（5 秒）ごとに最大 1 回：並行する待機者は同じ判定を読み、ロック + double-check により N 個の呼び出しでサンプリングはちょうど 1 回です。
+
+**フェイルオープンは監視自体にのみ。** psutil の故障（ライブラリ欠如、`/proc` の無いバックエンド）は ok 判定を返し派遣を止めませんが、正常なサンプルの `stop` は必ず尊重されます。
+
+**既定はオフ。** `load_gate_enabled` の既定は `False` で、最初のリリースは従来と完全に同じ挙動です。psutil が凍結バックエンドに入ったことを確認してから有効化します——デスクトップワークフローの「Verify psutil made it into the frozen tree」はそのためで、import が遅延実行され freezer から見えないことによります（`packaging/build_backend.py` の `HIDDEN_IMPORTS`）。
+
 ### キューイング意味論：`PENDING`
 
 グローバル並行性は拒否カウンタではありません。`spawn_subagent_direct` は親単位のアドミッション（`validate_spawn_depth`、`validate_concurrent_children`）を引き続き適用しますが、グローバル上限を超える spawn は**受理**され `ExecutionStatus.PENDING` として登録されます：`started_at` は `None` のままで、その run はレーンスロットを保持しません。SUBAGENT レーンのラッパー（`_execute_subagent_with_lane`、`agent/tools/subagent/spawn/core.py`）がスロットを待ち、`mark_run_running()` で `PENDING → RUNNING` へ昇格し、その瞬間に `started_at` を刻みます——キュー待ち時間が実行時間として数えられることはありません。`validate_global_concurrent()` と `SubagentConfig.max_concurrent` は後方互換のためだけに残り、spawn パイプラインからは呼ばれません。

@@ -145,6 +145,22 @@ FACTS.md はグローバルなので、ディレクトリ切替でメモリ用�
 
 todo リストにはもう 1 つの防護があります: `PlanContinuationEnforcer`（`TodoContinuationEnforcer` から改名。監督する「プラン」= todos + TaskFlow flows）は `todowrite` を呼ばないターン数を数え、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` を追記します——スナップショット方式の停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。
 
+## 🧩 Provider プロンプトキャッシュ（Anthropic）
+
+sherry が対応する provider のうち、Anthropic だけはプロンプトキャッシュが**明示的**です——リクエストに `cache_control` を書かなければ何もキャッシュされません。上記のアーキテクチャ（凍結システムプロンプト、セッション内で安定したツール面、ライブ状態をリマインダー層へ押し下げる設計）は自動キャッシュの provider 向けに作られたため、Anthropic では利益がゼロでした。`models/LLMs/anthropic_cache.py` がその穴を埋めます：provider が `anthropic` のときだけ装着される `BaseChatModel` ラッパー（メインクライアント、補助クライアント、`TASKFLOW_LLM` / `COMPRESSION_LLM` の両ファミリー）が、各リクエストに最大 3 つのブレークポイントを付けます。
+
+| ブレークポイント | 付ける対象 | 安定している理由 |
+|---|---|---|
+| BP1 | `SystemMessage` の最後の text ブロック | セッション内で凍結。Anthropic のプレフィックス順は tools → system → messages なので、これ 1 つでツール一覧もキャッシュされる |
+| BP2 | 最後の tool 定義 | セッション内で安定したツール面（thinking 切替や agent-config 変更でシステムプロンプトが変わり、ツールが変わらないときに効く） |
+| BP3 | 末尾から遡って最初に見つかる実履歴メッセージ（AI または tool） | リマインダーブロックと新しいユーザー入力より**前**にあるため、毎ターン変わるリマインダーでは失効しない |
+
+**既存の無効化ポイントはそのまま正しい。** thinking の切替は記憶スナップショットを再読込して `SYSTEM_PROMPT` を削除するので BP1 は miss——バイトが変わるのだから正しい挙動です。agent-config の変更で BP1 と BP2 が同時に失効します。圧縮はプロンプトとメッセージ列を書き換えるので BP1 と BP3 が失効します。BP3 は前ターンの確定した末尾をアンカーにするため、リマインダーの変化では壊れません。
+
+**コスト。** `MODEL_PRICING_TABLE` のエントリには `cache_read`（キャッシュ読み取り）と `cache_write`（キャッシュ書き込み）の 2 つの任意単価を持てます。`TokenBudget` は 1 回のレスポンスの `input_token_details` を未キャッシュ / キャッシュ読み / キャッシュ書きに分け、それぞれの単価で計算します。2 フィールドを省くとキャッシュ分は通常の input 単価——つまり従来の見積りで、架空の割引は作りません。OpenAI 形式の usage は `input_tokens` にキャッシュ分を**含む**ので、ミドルウェアは先に差し引いてから未キャッシュ単価を適用します。Anthropic の `input_tokens` は含みません。
+
+**失敗時と範囲。** 注入例外、ツール変換の失敗、`SHERRY_ANTHROPIC_CACHE=0` はいずれも素通しで、呼び出し側のメッセージとツール一覧は決して変更しません（リクエストは複製から構築）。対象はネイティブの `anthropic` 統合のみです。Bedrock の Claude は `langchain-aws`（キャッシュ API が異なる）を通り、OpenRouter 経由の Claude は OpenAI 形式クライアントがマーカーを落とすため、どちらも対象外と明記します。
+
 ## 🧹 checkpoint 保持と孤児セッション掃除
 
 メインとサブエージェントは `src/checkpoints/sqlite.db` を共有します。メインターンの終了後、`on_turn_finished` はそのセッションの thread を最新のトップレベル checkpoint とその writes（`aget_state` が読む行）だけに削減します。child の `_release_child_resources` も自分の thread に同じ処理を行います。`tools:*` / `model:*` の行は削除され、トップレベル行が無い場合は最新行を fallback として残します。HITL pending のセッションは、中断中のグラフをターン終了と見なさないためスキップします。メインセッションの削除は全子孫 run を抑制・kill してから、各子孫の registry 行、checkpoint thread、session ディレクトリ、計画データ、添付を削除します。起動時は `init_registry()` の後に 1 回 sweep を実行し、ルートのメインセッションまたは親 run が消えた全 run サブツリーを削除します。すべての cleanup はフェイルオープンで冪等です。

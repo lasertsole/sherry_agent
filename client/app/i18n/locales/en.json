@@ -11,6 +11,47 @@
     "delete": "Delete",
     "cancel": "Cancel"
   },
+  "shortcuts": {
+    "hint": "Click Rebind, then press the new chord (Esc cancels). Bindings are stored in this browser and apply immediately.",
+    "rebind": "Rebind",
+    "cancelRebind": "Cancel",
+    "listening": "Press a chord…",
+    "reset": "Restore default",
+    "resetAll": "Restore all defaults",
+    "conflict": "Conflicts with \"{name}\" — not saved",
+    "group": {
+      "composer": "Composer",
+      "navigation": "Sessions & sidebar",
+      "global": "Global"
+    },
+    "sendMessage": "Send message",
+    "historyPrev": "Previous question",
+    "historyNext": "Next question",
+    "cancelInput": "Leave history browsing",
+    "commandPalette": "Command palette",
+    "findInConversation": "Find in conversation",
+    "newSession": "New session",
+    "toggleSidebar": "Collapse / expand session sidebar"
+  },
+  "safety": {
+    "blocked": "Content blocked by the safety filter",
+    "replaced": "Some content was replaced by the safety rules",
+    "event": "{count} rule(s) matched"
+  },
+  "chatFind": {
+    "placeholder": "Search in conversation",
+    "previous": "Previous match",
+    "next": "Next match",
+    "close": "Close search"
+  },
+  "chatFloat": {
+    "title": "Conversation",
+    "dragHint": "Drag to move",
+    "restore": "Restore",
+    "expand": "Expand conversation",
+    "resize": "Drag to resize",
+    "collapse": "Collapse to input"
+  },
   "chatInput": {
     "maxImages": "You can upload at most {count} images",
     "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
@@ -63,6 +104,7 @@
     "thinking": "Thinking",
     "toolArgs": "Arguments",
     "toolNoOutput": "No output",
+    "openTrajectory": "View trajectory",
     "toolResult": "Result",
     "toolRunning": "Running…",
     "turnHistoryTools": "Tools executed: {n}",
@@ -75,7 +117,11 @@
     "removeVideo": "Remove video",
     "diffNewFile": "New file",
     "codeWrap": "Wrap",
-    "codeZoom": "Zoom"
+    "codeZoom": "Zoom",
+    "continueGeneration": "Continue generating",
+    "editMessage": "Edit message",
+    "editingMessage": "Editing a sent message — sending re-runs that turn",
+    "forkFromHere": "Branch a new session from this answer"
   },
   "chat": {
     "backgroundMessage": "Background task",
@@ -100,7 +146,7 @@
     },
     "tokenGuard": {
       "title": "Model Config Below Minimum",
-      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Model Config."
+      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 200K (200000). The agent may refuse to run. Fix in System Config → Model Config."
     }
   },
   "errors": {
@@ -108,7 +154,12 @@
     "pageError": "Page error",
     "replyFailed": "(Reply failed: {reason})",
     "sendFailed": "(Send failed: {reason})",
-    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly.",
+    "breakpointStale": "The interrupted answer can no longer be continued",
+    "continueBusy": "A turn is running; try again once it finishes",
+    "editBusy": "A turn is running; editing is unavailable",
+    "editCompacted": "This message is outside the editable range (its history was compacted)",
+    "forkFailed": "Could not create the branch — try again"
   },
   "connection": {
     "offline": "Network offline",
@@ -163,7 +214,20 @@
     "refreshGraph": "Refresh",
     "refreshGraphPrompt": "Refetch and redraw the run graph",
     "noTasks": "No background tasks yet",
-    "tasksLoading": "Loading tasks..."
+    "tasksLoading": "Loading tasks...",
+    "resize": "Drag to resize"
+  },
+  "commandPalette": {
+    "placeholder": "Type a command…",
+    "recent": "Recently used",
+    "noMatch": "No matching command",
+    "newSession": "New Session",
+    "section": {
+      "session": "Sessions",
+      "navigate": "Navigation",
+      "tools": "Tools",
+      "skills": "Skills"
+    }
   },
   "toolbar": {
     "newChat": "New Chat",
@@ -198,6 +262,8 @@
     },
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
+    "floatChat": "Float conversation",
+    "restoreChat": "Restore conversation",
     "notification": "Notifications",
     "projectFiles": "Project files",
     "projectFilesHint": "Project files",
@@ -207,7 +273,9 @@
     "toolbox": "Toolbox",
     "browser": "Browser",
     "terminal": "Terminal",
-    "webSearch": "Web Search"
+    "webSearch": "Web Search",
+    "i18n": "Language",
+    "whiteboard": "Whiteboard"
   },
   "config": {
     "agent": {
@@ -297,6 +365,8 @@
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
         "tierDepth": "No role definition: depth default",
+        "maxOutput": "Max output",
+        "maxOutputHint": "This role model's own max-output tokens (default 8192); it scales the subagent result storage, delivery, summary, judge and transcript caps.",
         "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
         "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
       },
@@ -313,7 +383,7 @@
         "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
       },
-      "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
+      "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
     },
     "save": "Save",
     "cancel": "Cancel",
@@ -404,14 +474,28 @@
       "saveFailed": "Failed to save model config.",
       "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
       "noEnvFile": "No .env file found.",
-      "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
-      "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+      "maxTokenError": "{key} must be >= 200000 (200K); current value does not meet the requirement, cannot save.",
+      "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
     },
     "sherry": {
       "loadError": "Failed to load app config. Please check the backend service.",
       "saveFailed": "Failed to save app config.",
       "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-      "noConfigFile": "No sherry.jsonc file found."
+      "noConfigFile": "No sherry.jsonc file found.",
+      "allowlist": {
+        "title": "Replay-gate allowlist",
+        "hint": "Add executable names the finish-time replay may re-run, on top of the five built-in toolchains (affects only which verification commands are replayed).",
+        "placeholder": "e.g. gradle",
+        "add": "Add",
+        "remove": "Remove",
+        "reload": "Reload",
+        "empty": "No extra executables — the built-in allowlist applies.",
+        "badChars": "No whitespace or shell metacharacters (;&|<>$`)",
+        "tooLong": "Name is too long",
+        "duplicate": "Already listed",
+        "loadFailed": "Read failed (backend unreachable?)",
+        "saveFailed": "Save failed"
+      }
     },
     "cron": {
       "addJob": "New task",
@@ -492,13 +576,14 @@
       "penaltyRange": "Enter a number between -2.0 and 2.0",
       "maxContextLabel": "Context window (MAX_TOKEN)",
       "maxOutputLabel": "Max output window (MAX_OUTPUT_TOKEN)",
+      "maxOutputHint": "Must be >= {min} and smaller than the model context window; leave empty for the provider default",
+      "outputCapRange": "Max output window must be >= {min} and smaller than the model context window",
       "groupHelpLabel": "Show what {group} is for and when to use it",
       "modelHelp": {
         "main": "Main chat model — drives conversation, tool calls, task planning, and the final answer. Best for your strongest general model with reliable tool use and a long context.",
         "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
         "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
         "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
-        "reasoner": "Reasoner model — deep analysis, math/logic reasoning, and complex problem solving. Best for hard tasks; everyday chat can stay on the main model.",
         "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
         "vttt": "Video-to-text model — extracts and describes video content. Use for video summaries and scene understanding.",
         "tti": "Text-to-image model — generates images from prompts. Use for illustrations, visual drafts, and assets.",
@@ -531,7 +616,21 @@
       "soul": "Agent personality, tone, character",
       "user": "User info and preferences"
     },
-    "uploadAvatar": "Upload Avatar"
+    "uploadAvatar": "Upload Avatar",
+    "cuda": {
+      "title": "CUDA acceleration (optional)",
+      "hint": "The CUDA pack runs local speech recognition and document parsing on the GPU. The CPU build is fully functional without it.",
+      "supported": "Acceleration available: {gpu} (driver {driver})",
+      "unsupported": "No usable NVIDIA driver detected",
+      "download": "Download CUDA Pack",
+      "uninstall": "Uninstall CUDA pack",
+      "restart": "Install and restart backend",
+      "installedHint": "Installed; it takes effect after a backend restart."
+    },
+    "i18n": {
+      "title": "Language",
+      "hint": "Pick the interface language. The choice applies at once and is remembered; it does not affect session content."
+    }
   },
   "rightSidebar": {
     "fileViewer": "Project files",
@@ -565,7 +664,10 @@
     },
     "scopeEmpty": "No tabs in this group",
     "recentClosed": "Recently closed tabs",
-    "recentClosedEmpty": "No recently closed tabs"
+    "recentClosedEmpty": "No recently closed tabs",
+    "i18n": "Language",
+    "tokenBudget": "Token budget",
+    "whiteboard": "Whiteboard"
   },
   "progressFloat": {
     "status": {
@@ -670,10 +772,43 @@
   },
   "searchFallback": {
     "notice": "Tavily is unavailable ({reason}); switched to {name}",
+    "cooldown": "SearXNG failed repeatedly; paused for about {seconds}s before automatic recovery",
+    "recovered": "SearXNG cooldown ended; re-enabled",
     "reason": {
       "tavily_auth_failed": "the key is invalid or expired",
       "tavily_timeout": "the request timed out",
       "tavily_error": "the request failed"
     }
+  },
+  "loadGate": {
+    "warning": "Host load is too high (CPU {cpu}% / RAM {ram}%) — subagent dispatch is paused and resumes automatically once load drops."
+  },
+  "backgroundTasks": {
+    "title": "Background commands",
+    "runningOnly": "{count} running",
+    "statusRunning": "Running",
+    "statusStopping": "Stopping…",
+    "kill": "Stop this command (the conversation keeps running)",
+    "killRefused": "Already finished"
+  },
+  "session": {
+    "fork": "Branch from here",
+    "forkedFrom": "Forked from {parent}",
+    "backToParent": "Back to the parent branch"
+  },
+  "whiteboard": {
+    "namePlaceholder": "Board name",
+    "pen": "Pen",
+    "eraser": "Eraser",
+    "width": "Line width",
+    "undo": "Undo",
+    "redo": "Redo",
+    "clear": "Clear",
+    "addToChat": "Add to chat",
+    "empty": "Draw freely here, then use “Add to chat” to send it to the assistant",
+    "unsupported": "This browser has no Canvas support, so the whiteboard is unavailable",
+    "exportFailed": "Could not export the drawing",
+    "addedToChat": "Added to the chat's pending images",
+    "maxStrokes": "Too many strokes — clear or undo some first"
   }
 }

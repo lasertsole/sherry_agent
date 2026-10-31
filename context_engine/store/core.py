@@ -890,29 +890,6 @@ def get_messages_by_lastest_n_turns(
     )
 
 
-def get_max_message_id(session_id: str) -> int:
-    """The newest message id of a session (0 when it has none)."""
-    row = (
-        _shared_db()
-        .execute("SELECT MAX(id) FROM messages WHERE session_id = ?", (session_id,))
-        .fetchone()
-    )
-    return int(row[0]) if row and row[0] is not None else 0
-
-
-def message_exists(session_id: str, message_id: int) -> bool:
-    """Whether *message_id* belongs to this session (a write-scope guard)."""
-    row = (
-        _shared_db()
-        .execute(
-            "SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
-            (message_id, session_id),
-        )
-        .fetchone()
-    )
-    return row is not None
-
-
 def session_has_messages(session_id: str) -> bool:
     """Whether the session has any persisted message row (cheap existence probe).
 
@@ -927,6 +904,106 @@ def session_has_messages(session_id: str) -> bool:
             .fetchone()
         )
     return row is not None
+
+
+def find_user_turn_cut(
+    session_id: str, turn_num: int, row_id: int | None = None
+) -> tuple[int, int] | None:
+    """Locate the user message a message edit starts from.
+
+    Returns ``(ordinal, cut_turn_num)`` where ``ordinal`` is the 1-based count of
+    USER human rows up to and including the edited one — the same counting rule
+    ``agent.state_port.truncate_messages_after_turn`` applies to the checkpoint —
+    and ``cut_turn_num`` is the persisted turn the edit deletes from.
+
+    ``row_id`` (the clicked row) is authoritative; without it the newest user row
+    at or before ``turn_num`` is used, which keeps an older client working.
+    ``None`` = the turn has no user row anymore (already compacted away / never
+    existed).
+    """
+    with _shared_db():
+        row = None
+        if row_id is not None:
+            candidate = (
+                _shared_db()
+                .execute(
+                    "SELECT id, turn_num, origin FROM messages WHERE session_id = ? AND id = ?",
+                    (session_id, row_id),
+                )
+                .fetchone()
+            )
+            if candidate is not None and candidate[2] in (None, "user"):
+                row = candidate
+        if row is None:
+            row = (
+                _shared_db()
+                .execute(
+                    "SELECT id, turn_num FROM messages WHERE session_id = ? AND role = 'human' "
+                    "AND (origin IS NULL OR origin = 'user') AND turn_num <= ? "
+                    "ORDER BY turn_num DESC, id DESC LIMIT 1",
+                    (session_id, turn_num),
+                )
+                .fetchone()
+            )
+        if row is None:
+            return None
+        ordinal = (
+            _shared_db()
+            .execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'human' "
+                "AND (origin IS NULL OR origin = 'user') "
+                "AND (turn_num < ? OR (turn_num = ? AND id <= ?))",
+                (session_id, row[1], row[1], row[0]),
+            )
+            .fetchone()[0]
+        )
+    return int(ordinal), int(row[1])
+
+
+def delete_messages_from_turn(session_id: str, from_turn_num: int) -> int:
+    """Hard-delete ``turn_num >= from_turn_num`` rows and re-point the tree leaf.
+
+    Unlike :func:`mark_messages_compacted` (a soft delete: rows linger and
+    ``get_max_turn_num`` still counts them) this DELETEs them, so the re-run's
+    batch reuses ``from_turn_num`` as its turn number — the edited turn keeps its
+    place in the transcript.
+
+    ``session_leafs`` is reset to the newest surviving message (the turn before
+    the cut) so the tree chain of the re-run appends there instead of pointing at
+    a deleted row. Editing the FIRST turn clears the leaf: the session is back to
+    its initial state.
+
+    The persistence watermark is deliberately untouched: it tombstones graph
+    message ids, and the deleted rows' ids never reappear (the checkpoint rows
+    were removed with them by ``RemoveMessage``).
+
+    Args:
+        session_id: Session whose tail turns are removed.
+        from_turn_num: First turn to delete (inclusive).
+
+    Returns:
+        The number of rows deleted.
+    """
+    with _shared_db():
+        cur = _shared_db().execute(
+            "DELETE FROM messages WHERE session_id = ? AND turn_num >= ?",
+            (session_id, from_turn_num),
+        )
+        deleted = cur.rowcount
+        previous = (
+            _shared_db()
+            .execute(
+                "SELECT id FROM messages WHERE session_id = ? AND turn_num < ? "
+                "ORDER BY turn_num DESC, id DESC LIMIT 1",
+                (session_id, from_turn_num),
+            )
+            .fetchone()
+        )
+        if previous is not None:
+            set_session_leaf(session_id, int(previous[0]))
+        else:
+            _shared_db().execute("DELETE FROM session_leafs WHERE session_id = ?", (session_id,))
+    return deleted
 
 
 def delete_messages_by_session(session_id: str) -> int:
@@ -1029,7 +1106,7 @@ def get_session_ids() -> list[dict]:
         # injections (task_intent / cron) are excluded, so a carrier never
         # becomes the session title. A session whose only human rows are
         # internal gets an empty title, which the client renders as an i18n
-        # placeholder (e.g. "新会话") instead of leaking the raw session_id.
+        # placeholder (e.g. 新会话, "New chat") instead of leaking the raw session_id.
         result.append(
             {
                 "session_id": str(row["session_id"]),

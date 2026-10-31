@@ -50,7 +50,7 @@ load_env()
 # ---------------------------------------------------------------------------
 
 
-def build_auxiliary_llm(temperature: float | None = None):
+def build_auxiliary_llm(temperature: float | None = None, model_name: str | None = None):
     """Create a fresh auxiliary LLM instance bound to the current event loop.
 
     The module-level ``auxiliary_llm`` singleton is created at import time on
@@ -63,6 +63,10 @@ def build_auxiliary_llm(temperature: float | None = None):
     Call this factory from any async context (e.g. the subagent daemon
     thread) to get a fresh instance whose transport pool is correctly
     bound to the *current* event loop.
+
+    ``model_name`` overrides ``AUXILIARY_LLM_API_NAME`` while keeping the
+    family's provider/credentials — the safety filter's review model is one
+    name on an existing deployment, not a second provider block.
     """
     _provider = read_env("AUXILIARY_LLM_PROVIDER")
     _api_base = read_env("AUXILIARY_LLM_API_BASE")
@@ -105,8 +109,16 @@ def build_auxiliary_llm(temperature: float | None = None):
             }
         )
 
-        model = init_chat_model(**_model_config)
-        model = NormalizingChatModel(inner=model)
+        if model_name and model_name.strip():
+            _model_config["model"] = model_name.strip()
+
+        from models.LLMs.anthropic_cache import maybe_wrap_anthropic_cache
+
+        # Same provider gate as the main client: the auxiliary family serves the
+        # completion judge / nudges / scanner calls, whose prompts repeat, so it
+        # benefits from the same breakpoints when it runs on Anthropic.
+        inner = maybe_wrap_anthropic_cache(init_chat_model(**_model_config), _provider)
+        model = NormalizingChatModel(inner=inner)
 
     else:
         # ---------- Local (GGUF) branch ----------

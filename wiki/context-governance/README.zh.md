@@ -144,6 +144,22 @@ FACTS.md 是全局文件，目录切换不再使缓存提示词失效。同一�
 
 todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuationEnforcer` 更名；它监督的"计划"= todos + TaskFlow flows）统计未调用 `todowrite` 的轮数，超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后追加 `[REMINDER: TODO TRACKING]` 提醒——这是基于快照的停滞检测唯一看不见的形态（模型推进 TaskFlow 会让 streak 清零，而 todo 列表在腐烂）。
 
+## 🧩 Provider 提示词缓存（Anthropic）
+
+sherry 支持的 provider 里，只有 Anthropic 的 prompt cache 是**要显式打标**的：请求不写 `cache_control` 就完全不缓存。上面整套架构（冻结系统提示词、会话内稳定的工具面、把实时状态下沉到提醒层）都是为自动缓存的 provider 设计的，因此在 Anthropic 上收益为零。`models/LLMs/anthropic_cache.py` 补上这一环：一个 `BaseChatModel` 包装器，仅在 provider 为 `anthropic` 时挂载（主客户端、辅助客户端与 `TASKFLOW_LLM` / `COMPRESSION_LLM` 两个家族），给每次请求打最多三个断点。
+
+| 断点 | 打在 | 为什么稳定 |
+|---|---|---|
+| BP1 | `SystemMessage` 的最后一个 text block | 会话内冻结；Anthropic 的前缀顺序是 tools → system → messages，所以这一个断点同时缓存工具列表 |
+| BP2 | 最后一个 tool 定义 | 会话内稳定的工具面（只有在 thinking 切换或 agent-config 改动导致系统提示词变化、而工具不变时才真正省到） |
+| BP3 | 从尾部向前扫到的最后一条真实历史消息（AI 或 tool） | 它位于提醒块与新的用户输入**之前**，因此每轮变化的提醒不会让它失效 |
+
+**既有的失效点依然正确。** thinking 切换会重载记忆快照并删除 `SYSTEM_PROMPT`，BP1 因此 miss——字节变了，本就该 miss。agent-config 改动同时让 BP1 和 BP2 失效。压缩重写提示词与消息列表，BP1、BP3 一起 miss。而 BP3 锚在上一轮已定型的尾部，提醒怎么变都不影响它。
+
+**计费。** `MODEL_PRICING_TABLE` 的条目可以带两个可选单价：`cache_read`（读缓存前缀）与 `cache_write`（写缓存）；`TokenBudget` 把一次响应的 `input_token_details` 拆成未缓存 / 缓存读 / 缓存写，各按自己的单价计费。不填这两个字段就按普通 input 单价计算——即修复前的估算，不凭空造折扣。OpenAI 形状的 usage 中 `input_tokens` **包含**缓存部分，中间件会先减掉再套未缓存单价；Anthropic 的 `input_tokens` 本身不含缓存。
+
+**失败与范围。** 注入异常、工具转换不通过、`SHERRY_ANTHROPIC_CACHE=0` 一律透传；调用方的消息与工具列表永不被修改（请求用副本构建）。范围是原生 `anthropic` 集成：Bedrock 的 Claude 走 `langchain-aws`（缓存 API 不同），OpenRouter 路由的 Claude 会被 OpenAI 形状的客户端丢掉标记，两者都不在承诺范围内。
+
 ## 🧹 checkpoint 保留与孤儿 session 清理
 
 主代理与子代理共用 `src/checkpoints/sqlite.db`。主代理 turn 结束后，`on_turn_finished` 把该 session 的 thread 裁到最新顶层 checkpoint 及其 writes（即 `aget_state` 读取的那一份）；child 的 `_release_child_resources` 对自己的 thread 做同样处理。`tools:*` / `model:*` 行会删除；没有顶层行时保留最新行兜底。HITL pending 的 session 会跳过，因为挂起的图不算 turn 结束。删除主 session 时先抑制并 kill 所有后代 run，再删除每个后代的 registry 行、checkpoint thread、session 目录、计划数据和附件。启动时 `init_registry()` 之后执行一次 sweep，删除根主 session 或父 run 已不存在的所有 run 子树。所有清理路径都 fail-open 且幂等。

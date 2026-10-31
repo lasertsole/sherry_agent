@@ -75,12 +75,12 @@ cheapest forgery (closing the block) is defanged.
 
 ## Secret redaction
 
-`agent/security/redact.py` masks credentials in text and is applied at two
+`pub/security/redact.py` masks credentials in text and is applied at two
 places, with different switches on purpose:
 
 | Surface | Applied by | Switch |
 |---|---|---|
-| Every log record (console + the three rotating files) | `agent/security/redact_formatter.py` (a loguru patcher installed by `logs/logger.py`) | always on — a log file outlives the session and is read by people who never saw the secret |
+| Every log record (console + the three rotating files) | `pub/security/redact_formatter.py` (a loguru patcher installed by `logs/logger.py`) | always on — a log file outlives the session and is read by people who never saw the secret |
 | Tool output that leaks credentials for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`, `browser`, `browser_*`) | the same middleware that fences untrusted output | `REDACTION["tool_output_enabled"]` in `config/features/agent_side/redaction.py` |
 | File tools (`read_file`, `patch_file`, `write_file`) | — | deliberately not redacted: the agent edits its own configuration, and masking a value would make a read-then-write lossy |
 
@@ -124,6 +124,49 @@ hygiene measure, not a boundary.
 | Answered text carrying inline reasoning | `agent/security/think_scrub.py` | Moves `<think>`/`<thinking>`/`<reasoning>` content from the answer channel to the reasoning channel the client renders as a thinking block. The per-turn scrubber is split-invariant: the provider decides where chunks break, so a tag cut anywhere must produce the same result as one chunk |
 | Channel user/chat identifiers | `agent/security/pii.py` | Logs `«pii:<12 hex>»` instead of the platform identifier. Stable across processes, so "received" still correlates with "sent" in a later log file; the raw value stays where it functions (routing tables, reply targets, the platform SDK call) |
 
+## Sherry's own files: read/write allow-lists
+
+Nothing configured means the session's project directory IS the checkout, so the
+in-root test used to call the whole source tree — and the credentials beside it —
+safe: `patch_file` could rewrite `agent/core.py` and `read_file` could read
+`.models` (API keys) or `src/data/auth.db` (password hashes) with no approval.
+Two WHITELISTS now stand in front of that surface
+(`agent/tools/pub_base/self_path_policy.py`), because the criteria differ:
+
+| Mode | Rule | Allowed inside sherry's trees |
+|---|---|---|
+| **write** | "changing it must not break the runtime, another session, or leak a credential" | `<project>/.sherry/` (index, shadow-git, attachments), the CURRENT session's `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
+| **read** | "reading it must not leak a credential, private memory, or another session's transcript" | the whole SOURCE TREE (reading source breaks nothing and leaks nothing) plus the write list; denied: `.env` `.models` `.network` `sherry.jsonc` + their `.example`s, `src/data/**`, `src/checkpoints/**`, `workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`, `workspace/memory/**`, `workspace/knowledge/**`, model-weight files, `mcp_servers/**`, the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory ledger, every session directory except the CURRENT session's `plans/` |
+
+Both are enforced on the paths the file tools resolve — and on the IN-ROOT
+success branch, not only the external one, because that branch is exactly where
+the default checkout silently passes (`resolve_tool_path` in
+`agent/tools/pub_base/path_utils.py`, plus `search_files`, which resolves on its own). A path in a
+DIFFERENT session project directory is the user's workspace and never reaches
+this policy.
+
+**Who answers.** The main agent gets ONE-SHOT approval (`sherry_self_access`,
+`approve` / `reject` only — no YOLO, no session allowlist: sherry's own files
+never become permanently unlocked). A SUBAGENT is refused outright with no card:
+a child reading the parent's config or another session's state is cross-session
+leakage, and there is no operator in that loop. Outside an agent run (a direct
+tool call from a script) there is nobody to ask, so the access fails CLOSED.
+
+**Shell.** `PathGuard` scans command strings as a mitigation: read-looking
+tokens meet the read policy, extracted write targets (`>`, `>>`, `tee`,
+`truncate`, `shred`, `sed -i`) meet the write policy — so `cat .models` and
+`echo x > agent/core.py` are refused. base64, shell variables and
+runtime-constructed paths escape the scan; the file-tool policy and the OS
+sandbox remain the real gates.
+
+**Not affected.** Every internal write keeps working: the `memory` tool,
+`skill_manage`, `exit_plan_mode`, the evidence ledger, shadow-git, the
+checkpointer, trajectory and the knowledge index build their paths from
+`config.path` constants and never pass through the resolvers above.
+
+**Why a whitelist.** A new sensitive path added later is denied by default
+instead of silently allowed — the failure mode of the old blocklist.
+
 ## Network boundary
 
 Four gates stand between the process and the network, each at the boundary its
@@ -155,6 +198,7 @@ heuristic:
 | Prompt-injection scanner, untrusted-output fence | Detection and labelling | A model can be argued past a fence; a pattern can be phrased around |
 | Secret redaction, identifier pseudonyms, control-sequence stripping | Hygienic rewriting of text at an output boundary | They only remove what their rules recognise, and the raw value usually still exists upstream |
 | Path guard, HITL allowlists, shell blocklists | Deny rules for known-bad shapes | Deny rules are incomplete by construction |
+| Sherry self-file read/write allow-lists | Default-deny whitelists over the agent's own tree (only enumerated directories pass) | Still in-process: the shell half is a static scan a determined model can escape, so the OS sandbox stays the backstop |
 | Env scrubbing, lane limits, iteration budgets, spawn / continuation budgets, run timeouts | Blast-radius reduction | They assume the child itself is not the attacker's code path |
 
 Operating consequences we accept and state plainly:
@@ -172,7 +216,7 @@ Operating consequences we accept and state plainly:
 
 ## Operations
 
-**Boot checks.** The 128K context floor refuses to start (both LLMs); the gateway
+**Boot checks.** The 200K context floor refuses to start (both LLMs); the gateway
 mints a per-boot token, so a page open across a restart reconnects only after a
 reload; secrets belong in ``.env`` (env vars only — the config files are not a
 secret store).
@@ -190,7 +234,7 @@ lines are:
 | ``Potential security threat detected: <id>`` | The injection scanner fired on tool output |
 | sandbox / denial lines | A tool call was refused by a deny rule |
 
-**If you suspect a leak.** Rotate the credential first (模型配置 / ``.models`` / ``.network``), then
+**If you suspect a leak.** Rotate the credential first (**Model Config**, `.models`, `.network`), then
 search the logs for its prefix — the redaction sentinel tells you a value of that
 shape *was* logged, and MesMemory holds the tool output it came from. A leak that
 never had a recognised shape is exactly what the heuristic cannot rule out; assume

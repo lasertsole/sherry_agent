@@ -50,7 +50,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 ### E2: ツール説明強制 — フォーマット + 委譲ルール
 
-`build_todolist_tools()` で todowrite の説明をオーバーライドし、MANDATORY フォーマットルールを注入：タイトルに WHERE/WHY/HOW/RESULT をエンコード、原子粒度、同時に1つの in_progress のみ、subagent 返却前に completed マークしない。
+`build_todolist_tools()` で todowrite の説明をオーバーライドし、MANDATORY フォーマットルールを注入：タイトルに WHERE/WHY/HOW/RESULT をエンコード、原子粒度、同時に1つの in_progress のみ、subagent 返却前に completed マークしない。ローカル action（patch/add/remove）を優先し、replace は全量書き換え時のみ使う。
 
 ### E3: 継続強制器 — 事後クロージャのコア ★★
 
@@ -88,6 +88,8 @@ turn ends (no tool_call, agent loop exits)
 ```
 
 **継続バジェット**：`mark_injected`——すべての指令が trigger に受理された後に必ず通る唯一の点——はその turn もカウントするため、このカウンタは実際に配信された連続継続 turn 数そのものです（trigger に拒否された指令はカウントされず、次の turn 終了時に再試行されます。リカバリ指令もカウント対象です）。15 に達すると、強制器は最後の `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 指令を送り、セッションをラッチして、この強制器自身が注入していない turn——実際のユーザーメッセージ、または subagent 完了通知（新しいイベントであり継続ではない）——がカウンタとラッチをリセットするまで沈黙します。この上限は停滞検出が見逃す形（モデルが毎回わずかに計画を編集し——ステータスを1つ変え、step を1つ追加し——スナップショットを動かし続けるため streak が発火しない）をカバーします。
+
+**最終検証リマインダー**：計画が完了したとき（未完了 todo も開いている flow もない）、ゲートは計画を完了扱いにする前に 1 回の自動 turn で自己検証プロンプトを送る。diff を読み直し、テスト / 型チェック / lint を実際に実行し、ユーザー向けの変更は起動して確認する。これは**ゲートではなくプロンプト**で、証拠を検査せずブロックもしない。スロットルは完了した計画の fingerprint をキーにするため、計画を拡張すれば新しいリマインダーが届く。配信が拒否された場合は再試行する。TaskFlow のセッションはスキップする（flow の finish ゲートが検証を担う）。
 
 **ファイル**：`stagnation_tracker.py`（~190 行）+ `todo_continuation/core.py`（~545 行）+ `agent/core.py`（~2 行登録）。
 

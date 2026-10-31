@@ -17,14 +17,17 @@ from agent.tools.pub_base.evidence_ledger import EvidenceLedger, derive_evidence
 def collect_evidence_summary(
     session_key: str | None = None,
     session_keys: Iterable[str] | None = None,
+    flow_id: str | None = None,
 ) -> str | None:
     """Build a human-readable evidence summary for the judge prompt.
 
     Scope by ONE key (``session_key`` — ``taskflow_resume`` passes the step's
     ``child_session_key``, the completion drain passes the session) or by
-    several (``session_keys`` — ``taskflow_finish`` aggregates the flow's own
-    scope: every dispatched step's child session plus the flow's creator,
-    because evidence rows are keyed by session and a flow spans sessions).
+    several (``session_keys`` — judge/diagnostic views). ``taskflow_finish``
+    uses ``flow_id`` ONLY: rows stamped with the flow are read directly, and
+    the creator is stamped for the duration of the finish call. ``flow_id``
+    and session keys are separate modes; a flow-scoped read never falls back to
+    session keys.
 
     Rows are grouped per session in ONE pass over the ledger and each group
     keeps its own order: the staleness derivation compares a row with LATER
@@ -33,9 +36,17 @@ def collect_evidence_summary(
     """
     keys = [key for key in [session_key, *(session_keys or [])] if str(key or "").strip()]
     ordered = list(dict.fromkeys(str(key) for key in keys))
-    if not ordered:
+    flow_id = str(flow_id or "").strip()
+    if not ordered and not flow_id:
         return None
+
     grouped = EvidenceLedger.read_for_keys(ordered)
+    if flow_id:
+        by_flow = EvidenceLedger.read_for_flow(flow_id)
+        grouped = {}
+        for row in by_flow:
+            grouped.setdefault(str(row.get("session_id") or ""), []).append(row)
+        ordered = list(dict.fromkeys(str(row.get("session_id") or "") for row in by_flow))
 
     lines: list[str] = []
     for key in ordered:

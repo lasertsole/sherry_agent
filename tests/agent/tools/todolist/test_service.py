@@ -127,6 +127,7 @@ async def test_update_todos_persists_and_pushes_one_todo_updated_frame(
     assert payload["event"] == "todo_updated"
     assert payload["session_id"] == "sess-1"
     assert [t["content"] for t in payload["content"]["todos"]] == ["a"]
+    assert [t["todo_id"] for t in payload["content"]["todos"]] == [1]
 
 
 @pytest.mark.asyncio
@@ -375,3 +376,43 @@ async def test_barrier_taskflow_read_receives_the_todo_session(
         )
 
     assert seen == [("flow-1", "sess-barrier")]
+
+
+# --- Local patch reuses the completion barrier ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_patch_to_completed_reuses_the_transition_barrier(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    await store_sqlite.replace_all(
+        "sess-1",
+        [
+            {
+                "content": "linked",
+                "status": "pending",
+                "flow_id": "flow-1",
+                "step_id": "step-1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service, "_load_flow", _load_flow_returning("flow-1", "step-1", "dispatched")
+    )
+
+    with pytest.raises(TodoStoreError):
+        await TodoService.patch_todo("sess-1", 1, status="completed")
+
+    row = await store_sqlite.get_todo_by_id("sess-1", 1)
+    assert row is not None and row["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_patch_missing_id_raises_with_the_valid_list(isolated_db: Path):
+    await store_sqlite.replace_all("sess-1", [{"content": "a"}])
+
+    with pytest.raises(service.TodoIdNotFoundError) as exc:
+        await TodoService.patch_todo("sess-1", 99, content="nope")
+
+    assert exc.value.todo_id == 99
+    assert [todo["todo_id"] for todo in exc.value.valid_todos] == [1]

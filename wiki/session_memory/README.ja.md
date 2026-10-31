@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）が実装済みです——圧縮前メモリフラッシュは、圧縮時 memory review がその役割を包含するため退役しました——これに長時間タスク編成が加わります。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
+SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）が実装済みです——圧縮前メモリフラッシュは、圧縮時 memory review がその役割を包含するため退役しました——これに長時間タスク編成が加わります。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory スキーマ）の拡張であり、並列ストアは作らない。
 
 > 状態（2026-09-13）：プラン退役。本 README が参照先。
 
@@ -11,16 +11,16 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 | 機能 | 場所 |
 |---|---|
 | 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization/core.py` の `_COOLDOWN_PERSIST_KEYS` |
-| SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、移行 v10 |
+| SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、現在の schema |
 | ツール出力の一行要約 | `pub/func/message/tool_output_prune.py` |
-| 圧縮チェックポイント + 復元 | 移行 v15、`restore_compaction_checkpoint` |
-| メッセージ冪等永続化 | 移行 v11（`idempotency_key` + 部分一意インデックス） |
-| `context_eligible` 履歴投影 | 移行 v12、取得時に非対象行を除外 |
-| メッセージツリー + ゼロコピー fork | 移行 v14（`parent_message_id`、`session_leafs`） |
-| 追記型イベントログ + プロジェクタ | 移行 v16、`context_engine/events/` |
-| Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
+| 圧縮チェックポイント + 復元 | 現在の schema、`restore_compaction_checkpoint` |
+| メッセージ冪等永続化 | 現在の schema（`idempotency_key` + 部分一意インデックス） |
+| `context_eligible` 履歴投影 | 現在の schema、取得時に非対象行を除外 |
+| メッセージツリー + ゼロコピー fork | 現在の schema（`parent_message_id`、`session_leafs`） |
+| 追記型イベントログ + プロジェクタ | 現在の schema、`context_engine/events/` |
+| Context Epoch スナップショット | 現在の schema（`context_epoch` テーブル）、`ContextEpoch` |
 | steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
+| ベクトル意味検索 | 現在の schema、`context_engine/embeddings/`、`message_search --semantic` |
 | TaskFlow 編成 | `wiki/long-running-tasks/` |
 
 ## メモリファイル
@@ -33,18 +33,20 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 | `workspace/memory/USER.md` | ユーザープロファイル：好み、コミュニケーションスタイル、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） | `memory` ツール（`user` ターゲット：memory review nudge） |
 | `workspace/memory/FACTS.md` | システムレベル / プロジェクト横断の落とし穴と規約；毎回のシステムプロンプトへ注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）、上限超過時は最古の項目からロールオフ | `memory` ツール（`facts` ターゲット：memory review / plan extraction nudge） |
 
-## MesMemory マイグレーション（v10–v17）
+## MesMemory スキーマ
 
-| バージョン | スキーマ |
+| スキーマオブジェクト | 用途 |
 |---|---|
-| v10 | `compression_locks` —— セッション単位圧縮ロック（主キーで相互排他） |
-| v11 | `messages.idempotency_key` + 部分一意インデックス（クラッシュリトライ重複排除） |
-| v12 | `messages.context_eligible` —— コンテキスト投影フラグ（既定 1） |
-| v13 | `message_embeddings` —— 意味検索ベクトルインデックス |
-| v14 | `messages.parent_message_id` + `session_leafs` —— メッセージツリー |
-| v15 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` |
-| v16 | `events` —— 追記型ログ、セッション単位の無欠番 `seq` |
-| v17 | `context_epoch` —— システムコンテキストのベースライン / スナップショット |
+| `compression_locks` | セッション単位圧縮ロック（主キーで相互排他） |
+| `messages.idempotency_key` + 部分一意インデックス | クラッシュリトライ重複排除 |
+| `messages.context_eligible` | コンテキスト投影フラグ（既定 1） |
+| `message_embeddings` | 意味検索ベクトルインデックス |
+| `messages.parent_message_id` + `session_leafs` | メッセージツリー |
+| `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | 圧縮復元ポイント |
+| `events` | 追記型ログ、セッション単位の無欠番 `seq` |
+| `context_epoch` | システムコンテキストのベースライン / スナップショット |
+
+`build_schema_v1` がこの完全なスキーマを一度に作成します。バージョン付きマイグレーション連鎖はありません。
 
 ## 主要コンポーネント
 
@@ -77,4 +79,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-サンドボックス下でライブ子系统を採点——6 チェック：クールダウン再起動存活、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。
+サンドボックス下でライブサブシステムを採点——6 チェック：クールダウン再起動後の生存、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。

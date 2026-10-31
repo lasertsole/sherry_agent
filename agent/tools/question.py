@@ -58,6 +58,10 @@ class QuestionInput(BaseModel):
 
 
 _DECLINE_MESSAGE = "User declined to answer. Proceed without this information."
+_HEADLESS_DECLINE_MESSAGE = (
+    "No human is present to answer (this is an automated turn). Proceed without "
+    "this information and say what you assumed."
+)
 
 
 class QuestionTool(BaseTool):
@@ -105,6 +109,13 @@ class QuestionTool(BaseTool):
                 )
             ],
         )
+        # A headless turn (cron / auto-turn / system-injected carrier) has nobody
+        # to answer: suspending the graph there leaves a turn interrupted forever.
+        from agent.middlewares.humanInTheLoop.approval_scope import no_operator_in_scope
+
+        if no_operator_in_scope():
+            logger.info("[QuestionTool] headless turn — declining instead of suspending")
+            return _HEADLESS_DECLINE_MESSAGE
         logger.debug("[QuestionTool] suspending graph for question: {}", header)
         response = interrupt(hitl_request)
 

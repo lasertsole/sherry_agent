@@ -23,6 +23,8 @@ from loguru import logger
 
 from config.features import TOOLS_TIMEOUTS
 
+from ..output_caps import SubagentOutputCaps, resolve_subagent_output_caps
+
 #: Messages fetched when the caller does not ask for a count, and the schema
 #: bounds the tool clamps ``limit`` to. ``limit`` decides how many messages are
 #: FETCHED; the token budgets decide how much is SHOWN.
@@ -125,11 +127,24 @@ def _compact_args(args: Any) -> str:
     return ", ".join(parts)
 
 
-def render_messages(messages: list[BaseMessage], session_key: str) -> str:
+def render_messages(
+    messages: list[BaseMessage],
+    session_key: str,
+    caps: SubagentOutputCaps | None = None,
+) -> str:
     """Render the transcript, per-message and total bounded by token budgets."""
     from pub.func.message.token_truncation import truncate_by_tokens
 
-    per_message = TOOLS_TIMEOUTS["session_messages_per_message_token_budget"]
+    per_message = (
+        caps.per_message_tokens
+        if caps is not None
+        else TOOLS_TIMEOUTS["session_messages_per_message_token_budget"]
+    )
+    total = (
+        caps.transcript_tokens
+        if caps is not None
+        else TOOLS_TIMEOUTS["session_messages_token_budget"]
+    )
     lines = [
         f"## Subagent session: {session_key}",
         f"Showing the last {len(messages)} message(s), oldest first:",
@@ -139,9 +154,7 @@ def render_messages(messages: list[BaseMessage], session_key: str) -> str:
         role = str(getattr(message, "type", "") or "?")
         rendered = truncate_by_tokens(message_text(message), max_tokens=per_message)
         lines.append(f"[{role}] {rendered}")
-    return truncate_by_tokens(
-        "\n".join(lines), max_tokens=TOOLS_TIMEOUTS["session_messages_token_budget"]
-    )
+    return truncate_by_tokens("\n".join(lines), max_tokens=total)
 
 
 async def read_session_transcript(
@@ -157,6 +170,15 @@ async def read_session_transcript(
 
     target = str(target_session_key).strip()
     bounded = clamp_limit(limit)
+    caps: SubagentOutputCaps | None = None
+    try:
+        from ..registry import get_run_by_child_session_key
+
+        run = get_run_by_child_session_key(target)
+        if run is not None:
+            caps = resolve_subagent_output_caps(run.max_output_tokens)
+    except Exception:  # noqa: BLE001 - a missing registry row keeps the default budgets
+        logger.debug("sessions_messages: output-cap lookup skipped for {}", target, exc_info=True)
     try:
         messages = await read_child_messages(target, bounded)
     except Exception:  # noqa: BLE001 - the tool boundary reports it as text
@@ -175,7 +197,7 @@ async def read_session_transcript(
         if not messages:
             return f"No message in session {target} matches {query!r}."
 
-    return render_messages(messages, target)
+    return render_messages(messages, target, caps)
 
 
 __all__ = [

@@ -4,9 +4,7 @@ Three tables in ``src/data/auth.db``:
 
 * ``auth_account`` — the SINGLE account (``CHECK (id = 1)``; login is
   password-only, so there is nothing to identify it by). The password column
-  stores the scrypt string, never a plaintext or reversible form. A legacy
-  ``auth_users`` table from the username era is migrated into it at init and
-  then dropped.
+  stores the scrypt string, never a plaintext or reversible form.
 * ``auth_settings`` — a single row (``CHECK (id = 1)``) carrying the runtime
   switch the account menu writes. Absent row = disabled.
 * ``auth_jwt_blacklist`` — revoked ``jti``s (logout, refresh rotation), kept
@@ -49,7 +47,6 @@ _BUSY_TIMEOUT_S = _BUSY_TIMEOUT_MS / 1000.0
 _INIT_WAIT_TIMEOUT_S = 30.0
 
 _ACCOUNT_TABLE = "auth_account"
-_LEGACY_USERS_TABLE = "auth_users"
 _BLACKLIST_TABLE = "auth_jwt_blacklist"
 _SETTINGS_TABLE = "auth_settings"
 
@@ -61,18 +58,6 @@ CREATE TABLE IF NOT EXISTS {_ACCOUNT_TABLE} (
     updated_at INTEGER NOT NULL
 )
 """
-
-#: One-shot migration from the username era, run at every init and idempotent:
-#: the copy keeps the LOWEST-id account (the only one this product ever
-#: supported), then the legacy table is dropped. Both statements are DDL-hook
-#: safe — on a fresh database ``auth_users`` does not exist, the SELECT raises,
-#: and the base treats that like a duplicate column (nothing to do).
-_MIGRATE_FROM_USERS_SQL = (
-    f"INSERT OR IGNORE INTO {_ACCOUNT_TABLE} (id, password_hash, created_at, updated_at)"
-    f" SELECT 1, password_hash, created_at, updated_at FROM {_LEGACY_USERS_TABLE}"
-    " WHERE id = (SELECT MIN(id) FROM " + _LEGACY_USERS_TABLE + ")",
-    f"DROP TABLE IF EXISTS {_LEGACY_USERS_TABLE}",
-)
 
 _CREATE_BLACKLIST_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_BLACKLIST_TABLE} (
@@ -102,9 +87,6 @@ class _AuthRepository(BaseSQLiteRepository):
 
     def _table_ddls(self) -> tuple[str, ...]:
         return (_CREATE_ACCOUNT_SQL, _CREATE_BLACKLIST_SQL, _CREATE_SETTINGS_SQL)
-
-    def _migration_ddls(self) -> tuple[str, ...]:
-        return _MIGRATE_FROM_USERS_SQL
 
     def _index_ddls(self) -> tuple[str, ...]:
         return _INDEX_DDL

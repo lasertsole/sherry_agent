@@ -76,33 +76,109 @@ export async function clearSession(sessionId: string): Promise<void> {
 export interface CreatedSideChat {
   sessionId: string;
   parentSessionId: string;
+  /** The parent turn the child was branched from (null = a side chat). */
+  forkTurnNum: number | null;
   /** Whether the child carries a parent transcript snapshot. */
   inherited: boolean;
+  /** True when the idempotency key matched an earlier creation (same child). */
+  deduplicated: boolean;
+}
+
+/** Creation options shared by side chats and branches. */
+export interface CreateSideChatOptions {
+  /**
+   * Idempotency key: the same (parent, key) pair answers the SAME child instead
+   * of building a second complete fork. Omitted = the legacy every-call-forks path.
+   */
+  clientRequestId?: string;
+  /**
+   * BRANCH fork point: a 1-based parent turn. Omitted = a side chat, which
+   * inherits the parent's last completed answer.
+   */
+  forkTurnNum?: number;
 }
 
 /**
- * Create a side-chat session and its parent link.
+ * Create a side-chat session (or a branch) and its parent link.
  *
  * The server forks the parent's checkpoint transcript for model-only
  * inheritance; the UI history still starts empty.
- * @param parentSessionId The main session the selection came from.
+ * @param parentSessionId The main session the selection/fork came from.
+ * @param options Idempotency key and the optional branch fork turn.
  */
-export async function createSideChat(parentSessionId: string): Promise<CreatedSideChat> {
+export async function createSideChat(
+  parentSessionId: string,
+  options: CreateSideChatOptions = {}
+): Promise<CreatedSideChat> {
   const res = await fetchApiPayload<{
     success?: boolean;
     session_id?: string;
     parent_session_id?: string;
+    fork_turn_num?: number | null;
     inherited?: boolean;
+    deduplicated?: boolean;
   }>({
     url: '/sessions/side_chat',
     method: 'post',
-    opts: { parent_session_id: parentSessionId }
+    opts: {
+      parent_session_id: parentSessionId,
+      client_request_id: options.clientRequestId,
+      ...(options.forkTurnNum != null ? { fork_turn_num: options.forkTurnNum } : {})
+    }
   });
   if (!res.session_id) throw new Error('side chat creation returned no session_id');
   return {
     sessionId: res.session_id,
     parentSessionId: res.parent_session_id ?? parentSessionId,
-    inherited: res.inherited === true
+    forkTurnNum: typeof res.fork_turn_num === 'number' ? res.fork_turn_num : null,
+    inherited: res.inherited === true,
+    deduplicated: res.deduplicated === true
+  };
+}
+
+/** One (child → parent) branch link, as the session list needs it. */
+export interface SessionBranchLink {
+  childSessionId: string;
+  parentSessionId: string;
+  /** The parent turn the child was branched from (null = a side chat). */
+  forkTurnNum: number | null;
+}
+
+/**
+ * Every branch/side-chat link (one small table read; the sidebar marks rows).
+ * @returns The links, newest-agnostic; empty when the server is unreachable.
+ */
+export async function listSideChatLinks(): Promise<SessionBranchLink[]> {
+  const res = await fetchApiPayload<{
+    links?: Array<{ child_session_id?: string; parent_session_id?: string; fork_turn_num?: number | null }>;
+  }>({ url: '/sessions/side_chat/links', method: 'get' });
+  return (res.links ?? [])
+    .filter(link => !!link.child_session_id && !!link.parent_session_id)
+    .map(link => ({
+      childSessionId: String(link.child_session_id),
+      parentSessionId: String(link.parent_session_id),
+      forkTurnNum: typeof link.fork_turn_num === 'number' ? link.fork_turn_num : null
+    }));
+}
+
+/**
+ * The branch link of ONE session ("am I a side chat / branch, and from where?").
+ * @param sessionId Session to inspect.
+ * @returns The parent link, or null for a root session.
+ */
+export async function fetchSessionLink(sessionId: string): Promise<SessionBranchLink | null> {
+  const res = await fetchApiPayload<{
+    parent_session_id?: string;
+    fork_turn_num?: number | null;
+  }>({
+    url: `/sessions/side_chat/link?session_id=${encodeURIComponent(sessionId)}`,
+    method: 'get'
+  });
+  if (!res.parent_session_id) return null;
+  return {
+    childSessionId: sessionId,
+    parentSessionId: String(res.parent_session_id),
+    forkTurnNum: typeof res.fork_turn_num === 'number' ? res.fork_turn_num : null
   };
 }
 
@@ -270,7 +346,7 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
 /**
  * Thinking control payload shapes. `mode: "on_off"` models use the boolean
  * switch; `mode: "levels"` models are always-think gateways whose control is
- * a 低/高/最高 selector (`level: "low" | "high" | "max"`).
+ * a low/high/max selector (`level: "low" | "high" | "max"`).
  */
 export type ThinkingMode = 'on_off' | 'levels';
 /** The seven thinking levels, least to most (mirrors the backend enum). */
@@ -318,7 +394,7 @@ export async function setAccessMode(sessionId: string, mode: AccessMode): Promis
   return toAccessMode(res.mode);
 }
 
-/** Web-search backends the 模型联网 panel can pick between. */
+/** Web-search backends the Web Search panel can pick between. */
 export type SearchBackend = 'tavily' | 'searxng';
 
 /** The SearXNG side of a backend state: its connection and how it is built. */
@@ -334,7 +410,7 @@ export interface SearxngStatus {
 }
 
 /**
- * The `.env` file as the 模型联网 panel edits it.
+ * The `.env` file as the Web Search panel edits it.
  *
  * Those keys are WITHHELD from `GET /env` (this panel owns them: there is one
  * editing surface per setting), so the state payload carries their file values.
@@ -358,7 +434,7 @@ export interface SearchEnvView {
  * `backend` is the session's explicit choice (`null` = follow the environment
  * default), while `effective` is what the tool will actually use — resolved
  * with the same availability-aware rule the tool applies, so the panel can show
- * "Tavily 降级到 SearXNG" without guessing.
+ * "Tavily downgrades to SearXNG" without guessing.
  */
 export interface SearchBackendState {
   backend: SearchBackend | null;
@@ -520,7 +596,7 @@ export interface ContextInspect {
   system_tokens: number;
   tools: ContextToolDefinition[];
   tool_tokens: number;
-  /** True when the session narrows the tool set (预设-工具 tab). */
+  /** True when the session narrows the tool set (the preset Tools tab). */
   tool_selection: boolean;
   messages: ContextMessage[];
   message_tokens: number;
@@ -608,7 +684,7 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
  * The composer's watchdog: the backend counts a turn as active while the
  * in-memory busy signal is set OR a QUEUED/CLAIMED input-queue row exists (a
  * normal chat stream only shows in the latter). Used to recover a client that
- * missed the turn's terminal frame, so 停止 cannot stay on for ever.
+ * missed the turn's terminal frame, so the Stop state cannot stay on for ever.
  *
  * @param sessionId Session to ask about.
  * @returns True while a turn is running.
@@ -783,6 +859,11 @@ export interface SessionModelProfile {
   api_key?: string;
   /** The model's context window (decimal string); absent = the env window. */
   context_window?: string;
+  /**
+   * Subagent-only output cap (decimal string, min 8192). Absent = 8192; the
+   * backend also applies the default for legacy role profiles.
+   */
+  max_output_tokens?: string;
 }
 
 /** A stored override as returned by the backend (credential masked). */
@@ -840,4 +921,128 @@ export async function setSessionModel(
     env_model: res.env_model ?? { provider: null, model: null },
     pending: res.pending === true
   };
+}
+
+/**
+ * Session token-budget read model (``GET /sessions/budget``).
+ *
+ * ``cap`` is the effective NEXT-turn cap (a parked mid-turn choice included),
+ * ``None``/0 = unlimited; ``used`` / ``cost`` accumulate across turns and
+ * ``limited`` latches once the cap is reached.
+ */
+export interface TokenBudgetState {
+  /** The cap enforced on the next turn (inherited default included); null = unlimited. */
+  cap: number | null;
+  /** The session's OWN cap: null = never set (inherits), 0 = explicitly unlimited. */
+  session_cap: number | null;
+  /** The app-config default (`sherry.jsonc` TOKEN_BUDGET_DEFAULT_CAP; 0 = unlimited). */
+  default_cap: number;
+  /** Whether the session is inheriting `default_cap`. */
+  inherited: boolean;
+  used: number;
+  cost: number;
+  limited: boolean;
+  pending: boolean;
+}
+
+/**
+ * Normalize the HTTP budget payload (the bridge contract is always present).
+ * @param res Raw payload, possibly null on a failed request.
+ */
+function toTokenBudgetState(res: Partial<TokenBudgetState> | null): TokenBudgetState {
+  const cap = res?.cap;
+  const sessionCap = res?.session_cap;
+  return {
+    cap: typeof cap === 'number' ? cap : null,
+    session_cap: typeof sessionCap === 'number' ? sessionCap : null,
+    default_cap: Number(res?.default_cap ?? 0),
+    inherited: res?.inherited === true,
+    used: Number(res?.used ?? 0),
+    cost: Number(res?.cost ?? 0),
+    limited: res?.limited === true,
+    pending: res?.pending === true
+  };
+}
+
+/**
+ * Read the session's token cap, accumulated usage/cost and exhausted latch.
+ * @param sessionId Session whose budget should be read.
+ */
+export async function fetchTokenBudget(sessionId: string): Promise<TokenBudgetState> {
+  const res = await fetchApiPayload<Partial<TokenBudgetState> | null>({
+    url: '/sessions/budget',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return toTokenBudgetState(res);
+}
+
+/**
+ * Persist the session's token cap (``null`` = unlimited).
+ *
+ * A change made while a turn runs is parked and lands on the next turn.
+ * @param sessionId Session whose cap should change.
+ * @param cap New cap in tokens, or null for unlimited.
+ */
+export async function setTokenBudgetCap(sessionId: string, cap: number | null): Promise<{ pending: boolean }> {
+  const res = await fetchApiPayload<{ pending?: boolean }>({
+    url: '/sessions/budget',
+    opts: { session_id: sessionId, cap },
+    method: 'put'
+  });
+  return { pending: res.pending === true };
+}
+
+/**
+ * Clear the session's accumulated usage/cost/latch, preserving the cap.
+ * @param sessionId Session whose counters should reset.
+ */
+export async function resetTokenBudgetUsage(sessionId: string): Promise<TokenBudgetState> {
+  const res = await fetchApiPayload<Partial<TokenBudgetState> | null>({
+    url: '/sessions/budget/reset',
+    opts: { session_id: sessionId },
+    method: 'post'
+  });
+  return toTokenBudgetState(res);
+}
+
+/** One row of the session's trajectory ledger (`GET /sessions/{sid}/trajectory`). */
+export interface TrajectoryEvent {
+  event_id: string;
+  turn_id: string;
+  seq: number;
+  /** Local time, second precision, no timezone suffix. */
+  ts: string;
+  kind: string;
+  is_error: boolean;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Read the session's trajectory ledger, newest events first on the wire (the
+ * store orders by seq; the panel re-sorts by `(ts, seq, event_id)`).
+ *
+ * A failed request returns `null` so the panel can distinguish a read failure
+ * from a session that genuinely has no events; an empty ledger is `[]`.
+ * @param sessionId Session whose ledger to read.
+ * @param opts turn filter / pagination.
+ * @param opts.turnId
+ * @param opts.limit
+ * @param opts.offset
+ */
+export async function fetchTrajectory(
+  sessionId: string,
+  opts: { turnId?: string; limit?: number; offset?: number } = {}
+): Promise<TrajectoryEvent[] | null> {
+  const params = new URLSearchParams();
+  if (opts.turnId) params.set('turn_id', opts.turnId);
+  params.set('limit', String(opts.limit ?? 500));
+  params.set('offset', String(opts.offset ?? 0));
+  const res = await fetchApiPayload<{ events?: TrajectoryEvent[] } | null>({
+    url: `/sessions/${encodeURIComponent(sessionId)}/trajectory?${params.toString()}`,
+    method: 'get'
+  });
+  if (res === null) return null;
+  return Array.isArray(res.events) ? res.events : [];
 }

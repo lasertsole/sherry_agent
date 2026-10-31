@@ -46,6 +46,15 @@ class TestRegisterRun:
         assert run.depth == 2
         assert run.thinking == "high"
 
+    def test_max_output_tokens_is_frozen_on_the_run(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+            max_output_tokens=16384,
+        )
+        assert run.max_output_tokens == 16384
+
     def test_depth_0_is_main(self):
         run = register_run(
             child_session_key="agent:main:subagent:abc",
@@ -160,6 +169,35 @@ class TestCompleteRun:
         assert updated.execution.status == ExecutionStatus.TERMINAL
         assert updated.execution.outcome.status == RunOutcomeStatus.OK
         assert updated.completion.result_text == "Done!"
+
+    def test_complete_uses_the_legacy_cap_when_the_model_is_unset(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+        )
+        updated = complete_run(
+            run.run_id,
+            RunOutcome(status=RunOutcomeStatus.OK),
+            result_text="x" * 30_000,
+        )
+        assert len(updated.completion.result_text or "") < 30_000
+        assert "truncated" in (updated.completion.result_text or "")
+
+    def test_complete_uses_the_scaled_cap_for_a_configured_model(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:abc",
+            requester_session_key="agent:main:session:p1",
+            task="test",
+            max_output_tokens=16384,
+        )
+        updated = complete_run(
+            run.run_id,
+            RunOutcome(status=RunOutcomeStatus.OK),
+            result_text="x" * 60_000,
+        )
+        assert len(updated.completion.result_text or "") > 49_000
+        assert "truncated" in (updated.completion.result_text or "")
 
     def test_complete_error(self):
         run = register_run(

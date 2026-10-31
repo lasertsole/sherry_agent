@@ -29,10 +29,30 @@ class WebSearchConfig(TypedDict):
     searxng_categories: str
     #: TLS verification — turn OFF only behind a MITM proxy (Clash/V2Ray).
     searxng_verify_tls: bool
+    #: Design concept #21 (circuit breaker): consecutive TRANSPORT failures
+    #: (timeout / connection error — an HTTP status answer does not count) that
+    #: open the SearXNG cooldown. 0 disables the breaker entirely.
+    searxng_failure_threshold: int
+    #: How long the cooldown lasts, in seconds, once the threshold is reached.
+    searxng_cooldown_seconds: float
 
 
 def _truthy(raw: str) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _bounded_int(raw: str, default: int, floor: int) -> int:
+    try:
+        return max(floor, int(raw))
+    except ValueError:
+        return default
+
+
+def _bounded_float(raw: str, default: float, floor: float) -> float:
+    try:
+        return max(floor, float(raw))
+    except ValueError:
+        return default
 
 
 def build_web_search_config(env: Mapping[str, str] | None = None) -> WebSearchConfig:
@@ -58,6 +78,12 @@ def build_web_search_config(env: Mapping[str, str] | None = None) -> WebSearchCo
         "searxng_engines": raw("SEARXNG_ENGINES"),
         "searxng_categories": raw("SEARXNG_CATEGORIES"),
         "searxng_verify_tls": _truthy(raw("SEARXNG_VERIFY_TLS", "true")),
+        "searxng_failure_threshold": _bounded_int(
+            raw("WEB_SEARCH_SEARXNG_FAILURE_THRESHOLD", "3"), 3, 0
+        ),
+        "searxng_cooldown_seconds": _bounded_float(
+            raw("WEB_SEARCH_SEARXNG_COOLDOWN_SECONDS", "60"), 60.0, 0.0
+        ),
     }
 
 

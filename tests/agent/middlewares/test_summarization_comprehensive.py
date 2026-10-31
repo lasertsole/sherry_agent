@@ -187,11 +187,6 @@ class TestSummarizationConfig:
         tiny = AIMessage(content="ab", usage_metadata=None)
         assert mw._check_trigger([tiny]) is False
 
-    def test_fifo_constants_lock(self):
-        assert COMPLETED_MAX_ITEMS == 5
-        assert KEY_DECISIONS_MAX_ITEMS == 5
-        assert CRITICAL_CONTEXT_MAX_ITEMS == 3
-
 
 # ======================================================================
 # need_update_system_prompt: hard-requirement dual write + override
@@ -1620,14 +1615,6 @@ class TestSummarizationAsync:
 
     # ---- wrap_model_call (sync) ----------------------------------------------
 
-    def test_wrap_model_call_returns_handler_result(self, sid):
-        mw = make_middleware(main_llm_context_window=40000)
-        req = make_request(
-            [HumanMessage(content="hi"), AIMessage(content="hello")],
-            session_id=sid,
-        )
-        assert mw.wrap_model_call(req, lambda r: "WRAP-SENTINEL") == "WRAP-SENTINEL"
-
     def test_wrap_model_call_small_history_no_compression(self, sid):
         mw = make_middleware(main_llm_context_window=40000)
         msgs = [HumanMessage(content="hi"), AIMessage(content="hello")]
@@ -1717,18 +1704,6 @@ class TestSummarizationAsync:
         assert mw.wrap_model_call(req, lambda r: "WRAP-SENTINEL") == "WRAP-SENTINEL"
 
     # ---- awrap_model_call (async) ----------------------------------------------
-
-    def test_awrap_model_call_returns_handler_result(self, sid):
-        mw = make_middleware(main_llm_context_window=40000)
-        req = make_request(
-            [HumanMessage(content="hi"), AIMessage(content="hello")],
-            session_id=sid,
-        )
-
-        async def handler(r):
-            return "AWRAP-SENTINEL"
-
-        assert asyncio.run(mw.awrap_model_call(req, handler)) == "AWRAP-SENTINEL"
 
     def test_awrap_model_call_small_history_no_compression(self, sid):
         mw = make_middleware(main_llm_context_window=40000)

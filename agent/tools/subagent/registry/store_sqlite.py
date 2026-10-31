@@ -140,17 +140,6 @@ async def load_runs_from_sqlite() -> dict[str, SubagentRunRecord]:
     return runs
 
 
-async def upsert_run_to_sqlite(run: SubagentRunRecord) -> None:
-    """Upsert a single run record for incremental persistence."""
-    await ensure_db()
-    async with _connect() as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO subagent_runs (run_id, data) VALUES (?, ?)",
-            (run.run_id, _serialize_run(run)),
-        )
-        await db.commit()
-
-
 def upsert_run_sync(run: SubagentRunRecord) -> None:
     """Synchronously upsert a single run record.
 

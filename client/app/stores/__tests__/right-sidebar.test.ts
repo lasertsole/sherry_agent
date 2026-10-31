@@ -4,7 +4,7 @@ import { createTestingPinia } from '@pinia/testing';
 import {
   RECENT_CLOSED_LIMIT,
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
-  RIGHT_SIDEBAR_MAX_WIDTH,
+  RIGHT_SIDEBAR_MAX_WIDTH_RATIO,
   RIGHT_SIDEBAR_MIN_WIDTH,
   RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
@@ -55,7 +55,7 @@ describe('stores/right-sidebar', () => {
 
     // Every settings/runtime tool is a GLOBAL tab; the things read from the
     // active session (its preset, a file of its project directory) are session
-    // tabs, and the strip starts on 全局.
+    // tabs, and the strip starts on Global.
     expect(store.activeScope).toBe('global');
     const logs = store.openTab('logs');
     expect(store.tabs.find(tab => tab.id === logs)?.scope).toBe('global');
@@ -167,8 +167,22 @@ describe('stores/right-sidebar', () => {
     expect(store.tabsInScope('session')).toEqual([]);
   });
 
+  it('registers the trajectory viewer as a deduped session tab', () => {
+    const store = useRightSidebarStore();
+
+    store.setActiveSession('s1');
+    const first = store.openTab('trajectory');
+
+    expect(store.tabs.find(tab => tab.id === first)?.scope).toBe('session');
+    expect(store.openTab('trajectory')).toBe(first);
+    expect(store.activeScope).toBe('session');
+
+    store.setActiveSession('s2');
+    expect(store.tabsInScope('session')).toEqual([]);
+  });
+
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
-    // The menu must never stack a second 系统配置 next to the open one — the
+    // The menu must never stack a second System Config next to the open one — the
     // click belongs to the tab that already exists.
     const store = useRightSidebarStore();
 
@@ -262,14 +276,34 @@ describe('stores/right-sidebar', () => {
   });
 
   it('clampSidebarWidth() keeps the panel inside its band', () => {
-    // Wide viewport: only the fixed band applies.
+    // Both ends are proportional: 280px floor, 65% of the viewport ceiling.
     expect(clampSidebarWidth(50, 2000)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
-    expect(clampSidebarWidth(5000, 2000)).toBe(RIGHT_SIDEBAR_MAX_WIDTH);
+    expect(clampSidebarWidth(5000, 2000)).toBe(1300);
     expect(clampSidebarWidth(500, 2000)).toBe(500);
-    // Narrow viewport: the 55% viewport cap wins over the fixed maximum.
-    expect(clampSidebarWidth(700, 800)).toBe(440);
-    // A viewport so narrow that 55% is below the minimum still yields something usable.
+    // Narrow viewport: the 65% viewport cap wins over the fixed maximum
+    // (ZCode's side-pane ceiling; it used to be 55%).
+    expect(clampSidebarWidth(700, 800)).toBe(520);
+    // A viewport so narrow that 65% falls below the minimum yields the floor
+    // (the cap never goes under it): a panel wider than the window helps nobody,
+    // and the auto-collapse is closing this column there anyway.
     expect(clampSidebarWidth(400, 400)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
+  });
+
+  it('clampSidebarWidth() stops a drag where the shell can still lay out', () => {
+    // 1280px window, 280 left column + 448 conversation floor reserved: 552 is
+    // the widest the panel may be, well under the 65% (832) ratio cap.
+    expect(clampSidebarWidth(900, 1280, 280 + 448)).toBe(552);
+    // Without a reservation only the 65% ratio applies: 832 at 1280px.
+    expect(clampSidebarWidth(900, 1280)).toBe(832);
+    // The floor still wins on a window too narrow for it.
+    expect(clampSidebarWidth(900, 700, 280 + 320)).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
+  });
+
+  it('a large display can give the panel more than the old 760px maximum', () => {
+    // 2560px: 65% would be 1664, the reserved rule (left 280 + 896 floor) leaves
+    // 1384 — more than the pixel cap this used to have, i.e. the ceiling scales.
+    expect(clampSidebarWidth(5000, 2560, 280 + 896)).toBe(1384);
+    expect(RIGHT_SIDEBAR_MAX_WIDTH_RATIO).toBe(0.65);
   });
 
   it('setWidth() clamps every drag step and defaults to a comfortable width', () => {
@@ -280,7 +314,7 @@ describe('stores/right-sidebar', () => {
     expect(store.width).toBe(RIGHT_SIDEBAR_MIN_WIDTH);
 
     store.setWidth(9999, 2000);
-    expect(store.width).toBe(RIGHT_SIDEBAR_MAX_WIDTH);
+    expect(store.width).toBe(1300);
 
     store.setWidth(512, 2000);
     expect(store.width).toBe(512);
@@ -289,12 +323,12 @@ describe('stores/right-sidebar', () => {
   it('fitToViewport() pulls a saved width back inside a shrunken window', () => {
     const store = useRightSidebarStore();
 
-    // 700 fits a 2000px window, but not an 800px one (cap = 440).
+    // 700 fits a 2000px window, but not an 800px one (65% cap = 520).
     store.setWidth(700, 2000);
     expect(store.width).toBe(700);
 
     store.fitToViewport(800);
-    expect(store.width).toBe(440);
+    expect(store.width).toBe(520);
 
     // No-op while the width still fits.
     store.setWidth(400, 2000);

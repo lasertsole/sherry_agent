@@ -5,7 +5,7 @@ from typing import TypedDict
 
 
 class LaneSystemConfig(TypedDict):
-    """Per-lane concurrency limits. Values are slot counts (>= 1)."""
+    """Per-lane concurrency limits plus the SUBAGENT lane's environment gate."""
 
     main_max_concurrent: int
     subagent_max_concurrent: int
@@ -13,6 +13,27 @@ class LaneSystemConfig(TypedDict):
     nested_max_concurrent: int
     lane_wait_warn_ms: int
     lane_drain_timeout_seconds: float
+    #: The load gate (``agent/tools/pub_base/load_gate.py``): environment-aware
+    #: backpressure in FRONT of the SUBAGENT lane. Shipped OFF — enable it only
+    #: after confirming psutil made it into the frozen backend on all three
+    #: platforms (the desktop workflow's packaging smoke step does exactly that).
+    load_gate_enabled: bool
+    #: Advisory threshold: logged only — the lane cap already throttles here.
+    load_gate_cpu_warn: int
+    #: Hard stop: a dispatch that samples at or above this is deferred.
+    load_gate_cpu_stop: int
+    load_gate_ram_warn: int
+    load_gate_ram_stop: int
+    #: Seconds slept between the three CPU samples (each sample sleeps itself).
+    load_gate_sample_interval_s: float
+    #: How long the process-wide snapshot stays valid; past it ONE caller
+    #: re-samples in a worker thread while the others read the fresh value.
+    load_gate_snapshot_ttl_s: float
+    #: Backoff between two checks of a deferred dispatch.
+    load_gate_retry_s: float
+    #: Total deferral budget; past it the run is terminalized as a load timeout
+    #: (returning instead would leave an ORPHAN the sweeper re-dispatches forever).
+    load_gate_max_defer_s: float
 
 
 DEFAULT_SUBAGENT_MAX_CONCURRENT = 8
@@ -45,6 +66,18 @@ LANE_SYSTEM: LaneSystemConfig = {
     "nested_max_concurrent": 1,
     "lane_wait_warn_ms": 5000,
     "lane_drain_timeout_seconds": 30.0,
+    # Load gate — OFF by default: a monitor that did not make it into a frozen
+    # build would fail open anyway, but shipping it disabled keeps the first
+    # release byte-for-byte the old behavior until the packaging smoke passes.
+    "load_gate_enabled": False,
+    "load_gate_cpu_warn": 90,
+    "load_gate_cpu_stop": 95,
+    "load_gate_ram_warn": 90,
+    "load_gate_ram_stop": 95,
+    "load_gate_sample_interval_s": 1.5,
+    "load_gate_snapshot_ttl_s": 5.0,
+    "load_gate_retry_s": 30.0,
+    "load_gate_max_defer_s": 600.0,
 }
 
 

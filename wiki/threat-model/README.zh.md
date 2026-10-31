@@ -68,11 +68,11 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 ## 密钥脱敏
 
-`agent/security/redact.py` 负责在文本里掩码凭证，落点有两处，开关刻意不同：
+`pub/security/redact.py` 负责在文本里掩码凭证，落点有两处，开关刻意不同：
 
 | 面 | 由谁施加 | 开关 |
 |---|---|---|
-| 每一条日志记录（控制台 + 三个轮转文件） | `agent/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
+| 每一条日志记录（控制台 + 三个轮转文件） | `pub/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
 | 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`、`browser`、`browser_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
 | 文件工具（`read_file`、`patch_file`、`write_file`） | — | 刻意不脱敏：agent 要编辑自己的配置，掩码会让"读回再写回"变成有损操作 |
 
@@ -96,6 +96,25 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 携带内联推理的回答文本 | `agent/security/think_scrub.py` | 把 `<think>`/`<thinking>`/`<reasoning>` 的内容从回答通道搬到客户端渲染思考块的推理通道。每回合一个 scrubber，且与切分无关：分块边界由 provider 决定，所以标签在任意位置被切开都必须与整段一致 |
 | 渠道用户 / 聊天标识 | `agent/security/pii.py` | 日志写 `«pii:<12 位十六进制>»` 而不是平台标识。跨进程稳定，因此"收到"与"已发送"在之后的日志文件里仍可关联；原值保留在它发挥作用的地方（路由表、回复目标、平台 SDK 调用） |
 
+## Sherry 自身文件：读写白名单
+
+未做任何配置时，会话项目目录就是 checkout 本身，于是 in-root 判定曾把整棵源码树（连同旁边的凭证文件）都当作安全：`patch_file` 可以改写 `agent/core.py`，`read_file` 可以读到 `.models`（API key）或 `src/data/auth.db`（密码 hash），全程无需审批。现在这道面之前有两张**白名单**（`agent/tools/pub_base/self_path_policy.py`），因为判定标准不同：
+
+| 模式 | 判定规则 | sherry 自身树内允许的路径 |
+|---|---|---|
+| **写** | "改了不破坏运行时、不影响其它会话、不泄露凭证" | `<project>/.sherry/`（索引、shadow-git、attachments）、**当前会话**的 `plans/` `attachments/` `uploads/`、`TEMP_DIR`、`STATIC_DIR`、`SRC_DIR/{images,audio,video}`、`SRC_DIR/rag/uploads` |
+| **读** | "读了不泄露凭证、私人记忆或其它会话的记录" | 整棵**源码树**（读源码既不破坏运行也不泄露）加上写白名单；拒绝：`.env` `.models` `.network` `sherry.jsonc` 及其 `.example`、`src/data/**`、`src/checkpoints/**`、`workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`、`workspace/memory/**`、`workspace/knowledge/**`、模型权重文件、`mcp_servers/**`、可写技能树、`CODE_INTEL_DIR`、`LOG_DIR`、共享 trajectory 账本，以及除**当前会话** `plans/` 之外的每个会话目录 |
+
+两者都挂在文件工具的解析路径上——而且包括 **in-root 成功分支**，不只是外部路径分支，因为默认 checkout 恰恰是从那里静默通过的（`agent/tools/pub_base/path_utils.py` 的 `resolve_tool_path`，外加自行解析的 `search_files`）。落在**其它**会话项目目录内的路径属于用户工作区，不经过本策略。
+
+**谁来批准。** main agent 得到的是**一次性**审批（`sherry_self_access`，只有 `approve` / `reject`——没有 YOLO，也没有会话 allowlist：sherry 自身文件永不永久解锁）。**子代理**直接被拒、不弹卡片：子代理读父会话配置或其它会话状态就是跨会话泄露，且那条链上没有操作者。在 agent 运行之外（脚本直接调工具）没有人可问，因此**失败关闭**。
+
+**Shell。** `PathGuard` 扫描命令字符串作为缓解手段：像读的 token 走读策略，抽取出的写目标（`>`、`>>`、`tee`、`truncate`、`shred`、`sed -i`）走写策略——所以 `cat .models` 与 `echo x > agent/core.py` 都会被拒。base64、shell 变量与运行时拼出的路径能逃过扫描；真正的门仍是文件工具策略与 OS 沙箱。
+
+**不受影响。** 所有内部写入照常工作：`memory` 工具、`skill_manage`、`exit_plan_mode`、证据账本、shadow-git、checkpointer、trajectory 与知识索引都用 `config.path` 常量拼路径，从不经过上述解析器。
+
+**为什么用白名单。** 以后新增的敏感路径默认被拒，而不是像旧黑名单那样静默放行。
+
 ## 网络边界
 
 进程与网络之间有四道闸门，各自守在威胁真正可达的那一层：
@@ -118,6 +137,7 @@ shell 是网络守卫看不见的另一条路径：HITL 审批清单（`agent/mi
 | Prompt 注入扫描器、不可信输出围栏 | 检测与标注 | 模型可能被说服越过围栏；模式也可能被绕开表述 |
 | 密钥脱敏、标识假名化、控制序列剥离 | 在输出边界做卫生性改写 | 只能去掉规则认得出的东西，而且原值通常仍存在于上游 |
 | 路径防护、HITL 允许清单、危险命令清单 | 对已知危险形状的拒绝规则 | 拒绝规则天生不完整 |
+| Sherry 自身文件读写白名单 | 对代理自身树采用默认拒绝的白名单（仅枚举目录可通过） | 仍在进程内：shell 那一半是静态扫描，坚定的模型能绕开，因此 OS 沙箱仍是后盾 |
 | env 剥离、lane 上限、迭代预算、spawn / 续跑预算、运行超时 | 缩小爆炸半径 | 它们假定子进程本身不是攻击者的代码路径 |
 
 我们接受并明确写出的运行结论：
@@ -129,7 +149,7 @@ shell 是网络守卫看不见的另一条路径：HITL 审批清单（`agent/mi
 
 ## 运行手册
 
-**启动检查。** 128K 上下文下限会让进程拒绝启动（两个 LLM 都查）；网关每次启动重新签发 token，因此跨重启仍打开的页面必须重载后才能重连；密钥只放 `.env`（仅环境变量——配置文件不是密钥仓库）。
+**启动检查。** 200K 上下文下限会让进程拒绝启动（两个 LLM 都查）；网关每次启动重新签发 token，因此跨重启仍打开的页面必须重载后才能重连；密钥只放 `.env`（仅环境变量——配置文件不是密钥仓库）。
 
 **该盯什么。** `logs/output/error/` 记录失败；与安全相关的行有：
 

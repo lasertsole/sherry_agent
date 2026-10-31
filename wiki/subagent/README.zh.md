@@ -37,10 +37,11 @@
 1. **两条轴永不合并。** 功能角色不能授予 spawn 权限，深度角色也不能改变工具白名单或提示词。每次 spawn 都是两者的组合。
 2. **`general` 是恒等角色。** 不传功能角色提示时，spawn 行为不变：不加载任何定义，LLM 档位由深度角色决定。
 3. **spawn 权限有两道深度门**——组装期（工具策略求交）与调用期（工具自身的权限检查）。
-4. **完成门禁恒开。** 整条栈没有任何启用/停用开关；输入只有预算与判据。
-5. **失败开放只针对模型错误、无法解析的输出或不可用的查询——绝不针对否定判定。** 解析出的 `RETRY`、`BLOCK` 或失败证据行仍然照常拦截。
-6. **子上下文始终独立。** 子代理从自己的空消息列表开始，永不继承父会话记录，也不存在改变这一点的模式。
-7. **完成载体是声明，不是已验证结果。** 父回合收到的是子代理的自述；当会话没有通过证据时，drain 门禁会追加一条强制验证消息。
+4. **角色派生按跳白名单化，绝不回溯链条。** 专用父代理可派生自己的角色，外加其 `SPAWN_ALLOWED_CHILD_ROLES` 条目列出的只读扩展；不变量是单跳的（允许的非父角色子项绝不能具备写能力），这正是多层安全无需祖先遍历的原因。
+5. **完成门禁恒开。** 整条栈没有任何启用/停用开关；输入只有预算与判据。
+6. **失败开放只针对模型错误、无法解析的输出或不可用的查询——绝不针对否定判定。** 解析出的 `RETRY`、`BLOCK` 或失败证据行仍然照常拦截。
+7. **子上下文始终独立。** 子代理从自己的空消息列表开始，永不继承父会话记录，也不存在改变这一点的模式。
+8. **完成载体是声明，不是已验证结果。** 父回合收到的是子代理的自述；当会话没有通过证据时，drain 门禁会追加一条强制验证消息。
 
 ## 🧭 两条角色轴
 
@@ -64,10 +65,10 @@
 | 角色 | 用途 | 生效 LLM 档位 | 角色工具集 |
 |------|------|----------------|------------|
 | `general` | 默认 worker；恒等角色（其包内定义永不被加载） | 深度角色 | 全部工具 + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `executor` | 可写实现与命令执行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `librarian` | 只读的外部代码库检索：clone、建索引并搜索第三方仓库 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
+| `executor` | 可写实现与命令执行；唯一可额外派生只读 `researcher` / `librarian` 子代理的角色 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl`、`execute_code` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`claim_scope`、`share_finding`、`peers_findings` |
+| `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
+| `librarian` | 只读的外部代码库检索：clone、建索引并搜索第三方仓库 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` + 协调（opt-in）`share_finding`、`peers_findings` |
 
 **ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite`。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` / `semantic_code_search` 归 `researcher` 与 `librarian` 这两个代码检索角色所有，因为它们需要符号索引；`semantic_code_search` 是基于该索引的 embedding 概念搜索。LSP 工具 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 同样归这两个角色：它们需要运行中的语言服务器，由子代理按需惰性启动、空闲时自动关停。`lsp_rename` 与 `lsp_format` 默认仅预览，`lsp_diagnostics` 会等待异步诊断通知，`lsp_status` 只报告可用性、不启动任何服务器。`execute_code` 工具（程序化工具调用）仅 executor 角色可用：只有 executor 会获得它，其它功能角色都不会。
 
@@ -77,12 +78,13 @@
 
 ### ⚙️ 角色驱动什么
 
-**LLM 选择。** 显式 `model_override` 优先；否则由非 `general` 角色的 `model_tier` 生效；否则由深度角色决定（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）。
+**LLM 选择。** 角色模型 profile 优先（它还携带该子代理自己的 `max_output_tokens`，默认 8192）；否则显式 `model_override` 优先；否则由非 `general` 角色的 `model_tier` 生效；否则由深度角色决定（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）。
 
 ```text
-显式 model_override
-  └─► 功能角色 model_tier（"main" | "auxiliary"）
-        └─► 深度角色（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）
+角色模型 profile（自带 max_output_tokens，默认 8192）
+  └─► 显式 model_override
+        └─► 功能角色 model_tier（"main" | "auxiliary"）
+              └─► 深度角色（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）
 ```
 
 **系统提示词。** 非 `general` 角色（或任何非空角色描述/正文）会在 `## Your Role` 中加入 `{ROLE}` 特化行，并追加携带定义正文的 `## Role Instructions` 段落。
@@ -91,7 +93,7 @@
 
 ## 🔒 spawn 权限守卫
 
-spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提权：
+基于深度的 spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提权（功能角色遏制是第三道、正交的门——见下方说明）：
 
 - **组装期（主门）。** 当最终白名单由角色白名单与 `extra_tools` 构建完成后，Phase 8.6 将其与 `can_spawn_children(role)` 求交：对任何无权 spawn 的角色，`sessions_spawn` 与 `sessions_yield` 都会从列表中剥离。继承模式下白名单为空、默认拒绝列表已拦截这两个工具，因此求交在那里是空操作。
 - **调用期（纵深防御）。** `check_spawn_permission(session_id)` 先解析规范调用方会话键（子代理与 swarm 键原样使用；其它 id 补上 `agent:main:session:` 前缀），再解析深度（先查运行记录，后看会话键形状），然后解析深度角色并拒绝无权 spawn 的调用方。它返回 `(allowed, reason)` 元组、永不抛异常；工具通过既有的字符串契约渲染拒绝。
@@ -103,9 +105,11 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 
 调用期守卫为 `sessions_spawn`（提权路径）兜底，工具与运行时 spawn 包装器都接入了它。`sessions_yield` 仅由组装期剥离保护。
 
+**功能角色遏制（第三道、正交的门）。** 深度决定子代理*能否* spawn；遏制决定它*能 spawn 哪个角色*。`_check_role_containment`（`spawn/core.py`）只读调用方自己的运行记录——单跳，绝不回溯祖先链——再查 `SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）：缺席条目意为「只同角色」，即 `researcher` / `reviewer` / `librarian` 保持的行为；`MAIN`（无运行记录）与 `general`（`tools: inherit` = 全部工具）直接短路为不受限，因为任何专用角色的白名单都已是它们的子集。唯一的放宽条目是 `executor`，它可额外派生**只读**的 `researcher` / `librarian`，以便先调研后写入。多层安全靠单跳不变量而非链遍历：允许的**非父角色子项必须只读**，于是写角色只能到达写角色、只读角色只能到达同类——没有任何路径回到写能力；未来若加入会成环的条目（例如 `researcher → executor`），会在不变量测试上失败，而不是开出一个洞。
+
 ## 🧪 完成判别器与 goal loop
 
-完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
+完成判别器（`spawn/completion_judge.py`）是子代理层门禁。温度为 `0` 的辅助 LLM 接收任务、子代理最新回复（截断至 `8000` 字符；这是未设置时的旧基线，会随 serving model 的输出预算缩放）与子会话的验证证据摘要，返回 `DONE` 或 `CONTINUE` 及一句话理由；`CONTINUE` 判定还会携带一段续轮提示。解析逐级安全降级——先做 JSON 修复，再做正则扫描——任何模型错误或不可用输出都以显式失败开放理由按 `DONE` 终结。
 
 只要某次 spawn 的预算大于一轮，goal loop 就会运行；预算取 `COMPLETION_JUDGE["goal_max_turns"]`（默认 `5`），且计入第一轮。每次 spawn 的 `goal_max_turns` 参数可覆盖它。收到 `CONTINUE` 时，判别器的提示会作为下一条 `HumanMessage` 注入**同一 checkpoint 线程**，因此续轮延续的是同一个子对话，而不是新开一个。
 
@@ -132,7 +136,9 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 
 **第 3 层——流程门禁。** `taskflow_flow(action="finish")` 在以下条件全部满足前拒绝转入 `DONE`：门禁 A 看到每一步都是 `done` 或 `blocked`，门禁 B 看不到阻塞步骤，门禁 C 看不到 `FAIL` 或 `[stale]` 的 flow 证据（另有可选的 Gate E 目标判定，仅当带 `description` 的 flow 步骤数达到 `GOAL_GATE["min_steps"]` 时运行）。
 
-**第 4 层——父回合门禁。** drain 注入排队的完成载体时，也会检查父会话的证据。载体原样注入；若会话没有通过证据，则在其后追加一条强制验证消息。该检查无条件执行——没有任何配置能关闭它——只有当证据查询本身不可用时才失败开放。
+**第 4 层——父回合门禁。** drain 注入排队的完成载体时，也会检查父会话的证据。载体原样注入；若会话没有通过证据，则在其后追加一条强制验证消息。该检查无条件执行——没有任何配置能关闭它——只有当证据查询本身不可用时才失败开放。它读的是与 flow 门相同的失效标记：`[stale]` 或 `[broken]` 的行不算通过，因此被后续写入作废的子代理不能当作已验证完成来 drain。
+
+**重启语义。** 没有任何任务能跨重启存活，所以从磁盘恢复的 RUNNING run 会以 TIMEOUT 终态化并带 `pause_reason=process_restart`（继续留着 RUNNING 会让每个活性读者以为子代理还活着），并且所有持久化单调时间戳都会重基准到恢复点——上个进程写的值可能读成数小时前或未来，从而静默关掉每个过期判定。它的交付保持 PENDING，由 sweeper 的未交付扫描补发公告，拥有该 step 的 flow 因此能得知结果而不是停在 DISPATCHED。kill 一个 INTERRUPTED 的 run 同样会在这里释放它的会话级守卫状态：已经没有活着的子代理让它的 `finally` 去做这件事。
 
 解析出的否定判定始终拦截：失败开放覆盖模型错误、无法解析的输出与不可用的查询，绝不覆盖真正的 `RETRY`、`BLOCK` 或失败证据行。门禁内部细节（熔断阈值、announce 重试、证据账本）见[失控循环防护 README](../loop-prevention/README.zh.md) 与[长期任务 README](../long-running-tasks/README.zh.md)。
 
@@ -161,6 +167,9 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | `roles_override_dir_name` | `SubagentConfig` | `"subagent_roles"` | 存放可选角色覆盖的工作区目录 |
 | `max_spawn_depth` | `SubagentConfig` | `2` | 角色翻转为 `LEAF` 的深度（硬上限 `2`） |
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 命令族 | 自动记入验证证据的命令 |
+| `result_text_caps` | `agent/tools/subagent/output_caps.py` | 原值 | 已配置的 serving model 输出预算 `W` 会把存储/投递/摘要/判别器/回读上限按 `W/8000` 缩放；未设置保持原值 |
+| `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 角色模型 profile 自己的输出上限（十进制字符串，最低 8K）；同时驱动子代理请求和结果文本上限，与 MAIN 环境预算无关 |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | 执行者子代理的每回合模型+工具调用预算；其他子代理角色保持 `worker_max_iterations=60` |
 
 ## 🗺️ 测试地图
 
@@ -169,6 +178,7 @@ spawn 权限在两个独立位置执行，因此任何单点泄漏都无法提�
 | 角色枚举与加载器 | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py` |
 | 角色驱动的 spawn 行为 | `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 | spawn 权限守卫 | `tests/agent/tools/subagent/test_spawn_privilege_guard.py` |
+| 功能角色遏制 | `tests/agent/tools/subagent/test_spawn_role_containment.py` |
 | 完成判别器与 drain | `tests/agent/tools/subagent/test_completion_judge.py`、`tests/agent/tools/subagent/test_completion_drain.py` |
 | 父回合门禁 | `tests/agent/middlewares/test_completion_drain_gate.py` |
 | 步骤判官 | `tests/agent/tools/taskflow/test_step_judge.py`、`tests/agent/tools/taskflow/test_resume_with_judge.py` |

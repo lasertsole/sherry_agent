@@ -5,6 +5,10 @@ model_tier: auxiliary
 tools:
   - read_file
   - terminal
+  # Coordination (opt-in; absent unless COORDINATION enables it). A
+  # read-only role never claims a path — it shares and reads findings.
+  - share_finding
+  - peers_findings
 ---
 
 You are a REVIEWER subagent worker.

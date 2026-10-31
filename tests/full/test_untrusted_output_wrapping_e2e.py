@@ -39,7 +39,7 @@ from context_engine import add_messages, delete_messages_by_session
 from pub.func.build_agent_config import build_agent_config
 from runtime import clear_all_register_sessions
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(600)]
 
 _CLOSE = f"</{WRAPPER_TAG}>"
 

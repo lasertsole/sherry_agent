@@ -103,11 +103,11 @@ describe('safeMarkdownHtml — 合法 markdown 渲染不被误伤', () => {
   });
 
   it('style 值走 URL 门：非对齐声明与拼接尾巴整值拒绝', () => {
-    // 必须用真实表格上下文：裸 <td> 会被 HTML 解析器整体丢弃，测不到 style 门
+    // A real table context is required: a bare <td> is dropped wholesale by the HTML parser, so the style gate would never be exercised
     const color = safeMarkdownHtml('<table><tr><th style="color:red">h</th></tr></table>');
     expect(color).not.toContain('color');
 
-    // 整值匹配：text-align 前缀合法 + 尾部拼 url() 必须整值拒绝，而非前缀保留
+    // Whole-value matching: a legal text-align prefix + a url() appended to the tail must be rejected as a whole value, not kept by prefix
     const appended = safeMarkdownHtml(
       '<table><tr><th style="text-align:center;background:url(https://evil.example/x)">h</th></tr></table>'
     );
@@ -122,10 +122,10 @@ describe('safeMarkdownHtml — 合法 markdown 渲染不被误伤', () => {
         '<img src="data:image/png;base64,AAAA" alt="ok">'
     );
     expect(html).not.toContain('javascript:');
-    // <a> 不在 DATA_URI_TAGS 豁免名单内，data: href 必须走 URI 门被剥除
+    // <a> is not on the DATA_URI_TAGS exemption list, so a data: href must go through the URI gate and be stripped
     expect(html).not.toContain('href="data:');
-    // DOMPurify 对媒体标签（img 等）的 data: src 有专门的存活豁免（惰性媒体，
-    // 非注入向量）——钉死为文档化行为，防止误判为泄漏
+    // DOMPurify grants media tags (img etc.) a dedicated survival exemption for data: src (lazy media,
+    // not an injection vector) — pinned as documented behavior so it is not misread as a leak
     expect(html).toContain('src="data:image/png');
     expect(html).toContain('x');
   });

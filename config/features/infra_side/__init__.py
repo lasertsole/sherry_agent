@@ -83,6 +83,14 @@ from .crash_loop import (
     CrashLoopConfig as CrashLoopConfig,
     CRASH_LOOP as CRASH_LOOP,
 )
+from .logs import (
+    LogsConfig as LogsConfig,
+    LOGS as LOGS,
+)
+from .ws_rate_limit import (
+    WsRateLimitConfig as WsRateLimitConfig,
+    WS_RATE_LIMIT as WS_RATE_LIMIT,
+)
 from .skills_tooling import (
     SkillsToolingConfig as SkillsToolingConfig,
     SKILLS_TOOLING as SKILLS_TOOLING,

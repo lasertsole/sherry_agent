@@ -25,6 +25,7 @@ from config.features import AUTH
 from server.service import auth_service
 from server.service.auth_service import AuthError, TokenPair
 from server.trigger import auth_user
+from server.trigger import rate_limit
 from server.trigger.core import app
 from server.trigger.http.helpers import ok, read_body, to_text_response
 
@@ -236,5 +237,10 @@ async def auth_ws_ticket_handler(request: Request):
             return to_text_response(
                 401, {"success": False, "error": "not_authenticated", "message": "not signed in"}
             )
+    if not rate_limit.consume_ws_ticket(str(getattr(request, "ip_addr", "") or "unknown")):
+        return to_text_response(
+            429,
+            {"success": False, "error": "rate_limited", "message": "too many ticket requests"},
+        )
     ticket, ttl = await auth_service.mint_ws_ticket()
     return ok({"success": True, "ticket": ticket, "expires_in": ttl})

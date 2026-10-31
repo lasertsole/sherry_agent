@@ -2,6 +2,10 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { isClient } from '~/utils/client';
 import { safeT } from '~/utils/i18n';
+// The store needs a stable module specifier so tests can vi.mock the bridge;
+// the unimport injection is compile-time and leaves bare symbols unmockable.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { checkHealth } from '~/composables/bridge/health';
 
 /**
  * Network / backend connectivity (event-driven, based on WebSocket heartbeat liveness detection).
@@ -133,20 +137,35 @@ export const useConnectionStore = defineStore('connection', () => {
   });
 
   /**
-   * Manually re-sync connectivity state once (no network requests).
+   * Manually re-sync connectivity state once.
    *
-   * Purely local sync: copy navigator.onLine into isOnline, then read the live readyState of the
-   * /sessions/ws singleton to set backendStatus. No toasts are popped (toasts are left to the
-   * WS events' edge logic as the single arbiter). Used by tests and external callers that need to
-   * refresh the state manually.
+   * The live WS readyState is the first arbiter: OPEN -> ok. A CLOSED socket
+   * that already HAS a verdict keeps it ('down') — the heartbeat reconnect loop
+   * owns that state. Only the UNDECIDED state ('unknown': no connection yet, no
+   * event since start) asks the backend directly, with one silent `GET /health`
+   * probe — the client half of the health endpoint (design concept #22). No
+   * toasts are popped (toasts are left to the WS events' edge logic as the
+   * single arbiter).
    */
   async function checkConnectivity(): Promise<void> {
     if (!isClient()) return;
 
     syncBrowserOnline();
 
-    // Read the WS singleton's live connection state (no network request): OPEN -> ok, otherwise down
-    backendStatus.value = isSessionWsOpen() ? 'ok' : 'down';
+    // Read the WS singleton's live connection state (no network request): OPEN -> ok
+    if (isSessionWsOpen()) {
+      backendStatus.value = 'ok';
+      return;
+    }
+    if (backendStatus.value !== 'unknown') {
+      backendStatus.value = 'down';
+      return;
+    }
+    try {
+      backendStatus.value = (await checkHealth()).healthy ? 'ok' : 'down';
+    } catch {
+      backendStatus.value = 'down';
+    }
   }
 
   /**
@@ -182,10 +201,12 @@ export const useConnectionStore = defineStore('connection', () => {
     window.addEventListener('offline', handleBrowserOffline);
 
     // 4) Initial state convergence: if the singleton is already connected (an existing connection will
-    //    not emit ws:connected again), mark ok immediately; otherwise stay 'unknown' and let the first
-    //    WS event make the call.
+    //    not emit ws:connected again), mark ok immediately; otherwise resolve the undecided state
+    //    with ONE /health probe instead of waiting for the first WS event.
     if (singleton.isConnected.value === true || singleton.ws.value?.readyState === WebSocket.OPEN) {
       handleWsUp();
+    } else {
+      void checkConnectivity();
     }
 
     return () => stopConnectionWatch();

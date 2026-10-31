@@ -60,6 +60,27 @@ def test_record_appends_passed_row(ledger_path):
     assert row["command"] == "pytest -q"
 
 
+def test_record_stamps_the_taskflow_context_from_the_session_state(ledger_path):
+    from runtime import StateKey, state_register_mem
+
+    session = "sess-evidence-flow-stamp"
+    state_register_mem.set_state(session, StateKey.FLOW_ID, "flow-42")
+    try:
+        evidence_recorder.record_verification_evidence("pytest -q", "all good", session)
+    finally:
+        state_register_mem.clear_session(session)
+
+    row = EvidenceLedger.read_all()[0]
+    assert row["flow_id"] == "flow-42"
+
+
+def test_record_leaves_flow_null_without_taskflow_context(ledger_path):
+    evidence_recorder.record_verification_evidence("pytest -q", "all good", "sess-no-flow")
+
+    row = EvidenceLedger.read_all()[0]
+    assert row["flow_id"] is None
+
+
 def test_record_marks_failed_from_exit_code(ledger_path):
     evidence_recorder.record_verification_evidence("pytest -q", "Exit code 2\nboom", "s1")
 

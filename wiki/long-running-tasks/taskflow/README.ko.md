@@ -790,7 +790,7 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 
 
-`task_flows`의 NULL 허용 컬럼 두 개가 플로우의 진화를 기록합니다(`resumed_from TEXT`, `superseded_by TEXT`. 토큰 컬럼과 동일한 추가 마이그레이션 방식——계보 이전 데이터베이스는 다음 오픈 시 수렴하며 그 행은 NULL로 읽힙니다):
+`task_flows`의 NULL 허용 컬럼 두 개가 플로우의 진화를 기록합니다(`resumed_from TEXT`, `superseded_by TEXT`. 현재 스키마에 있으며 계보가 없는 행은 NULL로 읽힙니다):
 
 
 

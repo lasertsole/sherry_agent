@@ -2,7 +2,7 @@
 inner chat model while normalizing chain-of-thought (reasoning) output.
 
 Why it exists
-    ``main_llm.py`` / ``reasoner_llm.py`` / ``auxiliary_llm/core.py`` all build
+    ``main_llm.py`` / ``auxiliary_llm/core.py`` all build
     their model via ``langchain.chat_models.init_chat_model(...)`` and previously
     wrapped the result with ``.configurable_fields(temperature=ConfigurableField(id="temperature"))``.
 

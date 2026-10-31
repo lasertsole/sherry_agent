@@ -31,7 +31,7 @@ from config.features.agent_side import CODE_INTEL_SEMANTIC, CodeEmbedderProfile
 _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 _TOKENIZER_DIR = _MODEL_DIR / "tokenizer"
-#: The user's explicit opt-in. ``auto`` stays OFF until the 模型配置 download
+#: The user's explicit opt-in. ``auto`` stays OFF until the Model Config download
 #: completes and writes this marker; merely having the files is not enough.
 _ENABLED_MARKER = _WEIGHT_DIR / ".enabled"
 

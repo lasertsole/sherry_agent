@@ -1,6 +1,6 @@
 /**
  * The top-bar preset button: icon-only, it names the session's preset in its
- * tooltip and opens that preset's VIEW as a right-sidebar tab in the 当前会话
+ * tooltip and opens that preset's VIEW as a right-sidebar tab in the This-session
  * group — there is no popup (the panel is a tab and survives outside clicks).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';

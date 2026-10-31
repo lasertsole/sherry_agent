@@ -144,7 +144,7 @@ def _clean_profile(role: str, profile: object) -> dict[str, str] | None:
     from server.service.session_settings_service import sanitize_main_model_override
 
     try:
-        return sanitize_main_model_override(profile)
+        return sanitize_main_model_override(profile, allow_max_output=True)
     except ValueError as exc:
         raise AgentConfigError(f"subagent_models.{role}: {exc}") from exc
 
@@ -177,7 +177,7 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             missing = sorted(set(wanted) - known)
             if missing:
                 raise AgentConfigError(f"unknown tool(s): {', '.join(missing)}")
-            # REQUIRED tools can never be left out (the 工具 tab shows them locked).
+            # REQUIRED tools can never be left out (the Tools tab shows them locked).
             dropped_required = sorted(_required_tool_names() - set(wanted))
             if dropped_required:
                 raise AgentConfigError(

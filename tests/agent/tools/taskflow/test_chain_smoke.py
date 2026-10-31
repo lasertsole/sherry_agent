@@ -28,6 +28,7 @@ from agent.tools.taskflow import step_judge
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 from config.features import TASKFLOW_INFRA
+from runtime import StateKey, state_register_mem
 
 pytestmark = [pytest.mark.unit]
 
@@ -175,22 +176,24 @@ async def test_taskflow_judge_chain_and_finish_gate_smoke(
     assert flow["state"]["steps"][0]["status"] == "done"
     assert len(dispatches) == 2, "resume must not spawn beyond the judge retry"
 
-    # Gate C reject (failing evidence) — seeded under the STEP'S CHILD SESSION,
-    # which is the key every producer writes (evidence rows never carry a flow id).
+    # Gate C reject (failing evidence) — seeded under the STEP'S CHILD SESSION
+    # with the flow stamp the spawn would carry.
     ledger.for_session("agent:main:subagent:c2").append(
-        kind="test", command="pytest -q", status="failed"
+        kind="test", command="pytest -q", status="failed", flow_id=FLOW
     )
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "failing verification evidence" in out, out
 
     # ... Gate C reject (stale evidence) ...
     _reset_ledger()
+    state_register_mem.set_state("agent:main:subagent:c2", StateKey.FLOW_ID, FLOW)
     ledger.for_session("agent:main:subagent:c2").append(
-        kind="test", command="pytest foo.py", status="passed"
+        kind="test", command="pytest foo.py", status="passed", flow_id=FLOW
     )
     ledger.for_session("agent:main:subagent:c2").mark_stale_for_path("foo.py")
     out = await tools["taskflow_finish"].coroutine(session_id=SESSION, flow_id=FLOW)
     assert "stale evidence" in out, out
+    state_register_mem.clear_session("agent:main:subagent:c2")
 
     # ... and Gate A/B/C pass: a clean ledger admits the finish.
     _reset_ledger()

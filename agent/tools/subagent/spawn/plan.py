@@ -44,16 +44,6 @@ def resolve_run_deadline_ms(
     return started_at + timeout
 
 
-def split_model_ref(model_ref: str | None) -> tuple[str | None, str | None]:
-    """Split a 'provider/model' reference into (provider, model); provider may be None."""
-    if model_ref is None:
-        return None, None
-    if "/" in model_ref:
-        provider, model = model_ref.split("/", 1)  # only split on the first slash
-        return provider, model
-    return None, model_ref
-
-
 def resolve_role_model_profile(
     requester_session_key: str | None, functional_role: object
 ) -> dict[str, str] | None:

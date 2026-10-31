@@ -343,7 +343,12 @@ def test_catalog_and_metadata_are_the_three_surfaces():
     assert tools["taskflow_inspect"].metadata["idempotent"] is True
     assert tools["taskflow_inspect"].metadata["side_effect_scope"] == "none"
     assert tools["taskflow_flow"].metadata["idempotent"] is False
+    assert set(tools["taskflow_flow"].metadata["idempotent_actions"]) == {"create", "plan"}
     assert tools["taskflow_step"].metadata["scope"] == "main_only"
+    assert set(tools["taskflow_step"].metadata["idempotent_actions"]) == {
+        "update_steps",
+        "resume",
+    }
 
 
 def test_the_legacy_builder_keeps_the_sixteen_module_tools_for_tests():

@@ -181,6 +181,7 @@ class TestStdoutTempFile:
         assert len(evicted) == 1
         assert evicted[0].stat().st_size == _BIG_BYTES
         assert f"[evicted to: {evicted[0]}]" in out
+        assert "Use read_file(file_path=" in out and str(evicted[0]) in out
         assert f"[full content: {_BIG_BYTES} bytes," in out, "the total is BYTES (stat), not lines"
 
     @pytest.mark.unit
@@ -445,3 +446,31 @@ class TestPerCallTimeout:
         out = tool._run(["sleep 1; echo finished-under-5s"], session_id=_SID, timeout=5)
 
         assert "finished-under-5s" in out
+
+
+class _SilentSyncProc:
+    """Popen stand-in: exits successfully without writing a byte."""
+
+    returncode = 0
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        self.kwargs = kwargs
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+class TestEmptyOutput:
+    @pytest.mark.unit
+    def test_an_empty_command_returns_a_default_hint(
+        self, tool: SafeShellTool, sessions_root: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: _SilentSyncProc(*a, **kw))
+
+        out = tool._run(["true"], session_id=_SID)
+
+        assert out == "(no output)"
+        assert not _temp_files(sessions_root)

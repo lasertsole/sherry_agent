@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `_SESSION_ID_COLUMN_DDL`, `store_sqlite.py:83-107`)로 정의됩니다. `session_id`는 격리 컬럼입니다(`idx_taskflow_session_status` 인덱스): 생성 시 기록되며 이후 모든 읽기/변경이 이를 필터링합니다(`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`agent/tools/pub_base/sqlite_store.py:79-139`).
+DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 현재 `_CREATE_TABLE_SQL` 스키마에 있습니다. `session_id`는 격리 컬럼입니다(`idx_taskflow_session_status` 인덱스): 생성 시 기록되며 이후 모든 읽기/변경이 이를 필터링합니다(`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`agent/tools/pub_base/sqlite_store.py:79-139`).
 
 ### 단계 상태 기계
 
@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-스키마에는 이제 `updated_at` REAL 컬럼이 있습니다(증분 마이그레이션; `update_flow`와 `create_flow`가 매번 기록). `_last_activity_ts()`는 이 시계를 먼저 읽고, 없으면 기존 활동 스탬프의 최댓값 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 으로 폴백해 UTC 타임스탬프로 렌더링합니다(둘 다 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
+스키마에는 `updated_at` REAL 컬럼이 있습니다(`update_flow`와 `create_flow`가 매번 기록). `_last_activity_ts()`는 이 시계를 먼저 읽고, 없으면 기존 활동 스탬프의 최댓값 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 으로 폴백해 UTC 타임스탬프로 렌더링합니다(둘 다 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
 
 ### 세션 소유의 세 가지 계획 도구 패밀리
 

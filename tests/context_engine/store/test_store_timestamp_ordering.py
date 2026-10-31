@@ -12,9 +12,8 @@ API surface (``last_time``, history row ``timestamp``) must stay 14 chars.
 The fix therefore carries a ``ts_ms`` INTEGER NOT NULL column (epoch ms,
 strictly increasing per process) in the base schema and orders
 ``get_session_ids`` by ``MAX(ts_ms)``; the visible formats never change.
-The migration/backfill steps that once added the column to pre-existing
-databases were removed once every tracked database had them applied —
-fresh databases get ``ts_ms`` straight from the ``build_schema_v1`` baseline.
+The column is part of the current schema, so a fresh database gets ``ts_ms``
+straight from ``build_schema_v1``.
 """
 
 import asyncio
@@ -28,7 +27,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from context_engine.store import core as store_core
-from context_engine.store.db import _migrate
+from context_engine.store.db import build_schema_v1
 
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
@@ -39,14 +38,14 @@ T0_STAMP = datetime.fromtimestamp(T0_S).strftime("%Y%m%d%H%M%S")
 
 
 @pytest.fixture()
-def migrated_db():
-    """Fully-migrated store on a temp file (production schema shape)."""
+def schema_db():
+    """Current-schema store on a temp file."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # check_same_thread=False mirrors production get_db() — the
         # stamp/turn race test drives two writer threads through one connection.
         db = sqlite3.connect(str(Path(tmpdir) / "store.db"), check_same_thread=False)
         db.row_factory = sqlite3.Row
-        _migrate(db)
+        build_schema_v1(db)
         yield db
         db.close()
 
@@ -120,9 +119,9 @@ class TestNextTurnStamp:
 
 
 class TestAddMessagesWritesTsMs:
-    def test_two_same_ms_turns_get_increasing_ts_ms(self, migrated_db, monkeypatch):
+    def test_two_same_ms_turns_get_increasing_ts_ms(self, schema_db, monkeypatch):
         """Consecutive turns issued in the same millisecond must not tie."""
-        monkeypatch.setattr(store_core, "_db", migrated_db)
+        monkeypatch.setattr(store_core, "_db", schema_db)
 
         stamps = iter([(T0_S * 1000, T0_STAMP), (T0_S * 1000 + 1, T0_STAMP)])
         monkeypatch.setattr(store_core, "_next_turn_stamp", lambda: next(stamps))
@@ -130,7 +129,7 @@ class TestAddMessagesWritesTsMs:
         asyncio.run(store_core.add_messages("s1", [HumanMessage(content="a")]))
         asyncio.run(store_core.add_messages("s2", [AIMessage(content="b")]))
 
-        rows = migrated_db.execute(
+        rows = schema_db.execute(
             "SELECT session_id, ts_ms, timestamp FROM messages ORDER BY ts_ms"
         ).fetchall()
         assert [r["ts_ms"] for r in rows] == [T0_S * 1000, T0_S * 1000 + 1]
@@ -145,26 +144,26 @@ class TestAddMessagesWritesTsMs:
 
 
 class TestSessionOrdering:
-    def test_same_second_sessions_order_by_activity(self, migrated_db, monkeypatch):
+    def test_same_second_sessions_order_by_activity(self, schema_db, monkeypatch):
         """Two sessions started in the SAME second: the later one lists first.
 
         Old code ordered by MAX(timestamp) — tied within the second, so the
         list order was unstable. New code orders by MAX(ts_ms).
         """
-        monkeypatch.setattr(store_core, "_db", migrated_db)
+        monkeypatch.setattr(store_core, "_db", schema_db)
 
-        _insert_raw_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
-        _insert_raw_row(migrated_db, session_id="second", stamp=T0_STAMP, ts_ms=T0_S * 1000 + 5)
+        _insert_raw_row(schema_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
+        _insert_raw_row(schema_db, session_id="second", stamp=T0_STAMP, ts_ms=T0_S * 1000 + 5)
 
         sessions = store_core.get_session_ids()
 
         assert [s["session_id"] for s in sessions] == ["second", "first"]
 
-    def test_last_time_stays_14_char(self, migrated_db, monkeypatch):
+    def test_last_time_stays_14_char(self, schema_db, monkeypatch):
         """``last_time`` is client-facing — must keep the legacy 14-char format."""
-        monkeypatch.setattr(store_core, "_db", migrated_db)
+        monkeypatch.setattr(store_core, "_db", schema_db)
 
-        _insert_raw_row(migrated_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
+        _insert_raw_row(schema_db, session_id="first", stamp=T0_STAMP, ts_ms=T0_S * 1000)
 
         sessions = store_core.get_session_ids()
 
@@ -178,9 +177,9 @@ class TestSessionOrdering:
 
 
 class TestHistoryApiShape:
-    def test_history_rows_hide_ts_ms_and_keep_14_char(self, migrated_db, monkeypatch):
+    def test_history_rows_hide_ts_ms_and_keep_14_char(self, schema_db, monkeypatch):
         """History rows must stay byte-compatible: 14-char timestamp, no ts_ms."""
-        monkeypatch.setattr(store_core, "_db", migrated_db)
+        monkeypatch.setattr(store_core, "_db", schema_db)
 
         stamps = iter([(T0_S * 1000, T0_STAMP)])
         monkeypatch.setattr(store_core, "_next_turn_stamp", lambda: next(stamps))
@@ -199,7 +198,7 @@ class TestHistoryApiShape:
 
 
 class TestStampTurnAtomicity:
-    def test_stamp_order_matches_turn_order_under_interleaving(self, migrated_db, monkeypatch):
+    def test_stamp_order_matches_turn_order_under_interleaving(self, schema_db, monkeypatch):
         """The turn stamp must be taken atomically with turn assignment.
 
         Regression guard for the history-jumble race: ``add_messages`` used to
@@ -213,7 +212,7 @@ class TestStampTurnAtomicity:
         stamping thread (A) is held out of the assign lock until the second
         writer (B) has fully committed its turn.
         """
-        monkeypatch.setattr(store_core, "_db", migrated_db)
+        monkeypatch.setattr(store_core, "_db", schema_db)
 
         a_stamped = threading.Event()
         b_done = threading.Event()
@@ -272,7 +271,7 @@ class TestStampTurnAtomicity:
         thread_a.join(timeout=10)
         assert not thread_a.is_alive(), "writer A deadlocked"
 
-        rows = migrated_db.execute(
+        rows = schema_db.execute(
             "SELECT turn_num, ts_ms FROM messages WHERE session_id = 's_race' ORDER BY turn_num"
         ).fetchall()
         assert [r["turn_num"] for r in rows] == [1, 2], "two turns must persist"

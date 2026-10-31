@@ -445,7 +445,7 @@ class TestChineseTrigramFTS5:
         """Mixed Chinese+English query should route based on CJK detection."""
         results = _patched_search("Python 内存管理", populate_chinese_data)
         assert len(results) >= 1
-        # The content "Python 的内存管理机制是怎样的" should match
+        # The content "Python 的内存管理机制是怎样的" ("how does Python manage memory") should match
         assert any("内存管理" in r["snippet"] for r in results)
 
     def test_tool_content_included(self, populate_chinese_data):

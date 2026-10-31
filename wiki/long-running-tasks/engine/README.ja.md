@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は追加的 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`_SESSION_ID_COLUMN_DDL`、`store_sqlite.py:83-107`）で定義されます。`session_id` は分離列です（`idx_taskflow_session_status` が索引）：作成時に刻まれ、以後のすべての読み取り/変更がそれをフィルタします（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`agent/tools/pub_base/sqlite_store.py:79-139`）。
+DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は現在の `_CREATE_TABLE_SQL` スキーマにあります。`session_id` は分離列です（`idx_taskflow_session_status` が索引）：作成時に刻まれ、以後のすべての読み取り/変更がそれをフィルタします（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`agent/tools/pub_base/sqlite_store.py:79-139`）。
 
 ### ステップ状態機械
 
@@ -341,7 +341,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-スキーマは `updated_at` REAL 列を持つようになりました（増分移行。`update_flow` と `create_flow` が毎回刻みます）。`_last_activity_ts()` はこの時計を優先し、無ければ従来の活動スタンプの最大値——`wait.set_at`、各 `step.dispatched_at`、各 `result.injected_at`——にフォールバックし、UTC タイムスタンプとして描画します（どちらも無い flow は `-`）。空のレジストリは `No task flows found` を返します。
+スキーマは `updated_at` REAL 列を持ちます（`update_flow` と `create_flow` が毎回刻みます）。`_last_activity_ts()` はこの時計を優先し、無ければ従来の活動スタンプの最大値——`wait.set_at`、各 `step.dispatched_at`、各 `result.injected_at`——にフォールバックし、UTC タイムスタンプとして描画します（どちらも無い flow は `-`）。空のレジストリは `No task flows found` を返します。
 
 ### セッション所有の 3 つの計画ツールファミリ
 

@@ -74,7 +74,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **エージェント制御ブラウザ（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py)): 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED=1` と再起動）——オフの間は browser ツールが登録されず、`/browser/*` ルートはすべて 404 を返し、Chromium も起動されない。オンにすると、メインエージェントは統合されたメイン専用 `browser` ツール（navigate / snapshot / click / type / press / scroll / screenshot）と、`browser_evaluate`（`SHERRY_BROWSER_ALLOW_EVALUATE=1` も必要）でループバックの実 Chromium を操作し、ツールボックスのブラウザパネルが第二の CDP クライアントとして同じページを視聴する（`/browser/ws` のスクリーンキャスト + 入力）。デバッグポートはバックエンドプロセスから出ない
 - **ユーザー定義ライフサイクルフック** ([agent/middlewares/user_hooks/](agent/middlewares/user_hooks/)): `sherry.jsonc` の `hooks` セクションで、運用者が用意したコマンドをターンに接続できます — `PostToolUse` / `PostToolUseFailure`（`toolName`、`toolCallId`、有界の結果/エラー プレビュー、`durationMs`）と `Stop`（`responsePreview`、`toolCallCount`）。設計上は読み取り専用で、フックは監査・通知・計測のみを行い、ツールのブロック、引数の書き換え、コンテキストの注入はできません。既定では無効（追跡される設定ファイルが単独でコマンドを実行させてはならないため）。コマンドは `shlex` で分割（シェルなし）、環境は scrub 済み、フックごとのタイムアウトがプロセスを kill し、stdout は上限付きで任意 JSON として解析されます（非 JSON 出力は成功扱い）。ツール ガードレールの後に登録され、セッション単位で無効化できます- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
 - **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
-- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の追加列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
+- **並列ステップディスパッチとフロー系譜** ([agent/tools/taskflow/tools/_shared.py](agent/tools/taskflow/tools/_shared.py)): ディスパッチの波は同時に spawn し、`TASKFLOW_INFRA["max_parallel_dispatch"]`（2。1 で順次動作に戻る）で制限される — 波の一部が失敗しても spawn 済みの子はすべて永続化され、失敗したステップ id は個別に列挙される。2 つの子が同時に完了しても両方の結果が着地する（resume の書き込みは `update_flow_with_conflict_retry` を通じて確定済みの判定を再適用するため、結果が競合で失われることも、同じステップが二重に spawn されることもない）。`taskflow_flow(action="create", resumed_from=…)` はフロー系譜（`resumed_from` / `superseded_by` の現在スキーマ列）を記録し、置き換えられたフローは active 読みから外れつつボードには残る
 - **TaskFlow の進捗** ([agent/tools/taskflow/progress_push.py](agent/tools/taskflow/progress_push.py)): 各フローのフラットなステップ一覧（id・タスク・状態）と状態別集計がフローティング進捗パネルに表示される。スケジューラは依然として各ステップの `depends_on` ごとに解錠する。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
 - **ストリーム復元** ([server/service/stream_dispatch.py](server/service/stream_dispatch.py)): ターン途中で切断したビューアは再接続時に 1 回の履歴リクエスト（`include_active_turn=1`）を送り、離席中に完了したターンと実行中ターンのスナップショット（`turn_id`、`seq`、テキスト）を同時に受け取ります。リクエスト中 socket は受信フレームを保持し、クライアントは履歴をマージしてスナップショットを適用し、同じターンの `seq` 以下のフレームだけを破棄します——再生も重複もありません。コミット済みのツール呼び出しは trajectory ledger（`GET /sessions/:session_id/trajectory`）で引き続き参照できます。
 - **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
@@ -177,7 +177,7 @@ sherry_agent/
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
 │   ├── llm-retry/         # リトライ予算、fallback 上限、遮断範囲
 │   ├── sandbox/            # 評価サンドボックスとツール分離
-│   ├── token-guard/        # 128K コンテキストウィンドウ下限
+│   ├── token-guard/        # 200K コンテキストウィンドウ下限
 │   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
 │   ├── long-running-tasks/ # TaskFlow オーケストレーション
 │   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
@@ -186,6 +186,7 @@ sherry_agent/
 │   ├── llm-wiki/          # markdown KB + 派生グラフクエリ
 │   ├── ptc/                # プログラム的ツール呼び出し
 │   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
+│   ├── safety-filter/      # ライブ安全: キーワード ルール + LLM 審査 + ストリーム切断
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
@@ -205,7 +206,7 @@ sherry_agent/
 │   └── output/             # ログ出力ディレクトリ
 │
 ├── models/                 # モデルラッパーと重み
-│   ├── LLMs/               # LLM 設定（main_llm.py、reasoner_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
+│   ├── LLMs/               # LLM 設定（main_llm.py、auxiliary_llm/、reasoning_* プロバイダー対応）
 │   ├── ITTT_model/         # Image-to-Text モデル（クラウド API またはローカル GGUF）
 │   ├── VTTT_model/         # Video-Text-to-Text モデル（クラウド API またはローカル GGUF）
 │   ├── STT_model/          # Speech-to-Text モデル（FunASR）
@@ -333,12 +334,11 @@ sherry_agent/
 | **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](wiki/sandbox/README.md) · [ZH](wiki/sandbox/README.zh.md) · [JA](wiki/sandbox/README.ja.md) · [KO](wiki/sandbox/README.ko.md) |
 | **脅威モデル** | 信頼境界、データ分類、脅威ごとの防御状況、prompt インジェクションスキャナ | [EN](wiki/threat-model/README.md) · [ZH](wiki/threat-model/README.zh.md) · [JA](wiki/threat-model/README.ja.md) · [KO](wiki/threat-model/README.ko.md) |
 | **ユーザーログイン** | オプトインのアカウント保護：loopback クライアントは免除され、リモートアクセスは scrypt パスワードと HttpOnly JWT セッション Cookie で制御されます | [EN](wiki/auth/README.md) · [ZH](wiki/auth/README.zh.md) · [JA](wiki/auth/README.ja.md) · [KO](wiki/auth/README.ko.md) |
-| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、三色孤児 GC、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
-| **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
+| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、未参照フロー孤児 GC、ターンをまたぐメモリ継続性 | [EN](wiki/long-running-tasks/README.md) · [ZH](wiki/long-running-tasks/README.zh.md) · [JA](wiki/long-running-tasks/README.ja.md) · [KO](wiki/long-running-tasks/README.ko.md) |
+| **Token Guard** | 両 LLM の 200K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](wiki/token-guard/README.md) · [ZH](wiki/token-guard/README.zh.md) · [JA](wiki/token-guard/README.ja.md) · [KO](wiki/token-guard/README.ko.md) |
 | **Plan Mode** | Plan-Then-Execute：読み取り専用の設計、計画の承認ゲート、リビジョン結び付けの再提出ループと変更予算 | [EN](wiki/plan-mode/README.md) · [ZH](wiki/plan-mode/README.zh.md) · [JA](wiki/plan-mode/README.ja.md) · [KO](wiki/plan-mode/README.ko.md) |
 | **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング、message 行のターン識別子 | [EN](wiki/context-governance/README.md) · [ZH](wiki/context-governance/README.zh.md) · [JA](wiki/context-governance/README.ja.md) · [KO](wiki/context-governance/README.ko.md) |
 | **ストリーム復元** | ターン途中の WebSocket 復元：スナップショット + ターンごとの `seq` 水位、再送なし、重複なし、ツール呼び出しは trajectory ledger に保持 | [EN](wiki/stream-recovery/README.md) · [ZH](wiki/stream-recovery/README.zh.md) · [JA](wiki/stream-recovery/README.ja.md) · [KO](wiki/stream-recovery/README.ko.md) |
-| **ターン実行履歴の折りたたみ** | 完了したターンはツール/推論履歴を 1 行の要約に折りたたみ、最終回答は常に表示。実行中/中断ターンは線形のまま | [EN](wiki/turn-fold/README.md) · [ZH](wiki/turn-fold/README.zh.md) · [JA](wiki/turn-fold/README.ja.md) · [KO](wiki/turn-fold/README.ko.md) |
 | **File Safety** | アトミック書き込み、二層 CAS、パス単位とプロセス間のロック、`write_file` の読み取り先行ライセンス（ライセンスを与えた読み取りを圧縮が捨てた時点で失効します）、そしてマージがインターフェース単位の変更を報告する隔離サブエージェントワークスペース | [EN](wiki/file-safety/README.md) · [ZH](wiki/file-safety/README.zh.md) · [JA](wiki/file-safety/README.ja.md) · [KO](wiki/file-safety/README.ko.md) |
 | **ツール並列安全** | バッチ対応 ToolNode：同一ファイルの読み書きを順序付け、異なるパスは並列、プロセス/セッションのリソースロック | [EN](wiki/tool-parallel-safety/README.md) · [ZH](wiki/tool-parallel-safety/README.zh.md) · [JA](wiki/tool-parallel-safety/README.ja.md) · [KO](wiki/tool-parallel-safety/README.ko.md) |
 
@@ -367,14 +367,13 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 
 | 変数 | 必須 | 説明 |
 | :------- | :------- | :---------- |
-| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 汎用推論スイッチ。プロバイダーごとにマッピング（DeepSeek / OpenAI / GLM / Anthropic） |
 | `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
 | `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
-| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
-| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
+| `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
+| `TASKFLOW_LLM_*` | — | TaskFlow の決定モデル（plan / replan / ステップ判定 / 目標達成判定）。Provider と API Base が空なら `AUXILIARY_LLM_*` に従い、ローカルモードは補助モデルの GGUF を再利用。`TASKFLOW_LLM_MAX_TOKEN` は 200000 (200K) 以上が必要 |
 | `COMPRESSION_LLM_*` | — | 圧縮モデル(LLM 要約)。メモリレビューは `MAIN_LLM`、計画抽出は `AUXILIARY_LLM_*` を使用。Provider と API Base が空なら `AUXILIARY_LLM_*` に従う |
-| `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
 | `MODEL_PRICING_TABLE` | — | セッション予算のコスト推定用 USD/1M token 価格表（ユーザー編集可能な JSON オブジェクトを JSON 文字列として保存。provider 直返コストとローカル litellm キャッシュがフォールバック） |
@@ -390,7 +389,7 @@ uv sync   # .venv を作成し、uv.lock の依存関係を正確にインスト
 - **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
 - **リランカーモデル**：`.models` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
 - **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
-- **進捗付きの事前ダウンロード**：「模型配置」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、スロットルされた `model_download_updated` WebSocket フレームを受信し、パネルを開いた時や再接続時に `GET /model-downloads/status` のスナップショットを 1 回取得して、未完了の `.part` ファイルから中断した転送を再開します。
+- **進捗付きの事前ダウンロード**：「モデル設定」パネルの内蔵ローカル項目（埋め込み、リランカー、ITTT / VTTT、補助モデル）にはダウンロードボタンとリアルタイム進捗バーがあり、スロットルされた `model_download_updated` WebSocket フレームを受信し、パネルを開いた時や再接続時に `GET /model-downloads/status` のスナップショットを 1 回取得して、未完了の `.part` ファイルから中断した転送を再開します。
 
 > 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
 

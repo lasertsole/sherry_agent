@@ -127,7 +127,7 @@ pub struct DownloadProgress {
 }
 
 impl DownloadProgress {
-    fn new(downloaded: u64, total: u64) -> Self {
+    pub(crate) fn new(downloaded: u64, total: u64) -> Self {
         let percent = if total > 0 {
             ((downloaded.min(total) * 100) / total) as u8
         } else {

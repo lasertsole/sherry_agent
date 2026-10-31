@@ -106,3 +106,42 @@ async def test_run_task_rejects_malformed_file_deps(isolated_db: Path):
     flow = await store_sqlite.get_flow(_FLOW, _SESSION)
     assert flow is not None
     assert len(flow["state"]["steps"]) == 1
+
+
+@pytest.mark.parametrize(
+    "depends",
+    [
+        # two-node cycle
+        {"step-1": ["step-2"], "step-2": ["step-1"]},
+        # self-reachable cycle through a chain (self-edge is caught earlier)
+        {"step-1": ["step-3"], "step-2": ["step-1"], "step-3": ["step-2"]},
+    ],
+)
+def test_a_dependency_cycle_is_refused(depends: dict[str, list[str]]):
+    """P3-9: a cycle must be refused at creation, not discovered by a dead scheduler.
+
+    ``depends_on`` is what unlocks a step, so a cycle means no member ever
+    becomes ready: the flow would sit active until the inactivity sweep fails
+    it — the plan is malformed, and the answer names the loop.
+    """
+    steps = [
+        {"step_id": sid, "task": f"do {sid}", "depends_on": deps, "status": "ready"}
+        for sid, deps in depends.items()
+    ]
+
+    error = validate_steps_list(steps)
+
+    assert error is not None and error.startswith("Error: dependency cycle")
+    assert "step-1" in error
+
+
+def test_a_diamond_is_not_a_cycle():
+    """Shared prerequisites are the normal DAG shape and must stay legal."""
+    steps = [
+        {"step_id": "a", "task": "a", "depends_on": [], "status": "ready"},
+        {"step_id": "b", "task": "b", "depends_on": ["a"], "status": "ready"},
+        {"step_id": "c", "task": "c", "depends_on": ["a"], "status": "ready"},
+        {"step_id": "d", "task": "d", "depends_on": ["b", "c"], "status": "ready"},
+    ]
+
+    assert validate_steps_list(steps) is None

@@ -41,7 +41,15 @@ _FALLBACK_DEFAULT: dict[str, float] = {"input": 0.5, "output": 1.5}
 
 
 def _normalized_entry(value: object) -> dict[str, float] | None:
-    """Validate one price entry ``{"input": x, "output": y}``."""
+    """Validate one price entry ``{"input": x, "output": y[, "cache_read", "cache_write"]}``.
+
+    The two cache prices are OPTIONAL and mean "USD per 1M cached tokens": a
+    read of a cached prefix (~0.1x input on Anthropic) and a write into the
+    cache (~1.25x for the 5-minute TTL, ~2x for 1 hour). Omitting them prices
+    cached tokens at the plain input rate, which is exactly the pre-existing
+    behaviour — an existing table gains accuracy only when the operator adds
+    the fields, never a silently invented discount.
+    """
     if not isinstance(value, dict):
         return None
     try:
@@ -51,7 +59,18 @@ def _normalized_entry(value: object) -> dict[str, float] | None:
         return None
     if input_price < 0 or output_price < 0:
         return None
-    return {"input": input_price, "output": output_price}
+    entry: dict[str, float] = {"input": input_price, "output": output_price}
+    for key in ("cache_read", "cache_write"):
+        raw = value.get(key)
+        if raw is None:
+            continue
+        try:
+            price = float(str(raw))
+        except (TypeError, ValueError):
+            continue
+        if price >= 0:
+            entry[key] = price
+    return entry
 
 
 def _load_pricing_table(raw: str | None = None) -> dict[str, dict[str, float]]:

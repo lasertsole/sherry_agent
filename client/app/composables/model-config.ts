@@ -18,7 +18,7 @@ function invalidModelConfig(): ModelConfig {
   return {
     main_max_token: null,
     aux_max_token: null,
-    min_required: 131072,
+    min_required: 200000,
     valid: false
   };
 }

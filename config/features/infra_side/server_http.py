@@ -101,15 +101,14 @@ SERVER_HTTP: ServerHttpConfig = {
     # wins, so it must stay in step with the block order of the tracked .env and
     # the .models.example / .network.example templates —
     # the chat model first, then the auxiliary model it delegates simple work to,
-    # then the reasoner. The trailing entries double as the group order for the
-    # network.jsonc groups (GET /network-config): the browser feature's switches
-    # and LangSmith tracing render after the model families.
+    # then TaskFlow / compression. The trailing entries double as the group order
+    # for the network.jsonc groups (GET /network-config): the browser feature's
+    # switches and LangSmith tracing render after the model families.
     "env_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
         "TASKFLOW_LLM_",
         "COMPRESSION_LLM_",
-        "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
         "TTI_",
@@ -128,7 +127,6 @@ SERVER_HTTP: ServerHttpConfig = {
         "AUXILIARY_LLM_",
         "TASKFLOW_LLM_",
         "COMPRESSION_LLM_",
-        "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
         "TTI_",
@@ -137,7 +135,7 @@ SERVER_HTTP: ServerHttpConfig = {
         "STT_",
     ),
     #: Prefixes the env-config payload WITHHOLDS from its panel because a
-    #: DEDICATED surface owns them (the 模型联网 tab edits the search backends
+    #: DEDICATED surface owns them (the Web Search tab edits the search backends
     #: through PUT /network-config and reads them from
     #: GET /sessions/search_backend): a second editor would only be a second way
     #: for the two to drift. Writes stay allowed — only the display is withheld.

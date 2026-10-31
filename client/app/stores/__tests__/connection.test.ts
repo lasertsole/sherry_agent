@@ -38,6 +38,11 @@ vi.mock('~/composables/ws', () => ({
   closeWs: vi.fn(),
   isSessionWsOpen: vi.fn(() => wsState.readyState === 1)
 }));
+// The undecided-state health probe (GET /health) — default: never resolves, so
+// a watch started by an unrelated case stays inert until a probe case drives it.
+const healthBridge = vi.hoisted(() => ({ checkHealth: vi.fn() }));
+vi.mock('~/composables/bridge/health', () => healthBridge);
+
 vi.mock('~/composables/toast', () => ({
   registerToastApi: vi.fn(),
   toastInfo: vi.fn(),
@@ -70,6 +75,7 @@ function simulateWsClosed(): void {
 describe('stores/connection 连通性监控（事件驱动）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    healthBridge.checkHealth.mockReturnValue(new Promise(() => {}));
     simulateWsClosed();
     _setClientFlag(true);
     setActivePinia(createTestingPinia({ stubActions: false }));
@@ -223,6 +229,34 @@ describe('stores/connection 连通性监控（事件驱动）', () => {
     expect(mockToastWarn).not.toHaveBeenCalled();
   });
 
+  it('WS 无判决时 checkConnectivity 用 /health 探测兜底', async () => {
+    // Undecided state (unknown) + no socket: the probe decides.
+    healthBridge.checkHealth.mockResolvedValueOnce({ healthy: true, message: 'ok' });
+    await store.checkConnectivity();
+    expect(store.backendStatus).toBe('ok');
+    expect(healthBridge.checkHealth).toHaveBeenCalledTimes(1);
+
+    store._resetStateForTest();
+    healthBridge.checkHealth.mockResolvedValueOnce({ healthy: false, message: 'HTTP 503' });
+    await store.checkConnectivity();
+    expect(store.backendStatus).toBe('down');
+    store._resetStateForTest(); // leave no status residue for later cases
+  });
+
+  it('已有判决的 down 不被探测覆盖（WS 事件是唯一仲裁）', async () => {
+    // A verdicted down state stays down even if the probe would say healthy:
+    // the reconnect loop's socket evidence outranks a one-shot HTTP answer.
+    simulateWsOpen();
+    await store.checkConnectivity(); // ok, via readyState
+    simulateWsClosed();
+    await store.checkConnectivity(); // down, via readyState (a verdict now exists)
+    healthBridge.checkHealth.mockResolvedValueOnce({ healthy: true, message: 'ok' });
+    await store.checkConnectivity();
+    expect(store.backendStatus).toBe('down');
+    expect(healthBridge.checkHealth).not.toHaveBeenCalled();
+    store._resetStateForTest();
+  });
+
   it('重复 start 幂等：不重复初始化单例、不叠加订阅', () => {
     store.startConnectionWatch();
     store.startConnectionWatch();
@@ -259,7 +293,15 @@ describe('connection bannerState', () => {
 
     emit('ws:disconnected', undefined);
 
-    expect(store.backendStatus).toBe('unknown');
+    // Self-contained: subscribe the freshly mounted store instead of asserting
+    // on a stale instance left over by an earlier describe block (which made
+    // this case order-dependent — and undefined in isolation).
+    const fresh = mount(true, 'unknown');
+    fresh.startConnectionWatch();
+    emit('ws:disconnected', undefined);
+
+    expect(fresh.backendStatus).toBe('unknown');
+    fresh.stopConnectionWatch();
   });
 
   it('reports a dead socket as the backend, even when the browser hint says offline', () => {

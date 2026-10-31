@@ -17,6 +17,7 @@ uv run --no-sync pytest tests/ -m "not llm_e2e" --cov=agent --cov=server --cov=c
   --cov=pub --cov=runtime --cov=workspace --cov-report=term-missing   # coverage report (single process; use run_tests_split.py -- --cov-append for the gate grouping)
 uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
 uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
+uv run --no-sync python scripts/check_doc_language.py # docs carry their own language (en: no CJK; ja/ko: no Simplified-only)
 uv run --no-sync python scripts/dev/mock_searxng.py 8888  # throwaway SearXNG stand-in (the exercise-the-fallback instance)
 uv run --no-sync lint-imports                        # import-linter contract check
 uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
@@ -41,12 +42,12 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py`         | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`)                                                                                   | `agent/trajectory_events.py`                         |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events                                                                             | `server/service/trajectory_store.py`                 |
 | `config/`                            | Centralized configuration (paths, features TypedDicts, schema, settings)                                                                                                             | `config/__init__.py`                                 |
-| `config/features/`                   | Per-object feature config (82 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
+| `config/features/`                   | Per-object feature config (87 TypedDicts)                                                                                                                                            | `config/features/__init__.py`                        |
 | `server/`                            | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils)                                                                                                                        | `server/__main__.py`                                 |
 | `context_engine/`                    | Memory engine (MesMemory SQLite + curator)                                                                                                                                           | `context_engine/store/db.py`                         |
 | `workspace/`                         | Live persona files (gitignored; templates in `workspace/template/`)                                                                                                                  | `workspace/prompt_builder.py::build_system_prompt()` |
 | `pub/`                               | Shared utilities (message pipeline, retry, validators)                                                                                                                               | `pub/func/message/`                                  |
-| `models/`                            | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
+| `models/`                            | LLM/model wrappers (main, auxiliary, vision, embed, reranker)                                                                                                              | `models/LLMs/main_llm.py`                            |
 | `runtime/`                           | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py`                  |
 | `runtime/hooks.py`                   | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server`                          | `runtime/hooks.py`                                   |
 | `runtime/data_provider.py`           | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent`                  | `runtime/data_provider.py`                           |
@@ -62,6 +63,18 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 ```
 User message → Robyn WS → agent.core.built_agent() graph
   │
+  │    (A HEADLESS turn — cron / auto-turn / a system-injected carrier — has no
+  │     operator: `resolve_turn_operator` returns None and the approval gates
+  │     auto-deny. The tools that call `interrupt()` THEMSELVES bypass those
+  │     gates, so each now refuses instead of suspending: `question` declines,
+  │     `exit_plan_mode` returns an error telling the model to stop, the
+  │     sherry-self-file approval fails closed, and the generic `interrupt_on`
+  │     strategy plus the sandbox-bypass path deny with `NO_OPERATOR_MESSAGE`.
+  │     The predicate is `no_operator_in_scope()` — an EXPLICIT empty scope, not
+  │     "no scope at all" (a unit test or an auxiliary graph keeps the old
+  │     suspend-and-wait behaviour). Boot rebuilding the flag for a session
+  │     whose graph is still suspended lives in `server/service/boot_recovery.py`,
+  │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
@@ -180,6 +193,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ lanes: runtime/lane/lane_slot() gates every dispatch point —
   │    MAIN(turn) / SUBAGENT(child) / NUDGE(memory) / NESTED(sessions.send)
+  │    (the SUBAGENT lane ALSO sits behind the load gate, below)
   │
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
@@ -193,6 +207,20 @@ User message → Robyn WS → agent.core.built_agent() graph
      session_key (`agent/tools/subagent/tools/sessions_messages.py`, token-
      budgeted, spawner-only)
 
+     Result-text caps scale with the serving model's output budget
+     (`agent/tools/subagent/output_caps.py`): the stored result (24000 B),
+     delivery (4000 chars), summary (2000), judge view (8000) and transcript
+     read (4000/500 tokens) are calibrated at an 8000-token output window. A
+     configured `*_MAX_OUTPUT_TOKEN=W` multiplies each by `W/8000` (8192 →
+     ×1.024), while an unset value keeps the legacy numbers exactly. A
+     per-role model profile carries its OWN `max_output_tokens` (decimal
+     string, default 8192, min 8K) and that value is used both for the child's
+     request and for these result caps — it no longer follows the MAIN env
+     budget. Tier and depth-role children read the MAIN/AUXILIARY env cap. The
+     effective limit is resolved at spawn and frozen on the run's
+     `max_output_tokens`; completion, delivery, announcement, the completion
+     judge and `sessions_messages` all read it.
+
      Checkpoint retention is latest-only per thread: a child's
      `_release_child_resources` prunes its thread to the newest top-level
      checkpoint + its writes (tools/model namespaces dropped), and a main
@@ -203,11 +231,34 @@ User message → Robyn WS → agent.core.built_agent() graph
      `init_registry()` a boot sweep deletes every orphan subtree whose root main
      session or parent run is gone, in one fail-open pass.
 
+     A restart is a STATE TRANSITION, not a no-op (`registry/state.py`). No task
+     survives it, so a restored RUNNING run is terminalized as a TIMEOUT with
+     `pause_reason=process_restart` / `ended_reason=process_restarted` (leaving
+     it RUNNING made every liveness reader — the WAITING-flow sweep, orphan
+     recovery, `should_keep_child_link` — believe the child was alive), and its
+     delivery stays PENDING for the sweeper's undelivered scan
+     (`_scan_undelivered_terminal_runs`, throttled to one sweep interval,
+     idempotent through the announce flow), which is how the owning step learns
+     instead of staying DISPATCHED. Every persisted monotonic timestamp is
+     REBASED onto the restore point (`_rebase_restored_clock`):
+     `time.monotonic()` is process-relative, so an old value can read as hours
+     old or as a future time and silently disable each `now - timestamp` expiry
+     check; `archive_at` is a deadline and gets a fresh window rather than being
+     rebased to "now" (which would archive on the first sweep). Killing an
+     INTERRUPTED run also releases its per-session guard state
+     (`release_child_session_state`) — there is no live child agent whose
+     `finally` would.
+
      Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
-     reviewer / librarian) may only spawn its own functional role (same role =
-     same tool allow-list; MAIN and general stay unrestricted), so a read-only
-     researcher cannot hire a write-capable executor — the refusal names the
-     way out and `functional_role` rides on the tool for a same-role fan-out
+     reviewer / librarian) may only spawn roles on its allow-list
+     (`SPAWN_ALLOWED_CHILD_ROLES`, types/functional_role.py) — its own role
+     plus, for an executor, the READ-ONLY researcher / librarian, so it can
+     research before it writes; an absent entry means same-role only, MAIN and
+     general stay unrestricted, and the allow-list only ever adds read-only
+     roles — that single-hop rule is what keeps multi-hop safe (a write role
+     reaches only write roles), so a read-only researcher still cannot hire a
+     write-capable executor. The refusal names the allowed set and the way out,
+     and `functional_role` rides on the tool for a same-role fan-out
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
@@ -246,17 +297,50 @@ User message → Robyn WS → agent.core.built_agent() graph
       the writer's own session is marked separately); at taskflow_flow(action="finish") the regression gate replays the flow's
       passed verification commands once (allowlisted, no shell, capped) and
       writes broken / unmark events, so a cross-file regression is confirmed
-      while a false-positive stale is cleared; read side derives
+      while a false-positive stale is cleared — a rewriting formatter cannot be
+      replayed at all (`black`/`prettier`/`ruff format` need `--check`/`--diff`;
+      a bare invocation used to REWRITE files outside the license/CAS stack) — the replay allowlist is the code
+      defaults PLUS `regression_gate_allowed_executables` from sherry.jsonc (the
+      `yolo_deny_paths` list-setting pattern: consumer owns the defaults, user
+      entries merge per call, so a new toolchain is a config line, not a code
+      change; only the replay gate reads it, and the list API at
+      `GET|PUT /sherry-config/list/<key>` accepts only the registered keys —
+      `LIST_SETTING_KEYS` in `config/sherry_settings.py` — validating every entry
+      for lowercase/no-shell-metacharacters/bounds, with the built-in defaults
+      never removable); read side derives
       broken/stale using the exact `modified_files` set, falling back to the
       command substring for legacy rows (evidence_collector.py)
     · taskflow_flow(action="finish") gates A–C — DAG completeness, no unresolved steps
       (blocked/failed/skipped/cancelled are reported by id with their reason),
-      the flow's AGGREGATED evidence (every dispatched step's child session +
-      the creator's; rows carry a session key, never a flow id) carrying no
-      FAIL/[stale]/[broken], then Gate E's goal judge (only for a flow with a
-      description and at least GOAL_GATE["min_steps"] = 3 steps)
+      the flow's evidence read by `flow_id` FIRST (step children are stamped at
+      spawn; finish temporarily stamps the creator's `StateKey.FLOW_ID` and
+      restores it in `finally`, so replay/creator rows carry the flow; stale /
+      broken / unmark events auto-stamp from the target session's flow context)
+      carrying no FAIL/[stale]/[broken]. A restart empties that read — the
+      stamp is memory-only — so an EMPTY flow-scoped result falls back to the
+      flow's OWN sessions (its step children plus the creator, never the whole
+      session), which is the only way evidence that still exists can gate the
+      finish. Then Gate E's goal judge (only for a flow with a description and
+      at least GOAL_GATE["min_steps"] = 3 steps)
+    · TaskFlow state-machine guards — `validate_steps_list` refuses a
+      `depends_on` CYCLE at create/update time (depth-first over the
+      already-validated id graph, so an A→B→A plan cannot pin a flow until the
+      inactivity sweep); `mark_flow_superseded` BUMPS `expected_revision`
+      (superseding makes the predecessor terminal, so a writer holding the
+      pre-supersede revision must lose its CAS, not resurrect a cancelled
+      flow); the stale-WAITING marker writes its payload with
+      `touch_updated_at=False` (that column is the inactivity clock the sweep
+      itself reads); `_auto_fail_finish` KILLS the detached children under
+      `TASKFLOW_INFRA["auto_kill_on_detach"]` (a failed flow can never collect
+      their results, so a live child only holds a lane), fail-open per child;
+      and a run that ended TIMEOUT/KILLED auto-resumes its step with
+      `step_outcome="failure"`, so the step fails instead of being marked done
+      with an empty result and unlocking its dependents
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
-      drained completion carriers when the session lacks passing evidence
+      drained completion carriers when the session lacks passing evidence; a
+      `[stale]` or `[broken]` row counts as "lacks" (the same marks the finish
+      gates read), so a child whose work a later write invalidated cannot drain
+      as if it were verified
 ```
 
 ## Queued User Input (`server/service/input_queue_service.py`)
@@ -279,10 +363,83 @@ Each queued row is manageable from the client (`cancel_queued` / `edit_queued` /
 `send_now` frames → `queued_cancelled` / `queued_updated` / `send_now_ack`
 `{event, session_id, msg_id, ok}` acks): cancel voids a `QUEUED` row (a
 `CLAIMED` one is already inside a turn and is refused), edit rewrites only a
-`QUEUED` payload, and `send_now` re-stamps `created_at` below the session
-minimum **before** cancelling the running turn — the cancel-triggered drain then
-claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
-single ordering rule; there is no priority column).
+`QUEUED` payload, and `send_now` stamps the row's `priority` to 1 **before**
+cancelling the running turn — the cancel-triggered drain then claims the
+prioritised row first (`claim_next`'s `ORDER BY priority DESC, created_at ASC`
+stays the single ordering rule; the row keeps its real `created_at`).
+
+## Interrupted-Answer Continuation & Message Edit (`server/service/resumable_breakpoint.py`)
+
+Two chat-row actions on the SAME per-session agent socket: **继续生成** (resume an
+interrupted pure-text answer) and **编辑消息** (rewrite a sent user message and
+re-run that turn). Both are additive WS frames; both fail open with one ack.
+
+**Continue.** The cancel / heartbeat-timeout path already heals the checkpoint
+and writes an `[interrupted] {partial}` marker (`interrupt_marker.py`). What was
+missing was identity: `_record_resumable_breakpoint` (in `server/service/messages.py`)
+stores `StateKey.RESUMABLE_BREAKPOINT` — mem + DB dual-write, like the token
+budget counters — as `{marker_id, partial_text, reason, at_turn_id, turn_seq,
+is_reasoning_only}`, and ONLY when the write was fresh (`wrote_checkpointer`),
+`healed_calls == 0` (a dangling tool call needs a rerun/skip decision this MVP
+does not make) and the turn produced visible text or reasoning. `turn_seq` is
+the human-message count the marker id was derived from — the validation
+fingerprint. `StreamDriver` adds an additive `resumable` boolean to `stopped`
+(the cancel path and the WS stop ack) and to `done` (a heartbeat timeout ends
+the turn NORMALLY, so the button must not need a `stopped` frame).
+
+A new turn clears the breakpoint: `_GenerateTurn.__init__` (all generation turns,
+the queue drain, the auto turn) and `_ResumeTurn.__init__` (HITL resume), gated
+by the class flag `_clears_resumable_breakpoint` so `_ContinueTurn` keeps it for
+itself. The client's `stopped`/`done` handler cannot rely on `streamingTurn` —
+the user's own Stop clears it before any frame arrives — so the `ws:resumable`
+handler falls back to the transcript's tail row.
+
+`continue_generation` (WS frame) VALIDATES before streaming: no live task
+(`busy`), breakpoint present and still the trailing marker with a matching turn
+count (`stale`, which also drops it). Then `_ContinueTurn(_GenerateTurn)` runs
+with `_is_continuation = True`: `_prepare` re-validates against the live
+transcript, CONSUMES the breakpoint (one shot), rewrites the marker to the clean
+partial text through `agent/state_port.py::restore_interrupt_marker` (same id →
+`add_messages` upsert; refuses an absent id instead of appending) and picks
+`_REASONING_ONLY_PROMPT` from `is_reasoning_only`. The rest is the existing
+max-tokens continuation: the injected prompt is a `HumanMessage` tagged
+`metadata={"internal": True, "provenance": "continuation"}`, and
+`message_persistence._is_persistable` filters that provenance so the prompt
+never shows up as a user row (this was pre-existing max-tokens behavior too).
+A cancelled continuation writes its own breakpoint through the inherited cancel
+hooks (the continuation prompt advances `turn_seq`, so the next marker id
+differs). The client sends `continue_generation`, reads the ack
+(`ok`/`busy`/`stale` → toast + hide + history reload), appends the chunks to the
+interrupted row (stripping the marker prefix locally) and lets `done` reload
+history — after which the persisted marker row and the continuation row are two
+rows (accepted; MesMemory is append-only).
+
+**Edit.** `edit_message {turn_num, new_text, msg_id, row_id?}` is refused while
+`detect_state(session_id).busy` (a live turn or a pending approval owns the
+transcript). `context_engine.store.core.find_user_turn_cut` maps the clicked
+row to `(ordinal, cut_turn_num)`: `origin = 'user'` human rows only, so the
+ordinal matches the checkpoint's human count while `cut_turn_num` is the
+persisted BATCH number — they are NOT the same thing (`add_messages` starts a
+new `turn_num` per persistence batch, so one user turn spans several numbers).
+`agent/state_port.py::truncate_messages_after_turn` then removes that ordinal's
+human message and everything after it from the live checkpoint through
+`RemoveMessage` (the checkpoint is pruned to latest-only, so history rewind is
+not available), counting turns over non-`metadata.internal` humans (reminder
+blocks / notices belong to the turn that follows them); `-1` = the turn was
+compacted away (`compacted`, never a silent partial truncation).
+`store.core.delete_messages_from_turn` hard-deletes `turn_num >= cut` and
+re-points `session_leafs` at the previous turn (first turn → leaf cleared), so
+the re-run's batch reuses the edited turn's number. The edited text is then
+re-submitted through `submit_user_input` with a FRESH `msg_id` (the old one is
+tombstoned by the dedupe) — the normal `turn_started`/`chunk`/`done` flow
+follows, and only failures ack (`edit_message_ack`). The client truncates
+`chatMessages` at that turn, appends an optimistic user/AI pair with the SAME
+turn number, and purges the Dexie cache from that turn on
+(`clearCachedMessagesFromTurn`) — without that purge the local cache merge
+resurrects the deleted rows on the next history load. Edit mode is entered from
+the bubble's pencil (persisted user rows only), prefills the composer
+(`setDraftText`), shows a banner and routes the composer's send to `handleEdit`;
+Esc cancels.
 
 ## Chat Selection Quote & Side Session (`ChatBox.vue` / `SideChatPanel.vue`)
 
@@ -319,7 +476,11 @@ works.
   so the child's visible history holds only its own new turns. The fork is cut
   at the parent's last completed assistant answer, so a dangling tool call (a
   pending HITL approval or an interrupted run) is never replayed into the
-  child. The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
+  child. Creation is IDEMPOTENT: an optional `client_request_id` in the POST
+  body — the same (parent, key) pair answers the SAME child with
+  `deduplicated: true` instead of a second complete fork (the client reuses one
+  key per parent for 30 s, so a re-click after a lost response cannot duplicate).
+  The link lives in `src/data/side_chats.db` (`fork_mode=1`; older text-
   snapshot links keep the bounded fallback) and the child appears in the normal
   session list as an ordinary session (its visible history still starts empty),
   so a closed panel is recoverable by reopening it. `createSideChatSession`
@@ -362,6 +523,98 @@ works.
   `forgetSession` drops a deleted session's tabs and recent entries.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
+
+**会话分支 / Branch (`fork_turn_num`).** A branch is the same fork machinery
+with its fork point parameterized. `POST /sessions/side_chat` accepts an
+optional `fork_turn_num`; the link table stores it, and an older
+`side_chats.db` gains the missing columns on first connect (additive
+`ALTER TABLE` guarded by a PRAGMA check — the VERY first release lacked
+`client_request_id` too, and a file without it 500'd every side-chat request
+with "no such column", live-verified; old rows read NULL = the legacy "last
+completed answer" point). `create_side_chat` validates it (int >= 1; a bool is
+not a turn) and answers it back, dedupe included. The incoming number is the
+clicked AI row's PERSISTED `turn_num`, which is a per-BATCH number — one user
+turn spans several batches (user=1, tool=2, answer=3) — while the checkpoint
+cut counts USER turns; `create_side_chat` therefore translates it with
+`context_engine.store.core.find_user_turn_cut` (the message edit's own helper)
+BEFORE storing it, and an unresolvable row (compacted away) degrades to the
+legacy cut. Storing the raw batch number silently misses the checkpoint and
+falls back to the full text snapshot (live-verified: the child then answered
+with the parent's SECOND turn too). `_history_up_to_turn` cuts the parent
+checkpoint after turn N's last call-less AI answer, counting NON-internal
+`HumanMessage`s —
+reminder blocks and workspace notices belong to the turn that follows them, so
+the count matches the client's `turn_num`. A turn cut off mid-tool has no safe
+answer boundary, so the cut stops BEFORE that turn's work instead of replaying
+the parent's dangling tool call; a compacted turn yields an empty cut and falls
+back to the bounded text snapshot. `fork_turn_num=None` keeps a quote side chat
+byte-for-byte. The UI entry is the AI bubble's 分叉 button (hover, beside copy;
+emits the row's turn number) — unlike a quote side chat it opens no panel: the
+page creates the child and `router.push`es to it. It is hidden while a turn
+streams (the parent checkpoint must be settled) and inside a child session
+(`GET /sessions/side_chat/link` once per session load; the server refuses a side
+chat parenting another, so a fork cannot be forked). The client's idempotency
+key is scoped per CREATION (`sidechat:<parent>[:fork:<turn>]`, 30 s reuse
+window), so forking two turns never collapses into one child. The left sidebar
+marks branched rows from ONE bulk read (`GET /sessions/side_chat/links`) and the
+branch badge navigates back to the parent; a branch child's visible history
+starts empty exactly like a side chat's (the inherited transcript is model-only).
+
+## Live-Stream Safety Filter (`agent/middlewares/safety_filter/`)
+
+Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE through an mtime cache — the 系统配置 → 直播安全 tab flips them from a switch, so the cache is one `stat` in the steady state). The app ships **no word list**: the rules file (`safety_filter.keyword_file`, inside the workspace) is operator-maintained, because choosing one is a legal decision this project does not make.
+
+- **Rules** (`rules.py`): `{pattern, type: exact|contains|regex, action: block|replace|warn, scope: input|output|both, replacement}`; validated (count / pattern / replacement caps, regex compiles) before writing, compiled with an mtime cache so an edit applies without a restart, and fail-open (a broken file reads as no rules).
+- **Input** (`InputSafetyFilter`, `awrap_model_call`): a `block` hit returns `safe_refusal_message` WITHOUT calling the provider; `warn`/`replace` pass through and only notify (the input side never rewrites the user's own text).
+- **LLM review** (`LLMModerationMiddleware`, inner to the keyword filter so a keyword block never pays for it): needs ALL THREE of the master switch, a non-`off` strategy (`on_keyword_hit` / `always`) and a model name — `safety_filter.llm_moderation_model` EMPTY keeps the review off whatever the strategy says, and the tab's switch is disabled until one is typed. The call reuses the auxiliary family's provider/credentials with the name overridden (`build_auxiliary_llm(model_name=…)`) and FAILS OPEN: timeout (20 s), request failure or an unparseable verdict lets the turn through.
+- **Output** (`OutputSafetyFilter`, `aafter_model`): registered between `LLMRetry` and `Summarization`, so the reverse `after_model` chain runs it BEFORE `MessagePersistence` stores the row — `block` replaces the whole answer, `replace` substitutes the hit, `warn` only reports; the row is upserted with the same message id.
+- **Streaming** (`stream_guard.py::StreamTextGuard`): holds the last `stream_buffer_window` (20) characters and releases ONLY scanned text. A `block` anywhere in the buffer latches (buffered text dropped, the replacement notice emitted once), a `replace` ending inside the releasable prefix is substituted, one the release point would cut in half holds the release back. A pattern longer than the window can only complete in the tail, so at most `len(match) - 1` characters can be visible before the end-of-stream flush cuts. A streamed answer therefore never reaches `OutputSafetyFilter` — the guard scrubs chunks before they become frames, so the client and the persisted row agree (`StreamTurn._safety_guard`, re-armed per phase).
+- **Surface**: `GET|PUT /safety-filter/rules`, `POST /safety-filter/test`, `GET /safety-filter/log` (`server/trigger/http/safety_filter.py`); switches/model ride `PUT /sherry-config`. Every decision records one bounded per-session event and pushes a `safety_filter` WS frame; the client toasts it (block = error level). Tests: `tests/agent/middlewares/safety_filter/` + `SafetyFilterPanel.integration.test.ts`.
+
+## First-Run Onboarding (`OnboardingDialog.vue` / `use-app-flags.ts`)
+
+A four-step tour (welcome → preset → core controls → ready) shown once per INSTALL, not once per visit: the shell checks `onboarding_completed` at boot and the tour writes it on BOTH exits (开始使用 and 跳过). The flag lives in Dexie (`appFlags`, schema v6, via the `readAppFlag`/`writeAppFlag` wrappers) with a **localStorage mirror** that is read FIRST — a browser whose IndexedDB is blocked (hardened profile, private mode) would otherwise resurrect the tour on every entry, which is exactly the failure the mirror prevents; a failed write to either store never throws.
+
+`createSessionFromPreset` (`persona-catalog.ts`) is the ONE session-creation orchestration the tour and `NewSessionPresetDialog.confirm()` share (apply preset → bind preset → character snapshot → placeholder meta → `session:created` → `localePath('/home/<sid>')`); the caller injects `ensureCharacter` (the page's helper) so the catalogue module never imports a component. 跳过 records the flag and opens the ordinary preset dialog (the previous first-run behavior); a failed 开始使用 keeps the dialog open, shows the error and leaves the flag UNSET so the tour returns next boot. The dialog is not mask/Esc dismissable (no stray click can silently drop the user into an empty UI).
+
+## Keyboard Shortcuts (`use-shortcuts.ts` / `plugins/shortcuts.ts` / `ShortcutSettingsSection.vue`)
+
+One binding table (`SHORTCUT_BINDINGS`) declares every chord with its built-in default; the EFFECTIVE chord is `overrides[id] ?? default`, so a rebind needs no re-registration. Two scopes with different owners:
+
+- **composer** (`send-message` Enter, `history-prev`/`history-next` ↑/↓, `cancel-input` Esc): `inputBox.vue` carries ONE `@keydown.stop="onComposerKeydown"` and matches with `matchesBinding(event, id)` — the compile-time `.enter/.up/.down/.escape` modifiers are gone. A matching chord is `preventDefault`ed and dispatched; everything else FALLS THROUGH, which is what keeps Shift+Enter's native newline and typing intact (`@keydown.stop` without `.prevent`). The defaults reproduce the old modifiers byte-for-byte.
+- **global / navigation** (`command-palette` Ctrl+K, `find-in-conversation` Ctrl+Shift+F, `new-session` Ctrl+N, `toggle-sidebar` Ctrl+B): ONE document listener installed by `plugins/shortcuts.ts`, which also loads the overrides at boot. Each owner registers its ACTION with `registerGlobalHandler(id, fn)` — the shell owns palette/new-session/toggle-sidebar, a session page owns find-in-conversation (registered on activation, released on deactivation; the registry is last-writer-wins, and `unregisterGlobalHandler(id, fn)` only removes a handler its caller still owns, so a cached page cannot unhook the visible one).
+
+`ctrl` means the platform PRIMARY modifier: `comboFromEvent` folds Cmd into it, so one table serves macOS and Windows/Linux, and `formatCombo` renders ⌘⇧F vs Ctrl+Shift+F (the send button's tooltip is built from it, so it follows a rebind). Overrides persist in Dexie (`shortcuts` table, schema v5) as `{id, keys}` JSON; deleting the row restores the default.
+
+The UI is the **快捷键 tab of 菜单 → 系统配置** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "与 X 冲突，未保存") and the row stays in capture.
+
+Not migrated on purpose: component-local `@keydown` on list items / overlays (they are internal UI interactions, not user-rebindable commands) and `BrowserPanel`'s CDP key forwarding.
+
+## In-Conversation Search (`use-conversation-find.ts` / `ConversationFindBar.vue`)
+
+Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED transcript (`chatMessages`), never the DOM: a turn's tool cards and intermediate text sit folded behind the final answer, and virtual rows outside the window are not mounted at all, so the in-memory list is the only complete view of what the reader can reach. Matching is plain case-insensitive substring per message with one entry per OCCURRENCE (a message may hold several), stepping wraps at both ends, and a query with no hits reads `0/0` with a red box and disabled arrows — an empty query cannot throw. The scan is debounced 300 ms in ChatBox, not in the bar: the bar's input must stay instant while the walk is O(N) over up to `MAX_LOADED_ROWS` (400) rows.
+
+- The bar (`components/chat/ConversationFindBar.vue`) is a controlled view: query, matches and index belong to `useConversationFind`; the bar owns only its draft string and focuses/selects itself on open. It is absolutely positioned over the list so opening it never re-flows a single virtual row.
+- The PAGE owns the gesture (`index/[sid].vue::onFindKeydown`, window listener): every KeepAlive-cached session keeps a ChatBox mounted, so a per-instance listener would open a bar in a session the reader cannot see — the handler answers only while the page's `isActive` is true. ChatBox exposes `openFind()`; Enter/Shift+Enter and the arrows step, Esc closes and forgets the query.
+- A jump (`revealMessage`) does what `scrollToMessage` already did (scroll the row in, ring it for 2.4 s) plus two things it needed: it expands the target turn's FOLD (`expandedTurnHistory.add(fold.key)` — otherwise a match in folded history would be ringed on a row the fold hides) and it expands the target tool card. The ring is drawn on the message BUBBLE as well (`ring-2 ring-theme-main/50`): `focusedMessageId` used to have a visible effect on tool cards only, so a text match in an answer would have landed with no marker at all.
+- A match in a row the memory cap already RELEASED is not in `chatMessages` any more: `jumpToMatch` therefore asks the page for `resetExhausted()` + `loadOlderHistory()` once and retries; no row growth ⇒ give up (the occurrence no longer exists anywhere the reader can scroll to).
+- Labels are the central `chatFind.*` keys (four languages). Deliberately NOT done: regex, cross-session search, searching tool args/results, and the plan's advanced full-text `<mark>` highlighting (markdown output makes DOM text-node mapping non-trivial) — the MVP marks the current match by the ring alone.
+
+## Floating Conversation Column (`index.vue` / `common/floating-window.ts` / `stores/chat-float.ts`)
+
+The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit 恢复原样 button. While the window is out, BOTH sidebar collapse buttons (left and right) are hidden — the window owns its restore control; Ctrl+B still closes it and collapses the left column.
+
+- **Three presentations**: `docked` / `floating` / `input-only` (plus the existing `hidden` column state). `chatFloat` (`floating` + `anchor` + user `width`/`height` + `collapsed`, persisted to localStorage) is the only state; the middle column binds `data-presentation`, class `fixed` vs `relative` (never both — same-specificity Tailwind utilities) and `minWidth: 0` while floating (the 35% viewport floor would otherwise win over the computed width).
+- **Single instance**: the same middle-column DOM and the KeepAlive'd session page relocate, never remount — draft, scroll, streaming turn and HITL survive. No Teleport (moving scrollable DOM resets the scroll position).
+- **Geometry** (`common/floating-window.ts`, pure functions): the default size is 45% × 78% of the shell clamped to 480–760 × 420–820; a user-resized size uses the wider drag band 360–1200 × 260–900, always clamped to the slot; 16px margin, 9 anchors (default `center`); drag threshold 4px; drag positions coalesce through one rAF into a `shallowRef`; release snaps to the nearest anchor. The anchor and the size are stored; a resize also keeps a transient top-left (it wins over the anchor until the next header drag).
+- **Edge resize**: three thin grips — left/right change the width (the opposite edge stays put), the bottom changes the height. The collapsed toggle-state is separate from the size.
+- **Input-only bar**: dragging the bottom edge below the 260px expanded minimum snaps to the input-only presentation — the window height becomes the measured composer dock (`[data-test="chat-composer-dock"]` in `[sid].vue`, which wraps the attachment previews, HITL/edit banners and the input box), the float header AND the shell toolbar unmount, and the composer's bottom stays where it was. The normal window's header carries a one-click 收起为输入框 button (next to 恢复原样), and a visible 展开对话 pill just above the bar is the way back (bottom-anchored, restoring the stored/default height). Width/height/collapsed persist across reloads; docking resets `collapsed` so the next open is the normal window.
+- **Side columns**: the right column absorbs the middle column's freed width whenever it is EXPANDED; the left column keeps its stored width (only a left column with no right column beside it grows into the space; neither expanded → nothing grows; a maximized right panel counts as unexpanded). `extraWidth` props add it to the rendered width only — no store is written, so docking restores both columns exactly. A side's resize grip hides while it carries a share.
+- **Auto-collapse** is suspended while floating (`useAutoCollapse`'s `isSuspended`); docking calls its returned `measure()` after the layout settles (the resize path was paused).
+- **Right sidebar maximize linkage**: maximising auto-floats the conversation. At the moment it expands, capture `{leftExpanded, middleFloating}` BEFORE floating; on restore keep floating only when the left was expanded AND the conversation was already floating, otherwise dock. The snapshot is transient (not persisted); a boot with a persisted `maximized` uses the boot state as the snapshot, and the maximize path calls `expand()` so a persisted collapsed flag cannot leave an empty overlay with no restore button.
+- **Clipping**: the floating root must NOT use `overflow-hidden` — the composer toolbar's upward `ToolbarPopover` panels (`absolute z-50`) would be cut; rounded corners come from the root background plus the header. The chat's own scroller keeps its own overflow.
+- **Stacking**: the window sits at `z-50`, ABOVE the right sidebar's maximized overlay (`z-40`), so it stays visible while that panel covers the shell. Its own toolbar popovers (`z-50`) are inside the window's stacking context; PrimeVue dialogs/menus are teleported to the body and stay above both.
+- A boot with `floating` persisted restores the window; the maximize watcher's restore branch ignores its initial `false` (no snapshot), or every reload would dock it.
 
 ## Voice Input (`use-voice-input.ts` / `server/service/audio_transcribe_service.py`)
 
@@ -441,8 +694,11 @@ per-turn cache would go stale after a HITL resume. The single accessor is
 `agent.tools.pub_base.session_workspace_root(session_id)` feeding
 `resolve_workspace_path(path, root)`; `PathGuard`, the four file tools,
 `terminal`, `python_repl`, `ptc` and the code-intel runners all read it (the
-guard also moves its boundary, keeping its policy: in-root passes, only the
-hard-deny floor rejects outside it).
+guard also moves its boundary). In-root is NOT the end of the story: because an
+unconfigured session's root IS the checkout, the four file tools also meet the
+sherry-self read/write allow-lists (`self_path_policy.py`, see the security
+section), which is what stops `patch_file` from rewriting `agent/core.py` and
+`read_file` from reading `.models`.
 
 Derivation: a subagent inherits the parent's binding at spawn
 (`resolve_spawned_workspace_inheritance`) and the value is persisted as the
@@ -588,14 +844,16 @@ ref-chip menu (or in a terminal, or a commit/reset outside the session) still
 reaches the AGENT as the git notice described under Project Directory Binding:
 the next turn's transcript gets one `git_head` card before the human message.
 
-The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
-same dialog shape the settings menu uses, and both entries open a right-sidebar tab
-in the SESSION group PER CLICK (a fresh `instance` key in the tab payload — the
-strip numbers the twins 浏览器 1 / 浏览器 2, and each panel keeps its own history /
-scrollback under `<sessionId>::<instance>`); the settings entries keep deduping on
-their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
-same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
-grids and the commands in step). The browser is an address bar over an iframe with
+The taskbar's **hammer button opens a three-entry toolbox** (浏览器 / 终端 /
+白板) as the same dialog shape the settings menu uses. The browser and the
+terminal open a right-sidebar tab in the SESSION group PER CLICK (a fresh
+`instance` key in the tab payload — the strip numbers the twins 浏览器 1 /
+浏览器 2, and each panel keeps its own history / scrollback under
+`<sessionId>::<instance>`); the whiteboard is deliberately NOT a twin (one board
+per session tab: a second click must show the same drawing), and the settings
+entries keep deduping on their empty payload (`toolboxTools` in
+`pages/home/config.ts`, wired through the same `HOME_TOOLBAR_EVENTS` registry as
+the settings grid — a pinned test keeps the grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay
 blank, which the empty state says), a **free-size mode** that emulates a mobile
 device viewport (resizable frame with edge/corner handles), and 打开调试工具,
@@ -608,7 +866,26 @@ through `/bin/sh -c` there with a scrubbed environment, bounded by
 exit code instead of raising. It is a one-shot console, not a PTY — an interactive
 full-screen program has nothing to attach to — and it is NOT the agent's
 `terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
-human's own shell, loopback-only via the gateway). The browser panel's address bar
+human's own shell, loopback-only via the gateway). **The whiteboard** (`WhiteboardPanel.vue`) is a freehand Canvas2D board:
+`composables/use-whiteboard-canvas.ts` owns the drawing math (a stroke is a
+polyline of points NORMALIZED to the fixed 1280×800 logical canvas, so CSS size
+changes never alter the drawing; one point paints a dot; the eraser paints the
+paper colour; the PNG export always renders at the logical size on an offscreen
+canvas) and `stores/whiteboard.ts` owns the boards (in memory, keyed by the
+tab's `boardId`, undo/redo as two stacks — a new stroke clears the redo stack —
+plus a 5 000-stroke cap; closing the tab does not delete the board). The tab is
+SESSION-scoped and opened at the wide 640px width; there are no text/shape tools
+and no persistence (a reload starts empty). **加入对话** exports the board to a
+PNG, strips the data-URL prefix and emits `chat:add-image` with
+`{sessionId, payload: {base64, name}}` — the SAME mitt relay shape as
+`chat:file-mention`; `[sid].vue` pushes it into the pending `selectedImages`
+tray (its frozen `mySid` filter keeps KeepAlive-cached pages from stealing the
+drawing, and it enforces the 10-image cap), and the send path then carries it
+like any pasted image. The board must never build a `MultiModalMessage`
+directly: `handleSend` re-reads the tray and would drop it. A browser without
+Canvas2D shows a fallback line instead of crashing.
+
+The browser panel's address bar
 suggests the persistent VISIT HISTORY: every navigation (iframe mode from
 `stores/toolbox.ts::navigate`, CDP mode from the `page` frame the server reports —
 the devtools frontend is excluded) records one row in the Dexie `browserVisits`
@@ -639,14 +916,18 @@ away (last session closed, binding cleared).
 
 ## Packaged Desktop App (Tauri) (`client/src-tauri/`)
 
-A release is TWO artifacts. `pnpm tauri build` (client/) produces the
-**installer** — the static SPA plus the Rust shell, ~30 MiB, no Python — and
-`packaging/build_backend.py` produces the **backend tree** (PyInstaller onedir,
-~1 GiB), which ships as the per-platform GitHub release asset the shell downloads
-on the app's first launch. `.github/workflows/desktop-build.yml` builds both on
-ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a `v*`
-tag); the split is forced by GitHub's 2 GiB release-asset cap, which a bundled
-backend exceeds several times over.
+A release is a UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
+build` (client/) bundles the static SPA, the Rust shell AND the CPU backend tree
+(`bundle.resources = ["sherry-backend/"]`, unpacked into the resource dir by the
+desktop workflow before the build) — first launch runs with zero downloads.
+`packaging/build_backend.py` still produces the per-platform backend archive as
+a GitHub release asset, now the DOWNLOAD FALLBACK (an older installer, a
+stripped install, a resource mismatch), and `packaging/build_cuda_pack.py`
+produces the optional Linux-only CUDA pack asset the user opts into from the
+model settings tab. `.github/workflows/desktop-build.yml` builds all of it on
+ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a
+`v*` tag): `build-tauri` needs `build-backend` (and `build-cuda-pack` runs
+beside them), so the installer carries its own backend.
 
 Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
 `tests/`, `evals/`, `wiki/` and `wiki/` trees (plus frontend `*.test.*` /
@@ -670,29 +951,47 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB saved
   — the difference between fitting the asset cap and not); macOS/Windows wheels
   are already CPU-only.
-- **Which backend runs**: `services/backend_downloader.rs` owns the first-run
-  flow — `<app_home>/sherry-backend/sherry-backend` present _and_ its `VERSION`
-  equal to this build's → spawn it straight away; otherwise download
-  `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest release
-  (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background thread, unpack
-  into a staging dir with the system `tar`, swap it in, then spawn it. Tauri
-  events (`backend-download-started` / `-progress` / `-complete` / `-error`,
-  plus the `backend_download_status` pull and the `retry_backend_download`
-  command; `use-backend-download.ts` + `BackendDownloadOverlay.vue` render it,
-  and the SPA reloads once the backend is up). The whole path is gated on
-  `cfg!(dev)` being FALSE: a dev build (`pnpm tauri dev`, a plain `cargo build`)
-  neither ships nor downloads a frozen backend, and spawns `python -m server`
-  from the checkout when `EMA_AUTO_START_BACKEND` asks for it.
-- **Never symlink the backend tree**: while the backend was a
-  `bundle.resources` entry, `tauri-build` copied it into `target/release/` at
-  BUILD time with `std::fs::copy`, which truncates the destination before
-  reading the source — a `target/release/sherry-backend` symlink pointing back
-  at the source made that copy empty every file (observed: 7,634 zero-byte
-  files in one build). The resource entry is gone (the downloader replaced it),
-  so that copy no longer runs; `packaging/build_backend.py` still removes a
-  leftover symlink of that name.
-- **`SHERRY_HOME` is the writable root** (`config/path.py`): the shell sets it
-  to the OS app-data dir, and every writable path derives from it — `src/`,
+- **Which backend runs**: the shell prefers the BUNDLED tree —
+  `resource_dir()/sherry-backend/sherry-backend` present _and_ its `VERSION`
+  equal to this build's → spawn it straight away (`"Using the bundled Python
+  backend (no download)"`). Otherwise `services/backend_downloader.rs` owns the
+  fallback: download `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest
+  release (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background
+  thread, unpack into a staging dir with the system `tar`, swap it in, then
+  spawn it. Tauri events (`backend-download-started` / `-progress` /
+  `-complete` / `-error`, plus the `backend_download_status` pull and the
+  `retry_backend_download` command; `use-backend-download.ts` +
+  `BackendDownloadOverlay.vue` render it, and the SPA reloads once the backend
+  is up). The whole path is gated on `cfg!(dev)` being FALSE: a dev build
+  (`pnpm tauri dev`, a plain `cargo build`) neither ships nor downloads a
+  frozen backend, and spawns `python -m server` from the checkout when
+  `EMA_AUTO_START_BACKEND` asks for it.
+- **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
+  `nvidia-smi` / the kernel-module record and gates the model settings tab's
+  card (`cuda_support` command; `CudaPackCard.vue` + `use-cuda-pack.ts` +
+  four-locale `config.cuda.*` copy). The opt-in download
+  (`cuda_pack_downloader.rs`, events `cuda-pack-download-*`) resumes via HTTP
+  Range (206 continues, 200 restarts, 416 resets an over-long tmp), installs
+  into `<app_home>/sherry-cuda-pack/` with the same staging + swap, and its
+  `VERSION` records the backend version it was built from (one pipeline builds
+  both — a matching backend version transitively pins the torch ABI). At every
+  packaged start the process manager re-checks pack vs backend versions and, on
+  a match, joins the pack's `*.so` directories to the loader via
+  `ld-linux --library-path` (probed loader path, NOT `LD_LIBRARY_PATH`); the
+  `restart_backend` command makes a fresh download take effect (torch resolves
+  the CUDA libraries at import). A pack never touches the env, and an
+  uninstall falls back to CPU on the next start.
+- **Never symlink the backend tree**: `tauri-build`'s build-time resource copy
+  (the `bundle.resources` entry the unified installer restored) uses
+  `std::fs::copy`, which truncates the destination before reading the source —
+  a `target/release/sherry-backend` symlink pointing back at the source made
+  that copy empty every file (observed: 7,634 zero-byte files in one build).
+  `packaging/build_backend.py` removes a leftover symlink of that name before
+  building, which is what makes the resource entry safe again.
+- **The app home is the writable root** (`config/path.py`): the shell passes
+  `--sherry-home <OS app-data dir>` on the backend's command line (the
+  `SHERRY_HOME` env var remains a transitional fallback), and every writable
+  path derives from it — `src/`,
   `workspace/` (sessions, memory), `temp/`, `logs/`, `models/`, `.codeintel/`,
   `.env`, `.models` / `.network` (gitignored; seeded from their templates),
   `sherry.jsonc`, and the WRITABLE half of the skills tree
@@ -705,11 +1004,37 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   their `.example` templates) and `sherry.jsonc`. Locations
   reported to the UI keep the CHECKOUT shape (`./skills/auto/…`) whichever home
   they live in (`app_relative` / `resolve_app_path` map between the two).
-- **First run without a model**: the boot's 128K token gate aborts a SERVER,
-  but `SHERRY_DESKTOP=1` (set by the shell) lets an UNCONFIGURED desktop app
-  serve anyway, so the window can open and 模型配置 can write the files; a
-  CONFIGURED-but-invalid value still aborts. The backend must be restarted
-  (relaunch the app) after configuring — the runtime reads the file at boot.
+- **First run without a model**: the boot's 200K token gate aborts a SERVER,
+  but the packaged shell passes the bare `--sherry-desktop` flag (packaged
+  only; `SHERRY_DESKTOP=1` is the transitional env fallback), which lets an
+  UNCONFIGURED desktop app serve anyway, so the window can open and 模型配置
+  can write the files; a CONFIGURED-but-invalid value still aborts. The
+  backend must be restarted (relaunch the app) after configuring — the runtime
+  reads the file at boot.
+
+## MCP Servers (`agent/tools/mcp_plugin.py`)
+
+MCP servers come from TWO layers merged by name (user overrides bundled):
+the read-only bundled defaults (`plugins/mcp_server/config.json`, shipped in
+the installer) and the user drop folder `APP_HOME/mcp_servers/` — the ONE
+writable place a user adds MCP servers in a unified install (`plugins/` is
+read-only there; the folder is seeded with a README on first boot of a
+desktop home, never in a checkout). Two drop shapes are scanned: a flat
+`<name>.json` (the file IS the server spec) and a self-contained
+`<name>/config.json` directory whose `$here/` resolves to the directory
+itself, so `server.py` travels beside its config; the bundled file's
+`$here/` keeps resolving to `plugins/mcp_server/` (legacy behavior). Every
+entry parses in ISOLATION — a bad JSON file shows as a ⚠ entry in
+`GET /mcp/servers` (`server/service/mcp_service.py`, the extend panel's MCP
+tab renders it) and is skipped by the loader instead of failing the load;
+noise (non-JSON files, directories without a config) never appears.
+`build_mcp_tools()` connects one `MultiServerMCPClient` PER server, so a
+dead server costs only its own tools, and the tool names
+(`mcp__<server>__<tool>`) still file under the catalog's `mcp` group
+unchanged. A config change takes effect on the next backend restart (the
+agent graph holds the tool list; the extend panel's restart button rides
+the same `restart_backend` command the CUDA pack uses). Only drop trusted
+MCP servers — their commands run on this machine.
 
 ## Configuration Files (`.env` / `.models` / `.network`)
 
@@ -720,8 +1045,8 @@ files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
   (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
 - **`.models`** (gitignored; template `.models.example`) — the model families:
   provider / endpoint / key / local-model switch for main, auxiliary, TaskFlow
-  decisions, compression, reasoner, ITTT, VTTT, TTI, reranker, embedding and
-  STT, plus the scanner's LLM selection. Loaded by
+  decisions, compression, ITTT, VTTT, TTI, reranker, embedding and STT, plus
+  the scanner's LLM selection. Loaded by
   `config/models_settings.py`.
 - **`.network`** (gitignored; template `.network.example`) — network services:
   `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
@@ -757,7 +1082,7 @@ falls back to `build_auxiliary_llm()` (an existing deployment is unchanged), a
 remote configuration builds the same client shape as auxiliary (bounded
 timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
 the auxiliary GGUF — there is no second local model to download. A configured
-`*_MAX_TOKEN` must be >= 131072 (128K) and `*_MAX_OUTPUT_TOKEN` empty or
+`*_MAX_TOKEN` must be >= 200000 (200K) and `*_MAX_OUTPUT_TOKEN` empty or
 >= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
 abort, exactly like the main/auxiliary keys. The 模型配置 tab renders both
 families as model-profile cards, whose local entry reports the aux family's
@@ -765,7 +1090,10 @@ download progress; a pre-existing `.models` gains a wholly missing family block
 on import (`ensure_models_config_file`), because the panel only renders keys the
 file contains. A configured-but-unbuildable remote model (unknown provider)
 logs a warning and falls back to auxiliary instead of stranding TaskFlow or
-compression.
+compression. An existing `.models` that still carries the previous `131072`
+default is migrated to `200000` when the file is loaded
+(`models_settings._ensure_context_window_floor`); any other below-floor value is
+left for the boot gate to reject.
 
 Drift is refused, not merged: `server/service/env.py` treats the moved keys as
 `SPLIT_OUT_KEYS` (the two registries are the source of truth) — a legacy `.env`
@@ -800,11 +1128,16 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
 ## Compression Thresholds, Microcompact & Output Caps (ZCode/PI parity)
 
 - **Per-model output caps** — every chat family carries its own
-  `*_MAX_OUTPUT_TOKEN` in `.models` (main / auxiliary / TaskFlow / compression /
-  reasoner) beside the context-window keys. Empty means "do not send a
-  field" (provider default); a set value must be >= 8192 (8K) and is refused at
-  boot, at `built_agent()`/spawn validation, at model build and at the
-  `/models-config` save (M9). The 模型配置 panel labels it 最大输出窗口 and every
+  `*_MAX_OUTPUT_TOKEN` in `.models` (main / auxiliary / TaskFlow / compression)
+  beside the context-window keys. Empty means "do not send a field" (provider
+  default); a set value must be >= 8192 (8K) and is refused at boot, at
+  `built_agent()`/spawn validation, at model build and at the
+  `/models-config` save (M9). Each cap must also be SMALLER than its family's
+  effective context window (an optional family with an empty own window falls
+  back to the auxiliary window or the remote default). `/models-config` rejects
+  `output >= window`, and the
+  模型配置 input blocks the same comparison against the draft's sibling
+  `*_MAX_TOKEN`. The panel labels it 最大输出窗口 and every
   model category title carries a help mark describing its purpose/use cases
   (four languages). `models/LLMs/provider_max_output.py` maps the
   provider to the kwarg `init_chat_model`'s class accepts — `max_tokens` for
@@ -814,7 +1147,7 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   the legacy `MAIN_LLM_OUTPUT_MAX_TOKEN`.
 - **Sampling-time repetition penalties** — every chat family carries a
   `*_FREQUENCY_PENALTY` / `*_PRESENCE_PENALTY` pair in `.models` (main,
-  auxiliary, TaskFlow, compression, reasoner). Empty uses the global
+  auxiliary, TaskFlow, compression). Empty uses the global
   `REPETITION_PENALTY` defaults (0.3 / 0.2); a set value must be a finite number
   in [-2, 2] and is refused by `/models-config` otherwise.
   `models/LLMs/provider_repetition_penalty.py` maps it per provider:
@@ -860,6 +1193,41 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   `phase`, `reason`, the unchanged `trigger`, `messages_before`, `messages_after`
   and `route`. T1/T2/T3/user compactions share `_finish_compact`; T4/T5 record
   from `_finish_forced_recovery`.
+
+## Provider Prompt Caching (`models/LLMs/anthropic_cache.py`)
+
+Anthropic is the one supported provider whose prompt cache is OPT-IN: nothing is cached unless the request marks a
+prefix with `cache_control`. Everything above (the frozen system prompt, the session-stable tool face, live state
+pushed down into the reminder layer) was built for providers that cache automatically, so on Anthropic it earned
+nothing. A `BaseChatModel` wrapper mounted at every client build point — `main_llm._build_inner_chat_model_from`,
+`auxiliary_llm/core.py` and `family_llm.build_family_llm` — rewrites each outgoing request before delegating.
+
+- **Three breakpoints**, in Anthropic's prefix order (tools → system → messages): BP1 the last text block of the
+  `SystemMessage` (also caches the tool list, since system follows tools), BP2 the last converted tool definition
+  (only pays off when a thinking switch or an agent-config edit changes the system prompt while the tools stay put),
+  BP3 the last real history message found when scanning back past the current turn's human carriers. BP3 anchors the
+  PREVIOUS turn's settled tail on purpose: `DynamicReminderMiddleware` and the workspace notice splice human messages
+  (a reminder, then the new user text) whose content changes per turn, so a breakpoint on the last message would miss
+  every time. The fourth slot stays free.
+- **Config** — `ANTHROPIC_CACHE` (`config/features/agent_side/anthropic_cache.py`): `enabled` (`SHERRY_ANTHROPIC_CACHE`,
+  default on), `ttl` (`SHERRY_ANTHROPIC_CACHE_TTL`: `short` = `{"type": "ephemeral"}`, `long` adds `"ttl": "1h"`),
+  `max_breakpoints` (clamped to Anthropic's limit of 4). Breakpoints the caller already placed count against the
+  budget; nothing is added twice.
+- **Gating** — `anthropic` only. Bedrock's Claude goes through `langchain-aws` (different cache API) and a
+  Claude-routed OpenRouter request loses the marker in the OpenAI-shaped client, so neither is claimed. Every other
+  provider's request is byte-identical to before.
+- **Cost** — `MODEL_PRICING_TABLE` entries take optional `cache_read` / `cache_write` prices (USD per 1M cached
+  tokens); `TokenBudget._cost_delta` splits `usage_metadata.input_token_details` into uncached / cache-read /
+  cache-write and charges each rate. A table without the two fields prices cached tokens at the plain input rate (the
+  pre-existing estimate — no invented discount). OpenAI-shaped usage reports `input_tokens` INCLUDING the cached
+  ones, so they are subtracted before the uncached rate applies; Anthropic's `input_tokens` already excludes them.
+- **Fail-open and non-mutating** — an injection failure, an unconvertible tool list, or `enabled=false` sends the
+  request unchanged; the caller's messages and tools are copied, never mutated (the middleware chain's state and the
+  message store are untouched).
+- **Semantics checklist** (why the existing invalidation points stay correct): a thinking switch reloads the memory
+  snapshot and deletes `SYSTEM_PROMPT` → BP1 misses because the bytes changed; an agent-config edit invalidates BP1
+  and BP2 together; a compaction rewrites prompt and messages → BP1 and BP3 miss; a changing reminder never touches
+  BP3.
 
 ## LLM Retry, Backoff & Retry Events (ZCode parity)
 
@@ -1028,7 +1396,7 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
-The 预设角色 panel (the 菜单 entry renamed from 预设; it leads the nine-grid, and the right
+The 预设角色 panel (the 菜单 entry renamed from 预设; it sits immediately after the 系统配置 entry, which leads the nine-grid, and the right
 sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
 per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
 `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
@@ -1170,10 +1538,15 @@ cross-origin fetches are refused by the browser when the response says `*`.
 
 **ONE account, password only.** There is no username anywhere: the single
 `auth_account` row (`CHECK (id = 1)` — the schema cannot hold a second) is
-identified by nothing, login takes just the password, and a username-era
-`auth_users` table is copied into it at init and dropped
-(`_MIGRATION_DDLS` in `server/DAO/auth_store.py`). The JWT carries only
+identified by nothing and login takes just the password. The JWT carries only
 `sub`/`jti`/`typ` — no personal data.
+
+**Inbound rate limits (design concept #28).** Two fail-open token buckets in
+`server/trigger/rate_limit.py` (`WS_RATE_LIMIT`): one inbound `/sessions/ws`
+frame per connection (burst 50, 10 frames/s; a starved burst is answered with
+ONE `rate_limited` frame — the transition edge, never per dropped frame), and
+`/auth/ws-ticket` mints per client address (30/minute). `enabled: false`
+restores unlimited behavior; a limiter crash allows everything.
 
 **Brute force is throttled, injection has no surface.** `_LoginThrottle`
 (`server/service/auth_service.py`) counts consecutive failures per CLIENT
@@ -1231,6 +1604,79 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
+## Background Commands: Command-Level Cancel (`agent/tools/terminal_bg_registry.py`)
+
+`terminal(run_in_background=True)` starts a child that OUTLIVES the turn, so stopping it cannot go through the turn's cancel: the WS `stop` frame cancels the turn's own asyncio task, and the background child is a separate process group with its own watcher. This feature is the missing verb — stop ONE command, leave the turn and the session's other commands alone.
+
+- `BackgroundTaskRegistry.kill_task(task_id, session_id=None)` reuses `kill_session_tasks`' tree kill (the process group recorded at spawn, SIGTERM → bounded SIGKILL) scoped to one id. It refuses (returns False, signals nothing) for an unknown id, another session's task (the id IS the ownership boundary), and one whose process already exited. `kill_session_tasks` (session deletion) is unchanged.
+- The watcher keeps the story straight: after `proc.wait()` a task whose status is already `killed` only records `exit_code` (a killed process exits non-zero, and rewriting that as `failed` would make the panel flicker killed → failed); the exit frame carries `status` + `reason` (`killed` / `exited`), and the auto-turn notice says "stopped by user" instead of "FAILED". A natural failure still reads `failed` / `exited`.
+- Two entry points, one method: the agent's `terminal_bg(action="kill", task_id=...)` (main-agent-only, like the other actions) and the UI's `terminal_bg_kill` WS frame, which answers `terminal_bg_kill_ack {ok, task_id, reason}` and lets the watcher's `terminal_bg_exit` confirm the final state.
+- Live updates: `_run_background` pushes `terminal_bg_started` after registering the task, so an open popover adds the row without polling; `GET /terminal/bg?session_id=` is the snapshot for mount / reconnect (the registry is process-level and NOT persisted — after a restart an empty list is correct, not lost work).
+- The display lives in the toolbar's terminal entry — the third icon above the input box (`TasksButton.vue`), whose popover already lists running sub-agents and foreground tool calls; its third section is `BackgroundCommandsSection.vue` (command / status chip, pid in the row tooltip, 终止 on each row), rendered only while the session has commands STILL RUNNING — a settled command leaves the FRONTEND list (its notification is the chat's background card, its log stays on the backend and its record stays readable through `terminal_bg`), and the header counts the running ones only. Nothing about background commands is persisted client-side: the composable is in-memory (snapshot + frames), and no Dexie table holds them. The entry's badge counts sub-agents + foreground calls + running background commands, so a lone detached command is still visible. `use-background-tasks.ts` owns the state (snapshot + the three frames) and `index/[sid].vue` passes it down, so the section is a pure view. It used to be a collapsible strip under the message list; that slot is now free for the chat.
+- Freshness is the SNAPSHOT's job, not one frame's: `terminal_bg_exit` is a best-effort session broadcast and is silently dropped when no socket is registered for the session (verified live 2026-10-30: a command killed between turns stayed "running"), so the popover re-pulls `GET /terminal/bg` every time it OPENS (a cache-busted `_=<ms>` param — a snapshot is state, never a cacheable document) and the page re-pulls once ~1.2 s after a kill click. A requested stop renders its own chip (`backgroundTasks.statusStopping`, amber) instead of a stale "running", and `applySnapshot` drops ids that are no longer running from the in-flight stop set, so the row can never claim a stop is still pending after the snapshot settled it.
+
+## Command Palette (`client/app/components/CommandPalette.vue`)
+
+`Ctrl+K` / `Cmd+K` opens one searchable command list over the things the shell
+already knows how to do. It is a thin layer over the existing command
+registries, not a second dispatch table:
+
+- `composables/use-command-registry.ts` — `CommandEntry {id, label, section,
+  icon?, keywords?, handler}`, `registerStatic`/`registerStaticBatch` (a
+  repeated id REPLACES, so a remount or a locale switch cannot duplicate rows),
+  `setDynamicCommands`, scoring (exact 1000 > prefix > substring > keyword) and
+  `highlightLabel` (escaped first, THEN the match is wrapped in `<mark>` — the
+  label is user/page-provided text rendered through `v-html`).
+- `pages/home/commands.ts` — the static half is DERIVED from `headerTools` /
+  `toolboxTools` (the 菜单 grid is the source of truth, so a new tile appears in
+  both), plus the notification bell and 新建会话; handlers call the existing
+  `buildHomeToolbarCommands` registry and `useNewSessionStore().openDialog()`.
+- The dynamic half (skill index + recent sessions) is pulled on every open and
+  replaces the previous dynamic set.
+- Search history is Dexie v4 (`commandHistory`, additive table; one row per
+  command id, capped 50, newest first), rendered as 最近使用 on an empty query.
+- The shell (`pages/home/index.vue`) mounts it, registers the static batch under
+  a `watch(locale, …, {immediate: true})` (labels are resolved i18n text — a
+  `watchEffect` would retrigger itself because registering reads and writes the
+  same registry refs) and owns the document-level keydown (Shift/Alt variants
+  pass through; the listener is removed on unmount).
+- i18n: `commandPalette.*` in all four locales; command labels reuse
+  `toolbar.*`. Sections render session → navigate → tools → skills; the keyboard
+  cursor walks the grouped list as one flat index, and a new query resets it.
+
+## Shell Layout: Three Columns (`client/app/pages/home/index.vue`)
+
+The shell is one flex row — left session column, conversation, right sidebar — and each column owns a width band modelled on ZCode's workspace shell. The point of the bands is that no column can be squeezed out of existence by another, and only the columns that are worth less than the chat give way.
+
+| Column | Band | Owner |
+| :--- | :--- | :--- |
+| Left (`SessionSidebar.vue`) | 280px floor, half the viewport at most, minus what the other columns need; drag the right edge, width persisted | `stores/sidebar-width.ts` (`SIDEBAR_MIN_WIDTH` / `SIDEBAR_MAX_WIDTH_RATIO`) |
+| Middle (`NuxtPage`) | `min-width: max(320px, 35%)` — an absolute floor (a message row needs it) plus a proportional one (the chat keeps its share on a large display) | `common/layout.ts` |
+| Right (`RightSidebar.vue`) | 280px floor (`RIGHT_SIDEBAR_MIN_WIDTH`), 65% viewport ceiling AND the space left over by the left column plus the conversation's floor (no fixed pixel maximum — the ceiling scales with the window), `shrink` so it gives way when every minimum cannot fit | `stores/right-sidebar.ts` |
+
+- **Both draggable columns clamp against what the layout still needs.** The right column's `clampSidebarWidth(width, viewport, reserved)` takes the left column's width plus `middleMinWidth(viewport)` as `reserved`, so its ceiling is `min(65% viewport, viewport - reserved)` — both ends of every column's band are proportional (left 50% ceiling, conversation 35% floor, right 65% ceiling); without the reserved term a drag on a 1280px window could store 760 and overflow the shell by 80px (280 left + 320 chat + 760 panel), and without a ratio the panel could never grow past 760px on a 4K display. The visible consequence is deliberate: on a 1280px window with the left column at its 280px floor the panel maxes at 552 and the chat sits exactly on its 448px (35%) floor.
+- **The clamps compose.** The left column's ceiling is `min(50% viewport, viewport - reserved)`, where `reserved` is the conversation's 320px plus the right column's 280px while it is open (`shellReservedWidth` in `SessionSidebar.vue`). Without that the two fixed minimums would overflow the window on a wide drag. A viewport too narrow for the floor lets the ceiling win: a column wider than the window helps nobody.
+- **Narrow-window safety net** (`composables/use-auto-collapse.ts`, thresholds 480 / 360 with a 300ms resize debounce): below a 480px conversation the right column retracts, below 360 the left one does too. It runs once at mount (a layout restored from localStorage can already be too narrow) and then only on WINDOW RESIZE — opening a panel by hand is never undone by the layout.
+- **Writability**: the composable writes the two `collapsed` refs, so they must come from `storeToRefs`; a `computed(() => store.collapsed)` throws on write (Vue only warns) and the collapse silently never happens.
+- **Not Splitter-based (deliberate).** The conversation and the right column are two flex items, not a PrimeVue `Splitter` pair: when the conversation reaches its 320px floor the RIGHT column starts shrinking, instead of both shrinking proportionally from the start. The layout guarantees minimums, not a ratio. Switching to a fractional split was considered and dropped — the browser/terminal/settings panels host their own resizers, and a second split model on top of them made every nested drag ambiguous.
+- **Collapsed is not a width**: the left column's collapsed state stays `w-0` (the parent owns the flag) and expanding returns to the persisted width. The right column keeps its `maximized` mode (`fixed inset-0`), which the `shrink min-w-[280px]` classes must not touch — the class list keeps them in the expanded branch only.
+- **The right sidebar's tab strip is an equal-width, proportional-shrink row**
+  (`RightSidebar.vue` + `composables/use-tabs-overflow.ts`): every tab is
+  `flex-[1_1_9.75rem] min-w-15 max-w-39` — a 156px basis and ceiling, a 60px
+  floor — so a tab's width never follows its title (白板 and 浏览器 2 are the
+  same width) and a crowded strip narrows ALL tabs equally before anything
+  scrolls. Only when N tabs at their 60px floor no longer fit
+  (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with the
+  scrollbar hidden and a gradient fade mask (`tabs-mask-left/right`, anchored
+  to the wrapper so they do not scroll with the content) marking the cut-off
+  side. The title fades at its right edge with a `mask-image` instead of an
+  ellipsis (the span is the tab's flexible item, so the close button's width is
+  already excluded — no per-state offset), and the close X is always in the
+  layout but only fully opaque on the ACTIVE tab (idle tabs show it on hover),
+  so hovering never shifts the title.
+
+The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the 菜单 button. The interface language lives in the 菜单's FIRST entry, 系统配置, as its LAST tab (国际化): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
+
 ## Session Token Budget (`agent/middlewares/token_budget/`)
 
 A session can carry an optional token CAP (`PUT /sessions/budget`,
@@ -1245,7 +1691,34 @@ response it accumulates the provider-reported `usage_metadata` into
 to the mem + DB registers so a restart does not lose the counters. The cap/park
 twin (`TOKEN_BUDGET_CAP_PENDING`) uses the same busy → park / turn-end promote
 rule as the thinking/model controls; `POST /sessions/budget/reset` clears
-USED/COST/LIMITED but keeps the cap.
+USED/COST/LIMITED but keeps the cap. The UI is a SESSION-scoped right-sidebar tab
+(`tokenBudget`, `client/app/pages/home/components/TokenBudgetPanel.vue`): the cap
+belongs to one conversation, so it is NOT a 系统配置 tab any more. It is opened
+from the context-ring popover's footer entry (`ContextUsageButton.vue` →
+`openTab('tokenBudget', { sessionId })`, which also closes the popover) and takes
+its session from the tab payload like every other session panel; it shows a
+no-session state only if the payload lacks one.
+
+**Inheritance** (`TOKEN_BUDGET_DEFAULT_CAP` in `sherry.jsonc`, 0 = unlimited):
+the session's OWN value always wins — `0` there means explicitly unlimited, so a
+positive app default never resurrects a session the operator cleared — and only
+a session that never set anything inherits the default
+(`agent/middlewares/token_budget/core.py::effective_cap`, cached per process
+because the value sits on the per-model-call path and sherry.jsonc applies
+values after a restart). `apply_token_budget_choice(None)` clears the session's
+override (back to inheriting); `0` is the explicit-unlimited choice the panel's
+toggle / an emptied cap field writes. `GET /sessions/budget` reports
+`{cap (enforced), session_cap (own choice), default_cap, inherited, used, cost,
+limited, pending}` so the panel can say where the cap comes from.
+
+**App Config tab** (`config/sherry_settings.py` registry → `GET /sherry-config`):
+each entry now returns its typed `default` alongside `value`, a registered key
+the file does not carry yet is still LISTED (with its default; the next write
+appends its line before the closing brace and fixes the previous comma), and the
+panel renders a localized label + one-line hint per key from
+`SHERRY_ENTRY_SLUGS` (an unknown key falls back to its raw key with no hint).
+「重置为默认值」 fills the form with those defaults (the footer's 保存 still
+writes them), and it is disabled once nothing differs.
 
 Pricing is USER-CONFIGURABLE, not hardcoded: `.models` carries
 `MODEL_PRICING_TABLE` (a JSON object serialized as a JSON string so the flat
@@ -1541,11 +2014,29 @@ pending. The old `resume_stream` WS handler and its
 longer sends that frame. This snapshot + per-turn `seq` pair is Sherry's
 stream-recovery anchor: it restores the text tail without replaying any frame,
 while committed tool calls stay queryable in the per-turn trajectory ledger
-(`GET /sessions/:session_id/trajectory`). Because the turn keeps running when
+(`GET /sessions/:session_id/trajectory`; hook events and frame projections share
+ONE per-turn sequence — the hooks used to write `seq=0`, so every hook event
+sorted before the turn's first frame — timestamps carry milliseconds, and a
+failed stream records an `error` event before re-raising, because a timeline
+that simply stops reads as "still running"). Because the turn keeps running when
 its last viewer disconnects (the socket release no longer cancels it), the
 reconnect resumes the SAME turn. Inbound frames are also checked against the
 socket's registered session (`_frame_session_allowed`) so one session's socket
 can never read another's.
+
+The per-turn trajectory ledger also has a UI consumer: `TrajectoryPanel.vue` is
+a SESSION-scoped right-sidebar tab (`right-sidebar.ts` kind/scope, opened from a
+tool card's history button or `ChatBox.vue::openTrajectory`). It consumes the
+existing `GET /sessions/:session_id/trajectory` only — no backend change —
+groups rows by `turn_id`, re-sorts each turn by `(ts, seq, event_id)` (rows
+can share a `ts` at millisecond precision, so the server order alone is not
+total), and caps at two 500-row pages. It renders tool rows
+(name/status/duration/args/result) and lifecycle rows (compact / model_retry /
+invalid_tool_call / turn_start / turn_end) with a kind badge; search is
+filter-style with an n/m counter, folding is two section switches plus
+expand/collapse-all, and a turn menu filters one turn. The pure helpers live in
+`client/app/composables/use-trajectory.ts`; `fetchTrajectory` is in
+`bridge/session.ts`. No polling and no virtual scrolling in v1.
 
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
@@ -1585,9 +2076,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File                          | Contents                                                                                                                                                                                                                    |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config/features/agent_side/` | 54 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
-| `config/features/infra_side/` | 28 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
-| `config/features/__init__.py` | Aggregator — all 82 TypedDicts + instances re-exported                                                                                                                                                                      |
+| `config/features/agent_side/` | 57 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, evidence_cross_session, evidence_regression_gate, subagent_isolation, tool_parallel, ...) |
+| `config/features/infra_side/` | 30 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, model_downloads, ...)                         |
+| `config/features/__init__.py` | Aggregator — all 87 TypedDicts + instances re-exported                                                                                                                                                                      |
 | `config/path.py`              | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...)                                                                                                                                                             |
 | `config/schema.py`            | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime)                                                                                                                                                              |
 | `config/sherry_settings.py`   | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator._, LANGSMITH._)                                                                                                                                          |
@@ -1662,6 +2153,8 @@ split, low-confidence pages, god nodes) after its original ten checks (L7).
 - Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary. The transcript port is the third seam, in the agent's own direction: `agent/state_port.py` (`read_messages` / `read_interrupt` / `heal_interrupted_turn`) is the ONLY place the LangGraph checkpoint shape is read or rewritten — `server/` drives turns through it and never touches `snapshot.values["messages"]` or `aupdate_state` itself (a turn's INPUT messages and the auxiliary heartbeat agent stay the server's own business).
 - `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
+- `pub/**` may import `config/**` only; `runtime/**` may import `config/**` and `pub/**`. Both MUST NOT import `agent`/`server`/`models`/`workspace`/`context_engine`/`skills`/`bus`/`channels`/`logs`. The read-only shadow HEAD reader lives in `pub/git_head.py`, so `runtime.session.git_head` never reaches into `agent`.
+- `logs/**` may import `config/**` and `pub/**` only; every logic package may import `logs`, but `logs` must never import a logic package (the loguru redaction patcher lives in `pub/security/redact_formatter.py`, not under `agent/`)
 - every numeric constant lives in a `config/features/**` per-object module (e.g. `SUMMARIZATION` in `config/features/agent_side/summarization.py`), never in a shared `num.py`
 
 ## Test Structure
@@ -1695,7 +2188,11 @@ hard-imports) is the harness's only consumer and stays out of the shipped
 runtime closure). The external benchmarks are `swebench` (SWE-bench_Lite
 instances: pinned base commit, per-instance `uv venv --python 3.11`, the
 instance's own FAIL_TO_PASS/PASS_TO_PASS verdict; the test patch is applied by
-the JUDGE and a gold-patch miss aborts before any model call), `deepswe`
+the JUDGE and a gold-patch miss aborts before any model call; the host harness
+quiesces the session before it reads the tree — turn cancel, descendant/background
+kill, shadow-git `wait_for_idle` + `freeze` — keeps `.sherry` outside the checkout,
+quarantines it atomically on revert, includes untracked files in the saved diff,
+and writes a per-instance result immediately), `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
 task's separate verifier image grades the agent's `git diff`),
@@ -1737,6 +2234,33 @@ each suite is the version-controlled reference (threshold + model id).
 - **Middleware hooks**: `abefore_model(self, state, runtime=None)`, `aafter_agent(self, state, runtime=None)` — LangChain 1.3.9 signatures; after_agent runs in REVERSE list order
 - **Tool registration**: `@tool("name")` + `build_*_tools()` factory + `_MAIN_TOOLS_BUILDERS` list in `agent/tools/__init__.py`
 - **Test fixtures**: `isolated_db` (tmp SQLite), `build_main_tools_real` (stub-tolerant), `scan_skills_real`
+- **Docs language** (`scripts/check_doc_language.py`): the parity gate compares
+  STRUCTURE across the four languages and the link gate only resolves targets, so a
+  label from ANOTHER language used to pass every gate — live-verified twice: Chinese UI
+  labels inside English sentences (模型配置, 继续生成 … in the README's Runtime section
+  and six wiki pages) and 「模型配置」 inside the Japanese/Korean READMEs. The rules are
+  per document language, in ONE table: ENGLISH documents (`README.md` plus every
+  `wiki/**/README.md`, nested pages included) may carry no CJK ideographs at all, while
+  the JAPANESE / KOREAN documents (`README.ja.md` / `README.ko.md` and their wiki
+  siblings) may carry no SIMPLIFIED-CHINESE-ONLY character from the shared list in
+  `scripts/data/simplified_chinese_only.txt` — a Simplified-only form (时, 图, 问 …) is a
+  Chinese leak, while kanji Japanese also uses is fine. That list is curated, not
+  exhaustive: characters whose simplified form is ordinary Japanese (体/国/数/条/后/万/号
+  等) are deliberately absent, so a label built only from shared characters (模型配置,
+  分叉) is NOT detectable — the gate targets mixed-language prose, not every possible
+  label. It ignores what is not prose: fenced blocks, inline code spans, HTML comments
+  and markdown link TARGETS (a link may point at a Chinese-named file); the four
+  language names (中文 / 简体中文 / 日本語 / 한국어) are allow-listed for the language
+  switcher. The Chinese source pages and `AGENTS.md` are never scanned — the first are
+  the source language, the second quotes the Chinese labels on purpose. A genuine label
+  goes in a code span, never the allowlist. The SAME list backs the client gate:
+  `client/app/composables/__tests__/locale-language.ts` (CJK runs / Simplified-only
+  detection / leaf walker) is asserted by `locales.test.ts` over the four central
+  dictionaries AND by `i18nBlocks.test.ts` over every SFC `<i18n>` block — an `en` value
+  may carry no CJK, a `ja`/`ko` value no Simplified-only character (that gate caught the
+  same `菜单-预设角色` leak in `en.json` and five inline blocks).
+  `tests/scripts/test_check_doc_language.py` pins prose findings, the per-language
+  rules, the non-prose exemptions, the allowlist and the file selection.
 - **Docs parity** (`scripts/check_docs_parity.py`): gates every four-language README group on structure plus semantic metrics — link-target sets with per-target language variants (a translation that links a foreign README the EN reference does not link fails, while the language switcher and own-language links pass), per-section body-length ratio plus a non-empty check for even the smallest EN sections, a language-independent heading-marker sequence (inline code spans + link targets, order-canonicalized) that fails a heading reordered under an unchanged level sequence, and a per-section invariant-token multiset (code spans + file paths + ENV names + numbers, matched by substring so dropped backticks are not drift) that fails a long but stale translation which lost ≥2 code-span/path tokens or all of them. Section pairing matches headings by marker fingerprint first, then occurrence index (the index-fallback count and the marker-less-reorder residual limitation are printed in the summary). The ratio band is a calibration snapshot: `--calibrate` prints the per-language distribution and its margin, and `tests/scripts/test_check_docs_parity.py` pins the smallest legitimate ratio at ≥1.15× the band so a denser legitimate section turns the test red before the band silently narrows — re-run `--calibrate` and update the constants' comment before changing any band. Exempting a group via `ALLOWLIST` is a last resort: the reason must contain an explicit "Fixing the document(s) is wrong because …" clause followed by a substantive rationale, be ≥40 chars, and may not open with placeholder text; stale entries fail the gate, and tests pin the mapping empty so every addition requires an explicit test edit
 - **Commits**: angular conventional (commitlint enforced), pathspec-only (`git commit -- <files>`)
 - **File naming**: snake_case enforced by pre-commit hook
@@ -1760,9 +2284,17 @@ each suite is the version-controlled reference (threshold + model id).
   shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation and a
   single `refs/heads/main` chain. `info/exclude` carries the deny patterns
   (secrets, bulk dirs and the shadow store) before `git add -A`; snapshots are
-  pruned to `SHADOW_GIT["max_snapshots"]`. Restore takes a pre-restore snapshot
+  pruned to `SHADOW_GIT["max_snapshots"]` (100 — the store is PER PROJECT ROOT and
+  shared by every session including subagents, so a small budget collapsed the
+  restore window to the last step or two once a fan-out ran concurrently;
+  `ensure_checkpoint` dedupes per session per turn, and the bare store's delta
+  compression keeps 100 snapshots at a few hundred KiB). Restore takes a pre-restore snapshot
   and supports one file or the whole tree; the `checkpoint` tool exposes
-  list/show/restore. The git-graph panel reads the shadow chain (branch label
+  list/show/restore. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
+  moves the store outside the project — the eval harness points it at a
+  run-scoped directory so an instance checkout never contains `.sherry` — and
+  `freeze()` / `wait_for_idle()` are the write barrier a harness uses to stop
+  snapshot writers before it reverts. The git-graph panel reads the shadow chain (branch label
   `checkpoint`), and `git_head` announces `checkpoint@<hash>`. An UNBOUND
   session is untouched, and reads are never gated.
 - the three tool classes that used to inherit from the archived
@@ -1778,11 +2310,11 @@ each suite is the version-controlled reference (threshold + model id).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_flow(action="plan")`'s planner may emit the field and `taskflow_step(action="update_steps")` may change it.
-- `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file), and a watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg(action="list"|"output", task_id=...)` (`scope=main_only`, catalogue group `terminal`) is how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
+- `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file) and STAYS there after the command exits — the log is the durable record (`terminal_bg(action="output")` reads it while running AND afterwards; only session deletion removes it), the watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg(action="list"|"output", task_id=...)` (`scope=main_only`, catalogue group `terminal`) is how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
 - terminal HITL cards can offer **本会话允许** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
 - the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
-- `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`).
+- `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`). A 0-byte result becomes `(no output)` before the tool returns — never an empty ToolMessage, which the pairing sanitizer would otherwise turn into a misleading missing placeholder — and the eviction preview starts with `[evicted to: <path>]` plus an explicit `read_file` hint.
 - the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
   (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
 writable_roots)` takes the caller's write surface, which each tool resolves from
@@ -1798,13 +2330,87 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   same state. Every bare run is recorded: the evidence-ledger row carries
   `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
   `PathGuard` additionally screens the command-string arguments (`commands` /
-  `query`) against the hard-deny floor only. The read-surface whitelist
+  `query`) against the hard-deny floor AND the sherry-self policy — read-looking
+  tokens against the read allow-list, extracted write targets (`>` / `>>` /
+  `tee` / `truncate` / `shred` / `sed -i`) against the write allow-list, so
+  `cat .models` and `echo x > agent/core.py` are refused; base64, shell
+  variables and runtime-built paths escape that static scan, which is why the
+  file tools' gate and the OS sandbox remain the real ones. The read-surface whitelist
   (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
   fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
   sandbox actually runs — neither backend has ever been verified on one.
-- An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `wiki/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
+- **Cross-agent coordination is advisory and opt-in** (`COORDINATION`, env
+  `SHERRY_COORDINATION_CLAIMS` / `SHERRY_COORDINATION_FINDINGS`, both OFF):
+  `claim_scope` records a per-path intent for this session and `write_file` /
+  `patch_file` attach ONE `claim_notice` line when a peer holds a claim on the
+  written path — the write always succeeds (no refusal path: claim → license →
+  CAS would stack three decisions into one). The notice is deduped per
+  (session, path) in a 10-minute window because the agent layer cannot see a
+  turn id, and claims expire after `claim_ttl_seconds` (1800). The findings
+  board adds `share_finding` (FAIL / FACT / PATCH) and the read-only
+  `peers_findings` query (every whitespace term must match text or file paths,
+  optional kind, capped); a merge publishes a PATCH entry on its own when the
+  board is on. Storage is ONE file, `<project>/.sherry/coordination.db`
+  (`claims` + `findings`, busy_timeout, WAL, current schema only), lazily
+  created and NEVER created by a read — a project without `.sherry/` answers
+  empty. Board content never enters the system prompt (it changes on every
+  write, so it would break the prefix cache); it moves only through tool calls.
+  A functional role's `tools:` list is an allow-list, so the specialized
+  definitions name the tools — a child would otherwise never see them however
+  the main agent is configured (pinned by `tests/agent/tools/test_coordination.py`).
+  The executor, the only writer, names all three (it is the only role that
+  claims a path); `researcher` / `reviewer` / `librarian` name only the
+  sharing/reading pair, so a read-only role never expresses write intent. Both
+  switches off ⇒ `build_main_tools()`, the child tool face and
+  `GET /agent/catalog` are byte-identical to a build without the feature.
+- **The SUBAGENT lane sits behind a load gate**
+  (`agent/tools/pub_base/load_gate.py`, `LANE_SYSTEM["load_gate_*"]`). The lane
+  is COUNTING backpressure ("are all 8 slots busy"); the gate is the
+  environment half ("can the machine carry one more"). It runs BEFORE
+  `lane_slot(SUBAGENT)` in `_execute_subagent_with_lane`, so a deferred dispatch
+  holds no slot: at ≥90% CPU/RAM it only logs (the cap throttles there), at
+  ≥95% it defers — the run stays PENDING, ONE `load_warning` frame goes to the
+  session (module-level per-run throttle), and it re-checks after
+  `load_gate_retry_s`. The deferral is BOUNDED: past `load_gate_max_defer_s`
+  (600 s) the run is terminalized via `complete_run(TIMEOUT, error="load_timeout:
+  …")` rather than abandoned, because an abandoned PENDING run is an orphan the
+  sweeper would re-dispatch → defer again (a loop); a kill during the wait is
+  seen through `kill_reconciliation` (a killed PENDING run is NOT TERMINAL) and
+  ends it at once. Sampling (three CPU intervals ≈4.5 s) runs in
+  `asyncio.to_thread` at most once per `load_gate_snapshot_ttl_s` (5 s) for the
+  whole process — concurrent waiters share one verdict — and FAILS OPEN on a
+  psutil error (a broken monitor must not stall dispatch) while honouring a real
+  stop. Shipped `load_gate_enabled: False` (byte-for-byte the old behavior);
+  enabling it requires the packaging smoke step that proves psutil reached the
+  frozen tree (`HIDDEN_IMPORTS` in `packaging/build_backend.py`), because the
+  import is lazy and invisible to the freezer.
+- **Sherry's own files are gated by two allow-lists**
+  (`agent/tools/pub_base/self_path_policy.py`). Nothing configured means the
+  session root IS the checkout, so the in-root test used to call the whole
+  source tree — and the credentials beside it — safe; a WHITELIST replaces that
+  assumption. WRITE allows only `<project>/.sherry/`, the CURRENT session's
+  `plans|attachments|uploads`, `TEMP_DIR`, `STATIC_DIR`,
+  `SRC_DIR/{images,audio,video}` and `SRC_DIR/rag/uploads`. READ is broader by
+  design — the whole source tree is readable (reading breaks nothing, leaks
+  nothing) — and denies `.env` `.models` `.network` `sherry.jsonc` and their
+  `.example`s, `src/data/**`, `src/checkpoints/**`, the workspace persona files
+  and `workspace/{memory,knowledge}/**`, model-weight suffixes, `mcp_servers/**`,
+  the writable skills tree, `CODE_INTEL_DIR`, `LOG_DIR`, the shared trajectory
+  ledger and every session directory except the CURRENT session's `plans/`.
+  Enforced in `resolve_tool_path` (including its IN-ROOT success branch, and
+  `search_files`' own resolve) and in `resolve_external_path`; a path in a
+  DIFFERENT session project directory is the user's workspace and never reaches
+  it. The main agent gets one-shot HITL (`sherry_self_access`, approve/reject
+  only — no YOLO, no session allowlist), a SUBAGENT is refused with no card,
+  and outside an agent run (no runnable context to ask) the access fails CLOSED.
+  Internal writers are untouched: `memory`, `skill_manage`, `exit_plan_mode`,
+  the ledger, shadow-git, the checkpointer, trajectory and the knowledge index
+  build paths from `config.path` constants and never call those resolvers.
+- An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped; the diff ALSO reports `changed:` entries for a surviving name whose parameter/return shape moved, and surfaces module-level `variable` symbols — both are opt-in to this diff, so the code index still lists only functions/methods/classes), the section then names `affected importers` from a READ-ONLY reverse lookup over the code index's `import_edges` (`code_intel/indexer.py::importers_of_names`; a missing index answers empty and the merge NEVER builds one) and those files are marked stale in the parent's evidence ledger alongside the merged paths (a pure import user has no write to match otherwise), with an optional `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]` (default OFF, `merge_reverify_max_commands` 5) replaying the parent's passed commands that cover them; it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `wiki/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
-- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears.
+- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears. A completed plan (no incomplete todo, no open flow) earns ONE `[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]` auto-turn before the gate treats it as done: the paranoid prompt asks the agent to re-read the diff, actually run the tests/typecheck/lint and launch user-facing changes. It is a PROMPT, not a gate (no evidence query, no HITL, no schema); a process-local fingerprint throttles it to once per completed plan, a changed plan re-arms it, a refused delivery is retried, and a TaskFlow session skips it (its finish gates own verification).
+- todo identity is `todo_id`, not `position`: each row gets a per-session monotonic id, the system reminder renders it as `#N`, and `todowrite` actions `patch` / `add(after_todo_id=…)` / `remove` / `reattach` / `list_orphans` address it. `replace` is still the default full-list rewrite and reissues every id (it reads `MAX(todo_id)` before DELETE, so an old id can never silently point at a new row); local actions preserve `flow_id` / `step_id` / `plan_ref`. A missing id raises `TodoIdNotFoundError` and the tool answers with the current valid list. The store creates only the current schema (`todo_id INTEGER NOT NULL`, unique `(session_id, todo_id)` index), with no old-table backfill; `position` is display order only and insertion shifts it via `TODOLIST_INFRA["position_shift_offset"]`.
+- Todo↔TaskFlow reference integrity is enforced at four points: (1) a full `todowrite` replacement that drops a flow's GC-root todo runs `compensate_orphaned_flows` immediately (`TODOLIST_INFRA["orphan_flow_on_drop"]`: `cancel` default, `refuse` rejects the rewrite, `sweep_only` leaves it to the sweep), kills the flow's live detached children (fail-open) and the tool result carries a `[REFERENCE INTEGRITY]` warning; (2) one session-scoped sweep follows the replacement with the CONFIGURED grace window (a just-completed root on its way to `taskflow_flow(action="finish")` is not collected; the targeted compensation already handled the dropped flows); (3) `taskflow_flow(action="create")` / `taskflow_flow(action="plan")` answer a similar active same-session flow with a reuse-or-`ack_dup=True` warning (normalized substring or Jaccard > 0.7; `resumed_from` skips it; a terminal flow never counts); (4) a terminal flow notifies its root at once — `completed` on finish, `cancelled` on fail/cancel — while the sweeper's delayed cancel remains the backstop. All four are fail-open; both notification helpers update only non-terminal rows (idempotent).
 - a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer's serializer (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
@@ -1856,22 +2462,23 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   A new signature-based tool-loop middleware was **not** added: 204 historical
   tool calls showed zero consecutive same-name + same-args successful mutating
   runs; `ToolGuardrails` remains the detector.
-- TaskFlow orphan collection is a **tri-color GC plus liveness** (v3), replacing
-  the per-scenario fixes: every `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a
+- TaskFlow orphan collection is an **unreferenced-flow GC plus liveness** (v3),
+  replacing the per-scenario fixes: every
+  `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a
   flow-level `pending` todo (the GC root; `step_id` empty, so it stays active
   until the whole flow is terminal) — a missing `todo_content` falls back to the
   description/flow id rather than creating an unrooted flow. The sweeper marks
-  active-todo `flow_id`s as the reachable/black set and fails non-terminal,
+  active-todo `flow_id`s as the reachable set and fails non-terminal,
   non-superseded flows with no root and an `updated_at` older than
-  `TASKFLOW_INFRA["tri_color_grace_seconds"]` (300 s — the grace covers the
-  create/bind race between the two SQLite files) as `orphan_unreferenced`.
+  `TASKFLOW_INFRA["unreferenced_flow_grace_seconds"]` (300 s — the grace covers
+  the create/bind race between the two SQLite files) as `orphan_unreferenced`.
   Liveness then handles stuck-but-referenced flows: a child-session flow with
   no live run is collected after the short grace, a main-session flow is
   collected after `stale_action_hours` (12 h) of inactivity
   (`session_dead` when no socket/turn/run exists, `stale_swept` when the
   session is live), a live child vetoes, and active todos referencing a
   failed/cancelled flow are cancelled. Both passes run at boot (before the
-  first 60 s tick) and every tick; `task_flows` gains additive `updated_at`
+  first 60 s tick) and every tick; `task_flows` carries `updated_at`
   (bumped by every mutation) and `terminal_reason` columns. A superseded
   predecessor becomes `cancelled`/`superseded`; `taskflow_flow(action="finish")` has three
   independent budgets (nudge / consecutive failures / protocol violations)
@@ -1892,7 +2499,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   actually persisted — two children completing at once both land, and the same
   step is spawned exactly once. A superseded flow releases its per-session slot.
 - two nullable `task_flows` columns record flow lineage (`resumed_from` /
-  `superseded_by`, additive migration): `taskflow_flow(action="create", resumed_from=…)` —
+  `superseded_by`): `taskflow_flow(action="create", resumed_from=…)` —
   the CREATE path, since `taskflow_flow(action="replan")` rewrites in place and never forks —
   writes the successor's forward pointer and stamps the predecessor's
   back-pointer with a plain session-scoped UPDATE that deliberately does NOT bump
@@ -1905,7 +2512,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
   (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
   negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`
-  and persisted to `messages.tool_duration_ms` (old DBs heal by ADD COLUMN; old rows read NULL). The stream's
+  and persisted to `messages.tool_duration_ms` (a row without the stamp reads NULL). The stream's
   `tool_result.duration_ms` is the same measurement for the live card (`stream_dispatch`'s `_tool_started_at`, per
   session + tool id, consumed once). Approval waits and queue time are OUTSIDE the window by construction — the clock
   starts when the tool actually executes. The client shows a live ticker while running and the measured value when

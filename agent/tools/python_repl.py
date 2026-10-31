@@ -299,6 +299,12 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
         )
+        # Restricted builtins block `open`, but class introspection can still
+        # reach `os` — the shadow diff inspects what actually changed on disk,
+        # so a write is accounted however it was performed.
+        from agent.tools.terminal import _record_shell_writes
+
+        _record_shell_writes(_extract_session_id(run_manager))
         return result
 
     async def _arun(
@@ -337,6 +343,12 @@ class TimedPythonREPLTool(SandboxGuardMixin, BaseTool):
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
         )
+        # Restricted builtins block `open`, but class introspection can still
+        # reach `os` — the shadow diff inspects what actually changed on disk,
+        # so a write is accounted however it was performed.
+        from agent.tools.terminal import _record_shell_writes
+
+        _record_shell_writes(_extract_session_id(run_manager))
         return result
 
 

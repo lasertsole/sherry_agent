@@ -37,6 +37,7 @@ from agent.middlewares.scaffolding import (
     verify_required_names_coverage,
 )
 from agent.tools.subagent.spawn.core import _build_child_middlewares
+from agent.tools.subagent.types.functional_role import FunctionalRole
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -54,10 +55,13 @@ class _AliasMiddleware:
         return self._alias
 
 
-def _real_subagent_chain() -> list[Any]:
+def _real_subagent_chain(
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
+) -> list[Any]:
     return _build_child_middlewares(
         auxiliary_llm=None,
         main_llm_context_window=_CONTEXT_WINDOW,
+        functional_role=functional_role,
     )
 
 
@@ -154,6 +158,23 @@ class TestActualChainCompliance:
         middleware = _real_subagent_chain()
         validate_required_middleware(middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
         assert SUBAGENT_REQUIRED_CLASSES <= {type(mw) for mw in middleware}
+
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [
+            (FunctionalRole.EXECUTOR, 90),
+            (FunctionalRole.GENERAL, 60),
+            (FunctionalRole.RESEARCHER, 60),
+            (FunctionalRole.REVIEWER, 60),
+            (FunctionalRole.LIBRARIAN, 60),
+        ],
+    )
+    def test_only_the_executor_gets_the_larger_iteration_budget(self, role, expected):
+        middleware = _real_subagent_chain(role)
+
+        budget = next(mw for mw in middleware if isinstance(mw, IterationBudget))
+
+        assert budget.max_iterations == expected
 
     def test_compression_llm_is_injected_into_summarization(self):
         """The compression family feeds the summarizer's own model (C1)."""

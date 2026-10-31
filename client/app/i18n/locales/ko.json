@@ -11,6 +11,47 @@
     "delete": "삭제",
     "cancel": "취소"
   },
+  "shortcuts": {
+    "hint": "「다시 지정」을 누른 뒤 새 조합을 누르세요(Esc 취소). 설정은 이 브라우저에 저장되며 즉시 적용됩니다.",
+    "rebind": "다시 지정",
+    "cancelRebind": "취소",
+    "listening": "키 조합을 누르세요…",
+    "reset": "기본값으로",
+    "resetAll": "모두 기본값으로",
+    "conflict": "「{name}」과(와) 충돌합니다 — 저장되지 않음",
+    "group": {
+      "composer": "입력창",
+      "navigation": "세션 및 사이드바",
+      "global": "전역"
+    },
+    "sendMessage": "메시지 보내기",
+    "historyPrev": "이전 질문 기록",
+    "historyNext": "다음 질문 기록",
+    "cancelInput": "기록 탐색 종료",
+    "commandPalette": "명령 팔레트",
+    "findInConversation": "대화에서 찾기",
+    "newSession": "새 세션",
+    "toggleSidebar": "세션 사이드바 접기/펼치기"
+  },
+  "safety": {
+    "blocked": "콘텐츠가 안전 필터에 의해 차단되었습니다",
+    "replaced": "일부 콘텐츠가 안전 규칙에 따라 대체되었습니다",
+    "event": "{count}개 규칙에 일치"
+  },
+  "chatFind": {
+    "placeholder": "대화에서 검색",
+    "previous": "이전 일치",
+    "next": "다음 일치",
+    "close": "검색 닫기"
+  },
+  "chatFloat": {
+    "title": "대화",
+    "dragHint": "드래그하여 이동",
+    "restore": "원래대로",
+    "expand": "대화 펼치기",
+    "resize": "드래그하여 크기 조정",
+    "collapse": "입력창으로 접기"
+  },
   "chatInput": {
     "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
     "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",
@@ -63,6 +104,7 @@
     "thinking": "생각",
     "toolArgs": "인자",
     "toolNoOutput": "출력 없음",
+    "openTrajectory": "궤적 보기",
     "toolResult": "실행 결과",
     "toolRunning": "실행 중…",
     "turnHistoryTools": "실행한 도구: {n}",
@@ -75,7 +117,11 @@
     "removeVideo": "비디오 제거",
     "diffNewFile": "새 파일",
     "codeWrap": "줄바꿈",
-    "codeZoom": "확대"
+    "codeZoom": "확대",
+    "continueGeneration": "이어서 생성",
+    "editMessage": "메시지 편집",
+    "editingMessage": "보낸 메시지를 편집 중입니다. 보내면 해당 턴을 다시 실행합니다",
+    "forkFromHere": "이 답변에서 새 세션 분기"
   },
   "chat": {
     "backgroundMessage": "백그라운드 작업",
@@ -100,7 +146,7 @@
     },
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",
-      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 모델 설정에서 수정하세요."
+      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 200K (200000) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 모델 설정에서 수정하세요."
     }
   },
   "errors": {
@@ -108,7 +154,12 @@
     "pageError": "페이지 오류",
     "replyFailed": "（회신 실패：{reason}）",
     "sendFailed": "（전송 실패：{reason}）",
-    "streamInterrupted": "연결이 끊겼습니다. 답장은 백그라운드에서 완료되었을 수 있으며 곧 자동 동기화됩니다."
+    "streamInterrupted": "연결이 끊겼습니다. 답장은 백그라운드에서 완료되었을 수 있으며 곧 자동 동기화됩니다.",
+    "breakpointStale": "중단된 답변을 더 이상 이어갈 수 없습니다",
+    "continueBusy": "응답 중에는 이어서 생성할 수 없습니다",
+    "editBusy": "응답 중이라 편집할 수 없습니다",
+    "editCompacted": "이 메시지는 편집 가능한 범위를 벗어났습니다(기록이 압축됨)",
+    "forkFailed": "분기 생성에 실패했습니다. 다시 시도하세요"
   },
   "connection": {
     "offline": "네트워크 연결 끊김",
@@ -163,7 +214,20 @@
     "refreshGraph": "새로고침",
     "refreshGraphPrompt": "실행 그래프를 다시 가져와 다시 그리기",
     "noTasks": "백그라운드 작업이 아직 없습니다",
-    "tasksLoading": "작업을 불러오는 중..."
+    "tasksLoading": "작업을 불러오는 중...",
+    "resize": "드래그하여 너비 조정"
+  },
+  "commandPalette": {
+    "placeholder": "명령 이름 입력…",
+    "recent": "최근 사용",
+    "noMatch": "일치하는 명령이 없습니다",
+    "newSession": "새 대화",
+    "section": {
+      "session": "세션",
+      "navigate": "이동",
+      "tools": "도구",
+      "skills": "스킬"
+    }
   },
   "toolbar": {
     "newChat": "새 대화",
@@ -198,6 +262,8 @@
     },
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기",
+    "floatChat": "대화를 플로팅으로 표시",
+    "restoreChat": "대화 막대 복원",
     "notification": "알림",
     "projectFiles": "프로젝트 파일",
     "projectFilesHint": "프로젝트 파일",
@@ -207,7 +273,9 @@
     "toolbox": "도구 상자",
     "browser": "브라우저",
     "terminal": "터미널",
-    "webSearch": "모델 검색"
+    "webSearch": "모델 검색",
+    "i18n": "국제화",
+    "whiteboard": "화이트보드"
   },
   "config": {
     "agent": {
@@ -297,6 +365,8 @@
         "followTier": "역할 기본값 따르기",
         "tier": "역할 기본값: {tier}",
         "tierDepth": "역할 정의 없음: 깊이 기본값",
+        "maxOutput": "최대 출력",
+        "maxOutputHint": "이 역할 모델 자체의 최대 출력 토큰(기본 8192)입니다. 하위 에이전트 결과 저장·전달·요약·판정·읽기 상한의 확대/축소에 사용됩니다.",
         "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
         "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
       },
@@ -404,14 +474,28 @@
       "saveFailed": "모델 설정을 저장하지 못했습니다.",
       "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
       "noEnvFile": ".env 파일을 찾을 수 없습니다.",
-      "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
-      "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+      "maxTokenError": "{key}는 200000 (200K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
+      "maxTokenHint": "200000 (200K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
     },
     "sherry": {
       "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
       "saveFailed": "앱 설정을 저장하지 못했습니다.",
       "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
-      "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+      "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다.",
+      "allowlist": {
+        "title": "리플레이 허용 목록",
+        "hint": "finish 시 리플레이에서 자동 실행을 허용할 실행 파일 이름을 기본 5개 툴체인에 추가합니다(재실행되는 검증 명령에만 영향).",
+        "placeholder": "예: gradle",
+        "add": "추가",
+        "remove": "삭제",
+        "reload": "다시 읽기",
+        "empty": "추가 항목이 없습니다——기본 허용 목록이 적용됩니다.",
+        "badChars": "공백이나 셸 메타 문자(&;|<>$`)는 사용할 수 없습니다",
+        "tooLong": "이름이 너무 깁니다",
+        "duplicate": "이미 등록됨",
+        "loadFailed": "읽기 실패(백엔드 연결 불가?)",
+        "saveFailed": "저장 실패"
+      }
     },
     "cron": {
       "addJob": "새 작업",
@@ -492,13 +576,14 @@
       "penaltyRange": "-2.0 ~ 2.0 사이의 숫자를 입력하세요",
       "maxContextLabel": "컨텍스트 창 (MAX_TOKEN)",
       "maxOutputLabel": "최대 출력 창 (MAX_OUTPUT_TOKEN)",
+      "maxOutputHint": "{min} 이상이며 모델 컨텍스트 창보다 작아야 합니다. 비우면 제공자 기본값",
+      "outputCapRange": "최대 출력 창은 {min} 이상이고 모델 컨텍스트 창보다 작아야 합니다",
       "groupHelpLabel": "{group}의 용도와 사용 사례 보기",
       "modelHelp": {
         "main": "메인 채팅 모델 — 대화, 도구 호출, 작업 계획, 최종 답변을 담당합니다. 도구 사용이 안정적이고 긴 컨텍스트를 가진 가장 강한 범용 모델에 적합합니다.",
         "auxiliary": "보조 모델 — JSON 생성, 판정, 계획 추출 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
         "taskflow": "TaskFlow 의사결정 모델 — 계획, 재계획, 단계 판정, 마무리 검사(temperature 0)에 사용합니다. JSON을 안정적으로 따르는 모델에 적합합니다.",
         "compression": "압축 모델 — 긴 대화 요약을 담당합니다. 긴 컨텍스트와 낮은 비용의 모델에 적합합니다.",
-        "reasoner": "추론 모델 — 복잡한 분석, 수학/논리 추론, 어려운 문제 해결에 사용합니다. 일상 대화는 메인 모델을 그대로 사용해도 됩니다.",
         "ittt": "이미지→텍스트 모델 — 이미지를 읽어 텍스트로 변환합니다. 스크린샷 이해, OCR, 시각 Q&A에 사용합니다.",
         "vttt": "비디오→텍스트 모델 — 비디오 내용을 추출·설명합니다. 비디오 요약과 장면 이해에 사용합니다.",
         "tti": "텍스트→이미지 모델 — 프롬프트로 이미지를 생성합니다. 일러스트, 시각 초안, 소재 제작에 사용합니다.",
@@ -531,7 +616,21 @@
       "soul": "Agent 인격, 어조, 성격",
       "user": "사용자 정보 및 선호도"
     },
-    "uploadAvatar": "아바타 업로드"
+    "uploadAvatar": "아바타 업로드",
+    "cuda": {
+      "title": "CUDA 가속(선택)",
+      "hint": "CUDA pack은 로컬 음성 인식과 문서 파싱을 GPU에서 실행합니다. CPU 빌드는 이것 없이도 완전하게 동작합니다.",
+      "supported": "가속 사용 가능: {gpu}(드라이버 {driver})",
+      "unsupported": "사용 가능한 NVIDIA 드라이버가 감지되지 않았습니다",
+      "download": "CUDA Pack 다운로드",
+      "uninstall": "CUDA pack 제거",
+      "restart": "설치 후 백엔드 재시작",
+      "installedHint": "설치됨. 백엔드 재시작 후 적용됩니다."
+    },
+    "i18n": {
+      "title": "국제화",
+      "hint": "인터페이스 언어를 선택합니다. 즉시 적용되고 선택이 기억되며 세션 내용에는 영향을 주지 않습니다."
+    }
   },
   "rightSidebar": {
     "fileViewer": "프로젝트 파일",
@@ -565,7 +664,10 @@
     },
     "scopeEmpty": "이 그룹에 탭이 없습니다",
     "recentClosed": "최근 닫은 탭",
-    "recentClosedEmpty": "최근에 닫은 탭이 없습니다"
+    "recentClosedEmpty": "최근에 닫은 탭이 없습니다",
+    "i18n": "국제화",
+    "tokenBudget": "토큰 예산",
+    "whiteboard": "화이트보드"
   },
   "progressFloat": {
     "status": {
@@ -670,10 +772,43 @@
   },
   "searchFallback": {
     "notice": "Tavily를 사용할 수 없어({reason}) {name}(으)로 전환했습니다",
+    "cooldown": "SearXNG가 연속으로 실패하여 약 {seconds}초 후 자동 복귀될 때까지 일시 중지합니다",
+    "recovered": "SearXNG 쿨다운이 끝나 다시 활성화되었습니다",
     "reason": {
       "tavily_auth_failed": "키가 유효하지 않거나 만료됨",
       "tavily_timeout": "요청 시간 초과",
       "tavily_error": "요청 실패"
     }
+  },
+  "loadGate": {
+    "warning": "호스트 부하가 너무 높습니다(CPU {cpu}% / 메모리 {ram}%). 서브에이전트 파견을 일시 중지했으며 부하가 내려가면 자동으로 재개합니다."
+  },
+  "backgroundTasks": {
+    "title": "백그라운드 명령",
+    "runningOnly": "실행 중 {count}",
+    "statusRunning": "실행 중",
+    "statusStopping": "중지 중…",
+    "kill": "이 명령 중지(대화는 계속됨)",
+    "killRefused": "이미 종료됨"
+  },
+  "session": {
+    "fork": "여기서 분기",
+    "forkedFrom": "{parent}에서 분기됨",
+    "backToParent": "상위 분기로 돌아가기"
+  },
+  "whiteboard": {
+    "namePlaceholder": "보드 이름",
+    "pen": "펜",
+    "eraser": "지우개",
+    "width": "선 두께",
+    "undo": "실행 취소",
+    "redo": "다시 실행",
+    "clear": "지우기",
+    "addToChat": "대화에 추가",
+    "empty": "여기에서 자유롭게 그린 뒤 「대화에 추가」로 어시스턴트에게 보내세요",
+    "unsupported": "이 브라우저는 Canvas를 지원하지 않아 화이트보드를 사용할 수 없습니다",
+    "exportFailed": "이미지 내보내기에 실패했습니다",
+    "addedToChat": "대화의 전송 대기 이미지에 추가했습니다",
+    "maxStrokes": "획이 너무 많습니다. 먼저 지우거나 실행 취소하세요"
   }
 }

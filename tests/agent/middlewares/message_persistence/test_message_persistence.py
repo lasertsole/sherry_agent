@@ -243,6 +243,13 @@ class TestFilterSemantics:
                 id="fside",
                 additional_kwargs={"side_chat_context": True},
             ),
+            # The injected continuation prompt: the model must see it (it lives
+            # in the checkpoint) but it is not a user message.
+            HumanMessage(
+                content="[System: Your previous response was truncated...]",
+                id="fcont",
+                metadata={"internal": True, "provenance": "continuation"},
+            ),
             SystemMessage(content="system", id="fsys"),
             already_flushed,
         ]

@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
 import contextlib
+
+from agent.checkpointer.pragmas import connect_with_busy_timeout
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
     ChannelVersions,
@@ -73,6 +76,114 @@ class _LoopSafeLock(asyncio.Lock):
 # ---------------------------------------------------------------------------
 # ThreadSafeAsyncSqliteSaver
 # ---------------------------------------------------------------------------
+
+
+async def aclean_all_checkpoints() -> dict[str, int]:
+    """Keep only the latest checkpoint per thread — ONE global prune.
+
+    Runs at boot (and from a maintenance call), never per turn: this used to be
+    called from every graph build, i.e. every turn, which made the shared
+    checkpoint DB take a competing writer per turn and turned ordinary
+    concurrency into ``SQLITE_BUSY`` turn failures.
+
+    The prune runs inside ``BEGIN IMMEDIATE`` so the keep-set it computes cannot
+    go stale: without the write lock another session could commit checkpoint
+    N+1 between the SELECT and the DELETE, and ``checkpoint_id != N`` would
+    delete that brand-new row.
+
+    Keeps the newest TOP-LEVEL (``checkpoint_ns = ''``) checkpoint per thread —
+    the row ``aget_state`` / ``sessions_messages`` reads — mirroring
+    :meth:`ThreadSafeAsyncSqliteSaver.aclean_thread_checkpoints`. Writes survive
+    only for that ``(checkpoint_ns, checkpoint_id)`` pair; orphan writes are
+    dropped. VACUUM is conditional and fail-open.
+    """
+    from config import SRC_DIR
+
+    db_path = str((SRC_DIR / "checkpoints" / "sqlite.db").resolve())
+    if not Path(db_path).exists():
+        return dict(threads_kept=0, deleted_checkpoints=0, deleted_writes=0)
+
+    conn = await connect_with_busy_timeout(db_path)
+    try:
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = await conn.execute(
+                "SELECT thread_id, checkpoint_ns, checkpoint_id FROM ("
+                "  SELECT thread_id, checkpoint_ns, checkpoint_id,"
+                "         ROW_NUMBER() OVER ("
+                "           PARTITION BY thread_id"
+                "           ORDER BY (checkpoint_ns = '') DESC, rowid DESC"
+                "         ) AS rn"
+                "  FROM checkpoints"
+                ") WHERE rn = 1"
+            )
+            keep_rows = await cursor.fetchall()
+            await cursor.close()
+
+            total_kept = len(keep_rows)
+            total_del_ckpt = 0
+            total_del_write = 0
+            for tid, keep_ns, keep_id in keep_rows:
+                cursor = await conn.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = ? "
+                    "AND NOT (checkpoint_ns = ? AND checkpoint_id = ?)",
+                    (tid, keep_ns, keep_id),
+                )
+                total_del_ckpt += cursor.rowcount
+                await cursor.close()
+
+                cursor = await conn.execute(
+                    "DELETE FROM writes WHERE thread_id = ? "
+                    "AND NOT (checkpoint_ns = ? AND checkpoint_id = ?)",
+                    (tid, keep_ns, keep_id),
+                )
+                total_del_write += cursor.rowcount
+                await cursor.close()
+
+            # orphan writes (their checkpoint is gone entirely)
+            cursor = await conn.execute(
+                "DELETE FROM writes WHERE NOT EXISTS ("
+                "  SELECT 1 FROM checkpoints c"
+                "   WHERE c.thread_id = writes.thread_id"
+                "     AND c.checkpoint_ns = writes.checkpoint_ns"
+                "     AND c.checkpoint_id = writes.checkpoint_id"
+                ")"
+            )
+            total_del_write += cursor.rowcount
+            await cursor.close()
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
+
+        try:
+            cursor = await conn.execute("PRAGMA freelist_count")
+            row = await cursor.fetchone()
+            await cursor.close()
+            freelist_count = int(row[0]) if row else 0
+
+            cursor = await conn.execute("PRAGMA page_size")
+            row = await cursor.fetchone()
+            await cursor.close()
+            page_size = int(row[0]) if row else 0
+
+            freelist_bytes = freelist_count * page_size
+            if freelist_bytes > _VACUUM_THRESHOLD_BYTES:
+                await conn.execute("VACUUM")
+                logger.info(
+                    "checkpoint db vacuumed: reclaimed ~{:.0f}MB",
+                    freelist_bytes / (1024 * 1024),
+                )
+        except Exception as exc:
+            logger.warning("checkpoint db vacuum skipped: {}", exc)
+    finally:
+        await conn.close()
+
+    return dict(
+        threads_kept=total_kept,
+        deleted_checkpoints=total_del_ckpt,
+        deleted_writes=total_del_write,
+    )
 
 
 class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
@@ -207,106 +318,8 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
     # ------------------------------------------------------------------
 
     async def aclean_old_checkpoints(self) -> dict[str, int]:
-        """Delete all checkpoints & writes except the last checkpoint per thread.
-
-        **Lock-free**: opens a *separate* SQLite connection so this method
-        never contends with ``aput`` / ``agetuple`` (which share
-        ``self.conn`` + ``self.lock``).  Safe to call from any context
-        (startup, cron, heartbeat) without deadlock risk.
-
-        Keeps the latest checkpoint so that ``aget_state()`` / ``aget_tuple()``
-        still return the session's most recent state (messages remain visible).
-
-        After pruning, runs a conditional ``VACUUM`` when the freelist exceeds
-        ``_VACUUM_THRESHOLD_BYTES`` — with ``auto_vacuum=0`` the DELETE only
-        returns pages to the freelist, it never shrinks the file.  The VACUUM
-        is fail-open: an error is logged and never affects the prune result.
-
-        Returns
-        -------
-        dict with keys: threads_kept, deleted_checkpoints, deleted_writes
-        """
-        import aiosqlite
-        from config import SRC_DIR
-
-        db_path = str((SRC_DIR / "checkpoints" / "sqlite.db").resolve())
-
-        async with aiosqlite.connect(db_path, check_same_thread=False) as conn:
-            # ── identify last checkpoint per thread ──
-            cursor = await conn.execute(
-                "SELECT thread_id, checkpoint_id FROM ("
-                "  SELECT thread_id, checkpoint_id, "
-                "         ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY rowid DESC) AS rn"
-                "  FROM checkpoints"
-                ") WHERE rn = 1"
-            )
-            keep_rows = await cursor.fetchall()
-            await cursor.close()
-
-            total_kept = len(keep_rows)
-            total_del_ckpt = 0
-            total_del_write = 0
-
-            if keep_rows:
-                for tid, last_id in keep_rows:
-                    cursor = await conn.execute(
-                        "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ? AND checkpoint_ns = ''",
-                        (tid, last_id),
-                    )
-                    total_del_ckpt += cursor.rowcount
-                    await cursor.close()
-
-                    cursor = await conn.execute(
-                        "DELETE FROM writes WHERE thread_id = ? AND (checkpoint_ns != '' OR checkpoint_id != ?)",
-                        (tid, last_id),
-                    )
-                    total_del_write += cursor.rowcount
-                    await cursor.close()
-
-                # orphan writes
-                cursor = await conn.execute(
-                    "DELETE FROM writes WHERE NOT EXISTS ("
-                    "  SELECT 1 FROM checkpoints c"
-                    "   WHERE c.thread_id = writes.thread_id"
-                    "     AND c.checkpoint_ns = writes.checkpoint_ns"
-                    "     AND c.checkpoint_id = writes.checkpoint_id"
-                    ")"
-                )
-                total_del_write += cursor.rowcount
-                await cursor.close()
-
-                await conn.commit()
-
-            # ── conditional VACUUM: reclaim the pages the prune just freed ──
-            # ``commit()`` above ends the implicit transaction; VACUUM cannot
-            # run inside one.  The prune is already committed, so a VACUUM
-            # failure is logged and swallowed (fail-open).
-            try:
-                cursor = await conn.execute("PRAGMA freelist_count")
-                row = await cursor.fetchone()
-                await cursor.close()
-                freelist_count = int(row[0]) if row else 0
-
-                cursor = await conn.execute("PRAGMA page_size")
-                row = await cursor.fetchone()
-                await cursor.close()
-                page_size = int(row[0]) if row else 0
-
-                freelist_bytes = freelist_count * page_size
-                if freelist_bytes > _VACUUM_THRESHOLD_BYTES:
-                    await conn.execute("VACUUM")
-                    logger.info(
-                        "checkpoint db vacuumed: reclaimed ~{:.0f}MB",
-                        freelist_bytes / (1024 * 1024),
-                    )
-            except Exception as exc:
-                logger.warning("checkpoint db vacuum skipped: {}", exc)
-
-        return dict(
-            threads_kept=total_kept,
-            deleted_checkpoints=total_del_ckpt,
-            deleted_writes=total_del_write,
-        )
+        """Keep only the latest checkpoint per thread (see the module function)."""
+        return await aclean_all_checkpoints()
 
     async def aclean_thread_checkpoints(self, thread_id: str) -> dict[str, int]:
         """Keep one checkpoint for ``thread_id`` and delete every other row for it.
@@ -325,7 +338,6 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
         if not str(thread_id).strip():
             return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
 
-        import aiosqlite
         from pathlib import Path
         from config import SRC_DIR
 
@@ -333,7 +345,8 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
         if not db_path.exists():
             return dict(kept=0, deleted_checkpoints=0, deleted_writes=0)
 
-        async with aiosqlite.connect(str(db_path), check_same_thread=False) as conn:
+        conn = await connect_with_busy_timeout(str(db_path))
+        try:
             cursor = await conn.execute(
                 "SELECT checkpoint_ns, checkpoint_id FROM checkpoints "
                 "WHERE thread_id = ? "
@@ -368,12 +381,13 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
             deleted_writes = cursor.rowcount
             await cursor.close()
             await conn.commit()
-
-        return dict(
-            kept=1,
-            deleted_checkpoints=deleted_checkpoints,
-            deleted_writes=deleted_writes,
-        )
+            return dict(
+                kept=1,
+                deleted_checkpoints=deleted_checkpoints,
+                deleted_writes=deleted_writes,
+            )
+        finally:
+            await conn.close()
 
     def get_delta_channel_history(
         self,

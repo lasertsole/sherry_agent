@@ -432,7 +432,21 @@ async def submit_user_input(
         placeholder_in_flight = any(
             row.status is UserInputQueueStatus.CLAIMED for row in await store.list_active(bare)
         )
-        if state.busy or placeholder_in_flight:
+        # A graph parked on a HITL interrupt is busy even when every in-memory
+        # signal says idle — the dangerous case is right after a restart, where
+        # the interrupt lives only in the checkpoint: dispatching a normal turn
+        # would feed a HumanMessage into the suspended graph and break the
+        # ``Command(resume=...)`` contract. The probe is fail-open (None on any
+        # error) so a broken reader cannot block all input.
+        interrupt_pending = False
+        if not state.busy and not placeholder_in_flight:
+            try:
+                from agent.state_port import read_interrupt
+
+                interrupt_pending = await read_interrupt(bare) is not None
+            except Exception as e:  # noqa: BLE001 - fail-open: queue never blocks
+                logger.debug("submit_user_input: interrupt probe failed for {}: {}", bare, e)
+        if state.busy or placeholder_in_flight or interrupt_pending:
             try:
                 _row, position = await store.enqueue(
                     bare,
@@ -447,7 +461,7 @@ async def submit_user_input(
             logger.info(
                 "submit_user_input: session {} busy ({}); queued at position {}",
                 bare,
-                state.reason,
+                state.reason or ("hitl_pending" if interrupt_pending else "claimed_row"),
                 position,
             )
             return queued(position)

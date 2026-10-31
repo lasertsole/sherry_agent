@@ -24,6 +24,8 @@ import { fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { createSideChat, deleteSideChat, fetchProjectDirectory, setProjectDirectory } from './bridge/session';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { generateMsgId } from './use-chat-stream';
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import {
   clearCachedCharacter,
   clearCachedSessionMeta,
@@ -36,12 +38,49 @@ import { releaseAgentSocket } from './bridge/agent-socket';
 import { emit } from './mitt';
 import { logUtil } from '~/utils/log';
 
+/**
+ * Creation idempotency (the client half): one (parent, client_request_id) pair
+ * names ONE child for a short window, so the re-click after a lost response —
+ * the POST may have succeeded server-side while the answer never arrived —
+ * returns the SAME fork instead of building a second complete one. A
+ * deliberate side chat opened later than the window gets a fresh key and forks
+ * normally.
+ */
+const REQUEST_ID_REUSE_MS = 30_000;
+const recentRequestIds = new Map<string, { id: string; at: number }>();
+
+/**
+ * The idempotency key for one creation: stable across immediate re-attempts,
+ * fresh for a genuinely new creation.
+ *
+ * The scope is the CREATION, not the parent: a side chat keys on the parent
+ * alone, while a branch keys on (parent, turn) so forking two different turns
+ * (or a turn and a quote chat) never collapses into one child.
+ * @param parentSessionId The parent session the child would belong to.
+ * @param forkTurnNum The branch fork point, when this is a branch.
+ * @returns The key to send with the POST.
+ */
+function creationRequestId(parentSessionId: string, forkTurnNum?: number): string {
+  const scope = forkTurnNum != null ? `sidechat:${parentSessionId}:fork:${forkTurnNum}` : `sidechat:${parentSessionId}`;
+  const now = Date.now();
+  const cached = recentRequestIds.get(scope);
+  if (cached && now - cached.at < REQUEST_ID_REUSE_MS) {
+    cached.at = now;
+    return cached.id;
+  }
+  const id = generateMsgId();
+  recentRequestIds.set(scope, { id, at: now });
+  return id;
+}
+
 /** What the caller needs to open the side-chat tab. */
 export interface SideChatSession {
   /** The server-created child session id. */
   sessionId: string;
   /** The main session this side chat belongs to. */
   parentSessionId: string;
+  /** The parent turn a BRANCH was forked at (null for a quote side chat). */
+  forkTurnNum: number | null;
   /** Whether the server captured a parent transcript for model-only context. */
   inherited: boolean;
   /** The session-list placeholder (announced so the child is immediately visible). */
@@ -73,10 +112,19 @@ function localCreateTime(date: Date): string {
  *
  * @param parentSessionId The session the selection came from.
  * @param title The placeholder title shown in the session list.
+ * @param forkTurnNum The parent turn to branch from (omitted = a side chat:
+ *   the child inherits the parent's last completed answer).
  * @returns The new session id, its parent link and its placeholder meta.
  */
-export async function createSideChatSession(parentSessionId: string, title: string): Promise<SideChatSession> {
-  const created = await createSideChat(parentSessionId);
+export async function createSideChatSession(
+  parentSessionId: string,
+  title: string,
+  forkTurnNum?: number
+): Promise<SideChatSession> {
+  const created = await createSideChat(parentSessionId, {
+    clientRequestId: creationRequestId(parentSessionId, forkTurnNum),
+    forkTurnNum
+  });
   const sessionId = created.sessionId;
   const meta: CachedSessionMeta = {
     id: sessionId,
@@ -136,11 +184,18 @@ export async function createSideChatSession(parentSessionId: string, title: stri
   });
   // The child is an ordinary session: announce its placeholder row so the list
   // shows it at once (loadSessionList replaces it with the server row later).
-  emit('session:created', meta);
+  // The parent id rides along so the sidebar can show the branch mark without
+  // waiting for the next list refresh (a side chat is a fork too, minus a turn).
+  emit('session:created', {
+    ...meta,
+    parentSessionId: created.parentSessionId,
+    forkTurnNum: created.forkTurnNum ?? undefined
+  });
 
   return {
     sessionId,
     parentSessionId: created.parentSessionId,
+    forkTurnNum: created.forkTurnNum,
     inherited: created.inherited,
     meta
   };

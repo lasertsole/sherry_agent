@@ -1,6 +1,6 @@
 """Unit contract for ``config/features/agent_side/token_guard.py``.
 
-The 128K floor is the single source of truth shared by the server boot gate,
+The 200K floor is the single source of truth shared by the server boot gate,
 ``built_agent()``, the subagent spawn path and the .env write path.
 """
 
@@ -18,9 +18,9 @@ from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
 pytestmark = [pytest.mark.unit]
 
 
-def test_threshold_is_128k():
-    assert token_guard.MIN_REQUIRED_MAX_TOKEN == 131_072
-    assert MIN_REQUIRED_MAX_TOKEN == 131_072
+def test_threshold_is_200k():
+    assert token_guard.MIN_REQUIRED_MAX_TOKEN == 200_000
+    assert MIN_REQUIRED_MAX_TOKEN == 200_000
 
 
 class TestAssertMaxTokenValid:

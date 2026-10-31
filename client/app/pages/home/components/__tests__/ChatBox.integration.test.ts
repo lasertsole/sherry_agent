@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { nextTick } from 'vue';
 import { mount, flushPromises } from '@vue/test-utils';
 import ChatBox from '@/pages/home/components/ChatBox.vue';
 import { DEFAULT_PLACEHOLDER_AVATAR } from '~/composables/defaultCharacter';
@@ -16,6 +17,84 @@ const base = (over: Partial<MessageItem>): MessageItem => ({
   ...over
 });
 
+describe('ChatBox.vue: edit + continue entry points', () => {
+  it('offers the edit action on a persisted user message and emits its row', async () => {
+    const message = base({ id: 42, role: CHAT_ROLE.USER, content: 'fix this', turn_num: 2 });
+    const wrapper = mount(ChatBox, { props: { messages: [message] } });
+
+    const button = wrapper.find('[data-test="chat-edit-message"]');
+    expect(button.exists()).toBe(true);
+    await button.trigger('click');
+
+    expect(wrapper.emitted('edit-message')).toEqual([[message]]);
+  });
+
+  it('never offers editing on an AI row, a streaming row, or a locked composer', () => {
+    const ai = mount(ChatBox, {
+      props: { messages: [base({ id: 3, role: CHAT_ROLE.AI, content: 'answer', turn_num: 1 })] }
+    });
+    expect(ai.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+
+    // A temp (negative) id is an optimistic row: not persisted yet.
+    const streaming = mount(ChatBox, {
+      props: { messages: [base({ id: -1, role: CHAT_ROLE.USER, content: 'sending', turn_num: 1 })] }
+    });
+    expect(streaming.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+
+    // `can-edit` false (a turn is streaming) hides it too.
+    const busy = mount(ChatBox, {
+      props: { canEdit: false, messages: [base({ id: 5, role: CHAT_ROLE.USER, content: 'x', turn_num: 1 })] }
+    });
+    expect(busy.find('[data-test="chat-edit-message"]').exists()).toBe(false);
+  });
+
+  it('offers 继续生成 on an interrupted tail answer and emits the turn', async () => {
+    const interrupted = base({
+      id: 9,
+      role: CHAT_ROLE.AI,
+      content: '[interrupted:cancelled] half an ans',
+      turn_num: 4
+    });
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 8, role: CHAT_ROLE.USER, content: 'q', turn_num: 4 }), interrupted] }
+    });
+
+    const button = wrapper.find('[data-test="chat-continue-generation"]');
+    expect(button.exists()).toBe(true);
+    expect(button.text()).toContain('继续生成');
+    await button.trigger('click');
+
+    expect(wrapper.emitted('continue-generation')).toEqual([[4]]);
+  });
+
+  it('hides 继续生成 when the interrupted answer is not the tail', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.AI, content: '[interrupted:cancelled] cut', turn_num: 1 }),
+          base({ id: 2, role: CHAT_ROLE.USER, content: 'next question', turn_num: 2 }),
+          base({ id: 3, role: CHAT_ROLE.AI, content: 'full answer', turn_num: 2 })
+        ]
+      }
+    });
+
+    expect(wrapper.find('[data-test="chat-continue-generation"]').exists()).toBe(false);
+  });
+
+  it('the live resumable flag offers 继续生成 without the marker prefix', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 1 }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'half an ans', turn_num: 1, resumable: true })
+        ]
+      }
+    });
+
+    expect(wrapper.find('[data-test="chat-continue-generation"]').exists()).toBe(true);
+  });
+});
+
 describe('ChatBox.vue (integration, backend mocked)', () => {
   it('renders a single AI message with the neutral default name and sanitized markdown', () => {
     const wrapper = mount(ChatBox, {
@@ -23,7 +102,7 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
         messages: [base({ id: 1, role: CHAT_ROLE.AI, content: '**bold** world' })]
       }
     });
-    // No character name on the prop → the neutral default label (改自 橘雪莉:
+    // No character name on the prop → the neutral default label (adapted from the 橘雪莉 character:
     // the persona name must never stand in for a nameless preset).
     expect(wrapper.text()).toContain('雪莉');
     expect(wrapper.text()).toContain('world');
@@ -57,11 +136,13 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(wrapper.text()).toContain('rate_limit');
   });
 
-  it('credits human messages as 我', () => {
+  it('renders USER role messages under the human row marker (credited as 我)', () => {
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] }
     });
-    expect(wrapper.text()).toContain('我');
+    // The row's role marker is the stable contract (a text assert on 我 — the zh role marker — alone
+    // matches almost any Chinese string on the page).
+    expect(wrapper.find('[data-message-role="human"]').exists()).toBe(true);
   });
 
   it('filters out TOOL role messages entirely', () => {
@@ -375,7 +456,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
 
     const card = wrapper.find('.background-task-card');
     expect(card.exists()).toBe(true);
-    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    // The per-origin label names the source (zh stub: 项目目录切换 "directory switched", not 后台任务 "background task")
     expect(wrapper.text()).toContain('项目目录切换');
     expect(wrapper.text()).not.toContain('后台任务');
     // Collapsed by default; expanding shows the verbatim notice
@@ -416,7 +497,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
 
     const card = wrapper.find('.background-task-card');
     expect(card.exists()).toBe(true);
-    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    // The per-origin label names the source (zh stub: 项目目录切换 "directory switched", not 后台任务 "background task")
     expect(wrapper.text()).toContain('项目目录切换');
     expect(wrapper.text()).not.toContain('后台任务');
     // Collapsed by default; expanding shows the verbatim notice
@@ -450,7 +531,7 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
   ])('labels the neutral card with its own source (%s)', (origin, label) => {
     // Every injector tags its rows with an origin, and the card names that
     // source instead of the generic background-task label. The generic-origin
-    // card (系统消息) collapses by default exactly like the tagged ones.
+    // card (系统消息 — "System message") collapses by default exactly like the tagged ones.
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 24, content: '门控正文', origin })] }
     });
@@ -673,7 +754,7 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
 
   it('opens the session context viewer when a token figure is clicked', async () => {
     // The token phrase on the AI row is the affordance: hovering it turns the
-    // numbers blue (the class) and clicking opens the 当前会话 context tab.
+    // numbers blue (the class) and clicking opens the This Session context tab.
     const sidebar = { openTab: vi.fn(() => 'contextViewer-1') };
     vi.stubGlobal('useRightSidebarStore', () => sidebar);
     const wrapper = mount(ChatBox, {
@@ -799,5 +880,126 @@ describe('ChatBox selection menu (integration)', () => {
     expect(menu.textContent).not.toContain('在辅助会话中提问');
     selection.removeAllRanges();
     wrapper.unmount();
+  });
+});
+
+describe('ChatBox.vue: branch from an answer', () => {
+  it('offers the fork action on a settled AI answer and emits its turn', async () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 2 }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: 'a', turn_num: 2 })
+        ]
+      }
+    });
+
+    const button = wrapper.find('[data-test="chat-fork-turn"]');
+    expect(button.exists()).toBe(true);
+    await button.trigger('click');
+
+    expect(wrapper.emitted('fork-turn')).toEqual([[2]]);
+  });
+
+  it('never offers forking on a user row, a streaming row, or a branch child', () => {
+    const user = mount(ChatBox, {
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'q', turn_num: 1 })] }
+    });
+    expect(user.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+
+    const streaming = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 2, role: CHAT_ROLE.AI, content: 'partial', turn_num: 1, streaming: true })]
+      }
+    });
+    expect(streaming.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+
+    const child = mount(ChatBox, {
+      props: {
+        canFork: false,
+        messages: [base({ id: 3, role: CHAT_ROLE.AI, content: 'a', turn_num: 1 })]
+      }
+    });
+    expect(child.find('[data-test="chat-fork-turn"]').exists()).toBe(false);
+  });
+});
+
+describe('ChatBox.vue: in-conversation find', () => {
+  const transcript: MessageItem[] = [
+    base({ id: 1, role: CHAT_ROLE.USER, content: 'first question', turn_num: 1 }),
+    base({ id: 2, role: CHAT_ROLE.AI, content: 'the needle lives here', turn_num: 1 }),
+    base({ id: 3, role: CHAT_ROLE.USER, content: 'another needle', turn_num: 2 })
+  ];
+
+  it('opens the bar, counts the hits and rings the first match', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+
+    expect(wrapper.find('[data-test="conversation-find-bar"]').exists()).toBe(true);
+
+    await wrapper.find('[data-test="conversation-find-input"]').setValue('needle');
+    await new Promise(resolve => setTimeout(resolve, 350));
+
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('1/2');
+    // The ring lands on the row holding the current match (id 2).
+    expect(wrapper.html()).toContain('ring-theme-main/50');
+    wrapper.unmount();
+  });
+
+  it('steps to the next match and reports a miss without throwing', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+    const input = wrapper.find('[data-test="conversation-find-input"]');
+
+    await input.setValue('needle');
+    await new Promise(resolve => setTimeout(resolve, 350));
+    await wrapper.find('[data-test="conversation-find-next"]').trigger('click');
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('2/2');
+
+    await input.setValue('absent');
+    await new Promise(resolve => setTimeout(resolve, 350));
+    expect(wrapper.find('[data-test="conversation-find-count"]').text()).toBe('0/0');
+    wrapper.unmount();
+  });
+
+  it('closes the bar with Esc', async () => {
+    const wrapper = mount(ChatBox, { attachTo: document.body, props: { messages: transcript } });
+    (wrapper.vm as unknown as { openFind: () => void }).openFind();
+    await nextTick();
+
+    await wrapper.find('[data-test="conversation-find-input"]').trigger('keydown', { key: 'Escape' });
+
+    expect(wrapper.find('[data-test="conversation-find-bar"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+describe('ChatBox.vue: jumps into folded history', () => {
+  const foldedTurn = (): MessageItem[] => [
+    base({ id: 1, role: CHAT_ROLE.USER, content: 'go' }),
+    base({ id: 2, role: CHAT_ROLE.AI, content: 'working on it' }),
+    base({
+      id: 3,
+      role: CHAT_ROLE.TOOL,
+      content: 'file body',
+      toolName: 'read_file',
+      toolStatus: 'done',
+      toolDurationMs: 900
+    }),
+    base({ id: 4, role: CHAT_ROLE.AI, content: 'final answer' })
+  ];
+
+  it('expands the collapsed work when the jump targets a hidden row', async () => {
+    const wrapper = mount(ChatBox, { props: { messages: foldedTurn() } });
+    // Collapsed: the tool card is behind the fold summary.
+    expect(wrapper.text()).not.toContain('read_file');
+
+    (wrapper.vm as unknown as { scrollToMessage: (id: number) => void }).scrollToMessage(3);
+    await nextTick();
+
+    expect(wrapper.text()).toContain('read_file');
+    expect(wrapper.find('.ring-theme-main\\/50').exists()).toBe(true);
   });
 });

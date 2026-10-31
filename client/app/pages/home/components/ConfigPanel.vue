@@ -237,6 +237,10 @@
                 </div>
               </template>
             </template>
+
+            <!-- Optional CUDA pack (packing-plan E1): Tauri desktop only, and
+                 only where the shell detected an NVIDIA driver. -->
+            <CudaPackCard />
           </div>
         </TabPanel>
 
@@ -246,9 +250,22 @@
           value="sherry"
           :header="t('config.tabs.sherry')">
           <div class="flex flex-col gap-4">
-            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-              {{ t('config.sherry.restartHint') }}
-            </p>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.sherry.restartHint') }}
+              </p>
+              <Button
+                v-if="sherryEntries.length"
+                :label="t('config.sherry.resetDefaults')"
+                icon="pi pi-replay"
+                size="small"
+                text
+                severity="secondary"
+                :title="t('config.sherry.resetDefaultsHint')"
+                :disabled="sherryAtDefaults"
+                data-test="sherry-reset-defaults"
+                @click="resetSherryDefaults" />
+            </div>
 
             <div
               v-if="sherryLoadError || envLoadError"
@@ -262,8 +279,21 @@
               <div
                 v-for="entry in sherryEntries"
                 :key="entry.key"
-                class="flex flex-col gap-1">
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                class="flex flex-col gap-1"
+                :data-test="`sherry-entry-${entry.key}`">
+                <!-- A human label + one-line explanation per key: the raw key alone
+                     told the reader nothing about what the setting does. -->
+                <div class="flex flex-wrap items-baseline gap-x-2">
+                  <span class="text-xs font-medium text-gray-700 dark:text-gray-200">
+                    {{ sherryEntryLabel(entry.key) }}
+                  </span>
+                  <span class="font-mono text-[0.65rem] text-gray-400">{{ entry.key }}</span>
+                </div>
+                <span
+                  v-if="sherryEntryHint(entry.key)"
+                  class="text-[0.7rem] leading-snug text-gray-400 dark:text-gray-500">
+                  {{ sherryEntryHint(entry.key) }}
+                </span>
                 <InputText
                   v-model="entry.value"
                   :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
@@ -277,6 +307,10 @@
               class="m-0 text-sm text-gray-400">
               {{ t('config.sherry.noConfigFile') }}
             </p>
+
+            <!-- Replay-gate allowlist: a LIST setting (outside the scalar
+                 registry), so it owns its own read/write pair. -->
+            <ReplayAllowlistEditor />
 
             <!-- Application settings that live outside sherry.jsonc: LANGSMITH
                  comes from .network, `other` is the .env catch-all. Each keeps
@@ -318,15 +352,47 @@
             </template>
           </div>
         </TabPanel>
+
+        <!-- Interface language: an app-wide (browser-profile) setting, so it sits
+             with the other system settings instead of in the toolbar. Appended
+             LAST on purpose: the footer / embedder / dirty-state logic below is
+             keyed by tab INDEX, and inserting a tab anywhere else would silently
+             re-target it. -->
+        <TabPanel
+          value="i18n"
+          :header="t('config.tabs.i18n')">
+          <I18nPanel />
+        </TabPanel>
+        <!-- Shortcut bindings: rebindable chords for the composer and the global
+             commands. Appended LAST for the same reason as the language tab —
+             the footer / embedder / dirty-state logic is keyed by tab INDEX —
+             and it saves on its own (no footer button). -->
+        <TabPanel
+          value="shortcuts"
+          :header="t('config.tabs.shortcuts')">
+          <ShortcutSettingsSection />
+        </TabPanel>
+        <!-- Live-stream safety: the master switch, the optional LLM review and
+             the operator's keyword rules, all applied live. Appended LAST for
+             the same index-keyed reasons as the tabs above. -->
+        <TabPanel
+          value="safetyFilter"
+          :header="t('config.tabs.safetyFilter')">
+          <SafetyFilterPanel />
+        </TabPanel>
       </TabView>
     </template>
 
     <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
          scrolls), and only the background / sherry tabs use it — every env item
-         saves or applies on its own inside its own group card.
-         (角色配置 moved to the 预设 panel together with the persona presets.) -->
+         saves or applies on its own inside its own group card and the language
+         list applies on click. (角色配置 moved to the 预设 panel together with
+         the persona presets; Token 预算 became a session tab opened from the
+         context ring, because the cap is per conversation.)
+         Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
+         shortcuts 4, safety filter 5. -->
     <div
-      v-if="activeTab !== 1"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -362,6 +428,11 @@ import type { CodeEmbedderStatus } from '@/composables/code-embedder';
 import type { ModelDownloadUpdate } from '@/composables/model-downloads';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
+import CudaPackCard from './CudaPackCard.vue';
+import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
+import I18nPanel from './I18nPanel.vue';
+import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
+import SafetyFilterPanel from './SafetyFilterPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -398,7 +469,7 @@ const loading = ref(false);
 const saving = ref(false);
 
 // ── Env config state (three files, one panel) ────────────────
-// The 模型配置 tab shows THREE sources merged — the model families from .models,
+// The Model Config tab shows THREE sources merged — the model families from .models,
 // the browser / tracing groups from .network, and what remains in .env (sandbox /
 // gateway / login) — and every group carries its `source`, so a save writes each
 // group back through ITS OWN endpoint. Snapshot taken once on load; edits modify
@@ -424,6 +495,7 @@ let codeEmbedderFrameSeq = 0;
 /**
  * Human-readable model size (the status payload is bytes).
  * @param bytes
+ * @returns The size in a locale-stable MiB/GiB string.
  */
 function formatCodeEmbedderSize(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
@@ -567,7 +639,10 @@ const loadEnvConfig = async () => {
   }
 };
 
-/** Writes the diff back to each file's own endpoint; returns true on success */
+/**
+ * Writes the diff back to each file's own endpoint.
+ * @returns True on success (the caller keeps its own error surface).
+ */
 const persistEnvChanges = async (): Promise<boolean> => {
   const perSource: Record<ConfigSource, Record<string, string>> = { models: {}, network: {}, env: {} };
   for (const g of envGroups.value) {
@@ -580,7 +655,7 @@ const persistEnvChanges = async (): Promise<boolean> => {
   );
   if (changedSources.length === 0) return true;
 
-  // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
+  // MAX_TOKEN guard: pre-validate before the PUT so a sub-200K value is rejected
   // in the dialog (the backend write_models_config enforces the same floor).
   for (const source of changedSources) {
     for (const [key, value] of Object.entries(perSource[source])) {
@@ -631,6 +706,60 @@ const sherryHasChanges = computed(() =>
   sherryEntries.value.some(entry => entry.value !== originalSherryValues.value[entry.key])
 );
 
+/**
+ * Human label/hint slugs for the sherry.jsonc keys the panel shows.
+ *
+ * Keyed by the dotted registry key; an UNKNOWN key (added by a later release)
+ * still renders — its raw key becomes the label and it simply has no hint — so
+ * the panel never hides a setting it does not know about yet.
+ */
+const SHERRY_ENTRY_SLUGS: Record<string, string> = {
+  TOOL_CALL_TIMEOUT_MINUTES: 'toolCallTimeout',
+  TOKEN_BUDGET_DEFAULT_CAP: 'tokenBudgetDefaultCap',
+  LOG_LEVEL: 'logLevel',
+  project_dir: 'projectDir',
+  WORKSPACE_TEMPLATE_LANG: 'workspaceTemplateLang',
+  'heartbeat.enabled': 'heartbeatEnabled',
+  'curator.enabled': 'curatorEnabled',
+  'curator.interval_hours': 'curatorIntervalHours',
+  'curator.min_idle_hours': 'curatorMinIdleHours',
+  'curator.stale_after_days': 'curatorStaleAfterDays',
+  'curator.archive_after_days': 'curatorArchiveAfterDays',
+  'curator.consolidate': 'curatorConsolidate',
+  'curator.prune_builtins': 'curatorPruneBuiltins',
+  'hooks.enabled': 'hooksEnabled'
+};
+
+/**
+ * Localized label of one App Config entry.
+ * @param key Dotted sherry.jsonc key.
+ */
+const sherryEntryLabel = (key: string): string => {
+  const slug = SHERRY_ENTRY_SLUGS[key];
+  return slug ? t(`config.sherry.entries.${slug}.label`) : key;
+};
+
+/**
+ * Localized one-line explanation of one App Config entry ('' when unknown).
+ * @param key Dotted sherry.jsonc key.
+ */
+const sherryEntryHint = (key: string): string => {
+  const slug = SHERRY_ENTRY_SLUGS[key];
+  return slug ? t(`config.sherry.entries.${slug}.hint`) : '';
+};
+
+/** Whether every entry already shows its registry default (the reset is a no-op). */
+const sherryAtDefaults = computed(() =>
+  sherryEntries.value.every(entry => entry.default === undefined || entry.value === entry.default)
+);
+
+/** Fill the form with the registry defaults; the footer's 保存 still writes them. */
+const resetSherryDefaults = (): void => {
+  for (const entry of sherryEntries.value) {
+    if (entry.default !== undefined) entry.value = entry.default;
+  }
+};
+
 /** Lazily loads the sherry.jsonc config when the sherry tab is opened (backend GET /sherry-config) */
 const loadSherryConfig = async () => {
   if (sherryLoaded.value) return;
@@ -649,7 +778,10 @@ const loadSherryConfig = async () => {
   }
 };
 
-/** Writes sherry changes back to the backend (sherry.jsonc PUT); returns true on success */
+/**
+ * Writes sherry changes back to the backend (sherry.jsonc PUT).
+ * @returns True on success (the caller keeps its own error surface).
+ */
 const persistSherryChanges = async (): Promise<boolean> => {
   const changes: Record<string, string> = {};
   for (const e of sherryEntries.value) {
@@ -697,6 +829,7 @@ watch(
 
 /**
  * Reads an uploaded image file as a base64 data URL
+ * @returns The data URL, or null when the file cannot be read
  * @param file
  */
 const readFileAsDataUrl = (file: File): Promise<string> =>
@@ -719,7 +852,7 @@ const canSave = computed(() => {
   return true;
 });
 
-// ── Image crop handling (background only; the role avatars moved to the 预设 panel) ──
+// ── Image crop handling (background only; the role avatars moved to the preset panel) ──
 // After an image is selected, the crop dialog opens; the background is cropped and
 // output at the **actual aspect ratio of the current chat window/screen** so it fits
 // any ratio (16:9, 16:10, 3:2, 21:9…); since rendering uses `background-size: cover`,
@@ -734,6 +867,7 @@ const cropOutput = ref({ width: 512, height: 512 });
 
 /**
  * Background crop size: generated from the current window's physical pixels (aspect ratio == chat window aspect ratio).
+ * @returns The crop dimensions for the current window.
  * Based on the window's real physical resolution (logical width/height × devicePixelRatio) so any screen gets a sharp full fill.
  */
 const getBackgroundCrop = () => {
@@ -819,6 +953,7 @@ const onBackgroundSelect = (event: { files: File[] }) => {
 
 /**
  * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * @returns The label for the active locale.
  * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
  * @param files
  */
@@ -845,7 +980,7 @@ const loadContent = async () => {
 
 /**
  * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
- * The model groups carry their own 保存/应用 inside the panel, so the env tab
+ * The model groups carry their own Save/Apply inside the panel, so the env tab
  * needs no footer button at all.
  */
 const handleSave = async () => {
@@ -1051,6 +1186,9 @@ onBeforeUnmount(onHide);
         "user": "用户信息",
         "env": "模型配置",
         "sherry": "应用配置",
+        "i18n": "国际化",
+        "shortcuts": "快捷键",
+        "safetyFilter": "直播安全",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1126,10 +1264,55 @@ onBeforeUnmount(onHide);
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
         "noModelGroups": "暂无模型配置项。",
-        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
-        "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+        "maxTokenError": "{key} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。",
+        "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
       },
       "sherry": {
+        "resetDefaults": "重置为默认值",
+        "resetDefaultsHint": "把本页每个字段填回出厂默认值，随后点「保存」写入。",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "工具调用超时（分钟）",
+            "hint": "仅作记录，当前工具执行不读取此值（实际超时由 TOOLS_TIMEOUTS 决定）。"
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "默认 Token 上限",
+            "hint": "新建或未单独设置的会话继承此上限；0 表示不限制。会话自己的设置优先。"
+          },
+          "logLevel": {
+            "label": "日志级别",
+            "hint": "控制台与信息日志的输出级别：TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL。"
+          },
+          "projectDir": { "label": "默认工作目录", "hint": "未绑定项目目录的会话默认在此工作；留空表示仓库根目录。" },
+          "workspaceTemplateLang": {
+            "label": "角色模板语言",
+            "hint": "首次创建会话时从 workspace/template 复制的模板语言：en / zh / ja / ko。"
+          },
+          "heartbeatEnabled": {
+            "label": "心跳总开关",
+            "hint": "允许心跳调度器定期唤起角色；关闭后不会自动运行，投递仍按渠道单独控制。"
+          },
+          "curatorEnabled": {
+            "label": "技能整理总开关",
+            "hint": "允许后台自动整理 agent 创建的技能（合并、标记过期、归档）。"
+          },
+          "curatorIntervalHours": {
+            "label": "技能整理间隔（小时）",
+            "hint": "两次技能整理之间的最短间隔，默认 168 小时（7 天）。"
+          },
+          "curatorMinIdleHours": {
+            "label": "空闲触发阈值（小时）",
+            "hint": "需要空闲多少小时后才允许触发整理，默认 2 小时。"
+          },
+          "curatorStaleAfterDays": { "label": "标记过期天数", "hint": "技能多少天未使用会被标记为过期，默认 30 天。" },
+          "curatorArchiveAfterDays": { "label": "归档天数", "hint": "技能多少天未使用会被归档，默认 90 天。" },
+          "curatorConsolidate": { "label": "合并整理", "hint": "是否用模型把窄小的技能合并成更大的技能包。" },
+          "curatorPruneBuiltins": { "label": "清理内置技能记录", "hint": "是否清理内置技能的使用记录。" },
+          "hooksEnabled": {
+            "label": "生命周期 Hook 总开关",
+            "hint": "允许运行 sherry.jsonc 里配置的钩子命令；钩子会执行本机命令，默认关闭。"
+          }
+        },
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
@@ -1216,7 +1399,6 @@ onBeforeUnmount(onHide);
           "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
           "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
           "compression": "压缩模型：为长会话生成摘要并整理记忆。适合长上下文、低成本模型。",
-          "reasoner": "推理模型：用于复杂分析、数学/逻辑推理和难题求解。日常对话可继续使用主模型。",
           "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
           "vttt": "视频生文模型：提取并描述视频内容。用于视频摘要和画面理解。",
           "tti": "文生图模型：根据提示词生成图片。用于插画、配图和视觉草稿。",
@@ -1364,7 +1546,7 @@ onBeforeUnmount(onHide);
           "middlewaresNone": "Middlewares: all on",
           "models": "Subagent models: {names}"
         },
-        "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
+        "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
       },
       "save": "Save",
       "cancel": "Cancel",
@@ -1381,6 +1563,9 @@ onBeforeUnmount(onHide);
         "user": "User Profile",
         "env": "Model Config",
         "sherry": "App Config",
+        "i18n": "Language",
+        "shortcuts": "Shortcuts",
+        "safetyFilter": "Live safety",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1456,10 +1641,70 @@ onBeforeUnmount(onHide);
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
         "noModelGroups": "No model settings.",
-        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
-        "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+        "maxTokenError": "{key} must be >= 200000 (200K); current value does not meet the requirement, cannot save.",
+        "maxTokenHint": "Must be >= 200000 (200K), otherwise the agent will refuse to start."
       },
       "sherry": {
+        "resetDefaults": "Restore defaults",
+        "resetDefaultsHint": "Fill every field on this page with its built-in default; press Save to write it.",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "Tool-call timeout (minutes)",
+            "hint": "Recorded only — tool execution does not read this value (real timeouts come from TOOLS_TIMEOUTS)."
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "Default token cap",
+            "hint": "Conversations with no cap of their own inherit this. 0 means unlimited; a conversation’s own setting wins."
+          },
+          "logLevel": {
+            "label": "Log level",
+            "hint": "Output level for the console and info logs: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL."
+          },
+          "projectDir": {
+            "label": "Default working directory",
+            "hint": "Sessions without their own project directory work here. Empty means the repository root."
+          },
+          "workspaceTemplateLang": {
+            "label": "Persona template language",
+            "hint": "Language of the workspace/template copy a new session starts from: en / zh / ja / ko."
+          },
+          "heartbeatEnabled": {
+            "label": "Heartbeat master switch",
+            "hint": "Lets the heartbeat scheduler wake the character periodically. Off means it never fires; delivery is still gated per channel."
+          },
+          "curatorEnabled": {
+            "label": "Skill curator master switch",
+            "hint": "Lets the background curator maintain agent-created skills (merge, mark stale, archive)."
+          },
+          "curatorIntervalHours": {
+            "label": "Curator interval (hours)",
+            "hint": "Minimum time between curator runs. Default 168 (7 days)."
+          },
+          "curatorMinIdleHours": {
+            "label": "Idle threshold (hours)",
+            "hint": "How long the agent must be idle before the curator may run. Default 2."
+          },
+          "curatorStaleAfterDays": {
+            "label": "Stale after (days)",
+            "hint": "Days without use before a skill is marked stale. Default 30."
+          },
+          "curatorArchiveAfterDays": {
+            "label": "Archive after (days)",
+            "hint": "Days without use before a skill is archived. Default 90."
+          },
+          "curatorConsolidate": {
+            "label": "Consolidation pass",
+            "hint": "Use the model to merge narrow skills into larger umbrella skills."
+          },
+          "curatorPruneBuiltins": {
+            "label": "Prune built-in usage records",
+            "hint": "Clean up usage records for the built-in skills."
+          },
+          "hooksEnabled": {
+            "label": "Lifecycle hooks master switch",
+            "hint": "Allow the hook commands configured in sherry.jsonc to run. Hooks execute local commands, so this is off by default."
+          }
+        },
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
@@ -1546,7 +1791,6 @@ onBeforeUnmount(onHide);
           "auxiliary": "Auxiliary model — lightweight structured calls such as JSON generation, judges, and plan extraction. Best for a cheap, low-latency model.",
           "taskflow": "TaskFlow decision model — planning, replanning, step judging, and finish checks at temperature 0. Best for a stable model that follows JSON schemas.",
           "compression": "Compression model — summarizes long conversations. Best for a long-context, low-cost model.",
-          "reasoner": "Reasoner model — deep analysis, math/logic reasoning, and complex problem solving. Best for hard tasks; everyday chat can stay on the main model.",
           "ittt": "Image-to-text model — reads an image and returns text. Use for screenshots, OCR, and visual Q&A.",
           "vttt": "Video-to-text model — extracts and describes video content. Use for video summaries and scene understanding.",
           "tti": "Text-to-image model — generates images from prompts. Use for illustrations, visual drafts, and assets.",
@@ -1711,6 +1955,9 @@ onBeforeUnmount(onHide);
         "user": "ユーザー情報",
         "env": "モデル設定",
         "sherry": "アプリ設定",
+        "i18n": "国際化",
+        "shortcuts": "ショートカット",
+        "safetyFilter": "ライブ安全",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -1786,10 +2033,70 @@ onBeforeUnmount(onHide);
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
         "noModelGroups": "モデル設定はありません。",
-        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
-        "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+        "maxTokenError": "{key} は 200000 (200K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+        "maxTokenHint": "200000 (200K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       },
       "sherry": {
+        "resetDefaults": "既定に戻す",
+        "resetDefaultsHint": "このページの各項目を組み込みの既定値に戻します（「保存」で書き込み）。",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "ツール呼び出しタイムアウト（分）",
+            "hint": "記録用の値です。実際のタイムアウトは TOOLS_TIMEOUTS が決めます。"
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "既定の Token 上限",
+            "hint": "独自の上限を設定していないセッションはこの値を使います。0 は無制限。セッション側の設定が優先されます。"
+          },
+          "logLevel": {
+            "label": "ログ レベル",
+            "hint": "コンソールと情報ログの出力レベル: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL。"
+          },
+          "projectDir": {
+            "label": "既定の作業ディレクトリ",
+            "hint": "プロジェクト ディレクトリを指定していないセッションはここで作業します。空欄はリポジトリ直下です。"
+          },
+          "workspaceTemplateLang": {
+            "label": "ペルソナ テンプレート言語",
+            "hint": "新しいセッションが workspace/template から複製する言語: en / zh / ja / ko。"
+          },
+          "heartbeatEnabled": {
+            "label": "ハートビートの総合スイッチ",
+            "hint": "ハートビート スケジューラが定期的にキャラクターを起こすことを許可します。オフなら発火せず、配信はチャネルごとに別途制御されます。"
+          },
+          "curatorEnabled": {
+            "label": "スキル整理の総合スイッチ",
+            "hint": "バックグラウンドで agent 作成スキルを整理（統合・期限切れ・アーカイブ）することを許可します。"
+          },
+          "curatorIntervalHours": {
+            "label": "整理の間隔（時間）",
+            "hint": "整理を実行する最小間隔。既定は 168 時間（7 日）。"
+          },
+          "curatorMinIdleHours": {
+            "label": "アイドルしきい値（時間）",
+            "hint": "整理を実行する前に必要なアイドル時間。既定は 2 時間。"
+          },
+          "curatorStaleAfterDays": {
+            "label": "期限切れまでの日数",
+            "hint": "未使用のまま何日で期限切れにするか。既定は 30 日。"
+          },
+          "curatorArchiveAfterDays": {
+            "label": "アーカイブまでの日数",
+            "hint": "未使用のまま何日でアーカイブするか。既定は 90 日。"
+          },
+          "curatorConsolidate": {
+            "label": "統合パス",
+            "hint": "モデルを使って狭いスキルをより大きな傘スキルに統合します。"
+          },
+          "curatorPruneBuiltins": {
+            "label": "組み込みスキル記録の削除",
+            "hint": "組み込みスキルの使用記録を削除します。"
+          },
+          "hooksEnabled": {
+            "label": "ライフサイクル フックの総合スイッチ",
+            "hint": "sherry.jsonc に設定したフック コマンドの実行を許可します。ローカルでコマンドを実行するため既定はオフです。"
+          }
+        },
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
@@ -1876,7 +2183,6 @@ onBeforeUnmount(onHide);
           "auxiliary": "補助モデル：JSON 生成、判定、計画抽出などの軽量な構造化呼び出しを担当。安価で低遅延なモデル向け。",
           "taskflow": "TaskFlow 意思決定モデル：計画、再計画、ステップ判定、完了チェック（temperature 0）に使用。JSON を安定して守るモデル向け。",
           "compression": "圧縮モデル：長い会話の要約とメモリ整理を担当。長コンテキストで低コストなモデル向け。",
-          "reasoner": "推論モデル：複雑な分析、数学・論理推論、難問解決に使用。日常会話はメインモデルのままでよい。",
           "ittt": "画像→テキストモデル：画像を読み取りテキスト化。スクリーンショット理解、OCR、視覚 Q&A に使用。",
           "vttt": "動画→テキストモデル：動画内容を抽出・説明。動画要約やシーン理解に使用。",
           "tti": "テキスト→画像モデル：プロンプトから画像を生成。イラスト、ビジュアル草案、素材作成に使用。",
@@ -2041,6 +2347,9 @@ onBeforeUnmount(onHide);
         "user": "사용자 정보",
         "env": "모델 설정",
         "sherry": "앱 설정",
+        "i18n": "국제화",
+        "shortcuts": "단축키",
+        "safetyFilter": "라이브 안전",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },
@@ -2116,10 +2425,64 @@ onBeforeUnmount(onHide);
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
         "noModelGroups": "모델 설정이 없습니다.",
-        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
-        "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+        "maxTokenError": "{key}는 200000 (200K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
+        "maxTokenHint": "200000 (200K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       },
       "sherry": {
+        "resetDefaults": "기본값으로",
+        "resetDefaultsHint": "이 페이지의 모든 항목을 기본값으로 채웁니다. 「저장」을 눌러 기록하세요.",
+        "entries": {
+          "toolCallTimeout": {
+            "label": "도구 호출 제한 시간(분)",
+            "hint": "기록용 값입니다. 실제 제한 시간은 TOOLS_TIMEOUTS가 정합니다."
+          },
+          "tokenBudgetDefaultCap": {
+            "label": "기본 Token 상한",
+            "hint": "자체 상한이 없는 세션이 이 값을 따릅니다. 0 은 무제한이며, 세션 설정이 우선합니다."
+          },
+          "logLevel": {
+            "label": "로그 수준",
+            "hint": "콘솔과 정보 로그의 출력 수준: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL."
+          },
+          "projectDir": {
+            "label": "기본 작업 디렉터리",
+            "hint": "프로젝트 디렉터리를 지정하지 않은 세션이 여기서 작업합니다. 비우면 저장소 루트입니다."
+          },
+          "workspaceTemplateLang": {
+            "label": "페르소나 템플릿 언어",
+            "hint": "새 세션이 workspace/template 에서 복사하는 언어: en / zh / ja / ko."
+          },
+          "heartbeatEnabled": {
+            "label": "하트비트 총 스위치",
+            "hint": "하트비트 스케줄러가 주기적으로 캐릭터를 깨우도록 허용합니다. 끄면 실행되지 않으며 전달은 채널별로 따로 제어됩니다."
+          },
+          "curatorEnabled": {
+            "label": "스킬 정리 총 스위치",
+            "hint": "백그라운드에서 agent 가 만든 스킬을 정리(병합·만료·보관)하도록 허용합니다."
+          },
+          "curatorIntervalHours": {
+            "label": "정리 간격(시간)",
+            "hint": "정리 실행 사이의 최소 간격. 기본 168시간(7일)."
+          },
+          "curatorMinIdleHours": {
+            "label": "유휴 임계값(시간)",
+            "hint": "정리를 실행하기 전에 필요한 유휴 시간. 기본 2시간."
+          },
+          "curatorStaleAfterDays": {
+            "label": "만료 표시 기간(일)",
+            "hint": "사용하지 않은 채 며칠이 지나면 만료로 표시할지. 기본 30일."
+          },
+          "curatorArchiveAfterDays": {
+            "label": "보관 기간(일)",
+            "hint": "사용하지 않은 채 며칠이 지나면 보관할지. 기본 90일."
+          },
+          "curatorConsolidate": { "label": "병합 정리", "hint": "모델로 좁은 스킬을 더 큰 우산 스킬로 병합합니다." },
+          "curatorPruneBuiltins": { "label": "내장 스킬 기록 정리", "hint": "내장 스킬의 사용 기록을 정리합니다." },
+          "hooksEnabled": {
+            "label": "생애주기 Hook 총 스위치",
+            "hint": "sherry.jsonc 에 설정한 훅 명령 실행을 허용합니다. 로컬 명령을 실행하므로 기본은 꺼짐입니다."
+          }
+        },
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
@@ -2206,7 +2569,6 @@ onBeforeUnmount(onHide);
           "auxiliary": "보조 모델 — JSON 생성, 판정, 계획 추출 같은 가벼운 구조화 호출을 담당합니다. 저렴하고 지연이 낮은 모델에 적합합니다.",
           "taskflow": "TaskFlow 의사결정 모델 — 계획, 재계획, 단계 판정, 마무리 검사(temperature 0)에 사용합니다. JSON을 안정적으로 따르는 모델에 적합합니다.",
           "compression": "압축 모델 — 긴 대화 요약과 메모리 정리를 담당합니다. 긴 컨텍스트와 낮은 비용의 모델에 적합합니다.",
-          "reasoner": "추론 모델 — 복잡한 분석, 수학/논리 추론, 어려운 문제 해결에 사용합니다. 일상 대화는 메인 모델을 그대로 사용해도 됩니다.",
           "ittt": "이미지→텍스트 모델 — 이미지를 읽어 텍스트로 변환합니다. 스크린샷 이해, OCR, 시각 Q&A에 사용합니다.",
           "vttt": "비디오→텍스트 모델 — 비디오 내용을 추출·설명합니다. 비디오 요약과 장면 이해에 사용합니다.",
           "tti": "텍스트→이미지 모델 — 프롬프트로 이미지를 생성합니다. 일러스트, 시각 초안, 소재 제작에 사용합니다.",

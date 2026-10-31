@@ -50,7 +50,7 @@ YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
 
 ### E2: 도구 설명 강제 — 형식 + 위임 규칙
 
-`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입: 제목에 WHERE/WHY/HOW/RESULT 인코딩, 원자 입자도, 동시에 하나의 in_progress만, subagent 반환 전 completed 마크 금지.
+`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입: 제목에 WHERE/WHY/HOW/RESULT 인코딩, 원자 입자도, 동시에 하나의 in_progress만, subagent 반환 전 completed 마크 금지. 로컬 action(patch/add/remove)을 우선하고 replace는 전체 재작성 시에만 사용.
 
 ### E3: 계속 강제기 — 사후 클로저 코어 ★★
 
@@ -88,6 +88,8 @@ turn ends (no tool_call, agent loop exits)
 ```
 
 **계속 예산**: `mark_injected` — 모든 지시가 trigger에 수락된 뒤 반드시 지나는 유일한 지점 — 은 그 turn도 세므로, 이 카운터는 실제로 전달된 연속 계속 turn 수 그 자체입니다 (trigger가 거부한 지시는 세지 않고 다음 turn 종료 때 재시도합니다. 복구 지시도 함께 셉니다). 15에 도달하면 강제기는 마지막 `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` 지시를 보내고 세션을 래치한 뒤, 이 강제기가 스스로 주입하지 않은 turn — 실제 사용자 메시지, 또는 subagent 완료 알림 (새 이벤트이지 계속이 아님) — 이 카운터와 래치를 리셋할 때까지 침묵합니다. 이 상한은 정체 감지가 볼 수 없는 형태(모델이 매번 계획을 조금씩 수정해 — 상태 하나를 바꾸고 step 하나를 추가해 — 스냅샷을 계속 움직여 streak이 발화하지 않는 경우)를 커버합니다.
+
+**최종 검증 리마인더**: 계획이 완료되었을 때(미완료 todo도, 열린 flow도 없음) 게이트는 계획을 완료로 처리하기 전에 한 번의 자동 turn으로 자체 점검 프롬프트를 보낸다. diff를 다시 읽고 테스트/타입 검사/lint를 실제로 실행하며, 사용자 대상 변경은 실행해 확인한다. 이것은 **게이트가 아니라 프롬프트**이며, 증거를 검사하거나 차단하지 않는다. 스로틀은 완료된 계획의 fingerprint를 키로 사용하므로, 계획을 확장하면 새 리마인더가 발송된다. 전달이 거부되면 재시도한다. TaskFlow 세션은 건너뛴다(flow의 finish 게이트가 검증을 담당한다).
 
 **파일**: `stagnation_tracker.py`(~190줄) + `todo_continuation/core.py`(~545줄) + `agent/core.py`(~2줄 등록).
 

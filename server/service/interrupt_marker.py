@@ -48,7 +48,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
 
-from agent.state_port import heal_interrupted_turn
+from agent.state_port import InterruptMarkerWrite, heal_interrupted_turn
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the import light
     from langgraph.graph.state import CompiledStateGraph
@@ -71,7 +71,7 @@ async def write_interrupted_marker(
     reason: InterruptReason,
     graph: CompiledStateGraph[Any, Any, Any, Any] | None = None,
     queue: UserInputQueue | None = None,
-) -> None:
+) -> InterruptMarkerWrite | None:
     """Persist the interrupted-turn marker for ``session_id`` (best-effort).
 
     Args:
@@ -89,11 +89,15 @@ async def write_interrupted_marker(
         queue: ``UserInputQueue`` for the CLAIMED-row cleanup. ``None``
             (production) resolves the process-wide default ().
 
+    Returns what the checkpointer write did (``marker_id`` / ``healed_calls`` /
+    ``turn_seq``) so the caller can record a resumable breakpoint, or ``None``
+    when the best-effort write failed.
+
     Never raises (except a re-delivered ``CancelledError``): internal
     failures are logged and swallowed — the caller is an exception handler.
     """
     try:
-        await _write_interrupted_marker_inner(
+        return await _write_interrupted_marker_inner(
             session_id, config, partial_text, reason, graph, queue
         )
     except asyncio.CancelledError:
@@ -107,6 +111,7 @@ async def write_interrupted_marker(
             reason,
             e,
         )
+        return None
 
 
 async def _write_interrupted_marker_inner(
@@ -116,7 +121,7 @@ async def _write_interrupted_marker_inner(
     reason: InterruptReason,
     graph: CompiledStateGraph[Any, Any, Any, Any] | None,
     queue: UserInputQueue | None,
-) -> None:
+) -> InterruptMarkerWrite:
     """Actual reconciliation work (see ``write_interrupted_marker``)."""
     # Lazy import keeps this module cheap to import (it sits on the hot
     # cancellation path).
@@ -130,6 +135,7 @@ async def _write_interrupted_marker_inner(
         await _persist_to_mesmemory(session_id, reason, partial_text, write.marker_id)
 
     await _void_claimed_rows(queue, session_id)
+    return write
 
 
 async def _persist_to_mesmemory(

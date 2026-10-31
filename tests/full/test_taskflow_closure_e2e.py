@@ -57,7 +57,7 @@ from context_engine import delete_messages_by_session
 from pub.func.build_agent_config import build_agent_config
 from runtime import clear_all_register_sessions
 
-pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 
 
 # The expectation a step can carry: the child must answer with a JSON object

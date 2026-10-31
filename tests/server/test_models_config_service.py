@@ -2,7 +2,7 @@
 
 The model configuration left ``.env`` for its own gitignored JSON5 file; the
 service answers the same grouped shape GET /env uses (so the 模型配置 tab renders
-it unchanged) and writes line-wise, preserving comments and the 128K floor.
+it unchanged) and writes line-wise, preserving comments and the 200K floor.
 """
 
 import json5
@@ -14,7 +14,7 @@ SAMPLE_MODELS = """// 模型配置模板
 {
   // main family
   "MAIN_LLM_PROVIDER": "openai",
-  "MAIN_LLM_MAX_TOKEN": 131072,
+  "MAIN_LLM_MAX_TOKEN": 200000,
   "MAIN_LLM_ENABLE_THINKING": false,
   "EMBEDDING_API_NAME": "bge-m3"
 }
@@ -51,7 +51,7 @@ class TestReadModelsConfig:
         }
 
         assert entries["MAIN_LLM_PROVIDER"] == "openai"
-        assert entries["MAIN_LLM_MAX_TOKEN"] == "131072"
+        assert entries["MAIN_LLM_MAX_TOKEN"] == "200000"
         assert entries["MAIN_LLM_ENABLE_THINKING"] == "false"
 
     def test_missing_file_raises(self, tmp_path, monkeypatch):
@@ -92,13 +92,13 @@ class TestWriteModelsConfig:
         with pytest.raises(ValueError, match="Unknown models config keys"):
             mc.write_models_config({"NOPE": "1"})
 
-    def test_enforces_the_128k_floor(self, models_file):
-        with pytest.raises(ValueError, match="128K"):
+    def test_enforces_the_200k_floor(self, models_file):
+        with pytest.raises(ValueError, match="200K"):
             mc.write_models_config({"MAIN_LLM_MAX_TOKEN": "65536"})
 
     def test_a_rejected_write_leaves_the_file_untouched(self, models_file):
-        """A sub-128K value must never reach disk — and no .bak churn either."""
-        with pytest.raises(ValueError, match="128K"):
+        """A sub-200K value must never reach disk — and no .bak churn either."""
+        with pytest.raises(ValueError, match="200K"):
             mc.write_models_config({"MAIN_LLM_MAX_TOKEN": "65536"})
 
         assert models_file.read_text(encoding="utf-8") == SAMPLE_MODELS
@@ -154,11 +154,47 @@ class TestWriteMaxOutputTokens:
         text = models_file.read_text(encoding="utf-8")
         assert '"MAIN_LLM_MAX_OUTPUT_TOKEN": 32768' in text
 
-    def test_rejects_an_output_cap_not_smaller_than_the_window(self, models_file):
-        with pytest.raises(ValueError, match="smaller than MAIN_LLM_MAX_TOKEN"):
-            mc.write_models_config({"MAIN_LLM_MAX_OUTPUT_TOKEN": "131072"})
+    @pytest.mark.parametrize(
+        ("output_key", "window_key"),
+        [
+            ("MAIN_LLM_MAX_OUTPUT_TOKEN", "MAIN_LLM_MAX_TOKEN"),
+            ("AUXILIARY_LLM_MAX_OUTPUT_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"),
+            ("TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "TASKFLOW_LLM_MAX_TOKEN"),
+            ("COMPRESSION_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"),
+        ],
+    )
+    def test_each_output_cap_must_be_smaller_than_its_context_window(
+        self, models_file, output_key, window_key
+    ):
+        changes = {window_key: "200000", output_key: "200000"}
+        if output_key.startswith(("TASKFLOW_", "COMPRESSION_")):
+            # An unconfigured optional family follows the auxiliary model, so
+            # its own MAX_TOKEN only applies when it has a remote identity.
+            changes[f"{output_key.removesuffix('_MAX_OUTPUT_TOKEN')}_PROVIDER"] = "openai"
+        with pytest.raises(ValueError, match="smaller than the model context window"):
+            mc.write_models_config(changes)
 
-        assert '"MAIN_LLM_MAX_OUTPUT_TOKEN"' not in models_file.read_text(encoding="utf-8")
+        changes[output_key] = "8192"
+        mc.write_models_config(changes)
+        assert f'"{output_key}"' in models_file.read_text(encoding="utf-8")
+
+    def test_a_configured_optional_family_uses_the_remote_default_window(self, models_file):
+        # TASKFLOW/COMPRESSION with a remote provider and an empty own window
+        # use LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"] = 121072.
+        with pytest.raises(ValueError, match="effective=121072"):
+            mc.write_models_config(
+                {
+                    "COMPRESSION_LLM_PROVIDER": "openai",
+                    "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "121072",
+                }
+            )
+
+        mc.write_models_config(
+            {
+                "COMPRESSION_LLM_PROVIDER": "openai",
+                "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "121071",
+            }
+        )
 
 
 class TestOptionalInternalFamilies:
@@ -169,8 +205,7 @@ class TestOptionalInternalFamilies:
         path.write_text(
             '{\n  "MAIN_LLM_PROVIDER": "openai",\n'
             '  "TASKFLOW_LLM_PROVIDER": "",\n'
-            '  "COMPRESSION_LLM_PROVIDER": "",\n'
-            '  "REASONER_LLM_PROVIDER": ""\n}\n',
+            '  "COMPRESSION_LLM_PROVIDER": ""\n}\n',
             encoding="utf-8",
         )
         monkeypatch.setattr(mc, "MODELS_CONFIG_PATH", path)
@@ -181,20 +216,24 @@ class TestOptionalInternalFamilies:
             "MAIN_LLM",
             "TASKFLOW_LLM",
             "COMPRESSION_LLM",
-            "REASONER_LLM",
         ]
         assert all(g["kind"] == "model" for g in payload["groups"])
 
     @pytest.mark.parametrize("key", ["TASKFLOW_LLM_MAX_TOKEN", "COMPRESSION_LLM_MAX_TOKEN"])
-    def test_enforces_the_128k_floor(self, models_file, key):
-        with pytest.raises(ValueError, match="128K"):
+    def test_enforces_the_200k_floor(self, models_file, key):
+        with pytest.raises(ValueError, match="200K"):
             mc.write_models_config({key: "65536"})
 
-        mc.write_models_config({key: "131072"})
-        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == 131072
+        mc.write_models_config({key: "200000"})
+        assert json5.loads(models_file.read_text(encoding="utf-8"))[key] == 200000
 
     @pytest.mark.parametrize(
-        "key", ["TASKFLOW_LLM_MAX_OUTPUT_TOKEN", "COMPRESSION_LLM_MAX_OUTPUT_TOKEN"]
+        "key",
+        [
+            "AUXILIARY_LLM_MAX_OUTPUT_TOKEN",
+            "TASKFLOW_LLM_MAX_OUTPUT_TOKEN",
+            "COMPRESSION_LLM_MAX_OUTPUT_TOKEN",
+        ],
     )
     def test_enforces_the_8k_output_floor(self, models_file, key):
         with pytest.raises(ValueError, match="8K"):

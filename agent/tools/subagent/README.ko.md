@@ -10,7 +10,7 @@
 
 - **`run_timeout_seconds` 기본값 0.0 → 600.0 (10분)**: 자식이 시간적으로 무제한 실행되지 않습니다. `spawn`과 `steer`는 다시 자식의 `ainvoke`를 `asyncio.wait_for`로 감싸고 followup 타임아웃 검사도 활성화됩니다 (`TimeoutError` → `RunOutcomeStatus.TIMEOUT`). sweeper의 2시간 stale 감지는 바깥 안전망으로 남습니다. 호출자는 `sessions_spawn(run_timeout_seconds=...)`로 spawn별 재정의할 수 있고 `0`은 여전히 "타임아웃 없음"입니다.
 - **런타임 `sessions_spawn` 도구에 `isolation` 추가** (같은 정리에서 그것이 지키는 "한 단계만" 규칙도 문서화): 모델이 격리 git worktree를 요청할 수 있고, cwd가 이미 격리 워크스페이스 안에 있는 spawn은 worktree의 worktree를 만들지 않고 그 트리를 재사용합니다. 이전에는 이 필드가 build-time 클래스에만 있어 격리 기능 전체가 모델 쪽에서 도달 불가능했습니다.
-- **능력 봉쇄(같은 역할 파생)**: 전문화된 자식(`researcher` / `executor` / `reviewer` / `librarian`)은 **자기 역할**의 자식만 spawn할 수 있습니다. 지금까지 read-only researcher는 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 고용할 수 있었습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오고 부모 역할은 관여하지 않기 때문입니다. 같은 역할 = 같은 allow-list라서 승격 경로가 사라집니다. `MAIN`과 `general`(inherit = 모든 도구)은 무제한이며, 교차 역할 요청은 **거부**되고 오류 문구가 해법(`functional_role="<부모 역할>"`)을 알려줍니다(조용히 바뀌지 않습니다). `functional_role`이 런타임 `sessions_spawn` 도구에도 노출되어 같은 역할 fan-out이 표현 가능해졌습니다.
+- **능력 봉쇄(역할 허용 목록)**: 전문화된 자식(`researcher` / `executor` / `reviewer` / `librarian`)은 허용 목록의 역할만 spawn할 수 있습니다——**자기 역할**에 더해 executor는 **읽기 전용** `researcher` / `librarian`도 spawn할 수 있습니다(쓰기 전 조사). 지금까지 read-only researcher는 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 고용할 수 있었습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오고 부모 역할은 관여하지 않기 때문입니다. 같은 역할 = 같은 allow-list라서 승격 경로가 사라집니다. `MAIN`과 `general`(inherit = 모든 도구)은 무제한이며, 교차 역할 요청은 **거부**되고 오류 문구가 해법(`functional_role="<부모 역할>"`)을 알려줍니다(조용히 바뀌지 않습니다). `functional_role`이 런타임 `sessions_spawn` 도구에도 노출되어 같은 역할 fan-out이 표현 가능해졌습니다.
 - **`sessions_spawn`가 타임아웃을 노출**: `run_timeout_seconds` 필드를 추가했습니다(전역 기본값과 나란히 있는 모델 자신의 레버). 도구는 모델이 넘긴 값을 **거부하지 않고** `[run_timeout_min_seconds, run_timeout_max_seconds]`(600초 .. 7200초)로 clamp합니다——60초라는 "짧게" 의도는 10분 하한에, 99999는 2시간 상한에 안착합니다——`None`/비양수는 "미설정"(전역 기본값 사용)입니다. 내부 호출자(TaskFlow dispatch, `delegate_task`)는 clamp를 우회하고 자체 경계를 유지합니다.
 - **신규 `sessions_messages` 도구**: `session_key`로 자식 세션의 checkpoint 트랜스크립트를 읽습니다(여덟 번째 런타임 도구). 타임아웃/kill 상황을 위한 것입니다——`Status: timed out`이고 `Result:`가 없으면 호출자는 아무것도 얻지 못했지만, 자식의 checkpoint에는 실행한 모든 도구 호출이 남아 있습니다. 출력은 token 예산화(총 4 000, 메시지당 500)되고 `spawned_by`/run의 완료 소유자로 인가되므로, 그 자식을 spawn한 세션만 읽을 수 있습니다.
 - **신규 `max_total_spawns_per_session` (50)**: 세션 단위 누적 spawn 예산 (`registry/spawn_budget.py`, registry의 다른 라이브 뷰와 같은 프로세스 내 메모리). `max_children_per_agent` (5)는 동시에 실행되는 자식 수를, 이 항목은 "하나 끝내고 다음 시작"의 무한 반복 — 막힌 오케스트레이터가 빠지는 형태 — 을 제한합니다. `register_run`에서 카운트(등록에 도달한 spawn), spawn admission 게이트에서 검사, 세션 정리 시 삭제되며 프로세스 재시작 시 초기화됩니다.
@@ -76,8 +76,9 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── resolve_subagent_capabilities(depth, max_depth):
   │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │     │     depth ≥ max → LEAF/NONE (capabilities/core.py)
-  │     └── 능력 봉쇄: 전문화(functional) 부모는 **같은 기능 역할**만
-  │         spawn 가능——MAIN/general은 무제한
+  │     └── 능력 봉쇄: 전문화(functional) 부모는 허용 목록의 역할만
+  │         spawn 가능(자기 역할. executor는 추가로 읽기 전용
+  │         researcher / librarian)——MAIN/general은 무제한
   │
   ├── 3. 모델 및 사고 계획 (Model & Thinking Plan, spawn/plan.py,
   │     spawn/thinking.py)
@@ -133,7 +134,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     └── create_agent()로 7겹의 미들웨어 구성:
   │           ├── Summarization(model=<보조 LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)])
-  │           ├── IterationBudget(60)      — 최대 반복 횟수
+  │           ├── IterationBudget(executor 90 / 기타 60) — 최대 반복 횟수
   │           ├── ToolGuardrails()         — 도구 안전 가드레일
   │           ├── OutputRepetitionGuard()  — 출력 반복 억제
   │           ├── MaxTokensBoostMiddleware() — 도구 호출 잘림 시 max_tokens를 높여
@@ -489,10 +490,10 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 | `FunctionalRole` | 용도 | `model_tier` | 역할 도구 목록 |
 |------------------|------|--------------|----------------|
 | `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `librarian` | 읽기 전용 외부 코드베이스 검색. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `executor` | 쓰기 가능한 구현과 명령 실행. 읽기 전용 `researcher` / `librarian`을 추가로 spawn 가능 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `claim_scope`, `share_finding`, `peers_findings` |
+| `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
+| `librarian` | 읽기 전용 외부 코드베이스 검색. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + 협업(opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. 이는 oh-my-openagent의 전역 등록 ast-grep 서버에 대응하는 핵심 기능입니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact` / `semantic_code_search`는 심볼 인덱스가 필요하므로 `researcher`와 `librarian` 두 코드 검색 역할에 주어집니다(`semantic_code_search`는 그 인덱스에 대한 임베딩 기반 개념 검색입니다). LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 역시 같은 이유로 이 두 역할에 주어지며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다. `lsp_rename`과 `lsp_format`은 기본적으로 미리보기만 하고, `lsp_diagnostics`는 비동기 진단 알림을 기다리며, `lsp_status`는 아무것도 시작하지 않고 가용성만 보고합니다. `execute_code` 도구(프로그래매틱 도구 호출)는 executor 전용이며, executor 역할만 받고 다른 기능 역할은 받지 않습니다.
 
@@ -506,7 +507,7 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 **도구 정책.** 역할의 `tools` 목록은 allow-list가 됩니다(기본 deny-list는 비워짐). spawn별 `extra_tools`는 그 allow-list에 합류하지만, 둘 다 무조건적인 `main_only` 메타데이터 게이트와 명시적 deny-list의 적용을 받습니다.
 
-**능력 봉쇄.** 전문화 역할(`researcher` / `executor` / `reviewer` / `librarian`)은 **같은 역할**의 자식만 spawn할 수 있습니다: 같은 역할 = 같은 allow-list = 자식의 능력은 부모와 정확히 같습니다. 이 규칙이 없으면 read-only researcher가 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 spawn해 대신 쓰게 할 수 있습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오며, 부모 역할로 걸러지지 않습니다. `MAIN`(run 레코드 없음)과 `general`(inherit = 모든 도구)은 무제한입니다——전문화 역할의 allow-list는 그 부분집합이기 때문입니다. 교차 역할 요청은 거부되며(결코 조용히 바뀌지 않습니다) 오류 문구가 출구를 알려줍니다: `Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+**능력 봉쇄.** 전문화 역할(`researcher` / `executor` / `reviewer` / `librarian`)은 허용 목록(`SPAWN_ALLOWED_CHILD_ROLES`, `types/functional_role.py`)의 역할만 spawn할 수 있습니다: **자기 역할**, 그리고 executor는 **읽기 전용** `researcher` / `librarian`(쓰기 전 조사). 항목이 없는 역할은 종전대로 ‘같은 역할만’이며, 세 개의 읽기 전용/감사 역할은 그대로입니다. 이 규칙이 없으면 read-only researcher가 ORCHESTRATOR 깊이에서 쓰기 가능한 executor를 spawn해 대신 쓰게 할 수 있습니다——자식의 도구는 **자식 자신**의 역할로 걸러진 전체 메인 도구셋에서 오며, 부모 역할로 걸러지지 않습니다. `MAIN`(run 레코드 없음)과 `general`(inherit = 모든 도구)은 무제한입니다——전문화 역할의 allow-list는 그 부분집합이기 때문입니다. 허용되지 않는 역할은 거부되며(결코 조용히 바뀌지 않습니다) 오류 문구가 허용 집합과 출구를 함께 알려줍니다: `Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` 안전성은 테스트로 고정된 두 불변식이 지킵니다: 모든 항목은 부모 역할 자신을 포함하고, 허용되는 **부모 이외의 자식은 반드시 읽기 전용**입니다. 이 단일 홉 규칙 덕분에 조상 체인 순회 없이 다단계도 안전합니다——쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 같은 종류에만 도달합니다.
 
 **`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다. 모델이 호출하는 런타임 도구가 가진 것은 `functional_role`·`run_timeout_seconds`·`isolation`이며, 여기 나머지는 build-time 클래스의 것입니다.
 

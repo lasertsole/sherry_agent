@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）——压缩前 memory flush 已退役，由压缩时 memory review 覆盖——另含长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
+SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）——压缩前 memory flush 已退役，由压缩时 memory review 覆盖——另含长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory schema——绝不另建平行存储。
 
 > 状态（2026-09-13）：计划已退役，本 README 即权威参考。
 
@@ -11,16 +11,16 @@ SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev 
 | 能力 | 位置 |
 |---|---|
 | 压缩冷却跨重启持久化 | `agent/middlewares/summarization/core.py` 的 `_COOLDOWN_PERSIST_KEYS` |
-| SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，迁移 v10 |
+| SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，当前 schema |
 | 工具输出一行摘要 | `pub/func/message/tool_output_prune.py` |
-| 压缩检查点 + 回溯 | 迁移 v15，`restore_compaction_checkpoint` |
-| 消息幂等持久化 | 迁移 v11（`idempotency_key` + 部分唯一索引） |
-| `context_eligible` 历史投影 | 迁移 v12；检索默认过滤不合格行 |
-| 消息树 + 零拷贝 fork | 迁移 v14（`parent_message_id`、`session_leafs`） |
-| 只增事件日志 + 投影器 | 迁移 v16，`context_engine/events/` |
-| Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
+| 压缩检查点 + 回溯 | 当前 schema，`restore_compaction_checkpoint` |
+| 消息幂等持久化 | 当前 schema（`idempotency_key` + 部分唯一索引） |
+| `context_eligible` 历史投影 | 当前 schema；检索默认过滤不合格行 |
+| 消息树 + 零拷贝 fork | 当前 schema（`parent_message_id`、`session_leafs`） |
+| 只增事件日志 + 投影器 | 当前 schema，`context_engine/events/` |
+| Context Epoch 快照 | 当前 schema（`context_epoch` 表），`ContextEpoch` |
 | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
+| 向量语义搜索 | 当前 schema，`context_engine/embeddings/`，`message_search --semantic` |
 | TaskFlow 编排 | `wiki/long-running-tasks/` |
 
 ## 记忆文件
@@ -33,18 +33,20 @@ SESSION 内存计划的 13 项能力中，12 项仍在（借鉴自 opencode-dev 
 | `workspace/memory/USER.md` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） | `memory` 工具（`user` 目标：memory review nudge） |
 | `workspace/memory/FACTS.md` | 系统级 / 跨项目普适的坑与约定；每次系统提示都会注入 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`），超限滚动淘汰最旧条目 | `memory` 工具（`facts` 目标：memory review / plan extraction nudge） |
 
-## MesMemory 迁移（v10–v17）
+## MesMemory schema
 
-| 版本 | 结构 |
+| schema 对象 | 用途 |
 |---|---|
-| v10 | `compression_locks` —— 每会话压缩锁（主键即互斥） |
-| v11 | `messages.idempotency_key` + 部分唯一索引（崩溃重试去重） |
-| v12 | `messages.context_eligible` —— 上下文投影标记（默认 1） |
-| v13 | `message_embeddings` —— 语义搜索向量索引 |
-| v14 | `messages.parent_message_id` + `session_leafs` —— 消息树 |
-| v15 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` |
-| v16 | `events` —— 只增日志，会话内无间隙 `seq` |
-| v17 | `context_epoch` —— 系统上下文基线 / 快照 |
+| `compression_locks` | 每会话压缩锁（主键即互斥） |
+| `messages.idempotency_key` + 部分唯一索引 | 崩溃重试去重 |
+| `messages.context_eligible` | 上下文投影标记（默认 1） |
+| `message_embeddings` | 语义搜索向量索引 |
+| `messages.parent_message_id` + `session_leafs` | 消息树 |
+| `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | 压缩恢复点 |
+| `events` | 只增日志，会话内无间隙 `seq` |
+| `context_epoch` | 系统上下文基线 / 快照 |
+
+`build_schema_v1` 一次创建完整 schema；没有版本化迁移链。
 
 ## 关键组件
 

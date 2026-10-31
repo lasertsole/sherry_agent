@@ -25,7 +25,7 @@ COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
 # ── The context window this suite feeds the middleware (test-fixed value) ─
 # 65_536 is pinned LOCALLY for exact threshold math; it is NOT the project
 # default. The runtime value comes from MAIN_LLM_MAX_TOKEN, which the token
-# guard enforces at >= 131_072.
+# guard enforces at >= 200_000.
 MAIN_LLM_MAX_TOKEN = 65_536
 # core.py trigger: ("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))
 EXPECTED_THRESHOLD = int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO)  # 52_428

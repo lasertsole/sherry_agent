@@ -9,18 +9,23 @@
           'fixed inset-0 z-40 bg-white dark:bg-[#181820]'
         : collapsed
           ? 'relative w-0'
-          : 'relative border-l border-solid border-gray-light dark:border-gray-dark',
+          : // `shrink` lets the column give way when the window is too narrow for
+            // every minimum (the left column is `shrink-0` and the conversation
+            // has its own 320px floor); the inline width stays the target.
+            'relative shrink border-l border-solid border-gray-light min-w-[280px] dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
-    :style="collapsed || store.maximized ? undefined : { width: `${store.width}px` }">
+    :style="collapsed || store.maximized ? undefined : { width: `${displayWidth}px` }">
     <!-- Resize handle on the left edge: dragging left widens the panel (it is
          right-anchored); the store clamps every step to the allowed band. The
          grip pill is the affordance — an 8px edge alone reads as a border, so
          the pill, the col-resize cursor and the tooltip say "drag me". Its
          greys are mode-independent: the theme accent resolves to white on a
-         dark-mode build, which disappears over a light panel. -->
+         dark-mode build, which disappears over a light panel. Hidden while the
+         chat column is floated: the extra width is a presentation override, so
+         a drag would move a width the user cannot see. -->
     <div
-      v-if="!collapsed && !store.maximized"
+      v-if="!collapsed && !store.maximized && props.extraWidth <= 0"
       class="group absolute left-0 top-0 h-full w-2 z-10 flex items-center justify-center cursor-col-resize"
       :class="{ 'bg-gray-400/20': dragging }"
       role="separator"
@@ -38,8 +43,8 @@
     <div
       v-if="contentMounted"
       class="flex flex-col h-full"
-      :style="store.maximized ? { width: '100%' } : { width: `${store.width}px` }">
-      <!-- Strip: the group pills (当前会话 / 全局 — the tabs' scope) are FIXED at the
+      :style="store.maximized ? { width: '100%' } : { width: `${displayWidth}px` }">
+      <!-- Strip: the group pills (This session / Global — the tabs' scope) are FIXED at the
            left of the single tab row, and the active group's tab list scrolls to
            their right. The row keeps the shared h-15, so all three columns still
            share one header line. Tabs are added from the top toolbar and the
@@ -84,33 +89,69 @@
             {{ t(`rightSidebar.scopes.${scope}`) }}
           </button>
         </div>
-        <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-          <button
-            v-for="tab in store.tabsInScope(store.activeScope)"
-            :key="tab.id"
-            type="button"
-            class="group shrink-0 flex items-center gap-1 h-7 px-2 rounded-md text-xs transition-colors"
-            :class="
-              tab.id === store.activeTabId
-                ? 'bg-theme-main/10 text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            "
-            :title="tabLabel(tab)"
-            :draggable="isDraggableTab(tab)"
-            @click="store.activateTab(tab.id)"
-            @dragstart="onTabDragStart($event, tab)">
-            <span class="truncate max-w-24">{{ tabLabel(tab) }}</span>
-            <i
-              class="pi pi-times text-[10px] opacity-60 hover:opacity-100"
-              :aria-label="t('rightSidebar.closeTab')"
-              @click.stop="emit('close-tab', tab)"></i>
-          </button>
-          <span
-            v-if="store.tabsInScope(store.activeScope).length === 0"
-            class="text-xs text-gray-400 dark:text-gray-500"
-            data-test="scope-empty">
-            {{ t('rightSidebar.scopeEmpty') }}
-          </span>
+        <!-- Tabs are EQUAL width and shrink proportionally: a 156px basis with
+             a 60px floor, so a long title never makes a tab wider and a crowded
+             strip narrows every tab by the same amount before it starts
+             scrolling. The fade masks (absolute, outside the scroller) mark the
+             side a scrolled strip is cutting off; the title fades instead of
+             ending in an ellipsis. -->
+        <div class="relative min-w-0 flex-1">
+          <div
+            ref="tabsViewport"
+            class="flex h-full min-w-0 items-center gap-1 overflow-x-auto scrollbar-hide"
+            :data-overflowing="isOverflowing ? 'true' : 'false'"
+            data-test="tabs-viewport">
+            <button
+              v-for="tab in store.tabsInScope(store.activeScope)"
+              :key="tab.id"
+              type="button"
+              class="group flex h-7 min-w-15 max-w-39 flex-[1_1_9.75rem] items-center gap-1 overflow-hidden whitespace-nowrap rounded-md px-1.5 pr-2 text-xs transition-colors"
+              :class="
+                tab.id === store.activeTabId
+                  ? 'bg-theme-main/10 text-theme-main'
+                  : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+              "
+              :title="tabLabel(tab)"
+              :draggable="isDraggableTab(tab)"
+              :data-test="`tab-${tab.kind}`"
+              @click="store.activateTab(tab.id)"
+              @dragstart="onTabDragStart($event, tab)">
+              <span
+                class="min-w-0 flex-1 overflow-hidden whitespace-nowrap"
+                :style="TAB_TITLE_MASK"
+                >{{ tabLabel(tab) }}</span
+              >
+              <!-- The close X is always present in the LAYOUT (so the title does
+                   not jump on hover) and fades in for the active tab and on
+                   hover. -->
+              <i
+                class="pi pi-times shrink-0 text-[10px] transition-opacity"
+                :class="
+                  tab.id === store.activeTabId
+                    ? 'opacity-100 hover:opacity-60'
+                    : 'opacity-0 group-hover:opacity-60 hover:opacity-100'
+                "
+                :aria-label="t('rightSidebar.closeTab')"
+                :data-test="`tab-close-${tab.kind}`"
+                @click.stop="emit('close-tab', tab)"></i>
+            </button>
+            <span
+              v-if="store.tabsInScope(store.activeScope).length === 0"
+              class="text-xs text-gray-400 dark:text-gray-500"
+              data-test="scope-empty">
+              {{ t('rightSidebar.scopeEmpty') }}
+            </span>
+          </div>
+          <!-- Fade masks: pointer-events-none, anchored to the WRAPPER (inside
+               the scroller they would scroll away with the content). -->
+          <div
+            v-if="showLeftMask"
+            class="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-gradient-to-r from-white to-transparent dark:from-[#181820]"
+            data-test="tabs-mask-left" />
+          <div
+            v-if="showRightMask"
+            class="pointer-events-none absolute inset-y-0 right-0 z-10 w-4 bg-gradient-to-l from-white to-transparent dark:from-[#181820]"
+            data-test="tabs-mask-right" />
         </div>
       </div>
 
@@ -141,7 +182,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
 import type { Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -151,20 +192,37 @@ import {
   type RightSidebarScope,
   type RightSidebarTab
 } from '~/stores/right-sidebar';
+import { useSidebarWidthStore } from '~/stores/sidebar-width';
+import { useUiStore } from '~/stores/ui';
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import { middleMinWidth } from '@/common/layout';
 import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
 
 /** The session the main area shows (the recent-tabs menu filters by it). */
-defineProps<{ sessionId?: string }>();
+const props = withDefaults(defineProps<{ sessionId?: string; extraWidth?: number }>(), { extraWidth: 0 });
 
 const { t } = useI18n({ useScope: 'local' });
 
 const store = useRightSidebarStore();
+/**
+ * What the DOM renders: the stored width plus the share the shell hands over
+ * while the conversation column is floated. Presentation-only — the store is
+ * never written — so docking the chat restores this column exactly.
+ */
+const displayWidth = computed(() => store.width + Math.max(0, props.extraWidth));
+/**
+ * Pixels the left column plus the conversation's floor need. The drag ceiling
+ * subtracts them so the stored width is always one the flex row can actually
+ * render — without it a wide drag stored 65% while the DOM stopped sooner.
+ */
+const leftSidebar = useSidebarWidthStore();
+const ui = useUiStore();
+const reservedWidth = () => (ui.sidebarCollapsed ? 0 : leftSidebar.width) + middleMinWidth(window.innerWidth);
 
 /**
  * A tab's strip label: its kind's name, plus `` N`` when several tabs of that
  * kind are open (the toolbox opens a browser / terminal per click, and two tabs
- * both reading 浏览器 would be indistinguishable).
+ * both reading Browser would be indistinguishable).
  * @param tab
  * @param tab.id
  * @param tab.kind
@@ -180,6 +238,25 @@ const tabLabel = (tab: RightSidebarTab): string => {
 
 /** The group tabs, in display order (session first, then the global tools). */
 const SCOPES: ReadonlyArray<RightSidebarScope> = ['session', 'global'];
+
+/**
+ * Fade the title's last few pixels instead of truncating it with an ellipsis.
+ *
+ * The span is the tab's flexible item (`min-w-0 flex-1`), so 100% is the
+ * visible width already excluding the close button — no per-state offset is
+ * needed (an offset would only slide the fade on hover, which reads as the
+ * title shifting).
+ */
+const TAB_TITLE_MASK: Record<string, string> = {
+  maskImage: 'linear-gradient(to right, black calc(100% - 0.5rem), transparent)',
+  WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 0.5rem), transparent)'
+};
+
+/** The tab row's scroller (overflow amount + fade sides). */
+const tabsViewport = useTemplateRef<HTMLElement>('tabsViewport');
+/** Tabs currently on screen: the active group's list. */
+const visibleTabCount = computed(() => store.tabsInScope(store.activeScope).length);
+const { isOverflowing, showLeftMask, showRightMask } = useTabsOverflow(tabsViewport, visibleTabCount);
 
 /** Lazy panel components: the chunk loads when a tab of that kind first mounts. */
 const PANELS: Record<RightSidebarPanelKind, Component> = {
@@ -201,8 +278,11 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
   gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
   contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue')),
+  trajectory: defineAsyncComponent(() => import('./TrajectoryPanel.vue')),
+  tokenBudget: defineAsyncComponent(() => import('./TokenBudgetPanel.vue')),
   browser: defineAsyncComponent(() => import('./BrowserPanel.vue')),
   terminal: defineAsyncComponent(() => import('./TerminalPanel.vue')),
+  whiteboard: defineAsyncComponent(() => import('./WhiteboardPanel.vue')),
   sideChat: defineAsyncComponent(() => import('./SideChatPanel.vue'))
 };
 
@@ -246,6 +326,7 @@ const activeTabPayload = computed<
       instance?: string;
       url?: string;
       sessionId?: string;
+      boardId?: string;
       parentSessionId?: string;
       inherited?: boolean;
       quote?: string;
@@ -320,7 +401,7 @@ let dragStartWidth = 0;
  */
 const onDragMove = (event: PointerEvent) => {
   if (!dragging.value) return;
-  store.setWidth(dragStartWidth - (event.clientX - dragStartX), window.innerWidth);
+  store.setWidth(dragStartWidth - (event.clientX - dragStartX), window.innerWidth, reservedWidth());
 };
 
 /** End the drag and detach the window listeners. */
@@ -350,7 +431,7 @@ const startDrag = (event: PointerEvent) => {
  * Keep the panel inside its band when the window is resized: a width saved on a
  * wide window would otherwise overflow a narrower one.
  */
-const fitToViewport = () => store.fitToViewport(window.innerWidth);
+const fitToViewport = () => store.fitToViewport(window.innerWidth, reservedWidth());
 
 onMounted(() => {
   fitToViewport();
@@ -391,6 +472,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "预设角色",
       "gitDiff": "提交差异",
       "contextViewer": "Agent 上下文",
+      "trajectory": "轨迹",
       "browser": "浏览器",
       "terminal": "终端",
       "scopes": {
@@ -425,6 +507,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "Presets & Role",
       "gitDiff": "Commit diff",
       "contextViewer": "Agent context",
+      "trajectory": "Trajectory",
       "browser": "Browser",
       "terminal": "Terminal",
       "scopes": {
@@ -459,6 +542,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "プリセットと役割",
       "gitDiff": "コミット差分",
       "contextViewer": "エージェント コンテキスト",
+      "trajectory": "軌跡",
       "browser": "ブラウザ",
       "terminal": "ターミナル",
       "scopes": {
@@ -493,6 +577,7 @@ onBeforeUnmount(() => {
       "sessionPreset": "프리셋과 역할",
       "gitDiff": "커밋 diff",
       "contextViewer": "에이전트 컨텍스트",
+      "trajectory": "궤적",
       "browser": "브라우저",
       "terminal": "터미널",
       "scopes": {

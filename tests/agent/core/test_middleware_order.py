@@ -36,6 +36,8 @@ EXPECTED_ORDER = [
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
     "DynamicReminderMiddleware",
+    "InputSafetyFilter",
+    "LLMModerationMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ThinkingControlMiddleware",
@@ -43,6 +45,7 @@ EXPECTED_ORDER = [
     "HumanInTheLoop",
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
+    "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
 ]
@@ -108,8 +111,8 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)
-    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
-    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
+    monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr(agent_core, "main_llm_max_tokens", 65_536)
     from agent.wrapper import registry as wrapper_registry
 

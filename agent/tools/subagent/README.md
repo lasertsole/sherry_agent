@@ -14,14 +14,16 @@
   whose cwd already sits inside one reuses that tree instead of cutting a worktree of a
   worktree. Before this the field existed only on the build-time class, so the whole isolation
   feature was unreachable from the model side.
-- **Capability containment (same-role derivation)**: a specialized child (`researcher` /
-  `executor` / `reviewer` / `librarian`) may only spawn children of its OWN role. Until now a
-  read-only researcher at ORCHESTRATOR depth could hire a write-capable executor, because a
-  child's tools come from the full main set filtered by the CHILD's role and never by the
-  parent's. Same role = same allow-list, so the escalation path is gone; `MAIN` and `general`
-  (inherit = every tool) stay unrestricted, and a cross-role request is REFUSED with the fix
-  named (`functional_role="<parent role>"`), never silently re-roled. `functional_role` is now
-  exposed on the runtime `sessions_spawn` tool so a same-role fan-out is expressible.
+- **Capability containment (role allow-list)**: a specialized child (`researcher` /
+  `executor` / `reviewer` / `librarian`) may only spawn the roles its allow-list permits —
+  its OWN role plus, for an executor, the read-only `researcher` / `librarian` (research
+  before writing). Until this existed a read-only researcher at ORCHESTRATOR depth could hire
+  a write-capable executor, because a child's tools come from the full main set filtered by
+  the CHILD's role and never by the parent's; containment closes exactly that write
+  escalation, and the allow-list only ever adds READ-ONLY roles, so the hole stays shut.
+  `MAIN` and `general` (inherit = every tool) are unrestricted, and a disallowed role is
+  REFUSED with the allowed set named, never silently re-roled. `functional_role` is exposed
+  on the runtime `sessions_spawn` tool so a same-role fan-out is expressible.
 - **`sessions_spawn` exposes the timeout**: a `run_timeout_seconds` field (the model's own lever, next to the global default). The tool CLAMPS a model-provided value into `[run_timeout_min_seconds, run_timeout_max_seconds]` (600 s .. 7200 s) instead of rejecting it — a request for 60 s keeps the "short" intent at the 10-minute floor, 99999 lands at 2 h — and `None`/non-positive means "unset" (the global default applies). Internal callers (TaskFlow dispatch, `delegate_task`) bypass the clamp and keep their own bounds.
 - **New `sessions_messages` tool**: read a child session's checkpoint transcript by its `session_key` (the eighth runtime tool). It exists for the timeout/kill case — `Status: timed out` with no `Result:` used to leave the caller with nothing, while the child's checkpoint still held every tool call it made. The value is token-budgeted (4 000 tokens total, 500 per message) and gated on `spawned_by` / the run's completion owner, so only the session that spawned a child can read it.
 - **New `max_total_spawns_per_session` (50)**: a per-session LIFETIME spawn budget (`registry/spawn_budget.py`, in-memory like the rest of the live registry). `max_children_per_agent` (5) bounds children running AT A TIME; this bounds "finish one child, start the next" repeating forever — the shape a stuck orchestrator loops on. Counted in `register_run` (a spawn that reached registration), checked in the spawn admission gate, dropped when the session is purged; a process restart starts clean.
@@ -87,7 +89,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │     depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │     │     depth ≥ max → LEAF/NONE (capabilities/core.py)
   │     └── capability containment: a specialized parent (functional) may only
-  │         spawn the SAME functional role — MAIN/general are unrestricted
+  │         spawn roles on its allow-list (own role; executor also researcher /
+  │         librarian, read-only) — MAIN/general are unrestricted
   │
   ├── 3. Model & Thinking Plan (spawn/plan.py, spawn/thinking.py)
   │     ├── thinking precedence: explicit → requester → target agent default
@@ -142,7 +145,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     └── create_agent() with seven middlewares:
   │           ├── Summarization(model=<aux LLM>, trigger=[("messages",40),
   │           │                  ("tokens",0.80×main_window)])
-  │           ├── IterationBudget(60)      — max iteration count
+  │           ├── IterationBudget(executor 90 / others 60) — max iteration count
   │           ├── ToolGuardrails()         — tool safety guardrails
   │           ├── OutputRepetitionGuard()  — output repetition suppression
   │           ├── MaxTokensBoostMiddleware() — re-calls with boosted max_tokens on
@@ -503,10 +506,10 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 | `FunctionalRole` | Purpose | `model_tier` | Role tool list |
 |------------------|---------|--------------|----------------|
 | `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `librarian` | Read-only external codebase retrieval on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `executor` | Write-capable implementation and command execution; may also spawn read-only `researcher` / `librarian` children | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl`, `execute_code` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `claim_scope`, `share_finding`, `peers_findings` |
+| `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
+| `librarian` | Read-only external codebase retrieval on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` + coordination (opt-in) `share_finding`, `peers_findings` |
 
 **ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite` — a core capability mirroring oh-my-openagent's globally registered ast-grep server. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` / `semantic_code_search` go to the two code-intel roles, `researcher` and `librarian`, because they need the symbol index; `semantic_code_search` is the embedding-backed concept search over that index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` reach the same two roles for the same reason: they need a running language server, which the child starts lazily and stops when idle. `lsp_rename` and `lsp_format` preview by default, `lsp_diagnostics` waits for the asynchronous diagnostics notification, and `lsp_status` reports availability without starting anything. The `execute_code` tool (Programmatic Tool Calling) is executor-only: the executor role receives it, and no other functional role does.
 
@@ -520,7 +523,7 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 **Tool policy.** A role's `tools` list becomes an allow-list (the default deny-list is cleared). Per-spawn `extra_tools` join that allow-list; both are still subject to the unconditional `main_only` metadata gate and any explicit deny-list.
 
-**Capability containment.** A specialized role (`researcher` / `executor` / `reviewer` / `librarian`) may only spawn children of its **own** role: same role = same allow-list = the child can do exactly what the parent can. Without this a read-only researcher at ORCHESTRATOR depth could spawn a write-capable executor and have the writing done on its behalf — a child's tools are the child's own role's, never a subset of the parent's. `MAIN` (no run record) and `general` (inherit = every tool) are unrestricted, since every specialized allow-list is a subset of theirs. A cross-role request is refused (never silently re-roled) with the way out named in the message: `Pass functional_role="researcher" for a same-role child; use a general subagent or the main agent to spawn a different role.`
+**Capability containment.** A specialized role (`researcher` / `executor` / `reviewer` / `librarian`) may only spawn roles on its allow-list (`SPAWN_ALLOWED_CHILD_ROLES`, `types/functional_role.py`): its **own** role, plus — for an executor — the read-only `researcher` / `librarian`, so an executor can research before it writes. An absent entry means same-role only, which is what the three read-only/review roles keep. Without containment a read-only researcher at ORCHESTRATOR depth could spawn a write-capable executor and have the writing done on its behalf — a child's tools are the child's own role's, never a subset of the parent's. `MAIN` (no run record) and `general` (inherit = every tool) are unrestricted, since every specialized allow-list is a subset of theirs. A disallowed role is refused (never silently re-roled) with the allowed set and the way out named in the message: `Pass functional_role="<one of the allowed roles>"; use a general subagent or the main agent to spawn a different role.` Two invariants keep the map safe, both pinned by tests: every entry keeps the parent role, and every permitted non-parent child is READ-ONLY — that single-hop rule makes multi-hop safe without ancestor-chain traversal, because a write role reaches only write roles and a read-only role only its own kind.
 
 **`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget. The runtime tool the model calls carries `functional_role`, `run_timeout_seconds` and `isolation`; the remaining fields here are the build-time class's.
 

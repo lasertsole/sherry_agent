@@ -1,10 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { reactive, nextTick } from 'vue';
 import homeIndex from '@/pages/home/index.vue';
+import CommandPalette from '@/components/CommandPalette.vue';
 import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 import { useSubagentStore } from '@/stores/subagent';
+import { useChatFloatStore } from '@/stores/chat-float';
+import { installGlobalShortcutListener } from '@/composables/use-shortcuts';
+import {
+  resolveFloatingSize,
+  resolveFloatingPosition,
+  resolveNearestFloatingAnchor,
+  clampFloatingPosition
+} from '@/common/floating-window';
 import type { SubagentRun } from '@/composables/bridge';
 
 // This mock is scoped to this file: only here does the mounted home page graph
@@ -69,6 +78,15 @@ const primevueStub = {
   },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
+  // The Ctrl+K palette (only its visibility is exercised here; its own suite
+  // covers the rows). Rendering the slot only when open keeps the shell markup
+  // unchanged for the other cases.
+  Dialog: { props: ['visible'], template: '<div class="dlg" v-if="visible"><slot /></div>' },
+  InputText: {
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template: '<input class="it" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  },
   ChatInputBox: { template: '<div class="cib"></div>' }
 };
 
@@ -136,6 +154,83 @@ function stubProjectDirectory(initial: string | null = '/proj') {
   return { state, restore: () => vi.stubGlobal('useProjectDirectoryStore', original) };
 }
 
+/**
+ * A controllable right-sidebar store for the float cases (the shared setup stub
+ * has no `maximized`, which the expand/restore linkage observes).
+ * @param overrides Initial collapsed / width / maximized state.
+ * @param overrides.collapsed Initial collapsed flag.
+ * @param overrides.width Initial stored width.
+ * @param overrides.maximized Initial maximize flag.
+ * @returns The stubbed store and a restore hook.
+ */
+function stubRightSidebar(overrides: { collapsed?: boolean; width?: number; maximized?: boolean } = {}) {
+  const original = (globalThis as any).useRightSidebarStore;
+  const store = reactive({
+    collapsed: overrides.collapsed ?? true,
+    tabs: [] as unknown[],
+    activeTabId: null as string | null,
+    activeScope: 'global',
+    width: overrides.width ?? 420,
+    maximized: overrides.maximized ?? false,
+    toggle: () => {},
+    toggleMaximized: () => {},
+    expand: () => {},
+    setWidth: () => {},
+    fitToViewport: () => {},
+    openTab: () => 'test-tab',
+    tabsInScope: () => [],
+    setActiveSession: () => {},
+    setActiveScope: () => {},
+    activateTab: () => {},
+    closeTab: () => {},
+    rememberClosed: () => {},
+    recentClosedFor: () => [],
+    reopenClosed: () => 'test-tab',
+    forgetSession: () => {}
+  });
+  vi.stubGlobal('useRightSidebarStore', () => store);
+  return { store, restore: () => vi.stubGlobal('useRightSidebarStore', original) };
+}
+
+/**
+ * A controllable UI store (left collapse flag the float snapshot reads).
+ * @param overrides Initial collapsed state.
+ * @param overrides.sidebarCollapsed Initial left-column collapse flag.
+ * @returns The stubbed store and a restore hook.
+ */
+function stubUi(overrides: { sidebarCollapsed?: boolean } = {}) {
+  const original = (globalThis as any).useUiStore;
+  const ui = reactive({
+    sidebarCollapsed: overrides.sidebarCollapsed ?? false,
+    settingsMenuOpen: false,
+    sidebarBody: 'sessions' as 'sessions' | 'files',
+    filesSectionOpen: true,
+    gitSectionOpen: true,
+    filesSplitSize: 50,
+    setTheme: () => {},
+    toggleSidebar: () => {},
+    toggleSidebarBody: () => {},
+    toggleFilesSection: () => {},
+    toggleGitSection: () => {},
+    setFilesSplitSize: () => {}
+  });
+  vi.stubGlobal('useUiStore', () => ui);
+  return { ui, restore: () => vi.stubGlobal('useUiStore', original) };
+}
+
+/**
+ * Dispatch one pointer event on a mounted element (happy-dom has no capture).
+ * @param target
+ * @param type
+ * @param x
+ * @param y
+ */
+function pointer(target: Element, type: 'pointerdown' | 'pointermove' | 'pointerup', x: number, y: number) {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+  Object.defineProperty(event, 'pointerId', { value: 1 });
+  target.dispatchEvent(event);
+}
+
 describe('home/index.vue (integration, backend mocked)', () => {
   beforeEach(() => {
     seededFetchApi.mockClear();
@@ -155,6 +250,37 @@ describe('home/index.vue (integration, backend mocked)', () => {
     // The logo label falls back to the neutral default name when the session has
     // no character name (it is the persona name only when the persona sets one).
     expect(wrapper.text()).toContain('🍊雪莉');
+  });
+
+  it('opens the Ctrl+K command palette, and ignores the Shift/Alt variants', async () => {
+    // The document listener belongs to the app (plugins/shortcuts.ts), not the
+    // shell: install the same dispatcher the plugin installs.
+    const uninstall = installGlobalShortcutListener();
+    try {
+      const wrapper = mountHome();
+      const palette = wrapper.findComponent(CommandPalette);
+      expect(palette.props('visible')).toBe(false);
+
+      // Ctrl+Shift+K is a different chord: the shell must leave it alone.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true }));
+      await nextTick();
+      expect(palette.props('visible')).toBe(false);
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
+      await nextTick();
+      expect(palette.props('visible')).toBe(true);
+
+      // The shell's REGISTRATION is removed with it: a mounted sibling answers
+      // instead (a leaked handler would also fire on the unmounted page).
+      const fresh = mountHome();
+      wrapper.unmount();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+      await nextTick();
+      expect(fresh.findComponent(CommandPalette).props('visible')).toBe(true);
+      fresh.unmount();
+    } finally {
+      uninstall();
+    }
   });
 
   it('puts the right-sidebar toggle to the right of the settings menu button', () => {
@@ -238,7 +364,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    // The sidebar used to carry a 会话 / 后台任务 tab strip plus its own task list;
+    // The sidebar used to carry a Chats / Background tasks tab strip plus its own task list;
     // both are gone, so no run data may leak into the left column.
     const labels = wrapper.findAll('button').map(b => b.text());
     expect(labels.some(text => text.includes('后台任务'))).toBe(false);
@@ -411,7 +537,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     const dir = stubProjectDirectory('/proj');
     try {
       const wrapper = mountHome();
-      // In files mode the button names the way BACK, so "会话列表" is its title.
+      // In files mode the button names the way BACK, so "会话列表" ("Sessions") is its title.
       expect(wrapper.findAll('.btn').map(b => b.attributes('title'))).toContain('会话列表');
 
       routeState.params = {};
@@ -425,6 +551,345 @@ describe('home/index.vue (integration, backend mocked)', () => {
       dir.restore();
       vi.stubGlobal('useUiStore', originalUi);
       vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+});
+
+describe('home/index.vue — floating conversation column', () => {
+  beforeEach(() => {
+    const store = useChatFloatStore();
+    store.dock();
+    store.setAnchor('center');
+    store.setSize({ width: 0, height: 0 });
+    store.setCollapsed(false);
+  });
+
+  /**
+   * The toolbar's float/restore toggle (its title flips with the state).
+   * @param wrapper
+   */
+  const floatButton = (wrapper: ReturnType<typeof mountHome>) =>
+    wrapper.findAll('.btn').find(b => ['浮动显示对话', '恢复对话栏'].includes(b.attributes('title') ?? ''));
+
+  it('places the float toggle between the collapse button and the folder button', () => {
+    const originalRoute = (globalThis as any).useRoute;
+    const routeState = reactive({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' } as Record<string, string>,
+      query: {}
+    });
+    vi.stubGlobal('useRoute', () => routeState);
+    const dir = stubProjectDirectory('/proj');
+    try {
+      const wrapper = mountHome();
+      const titles = wrapper.findAll('[data-test="toolbar-left"] .btn').map(b => b.attributes('title'));
+      expect(titles[0]).toMatch(/折叠侧边栏|展开侧边栏/);
+      expect(titles[1]).toBe('浮动显示对话');
+      expect(titles[2]).toBe('项目文件');
+    } finally {
+      dir.restore();
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+
+  it('detaches the middle column, splits the freed width, and restores exactly', async () => {
+    // A 1440px window keeps both side columns expanded (at 1024 the auto-collapse
+    // net retracts the right one, which is the one-sided case below).
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { value: 1440, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 900, configurable: true });
+    const right = stubRightSidebar({ collapsed: false, width: 420 });
+    try {
+      const wrapper = mountHome();
+      await floatButton(wrapper)!.trigger('click');
+      await nextTick();
+
+      const column = wrapper.get('[data-test="chat-column"]');
+      expect(column.attributes('data-presentation')).toBe('floating');
+      expect(column.classes()).toContain('fixed');
+      expect(column.classes()).not.toContain('relative');
+      // Above the right sidebar's maximized overlay (z-40).
+      expect(column.classes()).toContain('z-50');
+      const slot = { left: 0, top: 0, width: 1440, height: 900 };
+      const size = resolveFloatingSize(slot);
+      expect(column.attributes('style')).toContain(`width: ${size.width}px`);
+      expect(column.attributes('style')).toContain(`height: ${size.height}px`);
+      expect(column.attributes('style')).toContain('min-width: 0px');
+      expect(useChatFloatStore().floating).toBe(true);
+
+      // Left 360 and right 420 are expanded: the left keeps its width and the
+      // right absorbs the docked middle's whole width.
+      const extra = Math.max(0, 1440 - 360 - 420);
+      expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain('width: 360px');
+      expect(wrapper.get('aside').attributes('style')).toContain(`width: ${420 + extra}px`);
+      // The window owns the header drag handle and the explicit restore control.
+      expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+      expect(wrapper.text()).toContain('恢复原样');
+
+      await wrapper.get('[data-test="chat-float-restore"]').trigger('click');
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
+      expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain('width: 360px');
+      expect(wrapper.get('aside').attributes('style')).toContain('width: 420px');
+      expect(useChatFloatStore().floating).toBe(false);
+    } finally {
+      right.restore();
+      Object.defineProperty(window, 'innerWidth', { value: originalWidth, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: originalHeight, configurable: true });
+    }
+  });
+
+  it('hides both sidebar collapse buttons while floating (Ctrl+B still closes it)', async () => {
+    const ui = stubUi({ sidebarCollapsed: false });
+    const uninstall = installGlobalShortcutListener();
+    try {
+      const wrapper = mountHome();
+      // Docked: the left toggle and the right panel toggle are both present.
+      expect(wrapper.findAll('.btn').map(b => b.attributes('title'))).toEqual(expect.arrayContaining(['折叠侧边栏']));
+      await floatButton(wrapper)!.trigger('click');
+      await nextTick();
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).not.toContain('折叠侧边栏');
+      expect(titles).not.toContain('展开侧边栏');
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+
+      // The global shortcut is the remaining way to hide the window.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true }));
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
+      expect(ui.ui.sidebarCollapsed).toBe(true);
+      wrapper.unmount();
+    } finally {
+      uninstall();
+      ui.restore();
+    }
+  });
+
+  /**
+   * A fake composer dock inside the middle column (NuxtPage is stubbed in tests).
+   * @param wrapper
+   * @param height
+   */
+  const appendComposerDock = (wrapper: ReturnType<typeof mountHome>, height = 160): HTMLElement => {
+    const column = wrapper.get('[data-test="chat-column"]').element as HTMLElement;
+    const dock = document.createElement('div');
+    dock.setAttribute('data-test', 'chat-composer-dock');
+    Object.defineProperty(dock, 'getBoundingClientRect', {
+      value: () => ({ height }) as unknown as DOMRect
+    });
+    column.appendChild(dock);
+    return dock;
+  };
+
+  /** Wait one animation frame (the composer-dock bind is nextTick + rAF). */
+  const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+  it('collapses from the header button and expands from the pill', async () => {
+    const wrapper = mountHome();
+    appendComposerDock(wrapper);
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    await nextTick();
+    await nextFrame();
+    await nextTick();
+
+    // One click on the normal window's top button drops to the input-only bar.
+    await wrapper.get('[data-test="chat-float-collapse"]').trigger('click');
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(true);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain('height: 160px');
+
+    // The pill just above the bar is the way back.
+    await wrapper.get('[data-test="chat-float-expand"]').trigger('click');
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(false);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+  });
+
+  it('collapses into the input-only bar at the lower bound and expands again', async () => {
+    const wrapper = mountHome();
+    appendComposerDock(wrapper);
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    await nextTick();
+    await nextFrame();
+    await nextTick();
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+
+    const grip = wrapper.get('[data-test="chat-float-resize-bottom"]').element;
+    pointer(grip, 'pointerdown', 500, 600);
+    pointer(grip, 'pointermove', 500, 200);
+    pointer(grip, 'pointerup', 500, 200);
+    await nextTick();
+
+    expect(useChatFloatStore().collapsed).toBe(true);
+    // Input only: the window header AND the shell toolbar are gone.
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="toolbar-left"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain('height: 160px');
+    expect(wrapper.find('[data-test="chat-float-expand"]').exists()).toBe(true);
+
+    await wrapper.get('[data-test="chat-float-expand"]').trigger('click');
+    await nextTick();
+    await nextTick();
+    expect(useChatFloatStore().collapsed).toBe(false);
+    expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain(
+      `height: ${resolveFloatingSize(slot).height}px`
+    );
+  });
+
+  it('resizes the width from the right edge within the lower and upper bounds', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const size = resolveFloatingSize(slot);
+    const start = resolveFloatingPosition('center', slot, size);
+    const grip = wrapper.get('[data-test="chat-float-resize-right"]').element;
+
+    pointer(grip, 'pointerdown', start.left + size.width, start.top + 100);
+    pointer(grip, 'pointermove', start.left + size.width + 1000, start.top + 100);
+    pointer(grip, 'pointerup', start.left + size.width + 1000, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(Math.min(1200, window.innerWidth - start.left - 16));
+
+    pointer(grip, 'pointerdown', start.left + size.width, start.top + 100);
+    pointer(grip, 'pointermove', -2000, start.top + 100);
+    pointer(grip, 'pointerup', -2000, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(360);
+  });
+
+  it('resizes the width from the left edge with the right side fixed', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const size = resolveFloatingSize(slot);
+    const start = resolveFloatingPosition('center', slot, size);
+    const grip = wrapper.get('[data-test="chat-float-resize-left"]').element;
+
+    pointer(grip, 'pointerdown', start.left, start.top + 100);
+    pointer(grip, 'pointermove', start.left - 100, start.top + 100);
+    pointer(grip, 'pointerup', start.left - 100, start.top + 100);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(size.width + 100);
+    expect(wrapper.get('[data-test="chat-column"]').attributes('style')).toContain(`left: ${start.left - 100}px`);
+  });
+
+  it('ignores a sub-threshold resize nudge', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const grip = wrapper.get('[data-test="chat-float-resize-right"]').element;
+    pointer(grip, 'pointerdown', 500, 300);
+    pointer(grip, 'pointermove', 502, 300);
+    pointer(grip, 'pointerup', 502, 300);
+    await nextTick();
+    expect(useChatFloatStore().width).toBe(0);
+  });
+
+  it('drags by the header and snaps to the nearest anchor; a 2px nudge is a click', async () => {
+    const wrapper = mountHome();
+    await floatButton(wrapper)!.trigger('click');
+    await nextTick();
+    const header = wrapper.get('[data-test="chat-float-header"]').element;
+    const slot = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+    const size = resolveFloatingSize(slot);
+    const start = resolveFloatingPosition('center', slot, size);
+
+    pointer(header, 'pointerdown', start.left + 30, start.top + 20);
+    pointer(header, 'pointermove', start.left + 32, start.top + 20);
+    pointer(header, 'pointerup', start.left + 32, start.top + 20);
+    await nextTick();
+    expect(useChatFloatStore().anchor).toBe('center');
+
+    pointer(header, 'pointerdown', start.left + 30, start.top + 20);
+    pointer(header, 'pointermove', start.left + 430, start.top + 320);
+    pointer(header, 'pointerup', start.left + 430, start.top + 320);
+    await nextTick();
+    const dropped = clampFloatingPosition({ left: start.left + 400, top: start.top + 300 }, slot, size);
+    expect(useChatFloatStore().anchor).toBe(resolveNearestFloatingAnchor(dropped, slot, size));
+  });
+
+  it('keeps a persisted float when the right panel is not maximized at boot', async () => {
+    useChatFloatStore().open();
+    const wrapper = mountHome();
+    await nextTick();
+    expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+  });
+
+  it('auto-floats a boot with a persisted maximize, and docks when the panel restores', async () => {
+    const right = stubRightSidebar({ collapsed: false, width: 420, maximized: true });
+    try {
+      const wrapper = mountHome();
+      await nextTick();
+      // The boot state is the snapshot: left expanded, chat was docked.
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+      right.store.maximized = false;
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
+    } finally {
+      right.restore();
+    }
+  });
+
+  it('auto-floats while the right panel is maximized and docks back when the chat was docked', async () => {
+    const right = stubRightSidebar({ collapsed: false, width: 420 });
+    try {
+      const wrapper = mountHome();
+      right.store.maximized = true;
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+
+      right.store.maximized = false;
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
+    } finally {
+      right.restore();
+    }
+  });
+
+  it('keeps the float after the panel restores when the left was expanded and the chat was floating', async () => {
+    const right = stubRightSidebar({ collapsed: false, width: 420 });
+    try {
+      const wrapper = mountHome();
+      await floatButton(wrapper)!.trigger('click');
+      await nextTick();
+
+      right.store.maximized = true;
+      await nextTick();
+      right.store.maximized = false;
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+      expect(useChatFloatStore().floating).toBe(true);
+    } finally {
+      right.restore();
+    }
+  });
+
+  it('docks after the panel restores when the left sidebar was collapsed at expand time', async () => {
+    const ui = stubUi({ sidebarCollapsed: true });
+    const right = stubRightSidebar({ collapsed: false, width: 420 });
+    try {
+      const wrapper = mountHome();
+      await floatButton(wrapper)!.trigger('click');
+      await nextTick();
+
+      right.store.maximized = true;
+      await nextTick();
+      right.store.maximized = false;
+      await nextTick();
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
+      expect(useChatFloatStore().floating).toBe(false);
+    } finally {
+      right.restore();
+      ui.restore();
     }
   });
 });

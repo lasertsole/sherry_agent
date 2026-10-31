@@ -1,12 +1,10 @@
 """Unit tests for token/cost budget tracking.
 
-Covers three seams:
+Covers two seams:
 
-1. the additive ``task_flows`` migration (``_ensure_token_columns``) on a
-   pre-existing database that lacks the token columns;
-2. ``taskflow_resume`` aggregating a child session's ``token_usage`` into the
+1. ``taskflow_resume`` aggregating a child session's ``token_usage`` into the
    flow's ``total_tokens``/``total_cost`` (and skipping it when absent);
-3. the ``taskflow_budget`` tool's query rendering (ok / WARNING / EXCEEDED)
+2. the ``taskflow_budget`` tool's query rendering (ok / WARNING / EXCEEDED)
    and its ``set`` action guards (positive int, optimistic lock, terminal).
 
 The store is isolated per test through the ``isolated_db`` fixture: the real
@@ -15,12 +13,10 @@ The store is isolated per test through the ``isolated_db`` fixture: the real
 
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
-from agent.tools.taskflow.config import INITIAL_REVISION, TABLE_NAME, TaskFlowStatus
+from agent.tools.taskflow.config import INITIAL_REVISION, TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
-from agent.tools.taskflow.registry.store_sqlite import _ensure_token_columns
 from agent.tools.taskflow.tools.taskflow_budget import taskflow_budget
 from agent.tools.taskflow.tools.taskflow_resume import taskflow_resume
 
@@ -37,49 +33,6 @@ async def _create(flow_id: str, **kwargs) -> dict:
     return await store_sqlite.create_flow(
         flow_id, _make_state(flow_id), session_id=_SESSION, **kwargs
     )
-
-
-# ---------------------------------------------------------------------------
-# Migration
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_migration_adds_columns(isolated_db: Path):
-    """A legacy DB without token columns gains them with zero defaults."""
-    legacy_schema = f"""
-    CREATE TABLE {TABLE_NAME} (
-        flow_id TEXT PRIMARY KEY,
-        state_json TEXT NOT NULL,
-        wait_json TEXT,
-        expected_revision INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        child_session_key TEXT
-    );
-    """
-    async with aiosqlite.connect(isolated_db) as db:
-        await db.execute(legacy_schema)
-        await db.execute(
-            f"INSERT INTO {TABLE_NAME} "
-            "(flow_id, state_json, expected_revision, status) VALUES (?, ?, ?, ?)",
-            ("legacy", "{}", INITIAL_REVISION, TaskFlowStatus.RUNNING.value),
-        )
-        await db.commit()
-
-        await _ensure_token_columns(db)
-        await _ensure_token_columns(db)  # idempotent: second run must not raise
-        await db.commit()
-
-        async with db.execute(f"PRAGMA table_info({TABLE_NAME})") as cursor:
-            columns = {row[1] for row in await cursor.fetchall()}
-        async with db.execute(
-            f"SELECT total_tokens, total_cost, token_budget FROM {TABLE_NAME} WHERE flow_id = ?",
-            ("legacy",),
-        ) as cursor:
-            row = await cursor.fetchone()
-
-    assert {"total_tokens", "total_cost", "token_budget"} <= columns
-    assert row == (0, 0.0, 0)
 
 
 # ---------------------------------------------------------------------------

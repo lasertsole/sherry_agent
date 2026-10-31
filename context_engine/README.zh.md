@@ -138,7 +138,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
 
 **FTS5 触发器：** 每个 FTS 表都在 `messages` 上建有 `AFTER INSERT` / `AFTER UPDATE` / `AFTER DELETE` 触发器，自动同步索引。因此删除行（例如 `delete_messages_by_session`）无需单独清理 FTS。
 
-**迁移：** 建表过程通过 `_migrations` 表做**名称键控**的版本化管理（`name TEXT PRIMARY KEY, at INTEGER NOT NULL`）。每个步骤都有稳定名字，`_migrate` 按列表顺序执行所有“名字尚未记录”的步骤——因此把新步骤插入列表任意位置，哪怕位于某个库已越过的位置之前，它仍会在该库上执行（旧的下标式恢复会静默跳过，线上库正是这样丢失了 `reasoning_tokens` 列）。全新库执行单一完整基线（`build_schema_v1`，记为 `0001_initial_schema`），一次创建上述完整 schema。遗留的下标式跟踪表（含 `v` 列）在首次连接时被替换，且不预置任何名字，基线因语句全部 `IF NOT EXISTS` 而幂等重跑，schema 与数据保持不动。步骤顺序仍影响依赖关系，因此新步骤建议追加——决定是否执行的是名字，而非位置。
+**Schema：** `build_schema_v1` 是完整的当前 schema，每次连接都以 `IF NOT EXISTS` DDL 执行。它在一处创建 messages 列、命名索引、两个 FTS5 表及其六个同步触发器，以及辅助表。没有迁移链、没有 schema 版本跟踪表、没有增量 ALTER 路径：数据库应已符合当前 schema，旧文件不会在原地收敛。
 
 ---
 

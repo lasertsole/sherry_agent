@@ -54,6 +54,21 @@ def _list_session_tasks(session_id: str) -> str:
     )
 
 
+def _kill_session_task(task_id: str | None, session_id: str) -> str:
+    """Kill one background task of THIS session (the agent's own cancel path)."""
+    resolved = str(task_id or "").strip()
+    if not resolved:
+        return "Error: terminal_bg action='kill': missing required parameter task_id."
+    task = background_registry.get(resolved)
+    if task is None or task.session_id != str(session_id or ""):
+        return f"No background task found with task_id: {task_id}"
+    if not background_registry.kill_task(resolved, str(session_id or "")):
+        return f"Background task {resolved} is not running (status={task.status}); nothing to stop."
+    return (
+        f"Background task {resolved} stopped (process tree killed). Its exit notification follows."
+    )
+
+
 def _read_task_output(task_id: str | None, session_id: str) -> str:
     task = background_registry.get(str(task_id or "").strip())
     if task is None or task.session_id != str(session_id or ""):
@@ -93,10 +108,12 @@ def terminal_bg(
     task_id: str | None = None,
     session_id: SessionId = "",
 ) -> str:
-    """List this session's background terminal tasks, or read one task's tail output.
+    """List this session's background terminal tasks, read one task's tail output, or stop one.
 
     action="list" — list this session's tasks (no required fields).
     action="output" — read the tail of one task (requires task_id).
+    action="kill" — stop ONE running task's process tree (requires task_id). The
+    current turn and the session's other background tasks are unaffected.
     """
     normalized = str(action or "").strip().lower()
     if normalized == "list":
@@ -108,7 +125,9 @@ def terminal_bg(
                 "task_id (the id from terminal(run_in_background=True))."
             )
         return _read_task_output(task_id, str(session_id or ""))
-    return f"Error: terminal_bg has unknown action '{action}'. Available: list, output."
+    if normalized == "kill":
+        return _kill_session_task(task_id, str(session_id or ""))
+    return f"Error: terminal_bg has unknown action '{action}'. Available: list, output, kill."
 
 
 def _tag_main_only(tool_obj: BaseTool) -> BaseTool:

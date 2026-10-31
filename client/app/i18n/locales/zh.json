@@ -11,6 +11,47 @@
     "delete": "删除",
     "cancel": "取消"
   },
+  "shortcuts": {
+    "hint": "点击「重绑」后按下新的组合键（Esc 取消）。绑定保存在本机浏览器，立即生效。",
+    "rebind": "重绑",
+    "cancelRebind": "取消",
+    "listening": "按下组合键…",
+    "reset": "恢复默认",
+    "resetAll": "全部恢复默认",
+    "conflict": "与「{name}」冲突，未保存",
+    "group": {
+      "composer": "输入框",
+      "navigation": "会话与侧栏",
+      "global": "全局"
+    },
+    "sendMessage": "发送消息",
+    "historyPrev": "上一条历史提问",
+    "historyNext": "下一条历史提问",
+    "cancelInput": "退出历史浏览",
+    "commandPalette": "命令面板",
+    "findInConversation": "会话内搜索",
+    "newSession": "新建会话",
+    "toggleSidebar": "折叠 / 展开会话侧栏"
+  },
+  "safety": {
+    "blocked": "内容已被安全过滤拦截",
+    "replaced": "部分内容已按安全规则替换",
+    "event": "命中 {count} 条规则"
+  },
+  "chatFind": {
+    "placeholder": "在对话中搜索",
+    "previous": "上一个匹配",
+    "next": "下一个匹配",
+    "close": "关闭搜索"
+  },
+  "chatFloat": {
+    "title": "对话",
+    "dragHint": "拖动以移动",
+    "restore": "恢复原样",
+    "expand": "展开对话",
+    "resize": "拖动调整大小",
+    "collapse": "收起为输入框"
+  },
   "chatInput": {
     "maxImages": "最多只能上传 {count} 张图片",
     "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
@@ -63,6 +104,7 @@
     "thinking": "思考过程",
     "toolArgs": "调用参数",
     "toolNoOutput": "无输出",
+    "openTrajectory": "查看轨迹",
     "toolResult": "执行结果",
     "toolRunning": "执行中…",
     "turnHistoryTools": "已执行工具 {n} 个",
@@ -75,7 +117,11 @@
     "removeVideo": "移除视频",
     "diffNewFile": "新建文件",
     "codeWrap": "换行",
-    "codeZoom": "放大"
+    "codeZoom": "放大",
+    "continueGeneration": "继续生成",
+    "editMessage": "编辑消息",
+    "editingMessage": "正在编辑已发送的消息；发送后将重跑该轮",
+    "forkFromHere": "从此回答分叉出新会话"
   },
   "chat": {
     "backgroundMessage": "后台任务",
@@ -100,7 +146,7 @@
     },
     "tokenGuard": {
       "title": "模型配置不达标",
-      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
+      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 200K (200000)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
     }
   },
   "errors": {
@@ -108,7 +154,12 @@
     "pageError": "页面错误",
     "replyFailed": "（回复失败：{reason}）",
     "sendFailed": "（发送失败：{reason}）",
-    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步",
+    "breakpointStale": "断点已失效，无法继续生成",
+    "continueBusy": "当前对话进行中，无法继续生成",
+    "editBusy": "对话进行中，暂时无法编辑",
+    "editCompacted": "该消息已超出可编辑范围（历史已被压缩）",
+    "forkFailed": "创建分支失败，请重试"
   },
   "connection": {
     "offline": "网络已断开",
@@ -163,7 +214,20 @@
     "refreshGraph": "刷新",
     "refreshGraphPrompt": "重新拉取并重绘运行图",
     "noTasks": "暂无后台任务",
-    "tasksLoading": "正在加载任务…"
+    "tasksLoading": "正在加载任务…",
+    "resize": "拖动调整宽度"
+  },
+  "commandPalette": {
+    "placeholder": "输入命令名…",
+    "recent": "最近使用",
+    "noMatch": "无匹配命令",
+    "newSession": "新建会话",
+    "section": {
+      "session": "会话",
+      "navigate": "导航",
+      "tools": "工具",
+      "skills": "技能"
+    }
   },
   "toolbar": {
     "newChat": "新建对话",
@@ -198,6 +262,8 @@
     },
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏",
+    "floatChat": "浮动显示对话",
+    "restoreChat": "恢复对话栏",
     "notification": "通知",
     "projectFiles": "项目文件",
     "projectFilesHint": "项目文件",
@@ -207,7 +273,9 @@
     "toolbox": "工具箱",
     "browser": "浏览器",
     "terminal": "终端",
-    "webSearch": "模型联网"
+    "webSearch": "模型联网",
+    "i18n": "国际化",
+    "whiteboard": "白板"
   },
   "config": {
     "agent": {
@@ -297,6 +365,8 @@
         "followTier": "跟随角色默认",
         "tier": "角色默认：{tier}",
         "tierDepth": "无角色定义：按深度默认",
+        "maxOutput": "最大输出",
+        "maxOutputHint": "该角色模型自己的最大输出 token（默认 8192）；它决定子代理结果存储、投递、摘要、判别器和回读上限的缩放。",
         "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
         "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
       },
@@ -404,14 +474,28 @@
       "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
       "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
       "noEnvFile": "未找到 .env 文件。",
-      "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
-      "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+      "maxTokenError": "{key} 必须 >= 200000 (200K)，当前值不满足要求，无法保存。",
+      "maxTokenHint": "必须 >= 200000 (200K)，否则 Agent 将拒绝启动。"
     },
     "sherry": {
       "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
       "saveFailed": "应用配置保存失败，请检查值是否合法。",
       "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-      "noConfigFile": "未找到 sherry.jsonc 文件。"
+      "noConfigFile": "未找到 sherry.jsonc 文件。",
+      "allowlist": {
+        "title": "回放门白名单",
+        "hint": "在代码内置的五种工具链之外，追加 finish 回放时允许自动执行的可执行文件名（只影响回放哪些验证命令）。",
+        "placeholder": "如 gradle",
+        "add": "追加",
+        "remove": "移除",
+        "reload": "重新读取",
+        "empty": "尚未追加任何可执行文件——仍使用内置白名单。",
+        "badChars": "不能包含空白或 shell 元字符（;&|<>$`）",
+        "tooLong": "名称过长",
+        "duplicate": "已存在",
+        "loadFailed": "读取失败（后端不可达？）",
+        "saveFailed": "保存失败"
+      }
     },
     "cron": {
       "addJob": "新建任务",
@@ -492,13 +576,14 @@
       "penaltyRange": "请输入 -2.0 ~ 2.0 之间的数字",
       "maxContextLabel": "上下文窗口（MAX_TOKEN）",
       "maxOutputLabel": "最大输出窗口（MAX_OUTPUT_TOKEN）",
+      "maxOutputHint": "需 ≥ {min} 且小于对应模型上下文窗口；留空使用提供商默认",
+      "outputCapRange": "最大输出窗口需 ≥ {min} 且小于模型上下文窗口",
       "groupHelpLabel": "查看 {group} 的用途与适用场景",
       "modelHelp": {
         "main": "主对话模型：负责日常对话、工具调用、任务规划和最终回答。适合作为能力最强、工具调用可靠、上下文较长的默认模型。",
         "auxiliary": "辅助模型：处理 JSON 生成、判断、计划提取等轻量结构化调用。适合便宜、低延迟的模型。",
         "taskflow": "TaskFlow 决策模型：用于计划、重规划、步骤判定和收尾检查（temperature 0）。适合稳定遵循 JSON 的模型。",
         "compression": "压缩模型：为长会话生成摘要。适合长上下文、低成本模型。",
-        "reasoner": "推理模型：用于复杂分析、数学/逻辑推理和难题求解。日常对话可继续使用主模型。",
         "ittt": "图生文模型：读取图片并输出文字。用于截图理解、OCR 和视觉问答。",
         "vttt": "视频生文模型：提取并描述视频内容。用于视频摘要和画面理解。",
         "tti": "文生图模型：根据提示词生成图片。用于插画、配图和视觉草稿。",
@@ -531,7 +616,21 @@
       "soul": "Agent人格、语气、性格",
       "user": "用户信息和偏好"
     },
-    "uploadAvatar": "上传头像"
+    "uploadAvatar": "上传头像",
+    "cuda": {
+      "title": "CUDA 加速（可选）",
+      "hint": "CUDA pack 让本地语音识别和文档解析走 GPU。CPU 版功能完整，不下载也能用。",
+      "supported": "支持加速：{gpu}（驱动 {driver}）",
+      "unsupported": "未检测到可用的 NVIDIA 驱动",
+      "download": "下载 CUDA Pack",
+      "uninstall": "卸载 CUDA pack",
+      "restart": "安装并重启后端",
+      "installedHint": "已安装，重启后端后生效。"
+    },
+    "i18n": {
+      "title": "国际化",
+      "hint": "选择界面语言，立即生效并记住选择（不影响会话内容）。"
+    }
   },
   "rightSidebar": {
     "fileViewer": "项目文件",
@@ -565,7 +664,10 @@
     },
     "scopeEmpty": "该分组暂无标签页",
     "recentClosed": "最近关闭的标签页",
-    "recentClosedEmpty": "最近没有关闭的标签页"
+    "recentClosedEmpty": "最近没有关闭的标签页",
+    "i18n": "国际化",
+    "tokenBudget": "Token 预算",
+    "whiteboard": "白板"
   },
   "progressFloat": {
     "status": {
@@ -670,10 +772,43 @@
   },
   "searchFallback": {
     "notice": "Tavily 无法使用（{reason}），已切换到 {name}",
+    "cooldown": "SearXNG 连续失败，已暂停使用（约 {seconds} 秒后自动恢复）",
+    "recovered": "SearXNG 冷却结束，已恢复使用",
     "reason": {
       "tavily_auth_failed": "密钥无效或已过期",
       "tavily_timeout": "请求超时",
       "tavily_error": "请求失败"
     }
+  },
+  "loadGate": {
+    "warning": "主机负载过高（CPU {cpu}% / 内存 {ram}%），子代理派发已暂缓，负载回落后会自动继续。"
+  },
+  "backgroundTasks": {
+    "title": "后台命令",
+    "runningOnly": "运行中 {count}",
+    "statusRunning": "运行中",
+    "statusStopping": "终止中…",
+    "kill": "终止该命令（不影响对话）",
+    "killRefused": "已结束，无法终止"
+  },
+  "session": {
+    "fork": "从此处分叉",
+    "forkedFrom": "从 {parent} 分支",
+    "backToParent": "回到父分支"
+  },
+  "whiteboard": {
+    "namePlaceholder": "白板名称",
+    "pen": "画笔",
+    "eraser": "橡皮",
+    "width": "线宽",
+    "undo": "撤销",
+    "redo": "重做",
+    "clear": "清空",
+    "addToChat": "加入对话",
+    "empty": "在这里自由手绘，画完点「加入对话」发给助手",
+    "unsupported": "当前浏览器不支持 Canvas，白板不可用",
+    "exportFailed": "导出图片失败",
+    "addedToChat": "已加入对话的待发送图片",
+    "maxStrokes": "笔画过多，请先清空或撤销"
   }
 }

@@ -24,6 +24,7 @@ from .indexer import levenshtein
 __all__ = [
     "InterfaceDelta",
     "RenameChange",
+    "SignatureChange",
     "SymbolChange",
     "diff_file_interface",
     "language_for_extension",
@@ -35,8 +36,26 @@ class SymbolChange:
     """One added or removed symbol definition."""
 
     name: str
-    kind: str  # "function" | "method" | "class"
+    kind: str  # "function" | "method" | "class" | "variable"
     parent: str | None  # the enclosing class, for methods
+    line: int
+    signature: str | None = None  # normalized parameter shape (Python today)
+
+
+@dataclass(frozen=True, slots=True)
+class SignatureChange:
+    """A symbol whose NAME survived but whose interface shape changed.
+
+    The blind spot this closes: identity is ``(kind, name, parent)``, so
+    ``foo(a, b)`` → ``foo(a, b, *, timeout)`` merged with zero conflicts and
+    produced no report line at all — while every caller of ``foo`` broke.
+    """
+
+    name: str
+    kind: str
+    parent: str | None
+    old_signature: str | None
+    new_signature: str | None
     line: int
 
 
@@ -61,12 +80,15 @@ class InterfaceDelta:
     added: list[SymbolChange] = field(default_factory=list)
     removed: list[SymbolChange] = field(default_factory=list)
     renamed: list[RenameChange] = field(default_factory=list)
+    #: Same name, different parameter/return shape (or a module variable whose
+    #: presence changed kind): callers break without any rename to notice.
+    changed: list[SignatureChange] = field(default_factory=list)
     error: str | None = None
 
     @property
     def has_changes(self) -> bool:
         """True when the symbol surface differs (a rename counts once)."""
-        return bool(self.added or self.removed or self.renamed)
+        return bool(self.added or self.removed or self.renamed or self.changed)
 
 
 def language_for_extension(suffix: str) -> str | None:
@@ -76,7 +98,7 @@ def language_for_extension(suffix: str) -> str | None:
 
 def _symbols_of(data: bytes, language: str) -> tuple[list[SymbolChange], str | None]:
     """Extract one revision's symbols; ``(symbols, error)``, never raises."""
-    result = extract_symbols(data, language)
+    result = extract_symbols(data, language, include_module_variables=True)
     if result.error:
         return [], result.error
     changes: list[SymbolChange] = []
@@ -85,7 +107,13 @@ def _symbols_of(data: bytes, language: str) -> tuple[list[SymbolChange], str | N
         if symbol.parent_index is not None and 0 <= symbol.parent_index < len(result.symbols):
             parent = result.symbols[symbol.parent_index].name
         changes.append(
-            SymbolChange(name=symbol.name, kind=symbol.kind, parent=parent, line=symbol.line_start)
+            SymbolChange(
+                name=symbol.name,
+                kind=symbol.kind,
+                parent=parent,
+                line=symbol.line_start,
+                signature=symbol.signature,
+            )
         )
     return changes, None
 
@@ -128,7 +156,7 @@ def diff_file_interface(
             delta.error = error
             return delta
 
-    delta.added, delta.removed, delta.renamed = _diff_symbol_sets(
+    delta.added, delta.removed, delta.renamed, delta.changed = _diff_symbol_sets(
         old_symbols, new_symbols, rename_threshold=rename_threshold
     )
     return delta
@@ -153,13 +181,35 @@ def _diff_symbol_sets(
     names are within *rename_threshold* edits. Everything unpaired stays in
     ``removed`` / ``added`` — the report errs towards telling the parent more.
 
-    :returns: ``(added, removed, renamed)``.
+    :returns: ``(added, removed, renamed, changed)``.
     """
     old_by_identity = {_identity(symbol): symbol for symbol in old_symbols}
     new_by_identity = {_identity(symbol): symbol for symbol in new_symbols}
 
     removed = [old_by_identity[key] for key in old_by_identity.keys() - new_by_identity.keys()]
     added = [new_by_identity[key] for key in new_by_identity.keys() - old_by_identity.keys()]
+
+    # Surviving identities: a parameter/return-shape change is an interface
+    # change even though the name (and every "conflict") stayed the same. Only
+    # compared when BOTH sides carry a signature — an extractor that does not
+    # capture one must never manufacture a change.
+    changed: list[SignatureChange] = []
+    for key in old_by_identity.keys() & new_by_identity.keys():
+        old_symbol = old_by_identity[key]
+        new_symbol = new_by_identity[key]
+        if not old_symbol.signature or not new_symbol.signature:
+            continue
+        if old_symbol.signature != new_symbol.signature:
+            changed.append(
+                SignatureChange(
+                    name=new_symbol.name,
+                    kind=new_symbol.kind,
+                    parent=new_symbol.parent,
+                    old_signature=old_symbol.signature,
+                    new_signature=new_symbol.signature,
+                    line=new_symbol.line,
+                )
+            )
 
     # Candidate pairs, nearest names first, so a whole family rename
     # (getX -> fetchX) still pairs one-to-one instead of crossing over.
@@ -205,4 +255,5 @@ def _diff_symbol_sets(
         key=lambda symbol: (symbol.line, symbol.name),
     )
     renamed.sort(key=lambda change: (change.old_line, change.old_name))
-    return remaining_added, remaining_removed, renamed
+    changed.sort(key=lambda change: (change.line, change.name))
+    return remaining_added, remaining_removed, renamed, changed

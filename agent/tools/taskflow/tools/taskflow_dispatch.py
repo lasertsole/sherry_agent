@@ -167,7 +167,7 @@ async def _taskflow_dispatch_locked(
                 # The step's own spawn contract rides along (schema, role, model,
                 # timeout): a step registered by taskflow_plan / update_steps must
                 # reach its child with the same configuration run_task would give.
-                **step_spawn_kwargs(step),
+                **step_spawn_kwargs(step, flow_id=flow_id),
             )
         except Exception as exc:  # tool boundary: report; the other spawns stand
             return sid, None, exc

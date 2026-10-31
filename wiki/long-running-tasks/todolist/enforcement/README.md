@@ -57,6 +57,7 @@ Overrides todowrite description in `build_todolist_tools()` with MANDATORY forma
 - Granularity: single atomic action completable in 1-3 tool calls.
 - One in_progress at a time.
 - No marking completed while subagent running or without verification.
+- Prefer local `patch`/`add`/`remove` actions; `replace` reissues every todo_id.
 
 ### E3: Continuation Enforcer — Post-Turn Closure Core ★★
 
@@ -101,6 +102,8 @@ turn ends (no tool_call, agent loop exits)
 ```
 
 **The continuation budget**: `mark_injected` — the one point every directive passes through after the trigger accepted it — also counts the turn, so the counter is the number of consecutive continuation turns actually delivered (a directive the trigger refused is not counted and is retried at the next turn end; recovery directives count too). At 15 the enforcer sends one final `[SYSTEM DIRECTIVE: CONTINUATION BUDGET EXHAUSTED]` directive, latches the session, and stays silent until a turn the gate did not itself inject — a real user message, or a subagent completion (a new event, not a continuation) — resets the counter and the latch. This covers the shape stagnation cannot see: a plan the model keeps editing just enough (one status flip, one added step) to keep the snapshot moving, so the streak never trips.
+
+**Final-verification reminder.** When the plan is complete (no incomplete todo and no open flow), the gate spends ONE auto-turn on a self-check prompt before it treats the plan as done: re-read the diff, actually run the tests / typecheck / lint, and launch user-facing changes. It is a PROMPT, not a gate — nothing inspects evidence or blocks. The throttle keys on a fingerprint of the completed plan, so a plan the agent extends gets a fresh reminder; a refused delivery is retried. A TaskFlow session skips it (its finish gates own verification).
 
 **Files**: `stagnation_tracker.py` (~190 lines) + `todo_continuation/core.py` (~545 lines) + `agent/core.py` (~2 lines registration).
 

@@ -91,6 +91,25 @@ jobs:
       - name: Build the backend tree
         run: uv run --no-sync python packaging/build_backend.py
 
+      # The load gate imports psutil lazily (inside a function), so the freezer
+      # cannot see it, and it ships a per-platform C extension: prove the payload
+      # actually landed in the tree before shipping it.
+      - name: Verify psutil made it into the frozen tree (load gate)
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" - <<'EOF'
+          import pathlib
+          import sys
+
+          tree = pathlib.Path("client/src-tauri/sherry-backend/_internal")
+          hits = sorted(p for p in tree.rglob("psutil*"))
+          print(f"psutil payload entries: {len(hits)}")
+          for hit in hits[:5]:
+              print(" ", hit.relative_to(tree))
+          sys.exit(0 if hits else "psutil is MISSING from the frozen backend tree")
+          EOF
+
       # Release hygiene: the frozen tree must not carry the repo's tests, docs
       # or generated wiki. build_backend.py runs the same guard; this step makes
       # the check explicit in the workflow log.
@@ -126,23 +145,100 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+  # ── The optional CUDA pack (Linux; the model settings tab's opt-in) ──────
+  build-cuda-pack:
+    name: CUDA pack (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # NO CPU-torch swap here: the pack is exactly the CUDA payload the lock
+      # resolves on Linux (nvidia-* wheels + triton + torch's CUDA binaries).
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      - name: Build the CUDA pack
+        run: uv run --no-sync python packaging/build_cuda_pack.py
+
+      - name: Compress the CUDA pack
+        run: |
+          cd client/src-tauri/sherry-cuda-pack
+          tar czf "${{ github.workspace }}/sherry-cuda-pack-linux-x86_64.tar.gz" .
+
+      - name: Drop the build residue
+        run: rm -rf client/src-tauri/sherry-cuda-pack build/pyinstaller-cuda
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherry-cuda-pack-linux-x86_64
+          path: sherry-cuda-pack-linux-x86_64.tar.gz
+          retention-days: 90
+          if-no-files-found: error
+
   # ── The installers (fast: SPA + Rust shell, no backend) ──────────────────
   build-tauri:
     name: Installer (${{ matrix.platform }})
+    # The unified installer (packing-plan A3) ships the backend tree inside:
+    # the matching platform archive is unpacked into the resource directory
+    # before `tauri build` runs, so the bundle carries it (the per-platform
+    # backend release asset stays published for the download fallback).
+    needs: build-backend
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             platform: linux
+            arch: x86_64
+            archive: tar.gz
           - os: windows-latest
             platform: windows
+            arch: x86_64
+            archive: zip
           - os: macos-latest
             platform: macos
+            arch: arm64
+            archive: tar.gz
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download the backend archive (this platform)
+        uses: actions/download-artifact@v4
+        with:
+          name: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}
+
+      - name: Unpack the backend into the bundle resource directory (Linux/macOS)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p client/src-tauri/sherry-backend
+          tar xzf "sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz" -C client/src-tauri/sherry-backend
+
+      - name: Unpack the backend into the bundle resource directory (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "client/src-tauri/sherry-backend" | Out-Null
+          Expand-Archive -Path "sherry-backend-windows-x86_64.zip" -DestinationPath "client/src-tauri/sherry-backend"
+
+      - name: Audit the bundled backend tree (no tests/docs/wiki)
+        shell: bash
+        run: |
+          PY="$(command -v python3 || command -v python)"
+          "$PY" packaging/check_release.py backend client/src-tauri/sherry-backend
 
       # Tauri's Linux webview + bundler prerequisites (Ubuntu 24.04 names).
       - name: Install Linux system dependencies
@@ -209,7 +305,7 @@ jobs:
   release:
     name: Publish the release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-backend, build-tauri]
+    needs: [build-backend, build-cuda-pack, build-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write

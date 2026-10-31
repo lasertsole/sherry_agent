@@ -132,14 +132,83 @@ _COMMAND_PATH_RE = re.compile(
 )
 
 
-def _screen_command_paths(command: str, root: Path | None = None) -> str | None:
-    """Rejection reason when a command string names a hard-denied path.
+#: Shell tokens that make the FOLLOWING path a write target. Deliberately a
+#: short, unambiguous list — this screen is a mitigation, not a shell parser.
+_WRITE_REDIRECTS = (">", ">>")
+_WRITE_COMMANDS = ("tee", "truncate", "shred")
+#: ``sed -i`` / ``perl -i`` edit in place: the path is the last argument.
+_INPLACE_FLAG = re.compile(r"\b(?:sed|perl|gsed)\b[^|;&]*\s-i\b")
 
-    Hard-deny only: a command touching some OTHER external path is left alone
-    (the sandbox decides, and the file tools' HITL flow never covered shell
-    commands to begin with). base64 / variables / ``cd`` + relative paths can
-    all hide a path from this scan — that is why the OS sandbox is the barrier
-    and this is only noise reduction.
+
+def _write_targets(text: str) -> list[str]:
+    """Path-looking tokens this command WRITES to (best effort).
+
+    Extracted from ``>`` / ``>>`` redirects and the obvious writers
+    (``tee``, ``truncate``, ``shred``, ``sed -i``). Everything else is treated
+    as a read for the floor check below.
+    """
+    targets: list[str] = []
+    tokens = text.split()
+    for index, token in enumerate(tokens):
+        stripped = token.lstrip("0123456789")  # 2>file, 2>>file
+        if stripped in _WRITE_REDIRECTS or stripped.rstrip("&") in _WRITE_REDIRECTS:
+            for follow in tokens[index + 1 :]:
+                if follow and not follow.startswith("&"):
+                    targets.append(follow)
+                    break
+            continue
+        if stripped in ("&>", "&>>"):
+            if index + 1 < len(tokens):
+                targets.append(tokens[index + 1])
+            continue
+        name = os.path.basename(stripped.rstrip("/")) or stripped
+        if name in _WRITE_COMMANDS and index + 1 < len(tokens):
+            for follow in tokens[index + 1 :]:
+                if not follow.startswith("-"):
+                    targets.append(follow)
+                    break
+    if _INPLACE_FLAG.search(text):
+        # `sed -i s/a/b/ file` — the last non-option token is the edited file.
+        for token in reversed(tokens):
+            if token and not token.startswith("-") and not token.startswith("'") and "." in token:
+                targets.append(token)
+                break
+    return targets
+
+
+def _bare_path_tokens(text: str) -> list[str]:
+    """Whitespace tokens that look like a relative path (contain ``/`` or a dot).
+
+    Flags, URLs and shell punctuation are dropped. Deliberately crude: a token
+    that is NOT a path simply resolves somewhere harmless and is allowed, while
+    the ones this exists for (``.models``, ``src/data/auth.db``) resolve inside
+    sherry's tree and meet the read policy.
+    """
+    tokens: list[str] = []
+    for raw in text.split():
+        token = raw.strip("\"'`()[]{}<>,;|&")
+        if not token or token.startswith("-") or "://" in token or "=" in token:
+            continue
+        if "/" not in token and "." not in token:
+            continue
+        tokens.append(token)
+    return tokens
+
+
+def _screen_command_paths(
+    command: str, root: Path | None = None, session_id: str = ""
+) -> str | None:
+    """Rejection reason when a command string names a denied path.
+
+    Two hard-deny classes: the system floor (credentials) and SHERRY'S OWN
+    non-whitelisted files. Read-looking paths are screened against the READ
+    policy, extracted WRITE targets against the (narrower) WRITE policy — that
+    is what catches both ``cat .models`` and ``echo x > agent/core.py``.
+
+    A MITIGATION, not a barrier: base64, shell variables, ``cd`` + relative
+    paths and runtime-built paths all hide a path from this scan, which is why
+    the file tools' policy (``resolve_tool_path``) is the real gate and the OS
+    sandbox is the backstop.
 
     The command is scanned first with the raw text and then with the shell
     quoting/escaping characters stripped, so ``cat '/etc/passwd'`` and
@@ -147,18 +216,55 @@ def _screen_command_paths(command: str, root: Path | None = None) -> str | None:
     """
     if not command.strip():
         return None
+    from agent.tools.pub_base.self_path_policy import classify_self_path
+
     candidates = {command}
     stripped = command.replace("\\", "").replace('"', "").replace("'", "")
     candidates.add(stripped)
     for text in candidates:
+        # 1. Write targets, by TOKEN (a bare relative path like ``agent/x.py``
+        #    has no leading slash, so the path regex below never sees it).
+        for token in _write_targets(text):
+            target = _external_target(token, root)
+            if target is None:
+                continue
+            if _is_hard_denied(target):
+                return "command writes a path on the hard deny list (credentials / system files)"
+            reason = classify_self_path(target, session_id, "write")
+            if reason is not None:
+                return reason
+        # 2. Bare path tokens (``.models``, ``src/data/auth.db``) that carry no
+        #    leading slash / dot-slash and therefore miss the regex below.
+        for token in _bare_path_tokens(text):
+            target = _external_target(token, root)
+            if target is None:
+                continue
+            if _is_hard_denied(target):
+                return "command names a path on the hard deny list (credentials / system files)"
+            reason = classify_self_path(target, session_id, "read")
+            if reason is not None:
+                return reason
+        # 3. Path-looking tokens: the system floor first, then the read policy.
         for match in _COMMAND_PATH_RE.finditer(text):
             value = match.group("path").rstrip("\"',;|&")
             if not value or "://" in value:
                 continue
             target = _external_target(value, root)
-            if target is not None and _is_hard_denied(target):
+            if target is None:
+                continue
+            if _is_hard_denied(target):
                 return "command names a path on the hard deny list (credentials / system files)"
+            reason = classify_self_path(target, session_id, "read")
+            if reason is not None:
+                return reason
     return None
+
+
+def _session_id(request: ToolCallRequest) -> str:
+    """The calling session's id (empty for a state-less caller)."""
+    state = getattr(request, "state", None)
+    session_id = state.get("session_id") if isinstance(state, dict) else None
+    return session_id if isinstance(session_id, str) else ""
 
 
 def _session_project_root(request: ToolCallRequest) -> Path | None:
@@ -185,6 +291,7 @@ class PathGuard(AgentMiddleware):
         if not isinstance(args, dict):
             return None
         root = self._session_project_root(request)
+        session_id = _session_id(request)
         for key in sorted(_PATH_ARG_KEYS):
             value = args.get(key)
             if not isinstance(value, str):
@@ -203,7 +310,7 @@ class PathGuard(AgentMiddleware):
             for text in texts:
                 if not isinstance(text, str):
                     continue
-                reason = _screen_command_paths(text, root)
+                reason = _screen_command_paths(text, root, session_id)
                 if reason is not None:
                     return _Rejection(key=key, value=text, reason=reason)
         return None

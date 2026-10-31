@@ -4,17 +4,15 @@ A flow that replaces an earlier one records the pair — the successor's
 ``resumed_from`` pointer and the predecessor's ``superseded_by`` back-pointer —
 so the evolution is traceable, while the replaced flow stops counting as an
 active flow (the continuation enforcer, the progress panel and the per-session
-flow cap all read through ``get_active_flows_sync``). The columns are an
-additive migration: a pre-lineage database converges on its next open and its
-rows read NULL (= no link).
+flow cap all read through ``get_active_flows_sync``). The columns live in the
+current schema; rows with no lineage keep NULL (= no link).
 """
 
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from agent.tools.taskflow.config import TABLE_NAME, TaskFlowStatus
+from agent.tools.taskflow.config import TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools.taskflow_create import taskflow_create
 from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
@@ -22,21 +20,6 @@ from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
 pytestmark = [pytest.mark.unit]
 
 _SESSION = "sess-lineage"
-_PRE_LINEAGE_CREATE_TABLE_SQL = f"""
-CREATE TABLE {TABLE_NAME} (
-    flow_id TEXT PRIMARY KEY,
-    state_json TEXT NOT NULL,
-    wait_json TEXT,
-    expected_revision INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    child_session_key TEXT,
-    total_tokens INTEGER DEFAULT 0,
-    total_cost REAL DEFAULT 0.0,
-    token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL,
-    session_id TEXT NOT NULL DEFAULT ''
-);
-"""
 
 
 async def _create(flow_id: str, *, resumed_from: str | None = None) -> str:
@@ -46,14 +29,6 @@ async def _create(flow_id: str, *, resumed_from: str | None = None) -> str:
         description=f"lineage probe {flow_id}",
         resumed_from=resumed_from,
     )
-
-
-def _columns(db_path: Path) -> set[str]:
-    conn = sqlite3.connect(db_path)
-    try:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({TABLE_NAME})")}
-    finally:
-        conn.close()
 
 
 @pytest.mark.asyncio
@@ -85,9 +60,10 @@ async def test_replacing_a_flow_stamps_both_pointers(isolated_db: Path):
     assert predecessor is not None
     assert predecessor["superseded_by"] == "flow-new"
     assert predecessor["resumed_from"] is None
-    # Lineage is metadata: the predecessor's content and revision are untouched.
-    # The active predecessor becomes terminal so no active read can surface it.
-    assert predecessor["expected_revision"] == 1
+    # Superseding makes the predecessor terminal, so it BUMPS the revision: a
+    # writer still holding the pre-supersede revision must lose its CAS rather
+    # than resurrect a cancelled flow.
+    assert predecessor["expected_revision"] == 2
     assert predecessor["status"] == TaskFlowStatus.CANCELLED.value
     assert predecessor["terminal_reason"] == "superseded"
 
@@ -153,26 +129,23 @@ async def test_mark_superseded_is_session_scoped(isolated_db: Path):
 
 
 @pytest.mark.asyncio
-async def test_the_lineage_columns_migrate_a_legacy_database(isolated_db: Path):
-    conn = sqlite3.connect(isolated_db)
-    try:
-        conn.execute(_PRE_LINEAGE_CREATE_TABLE_SQL)
-        conn.execute(
-            f"INSERT INTO {TABLE_NAME} "
-            "(flow_id, state_json, wait_json, expected_revision, status, "
-            "child_session_key, session_id) "
-            "VALUES ('flow-legacy', '{}', NULL, 1, ?, NULL, ?)",
-            (TaskFlowStatus.RUNNING.value, _SESSION),
+async def test_a_pre_supersede_revision_loses_its_cas(isolated_db: Path):
+    """P3-8: superseding bumps the revision, so a stale writer cannot resurrect.
+
+    Without the bump, a caller that read the flow before the supersede would
+    still match the revision and be free to write a plan into a flow that is now
+    CANCELLED — the successor and the zombie would both be live.
+    """
+    assert (await _create("flow-old")).startswith("TaskFlow created")
+    before = await store_sqlite.get_flow("flow-old", _SESSION)
+    assert before is not None
+
+    await store_sqlite.mark_flow_superseded("flow-old", "flow-new", session_id=_SESSION)
+
+    with pytest.raises(store_sqlite.FlowConflictError):
+        await store_sqlite.update_flow(
+            "flow-old",
+            before["expected_revision"],
+            session_id=_SESSION,
+            state={"steps": [], "results": []},
         )
-        conn.commit()
-    finally:
-        conn.close()
-    assert "resumed_from" not in _columns(isolated_db)
-
-    await store_sqlite.ensure_db()
-
-    assert {"resumed_from", "superseded_by"} <= _columns(isolated_db)
-    legacy = await store_sqlite.get_flow("flow-legacy", _SESSION)
-    assert legacy is not None
-    assert legacy["resumed_from"] is None
-    assert legacy["superseded_by"] is None

@@ -78,46 +78,6 @@ def extract_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
     return calls
 
 
-def extract_invalid_tool_calls_from_assistant(msg: AIMessage) -> list[ToolCallLike]:
-    """
-    Extract invalid tool-call entries from an assistant message.
-
-    Args:
-        msg: Assistant message.
-
-    Returns:
-        List of invalid tool-call entries.
-    """
-    invalid_tool_calls = getattr(msg, "invalid_tool_calls", None)
-
-    if not isinstance(invalid_tool_calls, list):
-        return []
-
-    calls: list[ToolCallLike] = []
-
-    for block in invalid_tool_calls:
-        if not block or not isinstance(block, dict):
-            continue
-
-        call_id = extract_tool_call_id(block)
-
-        if not call_id:
-            continue
-
-        error = block.get("error", "")
-
-        if isinstance(error, str) and error != "":
-            calls.append(
-                {
-                    "id": call_id,
-                    "name": block.get("name") if isinstance(block.get("name"), str) else None,
-                    "error": error,
-                }
-            )
-
-    return calls
-
-
 def extract_tool_result_id(msg: ToolMessage) -> str | None:
     """
     Extract the tool-call ID from a tool-result message.
@@ -135,6 +95,18 @@ def extract_tool_result_id(msg: ToolMessage) -> str | None:
     return None
 
 
+#: Default model-facing content for a tool that ran successfully but produced
+#: no output. An EMPTY ToolMessage is dropped by the pairing sanitizer (the
+#: provider requires a result for every call), which used to turn "no matches"
+#: into a misleading "missing after context trim" placeholder.
+EMPTY_TOOL_RESULT = "(no output)"
+
+#: Default content for a result that is genuinely absent from the transcript
+#: (not empty, not evicted). The old wording claimed "after context trim", which
+#: was false for empty results and misleading for every other cause.
+MISSING_TOOL_RESULT = "tool result missing (not recorded; re-run the tool if you still need it)."
+
+
 def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) -> ToolMessage:
     """
     Create a placeholder tool-result message for a missing result.
@@ -144,14 +116,20 @@ def make_missing_tool_result(tool_call_id: str, tool_name: str | None = None) ->
         tool_name: Tool name (optional).
 
     Returns:
-        A dummy ToolMessage indicating the result was missing.
+        A dummy ToolMessage indicating the result was missing. It is a repair
+        marker, NOT a tool execution failure: ``status`` stays successful so
+        downstream consumers do not count it as an error, and the marker in
+        ``additional_kwargs`` lets reports count trim placeholders separately.
     """
     return ToolMessage(
         name=tool_name or "unknown",
-        content="tool result missing after context trim.",
+        content=MISSING_TOOL_RESULT,
         tool_call_id=tool_call_id,
-        status="error",
-        additional_kwargs={"timestamp": int(time.time() * 1000)},
+        status="success",
+        additional_kwargs={
+            "timestamp": int(time.time() * 1000),
+            "sherry_repair": "missing_tool_result",
+        },
     )
 
 
@@ -162,6 +140,10 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     Fixes tool_use/tool_result pairing after message trimming to prevent
     "Message ordering conflict" errors from the agent.
 
+    An EMPTY ToolMessage is a real result (a command that produced no output),
+    not a missing one: it is kept and given ``EMPTY_TOOL_RESULT`` so the pairing
+    stays valid without pretending the result was trimmed away.
+
     Args:
         messages: List of messages.
 
@@ -171,6 +153,29 @@ def sanitize_tool_use_result_pairing(messages: list[BaseMessage]) -> list[BaseMe
     out: list[BaseMessage] = []
     seen_tool_result_ids: set[str] = set()
     changed = False
+
+    # An empty result is a REAL result (e.g. a grep with no match). Keep the
+    # ToolMessage and give it a non-empty default hint; dropping it would make
+    # the provider pairing invalid and force a "missing after context trim"
+    # placeholder that hides the successful empty outcome.
+    if any(isinstance(msg, ToolMessage) and not msg.content for msg in messages):
+        messages = [
+            (
+                msg.model_copy(
+                    update={
+                        "content": EMPTY_TOOL_RESULT,
+                        "additional_kwargs": {
+                            **(getattr(msg, "additional_kwargs", None) or {}),
+                            "sherry_repair": "empty_result",
+                        },
+                    }
+                )
+                if isinstance(msg, ToolMessage) and not msg.content
+                else msg
+            )
+            for msg in messages
+        ]
+        changed = True
 
     def push_tool_result(msg: ToolMessage) -> None:
         """Push a tool-result message, deduplicating by ID."""

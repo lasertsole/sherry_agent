@@ -391,22 +391,3 @@ def _count_active_swarm_runs(group_id: str) -> int:
         and r.swarm_run_state == active_state
         and r.execution.status in counted_statuses
     )
-
-
-def list_swarm_runs_by_group(group_id: str) -> list[SubagentRunRecord]:
-    """List all run records belonging to a swarm group."""
-    return [r for r in all_runs() if r.swarm_group_id == group_id]
-
-
-def count_pending_swarm_runs(group_id: str) -> int:
-    """Count RESERVED (queued) runs in a swarm group."""
-    return sum(
-        1
-        for r in all_runs()
-        if r.swarm_group_id == group_id and r.swarm_run_state == SwarmRunState.RESERVED.value
-    )
-
-
-def count_active_swarm_runs(group_id: str) -> int:
-    """Public wrapper for _count_active_swarm_runs."""
-    return _count_active_swarm_runs(group_id)

@@ -156,8 +156,8 @@ def family_repetition_penalty_kwargs(
 
     ``prefix`` is e.g. ``MAIN_LLM``. An empty override (the shipped default)
     falls back to the global :data:`REPETITION_PENALTY`; an explicit value
-    (including 0) wins. The fallback is per-family, so a user can lower the
-    reasoner's penalty without touching the main model.
+    (including 0) wins. The fallback is per-family, so a user can lower one
+    family's penalty without touching the main model.
     """
     frequency = _family_value(prefix, "FREQUENCY_PENALTY")
     presence = _family_value(prefix, "PRESENCE_PENALTY")

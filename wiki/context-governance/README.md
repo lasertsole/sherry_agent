@@ -148,6 +148,22 @@ FACTS.md is global, so a directory switch no longer invalidates the cached promp
 
 The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `TodoContinuationEnforcer`; it supervises the plan = todos + TaskFlow flows) counts turns without a `todowrite` call and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), appends a `[REMINDER: TODO TRACKING]` nudge to the continuation directive — the one shape the snapshot-based stagnation check cannot catch (an agent advancing TaskFlow clears the streak while the todo list rots).
 
+## 🧩 Provider Prompt Caching (Anthropic)
+
+Every provider sherry supports caches automatically — except Anthropic, where nothing is cached unless the request MARKS a prefix with `cache_control`. The whole architecture above (a frozen system prompt, a session-stable tool face, live state pushed into the reminder layer) was built for automatic caches, so on Anthropic it produced zero hits. `models/LLMs/anthropic_cache.py` closes that gap: a `BaseChatModel` wrapper, mounted only when the provider is `anthropic` (the main client, the auxiliary client and the `TASKFLOW_LLM` / `COMPRESSION_LLM` families), rewrites each outgoing request with up to three breakpoints.
+
+| Breakpoint | Placed on | Why it is stable |
+|---|---|---|
+| BP1 | the last text block of the `SystemMessage` | frozen per session; Anthropic's prefix order is tools → system → messages, so this one also caches the tool list |
+| BP2 | the last tool definition | the session's tool face (only matters after a thinking switch or an agent-config edit changes the system prompt while the tools stay put) |
+| BP3 | the last real history message (AI or tool) found when scanning back | it sits BEFORE the reminder block and the new user text, so per-turn reminder churn cannot invalidate it |
+
+**The invalidation points stay correct by construction.** A thinking switch reloads the memory snapshot and deletes `SYSTEM_PROMPT`, so BP1 misses — the bytes changed, which is exactly what a byte-prefix cache should do. An agent-config edit invalidates BP1 and BP2 together. A compaction rewrites both the prompt and the message list, so BP1 and BP3 miss. And because BP3 anchors the previous turn's settled tail, a changing reminder never breaks it.
+
+**Cost.** `MODEL_PRICING_TABLE` entries accept two optional prices, `cache_read` (a cached-prefix read) and `cache_write` (a write into the cache); `TokenBudget` splits one response's `input_token_details` into uncached / cache-read / cache-write and charges each at its own rate. Omitting the two fields prices cached tokens at the plain input rate — the pre-existing estimate, with no invented discount. OpenAI-shaped usage reports `input_tokens` INCLUDING the cached ones, so the middleware subtracts them before applying the uncached rate; Anthropic's `input_tokens` already excludes them.
+
+**Failure and scope.** Injection failures, a disallowed tool conversion and `SHERRY_ANTHROPIC_CACHE=0` are all pass-throughs; the caller's messages and tool list are never mutated (the request is built from copies). Scope is the native `anthropic` integration: Bedrock's Claude models go through `langchain-aws` (different cache API) and an OpenRouter-routed Claude request would have the marker dropped by the OpenAI-shaped client, so neither is claimed.
+
 ## 🧹 Checkpoint Retention & Orphan Session Sweep
 
 The main and subagent graphs share `src/checkpoints/sqlite.db`. After a main turn, `on_turn_finished` prunes that session's thread to its newest top-level checkpoint plus its writes (the row `aget_state` reads); a child's `_release_child_resources` does the same for its own thread. `tools:*` / `model:*` rows are deleted; a missing top-level row keeps the newest row as a fallback. HITL-pending sessions are skipped because a suspended graph is not a turn end. Deleting a main session first suppresses and kills its descendant runs, then removes every descendant's registry row, checkpoint thread, session folder, planning rows and attachments. At boot, after `init_registry()`, one sweep deletes every run subtree whose root main session or parent run no longer exists. All cleanup paths are fail-open and idempotent.

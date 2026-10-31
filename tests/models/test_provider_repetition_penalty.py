@@ -143,13 +143,13 @@ class TestFamilyFallback:
         }
 
     def test_override_belongs_to_its_own_family(self, monkeypatch):
-        monkeypatch.setenv("REASONER_LLM_FREQUENCY_PENALTY", "0.1")
+        monkeypatch.setenv("TASKFLOW_LLM_FREQUENCY_PENALTY", "0.1")
 
         main = family_repetition_penalty_kwargs("MAIN_LLM", "openai")
-        reasoner = family_repetition_penalty_kwargs("REASONER_LLM", "openai")
+        taskflow = family_repetition_penalty_kwargs("TASKFLOW_LLM", "openai")
 
         assert main["frequency_penalty"] == REPETITION_PENALTY["frequency_penalty"]
-        assert reasoner["frequency_penalty"] == 0.1
+        assert taskflow["frequency_penalty"] == 0.1
 
 
 class TestBuilderIntegration:

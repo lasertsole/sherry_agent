@@ -55,7 +55,7 @@
           {{ t('contextViewer.stateError', { error: data.state_error }) }}
         </p>
 
-        <!-- One section per part of the context: 系统提示词 / 工具 / 消息队列. -->
+        <!-- One section per part of the context: system prompt / tools / message queue. -->
         <section
           v-for="section in sections"
           :key="section.key"

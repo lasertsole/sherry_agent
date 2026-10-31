@@ -34,6 +34,30 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 `_resolve_main_concurrency()`는 OpenClaw의 CPU 스케일링——`min(16, max(8, CPU))`——을 따르고, 하드 불변식 `SUBAGENT + NUDGE`(8 + 4 = 12) 이상으로 **상향** 클램프하므로 출하 기본값은 어떤 CPU 수에서도 유효합니다. `validate_lane_config()`는 서버 시작 시 `install_lane_lifecycle()`(`server/service/lane_lifecycle.py`)이 한 번만 호출하며(import 시에는 절대 호출하지 않음), `main_max_concurrent < subagent + nudge`이거나 임의 레인 한도가 `< 1`이면 예외를 던집니다. `lane_wait_warn_ms`는 "슬롯을 너무 오래 기다림" 경고를 제어하고, `lane_drain_timeout_seconds`는 `LaneManager.drain_all()`의 기본 타임아웃입니다. `LaneManager.set_concurrency(lane, n)`은 한도를 핫 업데이트합니다——실행 중 슬롯은 permit을 유지하고 새 acquire만 새 한도를 봅니다.
 
+### SUBAGENT lane 앞의 부하 게이트
+
+lane은 **계수형** 배압입니다——"8개 슬롯이 다 찼는가"에는 답하지만 "기계가 하나 더 감당할 수 있는가"에는 답하지 못하므로, CPU 99%에서도 파견이 lane에 들어가 모두를 느리게 만들었습니다. 부하 게이트(`agent/tools/pub_base/load_gate.py`)가 그 빠진 절반을 채웁니다. 둘은 직교하며 순서가 있습니다: 게이트는 `lane_slot(SUBAGENT)` **앞**에서 실행되므로, 지연된 파견은 대기하는 동안 슬롯을 **차지하지 않습니다**.
+
+| 호스트 부하 | 동작 |
+| :--- | :--- |
+| 둘 다 < warn | 통과 |
+| 하나라도 ≥ warn(90%)이고 < stop | 통과——여기서는 lane cap이 이미 제한하므로 게이트는 로그만 남김 |
+| 하나라도 ≥ stop(95%) | **지연**: run은 PENDING 유지, 슬롯 미점유, `load_warning` 한 번 push, `load_gate_retry_s` 후 재검사 |
+
+```text
+spawn ─► 부하 게이트(stop 동안 지연) ─► lane_slot(SUBAGENT) ─► PENDING→RUNNING ─► 실행
+              │ stop 그리고 예산 소진
+              └─► 종결 처리(timeout / "load_timeout")   ← 단순 return 금지
+```
+
+**지연에는 상한이 있고, 초과하면 종결합니다.** 지연된 run을 PENDING으로 남기면 orphan이 되고 orphan recovery가 다시 파견 → 다시 지연의 무한 루프가 됩니다. `load_gate_max_defer_s`(600초)를 넘으면 `TIMEOUT`으로 종결하고 오류 문구에 `load_timeout`을 명시합니다(`ended_reason`은 열거형의 `timeout` 그대로, 부하 관련 상세는 오류 문구에). 대기 중 kill은 `kill_reconciliation`으로 관측하며(kill된 PENDING run은 TERMINAL이 되지 않음) 즉시 대기를 끝냅니다.
+
+**스냅샷은 공유되고, 샘플링은 이벤트 루프를 막지 않습니다.** 샘플링 한 번은 CPU 간격 3회(기본 1.5초면 약 4.5초)이므로 `asyncio.to_thread`에서 실행하고, 프로세스 전체에서 `load_gate_snapshot_ttl_s`(5초)마다 최대 한 번: 동시 대기자는 같은 판정을 읽고, 락 + double-check로 N개 호출이 정확히 한 번만 샘플링합니다.
+
+**fail-open은 모니터 자체에만.** psutil 장애(라이브러리 부재, `/proc` 없는 백엔드)는 ok 판정을 돌려주어 파견을 멈추지 않지만, 정상 샘플의 `stop`은 반드시 존중됩니다.
+
+**기본은 꺼짐.** `load_gate_enabled` 기본값은 `False`라 첫 릴리스는 이전과 완전히 동일합니다. psutil이 동결 백엔드에 들어갔음을 확인한 뒤 켭니다——데스크톱 워크플로의 "Verify psutil made it into the frozen tree" 단계가 그 때문이며, import가 지연 실행되어 freezer가 볼 수 없기 때문입니다(`packaging/build_backend.py`의 `HIDDEN_IMPORTS`).
+
 ### 대기 의미론: `PENDING`
 
 전역 동시성은 거부 카운터가 아닙니다. `spawn_subagent_direct`는 부모별 어드미션(`validate_spawn_depth`, `validate_concurrent_children`)을 그대로 적용하지만, 전역 한도를 초과한 spawn은 **수락**되어 `ExecutionStatus.PENDING`으로 등록됩니다: `started_at`은 `None`으로 남고 해당 run은 레인 슬롯을 보유하지 않습니다. SUBAGENT 레인 래퍼(`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`)가 슬롯을 기다린 뒤 `mark_run_running()`으로 `PENDING → RUNNING` 승격하며, 그 시점에만 `started_at`을 찍습니다——대기 시간은 실행 시간으로 계산되지 않습니다. `validate_global_concurrent()`와 `SubagentConfig.max_concurrent`는 하위 호환용으로만 남고 spawn 파이프라인은 호출하지 않습니다.

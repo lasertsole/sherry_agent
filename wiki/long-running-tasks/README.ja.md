@@ -28,7 +28,7 @@
 - [判定ゲート](gates/README.ja.md)
 - [エビデンス台帳](gates/evidence-ledger/README.ja.md)
 - [並行レーン](lanes/README.ja.md)
-- [三色孤児 GC](#-三色孤児-gc)
+- [未参照フロー孤児 GC](#-未参照フロー孤児-gc)
 - [ディスパッチ直列化と冪等プランニング](#-dispatch-serialization--idempotent-planning)
 - [設定レジストリ](#-設定レジストリ)
 - [アーキテクチャ図](#-アーキテクチャ図)
@@ -47,26 +47,28 @@
 | 3 | **締め切り** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
 | 5 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
-| 6 | **三色孤児 GC** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / アクティブ `todos` |
+| 6 | **未参照フロー孤児 GC** | sweeper `_unreferenced_flow_sweep` / `_liveness_sweep` | `task_flows.updated_at` / アクティブ `todos` |
 
 全体を貫く設計契約は**エラーをテキストとして返す**ことです：ツールは業務エラーをモデルへ投げず、`Error:` で始まる人間可読な文字列を返します。すべてのバックグラウンドフックは**フェイルオープン**です——レジストリが使えなくても sweeper がクラッシュしても、「長時間タスクのコンテキストなし」へ退化するだけで、ターンを壊すことはありません。
 
-## ♻️ 三色孤児 GC
+## ♻️ 未参照フロー孤児 GC
 
-TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_flow(action="create")` と `taskflow_flow(action="plan")` は作成時にフロー単位の `pending` todo を 1 行バインドし（`step_id` なし）、この todo はフローが終端になるまで完了できません。`todowrite` はこれを引き継ぐ必要があります。sweeper は起動時と毎 tick に 2 つの補完的なパスを実行します：
+TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_flow(action="create")` と `taskflow_flow(action="plan")` は作成時にフロー単位の `pending` todo を 1 行バインドし（`step_id` なし）、この todo はフローが終端になるまで完了できません。`todowrite` はこれを引き継ぐ必要があります。ローカルの `patch`/`add`/`remove` action を優先してください（`todo_id` と `flow_id` を保持します）。全量 `replace` は id を再発行するため、ルート todo が孤児になる可能性があります。sweeper は起動時と毎 tick に 2 つの補完的なパスを実行します：
 
 | パス | 条件 | 動作 |
 | :--- | :--- | :--- |
-| 三色 mark | todo の状態が `pending`/`in_progress` で `flow_id` を持つ | そのフローを黒（到達可能）にする |
-| 三色 sweep | 非終端・未被 supersede・アクティブなルートなし、かつ `updated_at` が `tri_color_grace_seconds`（300 秒）より古い | `failed` / `orphan_unreferenced` |
+| 未参照マーク | todo の状態が `pending`/`in_progress` で `flow_id` を持つ | そのフローを到達可能としてマークする |
+| 未参照スイープ | 非終端・未被 supersede・アクティブなルートなし、かつ `updated_at` が `unreferenced_flow_grace_seconds`（300 秒）より古い | `failed` / `orphan_unreferenced` |
 | 子セッション liveness | session key が `agent:*:subagent:*` または `agent:*:swarm:*`、ライブ run なし、同じ grace 超過 | `failed` / `session_dead` |
 | フロー liveness | メインセッションが `stale_action_hours`（12 時間）無活動、ライブ子なし | `failed` / `stale_swept` または `session_dead` |
 | ゾンビ todo | アクティブな todo が failed/cancelled フローを参照 | todo を `cancelled` |
 | prune | 終端/superseded 行が `max_total_flows_per_session`（200）超過 | 最も古い行を削除 |
 
-ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録します。`todowrite` の全置換は 1 トランザクションなので、mark クエリは DELETE と INSERT の間の空窓を見ません。
+ライブ子は回収を拒否します。grace は `todos.db` と `taskflow_registry.db` の間の作成/バインド競合を覆い、セッションレベルの liveness は既に期限切れのフローのみを対象にするため、socket のない起動時に最近の作業を一括誤殺しません。各 mutation は `updated_at` を更新し、終端遷移は `terminal_reason` を記録します。superseded の前駆は `cancelled` / `superseded` になります。`taskflow_flow(action="finish")` には 3 つの独立予算（nudge、連続失敗、プロトコル違反）があり、超過時は自動失敗して detached 子を記録し、`auto_kill_on_detach` が有効なら**kill** します——失敗した flow は結果を回収できないため、生かしておくとレーンを占有するだけです。`depends_on` の循環は作成/更新時に拒否され（深さ優先、id は先に検証済み）、フローを非活動スイープまで固定しません。`supersede` は `expected_revision` を進めるため、旧リビジョンを持つ書き手はキャンセル済みフローを復活させるのではなく CAS に失敗します。stale-WAITING マーカーは `updated_at` に触れずにペイロードを書き込みます——その列はスイープが読む非活動時計そのものだからです。`todowrite` の全置換は 1 トランザクションなので、ルートクエリは DELETE と INSERT の間の空窓を見ません。
 
-出典：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；テスト：`tests/agent/tools/taskflow/test_tri_color_gc.py`。
+全置換がルート todo を落とした場合、猶予期間を待たずに `update_todos` が孤立 flow を即座に補償する（方針: `TODOLIST_INFRA["orphan_flow_on_drop"]`）。直後にセッション限定の sweep が走り、flow が終端に達するとルート todo へ即座に通知する。稼働中 flow と似た目標の作成は `ack_dup` がない限り警告される。
+
+出典：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`、`config/features/agent_side/taskflow_infra.py`；テスト：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`。
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
@@ -83,13 +85,13 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **54** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
-| `config/features/infra_side/` | **28** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格、ローカルモデルダウンロード） |
+| `config/features/agent_side/` | **57** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow、ツール並列安全） |
+| `config/features/infra_side/` | **30** 個のインフラ側設定モジュール（サーバー、ログイン、キュー、スキル、コンテキストエンジン、ランタイム、ウェブ検索、モデル価格、ローカルモデルダウンロード、ログ保持、WS レート制限） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **82 個の feature オブジェクト**を保持します——エージェント側 54 + インフラ側 28——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **87 個の feature オブジェクト**を保持します——エージェント側 57 + インフラ側 30——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -280,7 +282,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 82。** 設定レジストリは 82 個の feature オブジェクト（エージェント側 54 + インフラ側 28）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS` を省いています（環境由来の既定値は専用のビルダーテストがカバーします）。
+- **レジストリ規模は 87。** 設定レジストリは 87 個の feature オブジェクト（エージェント側 57 + インフラ側 30）を保持します；インフラ側の契約テストはそのうち 21 個（GATEWAY + 20 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS`、`WS_RATE_LIMIT` を省いています（既定値は専用のテストまたは各 feature のテストスイートがカバーします）。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_step(action="dispatch")` と `taskflow_step(action="wait_all")` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_step(action="resume")` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。

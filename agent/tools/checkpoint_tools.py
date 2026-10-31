@@ -96,6 +96,9 @@ def build_checkpoint_tool():
     checkpoint_tool.metadata = {
         "scope": "main_only",
         "idempotent": False,
+        # list/show only read the shadow repository; restore writes files and
+        # must never be treated as a repeatable call by ToolGuardrails.
+        "idempotent_actions": ("list", "show"),
         "concurrent_safe": False,
         "side_effect_scope": "workspace",
     }

@@ -9,13 +9,17 @@
 // Read once at boot — restart the backend after a change.
 {
   // ── 主模型 Main chat model — must support JSON generation and tool calling ──
+  // Anthropic: requires the bundled `langchain-anthropic` integration and gets
+  //   explicit prompt caching (cache_control breakpoints on the frozen system
+  //   prompt, the tool list and the settled history tail). Toggle / TTL live in
+  //   .env (SHERRY_ANTHROPIC_CACHE / SHERRY_ANTHROPIC_CACHE_TTL), not here.
   "MAIN_LLM_PROVIDER": "",
   "MAIN_LLM_NAME": "",
   "MAIN_LLM_API_BASE": "",
   "MAIN_LLM_API_KEY": "",
   // Context window; drives the summarization trigger threshold.
-  // MUST be >= 131072 (128K) — the server refuses to start below this.
-  "MAIN_LLM_MAX_TOKEN": 131072,
+  // MUST be >= 200000 (200K) — the server refuses to start below this.
+  "MAIN_LLM_MAX_TOKEN": 200000,
   // Per-request output cap (NOT the context window). Empty = do not send the
   // field; the provider applies its own default (OpenAI-compatible APIs: 4096).
   // When set it must be >= 8192 (8K): thinking-mode reasoning and the visible
@@ -38,9 +42,9 @@
   "AUXILIARY_LLM_API_NAME": "",
   "AUXILIARY_LLM_API_BASE": "",
   "AUXILIARY_LLM_API_KEY": "",
-  // MUST be >= 131072 (128K): an unset value falls back to 121072 (<128K),
+  // MUST be >= 200000 (200K): an unset value falls back to 121072 (<200K),
   // which blocks startup too (the floor applies in local mode as well).
-  "AUXILIARY_LLM_MAX_TOKEN": 131072,
+  "AUXILIARY_LLM_MAX_TOKEN": 200000,
   // Per-request output cap (same rule as MAIN_LLM_MAX_OUTPUT_TOKEN: empty =
   // provider default, set = >= 8192/8K).
   "AUXILIARY_LLM_MAX_OUTPUT_TOKEN": "",
@@ -52,13 +56,13 @@
   // Used by: taskflow_plan / taskflow_replan / step_judge / taskflow_finish.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).
-  // MUST be >= 131072 (128K): a replan prompt carries every done step's result.
+  // MUST be >= 200000 (200K): a replan prompt carries every done step's result.
   "TASKFLOW_LLM_MODEL_LOCAL": false,
   "TASKFLOW_LLM_PROVIDER": "",
   "TASKFLOW_LLM_API_NAME": "",
   "TASKFLOW_LLM_API_BASE": "",
   "TASKFLOW_LLM_API_KEY": "",
-  "TASKFLOW_LLM_MAX_TOKEN": 131072,
+  "TASKFLOW_LLM_MAX_TOKEN": 200000,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "TASKFLOW_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
@@ -70,30 +74,21 @@
   // Memory review uses MAIN_LLM (cache-warm); plan extraction uses AUXILIARY.
   // Empty provider + api_base → follows AUXILIARY_LLM_* (backward compatible).
   // true = local GGUF: reuses the auxiliary model's weights (no second download).
-  // MUST be >= 131072 (128K): the prompt carries the discarded slice verbatim.
+  // MUST be >= 200000 (200K): the prompt carries the discarded slice verbatim.
   "COMPRESSION_LLM_MODEL_LOCAL": false,
   "COMPRESSION_LLM_PROVIDER": "",
   "COMPRESSION_LLM_API_NAME": "",
   "COMPRESSION_LLM_API_BASE": "",
   "COMPRESSION_LLM_API_KEY": "",
-  "COMPRESSION_LLM_MAX_TOKEN": 131072,
+  "COMPRESSION_LLM_MAX_TOKEN": 200000,
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
   "COMPRESSION_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
   "COMPRESSION_LLM_FREQUENCY_PENALTY": "",
   "COMPRESSION_LLM_PRESENCE_PENALTY": "",
 
-  // ── 推理模型 Reasoner model ──────────────────────────────────────────────
-  "REASONER_LLM_PROVIDER": "",
-  "REASONER_LLM_NAME": "",
-  "REASONER_LLM_API_BASE": "",
-  "REASONER_LLM_API_KEY": "",
-  "REASONER_LLM_MAX_TOKEN": "",
   // Per-request output cap; empty = provider default, set = >= 8192 (8K).
-  "REASONER_LLM_MAX_OUTPUT_TOKEN": "",
   // Repetition penalty in [-2.0, 2.0]; empty = global default.
-  "REASONER_LLM_FREQUENCY_PENALTY": "",
-  "REASONER_LLM_PRESENCE_PENALTY": "",
 
   // ── 图生文 Image-to-Text model ───────────────────────────────────────────
   "ITTT_MODEL_LOCAL": false,
@@ -139,7 +134,11 @@
   // A JSON OBJECT stored as a JSON STRING so the flat key/value editor works.
   // Lookup: provider-returned cost → this table → litellm cache → `_default`.
   // User-editable; no code change. Set a model to adjust budget estimates.
-  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
+  // `cache_read` / `cache_write` (USD per 1M cached tokens) are OPTIONAL and
+  // only affect the ESTIMATED cost: a read of a cached prefix (~0.1x input) and
+  // a write into the cache (~1.25x for the 5-minute TTL, ~2x for 1 hour).
+  // Omitted => cached tokens are priced at the plain `input` rate.
+  "MODEL_PRICING_TABLE": "{\"glm-5\": {\"input\": 0.5, \"output\": 1.5}, \"deepseek-chat\": {\"input\": 0.14, \"output\": 0.28}, \"kimi-latest\": {\"input\": 0.55, \"output\": 2.19}, \"claude-sonnet-4-20250514\": {\"input\": 3.0, \"output\": 15.0, \"cache_read\": 0.3, \"cache_write\": 3.75}, \"claude-opus-4-20250514\": {\"input\": 15.0, \"output\": 75.0, \"cache_read\": 1.5, \"cache_write\": 18.75}, \"_default\": {\"input\": 0.5, \"output\": 1.5}}",
 
   // ── 技能安全扫描器 SkillSpector scanner (its own LLM selection) ─────────
   // SKILL_SCANNER_ENABLED: master switch (1 = scan uploaded skills).

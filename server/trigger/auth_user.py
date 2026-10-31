@@ -45,8 +45,9 @@ __all__ = [
 ]
 
 #: Reachable without a session: the login flow itself, the client's status probe
-#: and the gateway-token bootstrap that predates this feature.
-PUBLIC_PATHS = frozenset({"/auth/status", "/auth/login", "/auth/refresh", "/auth/token"})
+#: and the gateway-token bootstrap that predates this feature. ``/health`` is the
+#: process self-check (no data behind it) so a liveness probe needs no cookie.
+PUBLIC_PATHS = frozenset({"/auth/status", "/auth/login", "/auth/refresh", "/auth/token", "/health"})
 
 #: Served from disk, no data behind them — the login page must be able to load.
 STATIC_PREFIXES = ("/static", "/favicon.ico")

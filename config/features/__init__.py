@@ -13,6 +13,8 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    AnthropicCacheConfig as AnthropicCacheConfig,
+    ANTHROPIC_CACHE as ANTHROPIC_CACHE,
     CustomThinkingMapping as CustomThinkingMapping,
     EXTENDED_THINKING_LEVELS as EXTENDED_THINKING_LEVELS,
     THINKING_LEVEL_CONFIG as THINKING_LEVEL_CONFIG,
@@ -72,6 +74,8 @@ from .agent_side import (
     TOOL_RESULT_EVICTION as TOOL_RESULT_EVICTION,
     UNTRUSTED_OUTPUT as UNTRUSTED_OUTPUT,
     REDACTION as REDACTION,
+    SAFETY_FILTER as SAFETY_FILTER,
+    SafetyFilterConfig as SafetyFilterConfig,
     TOOLS_TIMEOUTS as TOOLS_TIMEOUTS,
     TOOL_PARALLEL as TOOL_PARALLEL,
     ToolParallelConfig as ToolParallelConfig,
@@ -110,6 +114,7 @@ from .agent_side import (
     ToolResultEvictionConfig as ToolResultEvictionConfig,
     UserHooksConfig as UserHooksConfig,
     USER_HOOKS as USER_HOOKS,
+    COORDINATION as COORDINATION,
     ToolsTimeoutsConfig as ToolsTimeoutsConfig,
     assert_max_token_valid as assert_max_token_valid,
     assert_max_output_valid as assert_max_output_valid,
@@ -120,6 +125,8 @@ from .infra_side import (
     BUS as BUS,
     CHANNELS as CHANNELS,
     CRASH_LOOP as CRASH_LOOP,
+    LOGS as LOGS,
+    WS_RATE_LIMIT as WS_RATE_LIMIT,
     CRON_SERVICE as CRON_SERVICE,
     CURATOR_DEFAULTS as CURATOR_DEFAULTS,
     GATEWAY as GATEWAY,

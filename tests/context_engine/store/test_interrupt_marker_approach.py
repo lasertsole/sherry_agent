@@ -70,7 +70,7 @@ import agent.middlewares.summarization.core as summarization_module
 import context_engine.store.core as mes_store_core
 from agent.middlewares.summarization import Summarization
 from agent.middlewares.tool_call_normalize import ToolCallNormalize
-from context_engine.store.db import _migrate as mes_migrate
+from context_engine.store.db import build_schema_v1 as mes_build_schema
 from runtime import state_register_mem
 from server.queue import UserInputQueue, UserInputQueueStatus
 from server.service.interrupt_marker import write_interrupted_marker
@@ -414,8 +414,9 @@ async def test_fact_b_tool_call_healing_drops_trailing_human_when_no_marker():
     ]
     assert len(placeholders) == 1, f"no synthesized ToolMessage in {last_call!r}"
     placeholder = placeholders[0]
-    assert placeholder.status == "error"
-    assert "missing" in placeholder.content  # "tool result missing after context trim."
+    assert placeholder.status != "error"
+    assert placeholder.additional_kwargs["sherry_repair"] == "missing_tool_result"
+    assert "missing" in placeholder.content  # "tool result missing (not recorded; ...)"
     assert placeholder.id is not None, "synthesized placeholder lost its id"
 
     # The pair is healed, but the dangling span swallowed the new user turn:
@@ -680,7 +681,7 @@ PROD_MARKER_ID = f"interrupted-{THREAD_ID}-1"
 PROD_HEAL_ID = f"{PROD_MARKER_ID}-heal-{DANGLING_CALL_ID}"
 
 # Mirrors pub/func/transcript_repair.make_missing_tool_result content.
-PROD_HEAL_CONTENT = "tool result missing after context trim."
+PROD_HEAL_CONTENT = "tool result missing (not recorded; re-run the tool if you still need it)."
 
 
 @pytest.fixture
@@ -695,7 +696,7 @@ def mes_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.
         tmp_path / "mes_memory.db", check_same_thread=False, isolation_level=None
     )
     conn.row_factory = sqlite3.Row
-    mes_migrate(conn)
+    mes_build_schema(conn)
     monkeypatch.setattr(mes_store_core, "_db", conn)
     yield conn
     conn.close()
@@ -792,7 +793,8 @@ async def test_production_heal_write_time_keeps_strict_provider_valid(
     heal = next(m for m in msgs if getattr(m, "id", None) == PROD_HEAL_ID)
     assert isinstance(heal, ToolMessage)
     assert heal.tool_call_id == DANGLING_CALL_ID
-    assert heal.status == "error"
+    assert heal.status != "error"
+    assert heal.additional_kwargs["sherry_repair"] == "missing_tool_result"
     assert heal.content == PROD_HEAL_CONTENT
 
     # Next turn: strict provider must NOT 400 and must see the full valid

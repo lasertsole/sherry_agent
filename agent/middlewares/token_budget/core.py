@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from functools import lru_cache
 from typing import Any, override
 from collections.abc import Awaitable, Callable
 
@@ -51,6 +52,42 @@ _WARNED: set[str] = set()
 def reset_budget_notice(session_id: str) -> None:
     """Forget the warning latch so a reset budget can warn again."""
     _WARNED.discard(session_id)
+
+
+@lru_cache(maxsize=1)
+def default_token_cap() -> int:
+    """The app-config cap for sessions that never set their own (0 = unlimited).
+
+    Read once per process on purpose: ``sherry.jsonc`` declares that its values
+    apply after a backend restart, and this sits on the per-model-call hot path.
+    """
+    try:
+        from config.sherry_settings import load_sherry_settings
+
+        return max(0, int(load_sherry_settings().get("TOKEN_BUDGET_DEFAULT_CAP", 0) or 0))
+    except Exception:  # noqa: BLE001 - a broken setting must never block a model call
+        return 0
+
+
+def clear_default_token_cap_cache() -> None:
+    """Forget the cached default (tests, and any future live-reload path)."""
+    default_token_cap.cache_clear()
+
+
+def effective_cap(session_id: str) -> int:
+    """The cap in force for one session (0 = unlimited).
+
+    A session's OWN value always wins — ``0`` there means explicitly unlimited,
+    so a positive app default never resurrects a session the operator cleared.
+    Only a session that never set anything inherits ``default_token_cap()``.
+    """
+    raw = _read_state(session_id, StateKey.TOKEN_BUDGET_CAP, None)
+    if raw is None:
+        return default_token_cap()
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _read_state(session_id: str, key: str, default: Any) -> Any:
@@ -138,12 +175,70 @@ def _provider_cost(usage: dict, ai_msg: AIMessage) -> float | None:
     return None
 
 
+def _cache_tokens(ai_msg: AIMessage, usage: dict) -> tuple[int, int, bool]:
+    """``(cache_read, cache_write, input_includes_cached)`` from one response.
+
+    LangChain standardizes cache counts into ``input_token_details``
+    (``cache_read`` for a prefix read, ``cache_creation`` for a write); a raw
+    Anthropic usage dict in ``response_metadata`` is the fallback for providers
+    that predate the detail map.
+
+    ``input_includes_cached`` matters for the arithmetic, not for display:
+    OpenAI's ``input_tokens`` already CONTAINS the cached ones, so they must be
+    subtracted before the uncached rate is applied; Anthropic's excludes them,
+    so subtracting would under-count the bill.
+    """
+    read = 0
+    write = 0
+    details = usage.get("input_token_details")
+    if isinstance(details, dict):
+        try:
+            read = int(details.get("cache_read") or 0)
+            write = int(details.get("cache_creation") or 0)
+        except (TypeError, ValueError):
+            read = write = 0
+    raw_usage: dict[str, Any] = {}
+    metadata = getattr(ai_msg, "response_metadata", None)
+    if isinstance(metadata, dict):
+        candidate = metadata.get("usage")
+        if isinstance(candidate, dict):
+            raw_usage = candidate
+    if read <= 0:
+        try:
+            read = int(raw_usage.get("cache_read_input_tokens") or 0)
+        except (TypeError, ValueError):
+            read = 0
+    if write <= 0:
+        try:
+            write = int(raw_usage.get("cache_creation_input_tokens") or 0)
+        except (TypeError, ValueError):
+            write = 0
+    # OpenAI-shaped usage reports ``prompt_tokens`` (cached included) plus a
+    # ``*_details.cached_tokens`` subset; Anthropic reports ``input_tokens``
+    # that already excludes the cached portion.
+    includes_cached = "prompt_tokens" in raw_usage or "prompt_tokens_details" in raw_usage
+    return max(0, read), max(0, write), includes_cached
+
+
 def _cost_delta(ai_msg: AIMessage, usage: dict, input_tokens: int, output_tokens: int) -> float:
     direct = _provider_cost(usage, ai_msg)
     if direct is not None:
         return direct
     pricing = resolve_model_pricing(_model_name(ai_msg))
-    return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+    cache_read, cache_write, includes_cached = _cache_tokens(ai_msg, usage)
+    if not cache_read and not cache_write:
+        return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
+    uncached = max(0, input_tokens - cache_read - cache_write) if includes_cached else input_tokens
+    # A table without the cache prices prices those tokens at the input rate,
+    # which is precisely the pre-cache estimate: no invented discount.
+    cache_read_price = pricing.get("cache_read", pricing["input"])
+    cache_write_price = pricing.get("cache_write", pricing["input"])
+    return (
+        uncached * pricing["input"]
+        + cache_read * cache_read_price
+        + cache_write * cache_write_price
+        + output_tokens * pricing["output"]
+    ) / 1_000_000
 
 
 def _notify(session_id: str, event: str, content: dict[str, Any]) -> None:
@@ -176,7 +271,7 @@ class TokenBudget(AgentMiddleware):
         session_id = _session_id(state)
         if not session_id:
             return None
-        cap = int(_read_state(session_id, StateKey.TOKEN_BUDGET_CAP, 0) or 0)
+        cap = effective_cap(session_id)
         if cap <= 0:
             return None
         used = int(_read_state(session_id, StateKey.TOKEN_BUDGET_USED, 0) or 0)
@@ -222,7 +317,7 @@ class TokenBudget(AgentMiddleware):
             _write_state(session_id, StateKey.TOKEN_BUDGET_USED, used)
             _write_state(session_id, StateKey.TOKEN_BUDGET_COST, round(cost, 6))
 
-            cap = int(_read_state(session_id, StateKey.TOKEN_BUDGET_CAP, 0) or 0)
+            cap = effective_cap(session_id)
             if cap <= 0:
                 return
             limited = bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False))

@@ -8,7 +8,7 @@ anything to ``.env``, so a profile can be verified BEFORE it is applied.
 What is tested per group:
 
 * chat groups (``MAIN_LLM`` / ``AUXILIARY_LLM`` / ``TASKFLOW_LLM`` /
-  ``COMPRESSION_LLM`` / ``REASONER_LLM``) — one
+  ``COMPRESSION_LLM``) — one
   minimal completion through the same builder the app uses
   (``build_main_llm_for_profile``), so the probe exercises the real client
   (provider quirks, normalizing wrapper, retries) rather than a bare HTTP call;
@@ -43,7 +43,6 @@ SUPPORTED_GROUPS: tuple[str, ...] = (
     "AUXILIARY_LLM",
     "TASKFLOW_LLM",
     "COMPRESSION_LLM",
-    "REASONER_LLM",
     "EMBEDDING",
     "RERANKER",
 )
@@ -59,7 +58,6 @@ _CHAT_GROUPS = (
     "AUXILIARY_LLM",
     "TASKFLOW_LLM",
     "COMPRESSION_LLM",
-    "REASONER_LLM",
 )
 
 

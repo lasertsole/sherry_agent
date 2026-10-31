@@ -3,6 +3,7 @@
 from .memory import (
     get as get_run,
     set_run,
+    set_run_durable,
     delete as delete_run,
     update as update_run,
     snapshot,
@@ -125,6 +126,7 @@ from .work_admission import (
 __all__ = [
     "get_run",
     "set_run",
+    "set_run_durable",
     "delete_run",
     "update_run",
     "snapshot",

@@ -35,7 +35,7 @@
         {{ t('personaPreset.contentTitle') }}
       </div>
       <TabView class="session-preset-preview">
-        <!-- 代理模型 tab (FIRST: the session's own model pair is what this viewer is
+        <!-- Agent models tab (FIRST: the session's own model pair is what this viewer is
              opened for): 主代理 mirrored read-only from the session-model control,
              子代理 editable — a change parks until the next turn. -->
         <TabPanel
@@ -114,14 +114,31 @@
                     }}
                   </div>
                 </div>
-                <Select
-                  :model-value="roleModelId(role.role)"
-                  :options="roleModelOptions"
-                  option-label="label"
-                  option-value="value"
-                  class="w-52"
-                  :data-test="`session-preset-role-model-${role.role}`"
-                  @update:model-value="value => setRoleModel(role.role, value)" />
+                <div class="flex shrink-0 flex-col items-stretch gap-1">
+                  <Select
+                    :model-value="roleModelId(role.role)"
+                    :options="roleModelOptions"
+                    option-label="label"
+                    option-value="value"
+                    class="w-52"
+                    :data-test="`session-preset-role-model-${role.role}`"
+                    @update:model-value="value => setRoleModel(role.role, value)" />
+                  <label
+                    v-if="roleModelId(role.role) !== FOLLOW_TIER_ID"
+                    class="flex items-center justify-between gap-1 text-[11px] text-gray-400">
+                    <span>{{ t('config.agent.subagents.maxOutput') }}</span>
+                    <input
+                      type="number"
+                      min="8192"
+                      step="1024"
+                      class="w-24 rounded border border-solid border-gray-light bg-transparent px-1.5 py-0.5 text-right text-xs text-gray-600 outline-none focus:border-theme-main dark:border-[#555] dark:text-gray-300"
+                      :value="roleMaxOutput(role.role)"
+                      :title="t('config.agent.subagents.maxOutputHint')"
+                      :aria-label="t('config.agent.subagents.maxOutput')"
+                      :data-test="`session-preset-role-max-output-${role.role}`"
+                      @change="event => onRoleMaxOutputChange(role.role, event)" />
+                  </label>
+                </div>
               </div>
             </template>
             <!-- Advanced: the per-session custom thinking wire mapping
@@ -158,7 +175,7 @@
             :data-test="`session-preset-content-${item.file}`"
             >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
-        <!-- The SESSION's own agent config, in the same four tabs the 预设角色
+        <!-- The SESSION's own agent config, in the same four tabs the Presets & Role
              panel edits: 工具 / 中间件 / 技能 are read-only here (change them in
              菜单-预设角色), while the 子代理 model pickers are EDITABLE — a choice
              lands on the main agent's next turn through the same park/promote
@@ -298,7 +315,7 @@
           </div>
         </TabPanel>
 
-        <!-- 技能 tab: which skill index entries the SESSION keeps in its system
+        <!-- Skills tab: which skill index entries the SESSION keeps in its system
              prompt (read-only here — the 预设 panel edits it). -->
         <TabPanel
           value="agentSkills"
@@ -375,7 +392,7 @@ const agentStore = useAgentConfigStore();
 
 /**
  * The persona files previewed as tabs, each with the i18n key suffix of its tab
- * header (the same `config.tabs.*` labels the 预设 panel uses).
+ * header (the same `config.tabs.*` labels the preset panel uses).
  */
 const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
   { file: 'AGENTS.md', tabKey: 'agents' },
@@ -391,7 +408,7 @@ const llmProfiles = useLlmProfilesStore();
 /** The session's EFFECTIVE agent config (the session is the live truth here). */
 const sessionEnabledTools = computed<string[]>(() => (sessionId.value ? agentStore.enabledTools(sessionId.value) : []));
 
-/** The two 代理模型 sub-tabs (mirroring the editor). */
+/** The two Agent models sub-tabs (mirroring the editor). */
 const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
 const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
 
@@ -419,7 +436,7 @@ const chooseMainModel = async (profileId: string): Promise<void> => {
   await sessionModel.select(sid, profile ? llmProfiles.toSessionProfile(profile) : null);
 };
 
-/** The 主代理 row's text: the env default (with its model) or the profile label. */
+/** The Main agent row's text: the env default (with its model) or the profile label. */
 const mainModelLabel = computed<string>(() => {
   const sid = sessionId.value;
   if (!sid) return t('config.agent.models.followEnv');
@@ -443,7 +460,7 @@ const sessionEnabledSkills = computed<string[]>(() => {
   return configured ?? agentStore.catalog.skills.map(skill => skill.name);
 });
 
-/** The two 工具 / 技能 sub-tabs, mirroring the editor. */
+/** The two Tools / Skills sub-tabs, mirroring the editor. */
 const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
 const MCP_TOOL_GROUP = 'mcp';
@@ -546,7 +563,40 @@ const setRoleModel = async (role: string, profileId: string): Promise<void> => {
   const profile = chosen && chosen !== FOLLOW_TIER_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
   const current = agentStore.configOf(sid);
   const models = { ...(current.subagent_models ?? {}) };
-  models[role] = profile ? llmProfiles.toSessionProfile(profile) : null;
+  models[role] = profile ? llmProfiles.toSubagentProfile(profile) : null;
+  await agentStore.save(sid, { ...current, subagent_models: models });
+};
+
+/** The 8K business floor for a role profile's output cap. */
+const MIN_ROLE_MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * One role's output cap, defaulting to the 8K floor for legacy profiles.
+ * @param role Functional role.
+ */
+const roleMaxOutput = (role: string): number => {
+  const raw = agentStore.configOf(sessionId.value).subagent_models?.[role]?.max_output_tokens;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= MIN_ROLE_MAX_OUTPUT_TOKENS ? parsed : MIN_ROLE_MAX_OUTPUT_TOKENS;
+};
+
+/**
+ * Persist one role profile's output cap (the selected profile is preserved).
+ * @param role Functional role.
+ * @param event Change event from the numeric input.
+ */
+const onRoleMaxOutputChange = async (role: string, event: Event): Promise<void> => {
+  const sid = sessionId.value;
+  if (!sid) return;
+  const current = agentStore.configOf(sid);
+  const profile = current.subagent_models?.[role];
+  if (!profile) return;
+  const parsed = Number((event.target as HTMLInputElement).value);
+  const next = Number.isFinite(parsed)
+    ? Math.max(MIN_ROLE_MAX_OUTPUT_TOKENS, Math.trunc(parsed))
+    : MIN_ROLE_MAX_OUTPUT_TOKENS;
+  const models = { ...(current.subagent_models ?? {}) };
+  models[role] = { ...profile, max_output_tokens: String(next) };
   await agentStore.save(sid, { ...current, subagent_models: models });
 };
 
@@ -565,7 +615,7 @@ const boundPresetMissing = ref(false);
 
 /**
  * The header label: the bound preset's name (stored at binding time, so a deleted
- * preset still reads right), or 未选择 for a session that has no binding.
+ * preset still reads right), or 未选择 ("nothing selected") for a session that has no binding.
  */
 const boundName = computed(() => (binding.value ? binding.value.preset_name : t('personaPreset.unbound')));
 
@@ -599,7 +649,7 @@ const loadBinding = async () => {
       return;
     }
     // The catalogue backs both the agent tabs and a built-in preset's agent
-    // block (纯净 / 情感陪伴 derive theirs from it); loading is idempotent.
+    // block (Pure / Companion derive theirs from it); loading is idempotent.
     await agentStore.loadCatalog();
     payload.value = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
   } catch (e) {
@@ -619,11 +669,11 @@ watch(
   [sessionId, () => locale.value],
   () => {
     // The catalogue backs the tabs; the per-session config is what the three
-    // agent tabs display (and 子代理模型 edits) — both are cheap and idempotent.
+    // agent tabs display (and Agent models edits) — both are cheap and idempotent.
     void agentStore.loadCatalog();
     if (sessionId.value) {
       void agentStore.hydrate(sessionId.value);
-      // The 主代理 sub-tab mirrors the session-model control (the toolbar
+      // The Main agent sub-tab mirrors the session-model control (the toolbar
       // picker's own store), so hydrate that one too.
       void sessionModel.hydrate(sessionId.value);
     }

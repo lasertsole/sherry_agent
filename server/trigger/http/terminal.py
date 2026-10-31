@@ -18,9 +18,19 @@ Endpoints:
         shows it); only a malformed request is a 400.
 
         400 when ``session_id`` (or the command) is missing / oversized.
+
+    GET  /terminal/bg?session_id=<sid>
+        -> {"success": true, "tasks": [{"task_id": ..., "command": ...,
+            "status": ..., "pid": ..., "exit_code": ...}, ...]}
+
+        This session's background commands (the agent's
+        ``terminal(run_in_background=True)``), newest first. The panel pulls it
+        once when it opens or reconnects; live changes arrive as the
+        ``terminal_bg_started`` / ``terminal_bg_exit`` WS frames.
 """
 
 from server.service.user_terminal_service import read_terminal_info, run_user_command
+from agent.tools.terminal_bg_registry import background_registry
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
 
@@ -33,6 +43,14 @@ async def terminal_info_handler(request):
         return ok(read_terminal_info(session_id))
     except ValueError as error:
         return bad_request(str(error))
+
+
+@app.get("/terminal/bg")
+async def terminal_bg_list_handler(request):
+    """List this session's background commands (the panel's initial snapshot)."""
+    session_id = request.query_params.get("session_id", "") or ""
+    tasks = [task.to_dict() for task in background_registry.list_session(str(session_id))]
+    return ok({"tasks": tasks})
 
 
 @app.post("/terminal/run")

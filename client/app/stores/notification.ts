@@ -17,7 +17,7 @@ import dayjs from 'dayjs';
 
 /** One notification (identical consecutive pushes merge into a count). */
 export interface NotificationItem {
-  source: 'heartbeat' | 'cron' | 'web_search';
+  source: 'heartbeat' | 'cron' | 'web_search' | 'load_gate';
   content: string;
   count: number;
   time: string;

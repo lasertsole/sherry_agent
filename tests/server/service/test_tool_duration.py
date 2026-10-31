@@ -166,46 +166,6 @@ def test_the_column_round_trips_through_mes_memory(tmp_path, monkeypatch):
     assert by_call["call-b"]["tool_duration_ms"] is None
 
 
-def test_a_legacy_database_without_the_column_reads_back_null(tmp_path, monkeypatch):
-    """An old database heals by ADD COLUMN, and its rows read back NULL."""
-    import sqlite3
-
-    import context_engine.store.core as core
-    from context_engine.store import db as store_db
-
-    db_path = tmp_path / "legacy.db"
-    legacy = sqlite3.connect(db_path)
-    legacy.execute(
-        """
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL, turn_num INTEGER NOT NULL, role TEXT NOT NULL,
-            content TEXT NOT NULL, tool_call_id TEXT, tool_calls TEXT, tool_status TEXT,
-            tool_name TEXT, timestamp TEXT, ts_ms INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
-    legacy.execute(
-        "INSERT INTO messages (session_id, turn_num, role, content, tool_call_id, tool_name, "
-        "timestamp) VALUES ('s-old', 1, 'tool', '\"ok\"', 'call-old', 'read_file', 't')"
-    )
-    legacy.commit()
-    legacy.close()
-
-    monkeypatch.setattr(store_db, "_db_path", db_path)
-    monkeypatch.setattr(store_db, "_db", None)
-    connection = store_db.get_db()
-    monkeypatch.setattr(core, "_db", connection)
-
-    columns = [row[1] for row in connection.execute("PRAGMA table_info(messages)").fetchall()]
-    assert "tool_duration_ms" in columns  # the heal added it
-
-    rows = core.get_history_by_turn_page(
-        "s-old", min_turn_num=1, turn_page_size=10, turn_page_num=1
-    )
-    assert rows[0]["tool_duration_ms"] is None
-
-
 def test_the_frame_prefers_the_persisted_stamp(monkeypatch):
     """Live and replay must show the same number: the stamp is authoritative."""
     from server.service.stream_dispatch import StreamTurn

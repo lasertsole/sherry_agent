@@ -5,8 +5,9 @@ session. The link must survive a restart so a deleted parent can still cascade
 into its children (and a boot sweep can remove orphans), so it lives in its own
 small SQLite table instead of an in-memory register.
 
-Only ids, the fork flag and the bounded fallback text are stored here; the
-conversation itself stays in the normal message/checkpoint stores.
+Only ids, the fork flag, the fork point and the bounded fallback text are
+stored here; the conversation itself stays in the normal message/checkpoint
+stores.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ __all__ = [
     "all_side_chats",
     "create_side_chat",
     "delete_side_chat",
+    "find_by_request",
     "get_side_chat",
     "list_children",
     "side_chat_ids",
@@ -35,11 +37,36 @@ CREATE TABLE IF NOT EXISTS side_chats (
     parent_session_id TEXT NOT NULL,
     context_text      TEXT NOT NULL DEFAULT '',
     fork_mode         INTEGER NOT NULL DEFAULT 0,
-    created_at        INTEGER NOT NULL
+    fork_turn_num     INTEGER,
+    created_at        INTEGER NOT NULL,
+    client_request_id TEXT
 )
 """
 
+#: Columns added after the first release. ``CREATE TABLE IF NOT EXISTS`` does
+#: nothing to an existing file, so each one is added once, guarded by a PRAGMA
+#: check (additive and non-destructive: old rows read as NULL — the legacy
+#: "no idempotency key / default fork point" behaviour). ``client_request_id``
+#: predates this module's first "added" list but the VERY first release did not
+#: have it, and a two-generation-old file otherwise fails every statement that
+#: names it (live-verified on this host: a side-chat POST 500'd with
+#: "no such column: client_request_id").
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("client_request_id", "TEXT"),
+    ("fork_turn_num", "INTEGER"),
+)
+
 _INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_side_chats_parent ON side_chats (parent_session_id)"
+
+# Creation idempotency (design concept #27): one client_request_id per parent
+# names at most ONE child, so a retried POST returns the existing fork instead
+# of building a second complete copy. NULLs (legacy/no-id rows) never collide —
+# SQLite unique indexes ignore them. A pre-column table (an old side_chats.db,
+# which is NOT migrated in place) keeps working without the dedupe.
+_IDEMPOTENCY_INDEX_DDL = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_side_chats_request "
+    "ON side_chats (parent_session_id, client_request_id)"
+)
 
 
 def _connect() -> sqlite3.Connection:
@@ -49,13 +76,21 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute(_DDL)
-    # Additive migration for databases created before the checkpoint-fork mode.
-    try:
-        conn.execute("ALTER TABLE side_chats ADD COLUMN fork_mode INTEGER NOT NULL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass  # duplicate column = already migrated / fresh schema
+    _add_missing_columns(conn)
     conn.execute(_INDEX_DDL)
+    try:
+        conn.execute(_IDEMPOTENCY_INDEX_DDL)
+    except sqlite3.OperationalError:
+        pass  # a pre-column table: no dedupe, every other operation unchanged
     return conn
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Add the post-release columns an older database file lacks."""
+    existing = {str(row["name"]) for row in conn.execute("PRAGMA table_info(side_chats)")}
+    for name, decl in _ADDED_COLUMNS:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE side_chats ADD COLUMN {name} {decl}")
 
 
 def create_side_chat(
@@ -64,30 +99,52 @@ def create_side_chat(
     context_text: str = "",
     *,
     fork_mode: bool = False,
+    client_request_id: str | None = None,
+    fork_turn_num: int | None = None,
 ) -> None:
-    """Insert (or replace) one side-chat link."""
+    """Insert (or replace) one side-chat link.
+
+    ``fork_turn_num`` is the parent turn the child was branched from, or ``None``
+    for a side chat / a legacy link that forks at the parent's last answer.
+    """
     with _connect() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO side_chats "
-            "(child_session_id, parent_session_id, context_text, fork_mode, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(child_session_id, parent_session_id, context_text, fork_mode, fork_turn_num, "
+            "created_at, client_request_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 child_session_id,
                 parent_session_id,
                 context_text,
                 1 if fork_mode else 0,
+                fork_turn_num,
                 int(time.time()),
+                client_request_id,
             ),
         )
         conn.commit()
+
+
+def find_by_request(parent_session_id: str, client_request_id: str) -> dict[str, Any] | None:
+    """The child created for one (parent, client_request_id) pair, or None."""
+    if not client_request_id:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, fork_turn_num, "
+            "created_at FROM side_chats WHERE parent_session_id = ? AND client_request_id = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (parent_session_id, client_request_id),
+        ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def get_side_chat(child_session_id: str) -> dict[str, Any] | None:
     """Return one link row, or None."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT child_session_id, parent_session_id, context_text, fork_mode, created_at "
-            "FROM side_chats WHERE child_session_id = ?",
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, fork_turn_num, "
+            "created_at FROM side_chats WHERE child_session_id = ?",
             (child_session_id,),
         ).fetchone()
     return dict(row) if row is not None else None
@@ -108,7 +165,7 @@ def all_side_chats() -> list[dict[str, Any]]:
     """Every link row (used by the boot orphan sweep)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT child_session_id, parent_session_id, context_text, fork_mode, "
+            "SELECT child_session_id, parent_session_id, context_text, fork_mode, fork_turn_num, "
             "created_at FROM side_chats"
         ).fetchall()
     return [dict(row) for row in rows]

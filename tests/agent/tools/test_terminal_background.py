@@ -212,6 +212,43 @@ class TestWatcher:
         assert turned and "exited with code 0" in turned[0]
 
     @pytest.mark.asyncio
+    async def test_the_exit_keeps_the_log_for_later_reads(self, sessions_root: Path):
+        """The log is the DURABLE record: the watcher must never delete it.
+
+        Only session deletion removes a background command's log; a finished
+        command stays readable through ``terminal_bg(action='output')``.
+        """
+        registry = BackgroundTaskRegistry()
+        path = open_background_output(SESSION, "bg-keep")
+        assert path is not None
+        path.write_text("building...\nOK\n", encoding="utf-8")
+        task = BackgroundTask(
+            task_id="bg-keep",
+            session_id=SESSION,
+            pid=1,
+            command="make",
+            output_path=path,
+            started_at=time.monotonic(),
+        )
+        registry.register(task)
+
+        class _Proc:
+            returncode = 0
+
+            async def wait(self) -> int:
+                return 0
+
+        registry.start_watcher("bg-keep", _Proc(), SESSION)
+        for _ in range(50):
+            if task.status != "running":
+                break
+            await asyncio.sleep(0.02)
+
+        assert task.status == "completed"
+        assert path.exists(), "the log must survive the exit"
+        assert task.output_path == path
+
+    @pytest.mark.asyncio
     async def test_a_failing_exit_is_reported_as_failed(self, sessions_root: Path):
         registry = BackgroundTaskRegistry()
         task = BackgroundTask(

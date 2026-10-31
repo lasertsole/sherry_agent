@@ -46,7 +46,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
 import context_engine.store.core as mes_store_core
-from context_engine.store.db import _migrate as mes_migrate
+from context_engine.store.db import build_schema_v1 as mes_build_schema
 from server.queue import UserInputQueue, UserInputQueueStatus
 from server.service.interrupt_marker import write_interrupted_marker
 
@@ -60,7 +60,7 @@ DANGLING_CALL_ID = "call_1"
 DANGLING_AI_ID = "ai-dangling-superstep"
 
 # Mirrors pub/func/transcript_repair.make_missing_tool_result content.
-HEAL_CONTENT = "tool result missing after context trim."
+HEAL_CONTENT = "tool result missing (not recorded; re-run the tool if you still need it)."
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ def mes_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.
         tmp_path / "mes_memory.db", check_same_thread=False, isolation_level=None
     )
     conn.row_factory = sqlite3.Row
-    mes_migrate(conn)
+    mes_build_schema(conn)
     monkeypatch.setattr(mes_store_core, "_db", conn)
     yield conn
     conn.close()
@@ -249,7 +249,7 @@ async def test_clean_cancel_writes_single_deterministic_marker(
 async def test_dangling_tool_calls_healed_before_marker(
     queue: UserInputQueue, mes_db: sqlite3.Connection
 ):
-    """Trailing AIMessage(tool_calls) without results → error ToolMessage
+    """Trailing AIMessage(tool_calls) without results → neutral ToolMessage
     placeholder(s) with deterministic ids committed BEFORE the marker in the
     same aupdate_state commit (Task 3 verdict: heal at WRITE time)."""
     model = RecordingFakeChatModel(response_text="R1")
@@ -270,7 +270,8 @@ async def test_dangling_tool_calls_healed_before_marker(
     assert len(heal) == 1, f"expected one deterministic heal placeholder, got {msgs!r}"
     assert isinstance(heal[0], ToolMessage)
     assert heal[0].tool_call_id == DANGLING_CALL_ID
-    assert heal[0].status == "error"
+    assert heal[0].status != "error"
+    assert heal[0].additional_kwargs["sherry_repair"] == "missing_tool_result"
     assert heal[0].content == HEAL_CONTENT
 
     idx_heal = [getattr(m, "id", None) for m in msgs].index(heal_id)

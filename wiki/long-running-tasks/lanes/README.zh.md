@@ -34,6 +34,30 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 `_resolve_main_concurrency()` 对标 OpenClaw 的 CPU 缩放——`min(16, max(8, CPU))`——再**向上**钳制到硬不变量 `SUBAGENT + NUDGE`（8 + 4 = 12），因此出厂默认值在任何 CPU 数量下都合法。`validate_lane_config()` 由 `install_lane_lifecycle()`（`server/service/lane_lifecycle.py`）在服务器启动时调用一次（绝不在 import 时）；当 `main_max_concurrent < subagent + nudge` 或任一 lane 上限 `< 1` 时抛错。`lane_wait_warn_ms` 控制"等待 slot 过久"的告警，`lane_drain_timeout_seconds` 是 `LaneManager.drain_all()` 的默认超时。`LaneManager.set_concurrency(lane, n)` 热更新上限——in-flight 的 slot 保留自己的 permit，只有新的 acquire 看到新上限。
 
+### SUBAGENT lane 之前的负载闸
+
+lane 是**计数型**背压——它回答"8 个槽位是否都占满了"，却回答不了"机器还扛得住再来一个吗"，所以 99% CPU 时派单照样进 lane，把一切拖慢。负载闸（`agent/tools/pub_base/load_gate.py`）补的就是这一半。两者正交且有先后：负载闸在 `lane_slot(SUBAGENT)` **之前**运行，被暂缓的派单在等待期间**不占**任何槽位。
+
+| 主机负载 | 行为 |
+| :--- | :--- |
+| 都 < warn | 放行 |
+| 任一 ≥ warn（90%）且 < stop | 放行——lane cap 已在这里限流，负载闸只记日志 |
+| 任一 ≥ stop（95%） | **暂缓**：run 保持 PENDING、不占槽位、推一帧 `load_warning` 告知会话，`load_gate_retry_s` 后重检 |
+
+```text
+spawn ─► 负载闸（stop 期间暂缓）─► lane_slot(SUBAGENT) ─► PENDING→RUNNING ─► 执行
+              │ stop 且预算耗尽
+              └─► 终结（timeout / "load_timeout"）   ← 绝不只 return
+```
+
+**暂缓有上限，超限即终结。** 把一个被暂缓的 run 留在 PENDING 会制造 orphan——而 orphan recovery 会重新调度它，于是又暂缓：死循环。超过 `load_gate_max_defer_s`（600 秒）后，run 以 `TIMEOUT` 结论终结，错误文本里写明 `load_timeout`（`ended_reason` 仍是枚举里的 `timeout`；负载专属细节放在错误文本中）。等待期间被 kill 通过 `kill_reconciliation` 观察（被 kill 的 PENDING run **不会**被标 TERMINAL），并立即结束等待。
+
+**共享快照，采样永不阻塞事件循环。** 一次采样要 3 个 CPU 间隔（默认 1.5s 时约 4.5s），所以在 `asyncio.to_thread` 里跑，且全进程每 `load_gate_snapshot_ttl_s`（5 秒）最多一次：并发等待者读同一结论，锁 + double-check 让 N 个调用者恰好只触发一次采样。
+
+**fail-open 只针对监控本身。** psutil 故障（缺库、没有 `/proc` 的后端）返回 ok 结论，派单永不停摆；而正常工作采出的 `stop` 一定被执行。
+
+**默认关闭。** `load_gate_enabled` 默认 `False`，首个版本行为与之前完全一致。确认 psutil 进了冻结后端后再开启——桌面工作流的「Verify psutil made it into the frozen tree」步骤就是为此，因为该 import 是惰性的，冻结算不到（`packaging/build_backend.py` 的 `HIDDEN_IMPORTS`）。
+
 ### 排队语义：`PENDING`
 
 全局并发不是拒绝计数器。`spawn_subagent_direct` 仍执行 per-parent 准入（`validate_spawn_depth`、`validate_concurrent_children`），但超过全局上限的 spawn 会被**接受**并注册为 `ExecutionStatus.PENDING`：`started_at` 保持 `None`，该 run 不持有 lane slot。SUBAGENT lane 包装器（`_execute_subagent_with_lane`，`agent/tools/subagent/spawn/core.py`）等待 slot，然后经 `mark_run_running()` 把 `PENDING → RUNNING`，此时才写入 `started_at`——排队等待永远不计入运行时长。`validate_global_concurrent()` 与 `SubagentConfig.max_concurrent` 仅为向后兼容保留，spawn 流水线不调用。

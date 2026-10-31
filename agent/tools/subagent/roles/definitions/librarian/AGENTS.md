@@ -7,6 +7,10 @@ tools:
   - search_files
   - terminal
   - web_search
+  # Coordination (opt-in; absent unless COORDINATION enables it). A
+  # read-only role never claims a path — it shares and reads findings.
+  - share_finding
+  - peers_findings
 ---
 
 # THE LIBRARIAN

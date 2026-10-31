@@ -72,7 +72,7 @@ def test_configured_family_builds_a_remote_client(builder, monkeypatch):
     monkeypatch.setenv(f"{prefix}_API_NAME", "gpt-4o-mini")
     monkeypatch.setenv(f"{prefix}_API_BASE", "https://example.invalid/v1")
     monkeypatch.setenv(f"{prefix}_API_KEY", "sk-test")
-    monkeypatch.setenv(f"{prefix}_MAX_TOKEN", "131072")
+    monkeypatch.setenv(f"{prefix}_MAX_TOKEN", "200000")
     monkeypatch.setenv(f"{prefix}_MAX_OUTPUT_TOKEN", "8192")
 
     captured: dict[str, object] = {}
@@ -92,7 +92,7 @@ def test_configured_family_builds_a_remote_client(builder, monkeypatch):
     assert captured["api_key"] == "sk-test"
     assert captured["temperature"] == 0
     assert captured["max_tokens"] == 8192
-    assert captured["profile"] == {"max_input_tokens": 131072}
+    assert captured["profile"] == {"max_input_tokens": 200000}
 
 
 def test_a_provider_that_cannot_be_built_falls_back_to_auxiliary(monkeypatch):

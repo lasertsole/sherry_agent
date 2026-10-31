@@ -1,12 +1,12 @@
 /**
- * The 预设 panel — the role config is its FIRST tab and part of the preset.
+ * The preset panel — the role config is its FIRST tab and part of the preset.
  *
  * Contract under test:
- * - the role tab leads (角色配置 before 人格灵魂 / 用户信息);
- * - 应用 writes ROLE.md composed from both role names in the ACTIVE UI language
+ * - the role tab leads (Character Setup before Soul / User Profile);
+ * - Apply writes ROLE.md composed from both role names in the ACTIVE UI language
  *   (the role statement the agent then reads from its system prompt) alongside
  *   SOUL.md / USER.md, and persists the character to the Dexie global profile;
- * - 保存预设 stores the character block with the preset, and selecting a preset
+ * - Save Preset stores the character block with the preset, and selecting a preset
  *   restores its names;
  * - an empty role name blocks save/apply.
  */
@@ -121,7 +121,7 @@ let written: Record<string, string> | null = null;
 
 /**
  * An agent-config store double whose catalogue carries one REQUIRED tool, one
- * plain optional tool and one bulk-only group (子代理) — enough for the two new
+ * plain optional tool and one bulk-only group (subagents) — enough for the two new
  * built-in presets to derive their agent blocks from.
  * @param catalogue
  * @param catalogue.tools
@@ -169,7 +169,7 @@ function makeCatalogStore(catalogue?: {
 
 /**
  * A catalogue wide enough for EVERY built-in's derivation (tools + skills +
- * the work-flow skills 编程助手 picks), installed for the whole suite: a preset
+ * the work-flow skills Coding Assistant picks), installed for the whole suite: a preset
  * click throws without one, and these tests are not about the derivation.
  */
 function makeWideCatalogStore() {
@@ -238,7 +238,7 @@ describe('PersonaPanel role tab', () => {
 
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     // Role first, the three persona files, then the agent-config tabs
-    // (工具 / 中间件 / 子代理模型) the preset also carries.
+    // (Tools / Middlewares / Agent models) the preset also carries.
     expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '代理模型', '技能']);
   });
 
@@ -302,7 +302,7 @@ describe('PersonaPanel role tab', () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    // The whole spectrum, top to bottom: 纯净 / 编程助手 (the default) / 情感陪伴 / 全量.
+    // The whole spectrum, top to bottom: Pure / Coding Assistant (the default) / Companion / Full.
     expect(builtinRows.map(row => row.attributes('data-test'))).toEqual([
       'builtin-pure',
       'builtin-coding',
@@ -382,7 +382,7 @@ describe('PersonaPanel role tab', () => {
 
   it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {
     vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
-    // A 运行守则 shaped like the shipped templates, task doctrine included.
+    // A 运行守则 ("Operating Instructions") template shaped like the shipped ones, task doctrine included.
     bridge.readSystemPromptTemplate.mockResolvedValue({
       'AGENTS.md': [
         '# AGENTS.md',
@@ -414,7 +414,7 @@ describe('PersonaPanel role tab', () => {
     expect(textareas[0]).not.toContain('ORCHESTRATOR');
     expect(textareas.slice(1)).toEqual(['TPL-SOUL', 'TPL-USER']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
-    // …while 子代理 / 任务与计划 stay out and every optional middleware is off.
+    // …while the Subagent / Tasks & planning groups stay out and every optional middleware is off.
     expect(wrapper.get('[data-test="agent-tools-tab"]').text()).toContain('已选 2/3');
     expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
     // This suite does not register PrimeVue globally, so the switch's bound
@@ -439,7 +439,7 @@ describe('PersonaPanel role tab', () => {
 
     // The nudge explanation is a CLICK affordance (a hover tooltip is
     // unreachable for a settings row): closed by default, toggled by the mark,
-    // and the mark sits right of the 启用 nudge label.
+    // and the mark sits right of the Enable nudge label.
     expect(wrapper.find('[data-test="agent-nudge-help-text"]').exists()).toBe(false);
     const help = wrapper.get('[data-test="agent-nudge-help"]');
     expect(help.text()).toBe('?');
@@ -529,12 +529,20 @@ describe('PersonaPanel role tab', () => {
           provider: 'zhipu',
           model: 'glm-4.6',
           api_key: 'k'
+        }),
+        toSubagentProfile: () => ({
+          id: 'p1',
+          label: '测试档案',
+          provider: 'zhipu',
+          model: 'glm-4.6',
+          api_key: 'k',
+          max_output_tokens: '8192'
         })
       })
     );
     const wrapper = await mountPanel();
 
-    // Pick a profile on the 主代理 sub-tab, then save: the preset stores it.
+    // Pick a profile on the Main agent sub-tab, then save: the preset stores it.
     await wrapper.get('[data-test="agent-main-model"]').setValue('p1');
     await flushPromises();
     await buttonByText(wrapper, '保存预设').trigger('click');
@@ -617,7 +625,7 @@ describe('PersonaPanel role tab', () => {
 
     const wrapper = await mountPanel();
 
-    // The inputs stay empty (their placeholder shows); substituting 橘雪莉/远野汉娜
+    // The inputs stay empty (their placeholder shows); substituting the shipped 橘雪莉/远野汉娜 names
     // here made the panel disagree with the preset it had just applied.
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
@@ -628,7 +636,7 @@ describe('PersonaPanel role tab', () => {
     await wrapper.get('[data-test="persona-role-ai-name"]').setValue('小樱');
     await wrapper.get('[data-test="persona-role-user-name"]').setValue('小明');
 
-    // The role tab's restore button is the first 恢复默认 (the file tabs carry one each).
+    // The role tab's restore button is the first Restore Default (the file tabs carry one each).
     await buttonByText(wrapper, '恢复默认').trigger('click');
     await flushPromises();
 

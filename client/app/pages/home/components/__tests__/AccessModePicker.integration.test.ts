@@ -69,17 +69,53 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
     expect(rows[3]!.find('i').classes()).toContain('shield-alert-icon');
   });
 
-  it('switches to plan mode and moves the trigger glyph', async () => {
+  // One parametrized family covers the four switch cases: same mount → open →
+  // click-row flow, differing only in (start mode, row, mode value, glyph, title).
+  it.each([
+    {
+      label: 'plan',
+      startMode: 'auto_edit',
+      row: 0,
+      mode: 'plan',
+      glyph: 'pi-list',
+      title: '访问模式 · 计划模式'
+    },
+    {
+      label: 'confirm-before-changes',
+      startMode: 'auto_edit',
+      row: 1,
+      mode: 'confirm_all',
+      glyph: 'shield-question-icon',
+      title: '访问模式 · 变更前确认'
+    },
+    {
+      label: 'auto-edit (re-picked from full access)',
+      startMode: 'full_access',
+      row: 2,
+      mode: 'auto_edit',
+      glyph: 'shield-check-icon',
+      title: '访问模式 · 自动编辑'
+    },
+    {
+      label: 'full access',
+      startMode: 'auto_edit',
+      row: 3,
+      mode: 'full_access',
+      glyph: 'shield-alert-icon',
+      title: '访问模式 · 完全访问'
+    }
+  ])('switches to $label and moves the trigger glyph', async ({ startMode, row, mode, glyph, title }) => {
+    modeApi.mode = startMode;
     const wrapper = mountPicker();
     await wrapper.find('button').trigger('click');
     await flushPromises();
 
-    await wrapper.findAll('button.row-button')[0]!.trigger('click');
+    await wrapper.findAll('button.row-button')[row]!.trigger('click');
     await flushPromises();
 
-    expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'plan');
-    expect(wrapper.find('i.pi-list').exists()).toBe(true);
-    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 计划模式');
+    expect(modeApi.select).toHaveBeenCalledWith('sid-1', mode);
+    expect(wrapper.find(`i.${glyph}`).exists()).toBe(true);
+    expect(wrapper.find('button').attributes('title')).toBe(title);
   });
 
   it('shows plan mode when the backend reports it (an agent-entered plan too)', async () => {
@@ -88,50 +124,5 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
 
     expect(wrapper.find('i.pi-list').exists()).toBe(true);
     expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 计划模式');
-  });
-
-  it('switches to strict (confirm-before-changes) mode and moves the trigger glyph', async () => {
-    const wrapper = mountPicker();
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-
-    await wrapper.findAll('button.row-button')[1]!.trigger('click');
-    await flushPromises();
-
-    expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'confirm_all');
-    expect(wrapper.find('i.shield-question-icon').exists()).toBe(true);
-    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 变更前确认');
-  });
-
-  it('switches to full access and moves the trigger glyph', async () => {
-    const wrapper = mountPicker();
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-
-    await wrapper.findAll('button.row-button')[3]!.trigger('click');
-    await flushPromises();
-
-    expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'full_access');
-    expect(wrapper.find('i.shield-alert-icon').exists()).toBe(true);
-    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 完全访问');
-  });
-
-  it('sends the auto-edit choice back when picked again', async () => {
-    modeApi.mode = 'full_access';
-    const wrapper = mountPicker();
-    await wrapper.find('button').trigger('click');
-    await flushPromises();
-
-    await wrapper.findAll('button.row-button')[2]!.trigger('click');
-
-    expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'auto_edit');
-  });
-
-  it('shows the strict mode the backend reported', async () => {
-    modeApi.mode = 'confirm_all';
-    const wrapper = mountPicker();
-
-    expect(wrapper.find('i.shield-question-icon').exists()).toBe(true);
-    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 变更前确认');
   });
 });

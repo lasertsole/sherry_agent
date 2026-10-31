@@ -28,7 +28,7 @@
 - [判断门](gates/README.zh.md)
 - [证据账本](gates/evidence-ledger/README.zh.md)
 - [并发 Lane](lanes/README.zh.md)
-- [三色孤儿回收](#-三色孤儿回收)
+- [无引用孤儿回收](#-无引用孤儿回收)
 - [派发串行化与幂等规划](#-dispatch-serialization--idempotent-planning)
 - [配置注册表](#-配置注册表)
 - [架构图](#-架构图)
@@ -47,26 +47,28 @@
 | 3 | **截止时间** | `taskflow_flow(action="create", deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **空闲检测** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` 中的过期标记 |
 | 5 | **连续性与自动恢复** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 提示词区块 |
-| 6 | **三色孤儿回收** | sweeper `_tri_color_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 活跃 `todos` |
+| 6 | **无引用孤儿回收** | sweeper `_unreferenced_flow_sweep` / `_liveness_sweep` | `task_flows.updated_at` / 活跃 `todos` |
 
 贯穿始终的设计契约是**错误即文本**：工具从不把业务错误抛给模型，而是返回以 `Error:` 开头的人类可读字符串。每个后台钩子都是**失败开放（fail-open）**的——注册表不可用或 sweeper 崩溃只会退化为“没有长时任务上下文”，绝不会破坏一个回合。
 
-## ♻️ 三色孤儿回收
+## ♻️ 无引用孤儿回收
 
-TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `taskflow_flow(action="plan")` 在创建时绑定一条流级 `pending` todo（一行，`step_id` 为空）；该 todo 只能在 flow 终态后才能完成，`todowrite` 必须把它带上。sweeper 在启动时和每个 tick 跑两个互补的扫描：
+TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `taskflow_flow(action="plan")` 在创建时绑定一条流级 `pending` todo（一行，`step_id` 为空）；该 todo 只能在 flow 终态后才能完成，`todowrite` 必须把它带上。优先用 `patch`/`add`/`remove` 局部 action，它们会保留 `todo_id` 与 `flow_id`；全量 `replace` 会重发 id，可能让根 todo 变成孤儿。sweeper 在启动时和每个 tick 跑两个互补的扫描：
 
 | 阶段 | 条件 | 动作 |
 | :--- | :--- | :--- |
-| 三色 mark | todo 状态为 `pending`/`in_progress` 且带 `flow_id` | 该 flow 标黑（可达） |
-| 三色 sweep | 非终态、未被 supersede、无活跃根，且 `updated_at` 早于 `tri_color_grace_seconds`（300 秒） | `failed` / `orphan_unreferenced` |
+| 无引用标记 | todo 状态为 `pending`/`in_progress` 且带 `flow_id` | 该 flow 标记为可达 |
+| 无引用清扫 | 非终态、未被 supersede、无活跃根，且 `updated_at` 早于 `unreferenced_flow_grace_seconds`（300 秒） | `failed` / `orphan_unreferenced` |
 | 子会话 liveness | session key 为 `agent:*:subagent:*` 或 `agent:*:swarm:*`，没有活 run，且超过同一 grace | `failed` / `session_dead` |
 | 流级 liveness | 主会话 `stale_action_hours`（12 小时）无活动，且无活子代理 | `failed` / `stale_swept` 或 `session_dead` |
 | 僵尸 todo | 活跃 todo 引用已 failed/cancelled 的 flow | todo 标 `cancelled` |
 | prune | 终态/superseded 行超过 `max_total_flows_per_session`（200） | 删除最旧的 |
 
-活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败并记录 detached 子代理。`todowrite` 全量替换是一个事务，mark 查询看不到 DELETE 与 INSERT 之间的空窗。
+活子代理会否决回收；grace 窗口覆盖 `todos.db` 与 `taskflow_registry.db` 之间“先建流、后绑 todo”的竞态；session 级 liveness 只处理已经过期的 flow，因此启动时没有 socket 也不会批量误杀近期工作。每次 mutation 都刷新 `updated_at`；终态写入 `terminal_reason`；被取代的前驱变为 `cancelled` / `superseded`。`taskflow_flow(action="finish")` 有三套独立预算（nudge、连续失败、协议违规），超限自动失败、记录 detached 子代理，并在 `auto_kill_on_detach` 开启时**杀掉**它们——失败的 flow 永远收不到结果，留着只占 lane。`depends_on` 环在创建/更新时就被拒绝（深度优先，id 已先校验），而不是把 flow 钉到失活扫描为止；`supersede` 会递增 `expected_revision`，因此持旧 revision 的写者 CAS 失败，而不是把已取消的 flow 复活；陈旧 WAITING 标记写入载荷时**不碰 `updated_at`**——那一列正是扫描读取的失活时钟。`todowrite` 全量替换是一个事务，根查询看不到 DELETE 与 INSERT 之间的空窗。
 
-来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_tri_color_gc.py`。
+全量替换丢掉根 todo 时不再等待宽限期：`update_todos` 立即补偿孤儿 flow（策略：`TODOLIST_INFRA["orphan_flow_on_drop"]`），随后立即跑一次会话级 sweep；flow 进入终态时会立刻通知其根 todo。创建目标与活跃 flow 相似的新 flow 时会给出警告，除非设置 `ack_dup`。
+
+来源：`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/tools/todolist/service.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_finish.py`, `agent/tools/taskflow/tools/_shared.py`、`config/features/agent_side/taskflow_infra.py`；测试：`tests/agent/tools/taskflow/test_unreferenced_flow_gc.py`, `tests/agent/tools/taskflow/test_reference_integrity.py`。
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
@@ -83,13 +85,13 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **54** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
-| `config/features/infra_side/` | **28** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载） |
+| `config/features/agent_side/` | **57** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow、工具并行安全） |
+| `config/features/infra_side/` | **30** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、联网搜索、模型定价、本地模型下载、日志保留、WS 限流） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **82 个 feature 对象**——Agent 侧 54 + 基础设施侧 28——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **87 个 feature 对象**——Agent 侧 57 + 基础设施侧 30——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -281,7 +283,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 82。** 配置注册表包含 82 个 feature 对象（Agent 侧 54 + 基础设施侧 28）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG` 和 `MODEL_DOWNLOADS`（其环境来源的默认值由专门的构建器测试覆盖）。
+- **注册表规模是 87。** 配置注册表包含 87 个 feature 对象（Agent 侧 57 + 基础设施侧 30）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY`、`SESSION_DIRS`、`WEB_SEARCH_CONFIG`、`MODEL_DOWNLOADS`、`LOGS` 和 `WS_RATE_LIMIT`（其默认值由专门的测试或各 feature 自己的测试套件覆盖）。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_step(action="dispatch")` 与 `taskflow_step(action="wait_all")` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_step(action="resume")` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。

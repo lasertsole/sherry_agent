@@ -90,8 +90,10 @@ client/
 │   │   ├── main.css               # Tailwind v4 entry (@import 'tailwindcss') + @theme tokens + reset
 │   │   └── main.scss              # Global SCSS entry (loaded in nuxt.config css)
 │   ├── common/utils.ts            # Shared utilities (dayjs setup, formatCompactTimeString, ...)
+│   ├── common/floating-window.ts  # Floating conversation column geometry (snap anchors, clamping, side-width split)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # Chat input box component (i18n-aware)
+│   │   ├── chat/ConversationFindBar.vue# In-conversation find bar (Ctrl+Shift+F): floating over the list, never in its flow
 │   │   ├── chat/DiffPreview.vue   # Inline colored unified diff for patch_file / write_file results (tool card)
 │   │   └── ImagePreviewOverlay.vue# Full-screen image preview overlay (Teleport to body)
 │   ├── composables/               # Vue 3 composable logic (+ unit tests under __tests__/)
@@ -125,8 +127,9 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 50 page components:
+│   │       └── components/        # 64 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media; right-click quotes a selection)
+│   │           ├── BackgroundCommandsSection.vue#     # The third section of the terminal entry's popover: the agent's STILL-RUNNING background commands (terminal(run_in_background=True)) — pid, and a command-level Stop that leaves the turn running (a settled command leaves the list)
 │   │           ├── SideChatPanel.vue          # Side-session tab: a quoted selection opens an ordinary child session with its own stream + HITL
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow step lists, collapsed to a pill and always on screen, live via taskflow_updated)
@@ -137,22 +140,26 @@ client/
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
-│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │   ├── SafetyFilterPanel.vue# System-config tab: live-stream master switch, LLM review (off without a model), keyword rules editor + test scan, recent filter events
+│   │   ├── OnboardingDialog.vue# First-run tour (welcome → preset → core controls → ready) that creates the session from the chosen preset; shown once via the persisted onboarding_completed flag
+│   │   ├── ShortcutSettingsSection.vue# Shortcut-bindings tab of the system settings: live chords, capture-to-rebind, conflict check, restore defaults
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
-│   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
+│   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
+│   │           ├── TrajectoryPanel.vue       # 当前会话 tab: the per-turn trajectory ledger (GET /sessions/:id/trajectory, rows grouped by turn, re-sorted and paged client-side)
 │   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
 │   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file; draggable into the composer — the drop inserts an @./path mention chip — and the row's right-click menu is wired here)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
-│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, language, ...)
+│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, 国际化, 快捷键)
 │   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
@@ -167,7 +174,8 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
 │   │           ├── AccountSettingsPanel.vue   # Account tab: set the password / replace it / disable login protection (the current password is required)
-│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
+│   │           ├── I18nPanel.vue               # Interface language tab body (国际化), embedded as the last tab of the System Config panel
+│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors); its left edge is a drag handle (280px floor, capped so the conversation keeps its 320px / 35% floor, and it shrinks to that floor when the window cannot hold every minimum)
 │   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file: text + markdown, images via GET /project/file/blob)
 │   │           ├── PdfViewer.vue             # PDF preview inside the file viewer (pdf.js, page nav + fit-width, GET /project/file/blob)
 │   │           ├── DocxViewer.vue            # docx preview inside the file viewer (mammoth → HTML → DOMPurify, GET /project/file/blob)
@@ -179,9 +187,14 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
 │   │           ├── SubagentRunDetail.vue      # Single subagent run detail
 │   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
+│   │           ├── TokenBudgetPanel.vue      # Session-scoped tab (opened from the context ring's popover): the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
+│   │           ├── ReplayAllowlistEditor.vue # 系统配置: the finish-replay allowlist editor (GET/PUT /sherry-config/list/<key>, add/remove executable names)
+│   │           ├── CudaPackCard.vue          # 模型配置: the optional CUDA pack card (Linux only — detect, download with resume, then restart the backend)
+│   │           ├── RecentClosedTabsMenu.vue  # The right-sidebar tab strip's leftmost control: recently closed tabs in two groups (当前会话 / 全局)
 │   │           └── AvatarCropDialog.vue       # Avatar upload + crop (cropperjs)
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
+│   │   ├── chat-float.ts       # Floating conversation column (open/closed + snap anchor, persisted)
 │   │   ├── subagent.ts         # Background-task state (runs / tree / selection) + derived views
 │   │   ├── todo.ts             # Session plan (todo) list + dock visibility
 │   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
@@ -390,7 +403,7 @@ The chat and the file viewer's markdown render through the v-safe-html pipeline,
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`), web-search backend (`web-search.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), floating conversation column (`chat-float.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`), web-search backend (`web-search.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 

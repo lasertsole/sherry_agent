@@ -91,8 +91,10 @@ client/
 │   │   ├── main.css               # Tailwind v4 入口（@import 'tailwindcss'）+ @theme 令牌 + 重置样式
 │   │   └── main.scss              # 全局 SCSS 入口（在 nuxt.config css 中加载）
 │   ├── common/utils.ts            # 共享工具函数（dayjs 配置、formatCompactTimeString、……）
+│   ├── common/floating-window.ts  # 浮动对话栏几何（吸附锚点、边界收敛、左右栏宽度分配）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 聊天输入框组件（支持 i18n）
+│   │   ├── chat/ConversationFindBar.vue# 会话内搜索栏（Ctrl+Shift+F）：浮在列表上方，不占文档流
 │   │   ├── chat/DiffPreview.vue   # 工具卡片内 patch_file / write_file 结果的彩色内联 diff
 │   │   └── ImagePreviewOverlay.vue# 全屏图片预览浮层（Teleport 到 body）
 │   ├── composables/               # Vue 3 组合式逻辑（单元测试位于 __tests__/）
@@ -126,8 +128,9 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 50 个页面组件：
+│   │       └── components/        # 61 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media；选中文字右键可引用）
+│   │           ├── BackgroundCommandsSection.vue#     # 终端入口弹框的第三段：仍在运行的 agent 后台命令（terminal(run_in_background=True)）——pid，以及不影响对话的单命令「终止」（已结束的命令不再列出）
 │   │           ├── SideChatPanel.vue          # 辅助会话标签页：右键引用新建普通子会话，独立消息流 + HITL 审批
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow 扁平步骤列表，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
@@ -138,22 +141,26 @@ client/
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
-│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令，弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令 / 后台命令（徽标三者合计）；弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │   ├── SafetyFilterPanel.vue# 系统配置页：直播安全总开关、LLM 审核（未配模型不启用）、关键词规则编辑 + 试扫、最近过滤记录
+│   │   ├── OnboardingDialog.vue# 首次启动引导（欢迎 → 选预设 → 核心操作 → 完成），用选中预设创建会话；由持久化的 onboarding_completed 标记保证只出现一次
+│   │   ├── ShortcutSettingsSection.vue# 系统设置里的快捷键绑定页：当前组合键、按键捕获重绑、冲突检测、恢复默认
 │   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
-│   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
+│   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）；右边缘可拖拽（下限 280px、上限视口一半、宽度持久化）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
+│   │           ├── TrajectoryPanel.vue       # 当前会话 tab：按回合的轨迹账本（GET /sessions/:id/trajectory，按 turn 分组、客户端重排与分页）
 │   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）。地址栏还会联想持久化的访问历史（Dexie，跨重启保留），按 URL / 标题模糊匹配
 │   │           ├── BrowserHistoryDropdown.vue # 地址栏的历史下拉：最近/匹配的访问记录（favicon、标题、相对时间）与清空操作
 │   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件；可拖拽进输入框——落下即插入 @./path 引用 chip——行右键菜单在此接线）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
-│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、国际化、快捷键）
 │   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
@@ -168,7 +175,8 @@ client/
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 更换密码 / 关闭登录保护（需当前密码）
-│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
+│   │           ├── I18nPanel.vue               # 国际化 tab 内容，嵌在系统配置面板的最后一个页签
+│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）；左边缘可拖拽（下限 280px，上限让对话区保住 320px / 35% 的下限，窗口挤不下所有下限时先缩到下限）
 │   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file：文本 + markdown，图片/PDF/docx 经 GET /project/file/blob）
 │   │           ├── PdfViewer.vue             # 文件查看器内的 PDF 预览（pdf.js，翻页 + 适应宽度，GET /project/file/blob）
 │   │           ├── DocxViewer.vue            # 文件查看器内的 docx 预览（mammoth → HTML → DOMPurify，GET /project/file/blob）
@@ -180,9 +188,14 @@ client/
 │   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
 │   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
 │   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
+│   │           ├── TokenBudgetPanel.vue      # 会话级标签页（从上下文指标弹框打开）：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
+│   │           ├── ReplayAllowlistEditor.vue # 系统配置：回放门白名单编辑器（GET/PUT /sherry-config/list/<key>，增删可执行文件名）
+│   │           ├── CudaPackCard.vue          # 模型配置：可选 CUDA 加速包卡片（仅 Linux——检测、断点续传下载，然后重启后端）
+│   │           ├── RecentClosedTabsMenu.vue  # 右栏标签条最左的控件：最近关闭的标签，两组（当前会话 / 全局）
 │   │           └── AvatarCropDialog.vue       # 头像上传 + 裁剪（cropperjs）
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）
+│   │   ├── chat-float.ts       # 浮动对话栏（开关 + 吸附锚点，持久化）
 │   │   ├── subagent.ts         # 后台任务状态（运行 / 树 / 选择）+ 派生视图
 │   │   ├── todo.ts             # 会话计划（todo）列表 + 停靠可见性
 │   │   ├── right-sidebar.ts    # 右侧栏（折叠状态 / 宽度持久化、已打开的标签类型）
@@ -390,7 +403,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 ### 状态与事件
 
-- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）、联网搜索后端（`web-search.ts`）
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、浮动对话栏（`chat-float.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）、联网搜索后端（`web-search.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
 - **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 

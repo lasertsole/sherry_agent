@@ -12,17 +12,54 @@ ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
 ROOT_DIR = ROOT_DIR.resolve()
 
+
+def _cli_arg(name: str) -> str | None:
+    """The value of ``--name value`` / ``--name=value`` in ``sys.argv``, or None.
+
+    A direct argv scan instead of argparse on purpose: this module computes its
+    constants at IMPORT time, before any entrypoint's parser would run, and the
+    shell (Tauri) passes the flags to either entrypoint (``python -m server``
+    and the frozen ``backend_entry``) without either one needing to know.
+    """
+    argv = sys.argv
+    for index, arg in enumerate(argv):
+        if arg == name and index + 1 < len(argv):
+            return argv[index + 1]
+        if arg.startswith(f"{name}="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _resolve_sherry_home_raw() -> str:
+    """The writable-home request: ``--sherry-home`` first, then the env var.
+
+    The environment variable is a TRANSITIONAL fallback (R5 of the packing
+    plan): a packaged shell passes the CLI flag and no longer sets the env, so
+    the env path only serves manual runs against an older shell or a plain
+    `SHERRY_HOME=x python -m server` invocation. A checkout sets neither.
+    """
+    from_cli = _cli_arg("--sherry-home")
+    if from_cli and from_cli.strip():
+        return from_cli.strip()
+    return os.environ.get("SHERRY_HOME", "").strip()
+
+
 #: The WRITABLE app-data root. Unset (a checkout, a server, CI) keeps every
 #: directory below exactly where it always was — ``ROOT_DIR`` — so nothing
 #: changes for existing installs. A PACKAGED desktop build sets it (the Tauri
-#: shell points it at the OS app-data dir) because the code tree ships
-#: read-only: sessions, memory, uploads, logs and the ``.env`` must live
-#: somewhere the user can write, and must survive an app update.
-APP_HOME = (
-    Path(os.environ.get("SHERRY_HOME", "")).expanduser().resolve()
-    if os.environ.get("SHERRY_HOME", "").strip()
-    else ROOT_DIR
-)
+#: shell passes ``--sherry-home`` pointing at the OS app-data dir) because the
+#: code tree ships read-only: sessions, memory, uploads, logs and the ``.env``
+#: must live somewhere the user can write, and must survive an app update.
+_HOME_RAW = _resolve_sherry_home_raw()
+APP_HOME = Path(_HOME_RAW).expanduser().resolve() if _HOME_RAW else ROOT_DIR
+
+#: Whether this process serves the packaged desktop app (the shell passes the
+#: bare ``--sherry-desktop`` flag; the environment variable is the transitional
+#: fallback, read the same way as the home above). The boot gate reads this
+#: instead of reaching into the environment directly.
+SHERRY_DESKTOP = "--sherry-desktop" in sys.argv or os.environ.get(
+    "SHERRY_DESKTOP", ""
+).strip().lower() in {"1", "true", "yes", "on"}
 
 ENV_PATH = APP_HOME / ".env"
 if APP_HOME != ROOT_DIR and not ENV_PATH.exists():
@@ -87,6 +124,45 @@ STATIC_DIR = APP_HOME / "static"
 TEMP_DIR = APP_HOME / "temp"
 
 MODELS_DIR = APP_HOME / "models"
+
+
+def _seed_mcp_folder() -> None:
+    """First-boot seeding of the MCP drop folder (desktop homes only).
+
+    The folder is the ONE writable place a user adds MCP servers (the bundled
+    ``plugins/mcp_server/config.json`` sits in the read-only install tree).
+    A checkout (``APP_HOME == ROOT_DIR``) stays untouched — importing config
+    must not drop an untracked directory into the repository.
+    """
+    try:
+        MCP_SERVERS_DIR.mkdir(parents=True, exist_ok=True)
+        readme = MCP_SERVERS_DIR / "README.md"
+        if not readme.exists():
+            readme.write_text(
+                "# MCP 服务器投放文件夹\n\n"
+                "把 MCP server 配置放进本文件夹，重启后端后自动加载。支持两种形态：\n\n"
+                "1. 扁平文件：`<名字>.json` —— 文件本身就是 server spec，例如\n"
+                "   `{\n"
+                '     "command": "npx",\n'
+                '     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]\n'
+                "   }\n"
+                "2. 自包含子目录：`<名字>/config.json` —— server 脚本可以和配置放在一起，\n"
+                '   配置里的 `$here/` 指向该子目录本身，例如 `"args": ["$here/server.py"]`。\n\n'
+                "同名时用户配置覆盖内置默认。单个配置解析失败只跳过该项，不影响其它 server。\n"
+                "安全提示：只投放你信任的 MCP server（它们的命令在本机执行）。",
+                encoding="utf-8",
+            )
+    except OSError:
+        pass  # a read-only home must never break the import
+
+
+#: The user's MCP drop folder (per-user, writable). User servers layer on top
+#: of the read-only bundled defaults in ``plugins/mcp_server/config.json``.
+MCP_SERVERS_DIR = APP_HOME / "mcp_servers"
+
+if APP_HOME != ROOT_DIR:
+    _seed_mcp_folder()
+
 #: The workspace root: persona files (AGENTS.md / SOUL.md / USER.md / ROLE.md),
 #: per-session directories, plan knowledge and the memory markdown tree.
 #:
