@@ -117,7 +117,7 @@ describe('NewSessionPresetDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the five built-ins with 日常 preselected', async () => {
+  it('lists the four built-ins with 全量 preselected', async () => {
     db.presets.push({
       id: 7,
       name: '我的预设',
@@ -132,7 +132,6 @@ describe('NewSessionPresetDialog', () => {
       'new-session-preset-option-pure',
       'new-session-preset-option-coding',
       'new-session-preset-option-companion',
-      'new-session-preset-option-daily',
       'new-session-preset-option-sherry',
       'new-session-preset-option-user:7'
     ]);

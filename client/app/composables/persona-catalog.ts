@@ -18,7 +18,7 @@ import { logUtil } from '~/utils/log';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /** Built-in entry ids (the virtual, non-deletable presets). */
-export type BuiltinPresetId = 'pure' | 'coding' | 'companion' | 'daily' | 'sherry';
+export type BuiltinPresetId = 'pure' | 'coding' | 'companion' | 'sherry';
 
 /** Translate function shape the catalogue needs (a component's `t`). */
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -78,20 +78,14 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
     badgeKey: 'config.persona.preset.builtinBadge'
   },
   {
-    id: 'daily',
-    nameKey: 'config.persona.preset.builtinDailyName',
-    badgeKey: 'config.persona.preset.defaultBadge'
-  },
-  {
     id: 'sherry',
     nameKey: 'config.persona.preset.defaultName',
-    badgeKey: 'config.persona.preset.builtinBadge'
+    badgeKey: 'config.persona.preset.defaultBadge'
   }
 ];
 
-/** The preset a session gets when nothing else is chosen (Daily: full minus the
- * task-orchestration and subagent tool groups). */
-export const DEFAULT_PRESET_ID: BuiltinPresetId = 'daily';
+/** The preset a session gets when nothing else is chosen (Full, the full setup). */
+export const DEFAULT_PRESET_ID: BuiltinPresetId = 'sherry';
 
 /**
  * The preset id a saved preset binds as.
@@ -170,11 +164,8 @@ export const CODING_DISABLED_TOOLS: readonly string[] = ['memory'];
 /** Skills Coding Assistant keeps besides the required chain (the work flow tools). */
 export const CODING_SKILLS: readonly string[] = ['bugfix-contract', 'code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
 
-/** Tool groups Daily and Companion keep OFF entirely: the orchestration surfaces. */
-export const ORCHESTRATION_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
-
-/** Skills the Daily preset hides: the orchestration work-flow skills (bugfix-contract / code-wiki stay). */
-export const ORCHESTRATION_SKILLS: readonly string[] = ['taskflow', 'todolist', 'ulw-execute'];
+/** Tool groups Companion keeps OFF entirely: the orchestration surfaces. */
+export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
 
 /**
  * The Operating Instructions sections Companion drops, per UI language: the task-orchestration
@@ -331,18 +322,9 @@ export function presetCatalogFacts(store: {
  * @returns The agent block for the session config.
  */
 export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
-  if (id !== 'pure' && id !== 'coding' && id !== 'companion' && id !== 'daily') return {};
+  if (id !== 'pure' && id !== 'coding' && id !== 'companion') return {};
   if (facts.tools.length === 0 || facts.skills.length === 0) {
     throw new Error('[persona-catalog] the tool catalogue is unavailable; cannot compose the preset');
-  }
-  // Daily is Full minus the orchestration groups, with every middleware and the
-  // Summarization nudge left at their defaults (the non-Full branch below would
-  // disable every optional middleware and turn the nudge off).
-  if (id === 'daily') {
-    return {
-      tools: facts.tools.filter(tool => !ORCHESTRATION_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name),
-      skills: builtinSkills(id, facts.skills).map(skill => skill.name)
-    };
   }
   const block: AgentConfig = {};
   block.tools =
@@ -350,7 +332,7 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
       ? facts.tools.filter(tool => tool.required === true).map(tool => tool.name)
       : id === 'coding'
         ? facts.tools.filter(tool => !CODING_DISABLED_TOOLS.includes(tool.name)).map(tool => tool.name)
-        : facts.tools.filter(tool => !ORCHESTRATION_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
+        : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
   block.skills = builtinSkills(id, facts.skills).map(skill => skill.name);
   if (id !== 'coding' && facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
@@ -369,11 +351,6 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
 function builtinSkills(id: BuiltinPresetId, skills: PresetCatalogFacts['skills']): PresetCatalogFacts['skills'] {
   const required = skills.filter(skill => skill.required === true);
   const optional = skills.filter(skill => skill.required !== true);
-  if (id === 'daily') {
-    // Full minus the three orchestration skills; returns skill OBJECTS (the
-    // caller maps .name), unlike the companion split below.
-    return skills.filter(skill => !ORCHESTRATION_SKILLS.includes(skill.name));
-  }
   if (id === 'pure' || id === 'sherry') {
     // Pure keeps the locked floor only; Full has no opinion (every skill).
     return id === 'pure' ? required : skills;
@@ -434,7 +411,7 @@ export function builtinPayload(
   facts: PresetCatalogFacts,
   locale: string
 ): PersonaPresetPayload {
-  const named = id === 'companion' || id === 'daily' || id === 'sherry';
+  const named = id === 'companion' || id === 'sherry';
   const character: PresetCharacter = named
     ? { ...DEFAULT_CACHED_CHARACTER }
     : {
@@ -453,7 +430,7 @@ export function builtinPayload(
     content = { 'AGENTS.md': rules, 'SOUL.md': '', 'USER.md': '' };
   } else {
     content = {
-      'AGENTS.md': id === 'companion' || id === 'daily' ? stripTaskSections(rules, locale) : rules,
+      'AGENTS.md': id === 'companion' ? stripTaskSections(rules, locale) : rules,
       'SOUL.md':
         id === 'companion' ? stripRelationshipLines(template['SOUL.md'] ?? '', locale) : (template['SOUL.md'] ?? ''),
       'USER.md': template['USER.md'] ?? ''

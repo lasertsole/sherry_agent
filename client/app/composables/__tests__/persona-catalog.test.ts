@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   BUILTIN_PRESETS,
-  ORCHESTRATION_TOOL_GROUPS,
+  COMPANION_DISABLED_TOOL_GROUPS,
   COMPANION_DROPPED_RELATIONSHIP_MARKERS,
   DEFAULT_PRESET_ID,
   applyPresetPayload,
@@ -57,7 +57,6 @@ const t = ((key: string, params?: Record<string, unknown>) => {
     'config.persona.preset.builtinPureName': '纯净',
     'config.persona.preset.builtinCodingName': '编程助手',
     'config.persona.preset.builtinCompanionName': '情感陪伴',
-    'config.persona.preset.builtinDailyName': '日常',
     'config.persona.preset.defaultName': '全量',
     'config.persona.preset.defaultBadge': '默认',
     'config.persona.preset.builtinBadge': '内置',
@@ -153,15 +152,15 @@ describe('persona catalogue', () => {
     vi.clearAllMocks();
   });
 
-  it('lists 纯净 / 编程助手 / 情感陪伴 / 日常 / 全量, with 日常 the default', () => {
-    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'daily', 'sherry']);
-    expect(DEFAULT_PRESET_ID).toBe('daily');
+  it('lists 纯净 / 编程助手 / 情感陪伴 / 全量, with 全量 the default', () => {
+    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
+    expect(DEFAULT_PRESET_ID).toBe('sherry');
     const entries = catalogEntries([]);
-    expect(entries.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'daily', 'sherry']);
+    expect(entries.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
     expect(entries.every(entry => entry.builtin)).toBe(true);
-    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '编程助手', '情感陪伴', '日常', '全量']);
-    // Only 日常 carries the 默认 badge ("Default"); the rest read 内置 ("Built-in").
-    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '内置', '默认', '内置']);
+    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '编程助手', '情感陪伴', '全量']);
+    // Only the default carries the 默认 badge ("Default"); the other three read 内置 ("Built-in").
+    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '内置', '默认']);
   });
 
   it('appends the saved presets after the built-ins', () => {
@@ -171,12 +170,11 @@ describe('persona catalogue', () => {
       'pure',
       'coding',
       'companion',
-      'daily',
       'sherry',
       userPresetEntryId(7),
       userPresetEntryId(9)
     ]);
-    expect(entryName(entries[5]!, t)).toBe('我的预设');
+    expect(entryName(entries[4]!, t)).toBe('我的预设');
   });
 
   it('composes the ROLE statement per name and drops blank ones', () => {
@@ -274,7 +272,7 @@ describe('persona catalogue', () => {
       expect(payload.agent!.tools).not.toContain(name);
     }
     // The disabled groups are the orchestration surfaces, and its nudge is off.
-    expect(ORCHESTRATION_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
+    expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
     expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
     // The skills are the mirror image of Coding Assistant: the required chain plus every
     // skill Coding Assistant does NOT pick (clawhub / cron here).
@@ -360,7 +358,7 @@ describe('persona catalogue', () => {
 
   it('refuses to compose a preset whose restriction needs the catalogue', () => {
     // A silent `{}` would apply the OPPOSITE of what these presets promise.
-    for (const id of ['pure', 'coding', 'companion', 'daily'] as const) {
+    for (const id of ['pure', 'coding', 'companion'] as const) {
       expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
     }
     // Full has no opinion at all, so it never needs the catalogue.
@@ -380,11 +378,11 @@ describe('persona catalogue', () => {
   it('loads a built-in payload from the language template and a saved preset from its row', async () => {
     bridge.readSystemPromptTemplate.mockResolvedValue(TEMPLATE);
 
-    const builtin = await loadPresetPayload(catalogEntries([])[4]!, 'zh', t, NO_AGENT);
+    const builtin = await loadPresetPayload(catalogEntries([])[3]!, 'zh', t, NO_AGENT);
     expect(bridge.readSystemPromptTemplate).toHaveBeenCalledWith('zh');
     expect(builtin.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
 
-    const user = await loadPresetPayload(catalogEntries([userPreset()])[5]!, 'zh', t, NO_AGENT);
+    const user = await loadPresetPayload(catalogEntries([userPreset()])[4]!, 'zh', t, NO_AGENT);
     expect(user.content).toEqual({
       'AGENTS.md': 'A',
       'SOUL.md': 'S',
@@ -415,42 +413,16 @@ describe('persona catalogue', () => {
     });
   });
 
-  it('pins an agent block on every preset except 全量; Daily keeps the middleware defaults', () => {
-    for (const id of ['pure', 'coding', 'companion', 'daily'] as const) {
+  it('pins an agent block on every preset except 全量', () => {
+    for (const id of ['pure', 'coding', 'companion'] as const) {
       const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
       expect(payload.agent).not.toEqual({});
-      if (id === 'daily') {
-        // Daily restricts tools/skills only: every middleware and the nudge stay at defaults.
-        expect(payload.agent!.middlewares_disabled).toBeUndefined();
-        expect(payload.agent!.middleware_options).toBeUndefined();
-      } else {
-        expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
-      }
+      // …and the nudge is the one option only Full leaves alone (absent = on).
+      expect(payload.agent!.middleware_options).toEqual(
+        id === 'sherry' ? undefined : { Summarization: { nudge: false } }
+      );
     }
     expect(builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh').agent).toEqual({});
-  });
-
-  it('builds the 日常 payload as Full minus the orchestration groups, keeping the persona', () => {
-    const payload = builtinPayload('daily', TEMPLATE_WITH_TASKS, t, FACTS, 'zh');
-
-    // Tool groups tasks/subagents off; no middleware override.
-    expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search', 'memory', 'web_search']);
-    for (const name of ['taskflow_flow', 'todoread', 'sessions_spawn']) {
-      expect(payload.agent!.tools).not.toContain(name);
-    }
-    expect(payload.agent!.middlewares_disabled).toBeUndefined();
-    expect(payload.agent!.middleware_options).toBeUndefined();
-    // The orchestration skills go; the coding skills stay.
-    expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'bugfix-contract', 'clawhub', 'code-wiki', 'cron']);
-    expect(payload.agent!.skills).not.toContain('taskflow');
-    expect(payload.agent!.skills).not.toContain('todolist');
-    expect(payload.agent!.skills).not.toContain('ulw-execute');
-    // The task doctrine is stripped from 运行守则; SOUL keeps the relationship line.
-    expect(payload.content['AGENTS.md']).not.toContain('任务管理与编排');
-    expect(payload.content['SOUL.md']).toBe(TEMPLATE_WITH_TASKS['SOUL.md']);
-    // Named like Companion/Full.
-    expect(payload.character.aiName).toBe('橘雪莉');
-    expect(payload.character.userName).toBe('远野汉娜');
   });
 
   it('writes the agent block to the session when the apply names one', async () => {

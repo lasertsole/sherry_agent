@@ -418,7 +418,6 @@
       "preset": {
         "builtinPureName": "Pure",
         "builtinCompanionName": "Companion",
-        "builtinDailyName": "Daily",
         "defaultName": "Full",
         "defaultBadge": "Default",
         "builtinCodingName": "Coding Assistant",

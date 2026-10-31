@@ -418,7 +418,6 @@
       "preset": {
         "builtinPureName": "순수",
         "builtinCompanionName": "감정 동반",
-        "builtinDailyName": "일상",
         "defaultName": "전체",
         "defaultBadge": "기본",
         "builtinCodingName": "코딩 어시스턴트",

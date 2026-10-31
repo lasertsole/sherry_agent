@@ -1813,7 +1813,6 @@ const handleApply = async () => {
         "preset": {
           "builtinPureName": "纯净",
           "builtinCompanionName": "情感陪伴",
-          "builtinDailyName": "日常",
           "defaultName": "全量",
           "defaultBadge": "默认",
           "builtinCodingName": "编程助手",
@@ -2112,7 +2111,6 @@ const handleApply = async () => {
         "preset": {
           "builtinPureName": "Pure",
           "builtinCompanionName": "Companion",
-          "builtinDailyName": "Daily",
           "defaultName": "Full",
           "defaultBadge": "Default",
           "builtinCodingName": "Coding Assistant",
@@ -2411,7 +2409,6 @@ const handleApply = async () => {
         "preset": {
           "builtinPureName": "純粋",
           "builtinCompanionName": "寄り添い",
-          "builtinDailyName": "毎日",
           "defaultName": "フル",
           "defaultBadge": "デフォルト",
           "builtinCodingName": "コーディングアシスタント",
@@ -2710,7 +2707,6 @@ const handleApply = async () => {
         "preset": {
           "builtinPureName": "순수",
           "builtinCompanionName": "감정 동반",
-          "builtinDailyName": "일상",
           "defaultName": "전체",
           "defaultBadge": "기본",
           "builtinCodingName": "코딩 어시스턴트",

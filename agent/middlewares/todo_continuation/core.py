@@ -362,19 +362,6 @@ def _is_continuation_turn(state: dict[str, Any]) -> bool:
     return False
 
 
-#: Tools the continuation needs to act on a todo/flow; a partial tasks config
-#: (or Daily) cannot continue, so the gate stays silent.
-_CONTINUATION_TOOLS: frozenset[str] = frozenset({"todowrite", "taskflow_flow", "taskflow_step"})
-
-
-def _continuation_enabled(session_id: str) -> bool:
-    """Whether the session has the tools the continuation prompt relies on."""
-    from agent.middlewares.tool_selection.core import enabled_tool_names
-
-    enabled = enabled_tool_names(session_id)
-    return enabled is None or _CONTINUATION_TOOLS <= enabled
-
-
 class PlanContinuationEnforcer(AgentMiddleware):
     """Turn-end enforcer: inject a continuation prompt when todos remain.
 
@@ -394,10 +381,6 @@ class PlanContinuationEnforcer(AgentMiddleware):
 
         if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
             return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
-        # Tasks-off presets cannot continue a plan; return before the budget
-        # counters / latch are touched.
-        if not _continuation_enabled(str((state or {}).get("session_id") or "")):
-            return None
         try:
             # Lazy: agent.tools.todolist imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.

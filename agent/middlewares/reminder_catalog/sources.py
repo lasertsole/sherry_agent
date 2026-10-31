@@ -41,27 +41,6 @@ def _as_builder(builder: Any) -> Any:
     return _source_builder
 
 
-def _tasks_enabled(session_id: str) -> bool:
-    """Whether the session has the full tasks tool group (None = all tools)."""
-    from agent.middlewares.tool_selection.core import enabled_tool_names
-    from agent.tools.catalog import TOOL_GROUPS
-
-    enabled = enabled_tool_names(session_id)
-    return enabled is None or frozenset(TOOL_GROUPS["tasks"]) <= enabled
-
-
-def _tasks_gated(builder: Any) -> Any:
-    """Adapt a builder but skip it when the session's tasks tools are off."""
-
-    def _source_builder(session_id: str, _state: dict[str, Any]) -> str | None:
-        if not _tasks_enabled(session_id):
-            return None
-        text = builder(session_id)
-        return text or None
-
-    return _source_builder
-
-
 def register_default_sources() -> None:
     """Register the seven live views (idempotent — a re-register replaces)."""
     register(
@@ -78,7 +57,7 @@ def register_default_sources() -> None:
         ReminderSource(
             source_id="todo_block",
             channel=ReminderChannel.CURRENT_TURN,
-            builder=_tasks_gated(_build_todo_block),
+            builder=_as_builder(_build_todo_block),
             budget_chars=1500,
             priority=80,
             # The todo list is the agent's working plan: never throttled, and
@@ -90,7 +69,7 @@ def register_default_sources() -> None:
         ReminderSource(
             source_id="taskflow_status",
             channel=ReminderChannel.CURRENT_TURN,
-            builder=_tasks_gated(_build_taskflow_block),
+            builder=_as_builder(_build_taskflow_block),
             budget_chars=2000,
             priority=75,
             # A steered board is worth a nudge, but not every single turn: at
@@ -144,7 +123,7 @@ def register_default_sources() -> None:
         ReminderSource(
             source_id="knowledge_index",
             channel=ReminderChannel.CURRENT_TURN,
-            builder=_tasks_gated(_build_knowledge_block),
+            builder=_as_builder(_build_knowledge_block),
             budget_chars=1000,
             priority=50,
             only_if_changed=True,
