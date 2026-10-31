@@ -226,6 +226,10 @@
          shell so every entry point (left sidebar, chat empty state, toolbar
          command) shares one dialog and one creation path. -->
     <NewSessionPresetDialog v-model:visible="newSession.dialogOpen" />
+    <!-- First-run tour. 跳过 hands the user the ordinary preset dialog. -->
+    <OnboardingDialog
+      v-model:visible="onboardingVisible"
+      @skip="newSession.openDialog()" />
 
     <!-- Ctrl+K command palette: one entry point over the menu grid, the toolbox,
          recent sessions and the skill index. It lives in the shell (not in a
@@ -252,6 +256,7 @@ import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
 import { useSidebarWidthStore } from '~/stores/sidebar-width';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
+import OnboardingDialog from '~/components/OnboardingDialog.vue';
 import CommandPalette from '~/components/CommandPalette.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
@@ -531,6 +536,13 @@ useAutoCollapse({
   rightSidebarWidth: () => rightSidebarStore.width
 });
 
+/**
+ * Whether the first-run tour is on screen. Checked ONCE per boot against the
+ * persisted `onboarding_completed` flag; the tour itself writes the flag on
+ * finish AND on skip, so re-entering the UI never re-opens it.
+ */
+const onboardingVisible = ref(false);
+
 onMounted(() => {
   chatBackgroundStore.loadBackground();
   // Global chords: the palette (Ctrl+K), a new session (Ctrl+N) and the left
@@ -544,6 +556,11 @@ onMounted(() => {
   // established here — the notification TAB is lazily mounted and would
   // otherwise be the first to open it.
   notifications.subscribe();
+  // First-run check AFTER the shell is usable: the dialog only needs the flag,
+  // and a slow read must not delay the socket subscription above.
+  void getAppFlag<boolean>('onboarding_completed').then(done => {
+    if (!done) onboardingVisible.value = true;
+  });
   // Same for the web-search downgrade frame: it arrives while a TURN runs, so
   // the listener cannot live in the session page (the user may be looking at
   // another session) nor in the Web Search tab (lazily mounted).

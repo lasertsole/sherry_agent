@@ -443,6 +443,81 @@ export function builtinPayload(
 }
 
 /**
+ * Everything `createSessionFromPreset` needs from its caller.
+ *
+ * Injected rather than imported so this module stays a pure catalogue: the
+ * character snapshot lives on the session page (`ensureSessionCharacter`), and
+ * the navigation helpers come from the component's Nuxt context.
+ */
+export interface CreateSessionOptions {
+  /** Current UI locale (selects the language template for built-ins). */
+  locale: string;
+  /** Translate function (component `t`). */
+  t: TranslateFn;
+  /** The loaded tool/middleware/skill catalogue. */
+  facts: PresetCatalogFacts;
+  /** Router (Nuxt `useRouter()`). */
+  router: { push: (to: string) => Promise<unknown> };
+  /** Locale-aware path builder (Nuxt `useLocalePath()`). */
+  localePath: (path: string) => string;
+  /** Lock the session's character snapshot (the page's helper). */
+  ensureCharacter: (sessionId: string) => Promise<unknown>;
+}
+
+/**
+ * Create a session from one preset: apply the persona files + agent block, bind
+ * the preset, snapshot the character and announce the new row.
+ *
+ * The apply runs FIRST: a session locks its persona into the prompt snapshot at
+ * the first build, so the files must already hold the preset when the session
+ * starts. A failed apply throws and the caller keeps its dialog open — a
+ * session created without its preset would silently run the previous persona.
+ *
+ * Extracted from the new-session dialog's `confirm()` so the onboarding flow
+ * can create the session programmatically (one implementation, no duplication).
+ * @param entry Catalogue entry to apply.
+ * @param options Injected context (see {@link CreateSessionOptions}).
+ * @returns The new session id.
+ */
+export async function createSessionFromPreset(entry: PresetEntry, options: CreateSessionOptions): Promise<string> {
+  const payload = await loadPresetPayload(entry, options.locale, options.t, options.facts);
+  // The id is minted first so the apply can also write the preset's agent
+  // config (Tools / Middlewares / Agent models) into THIS session's registers.
+  const sessionId = crypto.randomUUID();
+  await applyPresetPayload(payload, sessionId);
+
+  try {
+    await cacheSessionPreset({
+      session_id: sessionId,
+      preset_id: entry.id,
+      preset_name: entryName(entry, options.t)
+    });
+  } catch (e) {
+    // The local preset binding is display metadata; a Dexie failure must not
+    // prevent the session itself from being created.
+    logUtil.e('[persona-catalog] preset binding cache failed:', e);
+  }
+  await options.ensureCharacter(sessionId);
+
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const meta = { id: sessionId, title: options.t('history.newSession'), createTime, updatedAt: Date.now() };
+  void cacheSessionMeta(meta).catch(e => {
+    logUtil.e('[persona-catalog] session meta cache failed:', e);
+  });
+  // The left sidebar keeps its own in-memory list; tell it about the new row so
+  // the session appears there without a reload.
+  emit('session:created', meta);
+
+  // `localePath` (not the named route): the i18n module's localized route
+  // variants make a raw named push redirect, which vue-router surfaces as a
+  // rejected navigation — the sidebar's own create path does the same.
+  await options.router.push(options.localePath(`/home/${sessionId}`));
+  return sessionId;
+}
+
+/**
  * Resolve a catalogue entry to its apply-ready payload.
  * @param entry Catalogue entry.
  * @param locale Current UI locale (selects the language template for built-ins).

@@ -374,6 +374,8 @@ class HistoryDb extends Dexie {
   commandHistory!: Table<CommandHistoryEntry, number>;
   /** User shortcut overrides, keyed by shortcut id (see {@link ShortcutRow}) */
   shortcuts!: Table<ShortcutRow, string>;
+  /** App-level flags, keyed by name (see {@link AppFlag}) */
+  appFlags!: Table<AppFlag, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -422,6 +424,10 @@ class HistoryDb extends Dexie {
     this.version(5).stores({
       shortcuts: 'id'
     });
+    // version(6): app-level flags (onboarding seen bit …). Additive bump.
+    this.version(6).stores({
+      appFlags: 'key'
+    });
   }
 }
 
@@ -435,12 +441,40 @@ class HistoryDb extends Dexie {
  * `keys` is the JSON form of its `KeyCombo`. Removing a row restores the
  * built-in default, so the table only ever holds what the user changed.
  */
+/**
+ * One app-level flag (the onboarding "seen" bit and anything else that must
+ * survive a reload). Small scalars only — this is a key/value switchboard, not
+ * a cache.
+ */
+export interface AppFlag {
+  key: string;
+  value: unknown;
+}
+
 export interface ShortcutRow {
   id: string;
   keys: string;
 }
 
 export const db = new HistoryDb();
+
+/**
+ * Read one app flag (undefined when it was never written).
+ * @param key Flag name.
+ */
+export async function readAppFlag(key: string): Promise<unknown> {
+  const row = await db.appFlags.get(key);
+  return row?.value;
+}
+
+/**
+ * Write one app flag (upsert).
+ * @param key Flag name.
+ * @param value Any JSON-serializable value.
+ */
+export async function writeAppFlag(key: string, value: unknown): Promise<void> {
+  await db.appFlags.put({ key, value });
+}
 
 /**
  * Every persisted shortcut override (the settings panel / the boot loader read

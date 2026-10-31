@@ -141,6 +141,7 @@ client/
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
 │   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
 │   │   ├── SafetyFilterPanel.vue# System-config tab: live-stream master switch, LLM review (off without a model), keyword rules editor + test scan, recent filter events
+│   │   ├── OnboardingDialog.vue# First-run tour (welcome → preset → core controls → ready) that creates the session from the chosen preset; shown once via the persisted onboarding_completed flag
 │   │   ├── ShortcutSettingsSection.vue# Shortcut-bindings tab of the system settings: live chords, capture-to-rebind, conflict check, restore defaults
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)

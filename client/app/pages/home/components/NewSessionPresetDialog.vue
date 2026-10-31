@@ -99,13 +99,14 @@ watch(visible, open => {
 });
 
 /**
- * Confirm: apply the chosen preset (persona files + character), bind it to the
- * new session, then create the session and navigate to it.
+ * Confirm: create the session from the chosen preset (the shared orchestration
+ * lives in `createSessionFromPreset`, which the onboarding flow also calls) and
+ * navigate to it.
  *
- * The apply runs FIRST: the session locks its persona into the prompt snapshot
- * at the first build, so the files must already hold the preset when the session
- * starts. A failed apply keeps the dialog open — a session created without its
- * preset would silently run the previous persona.
+ * The apply inside that helper runs FIRST: the session locks its persona into
+ * the prompt snapshot at the first build, so the files must already hold the
+ * preset when the session starts. A failed apply keeps the dialog open — a
+ * session created without its preset would silently run the previous persona.
  */
 const confirm = async () => {
   const entry = entries.value.find(candidate => candidate.id === selectedId.value);
@@ -115,41 +116,15 @@ const confirm = async () => {
     // The tool catalogue comes first: Pure / Companion derive their agent block
     // from it (a preset applied without it would silently write the wrong set).
     await agentStore.loadCatalog();
-    const payload = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
-    // The id is minted first so the apply can also write the preset's agent
-    // config (Tools / Middlewares / Agent models) into THIS session's registers.
-    const sessionId = crypto.randomUUID();
-    await applyPresetPayload(payload, sessionId);
-
-    try {
-      await cacheSessionPreset({
-        session_id: sessionId,
-        preset_id: entry.id,
-        preset_name: entryName(entry, t)
-      });
-    } catch (e) {
-      // The local preset binding is display metadata; a Dexie failure must not
-      // prevent the session itself from being created.
-      logUtil.e('[NewSessionPresetDialog] preset binding cache failed:', e);
-    }
-    await ensureSessionCharacter(sessionId);
-
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const meta = { id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() };
-    void cacheSessionMeta(meta).catch(e => {
-      logUtil.e('[NewSessionPresetDialog] session meta cache failed:', e);
+    await createSessionFromPreset(entry, {
+      locale: locale.value,
+      t,
+      facts: presetCatalogFacts(agentStore),
+      router,
+      localePath,
+      ensureCharacter: ensureSessionCharacter
     });
-    // The left sidebar keeps its own in-memory list; tell it about the new row
-    // so the session appears there without a reload.
-    emit('session:created', meta);
-
     visible.value = false;
-    // `localePath` (not the named route): the i18n module's localized route
-    // variants make a raw named push redirect, which vue-router surfaces as a
-    // rejected navigation — the sidebar's own create path does the same.
-    await router.push(localePath(`/home/${sessionId}`));
   } catch (e) {
     logUtil.e('[NewSessionPresetDialog] Failed to create the session:', e);
     const detail = e instanceof Error ? e.message : String(e);
