@@ -22,7 +22,7 @@
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { CachedMessage, CachedSessionMeta, DraftTurn, CachedSubagentRun } from '../db';
+import type { CachedMessage, CachedSessionMeta, CachedSubagentRun } from '../db';
 import {
   db,
   GLOBAL_SESSION_KEY,
@@ -175,10 +175,7 @@ describe('cachedMaxTurnNum', () => {
   it('falls back to the max over valid rows when the last row is poisoned', async () => {
     // Strings sort after all numbers in IndexedDB, so the poisoned row lands
     // last; the numeric max must come from a scan over valid rows instead.
-    await db.messages.bulkPut([
-      msg({ id: 1, turn_num: 3 }),
-      msg({ id: 2, turn_num: 'corrupt' as unknown as number })
-    ]);
+    await db.messages.bulkPut([msg({ id: 1, turn_num: 3 }), msg({ id: 2, turn_num: 'corrupt' as unknown as number })]);
     await expect(cachedMaxTurnNum('ses_A')).resolves.toBe(3);
   });
 
@@ -190,11 +187,7 @@ describe('cachedMaxTurnNum', () => {
 
 describe('clearCachedSession', () => {
   it('deletes only the given session messages, another session survives', async () => {
-    await cacheMessages([
-      msg({ id: 1 }),
-      msg({ id: 2, turn_num: 2 }),
-      msg({ id: 3, session_id: 'ses_B' })
-    ]);
+    await cacheMessages([msg({ id: 1 }), msg({ id: 2, turn_num: 2 }), msg({ id: 3, session_id: 'ses_B' })]);
     await clearCachedSession('ses_A');
 
     await expect(readCachedMessages('ses_A')).resolves.toEqual([]);
