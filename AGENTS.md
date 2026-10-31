@@ -602,7 +602,7 @@ Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED
 
 ## Floating Conversation Column (`index.vue` / `common/floating-window.ts` / `stores/chat-float.ts`)
 
-The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit 恢复原样 button.
+The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit 恢复原样 button. While the window is out, BOTH sidebar collapse buttons (left and right) are hidden — the window owns its restore control; Ctrl+B still closes it and collapses the left column.
 
 - **Three presentations**: `docked` / `floating` / `hidden` (the existing collapsed state). `chatFloat` (`floating` + `anchor`, persisted to localStorage) is the only state; the middle column binds `data-presentation`, class `fixed` vs `relative` (never both — same-specificity Tailwind utilities) and `minWidth: 0` while floating (the 35% viewport floor would otherwise win over the computed width).
 - **Single instance**: the same middle-column DOM and the KeepAlive'd session page relocate, never remount — draft, scroll, streaming turn and HITL survive. No Teleport (moving scrollable DOM resets the scroll position).

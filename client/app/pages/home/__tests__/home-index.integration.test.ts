@@ -638,18 +638,28 @@ describe('home/index.vue — floating conversation column', () => {
     }
   });
 
-  it('closes the float and collapses the left column from the collapse button', async () => {
+  it('hides both sidebar collapse buttons while floating (Ctrl+B still closes it)', async () => {
     const ui = stubUi({ sidebarCollapsed: false });
+    const uninstall = installGlobalShortcutListener();
     try {
       const wrapper = mountHome();
+      // Docked: the left toggle and the right panel toggle are both present.
+      expect(wrapper.findAll('.btn').map(b => b.attributes('title'))).toEqual(expect.arrayContaining(['折叠侧边栏']));
       await floatButton(wrapper)!.trigger('click');
       await nextTick();
-      const collapse = wrapper.findAll('[data-test="toolbar-left"] .btn')[0]!;
-      await collapse.trigger('click');
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).not.toContain('折叠侧边栏');
+      expect(titles).not.toContain('展开侧边栏');
+      expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('floating');
+
+      // The global shortcut is the remaining way to hide the window.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true }));
       await nextTick();
       expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
       expect(ui.ui.sidebarCollapsed).toBe(true);
+      wrapper.unmount();
     } finally {
+      uninstall();
       ui.restore();
     }
   });

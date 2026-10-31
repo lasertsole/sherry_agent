@@ -97,7 +97,10 @@
         <div
           class="flex items-center gap-1"
           data-test="toolbar-left">
+          <!-- The left column's collapse toggle. Hidden while the chat floats:
+               the window owns its restore control, and Ctrl+B still closes it. -->
           <Button
+            v-if="!chatFloat.floating"
             :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
             :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
             :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
@@ -195,8 +198,11 @@
               @click="isSettingsMenuOpen = true" />
             <!-- Right sidebar toggle: mirrors the left sidebar's collapse button,
                  sitting at the far right of the toolbar (the sidebar it controls
-                 is the rightmost region of the shell). -->
+                 is the rightmost region of the shell). Hidden while the chat
+                 floats — the toolbar belongs to the window then, and its side
+                 columns are already laid out around it. -->
             <Button
+              v-if="!chatFloat.floating"
               :icon="isRightSidebarCollapsed ? 'pi pi-angle-double-left' : 'pi pi-angle-double-right'"
               :title="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
               :aria-label="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
