@@ -595,8 +595,7 @@
         <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
           <!-- Virtual read-only entries: the built-in personas (no delete button,
                not Dexie rows) — 纯净 (nothing named, no persona content, required
-               tools only), 编程助手 (the default: operating rules only, no soul /
-               user profile), 情感陪伴 (full persona, orchestration off) and 全量
+               tools only), 情感陪伴 (full persona, orchestration off) and 全量
                (full persona, everything on). -->
           <div
             v-for="builtin in BUILTIN_PRESETS"
@@ -1263,7 +1262,7 @@ const loadContent = async () => {
     // the compose direction is one-way (names -> sentence).
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
     // An explicitly EMPTY name/avatar stays empty (the input shows its
-    // placeholder): the nameless built-ins (Pure / Coding Assistant) ship no names on
+    // placeholder): the nameless built-ins (Pure) ship no names on
     // purpose, and prefilling the shipped character here made the panel disagree
     // with the preset it had just applied.
     fillCharacter({
@@ -1282,7 +1281,7 @@ const loadContent = async () => {
 
 /**
  * Gate for Save Preset / Apply: every file tab within the char limit. Empty content
- * is LEGAL — the Coding Assistant built-in ships an empty soul / user profile (a plain
+ * is LEGAL — the Pure built-in ships an empty soul / user profile (a plain
  * assistant without role-play) and an empty user role name means "the user
  * plays nothing" — so no non-empty requirement remains. The backend accepts
  * blank persona writes for the same reason.
@@ -1455,8 +1454,6 @@ const restoreDefault = async (tab: PersonaTab) => {
  * Click a built-in entry: load its shipped template through the shared catalogue
  * (the same payload the new-session dialog and the top-bar viewer use).
  * - Pure → nobody named, no persona content, and only the required tools;
- * - Coding Assistant → the operating rules only: empty soul and user profile, and BOTH
- *   role names empty — a plain coding assistant, no role statement at all;
  * - Companion / Full → the full language template plus the default names/avatars
  *   (Companion also pins the orchestration surfaces off).
  * @param id Which built-in entry was clicked.
@@ -1815,7 +1812,6 @@ const handleApply = async () => {
           "builtinCompanionName": "情感陪伴",
           "defaultName": "全量",
           "defaultBadge": "默认",
-          "builtinCodingName": "编程助手",
           "builtinBadge": "内置",
           "savePreset": "保存预设",
           "apply": "应用",
@@ -2113,7 +2109,6 @@ const handleApply = async () => {
           "builtinCompanionName": "Companion",
           "defaultName": "Full",
           "defaultBadge": "Default",
-          "builtinCodingName": "Coding Assistant",
           "builtinBadge": "Built-in",
           "savePreset": "Save Preset",
           "apply": "Apply",
@@ -2411,7 +2406,6 @@ const handleApply = async () => {
           "builtinCompanionName": "寄り添い",
           "defaultName": "フル",
           "defaultBadge": "デフォルト",
-          "builtinCodingName": "コーディングアシスタント",
           "builtinBadge": "内蔵",
           "savePreset": "プリセット保存",
           "apply": "適用",
@@ -2709,7 +2703,6 @@ const handleApply = async () => {
           "builtinCompanionName": "감정 동반",
           "defaultName": "전체",
           "defaultBadge": "기본",
-          "builtinCodingName": "코딩 어시스턴트",
           "builtinBadge": "내장",
           "savePreset": "프리셋 저장",
           "apply": "적용",

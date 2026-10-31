@@ -68,6 +68,7 @@ from server.service.session_settings_service import (
 )
 from server.service.session_settings_service import (
     apply_token_budget_choice,
+    apply_turn_token_budget_choice,
     get_token_budget_state,
     reset_token_budget,
 )
@@ -262,22 +263,51 @@ async def get_budget_handler(request):
 
 @app.put("/sessions/budget")
 async def put_budget_handler(request):
-    """Persist the session's token cap (``null`` clears it; live or parked)."""
+    """Persist the session's cumulative and/or per-turn token caps.
+
+    ``cap`` is the session-wide cap; ``turn_cap`` is the per-turn cap across the
+    main agent and all descendants. Either may be omitted; ``null`` clears that
+    choice and goes back to inheriting the app-config default.
+    """
     body = read_body(request)
     if body is None:
         return bad_request("JSON body required")
     session_id = body.get("session_id") or ""
     if not session_id:
         return bad_request("session_id is required")
-    if "cap" not in body:
-        return bad_request("'cap' is required (a non-negative integer, or null to clear)")
+    if "cap" not in body and "turn_cap" not in body:
+        return bad_request(
+            "'cap' or 'turn_cap' is required (a non-negative integer, or null to clear)"
+        )
     cap = body.get("cap")
+    turn_cap = body.get("turn_cap")
     try:
-        pending = await apply_token_budget_choice(session_id, cap)
+        pending = await apply_token_budget_choice(session_id, cap) if "cap" in body else False
+        turn_pending = (
+            await apply_turn_token_budget_choice(session_id, turn_cap)
+            if "turn_cap" in body
+            else False
+        )
     except ValueError as exc:
         return bad_request(str(exc))
-    logger.info("Token budget cap: session={} cap={} pending={}", session_id, cap, pending)
-    return ok({"success": True, "session_id": session_id, "cap": cap, "pending": pending})
+    logger.info(
+        "Token budget caps: session={} cap={} pending={} turn_cap={} turn_pending={}",
+        session_id,
+        cap,
+        pending,
+        turn_cap,
+        turn_pending,
+    )
+    return ok(
+        {
+            "success": True,
+            "session_id": session_id,
+            "cap": cap,
+            "pending": pending,
+            "turn_cap": turn_cap,
+            "turn_pending": turn_pending,
+        }
+    )
 
 
 @app.post("/sessions/budget/reset")

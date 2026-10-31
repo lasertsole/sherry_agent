@@ -16,7 +16,7 @@ from agent.tools.ptc.stub_generator import (
     tool_specs_from_base_tools,
 )
 from agent.tools.terminal import build_terminal_tool
-from agent.tools.web_search import build_web_search_tool
+from agent.tools.web.web_search import build_web_search_tool
 
 pytestmark = [pytest.mark.unit]
 

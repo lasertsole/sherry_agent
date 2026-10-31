@@ -63,12 +63,29 @@
 
 상한은 token만 기준으로 하며 이 추정값에 의존하지 않습니다.
 
+## 🧮 턴당 예산(메인 + 서브에이전트)
+
+`TOKEN_BUDGET_TURN_CAP`은 현재 턴의 선택적 상한입니다. `TokenBudget`은
+`before_agent`에서 turn id를 만들고 `TOKEN_BUDGET_TURN_USED`,
+`TOKEN_BUDGET_TURN_MAIN_USED`, `TOKEN_BUDGET_TURN_CHILD_USED`,
+`TOKEN_BUDGET_TURN_COST`, `TOKEN_BUDGET_TURN_LIMITED`를 초기화합니다. 각 자식은
+spawn 시 `TOKEN_BUDGET_PARENT = {session_id, turn_id}`를 받고,
+`ChildTokenBudget`이 그 사용량을 루트 부모의 SESSION 카운터에(항상), 같은 턴이면
+turn 카운터에도 더합니다. 따라서 session의 `used/cost`에는 모든 자손이 포함됩니다.
+
+`GET /sessions/budget`은 `turn_cap`, `session_turn_cap`, `default_turn_cap`,
+`inherited_turn`, `turn_used`, `turn_main_used`, `turn_child_used`,
+`turn_cost`, `turn_limited`, `turn_pending`도 반환합니다. 설정하지 않으면
+`sherry.jsonc`의 `TOKEN_BUDGET_DEFAULT_TURN_CAP`을 상속하며,
+`PUT /sessions/budget`은 `cap`과 `turn_cap`을 함께 받습니다(각 `null`은 해제,
+`0`은 명시적 무제한). 초기화는 두 카운터를 모두 지우고 두 상한은 유지합니다.
+
 ## 🌐 HTTP API
 
 | Method | Path | Body / query |
 | :--- | :--- | :--- |
 | `GET` | `/sessions/budget` | `?session_id=<sid>` |
-| `PUT` | `/sessions/budget` | `{session_id, cap: int \| null}` |
+| `PUT` | `/sessions/budget` | `{session_id, cap?: int \| null, turn_cap?: int \| null}` |
 | `POST` | `/sessions/budget/reset` | `{session_id}` |
 
 ## 🧪 테스트

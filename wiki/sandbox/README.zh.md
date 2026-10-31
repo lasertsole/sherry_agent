@@ -6,7 +6,7 @@
 
 三个工具让模型能在你的机器上执行代码：`terminal`（shell 命令）、`python_repl`（子进程中的 Python），以及 PTC 的 `execute_code`（子进程中一段更长的 Python 脚本，可经 RPC 桥调用真实工具）。一条幻觉或被注入的命令可能从环境变量里读走 API 密钥、把文件写到项目之外、或者触碰其他进程。沙箱层对这三类风险都有约束。
 
-事实来源：`agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/tools/ptc/runner.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
+事实来源：`agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal/core.py`、`agent/tools/python_repl.py`、`agent/tools/ptc/runner.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
 
 ## 目录
 

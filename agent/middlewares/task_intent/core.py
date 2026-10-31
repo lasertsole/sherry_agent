@@ -214,42 +214,54 @@ This message appears to be a work request. Before responding, assess the scope:
    `enter_plan_mode` narrows you to read-only tools while you design, and
    `exit_plan_mode` submits the plan for the user's approval before anything is
    written. It is optional — a clear, well-scoped task can go straight to
-   orchestrating.
+   implementation.
 
-2. Load the ulw-execute skill to understand the orchestration workflow.
-   Use the skill_view tool to read skill files by name when you need their
-   full instructions.
+2. For a large, delegation-heavy plan, the ulw-execute skill is an optional
+   orchestration mode; ordinary multi-step work does not need it. Use the
+   skill_view tool to read a skill by name when you need its full instructions.
+   Use todowrite to register tasks; for dependencies, register TaskFlow steps
+   with depends_on and let TaskFlow block/unlock/parallel-dispatch — do NOT
+   build a second DAG.
 
-3. You are an ORCHESTRATOR, not an implementer:
-   - Create a session plan file under workspace/sessions/<session_id>/plans/
-     or use todowrite to register tasks
-   - Set proper category, delegation, flow_id/step_id fields
-   - For dependencies, register TaskFlow steps with depends_on and let TaskFlow
-     block/unlock/parallel-dispatch — do NOT build a second DAG
-   - DELEGATE implementation to subagents — you do NOT write code
+3. You may implement directly. The main agent is not forbidden from editing:
+   - A single-file change of about 10 lines or fewer, a bug fix you can verify
+     immediately, or a task with no independent units: do it yourself and run
+     the checks.
+   - For multi-step or large work: create todos first; delegate independent
+     units to subagents via `sessions_spawn` when that is faster or safer, and
+     implement the units that are easier to do yourself.
+   - Long external research (web pages, issues, upstream PRs, cross-repository
+     lookups): spawn a read-only researcher with
+     `sessions_spawn(functional_role='researcher')` and keep implementing and
+     verifying the local patch; do not let the research block the edit.
+   - Delegation is a tool, not a ritual. Do not delegate a trivial edit and wait.
 
 4. Workflow:
-   a. todowrite: register all tasks with atomic granularity
+   a. todowrite: register all tasks with atomic granularity (multi-step work)
    b. For dependent steps: taskflow_step(action='run_task', flow_id=..., task=..., depends_on=[...]); then
       taskflow_step(action='dispatch') the ready ones and taskflow_step(action='wait_all')
-   c. For delegation="subagent" tasks: spawn subagent via task tool
+   c. For delegation="subagent" tasks: spawn with the `sessions_spawn` tool
+      (use functional_role='researcher' for read-only research), then store the
+      returned child_session_key in the todo's subagent_id field
    d. Wait for subagent return → taskflow_step(action='resume') → verify → mark completed
    e. For delegation="self" tasks: execute directly
 
 ## If this is a simple single-step task:
-Respond directly — no plan needed.
+Do it directly — no plan and no delegation needed.
 
 ## If this is a question (not a task):
 Respond directly — ignore this directive.
 
-Decision: Is this a multi-step task? If yes, create todos FIRST."""
+Decision: Is this a multi-step task? If yes, create todos FIRST; if it is small
+and well-scoped, implement it directly."""
 
 # Light steering: short reminder once the session is already armed.
 _TASK_STEERING_REMINDER = (
-    "[SYSTEM DIRECTIVE: ORCHESTRATOR MODE ARMED]\n"
-    "Orchestrator mode is already active for this session. "
+    "[SYSTEM DIRECTIVE: TASK EXECUTION GUIDANCE ARMED]\n"
+    "Task execution guidance is already active for this session. "
     "The full directive above remains binding — re-read it and continue. "
-    "Create todos FIRST for any multi-step work."
+    "Create todos FIRST for any multi-step work; a small single-step change can "
+    "be implemented directly."
 )
 
 # Plan-active reminder (appended when a boulder work is active).

@@ -63,12 +63,30 @@ key/value エディタでも扱えます。既存ファイルに表がなけれ�
 
 上限は token のみで判定し、この推定値には依存しません。
 
+## 🧮 ターンごとの予算（メイン + サブエージェント）
+
+`TOKEN_BUDGET_TURN_CAP` は現在のターンの任意上限です。`TokenBudget` は
+`before_agent` で turn id を発行し、`TOKEN_BUDGET_TURN_USED`、
+`TOKEN_BUDGET_TURN_MAIN_USED`、`TOKEN_BUDGET_TURN_CHILD_USED`、
+`TOKEN_BUDGET_TURN_COST`、`TOKEN_BUDGET_TURN_LIMITED` をリセットします。各子は
+spawn 時に `TOKEN_BUDGET_PARENT = {session_id, turn_id}` を持ち、
+`ChildTokenBudget` がその使用量をルート親の SESSION カウンタへ（常に）、同じ
+ターン中なら turn カウンタへ加算します。したがって session の `used/cost` には
+全子孫が含まれます。
+
+`GET /sessions/budget` は `turn_cap`、`session_turn_cap`、`default_turn_cap`、
+`inherited_turn`、`turn_used`、`turn_main_used`、`turn_child_used`、
+`turn_cost`、`turn_limited`、`turn_pending` も返します。未設定なら
+`sherry.jsonc` の `TOKEN_BUDGET_DEFAULT_TURN_CAP` を継承し、
+`PUT /sessions/budget` は `cap` と `turn_cap` を同時に受け付けます（各 `null` は
+解除、`0` は明示的な無制限）。リセットは両方のカウンタを消し、両方の上限は保持します。
+
 ## 🌐 HTTP API
 
 | Method | Path | Body / query |
 | :--- | :--- | :--- |
 | `GET` | `/sessions/budget` | `?session_id=<sid>` |
-| `PUT` | `/sessions/budget` | `{session_id, cap: int \| null}` |
+| `PUT` | `/sessions/budget` | `{session_id, cap?: int \| null, turn_cap?: int \| null}` |
 | `POST` | `/sessions/budget/reset` | `{session_id}` |
 
 ## 🧪 テスト

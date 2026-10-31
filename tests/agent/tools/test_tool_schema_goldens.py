@@ -135,7 +135,7 @@ def test_the_three_tools_no_longer_import_archived_packages():
 
     import agent.tools.file_tools.write_file as write_file_module
     import agent.tools.python_repl as repl_module
-    import agent.tools.terminal as terminal_module
+    import agent.tools.terminal.core as terminal_module
 
     archived = ("langchain_community", "langchain_experimental")
     for module in (write_file_module, terminal_module, repl_module):

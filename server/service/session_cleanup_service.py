@@ -150,7 +150,7 @@ async def purge_session_data(session_id: str) -> None:
     # the output files go away with the folder (best-effort — a dead pid is the
     # common case, and the watcher already recorded that exit).
     try:
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         killed = background_registry.kill_session_tasks(session_id)
         if killed:

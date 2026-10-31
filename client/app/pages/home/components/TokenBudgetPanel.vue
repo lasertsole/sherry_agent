@@ -72,23 +72,90 @@
           :value="percent"
           :show-value="false"
           class="h-1.5" />
+      </div>
 
-        <div class="flex justify-end gap-2">
-          <Button
-            :label="t('budget.reset')"
-            icon="pi pi-refresh"
-            severity="secondary"
-            size="small"
-            :loading="busy"
-            @click="resetUsage" />
-          <Button
-            :label="t('budget.save')"
-            icon="pi pi-check"
-            size="small"
-            :loading="busy"
-            :disabled="!dirty"
-            @click="saveCap" />
+      <div class="flex flex-col gap-3 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-sm font-semibold text-gray-700 dark:text-gray-200">
+            {{ t('budget.turnTitle') }}
+          </span>
+          <span class="flex items-center gap-1">
+            <Tag
+              v-if="state?.turn_pending"
+              :value="t('budget.turnPending')"
+              severity="warn" />
+            <Tag
+              v-if="state?.turn_limited"
+              :value="t('budget.turnLimited')"
+              severity="danger" />
+          </span>
         </div>
+
+        <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('budget.turnHint') }}
+        </p>
+
+        <div class="flex items-center gap-2">
+          <ToggleSwitch
+            v-model="turnUnlimited"
+            :aria-label="t('budget.turnUnlimited')" />
+          <span class="text-sm text-gray-600 dark:text-gray-300">{{ t('budget.turnUnlimited') }}</span>
+        </div>
+
+        <small
+          class="text-xs text-gray-400 dark:text-gray-500"
+          data-test="turn-source">
+          {{
+            state?.inherited_turn ? t('budget.turnInheritHint', { cap: defaultTurnCapLabel }) : t('budget.turnOwnHint')
+          }}
+        </small>
+
+        <div
+          v-if="!turnUnlimited"
+          class="flex flex-col gap-1">
+          <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('budget.turnCap') }}</label>
+          <InputNumber
+            v-model="turnCapInput"
+            :min="1"
+            :use-grouping="false"
+            class="w-full"
+            :placeholder="t('budget.capPlaceholder')" />
+          <small class="text-xs text-gray-400">{{ t('budget.turnCapHint') }}</small>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          <span>{{ t('budget.turnUsed', { used: formatTokens(state?.turn_used ?? 0), cap: turnCapLabel }) }}</span>
+          <span>{{
+            t('budget.turnSplit', {
+              main: formatTokens(state?.turn_main_used ?? 0),
+              child: formatTokens(state?.turn_child_used ?? 0)
+            })
+          }}</span>
+          <span>{{ t('budget.turnCost', { cost: formatCost(state?.turn_cost ?? 0) }) }}</span>
+        </div>
+
+        <ProgressBar
+          v-if="state?.turn_cap"
+          :value="turnPercent"
+          :show-value="false"
+          class="h-1.5" />
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <Button
+          :label="t('budget.reset')"
+          icon="pi pi-refresh"
+          severity="secondary"
+          size="small"
+          :loading="busy"
+          @click="resetUsage" />
+        <Button
+          :label="t('budget.save')"
+          icon="pi pi-check"
+          size="small"
+          :loading="busy"
+          :disabled="!dirty"
+          @click="saveCap" />
       </div>
     </template>
   </div>
@@ -127,6 +194,12 @@ const loadError = ref('');
 
 /** The cap the panel loaded, used to enable the Save button only on a real edit. */
 const original = ref<{ unlimited: boolean; cap: number | null }>({ unlimited: true, cap: null });
+const turnUnlimited = ref(true);
+const turnCapInput = ref<number | null>(null);
+const originalTurn = ref<{ unlimited: boolean; cap: number | null }>({
+  unlimited: true,
+  cap: null
+});
 
 const capLabel = computed(() =>
   state.value?.cap && state.value.cap > 0 ? formatTokens(state.value.cap) : t('budget.unlimitedShort')
@@ -138,8 +211,22 @@ const percent = computed(() => {
   return Math.min(100, Math.round(((state.value?.used ?? 0) / cap) * 100));
 });
 
+const turnCapLabel = computed(() =>
+  state.value?.turn_cap && state.value.turn_cap > 0 ? formatTokens(state.value.turn_cap) : t('budget.unlimitedShort')
+);
+
+const turnPercent = computed(() => {
+  const cap = state.value?.turn_cap ?? 0;
+  if (cap <= 0) return 0;
+  return Math.min(100, Math.round(((state.value?.turn_used ?? 0) / cap) * 100));
+});
+
 const dirty = computed(
-  () => unlimited.value !== original.value.unlimited || (!unlimited.value && capInput.value !== original.value.cap)
+  () =>
+    unlimited.value !== original.value.unlimited ||
+    (!unlimited.value && capInput.value !== original.value.cap) ||
+    turnUnlimited.value !== originalTurn.value.unlimited ||
+    (!turnUnlimited.value && turnCapInput.value !== originalTurn.value.cap)
 );
 
 /**
@@ -173,11 +260,22 @@ const applyState = (next: TokenBudgetState) => {
   unlimited.value = isUnlimited;
   capInput.value = isUnlimited ? null : (own ?? next.cap);
   original.value = { unlimited: isUnlimited, cap: capInput.value };
+
+  const ownTurn = next.session_turn_cap;
+  const turnIsUnlimited = ownTurn === 0 || (ownTurn === null && next.turn_cap === null);
+  turnUnlimited.value = turnIsUnlimited;
+  turnCapInput.value = turnIsUnlimited ? null : (ownTurn ?? next.turn_cap);
+  originalTurn.value = { unlimited: turnIsUnlimited, cap: turnCapInput.value };
 };
 
 /** The app-config default as the source hint shows it (0 → unlimited). */
 const defaultCapLabel = computed(() =>
   (state.value?.default_cap ?? 0) > 0 ? formatTokens(state.value!.default_cap) : t('budget.unlimitedShort')
+);
+
+/** The app-config per-turn default as the source hint shows it (0 → unlimited). */
+const defaultTurnCapLabel = computed(() =>
+  (state.value?.default_turn_cap ?? 0) > 0 ? formatTokens(state.value!.default_turn_cap) : t('budget.unlimitedShort')
 );
 
 /** Load the current session's budget (the panel can be opened before a session). */
@@ -216,10 +314,22 @@ const saveCap = async () => {
       cap = value;
     }
   }
+  let turnCap = 0;
+  if (!turnUnlimited.value) {
+    const value = turnCapInput.value;
+    if (value === null) {
+      turnUnlimited.value = true;
+    } else if (!Number.isInteger(value) || value <= 0) {
+      loadError.value = t('budget.invalidTurnCap');
+      return;
+    } else {
+      turnCap = value;
+    }
+  }
   busy.value = true;
   loadError.value = '';
   try {
-    await setTokenBudgetCap(sessionId, cap);
+    await setTokenBudgetCap(sessionId, cap, turnCap);
     await load();
   } catch (e) {
     logUtil.e('[TokenBudgetPanel] Failed to save budget:', e);
@@ -274,7 +384,20 @@ onMounted(() => {
       "loadError": "读取 Token 预算失败",
       "saveError": "保存 Token 预算失败",
       "resetError": "重置用量失败",
-      "invalidCap": "请输入大于 0 的整数"
+      "invalidCap": "请输入大于 0 的整数",
+      "turnTitle": "每回合 Token 上限",
+      "turnHint": "统计主代理与本次回合派生的所有子代理；达到上限后本回合停止模型调用。",
+      "turnUnlimited": "不限制每回合用量",
+      "turnCap": "每回合上限",
+      "turnCapHint": "主代理 + 所有子代理的输入 + 输出 token；达到后停止本回合。",
+      "turnUsed": "本回合 {used} / {cap}",
+      "turnSplit": "主代理 {main} · 子代理 {child}",
+      "turnCost": "本回合估算费用 {cost}",
+      "turnInheritHint": "沿用应用配置每回合上限：{cap}",
+      "turnOwnHint": "本会话单独设置每回合上限",
+      "turnPending": "下回合生效",
+      "turnLimited": "本回合已达上限",
+      "invalidTurnCap": "每回合上限必须是大于 0 的整数"
     }
   },
   "en": {
@@ -298,7 +421,20 @@ onMounted(() => {
       "loadError": "Failed to read the token budget",
       "saveError": "Failed to save the token budget",
       "resetError": "Failed to reset the usage",
-      "invalidCap": "Enter an integer greater than 0"
+      "invalidCap": "Enter an integer greater than 0",
+      "turnTitle": "Per-turn token budget",
+      "turnHint": "Counts the main agent plus every subagent spawned in this turn; the turn stops when the cap is reached.",
+      "turnUnlimited": "Unlimited per turn",
+      "turnCap": "Per-turn cap",
+      "turnCapHint": "Main agent + all subagents, input + output tokens; stops the current turn when reached.",
+      "turnUsed": "This turn {used} / {cap}",
+      "turnSplit": "Main {main} · Subagents {child}",
+      "turnCost": "This turn's estimated cost {cost}",
+      "turnInheritHint": "Following the app-config per-turn default: {cap}",
+      "turnOwnHint": "Set for this conversation (the app default does not apply)",
+      "turnPending": "Applies next turn",
+      "turnLimited": "This turn hit the cap",
+      "invalidTurnCap": "The per-turn cap must be an integer greater than 0"
     }
   },
   "ja": {
@@ -322,7 +458,20 @@ onMounted(() => {
       "loadError": "Token 予算の読み取りに失敗しました",
       "saveError": "Token 予算の保存に失敗しました",
       "resetError": "使用量のリセットに失敗しました",
-      "invalidCap": "0 より大きい整数を入力してください"
+      "invalidCap": "0 より大きい整数を入力してください",
+      "turnTitle": "ターンごとの Token 上限",
+      "turnHint": "メインエージェントとこのターンで生成したすべてのサブエージェントを集計します。上限に達するとターンを停止します。",
+      "turnUnlimited": "ターンごとの上限なし",
+      "turnCap": "ターン上限",
+      "turnCapHint": "メイン + すべてのサブエージェントの入力 + 出力トークン。到達すると現在のターンを停止します。",
+      "turnUsed": "今回のターン {used} / {cap}",
+      "turnSplit": "メイン {main} · サブ {child}",
+      "turnCost": "今回のターンの推定費用 {cost}",
+      "turnInheritHint": "アプリ設定のターン既定上限に従います: {cap}",
+      "turnOwnHint": "このセッション専用のターン上限です（アプリ既定は適用されません）",
+      "turnPending": "次のターンから適用",
+      "turnLimited": "このターンは上限に到達",
+      "invalidTurnCap": "ターン上限は 0 より大きい整数で入力してください"
     }
   },
   "ko": {
@@ -346,7 +495,20 @@ onMounted(() => {
       "loadError": "Token 예산을 읽지 못했습니다",
       "saveError": "Token 예산을 저장하지 못했습니다",
       "resetError": "사용량을 초기화하지 못했습니다",
-      "invalidCap": "0보다 큰 정수를 입력하세요"
+      "invalidCap": "0보다 큰 정수를 입력하세요",
+      "turnTitle": "턴당 Token 상한",
+      "turnHint": "메인 에이전트와 이번 턴에 생성된 모든 서브에이전트를 합산합니다. 상한에 도달하면 턴을 중지합니다.",
+      "turnUnlimited": "턴당 무제한",
+      "turnCap": "턴당 상한",
+      "turnCapHint": "메인 + 모든 서브에이전트의 입력 + 출력 토큰. 도달하면 현재 턴을 중지합니다.",
+      "turnUsed": "이번 턴 {used} / {cap}",
+      "turnSplit": "메인 {main} · 서브 {child}",
+      "turnCost": "이번 턴 예상 비용 {cost}",
+      "turnInheritHint": "앱 설정의 턴 기본 상한을 따릅니다: {cap}",
+      "turnOwnHint": "이 세션에만 적용되는 턴 상한입니다(앱 기본값은 적용되지 않음)",
+      "turnPending": "다음 턴부터 적용",
+      "turnLimited": "이번 턴 상한 도달",
+      "invalidTurnCap": "턴 상한은 0보다 큰 정수를 입력하세요"
     }
   }
 }

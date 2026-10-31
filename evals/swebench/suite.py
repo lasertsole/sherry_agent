@@ -83,13 +83,31 @@ _SWEBENCH_AGENTS_APPENDIX = """
   issue tracker / upstream history for an existing fix before inventing one.
 """
 
+_DELEGATE_ONLY_APPENDIX = """
+
+## Delegate-only arm (this evaluation)
+
+- Your own read/search/browser/terminal/python/write tools are DISABLED for the
+  main agent. You must delegate.
+- Spawn an executor with
+  `sessions_spawn(functional_role="executor", ...)` and give it the full task,
+  the repository path, and the instruction to implement the fix and run the
+  relevant tests.
+- Do not stop after spawning. Poll `subagents_list` / `sessions_messages`
+  until the child is done, then use its report (changed files, test command and
+  output, remaining failures). You cannot inspect or edit the code yourself.
+- If the child failed, spawn a follow-up executor or a reviewer; do not try to
+  read or patch the repository yourself.
+"""
+
 
 def _append_agents_appendix(workspace: Path) -> None:
     """Append the swebench arm's environment notes to the seeded rules file."""
     rules = workspace / "AGENTS.md"
-    rules.write_text(
-        rules.read_text(encoding="utf-8") + _SWEBENCH_AGENTS_APPENDIX, encoding="utf-8"
-    )
+    appendix = _SWEBENCH_AGENTS_APPENDIX
+    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
+        appendix += _DELEGATE_ONLY_APPENDIX
+    rules.write_text(rules.read_text(encoding="utf-8") + appendix, encoding="utf-8")
 
 
 def _probe_web() -> dict[str, Any]:
@@ -213,11 +231,15 @@ def _run(
     live_sessions = harness._session_names(live_workspace)
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
+    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
+        os.environ.pop("SHERRY_EVAL_REQUIRE_EDIT", None)
+    else:
+        os.environ["SHERRY_EVAL_REQUIRE_EDIT"] = "1"
     import config.path  # noqa: F401 — hydrates .env / .models / .network
 
-    # Bind the REAL build_main_tools before EvalSandbox patches it for child
-    # agents: agent.core imported it at module load, so this import must happen
-    # before sandbox.apply() or init() would see only the child-safe subset.
+    # Bind the REAL build_main_tools before the sandbox applies: agent.core
+    # imported it at module load, so this import must happen before the
+    # sandbox redirects persistence.
     import agent.core  # noqa: F401
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
@@ -591,6 +613,8 @@ def _write_run_meta(results_dir: Path, *, run_id: str, hard: bool) -> None:
         "argv": sys.argv[1:],
         "git_head": head,
         "hard": hard,
+        "no_edit_gate": os.getenv("SHERRY_EVAL_REQUIRE_EDIT") == "1",
+        "delegate_only": os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1",
         "model": harness._model_info(),
         "sandbox_backend": _sandbox_backend(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -627,6 +651,36 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
         "quiesce": {},
         "harness_error": str(exc),
     }
+
+
+async def _wait_for_descendants(session_id: str, timeout_s: float) -> dict[str, Any]:
+    """Wait for spawned children to settle before teardown (delegate-only).
+
+    ``_drive`` returns when the MAIN turn ends; a delegated child is detached
+    and the teardown cascade would otherwise kill it before it writes. Poll the
+    registry until no descendant is RUNNING/PENDING (or the timeout fires).
+    """
+    from agent.tools.subagent.registry.queries import count_active_descendant_runs
+    from agent.tools.subagent.registry.session_keys import denormalize_session_key
+
+    try:
+        requester = denormalize_session_key(session_id)
+    except Exception as exc:  # noqa: BLE001 — report, never mask the instance
+        return {"ok": False, "active": None, "error": f"{type(exc).__name__}: {exc}"}
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while time.monotonic() < deadline:
+        try:
+            active = count_active_descendant_runs(requester)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "active": None, "error": f"{type(exc).__name__}: {exc}"}
+        if active == 0:
+            return {"ok": True, "active": 0}
+        await asyncio.sleep(2.0)
+    try:
+        active = count_active_descendant_runs(requester)
+    except Exception:  # noqa: BLE001
+        active = None
+    return {"ok": False, "active": active, "timed_out": True}
 
 
 async def _run_instance(
@@ -680,6 +734,14 @@ async def _run_instance(
                 "timeout": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
+        if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
+            # The main turn may end right after spawning; let the detached child
+            # finish (and write its diff) before the teardown cascade kills it.
+            child_wait = await _wait_for_descendants(session_id, timeout_s)
+            print(
+                f"[evals] {instance.instance_id}: delegate-only child wait {child_wait}",
+                flush=True,
+            )
     finally:
         os.environ["PATH"] = original_path
         if previous_scm is None:

@@ -81,7 +81,7 @@ def _network_file(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _providers(monkeypatch):
     """Both providers configured and the search tool's resolution stubbed out."""
-    import agent.tools.web_search as web_search
+    import agent.tools.web.web_search as web_search
 
     monkeypatch.setattr(web_search, "tavily_available", lambda: True)
     monkeypatch.setattr(
@@ -91,7 +91,7 @@ def _providers(monkeypatch):
     )
     # The service imports both lazily from the tool module; the availability of
     # the instance itself is reported by searxng_status.
-    import agent.tools.web_search_searxng as searxng
+    import agent.tools.web.web_search_searxng as searxng
 
     monkeypatch.setattr(
         searxng,

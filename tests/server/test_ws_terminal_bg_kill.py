@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from agent.tools.terminal_bg_registry import BackgroundTask, background_registry
+from agent.tools.terminal.bg_registry import BackgroundTask, background_registry
 from server.trigger.ws.messages import _handle_terminal_bg_kill
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]

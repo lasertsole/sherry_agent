@@ -49,6 +49,10 @@ class TestBuiltinDefinitions:
             "search_files",
             "terminal",
             "web_search",
+            "web_fetch",
+            "message_search",
+            "skill_view",
+            "skill_list",
             # Coordination tools are opt-in at RUNTIME (the builder returns []
             # unless COORDINATION enables them); the whitelist names them so a
             # specialized child reaches the board when it is on. A read-only
@@ -100,13 +104,17 @@ class TestBuiltinDefinitions:
             "search_files",
             "terminal",
             "web_search",
+            "web_fetch",
+            "message_search",
+            "skill_view",
+            "skill_list",
             # Coordination (opt-in at runtime; named here so the child reaches
             # the board when COORDINATION enables it). Read-only roles share and
             # read findings; only the executor claims a path.
             "share_finding",
             "peers_findings",
         ]
-        assert "web_fetch" not in definition.tools
+        assert "web_fetch" in definition.tools
         assert not {"write_file", "patch_file", "python_repl"} & set(definition.tools or [])
 
 

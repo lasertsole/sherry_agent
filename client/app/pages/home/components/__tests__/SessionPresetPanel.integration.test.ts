@@ -218,15 +218,15 @@ describe('SessionPresetButton', () => {
   });
 
   it('names the bound preset and previews it in the four content tabs', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const wrapper = await mountPanel();
 
     const panel = wrapper.get('[data-test="session-preset-panel"]');
-    expect(panel.get('[data-test="session-preset-bound"]').text()).toBe('编程助手');
-    // Preview: the operating rules, and 空 ("empty") for the coding preset's blank soul / user profile.
+    expect(panel.get('[data-test="session-preset-bound"]').text()).toBe('全量');
+    // Preview: the full preset's template content (the built-in now resolves).
     expect(panel.get('[data-test="session-preset-content-AGENTS.md"]').text()).toBe(TEMPLATE['AGENTS.md']);
-    expect(panel.get('[data-test="session-preset-content-SOUL.md"]').text()).toBe('（空）');
-    expect(panel.get('[data-test="session-preset-content-USER.md"]').text()).toBe('（空）');
+    expect(panel.get('[data-test="session-preset-content-SOUL.md"]').text()).toBe(TEMPLATE['SOUL.md']);
+    expect(panel.get('[data-test="session-preset-content-USER.md"]').text()).toBe(TEMPLATE['USER.md']);
   });
 
   it('hints that the session has no preset instead of showing one', async () => {
@@ -248,7 +248,7 @@ describe('SessionPresetButton', () => {
       createdAt: 0,
       updatedAt: 0
     });
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const wrapper = await mountPanel();
 
     const panel = wrapper.get('[data-test="session-preset-panel"]');
@@ -277,7 +277,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('shows the session tools and middlewares READ-ONLY, in the preset panel’s shape', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({
       tools: ['terminal'],
       middlewares_disabled: ['TaskIntentMiddleware']
@@ -307,7 +307,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('marks required tools locked-on and renders a bulk-only group as chips', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({ tools: ['terminal'] }, false, {
       tools: [
         { name: 'read_file', group: 'files', required: true },
@@ -347,7 +347,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('shows the session skills READ-ONLY with the two sub-tabs', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({ tools: ['terminal'], skills: ['alpha'] }).store;
 
     const wrapper = await mountPanel();
@@ -370,7 +370,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('leads with the 代理模型 tab, mirrors 主代理 read-only and shows the nudge row', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({
       tools: ['terminal'],
       middleware_options: { Summarization: { nudge: false } }
@@ -405,7 +405,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('switches the session main model from the 主代理 picker, through the same store', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const selectCalls: Array<[string, unknown]> = [];
     const profiles = makeProfilesStore();
     vi.stubGlobal('useLlmProfilesStore', () => profiles);
@@ -445,7 +445,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({ tools: ['terminal'] }).store;
 
     const store = agentStoreState.current as { save: ReturnType<typeof vi.fn> };
@@ -475,7 +475,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('edits the role profile output cap and keeps the selected profile', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({
       subagent_models: {
         researcher: {
@@ -513,7 +513,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('flags a parked model choice as 下一轮生效', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     agentStoreState.current = makeAgentStore({}, true).store;
 
     const wrapper = await mountPanel();
@@ -528,7 +528,7 @@ describe('SessionPresetButton', () => {
     // The i18n plugin settles the locale after first mount, so a viewer that only
     // watched the session would keep the pre-settle language (live bug: an
     // English template previewed inside a Chinese app).
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const wrapper = await mountPanel();
     expect(bridge.readSystemPromptTemplate).toHaveBeenCalledWith('zh');
 

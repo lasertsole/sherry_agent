@@ -58,12 +58,12 @@ describe('SessionPresetButton', () => {
   });
 
   it('is icon-only and thins out with the folder button on a squeezed column', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const wrapper = await mountButton();
 
     const trigger = wrapper.get('[data-test="session-preset-trigger"]');
     expect(trigger.text()).toBe('');
-    expect(trigger.attributes('title')).toBe('当前会话预设角色：编程助手');
+    expect(trigger.attributes('title')).toBe('当前会话预设角色：全量');
     expect(trigger.classes()).toContain('@max-[300px]:hidden!');
   });
 
@@ -75,7 +75,7 @@ describe('SessionPresetButton', () => {
   });
 
   it('opens the session preset tab in the right sidebar instead of a popup', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
     const wrapper = await mountButton();
 
     await wrapper.get('[data-test="session-preset-trigger"]').trigger('click');

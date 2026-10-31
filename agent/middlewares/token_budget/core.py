@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import uuid
 from functools import lru_cache
 from typing import Any, override
 from collections.abc import Awaitable, Callable
@@ -38,6 +39,8 @@ from config.features import MODEL_PRICING
 from config.features.infra_side.model_pricing import resolve_model_pricing
 from runtime import StateKey, state_register_db, state_register_mem
 
+from agent.middlewares.base import BeforeAgentHooksMixin
+
 BUDGET_LIMITED_EVENT = "budget_limited"
 BUDGET_WARNING_EVENT = "budget_warning"
 
@@ -47,11 +50,16 @@ _BUDGET_LOCK = threading.Lock()
 
 #: Sessions already warned at the threshold (process-local; reset by the API).
 _WARNED: set[str] = set()
+#: (session, turn_id) pairs already warned about the per-turn threshold.
+_TURN_WARNED: set[tuple[str, str]] = set()
 
 
 def reset_budget_notice(session_id: str) -> None:
     """Forget the warning latch so a reset budget can warn again."""
     _WARNED.discard(session_id)
+    for key in tuple(_TURN_WARNED):
+        if key[0] == session_id:
+            _TURN_WARNED.discard(key)
 
 
 @lru_cache(maxsize=1)
@@ -69,9 +77,23 @@ def default_token_cap() -> int:
         return 0
 
 
+@lru_cache(maxsize=1)
+def default_turn_cap() -> int:
+    """The app-config DEFAULT per-turn cap (0 = unlimited)."""
+    try:
+        from config.sherry_settings import load_sherry_settings
+
+        return max(0, int(load_sherry_settings().get("TOKEN_BUDGET_DEFAULT_TURN_CAP", 0) or 0))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def clear_default_token_cap_cache() -> None:
-    """Forget the cached default (tests, and any future live-reload path)."""
-    default_token_cap.cache_clear()
+    """Forget the cached defaults (tests, and any future live-reload path)."""
+    for function in (default_token_cap, default_turn_cap):
+        clear = getattr(function, "cache_clear", None)
+        if callable(clear):
+            clear()
 
 
 def effective_cap(session_id: str) -> int:
@@ -84,6 +106,17 @@ def effective_cap(session_id: str) -> int:
     raw = _read_state(session_id, StateKey.TOKEN_BUDGET_CAP, None)
     if raw is None:
         return default_token_cap()
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def effective_turn_cap(session_id: str) -> int:
+    """The per-turn cap in force for one session (0 = unlimited)."""
+    raw = _read_state(session_id, StateKey.TOKEN_BUDGET_TURN_CAP, None)
+    if raw is None:
+        return default_turn_cap()
     try:
         return max(0, int(raw or 0))
     except (TypeError, ValueError):
@@ -263,8 +296,24 @@ async def _push_event(session_id: str, event: str, content: dict[str, Any]) -> N
         logger.debug("budget push skipped for {} ({}): {}", session_id, event, exc)
 
 
-class TokenBudget(AgentMiddleware):
-    """Enforce an optional per-session token cap and accumulate usage."""
+class TokenBudget(BeforeAgentHooksMixin, AgentMiddleware):
+    """Enforce optional per-session AND per-turn caps and accumulate usage.
+
+    The per-turn counters include the main agent and every descendant subagent
+    (a child's model calls are attributed through ``TOKEN_BUDGET_PARENT``).
+    """
+
+    def _before_agent_impl(self, state: AgentState) -> None:
+        session_id = _session_id(state)
+        if not session_id:
+            return
+        with _BUDGET_LOCK:
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_ID, uuid.uuid4().hex)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_USED, 0)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_COST, 0.0)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED, False)
 
     @staticmethod
     def _pre_call(state: AgentState) -> AIMessage | None:
@@ -272,23 +321,49 @@ class TokenBudget(AgentMiddleware):
         if not session_id:
             return None
         cap = effective_cap(session_id)
-        if cap <= 0:
-            return None
         used = int(_read_state(session_id, StateKey.TOKEN_BUDGET_USED, 0) or 0)
-        if used < cap:
-            return None
-
-        if not bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False)):
-            _write_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, True)
-            _notify(session_id, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
-        return AIMessage(
-            content=(
-                f"[SYSTEM] Token budget exhausted ({used}/{cap} tokens). "
-                "Stop calling tools and provide a concise summary of what was "
-                "accomplished. The operator can reset or raise the budget in the "
-                "session controls."
+        if cap > 0 and used >= cap:
+            if not bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False)):
+                _write_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, True)
+                _notify(session_id, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
+            return AIMessage(
+                content=(
+                    f"[SYSTEM] Token budget exhausted ({used}/{cap} tokens). "
+                    "Stop calling tools and provide a concise summary of what was "
+                    "accomplished. The operator can reset or raise the budget in the "
+                    "session controls."
+                )
             )
-        )
+        turn_cap = effective_turn_cap(session_id)
+        turn_used = int(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_USED, 0) or 0)
+        if turn_cap > 0 and turn_used >= turn_cap:
+            if not bool(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED, False)):
+                _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED, True)
+                _notify(
+                    session_id,
+                    BUDGET_LIMITED_EVENT,
+                    {
+                        "scope": "turn",
+                        "used": used,
+                        "cap": cap,
+                        "turn_used": turn_used,
+                        "turn_cap": turn_cap,
+                        "main_used": int(
+                            _read_state(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0) or 0
+                        ),
+                        "child_used": int(
+                            _read_state(session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0) or 0
+                        ),
+                    },
+                )
+            return AIMessage(
+                content=(
+                    f"[SYSTEM] Turn token budget exhausted ({turn_used}/{turn_cap} tokens, "
+                    "main agent + subagents). Stop calling tools and provide a concise "
+                    "summary of what was accomplished."
+                )
+            )
+        return None
 
     @staticmethod
     def _post_call(state: AgentState, result: Any) -> None:
@@ -309,35 +384,315 @@ class TokenBudget(AgentMiddleware):
         total = input_tokens + output_tokens
         if total <= 0:
             return
+        cost_delta = _cost_delta(ai_msg, usage, input_tokens, output_tokens)
 
         with _BUDGET_LOCK:
             used = int(_read_state(session_id, StateKey.TOKEN_BUDGET_USED, 0) or 0) + total
             cost = float(_read_state(session_id, StateKey.TOKEN_BUDGET_COST, 0.0) or 0.0)
-            cost += _cost_delta(ai_msg, usage, input_tokens, output_tokens)
+            cost += cost_delta
+            turn_used = (
+                int(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_USED, 0) or 0) + total
+            )
+            turn_main_used = (
+                int(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0) or 0) + total
+            )
+            turn_cost = float(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_COST, 0.0) or 0.0)
+            turn_cost += cost_delta
             _write_state(session_id, StateKey.TOKEN_BUDGET_USED, used)
             _write_state(session_id, StateKey.TOKEN_BUDGET_COST, round(cost, 6))
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_USED, turn_used)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, turn_main_used)
+            _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_COST, round(turn_cost, 6))
 
             cap = effective_cap(session_id)
-            if cap <= 0:
-                return
-            limited = bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False))
-            if used >= cap:
-                if not limited:
-                    _write_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, True)
-                    _notify(session_id, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
-                return
-            threshold = float(cap) * float(MODEL_PRICING["budget_warn_threshold"])
-            if used >= threshold and session_id not in _WARNED:
-                _WARNED.add(session_id)
-                _notify(
-                    session_id,
-                    BUDGET_WARNING_EVENT,
-                    {
-                        "used": used,
-                        "cap": cap,
-                        "threshold": MODEL_PRICING["budget_warn_threshold"],
-                    },
+            if cap > 0:
+                limited = bool(_read_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, False))
+                if used >= cap:
+                    if not limited:
+                        _write_state(session_id, StateKey.TOKEN_BUDGET_LIMITED, True)
+                        _notify(session_id, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
+                else:
+                    threshold = float(cap) * float(MODEL_PRICING["budget_warn_threshold"])
+                    if used >= threshold and session_id not in _WARNED:
+                        _WARNED.add(session_id)
+                        _notify(
+                            session_id,
+                            BUDGET_WARNING_EVENT,
+                            {
+                                "scope": "session",
+                                "used": used,
+                                "cap": cap,
+                                "threshold": MODEL_PRICING["budget_warn_threshold"],
+                            },
+                        )
+
+            turn_cap = effective_turn_cap(session_id)
+            if turn_cap > 0:
+                turn_limited = bool(
+                    _read_state(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED, False)
                 )
+                if turn_used >= turn_cap:
+                    if not turn_limited:
+                        _write_state(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED, True)
+                        _notify(
+                            session_id,
+                            BUDGET_LIMITED_EVENT,
+                            {
+                                "scope": "turn",
+                                "used": used,
+                                "cap": cap,
+                                "turn_used": turn_used,
+                                "turn_cap": turn_cap,
+                                "main_used": turn_main_used,
+                                "child_used": int(
+                                    _read_state(
+                                        session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0
+                                    )
+                                    or 0
+                                ),
+                            },
+                        )
+                else:
+                    threshold = float(turn_cap) * float(MODEL_PRICING["budget_warn_threshold"])
+                    turn_id = str(_read_state(session_id, StateKey.TOKEN_BUDGET_TURN_ID, "") or "")
+                    key = (session_id, turn_id)
+                    if turn_used >= threshold and key not in _TURN_WARNED:
+                        _TURN_WARNED.add(key)
+                        _notify(
+                            session_id,
+                            BUDGET_WARNING_EVENT,
+                            {
+                                "scope": "turn",
+                                "used": used,
+                                "cap": cap,
+                                "turn_used": turn_used,
+                                "turn_cap": turn_cap,
+                                "main_used": turn_main_used,
+                                "child_used": int(
+                                    _read_state(
+                                        session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0
+                                    )
+                                    or 0
+                                ),
+                                "threshold": MODEL_PRICING["budget_warn_threshold"],
+                            },
+                        )
+
+    @override
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        terminal = self._pre_call(request.state)
+        if terminal is not None:
+            return terminal
+        result = handler(request)
+        self._post_call(request.state, result)
+        return result
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        terminal = self._pre_call(request.state)
+        if terminal is not None:
+            return terminal
+        result = await handler(request)
+        self._post_call(request.state, result)
+        return result
+
+
+class ChildTokenBudget(AgentMiddleware):
+    """Attribute a child agent's usage to its root parent's budget counters.
+
+    A child session carries ``TOKEN_BUDGET_PARENT = {session_id, turn_id}`` set
+    at spawn. Its model calls add to that parent's SESSION usage (always) and
+    TURN usage (when the parent is still on the same turn), so a per-turn cap
+    covers the main agent plus every descendant.
+    """
+
+    @staticmethod
+    def _attribution(state: AgentState) -> tuple[str, str] | None:
+        session_id = _session_id(state)
+        if not session_id:
+            return None
+        raw = _read_state(session_id, StateKey.TOKEN_BUDGET_PARENT, None)
+        if not isinstance(raw, dict):
+            return None
+        parent = raw.get("session_id")
+        if not isinstance(parent, str) or not parent:
+            return None
+        return parent, str(raw.get("turn_id") or "")
+
+    @staticmethod
+    def _same_turn(parent: str, turn_id: str) -> bool:
+        if not turn_id:
+            return False
+        current = str(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_ID, "") or "")
+        return current == turn_id
+
+    @staticmethod
+    def _pre_call(state: AgentState) -> AIMessage | None:
+        attribution = ChildTokenBudget._attribution(state)
+        if attribution is None:
+            return None
+        parent, turn_id = attribution
+        used = int(_read_state(parent, StateKey.TOKEN_BUDGET_USED, 0) or 0)
+        cap = effective_cap(parent)
+        if cap > 0 and used >= cap:
+            if not bool(_read_state(parent, StateKey.TOKEN_BUDGET_LIMITED, False)):
+                _write_state(parent, StateKey.TOKEN_BUDGET_LIMITED, True)
+                _notify(parent, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
+            return AIMessage(
+                content=(
+                    f"[SYSTEM] Token budget exhausted ({used}/{cap} tokens, "
+                    "main agent + subagents). Stop calling tools and provide a "
+                    "concise summary of what was accomplished."
+                )
+            )
+        if ChildTokenBudget._same_turn(parent, turn_id):
+            turn_cap = effective_turn_cap(parent)
+            turn_used = int(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_USED, 0) or 0)
+            if turn_cap > 0 and turn_used >= turn_cap:
+                if not bool(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_LIMITED, False)):
+                    _write_state(parent, StateKey.TOKEN_BUDGET_TURN_LIMITED, True)
+                    _notify(
+                        parent,
+                        BUDGET_LIMITED_EVENT,
+                        {
+                            "scope": "turn",
+                            "used": used,
+                            "cap": cap,
+                            "turn_used": turn_used,
+                            "turn_cap": turn_cap,
+                            "main_used": int(
+                                _read_state(parent, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0) or 0
+                            ),
+                            "child_used": int(
+                                _read_state(parent, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0) or 0
+                            ),
+                        },
+                    )
+                return AIMessage(
+                    content=(
+                        f"[SYSTEM] Turn token budget exhausted ({turn_used}/{turn_cap} "
+                        "tokens, main agent + subagents). Stop calling tools and "
+                        "provide a concise summary."
+                    )
+                )
+        return None
+
+    @staticmethod
+    def _post_call(state: AgentState, result: Any) -> None:
+        attribution = ChildTokenBudget._attribution(state)
+        if attribution is None:
+            return
+        parent, turn_id = attribution
+        ai_msg = _extract_ai_message(result)
+        if ai_msg is None:
+            return
+        usage = getattr(ai_msg, "usage_metadata", None)
+        if not isinstance(usage, dict):
+            return
+        try:
+            input_tokens = int(usage.get("input_tokens") or 0)
+            output_tokens = int(usage.get("output_tokens") or 0)
+        except (TypeError, ValueError):
+            return
+        total = input_tokens + output_tokens
+        if total <= 0:
+            return
+        cost_delta = _cost_delta(ai_msg, usage, input_tokens, output_tokens)
+
+        with _BUDGET_LOCK:
+            used = int(_read_state(parent, StateKey.TOKEN_BUDGET_USED, 0) or 0) + total
+            cost = float(_read_state(parent, StateKey.TOKEN_BUDGET_COST, 0.0) or 0.0) + cost_delta
+            _write_state(parent, StateKey.TOKEN_BUDGET_USED, used)
+            _write_state(parent, StateKey.TOKEN_BUDGET_COST, round(cost, 6))
+            same_turn = ChildTokenBudget._same_turn(parent, turn_id)
+            if same_turn:
+                turn_used = (
+                    int(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_USED, 0) or 0) + total
+                )
+                child_used = (
+                    int(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0) or 0) + total
+                )
+                turn_cost = (
+                    float(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_COST, 0.0) or 0.0)
+                    + cost_delta
+                )
+                _write_state(parent, StateKey.TOKEN_BUDGET_TURN_USED, turn_used)
+                _write_state(parent, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, child_used)
+                _write_state(parent, StateKey.TOKEN_BUDGET_TURN_COST, round(turn_cost, 6))
+                turn_cap = effective_turn_cap(parent)
+                if turn_cap > 0:
+                    limited = bool(_read_state(parent, StateKey.TOKEN_BUDGET_TURN_LIMITED, False))
+                    if turn_used >= turn_cap:
+                        if not limited:
+                            _write_state(parent, StateKey.TOKEN_BUDGET_TURN_LIMITED, True)
+                            _notify(
+                                parent,
+                                BUDGET_LIMITED_EVENT,
+                                {
+                                    "scope": "turn",
+                                    "used": used,
+                                    "cap": effective_cap(parent),
+                                    "turn_used": turn_used,
+                                    "turn_cap": turn_cap,
+                                    "main_used": int(
+                                        _read_state(parent, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0)
+                                        or 0
+                                    ),
+                                    "child_used": child_used,
+                                },
+                            )
+                    else:
+                        threshold = float(turn_cap) * float(MODEL_PRICING["budget_warn_threshold"])
+                        key = (parent, turn_id)
+                        if turn_used >= threshold and key not in _TURN_WARNED:
+                            _TURN_WARNED.add(key)
+                            _notify(
+                                parent,
+                                BUDGET_WARNING_EVENT,
+                                {
+                                    "scope": "turn",
+                                    "used": used,
+                                    "cap": effective_cap(parent),
+                                    "turn_used": turn_used,
+                                    "turn_cap": turn_cap,
+                                    "main_used": int(
+                                        _read_state(parent, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0)
+                                        or 0
+                                    ),
+                                    "child_used": child_used,
+                                    "threshold": MODEL_PRICING["budget_warn_threshold"],
+                                },
+                            )
+
+            cap = effective_cap(parent)
+            if cap > 0:
+                limited = bool(_read_state(parent, StateKey.TOKEN_BUDGET_LIMITED, False))
+                if used >= cap:
+                    if not limited:
+                        _write_state(parent, StateKey.TOKEN_BUDGET_LIMITED, True)
+                        _notify(parent, BUDGET_LIMITED_EVENT, {"used": used, "cap": cap})
+                else:
+                    threshold = float(cap) * float(MODEL_PRICING["budget_warn_threshold"])
+                    if used >= threshold and parent not in _WARNED:
+                        _WARNED.add(parent)
+                        _notify(
+                            parent,
+                            BUDGET_WARNING_EVENT,
+                            {
+                                "scope": "session",
+                                "used": used,
+                                "cap": cap,
+                                "threshold": MODEL_PRICING["budget_warn_threshold"],
+                            },
+                        )
 
     @override
     def wrap_model_call(

@@ -12,6 +12,7 @@ from agent.middlewares.token_budget import core as budget_core
 from agent.middlewares.token_budget.core import (
     BUDGET_LIMITED_EVENT,
     BUDGET_WARNING_EVENT,
+    ChildTokenBudget,
     TokenBudget,
 )
 from runtime import StateKey
@@ -384,3 +385,90 @@ class TestInheritedDefaultCap:
 
         assert result.content == "ok", "no budget message: the session is unlimited"
         assert events == []
+
+
+# ── Per-turn budget: main + descendants ─────────────────────────────────────
+
+CHILD = "agent:main:subagent:token-budget-test"
+
+
+@pytest.mark.asyncio
+async def test_per_turn_counters_reset_and_include_main(registers):
+    mem, _db = registers
+    budget = TokenBudget()
+    budget._before_agent_impl({"session_id": SESSION})
+    turn_id = mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_ID)
+    assert isinstance(turn_id, str) and turn_id
+
+    async def handler(_request):
+        return _ai(input_tokens=100, output_tokens=50)
+
+    await budget.awrap_model_call(_request(), handler)
+
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 150
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_MAIN_USED) == 150
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) == 0
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 150
+
+    # A new turn resets the turn counters but keeps the session total.
+    budget._before_agent_impl({"session_id": SESSION})
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 0
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 150
+
+
+@pytest.mark.asyncio
+async def test_turn_cap_short_circuits_without_calling_the_model(registers):
+    mem, _db = registers
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP, 100)
+    budget = TokenBudget()
+    budget._before_agent_impl({"session_id": SESSION})
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED, 100)
+    called: list[bool] = []
+
+    async def handler(_request):
+        called.append(True)
+        return _ai(input_tokens=1, output_tokens=1)
+
+    result = await budget.awrap_model_call(_request(), handler)
+
+    assert isinstance(result, AIMessage)
+    assert "Turn token budget exhausted" in result.content
+    assert called == []
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_LIMITED) is True
+
+
+@pytest.mark.asyncio
+async def test_child_usage_is_attributed_to_the_parent_turn(registers):
+    mem, _db = registers
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_ID, "turn-1")
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP, 1000)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 0)
+    mem.set_state(
+        CHILD,
+        StateKey.TOKEN_BUDGET_PARENT,
+        {"session_id": SESSION, "turn_id": "turn-1"},
+    )
+
+    async def handler(_request):
+        return _ai(input_tokens=200, output_tokens=100)
+
+    result = await ChildTokenBudget().awrap_model_call(
+        SimpleNamespace(state={"session_id": CHILD}), handler
+    )
+
+    assert result.content == "ok"
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 300
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 300
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_MAIN_USED) == 0
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) == 300
+
+    # After the parent moved to a new turn, an old child only adds to the
+    # session total (never to the new turn's counters).
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_ID, "turn-2")
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED, 0)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 0)
+
+    await ChildTokenBudget().awrap_model_call(SimpleNamespace(state={"session_id": CHILD}), handler)
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 600
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 0
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) == 0

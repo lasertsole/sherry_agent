@@ -26,8 +26,8 @@ from config.features import TOOLS_TIMEOUTS
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
-from agent.tools.web_search_push import push_search_fallback, push_searxng_cooldown
-from agent.tools.web_search_searxng import (
+from .web_search_push import push_search_fallback, push_searxng_cooldown
+from .web_search_searxng import (
     consume_searxng_recovery,
     record_searxng_outcome,
     searxng_available,

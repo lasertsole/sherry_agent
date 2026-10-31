@@ -1464,7 +1464,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
   the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
-  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
+  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 /
   情感陪伴 pin `nudge: false`.
 - **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
   — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
@@ -1498,14 +1498,13 @@ false` = under `skills/plugins/`); each tool entry also carries the
 - **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
   内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag), 代理模型 = 主代理 /
   子代理. The pills are a VIEW filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
-- **Four built-in presets**, in display order — the whole spectrum
+- **Three built-in presets**, in display order — the whole spectrum
   (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
   persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
-  off), 编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool
-  EXCEPT the memory store, the required skills plus `CODING_SKILLS` — code-wiki / taskflow /
-  ulw-execute / todolist — and every optional middleware on), 情感陪伴 (the full role-play
+  off), 情感陪伴 (the full role-play
   persona with the 任务与计划 / 子代理 tool groups off, every optional middleware off, the
-  mirror-image skill set — the required chain plus every skill 编程助手 does NOT pick — the
+  required chain plus every skill outside the coding work-flow set
+  (`COMPANION_EXCLUDED_SKILLS`), the
   task-orchestration sections stripped out of 运行守则 — `stripTaskSections`, a per-language
   heading/label filter pinned by a test that reads the four shipped templates — and the
   couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
@@ -1604,7 +1603,7 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
-## Background Commands: Command-Level Cancel (`agent/tools/terminal_bg_registry.py`)
+## Background Commands: Command-Level Cancel (`agent/tools/terminal/bg_registry.py`)
 
 `terminal(run_in_background=True)` starts a child that OUTLIVES the turn, so stopping it cannot go through the turn's cancel: the WS `stop` frame cancels the turn's own asyncio task, and the background child is a separate process group with its own watcher. This feature is the missing verb — stop ONE command, leave the turn and the session's other commands alone.
 
@@ -1691,7 +1690,7 @@ response it accumulates the provider-reported `usage_metadata` into
 to the mem + DB registers so a restart does not lose the counters. The cap/park
 twin (`TOKEN_BUDGET_CAP_PENDING`) uses the same busy → park / turn-end promote
 rule as the thinking/model controls; `POST /sessions/budget/reset` clears
-USED/COST/LIMITED but keeps the cap. The UI is a SESSION-scoped right-sidebar tab
+USED/COST/LIMITED and the per-turn counters but keeps both caps. The UI is a SESSION-scoped right-sidebar tab
 (`tokenBudget`, `client/app/pages/home/components/TokenBudgetPanel.vue`): the cap
 belongs to one conversation, so it is NOT a 系统配置 tab any more. It is opened
 from the context-ring popover's footer entry (`ContextUsageButton.vue` →
@@ -1709,7 +1708,27 @@ values after a restart). `apply_token_budget_choice(None)` clears the session's
 override (back to inheriting); `0` is the explicit-unlimited choice the panel's
 toggle / an emptied cap field writes. `GET /sessions/budget` reports
 `{cap (enforced), session_cap (own choice), default_cap, inherited, used, cost,
-limited, pending}` so the panel can say where the cap comes from.
+limited, pending}` so the panel can say where the cap comes from. The response
+also carries the per-turn fields below.
+
+**Per-turn budget (main + subagents)**: `TOKEN_BUDGET_TURN_CAP` is an optional
+cap for the CURRENT turn; `TOKEN_BUDGET_DEFAULT_TURN_CAP` is its app-config
+default (0 = unlimited). `TokenBudget` now also runs a `before_agent` hook:
+it mints `TOKEN_BUDGET_TURN_ID` and resets
+`TOKEN_BUDGET_TURN_USED/MAIN_USED/CHILD_USED/COST/LIMITED` (the session totals
+are untouched). Every spawn writes `TOKEN_BUDGET_PARENT` (the root parent session id plus the
+turn id) on the CHILD session (nested spawns inherit their own attribution, so a
+grandchild returns to the root parent); `ChildTokenBudget`, in the child chain,
+adds the child's provider-reported usage to that root parent's SESSION
+`USED/COST` always and to its TURN counters while the parent is still on the
+same turn. A child that outlives the turn only affects the session total. Both
+the main and child model calls check the turn cap and short-circuit with a
+terminal `AIMessage` when it is exhausted. `GET /sessions/budget` additionally
+returns `turn_cap, session_turn_cap, default_turn_cap, inherited_turn,
+turn_used, turn_main_used, turn_child_used, turn_cost, turn_limited,
+turn_pending, turn_id`; `PUT /sessions/budget` accepts `cap` and `turn_cap`
+independently (each `null` clears it, `0` is explicitly unlimited). Reset clears
+both the session and the turn counters; both caps stay.
 
 **App Config tab** (`config/sherry_settings.py` registry → `GET /sherry-config`):
 each entry now returns its typed `default` alongside `value`, a registered key
@@ -1754,7 +1773,7 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
   client has one shape to render (`client/app/stores/taskflow.ts`,
   `pages/home/components/ProgressFloat.vue`).
 
-## Web Search Backends (`agent/tools/web_search.py`)
+## Web Search Backends (`agent/tools/web/web_search.py`)
 
 `web_search` is ONE tool over two interchangeable providers — the Tavily branch
 pins `name = "web_search"` (TavilySearch's own default would ship the swap as a
@@ -1772,7 +1791,7 @@ Tavily keeps its bounded retry and then falls back to SearXNG when an instance
 is configured — the one thing SearXNG never does is fall back to Tavily (a
 self-hosted deployment may have no key at all, and the pair must not ping-pong).
 
-The fallback is announced, not silent: `agent/tools/web_search_push.py` pushes
+The fallback is announced, not silent: `agent/tools/web/web_search_push.py` pushes
 the best-effort `search_backend_fallback` frame
 (`{from, backend, reason, message}`, reason ∈ `tavily_auth_failed` /
 `tavily_timeout` / `tavily_error`; an auth failure skips the retries) to the
@@ -1785,7 +1804,7 @@ user may be looking at another session. The turn it belongs to keeps streaming,
 and the result text names its own backend ("SearXNG search results …"), so a
 client that misses the frame still shows the truth.
 
-SearXNG lives in `agent/tools/web_search_searxng.py`: the instance's JSON API
+SearXNG lives in `agent/tools/web/web_search_searxng.py`: the instance's JSON API
 (`GET {SEARXNG_URL}/search?q=…&format=json&pageno=1`), results ranked by score
 and formatted like Tavily's, plus the three connection options a self-hosted
 deployment needs — an httpx proxy, engine/category passthrough, and a
@@ -1849,7 +1868,7 @@ question unanswerable by traversal. `path_search.py` adds the explicit layer
   regression gate. Measured after the change: bridge answer recall 0.875 → 1.000,
   total context −44% (`mix`) / −85% (`path`), path latency 2-13 ms.
 
-## URL Fetching (`agent/tools/web_fetch.py`)
+## URL Fetching (`agent/tools/web/web_fetch.py`)
 
 `web_fetch(url)` reads ONE http(s) URL and hands it back as markdown — the
 companion to `web_search` (search finds URLs, this reads one). Two branches:

@@ -81,7 +81,7 @@ from langgraph.errors import GraphInterrupt
 from loguru import logger
 
 import agent.tools.python_repl as python_repl_mod
-import agent.tools.terminal as terminal_mod
+import agent.tools.terminal.core as terminal_mod
 from agent.middlewares.humanInTheLoop import HITLConfig, HumanInTheLoop
 from agent.tools.pub_base.env_scrub import SHERRY_SECRET_NAMES
 from agent.tools.python_repl import build_python_repl_tool

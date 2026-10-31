@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 import agent.tools.pub_base.sandbox_guard as sandbox_guard
-import agent.tools.terminal as terminal
+import agent.tools.terminal.core as terminal
 import pub.func.message.eviction as eviction_module
 from agent.tools.pub_base.sandbox import SandboxPolicy
 from agent.tools.pub_base.stdout_fd import (
@@ -408,7 +408,7 @@ class TestRealChild:
 
 class TestPerCallTimeout:
     def test_the_resolver_defaults_clamps_and_rejects_nonsense(self):
-        from agent.tools.terminal import (
+        from agent.tools.terminal.core import (
             TERMINAL_MAX_TIMEOUT,
             TERMINAL_TIMEOUT,
             _resolve_timeout,

@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
-import agent.tools.web_search_searxng as searxng
+import agent.tools.web.web_search_searxng as searxng
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 

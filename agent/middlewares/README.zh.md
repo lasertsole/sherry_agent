@@ -837,7 +837,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | `llm_retry.py`            | `max_retries=3`、`base_delay=2.0`、`max_delay=60.0`、`jitter=0.3`、`stale_giveup_threshold=5`                                                                                                                   |
 | `context_guard.py`        | `output_cut_ratio=0.20`、`check_interval=20`                                                                                                                                                                    |
 
-> **相关但独立：** 各工具的超时是绑定特性注册表的模块常量（`config/features/agent_side/tools_timeouts.py` 中的 `TOOLS_TIMEOUTS`）——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`TOOL_CALL_TIMEOUT_MINUTES`（默认 5）是 `sherry.jsonc` 设置，经 `config/sherry_settings.py` 贯通并由配置服务对外暴露，但**没有任何工具执行路径消费它**——它不是生效的超时旋钮。摘要管线从 `config/features/agent_side/summarization.py` 读取其常量。
+> **相关但独立：** 各工具的超时是绑定特性注册表的模块常量（`config/features/agent_side/tools_timeouts.py` 中的 `TOOLS_TIMEOUTS`）——`WEB_SEARCH_TIMEOUT = 15`（`agent/tools/web/web_search.py`）、`TERMINAL_TIMEOUT = 30`（`agent/tools/terminal/core.py`）、`PYTHON_REPL_TIMEOUT = 30`（`agent/tools/python_repl.py`；超时会杀死子进程）。`TOOL_CALL_TIMEOUT_MINUTES`（默认 5）是 `sherry.jsonc` 设置，经 `config/sherry_settings.py` 贯通并由配置服务对外暴露，但**没有任何工具执行路径消费它**——它不是生效的超时旋钮。摘要管线从 `config/features/agent_side/summarization.py` 读取其常量。
 
 ### 构建示例（节选）
 

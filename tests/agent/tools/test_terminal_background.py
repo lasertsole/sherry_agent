@@ -18,14 +18,14 @@ import pytest
 
 from agent.tools.pub_base import read_state
 from agent.tools.terminal import build_terminal_tool
-from agent.tools.terminal_bg_registry import (
+from agent.tools.terminal.bg_registry import (
     BackgroundTask,
     BackgroundTaskRegistry,
     background_registry,
     open_background_output,
     read_output_tail,
 )
-from agent.tools.terminal_bg_tools import terminal_bg_list, terminal_bg_output
+from agent.tools.terminal.bg_tools import terminal_bg_list, terminal_bg_output
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 

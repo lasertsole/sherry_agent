@@ -135,10 +135,9 @@ sherry_agent/
 │       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # Shared tool utilities & infrastructure (BaseSQLiteRepository, path utils)
 │       ├── mcp_plugin.py   # MCP tool integration
-│       ├── web_search.py   # Web search tool (Tavily)
-│       ├── web_fetch.py    # URL-reading tool (markdown; public + opt-in local)
+│       ├── web/            # Web search + fetch tools
 │       ├── python_repl.py  # Python code execution
-│       ├── terminal.py     # Terminal command execution
+│       ├── terminal/       # Terminal + background-task tools
 │       ├── memory.py       # Memory inspection tool
 │       ├── question.py     # HITL multi-choice question prompt
 │       └── message_search.py # Conversation FTS5 search tool

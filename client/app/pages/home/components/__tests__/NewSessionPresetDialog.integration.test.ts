@@ -1,7 +1,7 @@
 /**
  * The mandatory new-session dialog: a session is created only after a preset is
  * chosen and applied, so this suite pins the two halves of that contract — the
- * catalogue it offers (Coding Assistant first, preselected) and the creation sequence
+ * catalogue it offers (Full first, preselected) and the creation sequence
  * (apply → bind → character snapshot → placeholder → navigate).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -117,7 +117,7 @@ describe('NewSessionPresetDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the four built-ins with 全量 preselected', async () => {
+  it('lists the three built-ins with 全量 preselected', async () => {
     db.presets.push({
       id: 7,
       name: '我的预设',
@@ -130,13 +130,12 @@ describe('NewSessionPresetDialog', () => {
     const rows = wrapper.findAll('[data-test^="new-session-preset-option-"]');
     expect(rows.map(row => row.attributes('data-test'))).toEqual([
       'new-session-preset-option-pure',
-      'new-session-preset-option-coding',
       'new-session-preset-option-companion',
       'new-session-preset-option-sherry',
       'new-session-preset-option-user:7'
     ]);
     // The default preset is preselected, so the 创建会话 ("Create session") button is immediately actionable.
-    expect(rows[3]!.find('i.pi-check').exists()).toBe(true);
+    expect(rows[2]!.find('i.pi-check').exists()).toBe(true);
     expect(buttonByText(wrapper, '创建会话').attributes('disabled')).toBeUndefined();
   });
 

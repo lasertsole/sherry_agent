@@ -931,7 +931,7 @@ export async function setSessionModel(
  * ``limited`` latches once the cap is reached.
  */
 export interface TokenBudgetState {
-  /** The cap enforced on the next turn (inherited default included); null = unlimited. */
+  /** The session cap enforced on the next turn (inherited default included); null = unlimited. */
   cap: number | null;
   /** The session's OWN cap: null = never set (inherits), 0 = explicitly unlimited. */
   session_cap: number | null;
@@ -943,6 +943,22 @@ export interface TokenBudgetState {
   cost: number;
   limited: boolean;
   pending: boolean;
+  /** The per-turn cap enforced on the current/next turn; null = unlimited. */
+  turn_cap: number | null;
+  /** The session's OWN per-turn cap: null = inherits, 0 = explicitly unlimited. */
+  session_turn_cap: number | null;
+  /** The app-config default (`TOKEN_BUDGET_DEFAULT_TURN_CAP`; 0 = unlimited). */
+  default_turn_cap: number;
+  /** Whether the session is inheriting `default_turn_cap`. */
+  inherited_turn: boolean;
+  /** Current-turn totals: main + all descendants. */
+  turn_used: number;
+  turn_main_used: number;
+  turn_child_used: number;
+  turn_cost: number;
+  turn_limited: boolean;
+  turn_pending: boolean;
+  turn_id: string;
 }
 
 /**
@@ -952,6 +968,8 @@ export interface TokenBudgetState {
 function toTokenBudgetState(res: Partial<TokenBudgetState> | null): TokenBudgetState {
   const cap = res?.cap;
   const sessionCap = res?.session_cap;
+  const turnCap = res?.turn_cap;
+  const sessionTurnCap = res?.session_turn_cap;
   return {
     cap: typeof cap === 'number' ? cap : null,
     session_cap: typeof sessionCap === 'number' ? sessionCap : null,
@@ -960,7 +978,18 @@ function toTokenBudgetState(res: Partial<TokenBudgetState> | null): TokenBudgetS
     used: Number(res?.used ?? 0),
     cost: Number(res?.cost ?? 0),
     limited: res?.limited === true,
-    pending: res?.pending === true
+    pending: res?.pending === true,
+    turn_cap: typeof turnCap === 'number' ? turnCap : null,
+    session_turn_cap: typeof sessionTurnCap === 'number' ? sessionTurnCap : null,
+    default_turn_cap: Number(res?.default_turn_cap ?? 0),
+    inherited_turn: res?.inherited_turn === true,
+    turn_used: Number(res?.turn_used ?? 0),
+    turn_main_used: Number(res?.turn_main_used ?? 0),
+    turn_child_used: Number(res?.turn_child_used ?? 0),
+    turn_cost: Number(res?.turn_cost ?? 0),
+    turn_limited: res?.turn_limited === true,
+    turn_pending: res?.turn_pending === true,
+    turn_id: String(res?.turn_id ?? '')
   };
 }
 
@@ -978,19 +1007,26 @@ export async function fetchTokenBudget(sessionId: string): Promise<TokenBudgetSt
 }
 
 /**
- * Persist the session's token cap (``null`` = unlimited).
+ * Persist the session's token caps (``null`` = inherit the app default).
  *
  * A change made while a turn runs is parked and lands on the next turn.
- * @param sessionId Session whose cap should change.
- * @param cap New cap in tokens, or null for unlimited.
+ * @param sessionId Session whose caps should change.
+ * @param cap New session-wide cap in tokens, or null for the inherited default.
+ * @param turnCap New per-turn cap in tokens, or null for the inherited default.
  */
-export async function setTokenBudgetCap(sessionId: string, cap: number | null): Promise<{ pending: boolean }> {
-  const res = await fetchApiPayload<{ pending?: boolean }>({
+export async function setTokenBudgetCap(
+  sessionId: string,
+  cap: number | null,
+  turnCap?: number | null
+): Promise<{ pending: boolean; turn_pending: boolean }> {
+  const body: Record<string, unknown> = { session_id: sessionId, cap };
+  if (turnCap !== undefined) body.turn_cap = turnCap;
+  const res = await fetchApiPayload<{ pending?: boolean; turn_pending?: boolean }>({
     url: '/sessions/budget',
-    opts: { session_id: sessionId, cap },
+    opts: body,
     method: 'put'
   });
-  return { pending: res.pending === true };
+  return { pending: res.pending === true, turn_pending: res.turn_pending === true };
 }
 
 /**

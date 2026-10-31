@@ -120,7 +120,17 @@ class TestA1WhitelistIntersection:
         [
             (
                 "researcher",
-                ["read_file", "search_files", "terminal", "web_search", *_COORDINATION_TOOLS],
+                [
+                    "read_file",
+                    "search_files",
+                    "terminal",
+                    "web_search",
+                    "web_fetch",
+                    "message_search",
+                    "skill_view",
+                    "skill_list",
+                    *_COORDINATION_TOOLS,
+                ],
             ),
             (
                 "executor",
@@ -136,7 +146,17 @@ class TestA1WhitelistIntersection:
             ("reviewer", ["read_file", "terminal", *_COORDINATION_TOOLS]),
             (
                 "librarian",
-                ["read_file", "search_files", "terminal", "web_search", *_COORDINATION_TOOLS],
+                [
+                    "read_file",
+                    "search_files",
+                    "terminal",
+                    "web_search",
+                    "web_fetch",
+                    "message_search",
+                    "skill_view",
+                    "skill_list",
+                    *_COORDINATION_TOOLS,
+                ],
             ),
         ],
     )

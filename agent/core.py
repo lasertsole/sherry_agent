@@ -303,7 +303,7 @@ def _build_middlewares(
     ``tests/agent/core/test_middleware_order.py``.
     """
     drain_middleware = SubagentCompletionDrainMiddleware()
-    return [
+    middlewares = [
         # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
         # after_agent hooks execute in REVERSE list order, so the first
         # registered middleware sits closest to END (README "Hook
@@ -427,6 +427,19 @@ def _build_middlewares(
         # layer, and it is idempotent (a strict parse succeeds untouched).
         InvalidToolCallRepairMiddleware(),
     ]
+    if os.getenv("SHERRY_EVAL_REQUIRE_EDIT") == "1":
+        # Eval-only convergence gate: SWE/coding sessions must produce a patch
+        # after a long no-write stretch. The product chain never sees it.
+        from .middlewares.no_edit_gate import NoEditGate
+
+        middlewares.append(NoEditGate())
+    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
+        # Eval-only delegation arm: the main agent may not read/search/write;
+        # it must use sessions_spawn. Child sessions keep their full tools.
+        from .middlewares.delegate_only_gate import DelegateOnlyGate
+
+        middlewares.append(DelegateOnlyGate())
+    return middlewares
 
 
 async def _build_graph(

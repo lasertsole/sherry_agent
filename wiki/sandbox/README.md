@@ -6,7 +6,7 @@
 
 Three tools let the model execute code on your machine: `terminal` (shell commands), `python_repl` (Python in a child process), and PTC's `execute_code` (a longer Python script in a child process that can call real tools over an RPC bridge). A hallucinated or prompt-injected command could read API keys from the environment, write outside the project, or touch other processes. The sandbox layer confines all three.
 
-Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/tools/ptc/runner.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
+Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal/core.py`, `agent/tools/python_repl.py`, `agent/tools/ptc/runner.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
 
 ## Table of Contents
 

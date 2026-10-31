@@ -20,8 +20,8 @@ Reporting discipline, enforced here:
   tool / skill catalogues at run time (all tools except the memory store, the
   required skills plus the coding skill set, and the compression nudge off) —
   the persona files of that preset are NOT reused, because its shipped
-  ``AGENTS.md`` carries the "ORCHESTRATOR. NEVER THE IMPLEMENTER" doctrine —
-  the worst way to get a coding number;
+  ``AGENTS.md`` carries the preset's task-management guidance and the neutral
+  arm must supply its own rules;
 - the module is a task whose tests do not pass with the intended fix are
   reported as HARNESS failures before any model call, so "the model did not fix
   it" and "the harness did not run" never blur together;
@@ -81,8 +81,8 @@ _PROVIDER_ERROR_MARKERS = (
 )
 
 #: The neutral arm's rules. Deliberately free of persona names and of the
-#: shipped template's orchestrator doctrine: it is the one persona file this
-#: arm must build itself.
+#: shipped template's task-management / delegation guidance: it is the one
+#: persona file this arm must build itself.
 _NEUTRAL_AGENTS_MD = """# Working rules
 
 - The session's project directory is the repository you are asked to change.
@@ -102,8 +102,8 @@ _PERSONA_MODE = "neutral"
 _PERSONA_TEMPLATE_LANG = "zh"
 
 #: Markers a neutral arm must not contain: the persona name in any shipped
-#: spelling and the orchestrator doctrine.
-_FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "ORCHESTRATOR", "NEVER THE IMPLEMENTER")
+#: spelling and the coding template's delegation guidance.
+_FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "sessions_spawn", "subagent_id")
 
 _PROCEED_DIRECTIVE = (
     "Do not ask questions and do not delegate. Implement the change yourself in the "
@@ -163,9 +163,9 @@ def _run(selected: list[Task], *, update_baseline: bool, skip_self_check: bool) 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
     import config.path  # noqa: F401 — hydrates the environment as a side effect
 
-    # Bind the REAL build_main_tools before EvalSandbox patches it for child
-    # agents: agent.core imported it at module load, so this import must happen
-    # before sandbox.apply() or init() would see only the child-safe subset.
+    # Bind the REAL build_main_tools before the sandbox applies: agent.core
+    # imported it at module load, so this import must happen before the
+    # sandbox redirects persistence.
     import agent.core  # noqa: F401
 
     if not os.getenv("MAIN_LLM_API_KEY", "").strip():
@@ -178,10 +178,10 @@ def _run(selected: list[Task], *, update_baseline: bool, skip_self_check: bool) 
 
     _seed_persona(eval_workspace)
 
-    # The agent's tool list is assembled here, BEFORE the sandbox patches
-    # ``agent.tools.build_main_tools`` to the child-safe subset: the sandbox's
-    # restriction is for spawned children, while the MAIN agent — the one
-    # this suite drives — must keep write_file / patch_file / terminal.
+    # The agent's tool list is assembled here, BEFORE the sandbox applies:
+    # the MAIN agent — the one this suite drives — must keep write_file /
+    # patch_file / terminal. Spawned children also keep the full surface by
+    # default, so a delegated child can edit too.
     init_agent()
     main_tools = _main_tool_names()
     missing = sorted(
@@ -251,12 +251,12 @@ def _seed_persona(workspace: Path, *, persona: str = "neutral", template_lang: s
 
     ``persona="neutral"`` (the capability baseline) writes standalone rules with
     no persona and no template copy: ``workspace/template/`` carries the shipped
-    persona (and its orchestrator doctrine), which a neutral arm must not carry.
+    persona (and its task-management guidance), which a neutral arm must not carry.
 
     ``persona="coding"`` writes the shipped 编码助手 preset's SYSTEM PROMPT
     instead: its ``AGENTS.md`` template (the operating rules, including the
-    orchestrator doctrine) with SOUL / USER / ROLE empty — exactly the files that
-    preset applies. Only the rules file is copied; the template directory's
+    task-management guidance) with SOUL / USER / ROLE empty — exactly the files
+    that preset applies. Only the rules file is copied; the template directory's
     persona files are never seeded. The memory note stays empty either way, so
     the memory store finds an empty page rather than a missing template.
     """
@@ -448,8 +448,8 @@ async def _bind_session(session_id: str, repo: Path) -> None:
 
     # The payload is written straight to the state register rather than through
     # ``agent_config_service.apply_agent_config_choice``: that service validates
-    # names against the LIVE catalogue, which the eval sandbox has already
-    # narrowed to the child-safe subset. The runtime readers (agent_switch,
+    # names against the LIVE catalogue, while this suite writes the preset
+    # payload directly. The runtime readers (agent_switch,
     # ToolSelectionMiddleware, the skill selection) read this state directly, so
     # the session behaves exactly as if the preset had been applied.
     payload = _coding_preset_payload()

@@ -15,7 +15,6 @@ const catalogApi = vi.hoisted(() => ({
   presetCatalogFacts: vi.fn(() => ({ tools: [], gateableMiddlewares: [], skills: [] })),
   catalogEntries: vi.fn(() => [
     { id: 'pure', nameKey: 'personaPreset.pure', builtin: true },
-    { id: 'coding', nameKey: 'personaPreset.coding', builtin: true },
     { id: 'companion', nameKey: 'personaPreset.companion', builtin: true },
     { id: 'sherry', nameKey: 'personaPreset.sherry', builtin: true }
   ]),
@@ -103,14 +102,14 @@ describe('OnboardingDialog', () => {
   it('开始使用 creates the session from the CHOSEN preset, then records the flag', async () => {
     const wrapper = mountTour();
     await clickLabel(wrapper, '下一步');
-    await wrapper.get('[data-test="onboarding-preset-coding"]').trigger('click');
+    await wrapper.get('[data-test="onboarding-preset-companion"]').trigger('click');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '下一步');
     await clickLabel(wrapper, '开始使用');
     await flushPromises();
 
     expect(catalogApi.createSessionFromPreset).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'coding' }),
+      expect.objectContaining({ id: 'companion' }),
       expect.objectContaining({ locale: 'zh', ensureCharacter: expect.any(Function) })
     );
     expect(flags.setAppFlag).toHaveBeenCalledWith('onboarding_completed', true);

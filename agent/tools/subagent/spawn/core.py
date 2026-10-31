@@ -1111,6 +1111,27 @@ def _bind_child_run_context(run: SubagentRunRecord) -> dict:
         normalize_session_key(run.spawned_by),
     )
     state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
+
+    # Token attribution: a child's model calls belong to the ROOT parent's
+    # session and current turn. Nested spawns inherit their own attribution
+    # (so a grandchild does not restart the chain at the immediate parent).
+    parent_key = normalize_session_key(run.requester_session_key)
+    if parent_key:
+        parent_attr = state_register_mem.get_state(parent_key, StateKey.TOKEN_BUDGET_PARENT, None)
+        if isinstance(parent_attr, dict) and isinstance(parent_attr.get("session_id"), str):
+            root = parent_attr["session_id"]
+            turn_id = parent_attr.get("turn_id")
+        else:
+            root = parent_key
+            turn_id = None
+        current_turn = state_register_mem.get_state(root, StateKey.TOKEN_BUDGET_TURN_ID, None)
+        turn_id = current_turn or turn_id
+        if isinstance(root, str) and root and isinstance(turn_id, str) and turn_id:
+            state_register_mem.set_state(
+                run.child_session_key,
+                StateKey.TOKEN_BUDGET_PARENT,
+                {"session_id": root, "turn_id": turn_id},
+            )
     return agent_config
 
 
@@ -1546,6 +1567,7 @@ def _build_child_middlewares(
     budget; every other role keeps the standard worker budget.
     """
     from agent.middlewares import (
+        ChildTokenBudget,
         HeartbeatStaleness,
         InvalidToolCallRepairMiddleware,
         IterationBudget,
@@ -1582,6 +1604,7 @@ def _build_child_middlewares(
             ],
         ),
         IterationBudget(iteration_limit),
+        ChildTokenBudget(),
         ToolGuardrails(),
         # Same process/system and per-session interaction locks as the parent.
         ToolResourceLockMiddleware(),

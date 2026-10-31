@@ -23,8 +23,8 @@ import time
 
 import pytest
 
-from agent.tools.terminal_bg_registry import BackgroundTask, BackgroundTaskRegistry
-from agent.tools.terminal_bg_tools import terminal_bg
+from agent.tools.terminal.bg_registry import BackgroundTask, BackgroundTaskRegistry
+from agent.tools.terminal.bg_tools import terminal_bg
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -269,7 +269,7 @@ class TestStartedFrame:
 
 class TestKillToolAction:
     def test_the_agent_can_stop_a_running_task(self, kill_calls):
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         background_registry.register(_task("bg-tool"))
         try:
@@ -288,7 +288,7 @@ class TestKillToolAction:
         assert out.startswith("Error:") and "task_id" in out
 
     def test_another_sessions_task_is_not_found(self):
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         background_registry.register(_task("bg-foreign"))
         try:
@@ -301,7 +301,7 @@ class TestKillToolAction:
         assert "No background task found" in out
 
     def test_a_finished_task_says_there_is_nothing_to_stop(self):
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         background_registry.register(_task("bg-done", status="completed"))
         try:

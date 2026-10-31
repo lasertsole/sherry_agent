@@ -255,7 +255,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "选择一个预设开始",
       "presetDesc": {
         "pure": "无预设配置，最小化工具面",
-        "coding": "代码任务专用，关闭记忆",
         "companion": "角色扮演，关闭任务编排",
         "sherry": "全部能力开启"
       },
@@ -281,7 +280,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "Pick a preset to start",
       "presetDesc": {
         "pure": "No preset configuration, minimal tool surface",
-        "coding": "For code work; memory off",
         "companion": "Role-play; task orchestration off",
         "sherry": "Everything on"
       },
@@ -307,7 +305,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "プリセットを選んで開始",
       "presetDesc": {
         "pure": "プリセット設定なし、最小限のツール",
-        "coding": "コード作業向け、記憶はオフ",
         "companion": "ロールプレイ、タスク編成はオフ",
         "sherry": "すべての機能を有効"
       },
@@ -333,7 +330,6 @@ const finish = async (): Promise<void> => {
       "choosePreset": "시작할 프리셋 선택",
       "presetDesc": {
         "pure": "프리셋 없음, 최소 도구 구성",
-        "coding": "코드 작업용, 기억 기능 끔",
         "companion": "역할극, 작업 오케스트레이션 끔",
         "sherry": "모든 기능 켜짐"
       },

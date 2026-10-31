@@ -490,3 +490,13 @@ class TestMultimodalContentShape:
         message = HumanMessage(content=[{"type": "text", "text": ti._TASK_STEERING_PROMPT}])
 
         assert ti._is_system_directive(message) is True
+
+    def test_steering_allows_direct_implementation_and_names_sessions_spawn(self):
+        prompt = ti._TASK_STEERING_PROMPT
+
+        assert "sessions_spawn" in prompt
+        assert "functional_role='researcher'" in prompt
+        assert "task tool" not in prompt
+        assert "do NOT write code" not in prompt
+        assert "ORCHESTRATOR" not in prompt
+        assert "implement it directly" in prompt

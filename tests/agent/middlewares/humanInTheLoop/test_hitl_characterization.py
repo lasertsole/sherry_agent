@@ -96,7 +96,7 @@ def _blocked_outcome(run, *args, **kwargs) -> str:
 # Coverage 1 — terminal blacklist: current ELEMENT-EXACT matching semantics
 # ─────────────────────────────────────────────────────────────────────────────
 class TestTerminalBlacklist:
-    """agent/tools/terminal.py:12,28-31,49-51 — BLACKLIST + ``bad in commands``."""
+    """agent/tools/terminal/core.py:12,28-31,49-51 — BLACKLIST + ``bad in commands``."""
 
     def test_exact_element_and_raw_str_are_blocked(self, monkeypatch):
         # # PRESERVE — raw str (substring membership) and byte-equal list element

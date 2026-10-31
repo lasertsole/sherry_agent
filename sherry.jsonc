@@ -11,6 +11,10 @@
   // the session's Token 预算 tab to go back to this value's behaviour.
   "TOKEN_BUDGET_DEFAULT_CAP": 0,
 
+  // Default per-turn cap across the main agent and all of its subagents.
+  // 0 = unlimited (the default). A session's own per-turn cap always wins.
+  "TOKEN_BUDGET_DEFAULT_TURN_CAP": 0,
+
   // Log level for console output and info log files: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL
   "LOG_LEVEL": "INFO",
 

@@ -18,7 +18,7 @@ import { logUtil } from '~/utils/log';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /** Built-in entry ids (the virtual, non-deletable presets). */
-export type BuiltinPresetId = 'pure' | 'coding' | 'companion' | 'sherry';
+export type BuiltinPresetId = 'pure' | 'companion' | 'sherry';
 
 /** Translate function shape the catalogue needs (a component's `t`). */
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -47,8 +47,6 @@ export interface PresetEntry {
  * - Pure (`pure`): nobody named, no persona content at all, only the catalogue's
  *   REQUIRED tools and every optional middleware off — the bare floor a session
  *   can run on;
- * - Coding Assistant (`coding`): the operating-rules template, empty soul / user profile,
- *   no roles, every tool on;
  * - Companion (`companion`): the full role-play persona with the orchestration
  *   surfaces switched off (no Tasks & planning / subagent tools, no optional middleware);
  * - Full (`sherry`): the DEFAULT — the full persona with every tool and switch on.
@@ -65,11 +63,6 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   {
     id: 'pure',
     nameKey: 'config.persona.preset.builtinPureName',
-    badgeKey: 'config.persona.preset.builtinBadge'
-  },
-  {
-    id: 'coding',
-    nameKey: 'config.persona.preset.builtinCodingName',
     badgeKey: 'config.persona.preset.builtinBadge'
   },
   {
@@ -130,7 +123,7 @@ export function entryName(entry: PresetEntry, t: TranslateFn): string {
  * (the templates in `workspace/template/<lang>/ROLE.md` carry the same shape).
  *
  * A blank name contributes NO line, and both blank yields an empty file — the
- * prompt then gains no ROLE block at all (the Coding Assistant built-in relies on this).
+ * prompt then gains no ROLE block at all (the Pure built-in relies on this).
  * @param character Role names to state.
  * @param t The component's translate function.
  * @returns The ROLE.md text ('' when neither role is named).
@@ -158,11 +151,14 @@ export interface PresetCatalogFacts {
   skills: ReadonlyArray<{ name: string; required?: boolean }>;
 }
 
-/** Tools Coding Assistant turns off on top of its own selection (the memory store). */
-export const CODING_DISABLED_TOOLS: readonly string[] = ['memory'];
-
-/** Skills Coding Assistant keeps besides the required chain (the work flow tools). */
-export const CODING_SKILLS: readonly string[] = ['bugfix-contract', 'code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
+/** Work-flow skills Companion excludes from its index (the coding chain). */
+export const COMPANION_EXCLUDED_SKILLS: readonly string[] = [
+  'bugfix-contract',
+  'code-wiki',
+  'taskflow',
+  'ulw-execute',
+  'todolist'
+];
 
 /** Tool groups Companion keeps OFF entirely: the orchestration surfaces. */
 export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
@@ -303,16 +299,14 @@ export function presetCatalogFacts(store: {
  * - Pure: only the catalogue's required tools and skills — the locked set the
  *   service would refuse to drop anyway, so the preset states the floor
  *   explicitly — and every optional middleware off;
- * - Coding Assistant: every tool except the memory store, the required skills plus the
- *   four work-flow skills (`CODING_SKILLS`), and every optional middleware on;
- * - Companion: every tool EXCEPT the Tasks & planning / subagent groups, every optional
- *   middleware off, and every NON-required skill except Coding Assistant's four (the two
- *   presets split the index between them);
+ * - Companion: every tool EXCEPT the Tasks & planning / subagent groups, every
+ *   optional middleware off, and every NON-required skill except the coding
+ *   work-flow set;
  * - Full: no opinion (every tool, every switch on, every skill in the index, and
  *   the Summarization nudge left ON).
  *
  * The compression nudge (`middleware_options.Summarization.nudge`) is pinned OFF
- * by the three restricted presets and left at its default by Full — it is the
+ * by both restricted presets and left at its default by Full — it is the
  * full-setup preset that keeps it.
  *
  * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
@@ -322,7 +316,7 @@ export function presetCatalogFacts(store: {
  * @returns The agent block for the session config.
  */
 export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
-  if (id !== 'pure' && id !== 'coding' && id !== 'companion') return {};
+  if (id !== 'pure' && id !== 'companion') return {};
   if (facts.tools.length === 0 || facts.skills.length === 0) {
     throw new Error('[persona-catalog] the tool catalogue is unavailable; cannot compose the preset');
   }
@@ -330,11 +324,9 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
   block.tools =
     id === 'pure'
       ? facts.tools.filter(tool => tool.required === true).map(tool => tool.name)
-      : id === 'coding'
-        ? facts.tools.filter(tool => !CODING_DISABLED_TOOLS.includes(tool.name)).map(tool => tool.name)
-        : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
+      : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
   block.skills = builtinSkills(id, facts.skills).map(skill => skill.name);
-  if (id !== 'coding' && facts.gateableMiddlewares.length > 0) {
+  if (facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
   }
   // Only Full leaves the compression nudge on (its absence = the default).
@@ -355,12 +347,8 @@ function builtinSkills(id: BuiltinPresetId, skills: PresetCatalogFacts['skills']
     // Pure keeps the locked floor only; Full has no opinion (every skill).
     return id === 'pure' ? required : skills;
   }
-  const codingPicks = new Set(CODING_SKILLS);
-  const picked =
-    id === 'coding'
-      ? optional.filter(skill => codingPicks.has(skill.name))
-      : optional.filter(skill => !codingPicks.has(skill.name));
-  return [...required, ...picked];
+  const excluded = new Set(COMPANION_EXCLUDED_SKILLS);
+  return [...required, ...optional.filter(skill => !excluded.has(skill.name))];
 }
 
 /** Payload every apply path writes: the persona files + the character + the agent config. */
@@ -391,8 +379,6 @@ export interface PersonaPresetPayload {
  * - Pure: EVERY persona file empty (no operating rules either) and nobody named
  *   — the clean slate — plus an agent block that keeps only the required tools
  *   and turns every optional middleware off;
- * - Coding Assistant: the operating rules only — soul and user profile EMPTY, and BOTH
- *   role names empty (no role statement: the prompt gains no ROLE block);
  * - Companion: the full template with the task-orchestration content stripped
  *   from the Operating Instructions (a companion is not an orchestrator) and the couple-relationship
  *   line stripped from SOUL, plus the default names;
@@ -415,8 +401,8 @@ export function builtinPayload(
   const character: PresetCharacter = named
     ? { ...DEFAULT_CACHED_CHARACTER }
     : {
-        // Pure / Coding Assistant name nobody — both roles render the neutral gray
-        // placeholder (DEFAULT_PLACEHOLDER_AVATAR) instead of an avatar.
+        // Pure names nobody — both roles render the neutral gray placeholder
+        // (DEFAULT_PLACEHOLDER_AVATAR) instead of an avatar.
         aiName: '',
         aiAvatar: '',
         userName: '',
@@ -426,8 +412,6 @@ export function builtinPayload(
   let content: Record<string, string>;
   if (id === 'pure') {
     content = { 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '' };
-  } else if (id === 'coding') {
-    content = { 'AGENTS.md': rules, 'SOUL.md': '', 'USER.md': '' };
   } else {
     content = {
       'AGENTS.md': id === 'companion' ? stripTaskSections(rules, locale) : rules,

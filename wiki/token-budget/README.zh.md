@@ -61,12 +61,29 @@ model call，不再请求 provider。该 turn 以“请总结”的提示结束�
 
 上限只看 token，不看这个估算。
 
+## 🧮 每回合预算（主代理 + 子代理）
+
+`TOKEN_BUDGET_TURN_CAP` 是当前回合的可选上限。`TokenBudget` 在 `before_agent`
+时生成 turn id，并重置 `TOKEN_BUDGET_TURN_USED`、`TOKEN_BUDGET_TURN_MAIN_USED`、
+`TOKEN_BUDGET_TURN_CHILD_USED`、`TOKEN_BUDGET_TURN_COST` 和
+`TOKEN_BUDGET_TURN_LIMITED`。每个子代理在 spawn 时写入
+`TOKEN_BUDGET_PARENT = {session_id, turn_id}`；`ChildTokenBudget` 把它的 token
+计入根父会话的 SESSION 计数（始终），并在父代理仍处于同一回合时计入 turn 计数。
+因此 session 的 `used/cost` 也包含所有子代理。
+
+`GET /sessions/budget` 额外返回 `turn_cap`、`session_turn_cap`、
+`default_turn_cap`、`inherited_turn`、`turn_used`、`turn_main_used`、
+`turn_child_used`、`turn_cost`、`turn_limited`、`turn_pending`。会话未设置时
+继承 `sherry.jsonc` 的 `TOKEN_BUDGET_DEFAULT_TURN_CAP`；`PUT /sessions/budget`
+可同时传 `cap` 和 `turn_cap`（各自 `null` 清除、`0` 显式不限）。重置会清空
+会话与回合计数，但保留两个上限。
+
 ## 🌐 HTTP API
 
 | 方法 | 路径 | Body / query |
 | :--- | :--- | :--- |
 | `GET` | `/sessions/budget` | `?session_id=<sid>` |
-| `PUT` | `/sessions/budget` | `{session_id, cap: int \| null}` |
+| `PUT` | `/sessions/budget` | `{session_id, cap?: int \| null, turn_cap?: int \| null}` |
 | `POST` | `/sessions/budget/reset` | `{session_id}` |
 
 ## 🧪 测试

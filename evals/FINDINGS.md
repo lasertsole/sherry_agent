@@ -53,25 +53,28 @@ in the report (`model.thinking_enabled`).
 failures are classified `invalid_run`, retried once in a fresh session and
 excluded from the pass rate (the invalid-run rule).
 
-## F2 — The orchestrator steering fights a coding task (config)
+## F2 — The orchestrator steering fights a coding task (config) — resolved 2026-10-31
 
-**Symptom.** In every eval task the log shows
+**Symptom (historical).** In every eval task the log showed
 `TaskIntentMiddleware: first-arm steering for session evals-…`: the middleware
-injects its orchestrator directive — *"YOU ARE AN ORCHESTRATOR. NEVER THE
+injected its orchestrator directive — *"YOU ARE AN ORCHESTRATOR. NEVER THE
 IMPLEMENTER. You DO NOT write code."* — into a session whose task is "fix this
-repository". The coding harness deliberately gives spawned children only
-read-only tools, so obeying the steering *cannot* solve the task.
+repository". The coding harness also gave spawned children only read-only tools,
+so obeying the steering *could not* solve the task; it also named a
+non-existent `task` tool instead of `sessions_spawn`.
 
 **Evidence.** Any suite log, e.g. `/tmp` capture of the coding-capability runs;
 the middleware's arming line appears once per session, on the first model call.
 
-**Improvement.** The built-in 编程助手 preset should switch
-`TaskIntentMiddleware` off (`AGENT_CONFIG["middlewares_disabled"]` — it is one
-of the four gateable middlewares), and/or the directive should exempt a session
-whose preset is a coding one. The eval applies the preset's *agent block*, so
-this is a product-config decision, not a harness workaround.
+**Fix (2026-10-31).** The shipped coding template and the TaskIntent directive
+now default to direct implementation for a small, single-file change and use
+`sessions_spawn` for delegation when a task is large or parallelizable; the
+"NEVER THE IMPLEMENTER" rule is gone. The eval sandbox also gives spawned
+children the full tool surface by default (`EvalSandbox(restrict_child_tools=False)`),
+so both the direct-edit and delegated paths can produce a patch.
 
-**Status.** TODO (config).
+**Status.** Resolved (2026-10-31). The remaining variable is model behaviour,
+not a prompt/tool-name dead-end.
 
 ## F3 — Near-miss fixes are not verified against the reported behaviour (skill)
 

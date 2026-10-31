@@ -169,7 +169,7 @@ function makeCatalogStore(catalogue?: {
 
 /**
  * A catalogue wide enough for EVERY built-in's derivation (tools + skills +
- * the work-flow skills Coding Assistant picks), installed for the whole suite: a preset
+ * the work-flow skills), installed for the whole suite: a preset
  * click throws without one, and these tests are not about the derivation.
  */
 function makeWideCatalogStore() {
@@ -298,57 +298,21 @@ describe('PersonaPanel role tab', () => {
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
   });
 
-  it('lists the four built-ins and loads 编程助手 without any role', async () => {
+  it('lists the three built-ins in catalogue order', async () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    // The whole spectrum, top to bottom: Pure / Coding Assistant (the default) / Companion / Full.
     expect(builtinRows.map(row => row.attributes('data-test'))).toEqual([
       'builtin-pure',
-      'builtin-coding',
       'builtin-companion',
       'builtin-sherry'
     ]);
     // Non-deletable: the virtual rows never carry a delete button.
     for (const row of builtinRows) expect(row.findAll('button')).toHaveLength(0);
-
-    await wrapper.get('[data-test="builtin-coding"]').trigger('click');
-    await flushPromises();
-
-    // Operating rules from the template; soul, user profile and BOTH role names empty.
-    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
-    expect(textareas).toEqual(['TPL-AGENTS', '', '']);
-    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
-    expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
-    // No avatars either: both sides show the neutral gray placeholder, which also
-    // means the per-avatar reset buttons start disabled (nothing to clear).
-    expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
-    expect(wrapper.get('[alt="user avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
-    expect(wrapper.get('[data-test="persona-role-ai-avatar-reset"]').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('[data-test="persona-role-user-avatar-reset"]').attributes('disabled')).toBeDefined();
-
-    await buttonByText(wrapper, '应用').trigger('click');
-    await flushPromises();
-
-    const payload = bridge.writeSystemPrompt.mock.calls[0]![0] as Record<string, string>;
-    expect(payload['AGENTS.md']).toBe('TPL-AGENTS');
-    expect(payload['SOUL.md']).toBe('');
-    expect(payload['USER.md']).toBe('');
-    // Neither role is named: an EMPTY ROLE.md, so the prompt gains no ROLE block.
-    expect(payload['ROLE.md']).toBe('');
-    expect(db.cacheCharacter).toHaveBeenCalledWith({
-      session_id: '__global__',
-      aiName: '',
-      aiAvatar: '',
-      userName: '',
-      userAvatar: ''
-    });
   });
 
   it('loads the full template for the 全量 built-in', async () => {
     const wrapper = await mountPanel();
-    await wrapper.get('[data-test="builtin-coding"]').trigger('click');
-    await flushPromises();
     await wrapper.get('[data-test="builtin-sherry"]').trigger('click');
     await flushPromises();
 

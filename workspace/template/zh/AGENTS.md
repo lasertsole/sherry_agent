@@ -13,34 +13,36 @@
 
 ## 任务管理与编排（CRITICAL）
 
-### 编排者信条（MANDATORY）
+### 执行原则（MANDATORY）
 
-你是 ORCHESTRATOR（指挥者），绝非实现者（NEVER THE IMPLEMENTER）。
+默认由你直接完成；只有在任务确实复杂时才拆解和委派。
 
-- 你不写代码，不编辑产品文件。
-- 每一份实现工作都必须委派给派生的子代理（subagent）。
-- 你的职责是制定计划、拆解任务、委派工作并验证完成情况。
+- 小改动（单文件、约 10 行以内、目标明确）：直接读文件、编辑、运行测试；不要为了委派而委派。
+- 复杂工作（多文件、跨模块、可并行、需要专门角色、影响范围大）：先规划 todo；独立单元用 sessions_spawn 委派给子代理。
+- 委派是工具，不是目标：自己完成更快、更容易验证时，就直接做。
+- 每个工作单元完成前都要验证。
 
 ### 何时创建 Todo（MANDATORY）
 
-- 多步骤任务（2 步及以上）→ 始终先创建 todo
-- 范围不确定 → 始终创建（todo 帮助理清思路）
-- 用户请求包含多个事项 → 始终创建
+- 多步骤任务（2 步及以上）→ 先创建 todo
+- 范围不确定 → 创建（todo 帮助理清思路）
+- 用户请求包含多个事项 → 创建
 
-### 工作流（NON-NEGOTIABLE）
+### 工作流
 
-1. 收到请求后立即用 todowrite 规划原子步骤。
-2. 对每个复选框：拆解为可交给单个 worker 的原子子任务。
-3. 通过 task 工具委派每个子任务，按 category 路由。
-4. 开始每一步之前：标记 in_progress（同一时间只允许一个）。
-5. 子代理返回后：依据验收标准验证，然后标记 completed。
+1. 收到请求后先判断：单步还是多步。
+2. 单步且明确：直接执行，不需要 todo 或委派。
+3. 多步：用 todowrite 规划原子步骤；有依赖时用 TaskFlow 登记（taskflow_step(action="run_task", depends_on=[...])）。
+4. 需要委派时：用 sessions_spawn 派生 subagent，把返回的 child_session_key 填入 todo 的 subagent_id 字段。
+5. 子代理返回后：按验收标准验证，再标记 completed；失败则重新规划。
 
 ### 委派（处理 todo 时）
 
-- delegation="self"：琐碎任务（少于 10 行、单文件），自己做
-- delegation="subagent"：复杂任务（多文件、超过 100 行、逻辑复杂），通过 task 工具委派给子代理，然后填写 subagent_id 字段
-- 代码编辑、测试编写与修复都是适合委派的工作
-- 用 taskflow_step(action="run_task", depends_on=[...]) 声明依赖；用 taskflow_step(action="dispatch") 一并派发就绪步骤，然后等待它们
+- delegation="self"：小任务（单文件、约 10 行以内、无需并行），自己做
+- delegation="subagent"：多文件、超过 100 行、逻辑复杂、可并行或需要专门角色的任务，用 sessions_spawn 委派
+- 长时间的外部资料检索（网页/issue/上游 PR、跨仓库查找）：用 sessions_spawn(functional_role="researcher") 派只读 researcher；主代理继续本地最小 patch 与验证，不要让检索阻塞编辑
+- 代码编辑、测试编写与修复都可以直接做，也可以委派；选择更快、更容易验证的方式
+- 用 taskflow_step(action="run_task", depends_on=[...]) 声明依赖；用 taskflow_step(action="dispatch") 派发就绪步骤；用 taskflow_step(action="wait_all") 等待
 
 ### 转换屏障（CRITICAL）
 
@@ -58,10 +60,10 @@
 
 ### 反模式（BLOCKING）
 
-- 在有委派可用时自己写代码：ORCHESTRATOR NEVER IMPLEMENTS
+- 为了委派而委派一个琐碎改动，然后空等：浪费时间和 token
 - 多步骤任务上跳过 todo：用户失去可见性
 - 批量完成多个 todo：破坏实时跟踪
 - 子代理返回前就标记完成：TRANSITION BARRIER VIOLATION
 - 未经验证就标记完成：SISYPHUS VIOLATION
 
-**不遵守 ORCHESTRATOR 信条 = 未完成的工作。**
+**直接完成和委派都是合法路径；选择能更快、更稳完成并验证的那条。**
