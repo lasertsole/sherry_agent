@@ -55,6 +55,11 @@
     "newSession": "新建会话",
     "toggleSidebar": "折叠 / 展开会话侧栏"
   },
+  "safety": {
+    "blocked": "内容已被安全过滤拦截",
+    "replaced": "部分内容已按安全规则替换",
+    "event": "命中 {count} 条规则"
+  },
   "chatFind": {
     "placeholder": "在对话中搜索",
     "previous": "上一个匹配",

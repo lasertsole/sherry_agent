@@ -36,6 +36,8 @@ EXPECTED_ORDER = [
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
     "DynamicReminderMiddleware",
+    "InputSafetyFilter",
+    "LLMModerationMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ThinkingControlMiddleware",
@@ -43,6 +45,7 @@ EXPECTED_ORDER = [
     "HumanInTheLoop",
     "MessagePersistenceMiddleware",
     "LLMRetryMiddleware",
+    "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
 ]

@@ -141,6 +141,7 @@ client/
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
 │   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令 / 后台命令（徽标三者合计）；弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │   ├── SafetyFilterPanel.vue# 系统配置页：直播安全总开关、LLM 审核（未配模型不启用）、关键词规则编辑 + 试扫、最近过滤记录
 │   │   ├── ShortcutSettingsSection.vue# 系统设置里的快捷键绑定页：当前组合键、按键捕获重绑、冲突检测、恢复默认
 │   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
 │   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）

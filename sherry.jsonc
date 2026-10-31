@@ -32,6 +32,21 @@
   // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
   "WORKSPACE_TEMPLATE_LANG": "en",
 
+  // Live-stream safety filter (系统配置 → 直播安全). OFF by default.
+  // Keyword rules live in the file named by keyword_file (relative to the
+  // workspace dir); nothing is bundled with the app.
+  "safety_filter": {
+    // Master switch: keyword filtering + the streaming cut.
+    "enabled": false,
+    // LLM moderation: off / on_keyword_hit / always. It ALSO needs a review
+    // model below — an empty model keeps it off whatever the mode says.
+    "llm_moderation_mode": "off",
+    // Review model name (empty = not configured).
+    "llm_moderation_model": "",
+    // Keyword rules file (relative to the workspace dir).
+    "keyword_file": "sensitive_words.json"
+  },
+
   // Global heartbeat scheduler switch (the Heartbeat panel toggle writes this value and applies it live).
   // Off by default: the periodic heartbeat is opt-in. false = it never fires; delivery to channels
   // is separately gated per channel.

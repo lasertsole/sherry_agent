@@ -38,6 +38,9 @@ from .middlewares import (
     MaxTokensBoostMiddleware,
     MessagePersistenceMiddleware,
     LLMRetryMiddleware,
+    InputSafetyFilter,
+    LLMModerationMiddleware,
+    OutputSafetyFilter,
     InvalidToolCallRepairMiddleware,
     validate_required_middleware,
     _MAIN_REQUIRED,
@@ -364,6 +367,12 @@ def _build_middlewares(
         # TaskIntent (whose dedup needs the user message still last when it
         # runs) and BEFORE everything that does not mind a trailing reminder.
         DynamicReminderMiddleware(),
+        # Live-stream safety (OFF by default): keyword rules on the user's
+        # message refuse a blocked turn WITHOUT a provider call, and an optional
+        # LLM review (only with a configured review model) runs inside them, so
+        # a keyword block never pays for the review.
+        InputSafetyFilter(),
+        LLMModerationMiddleware(),
         OutputRepetitionGuard(),
         MaxTokensBoostMiddleware(),
         # Per-session thinking toggle: swaps the per-call model for the
@@ -385,6 +394,11 @@ def _build_middlewares(
         # relative to Summarization (the retry loop wraps the
         # T4/T5 overflow recovery from outside).
         LLMRetryMiddleware(fallback_chain=fallback_chain),
+        # Output-side keyword rules (OFF by default). after_model hooks run in
+        # reverse registration order, so registering it AFTER
+        # MessagePersistence makes it run FIRST — the replaced text is what
+        # the transcript row stores.
+        OutputSafetyFilter(),
         Summarization(
             need_update_system_prompt=True,
             # COMPRESSION_LLM_* when configured, else the auxiliary instance

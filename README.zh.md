@@ -186,6 +186,7 @@ sherry_agent/
 │   ├── llm-wiki/          # markdown 知识库 + 派生图查询
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── safety-filter/      # 直播安全：关键词规则 + LLM 审核 + 流式截断
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │

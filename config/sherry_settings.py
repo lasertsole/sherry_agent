@@ -57,6 +57,15 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # config/path.py::resolve_default_project_dir).
     "project_dir": "",
     "WORKSPACE_TEMPLATE_LANG": "en",
+    # Live-stream safety filter (keyword rules + optional LLM moderation).
+    # OFF by default: an untouched install behaves exactly as before. These are
+    # read LIVE (the 系统配置 → 直播安全 tab flips them from a switch), not only
+    # at boot.
+    "safety_filter.enabled": False,
+    "safety_filter.llm_moderation_mode": "off",
+    # Empty = no review model configured → LLM moderation stays off.
+    "safety_filter.llm_moderation_model": "",
+    "safety_filter.keyword_file": "sensitive_words.json",
     # Global heartbeat scheduler switch (the Heartbeat panel's toggle). Off by
     # default: the periodic heartbeat is opt-in, and the boot path reads this
     # value, so a session that never touches the switch never wakes the agent.
@@ -92,6 +101,7 @@ _INT_KEYS = frozenset(
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 _BOOL_KEYS = frozenset(
     {
+        "safety_filter.enabled",
         "heartbeat.enabled",
         "hooks.enabled",
         "curator.enabled",

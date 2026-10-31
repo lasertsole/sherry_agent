@@ -324,11 +324,82 @@ class StreamTurn:
         # snapshot's seq, so a frame produced before the snapshot but delivered
         # after it can never be appended twice.
         self._frame_seq: int = 0
+        # Live-stream safety guard (None while the feature is off): every text
+        # delta goes through it BEFORE it becomes a frame, so blocked content
+        # never reaches the client — the guard holds one window back and the
+        # caller emits only what it has already scanned.
+        self._safety_guard: Any = None
+        # One-shot notice after a block (the replacement text is emitted once).
+        self._safety_cut_emitted: bool = False
 
     # ---- hooks ----------------------------------------------------------
 
     async def _prepare(self) -> None:
         """Run before ``answering`` is set (before the try block)."""
+
+    def _arm_safety_guard(self) -> None:
+        """Create this turn's stream guard when the feature is on (no-op otherwise).
+
+        Re-armed at each phase (a max-tokens continuation restarts the stream):
+        the previous phase's tail is flushed first so nothing held back is lost.
+        """
+        tail = self._flush_safety_tail()
+        if tail:
+            # The base _prepare runs before any frame exists; a tail here only
+            # happens on a re-armed phase, whose frames were already yielded.
+            self.ai_text += tail
+        try:
+            from agent.middlewares.safety_filter import StreamTextGuard, safety_enabled
+
+            self._safety_guard = StreamTextGuard() if safety_enabled() else None
+        except Exception:  # noqa: BLE001 - the filter must never cost a turn
+            logger.debug("safety filter: guard unavailable", exc_info=True)
+            self._safety_guard = None
+        self._safety_cut_emitted = False
+
+    def _flush_safety_tail(self) -> str:
+        """End-of-stream scan of the held-back tail ('' without a guard)."""
+        guard = self._safety_guard
+        if guard is None:
+            return ""
+        try:
+            return guard.flush()
+        except Exception:  # noqa: BLE001
+            logger.debug("safety filter: tail flush failed", exc_info=True)
+            return ""
+
+    def _safety_notice(self) -> str:
+        """The replacement text a block substitutes (empty when unavailable)."""
+        try:
+            from agent.middlewares.safety_filter import safety_filter_config
+
+            return str(safety_filter_config()["safe_replacement_message"])
+        except Exception:  # noqa: BLE001
+            return "[该内容已被安全过滤拦截]"
+
+    def _notify_safety_hits(self) -> None:
+        """Report this turn's stream hits once (log + WS frame)."""
+        guard = self._safety_guard
+        if guard is None or not getattr(guard, "hits", None):
+            return
+        try:
+            from agent.middlewares.safety_filter import notify_safety
+
+            blocked = bool(getattr(guard, "blocked", False))
+            notify_safety(
+                self.session_id,
+                layer="stream_cut" if blocked else "output_keyword",
+                action="block" if blocked else "replace",
+                rule_count=len(guard.hits),
+                message=(
+                    "流式输出命中拦截规则，已截断"
+                    if blocked
+                    else "流式输出命中规则，命中部分已替换"
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("safety filter: stream notify failed", exc_info=True)
+        guard.hits.clear() if hasattr(guard.hits, "clear") else None
 
     async def _create_source(self) -> tuple[Literal["stream", "invoke"], Any]:
         """Return the turn's source: a chunk stream or an awaitable result."""
@@ -515,6 +586,10 @@ class StreamTurn:
         self._log_started()
         _ACTIVE_TURNS[self.session_id] = self
         await self._prepare()
+        # Arm the stream guard HERE, not in the base ``_prepare``: subclasses
+        # override that hook without calling super (the chat turn does), so a
+        # hook there never ran for the path that matters.
+        self._arm_safety_guard()
 
         # Control answering
         state_register_mem.set_state(self.session_id, StateKey.ANSWERING, True)
@@ -640,6 +715,23 @@ class StreamTurn:
                     self._project(frame)
                     yield frame
 
+        # End of this phase: the guard still holds its window — scan it and
+        # emit whatever survived (a block here appends the replacement once).
+        if self._safety_guard is not None:
+            tail = self._flush_safety_tail()
+            if tail:
+                self.ai_text += tail
+                self._has_visible_text = True
+                self._diag["bytes"] += len(tail)
+                yield {"type": "text", "content": tail}
+            if self._safety_guard.blocked and not self._safety_cut_emitted:
+                self._safety_cut_emitted = True
+                notice = self._safety_notice()
+                self.ai_text += notice
+                self._has_visible_text = True
+                yield {"type": "text", "content": notice}
+            self._notify_safety_hits()
+
         # Stream ended: check for a provider mid-stream safety cut
         # that arrived without a content_filter finish_reason.
         self._detect_mid_stream_content_filter()
@@ -715,6 +807,16 @@ class StreamTurn:
             # A reasoning block held back entirely produces
             # no visible text (and must not count as one).
             res = self._think_scrubber.feed(msg_chunk.content)
+            if self._safety_guard is not None:
+                # Scan BEFORE emitting: the guard returns only text it has
+                # already cleared (a block latches and returns nothing).
+                res = self._safety_guard.feed(res) if res else ""
+                if self._safety_guard.blocked and not self._safety_cut_emitted:
+                    self._safety_cut_emitted = True
+                    notice = self._safety_notice()
+                    self.ai_text += notice
+                    self._has_visible_text = True
+                    frames.append({"type": "text", "content": notice})
             if res:
                 self.ai_text += res
                 self._has_visible_text = True

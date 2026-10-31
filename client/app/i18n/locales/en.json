@@ -33,6 +33,11 @@
     "newSession": "New session",
     "toggleSidebar": "Collapse / expand session sidebar"
   },
+  "safety": {
+    "blocked": "Content blocked by the safety filter",
+    "replaced": "Some content was replaced by the safety rules",
+    "event": "{count} rule(s) matched"
+  },
   "chatFind": {
     "placeholder": "Search in conversation",
     "previous": "Previous match",

@@ -372,6 +372,14 @@
           :header="t('config.tabs.shortcuts')">
           <ShortcutSettingsSection />
         </TabPanel>
+        <!-- Live-stream safety: the master switch, the optional LLM review and
+             the operator's keyword rules, all applied live. Appended LAST for
+             the same index-keyed reasons as the tabs above. -->
+        <TabPanel
+          value="safetyFilter"
+          :header="t('config.tabs.safetyFilter')">
+          <SafetyFilterPanel />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -382,9 +390,9 @@
          the persona presets; Token 预算 became a session tab opened from the
          context ring, because the cap is per conversation.)
          Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
-         shortcuts 4. -->
+         shortcuts 4, safety filter 5. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -424,6 +432,7 @@ import CudaPackCard from './CudaPackCard.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
+import SafetyFilterPanel from './SafetyFilterPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -1179,6 +1188,7 @@ onBeforeUnmount(onHide);
         "sherry": "应用配置",
         "i18n": "国际化",
         "shortcuts": "快捷键",
+        "safetyFilter": "直播安全",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1555,6 +1565,7 @@ onBeforeUnmount(onHide);
         "sherry": "App Config",
         "i18n": "Language",
         "shortcuts": "Shortcuts",
+        "safetyFilter": "Live safety",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1946,6 +1957,7 @@ onBeforeUnmount(onHide);
         "sherry": "アプリ設定",
         "i18n": "国際化",
         "shortcuts": "ショートカット",
+        "safetyFilter": "ライブ安全",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2337,6 +2349,7 @@ onBeforeUnmount(onHide);
         "sherry": "앱 설정",
         "i18n": "국제화",
         "shortcuts": "단축키",
+        "safetyFilter": "라이브 안전",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },

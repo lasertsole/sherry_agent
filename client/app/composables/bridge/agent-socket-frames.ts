@@ -128,6 +128,17 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
         exitCode: typeof content.exit_code === 'number' ? content.exit_code : null
       });
     },
+    safety_filter: data => {
+      const content = (data.content ?? {}) as Record<string, unknown>;
+      if (typeof content.layer !== 'string' || typeof content.action !== 'string') return;
+      ctx.handlers.onSafetyFilter?.({
+        layer: content.layer,
+        action: content.action,
+        ruleCount: typeof content.rule_count === 'number' ? content.rule_count : 0,
+        message: typeof content.message === 'string' ? content.message : '',
+        snippet: typeof content.snippet === 'string' ? content.snippet : undefined
+      });
+    },
     terminal_bg_kill_ack: data => {
       const content = (data.content ?? {}) as Record<string, unknown>;
       ctx.handlers.onTerminalBgKillAck?.({

@@ -19,6 +19,12 @@ SAMPLE = """// app settings
   "project_dir": "",
 
   "WORKSPACE_TEMPLATE_LANG": "en",
+  "safety_filter": {
+    "enabled": false,
+    "llm_moderation_mode": "off",
+    "llm_moderation_model": "",
+    "keyword_file": "sensitive_words.json"
+  },
   "heartbeat": {
     "enabled": true
   },

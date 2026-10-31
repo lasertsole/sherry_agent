@@ -33,6 +33,11 @@
     "newSession": "新しいセッション",
     "toggleSidebar": "セッション サイドバーの折りたたみ"
   },
+  "safety": {
+    "blocked": "内容は安全フィルターによりブロックされました",
+    "replaced": "一部の内容が安全ルールにより置き換えられました",
+    "event": "{count} 件のルールに一致"
+  },
   "chatFind": {
     "placeholder": "会話内を検索",
     "previous": "前の一致",

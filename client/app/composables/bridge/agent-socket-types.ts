@@ -57,6 +57,17 @@ export interface TerminalBgExitInfo {
 }
 
 /** The acknowledgement of one user-issued kill. */
+/** One safety-filter event (`safety_filter` frame). */
+export interface SafetyFilterInfo {
+  /** input_keyword | output_keyword | stream_cut | llm_moderation */
+  layer: string;
+  /** block | replace | warn */
+  action: string;
+  ruleCount: number;
+  message: string;
+  snippet?: string;
+}
+
 export interface TerminalBgKillAckInfo {
   taskId: string;
   ok: boolean;
@@ -89,6 +100,8 @@ export interface AgentSocketHandlers {
   onTerminalBgExit?: (info: TerminalBgExitInfo) => void;
   /** `terminal_bg_kill_ack` -> the kill signal landed (or was refused). */
   onTerminalBgKillAck?: (info: TerminalBgKillAckInfo) => void;
+  /** `safety_filter` -> a live-stream filter decision (banner/toast). */
+  onSafetyFilter?: (info: SafetyFilterInfo) => void;
 }
 
 /**

@@ -141,6 +141,7 @@ client/
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
 │   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령 / 백그라운드 명령(배지는 셋의 합계) — 팝오버 행은 페이지에 이동을 맡긴다(실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │   ├── SafetyFilterPanel.vue# 시스템 설정 탭: 라이브 안전 마스터 스위치, LLM 심사(모델 없으면 비활성), 키워드 규칙 편집 + 테스트 검사, 최근 필터 기록
 │   │   ├── ShortcutSettingsSection.vue# 시스템 설정의 단축키 바인딩 탭: 현재 조합, 키 입력으로 다시 지정, 충돌 검사, 기본값 복원
 │   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
 │   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)

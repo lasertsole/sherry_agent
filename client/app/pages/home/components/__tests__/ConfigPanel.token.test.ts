@@ -177,14 +177,16 @@ describe('ConfigPanel shortcut-bindings tab', () => {
     });
     const vm = wrapper.vm as unknown as ConfigPanelVm;
 
-    // The token budget left the settings for a session tab: the headers are
-    // exactly background / env / app / language / shortcuts.
+    // The token budget left the settings for a session tab; the live-stream
+    // safety tab is appended last: background / env / app / language /
+    // shortcuts / live safety.
     expect(wrapper.findAll('.tp-header').map(node => node.text())).toEqual([
       '背景图片',
       '模型配置',
       '应用配置',
       '国际化',
-      '快捷键'
+      '快捷键',
+      '直播安全'
     ]);
 
     // The tab body is the (stubbed) section; it saves on its own, so the

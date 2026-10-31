@@ -995,6 +995,13 @@ agentSocket.setHandlers({
   onTerminalBgStarted: onBackgroundTaskStarted,
   onTerminalBgExit: onBackgroundTaskExit,
   onTerminalBgKillAck: onBackgroundTaskKillAck,
+  onSafetyFilter: info => {
+    // A live-stream filter decision: a block is an error-level notice, a
+    // replace / warn is informational. The transcript already reflects it.
+    const text = t('safety.event', { count: info.ruleCount });
+    if (info.action === 'block') toastError(t('safety.blocked'), text);
+    else toastInfo(t('safety.replaced'), text);
+  },
   onDone: handleSocketDone
 });
 

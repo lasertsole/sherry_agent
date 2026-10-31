@@ -27,6 +27,10 @@ from .user_hooks import (
     UserHooksConfig as UserHooksConfig,
     USER_HOOKS as USER_HOOKS,
 )
+from .safety_filter import (
+    SafetyFilterConfig as SafetyFilterConfig,
+    SAFETY_FILTER as SAFETY_FILTER,
+)
 from .redaction import (
     RedactionConfig as RedactionConfig,
     REDACTION as REDACTION,

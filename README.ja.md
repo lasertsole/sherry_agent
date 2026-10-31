@@ -186,6 +186,7 @@ sherry_agent/
 │   ├── llm-wiki/          # markdown KB + 派生グラフクエリ
 │   ├── ptc/                # プログラム的ツール呼び出し
 │   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
+│   ├── safety-filter/      # ライブ安全: キーワード ルール + LLM 審査 + ストリーム切断
 │   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │

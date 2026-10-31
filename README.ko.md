@@ -186,6 +186,7 @@ sherry_agent/
 │   ├── llm-wiki/          # markdown KB + 파생 그래프 쿼리
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── safety-filter/      # 라이브 안전: 키워드 규칙 + LLM 심사 + 스트림 절단
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │

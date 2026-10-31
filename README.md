@@ -187,6 +187,7 @@ sherry_agent/
 │   ├── llm-wiki/          # Markdown KB + derived graph queries
 │   ├── ptc/                # Programmatic tool calling
 │   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── safety-filter/      # Live-stream keyword rules + LLM review + stream cut
 │   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # Opt-in login protection (account + session)
 │

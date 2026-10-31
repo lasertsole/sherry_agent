@@ -33,6 +33,11 @@
     "newSession": "새 세션",
     "toggleSidebar": "세션 사이드바 접기/펼치기"
   },
+  "safety": {
+    "blocked": "콘텐츠가 안전 필터에 의해 차단되었습니다",
+    "replaced": "일부 콘텐츠가 안전 규칙에 따라 대체되었습니다",
+    "event": "{count}개 규칙에 일치"
+  },
   "chatFind": {
     "placeholder": "대화에서 검색",
     "previous": "이전 일치",
