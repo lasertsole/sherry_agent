@@ -11,6 +11,50 @@
     "delete": "删除",
     "cancel": "取消"
   },
+  "shortcuts": {
+    "hint": "点击「重绑」后按下新的组合键（Esc 取消）。绑定保存在本机浏览器，立即生效。",
+    "rebind": "重绑",
+    "cancelRebind": "取消",
+    "listening": "按下组合键…",
+    "reset": "恢复默认",
+    "resetAll": "全部恢复默认",
+    "conflict": "与「{name}」冲突，未保存",
+    "group": {
+      "composer": "输入框",
+      "navigation": "会话与侧栏",
+      "global": "全局"
+    },
+    "sendMessage": "发送消息",
+    "historyPrev": "上一条历史提问",
+    "historyNext": "下一条历史提问",
+    "cancelInput": "退出历史浏览",
+    "commandPalette": "命令面板",
+    "findInConversation": "会话内搜索",
+    "newSession": "新建会话",
+    "toggleSidebar": "折叠 / 展开会话侧栏"
+  },
+  "shortcuts": {
+    "hint": "点击「重绑」后按下新的组合键（Esc 取消）。绑定保存在本机浏览器，立即生效。",
+    "rebind": "重绑",
+    "cancelRebind": "取消",
+    "listening": "按下组合键…",
+    "reset": "恢复默认",
+    "resetAll": "全部恢复默认",
+    "conflict": "与「{name}」冲突，未保存",
+    "group": {
+      "composer": "输入框",
+      "navigation": "会话与侧栏",
+      "global": "全局"
+    },
+    "sendMessage": "发送消息",
+    "historyPrev": "上一条历史提问",
+    "historyNext": "下一条历史提问",
+    "cancelInput": "退出历史浏览",
+    "commandPalette": "命令面板",
+    "findInConversation": "会话内搜索",
+    "newSession": "新建会话",
+    "toggleSidebar": "折叠 / 展开会话侧栏"
+  },
   "chatFind": {
     "placeholder": "在对话中搜索",
     "previous": "上一个匹配",

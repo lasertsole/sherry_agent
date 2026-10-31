@@ -140,6 +140,7 @@ client/
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
 │   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │   ├── ShortcutSettingsSection.vue# Shortcut-bindings tab of the system settings: live chords, capture-to-rebind, conflict check, restore defaults
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
 │   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)

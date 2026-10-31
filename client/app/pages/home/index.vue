@@ -442,18 +442,10 @@ watch(
 /** Whether the Ctrl+K palette is open (transient UI state, never persisted). */
 const commandPaletteOpen = ref(false);
 
-/**
- * Ctrl+K (Cmd+K on macOS) opens the palette from anywhere in the shell.
- *
- * The listener is document-level because the shell renders no focusable wrapper;
- * `preventDefault` is unconditional for the chord (the composer does not use
- * Ctrl+K, so there is nothing to protect) and Shift/Alt variants pass through.
- * @param event The keydown.
- */
-const onCommandPaletteKeydown = (event: KeyboardEvent): void => {
-  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey) return;
-  if (event.key !== 'k' && event.key !== 'K') return;
-  event.preventDefault();
+// The shell owns the global commands the palette / shortcuts drive. The chords
+// themselves come from the shortcut table (rebindable in 菜单 → 系统设置), so
+// these are plain actions registered by id.
+const openCommandPalette = (): void => {
   commandPaletteOpen.value = true;
 };
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
@@ -541,9 +533,12 @@ useAutoCollapse({
 
 onMounted(() => {
   chatBackgroundStore.loadBackground();
-  // The Ctrl+K palette's global chord (removed again on unmount; the shell is
-  // the only listener, so the login page and dialogs never see it).
-  document.addEventListener('keydown', onCommandPaletteKeydown);
+  // Global chords: the palette (Ctrl+K), a new session (Ctrl+N) and the left
+  // sidebar (Ctrl+B). Registered by id; the shortcut table decides the keys and
+  // a rebind takes effect on the next press.
+  registerGlobalHandler('command-palette', openCommandPalette);
+  registerGlobalHandler('new-session', () => newSession.openDialog());
+  registerGlobalHandler('toggle-sidebar', toggleSidebar);
   // The notification badge must keep counting while its tab is closed, so the
   // listener lives in the store (registered once) and the session socket is
   // established here — the notification TAB is lazily mounted and would
@@ -557,6 +552,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onCommandPaletteKeydown);
+  unregisterGlobalHandler('command-palette', openCommandPalette);
+  unregisterGlobalHandler('new-session');
+  unregisterGlobalHandler('toggle-sidebar');
 });
 </script>

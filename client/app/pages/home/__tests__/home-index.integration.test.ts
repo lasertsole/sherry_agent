@@ -6,6 +6,7 @@ import CommandPalette from '@/components/CommandPalette.vue';
 import HistoryItem from '@/pages/home/components/HistoryItem.vue';
 import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 import { useSubagentStore } from '@/stores/subagent';
+import { installGlobalShortcutListener } from '@/composables/use-shortcuts';
 import type { SubagentRun } from '@/composables/bridge';
 
 // This mock is scoped to this file: only here does the mounted home page graph
@@ -168,27 +169,34 @@ describe('home/index.vue (integration, backend mocked)', () => {
   });
 
   it('opens the Ctrl+K command palette, and ignores the Shift/Alt variants', async () => {
-    const wrapper = mountHome();
-    const palette = wrapper.findComponent(CommandPalette);
-    expect(palette.props('visible')).toBe(false);
+    // The document listener belongs to the app (plugins/shortcuts.ts), not the
+    // shell: install the same dispatcher the plugin installs.
+    const uninstall = installGlobalShortcutListener();
+    try {
+      const wrapper = mountHome();
+      const palette = wrapper.findComponent(CommandPalette);
+      expect(palette.props('visible')).toBe(false);
 
-    // Ctrl+Shift+K is a different chord: the shell must leave it alone.
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true }));
-    await nextTick();
-    expect(palette.props('visible')).toBe(false);
+      // Ctrl+Shift+K is a different chord: the shell must leave it alone.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, shiftKey: true }));
+      await nextTick();
+      expect(palette.props('visible')).toBe(false);
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
-    await nextTick();
-    expect(palette.props('visible')).toBe(true);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));
+      await nextTick();
+      expect(palette.props('visible')).toBe(true);
 
-    // The listener is removed with the shell (leaked listeners would fire on
-    // every later mount's document too).
-    const fresh = mountHome();
-    wrapper.unmount();
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
-    await nextTick();
-    expect(fresh.findComponent(CommandPalette).props('visible')).toBe(true);
-    fresh.unmount();
+      // The shell's REGISTRATION is removed with it: a mounted sibling answers
+      // instead (a leaked handler would also fire on the unmounted page).
+      const fresh = mountHome();
+      wrapper.unmount();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+      await nextTick();
+      expect(fresh.findComponent(CommandPalette).props('visible')).toBe(true);
+      fresh.unmount();
+    } finally {
+      uninstall();
+    }
   });
 
   it('puts the right-sidebar toggle to the right of the settings menu button', () => {

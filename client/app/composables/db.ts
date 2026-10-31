@@ -372,6 +372,8 @@ class HistoryDb extends Dexie {
   browserVisits!: Table<BrowserVisit, number>;
   /** Executed palette commands (auto-increment id, see {@link CommandHistoryEntry}) */
   commandHistory!: Table<CommandHistoryEntry, number>;
+  /** User shortcut overrides, keyed by shortcut id (see {@link ShortcutRow}) */
+  shortcuts!: Table<ShortcutRow, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -416,13 +418,53 @@ class HistoryDb extends Dexie {
     this.version(4).stores({
       commandHistory: '++id, commandId, executedAt'
     });
+    // version(5): user shortcut overrides. Same additive bump.
+    this.version(5).stores({
+      shortcuts: 'id'
+    });
   }
 }
 
 /**
  * Global unique Dexie database instance (used to cache conversation history).
  */
+/**
+ * One shortcut override.
+ *
+ * The id is the `SHORTCUT_BINDINGS` id ('send-message', 'command-palette' …) and
+ * `keys` is the JSON form of its `KeyCombo`. Removing a row restores the
+ * built-in default, so the table only ever holds what the user changed.
+ */
+export interface ShortcutRow {
+  id: string;
+  keys: string;
+}
+
 export const db = new HistoryDb();
+
+/**
+ * Every persisted shortcut override (the settings panel / the boot loader read
+ * them through this wrapper: composables must not import the singleton).
+ */
+export async function readShortcutRows(): Promise<ShortcutRow[]> {
+  return await db.shortcuts.toArray();
+}
+
+/**
+ * Upsert one shortcut override.
+ * @param row The shortcut id and its JSON-encoded combination.
+ */
+export async function writeShortcutRow(row: ShortcutRow): Promise<void> {
+  await db.shortcuts.put(row);
+}
+
+/**
+ * Drop one shortcut override (the binding falls back to its built-in default).
+ * @param id Shortcut id.
+ */
+export async function deleteShortcutRow(id: string): Promise<void> {
+  await db.shortcuts.delete(id);
+}
 
 /**
  * Merge server-returned message rows into the cache (deduplicated by `id`).

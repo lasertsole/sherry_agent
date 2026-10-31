@@ -11,6 +11,28 @@
     "delete": "삭제",
     "cancel": "취소"
   },
+  "shortcuts": {
+    "hint": "「다시 지정」을 누른 뒤 새 조합을 누르세요(Esc 취소). 설정은 이 브라우저에 저장되며 즉시 적용됩니다.",
+    "rebind": "다시 지정",
+    "cancelRebind": "취소",
+    "listening": "키 조합을 누르세요…",
+    "reset": "기본값으로",
+    "resetAll": "모두 기본값으로",
+    "conflict": "「{name}」과(와) 충돌합니다 — 저장되지 않음",
+    "group": {
+      "composer": "입력창",
+      "navigation": "세션 및 사이드바",
+      "global": "전역"
+    },
+    "sendMessage": "메시지 보내기",
+    "historyPrev": "이전 질문 기록",
+    "historyNext": "다음 질문 기록",
+    "cancelInput": "기록 탐색 종료",
+    "commandPalette": "명령 팔레트",
+    "findInConversation": "대화에서 찾기",
+    "newSession": "새 세션",
+    "toggleSidebar": "세션 사이드바 접기/펼치기"
+  },
   "chatFind": {
     "placeholder": "대화에서 검색",
     "previous": "이전 일치",

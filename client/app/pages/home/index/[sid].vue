@@ -557,6 +557,8 @@ const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number })
 const isActive = ref(false);
 onActivated(() => {
   isActive.value = true;
+  // Claim the find chord for THIS page: a cached sibling may have owned it.
+  registerGlobalHandler('find-in-conversation', openFindBar);
   // When returning to this session, refresh the HITL card that may still be pending approval (idempotent: early-return if a card already exists or a resume is in flight)
   if (mySid) restorePendingHitl(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
@@ -566,6 +568,8 @@ onActivated(() => {
 });
 onDeactivated(() => {
   isActive.value = false;
+  // Release the chord only if it is still ours (a newer page keeps its own).
+  unregisterGlobalHandler('find-in-conversation', openFindBar);
 });
 
 /**
@@ -910,28 +914,21 @@ const onEditModeKeydown = (event: KeyboardEvent) => {
   cancelEditMessage();
 };
 /**
- * Ctrl/Cmd+Shift+F opens the conversation's find bar.
+ * The conversation's find bar, as a GLOBAL shortcut action.
  *
- * The PAGE owns the gesture, not ChatBox: every KeepAlive-cached session keeps
- * a ChatBox mounted, so a per-instance listener would open a bar in sessions
- * the reader cannot see. Here the active instance (`isActive`) answers alone.
- * @param event
+ * The PAGE owns the action, not ChatBox: every KeepAlive-cached session keeps a
+ * ChatBox mounted, so a per-instance listener would open a bar in a session the
+ * reader cannot see. The handler is registered while this page is active (the
+ * chord itself is rebindable in 菜单 → 系统设置) and checks `isActive` anyway.
  */
-const onFindKeydown = (event: KeyboardEvent): void => {
-  if (!(event.ctrlKey || event.metaKey) || !event.shiftKey) return;
-  if (event.key.toLowerCase() !== 'f') return;
+const openFindBar = (): void => {
   if (!isActive.value || !mySid) return;
-  event.preventDefault();
   chatBoxRef.value?.openFind();
 };
 
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onEditModeKeydown);
-  window.addEventListener('keydown', onFindKeydown);
-  onUnmounted(() => {
-    window.removeEventListener('keydown', onEditModeKeydown);
-    window.removeEventListener('keydown', onFindKeydown);
-  });
+  onUnmounted(() => window.removeEventListener('keydown', onEditModeKeydown));
 }
 
 const stream = useChatStream({

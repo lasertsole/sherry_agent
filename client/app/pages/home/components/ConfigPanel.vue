@@ -345,6 +345,15 @@
           :header="t('config.tabs.i18n')">
           <I18nPanel />
         </TabPanel>
+        <!-- Shortcut bindings: rebindable chords for the composer and the global
+             commands. Appended LAST for the same reason as the language tab —
+             the footer / embedder / dirty-state logic is keyed by tab INDEX —
+             and it saves on its own (no footer button). -->
+        <TabPanel
+          value="shortcuts"
+          :header="t('config.tabs.shortcuts')">
+          <ShortcutSettingsSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -354,9 +363,9 @@
          owns its Save/Reset pair, and the language list applies on click.
          (角色配置 moved to the 预设 panel together with the persona presets.)
          Index-keyed like the rest of this panel's tab logic: env 1, budget 3,
-         i18n 4. -->
+         i18n 4, shortcuts 5. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -396,6 +405,7 @@ import CudaPackCard from './CudaPackCard.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import TokenBudgetPanel from './TokenBudgetPanel.vue';
 import I18nPanel from './I18nPanel.vue';
+import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { useRightSidebarStore } from '~/stores/right-sidebar';
@@ -1102,6 +1112,7 @@ onBeforeUnmount(onHide);
         "sherry": "应用配置",
         "budget": "Token 预算",
         "i18n": "国际化",
+        "shortcuts": "快捷键",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1433,6 +1444,7 @@ onBeforeUnmount(onHide);
         "sherry": "App Config",
         "budget": "Token Budget",
         "i18n": "Language",
+        "shortcuts": "Shortcuts",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1764,6 +1776,7 @@ onBeforeUnmount(onHide);
         "sherry": "アプリ設定",
         "budget": "Token 予算",
         "i18n": "国際化",
+        "shortcuts": "ショートカット",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2095,6 +2108,7 @@ onBeforeUnmount(onHide);
         "sherry": "앱 설정",
         "budget": "Token 예산",
         "i18n": "국제화",
+        "shortcuts": "단축키",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },

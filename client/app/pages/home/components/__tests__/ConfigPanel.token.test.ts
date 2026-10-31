@@ -70,7 +70,8 @@ const primevueStubs = {
   Button: { name: 'Button', props: ['label'], template: '<button class="btn">{{ label }}</button>' },
   Slider: { name: 'Slider', props: ['modelValue'], template: '<div class="sl"></div>' },
   ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' },
-  TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' }
+  TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' },
+  ShortcutSettingsSection: { name: 'ShortcutSettingsSection', template: '<div class="shortcut-section"></div>' }
 };
 
 interface ConfigPanelVm {
@@ -161,5 +162,24 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
     expect(writeModelsConfigMock).toHaveBeenCalledWith({ [MAIN_TOKEN_KEY]: '262144' });
     expect(invalidateModelConfigCacheMock).toHaveBeenCalledTimes(1);
     expect(vm.envLoadError).toBe('');
+  });
+});
+
+
+describe('ConfigPanel shortcut-bindings tab', () => {
+  it('renders the bindings section and hides the shared footer there', async () => {
+    const wrapper = mount(ConfigPanel, {
+      props: { modelValue: true },
+      global: { stubs: primevueStubs }
+    });
+    const vm = wrapper.vm as unknown as ConfigPanelVm;
+
+    // The tab body is the (stubbed) section; it saves on its own, so the
+    // footer's Save/Cancel pair must be gone while it is active.
+    expect(wrapper.find('.shortcut-section').exists()).toBe(true);
+    vm.activeTab = 5;
+    await flushPromises();
+    expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);
+    expect(wrapper.findAll('button').filter(b => b.text() === '保存')).toHaveLength(0);
   });
 });

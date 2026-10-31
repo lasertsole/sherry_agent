@@ -11,6 +11,28 @@
     "delete": "削除",
     "cancel": "キャンセル"
   },
+  "shortcuts": {
+    "hint": "「再割り当て」を押してから新しい組み合わせを押します（Esc でキャンセル）。設定はこのブラウザに保存され、すぐに反映されます。",
+    "rebind": "再割り当て",
+    "cancelRebind": "キャンセル",
+    "listening": "キーを押してください…",
+    "reset": "既定に戻す",
+    "resetAll": "すべて既定に戻す",
+    "conflict": "「{name}」と競合しています（保存されません）",
+    "group": {
+      "composer": "入力欄",
+      "navigation": "セッションとサイドバー",
+      "global": "グローバル"
+    },
+    "sendMessage": "メッセージを送信",
+    "historyPrev": "前の質問履歴",
+    "historyNext": "次の質問履歴",
+    "cancelInput": "履歴参照を終了",
+    "commandPalette": "コマンド パレット",
+    "findInConversation": "会話内検索",
+    "newSession": "新しいセッション",
+    "toggleSidebar": "セッション サイドバーの折りたたみ"
+  },
   "chatFind": {
     "placeholder": "会話内を検索",
     "previous": "前の一致",

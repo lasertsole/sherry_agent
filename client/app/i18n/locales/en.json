@@ -11,6 +11,28 @@
     "delete": "Delete",
     "cancel": "Cancel"
   },
+  "shortcuts": {
+    "hint": "Click Rebind, then press the new chord (Esc cancels). Bindings are stored in this browser and apply immediately.",
+    "rebind": "Rebind",
+    "cancelRebind": "Cancel",
+    "listening": "Press a chord…",
+    "reset": "Restore default",
+    "resetAll": "Restore all defaults",
+    "conflict": "Conflicts with \"{name}\" — not saved",
+    "group": {
+      "composer": "Composer",
+      "navigation": "Sessions & sidebar",
+      "global": "Global"
+    },
+    "sendMessage": "Send message",
+    "historyPrev": "Previous question",
+    "historyNext": "Next question",
+    "cancelInput": "Leave history browsing",
+    "commandPalette": "Command palette",
+    "findInConversation": "Find in conversation",
+    "newSession": "New session",
+    "toggleSidebar": "Collapse / expand session sidebar"
+  },
   "chatFind": {
     "placeholder": "Search in conversation",
     "previous": "Previous match",

@@ -560,6 +560,19 @@ marks branched rows from ONE bulk read (`GET /sessions/side_chat/links`) and the
 branch badge navigates back to the parent; a branch child's visible history
 starts empty exactly like a side chat's (the inherited transcript is model-only).
 
+## Keyboard Shortcuts (`use-shortcuts.ts` / `plugins/shortcuts.ts` / `ShortcutSettingsSection.vue`)
+
+One binding table (`SHORTCUT_BINDINGS`) declares every chord with its built-in default; the EFFECTIVE chord is `overrides[id] ?? default`, so a rebind needs no re-registration. Two scopes with different owners:
+
+- **composer** (`send-message` Enter, `history-prev`/`history-next` ↑/↓, `cancel-input` Esc): `inputBox.vue` carries ONE `@keydown.stop="onComposerKeydown"` and matches with `matchesBinding(event, id)` — the compile-time `.enter/.up/.down/.escape` modifiers are gone. A matching chord is `preventDefault`ed and dispatched; everything else FALLS THROUGH, which is what keeps Shift+Enter's native newline and typing intact (`@keydown.stop` without `.prevent`). The defaults reproduce the old modifiers byte-for-byte.
+- **global / navigation** (`command-palette` Ctrl+K, `find-in-conversation` Ctrl+Shift+F, `new-session` Ctrl+N, `toggle-sidebar` Ctrl+B): ONE document listener installed by `plugins/shortcuts.ts`, which also loads the overrides at boot. Each owner registers its ACTION with `registerGlobalHandler(id, fn)` — the shell owns palette/new-session/toggle-sidebar, a session page owns find-in-conversation (registered on activation, released on deactivation; the registry is last-writer-wins, and `unregisterGlobalHandler(id, fn)` only removes a handler its caller still owns, so a cached page cannot unhook the visible one).
+
+`ctrl` means the platform PRIMARY modifier: `comboFromEvent` folds Cmd into it, so one table serves macOS and Windows/Linux, and `formatCombo` renders ⌘⇧F vs Ctrl+Shift+F (the send button's tooltip is built from it, so it follows a rebind). Overrides persist in Dexie (`shortcuts` table, schema v5) as `{id, keys}` JSON; deleting the row restores the default.
+
+The UI is the **快捷键 tab of 菜单 → 系统配置** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "与 X 冲突，未保存") and the row stays in capture.
+
+Not migrated on purpose: component-local `@keydown` on list items / overlays (they are internal UI interactions, not user-rebindable commands) and `BrowserPanel`'s CDP key forwarding.
+
 ## In-Conversation Search (`use-conversation-find.ts` / `ConversationFindBar.vue`)
 
 Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED transcript (`chatMessages`), never the DOM: a turn's tool cards and intermediate text sit folded behind the final answer, and virtual rows outside the window are not mounted at all, so the in-memory list is the only complete view of what the reader can reach. Matching is plain case-insensitive substring per message with one entry per OCCURRENCE (a message may hold several), stepping wraps at both ends, and a query with no hits reads `0/0` with a red box and disabled arrows — an empty query cannot throw. The scan is debounced 300 ms in ChatBox, not in the bar: the bar's input must stay instant while the walk is O(N) over up to `MAX_LOADED_ROWS` (400) rows.
