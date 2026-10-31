@@ -90,6 +90,7 @@ client/
 │   │   ├── main.css               # Tailwind v4 entry (@import 'tailwindcss') + @theme tokens + reset
 │   │   └── main.scss              # Global SCSS entry (loaded in nuxt.config css)
 │   ├── common/utils.ts            # Shared utilities (dayjs setup, formatCompactTimeString, ...)
+│   ├── common/floating-window.ts  # Floating conversation column geometry (snap anchors, clamping, side-width split)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # Chat input box component (i18n-aware)
 │   │   ├── chat/ConversationFindBar.vue# In-conversation find bar (Ctrl+Shift+F): floating over the list, never in its flow
@@ -193,6 +194,7 @@ client/
 │   │           └── AvatarCropDialog.vue       # Avatar upload + crop (cropperjs)
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
+│   │   ├── chat-float.ts       # Floating conversation column (open/closed + snap anchor, persisted)
 │   │   ├── subagent.ts         # Background-task state (runs / tree / selection) + derived views
 │   │   ├── todo.ts             # Session plan (todo) list + dock visibility
 │   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
@@ -401,7 +403,7 @@ The chat and the file viewer's markdown render through the v-safe-html pipeline,
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`), web-search backend (`web-search.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), floating conversation column (`chat-float.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`), web-search backend (`web-search.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 

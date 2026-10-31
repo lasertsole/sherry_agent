@@ -91,6 +91,7 @@ client/
 │   │   ├── main.css               # Tailwind v4 入口（@import 'tailwindcss'）+ @theme 令牌 + 重置样式
 │   │   └── main.scss              # 全局 SCSS 入口（在 nuxt.config css 中加载）
 │   ├── common/utils.ts            # 共享工具函数（dayjs 配置、formatCompactTimeString、……）
+│   ├── common/floating-window.ts  # 浮动对话栏几何（吸附锚点、边界收敛、左右栏宽度分配）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 聊天输入框组件（支持 i18n）
 │   │   ├── chat/ConversationFindBar.vue# 会话内搜索栏（Ctrl+Shift+F）：浮在列表上方，不占文档流
@@ -194,6 +195,7 @@ client/
 │   │           └── AvatarCropDialog.vue       # 头像上传 + 裁剪（cropperjs）
 │   ├── stores/                    # Pinia stores
 │   │   ├── ui.ts               # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）
+│   │   ├── chat-float.ts       # 浮动对话栏（开关 + 吸附锚点，持久化）
 │   │   ├── subagent.ts         # 后台任务状态（运行 / 树 / 选择）+ 派生视图
 │   │   ├── todo.ts             # 会话计划（todo）列表 + 停靠可见性
 │   │   ├── right-sidebar.ts    # 右侧栏（折叠状态 / 宽度持久化、已打开的标签类型）
@@ -401,7 +403,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 ### 状态与事件
 
-- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）、联网搜索后端（`web-search.ts`）
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、浮动对话栏（`chat-float.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）、联网搜索后端（`web-search.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
 - **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 

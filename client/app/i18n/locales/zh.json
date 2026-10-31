@@ -33,28 +33,6 @@
     "newSession": "新建会话",
     "toggleSidebar": "折叠 / 展开会话侧栏"
   },
-  "shortcuts": {
-    "hint": "点击「重绑」后按下新的组合键（Esc 取消）。绑定保存在本机浏览器，立即生效。",
-    "rebind": "重绑",
-    "cancelRebind": "取消",
-    "listening": "按下组合键…",
-    "reset": "恢复默认",
-    "resetAll": "全部恢复默认",
-    "conflict": "与「{name}」冲突，未保存",
-    "group": {
-      "composer": "输入框",
-      "navigation": "会话与侧栏",
-      "global": "全局"
-    },
-    "sendMessage": "发送消息",
-    "historyPrev": "上一条历史提问",
-    "historyNext": "下一条历史提问",
-    "cancelInput": "退出历史浏览",
-    "commandPalette": "命令面板",
-    "findInConversation": "会话内搜索",
-    "newSession": "新建会话",
-    "toggleSidebar": "折叠 / 展开会话侧栏"
-  },
   "safety": {
     "blocked": "内容已被安全过滤拦截",
     "replaced": "部分内容已按安全规则替换",
@@ -65,6 +43,11 @@
     "previous": "上一个匹配",
     "next": "下一个匹配",
     "close": "关闭搜索"
+  },
+  "chatFloat": {
+    "title": "对话",
+    "dragHint": "拖动以移动",
+    "restore": "恢复原样"
   },
   "chatInput": {
     "maxImages": "最多只能上传 {count} 张图片",
@@ -276,6 +259,8 @@
     },
     "collapseSidebar": "折叠侧边栏",
     "expandSidebar": "展开侧边栏",
+    "floatChat": "浮动显示对话",
+    "restoreChat": "恢复对话栏",
     "notification": "通知",
     "projectFiles": "项目文件",
     "projectFilesHint": "项目文件",

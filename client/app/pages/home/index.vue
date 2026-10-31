@@ -19,17 +19,62 @@
          v-model:current-session-id (the parent uses it to load the character snapshot). -->
     <SessionSidebar
       v-model:collapsed="isSidebarCollapsed"
-      v-model:current-session-id="currentSessionId" />
+      v-model:current-session-id="currentSessionId"
+      :extra-width="sideExtra.left" />
 
     <!-- Right side - session main area -->
     <!-- The conversation keeps TWO floors: 320px absolute (a message row needs
          it) and 35% of the viewport (on a large display it keeps its share
          instead of shrinking to the absolute floor while the side panels eat the
          rest). `max()` applies both; `common/layout.ts` holds the numbers
-         because the right column's drag ceiling must agree with them. -->
+         because the right column's drag ceiling must agree with them.
+         FLOATING: the same node becomes a fixed window inside the shell
+         (`fixed` must REPLACE `relative` — same-specificity position utilities);
+         the middle column then takes no flex width and the two side columns
+         share the freed space (see sideExtra). minWidth must be 0 or the 35%
+         floor would win over the computed window width. -->
     <div
-      class="relative flex flex-col flex-1 h-full bg-transparent dark:bg-transparent"
-      :style="{ minWidth: middleMinWidthCss() }">
+      data-test="chat-column"
+      :data-presentation="chatFloat.floating ? 'floating' : 'docked'"
+      :class="[
+        'flex flex-col h-full',
+        chatFloat.floating
+          ? [
+              'fixed z-40 rounded-xl border border-solid border-gray-light bg-white shadow-2xl dark:border-gray-dark dark:bg-[#181820]',
+              draggingFloat ? 'select-none transition-none' : 'transition-all duration-150'
+            ]
+          : 'relative flex-1 bg-transparent dark:bg-transparent'
+      ]"
+      :style="middleColumnStyle">
+      <!-- Floating header: the drag handle + the explicit restore button. Only
+           the window has it; in the docked layout the toolbar below is the
+           top edge. Dragging is ignored when the pointer starts on a control. -->
+      <div
+        v-if="chatFloat.floating"
+        class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-light px-3 h-9 dark:border-gray-dark"
+        :class="draggingFloat ? 'cursor-grabbing' : 'cursor-grab'"
+        data-test="chat-float-header"
+        role="button"
+        tabindex="0"
+        :aria-label="t('chatFloat.dragHint')"
+        :title="t('chatFloat.dragHint')"
+        @pointerdown="startFloatDrag"
+        @pointermove="moveFloatDrag"
+        @pointerup="endFloatDrag"
+        @pointercancel="cancelFloatDrag">
+        <i
+          class="pi pi-bars text-xs text-gray-500 dark:text-gray-400"
+          aria-hidden="true" />
+        <span class="truncate text-xs text-gray-500 dark:text-gray-400">{{ t('chatFloat.title') }}</span>
+        <span class="flex-1" />
+        <Button
+          size="small"
+          text
+          :label="t('chatFloat.restore')"
+          data-test="chat-float-restore"
+          @pointerdown.stop
+          @click="dockChatFloat" />
+      </div>
       <!-- Top toolbar: flex with space-between alignment. The collapse/expand history button
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
@@ -59,6 +104,22 @@
             variant="text"
             class="text-theme-main"
             @click="toggleSidebar" />
+          <!-- Float / restore the conversation column. The button is a toggle:
+               docked → pop the middle column out; floating → put it back. -->
+          <Button
+            v-if="canFloatChat"
+            :icon="chatFloat.floating ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
+            :title="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
+            :aria-label="chatFloat.floating ? t('toolbar.restoreChat') : t('toolbar.floatChat')"
+            :aria-pressed="chatFloat.floating"
+            variant="text"
+            data-test="chat-float"
+            :class="[
+              chatFloat.floating
+                ? 'bg-theme-main/10 text-theme-main'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+            ]"
+            @click="toggleChatFloat" />
           <Button
             v-if="canShowProjectFiles"
             :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
@@ -214,6 +275,7 @@
          outside the KeepAlive'd session page, its tabs survive session switches. -->
     <RightSidebar
       :session-id="openSessionId"
+      :extra-width="sideExtra.right"
       @saved="loadCharacter"
       @close-tab="handleCloseRightTab" />
 
@@ -255,16 +317,27 @@ import RightSidebar from './components/RightSidebar.vue';
 import { detachSideChatSession } from '~/composables/use-side-chat';
 import type { RightSidebarTab } from '~/stores/right-sidebar';
 import { useSidebarWidthStore } from '~/stores/sidebar-width';
+import { useChatFloatStore } from '~/stores/chat-float';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import OnboardingDialog from '~/components/OnboardingDialog.vue';
 import CommandPalette from '~/components/CommandPalette.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 // function
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
+import {
+  FLOATING_DRAG_CLICK_THRESHOLD_PX,
+  clampFloatingPosition,
+  distributeSideExtra,
+  isFloatingAvailable,
+  resolveFloatingPosition,
+  resolveFloatingSize,
+  resolveNearestFloatingAnchor,
+  type FloatingPosition
+} from '@/common/floating-window';
 import { headerTools, toolboxTools } from './config';
 import ModeSwitch from './components/ModeSwitch.vue';
 import { buildHomeToolbarCommands, type HomeToolbarContext } from './dialogs';
@@ -378,6 +451,9 @@ const SIDEBAR_FILES_HINT_KEY = 'sherry.sidebarFilesHintShown';
  * fixed-chrome measurement. The hint costs one toast and is remembered locally.
  */
 const toggleSidebarBodyWithHint = (): void => {
+  // The working-directory body only exists in the docked column: put the chat
+  // back first, otherwise the folder button looks like it did nothing.
+  if (chatFloat.floating) dockChatFloat();
   uiStore.toggleSidebarBody();
   // Reveal the body being switched to: with the sidebar collapsed the click would
   // otherwise look like it did nothing (the folder is the most obvious case — you
@@ -402,6 +478,142 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 const rightSidebarStore = useRightSidebarStore();
 /** Left column width (draggable in SessionSidebar; the auto-collapse reads it) */
 const sidebarWidthStore = useSidebarWidthStore();
+
+// ── Floating conversation column ───────────────────────────────────────────
+/** Whether the middle column is popped out as a window (persisted, global). */
+const chatFloat = useChatFloatStore();
+/** Viewport size the float geometry is derived from (updated on window resize). */
+const viewportSize = ref({
+  width: typeof window === 'undefined' ? 0 : window.innerWidth,
+  height: typeof window === 'undefined' ? 0 : window.innerHeight
+});
+/** The shell's content area: the float stays inside it. */
+const floatSlot = computed(() => ({ left: 0, top: 0, ...viewportSize.value }));
+const floatSize = computed(() => resolveFloatingSize(floatSlot.value));
+/** Whether this window is wide enough to offer the float at all. */
+const canFloatChat = computed(() => isFloatingAvailable(viewportSize.value.width));
+/** Live drag position (null = resting on the anchor). */
+const dragPosition = shallowRef<FloatingPosition | null>(null);
+/** The window's current corner: the drag position while dragging, the anchor otherwise. */
+const floatPosition = computed(
+  () => dragPosition.value ?? resolveFloatingPosition(chatFloat.anchor, floatSlot.value, floatSize.value)
+);
+/**
+ * The middle column's box. Docked it keeps the conversation's double floor;
+ * floating it takes the window's geometry and drops the floor (`minWidth: 0`),
+ * or a 35%-viewport minimum would win over the computed width.
+ */
+const middleColumnStyle = computed(() =>
+  chatFloat.floating
+    ? {
+        left: `${floatPosition.value.left}px`,
+        top: `${floatPosition.value.top}px`,
+        width: `${floatSize.value.width}px`,
+        height: `${floatSize.value.height}px`,
+        minWidth: '0px'
+      }
+    : { minWidth: middleMinWidthCss() }
+);
+/** True while the header is being dragged (disables the snap transition). */
+const draggingFloat = ref(false);
+let floatDrag: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  origin: FloatingPosition;
+  moved: boolean;
+} | null = null;
+let pendingDrag: FloatingPosition | null = null;
+let dragFrame = 0;
+
+/** Flush the coalesced drag position (one style patch per animation frame). */
+const applyPendingDrag = (): void => {
+  dragFrame = 0;
+  if (!pendingDrag) return;
+  dragPosition.value = clampFloatingPosition(pendingDrag, floatSlot.value, floatSize.value);
+};
+
+const startFloatDrag = (event: PointerEvent): void => {
+  if (event.button !== 0) return;
+  // A control inside the header (the restore button) must keep its own click.
+  if ((event.target as HTMLElement | null)?.closest('button, a, input, [contenteditable="true"]')) return;
+  const header = event.currentTarget as HTMLElement;
+  try {
+    header.setPointerCapture?.(event.pointerId);
+  } catch {
+    // Pointer capture is an enhancement (and absent in a bare test DOM).
+  }
+  floatDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin: floatPosition.value,
+    moved: false
+  };
+  event.preventDefault();
+};
+
+const moveFloatDrag = (event: PointerEvent): void => {
+  const session = floatDrag;
+  if (!session || session.pointerId !== event.pointerId) return;
+  const dx = event.clientX - session.startX;
+  const dy = event.clientY - session.startY;
+  if (!session.moved && Math.hypot(dx, dy) < FLOATING_DRAG_CLICK_THRESHOLD_PX) return;
+  session.moved = true;
+  draggingFloat.value = true;
+  pendingDrag = { left: session.origin.left + dx, top: session.origin.top + dy };
+  if (!dragFrame) dragFrame = requestAnimationFrame(applyPendingDrag);
+};
+
+/**
+ * End a drag: a sub-threshold pointer sequence is a click; a real drag snaps to
+ * the nearest anchor (or, when cancelled, returns to the anchor it started
+ * from — the drag position is simply dropped).
+ * @param event The pointerup / pointercancel event.
+ * @param snap Whether to snap to the nearest anchor (false = abandon the drag).
+ */
+const finishFloatDrag = (event: PointerEvent, snap: boolean): void => {
+  const session = floatDrag;
+  if (!session || session.pointerId !== event.pointerId) return;
+  floatDrag = null;
+  try {
+    (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId);
+  } catch {
+    // The pointer is already gone; nothing to release.
+  }
+  if (!session.moved) {
+    draggingFloat.value = false;
+    pendingDrag = null;
+    return;
+  }
+  if (dragFrame) {
+    cancelAnimationFrame(dragFrame);
+    dragFrame = 0;
+  }
+  if (pendingDrag) dragPosition.value = clampFloatingPosition(pendingDrag, floatSlot.value, floatSize.value);
+  pendingDrag = null;
+  draggingFloat.value = false;
+  const dropped = dragPosition.value ?? floatPosition.value;
+  dragPosition.value = null;
+  if (snap) chatFloat.setAnchor(resolveNearestFloatingAnchor(dropped, floatSlot.value, floatSize.value));
+};
+
+const endFloatDrag = (event: PointerEvent): void => finishFloatDrag(event, true);
+const cancelFloatDrag = (event: PointerEvent): void => finishFloatDrag(event, false);
+
+/**
+ * Extra width each side column receives while the chat floats: the docked
+ * middle column's width, split equally between the sides that are expanded
+ * (only one expanded → it takes everything; none → nothing grows). A maximized
+ * right panel covers the shell, so it counts as unexpanded for the split.
+ */
+const sideExtra = computed(() => {
+  if (!chatFloat.floating) return { left: 0, right: 0 };
+  const left = uiStore.sidebarCollapsed ? 0 : sidebarWidthStore.width;
+  const right = rightSidebarStore.collapsed || rightSidebarStore.maximized ? 0 : rightSidebarStore.width;
+  return distributeSideExtra(left, right, viewportSize.value.width);
+});
+
 // The This-session tab group belongs to the route's session: switching sessions
 // shows that session's own tabs (or an empty group), never the previous one's.
 watch(openSessionId, sid => rightSidebarStore.setActiveSession(sid), { immediate: true });
@@ -511,6 +723,13 @@ const toggleRightSidebar = () => {
 };
 
 const toggleSidebar = () => {
+  // While the chat floats the left column is widened by the float's split; the
+  // same button now means "hide the sidebar" — close the window and collapse.
+  if (chatFloat.floating) {
+    dockChatFloat();
+    uiStore.sidebarCollapsed = true;
+    return;
+  }
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };
 
@@ -519,8 +738,9 @@ const toggleSidebar = () => {
 // Narrow-window safety net (ZCode's shell behaviour): when the conversation is
 // squeezed below a readable width, the accessory columns retract — right first,
 // left second. Only WINDOW resizes trigger it, so opening a panel by hand is
-// never undone by the layout.
-useAutoCollapse({
+// never undone by the layout. Suspended while the chat floats: the middle
+// column takes no flex width then, so measuring would retract the widened sides.
+const { measure: measureAutoCollapse } = useAutoCollapse({
   // Read/write the store state directly: `storeToRefs` drops primitive keys on a
   // plain reactive store (and the test double is exactly that), which would
   // leave this accessor reading `undefined`.
@@ -533,8 +753,85 @@ useAutoCollapse({
   setRightCollapsed: value => {
     rightSidebarStore.collapsed = value;
   },
-  rightSidebarWidth: () => rightSidebarStore.width
+  rightSidebarWidth: () => rightSidebarStore.width,
+  isSuspended: () => chatFloat.floating
 });
+
+/**
+ * Put the conversation column back into the flow. The drag leftovers are
+ * cleared and the auto-collapse net re-measures once the restored layout is on
+ * screen (its resize path was paused while the window floated).
+ */
+function dockChatFloat(): void {
+  chatFloat.dock();
+  dragPosition.value = null;
+  pendingDrag = null;
+  draggingFloat.value = false;
+  if (dragFrame) {
+    cancelAnimationFrame(dragFrame);
+    dragFrame = 0;
+  }
+  void nextTick(() => {
+    requestAnimationFrame(() => measureAutoCollapse());
+  });
+}
+
+/** Flip between the docked column and the floating window. */
+function toggleChatFloat(): void {
+  if (chatFloat.floating) {
+    dockChatFloat();
+    return;
+  }
+  if (!canFloatChat.value) return;
+  chatFloat.open();
+}
+
+/**
+ * The right sidebar's global expand covers the shell, so the conversation has
+ * to leave the layout while it is open. Snapshot the states that were true at
+ * the moment it expanded (BEFORE auto-floating, or "was docked" would be
+ * recorded as "was floating"):
+ *  - on expand: remember (left expanded?, chat floating?) and always float;
+ *  - on restore: keep floating only when the left was expanded AND the chat was
+ *    already floating; every other combination docks.
+ * `immediate` covers a boot with a persisted `maximized`: the boot state is the
+ * snapshot.
+ */
+const preMaximizeSnapshot = ref<{ leftExpanded: boolean; middleFloating: boolean } | null>(null);
+watch(
+  () => rightSidebarStore.maximized,
+  maximized => {
+    if (maximized) {
+      preMaximizeSnapshot.value = {
+        leftExpanded: !uiStore.sidebarCollapsed,
+        middleFloating: chatFloat.floating
+      };
+      // A maximize implies an expanded panel. The explicit toggle does this too;
+      // the boot path (a persisted `maximized`) does not, and a persisted
+      // collapsed flag would leave the overlay with no body — and therefore no
+      // restore button — on screen.
+      rightSidebarStore.expand?.();
+      if (!chatFloat.floating && canFloatChat.value) chatFloat.open();
+      return;
+    }
+    const snapshot = preMaximizeSnapshot.value;
+    // `immediate` also runs the restore branch on a normal boot (maximized is
+    // false). Only a maximize that actually happened may change the float then —
+    // otherwise a persisted floating window would be docked on every reload.
+    if (!snapshot) return;
+    preMaximizeSnapshot.value = null;
+    const keepFloating = !!snapshot.leftExpanded && !!snapshot.middleFloating && canFloatChat.value;
+    if (keepFloating) chatFloat.open();
+    else dockChatFloat();
+  },
+  { immediate: true }
+);
+
+/** Keep the float's geometry valid when the window changes size. */
+const onViewportResize = (): void => {
+  viewportSize.value = { width: window.innerWidth, height: window.innerHeight };
+  if (chatFloat.floating && !isFloatingAvailable(window.innerWidth)) dockChatFloat();
+};
 
 /**
  * Whether the first-run tour is on screen. Checked ONCE per boot against the
@@ -545,6 +842,10 @@ const onboardingVisible = ref(false);
 
 onMounted(() => {
   chatBackgroundStore.loadBackground();
+  // The float's geometry follows the window: its size and anchor are re-derived
+  // on resize, and a window too narrow no longer offers the float.
+  viewportSize.value = { width: window.innerWidth, height: window.innerHeight };
+  window.addEventListener('resize', onViewportResize);
   // Global chords: the palette (Ctrl+K), a new session (Ctrl+N) and the left
   // sidebar (Ctrl+B). Registered by id; the shortcut table decides the keys and
   // a rebind takes effect on the next press.
@@ -569,6 +870,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onViewportResize);
   unregisterGlobalHandler('command-palette', openCommandPalette);
   unregisterGlobalHandler('new-session');
   unregisterGlobalHandler('toggle-sidebar');

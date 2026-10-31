@@ -91,6 +91,7 @@ client/
 │   │   ├── main.css               # Tailwind v4 エントリ（@import 'tailwindcss'）+ @theme トークン + リセット
 │   │   └── main.scss              # グローバル SCSS エントリ（nuxt.config の css で読み込み）
 │   ├── common/utils.ts            # 共有ユーティリティ（dayjs セットアップ、formatCompactTimeString、...）
+│   ├── common/floating-window.ts  # フローティング会話列のジオメトリ（吸着位置、境界クランプ、左右列の幅配分）
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # チャット入力ボックスコンポーネント（i18n 対応）
 │   │   ├── chat/ConversationFindBar.vue# 会話内検索バー（Ctrl+Shift+F）：一覧の上に浮かせ、レイアウトを動かさない
@@ -194,6 +195,7 @@ client/
 │   │           └── AvatarCropDialog.vue       # アバターアップロード + 切り抜き（cropperjs）
 │   ├── stores/                    # Pinia ストア
 │   │   ├── ui.ts               # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）
+│   │   ├── chat-float.ts       # フローティング会話列（開閉 + 吸着位置を永続化）
 │   │   ├── subagent.ts         # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
 │   │   ├── todo.ts             # セッション計画（todo）リスト + ドック表示可否
 │   │   ├── right-sidebar.ts    # 右サイドバー（折りたたみ / 幅を永続化、開いているタブ種別）
@@ -401,7 +403,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 ### 状態とイベント
 
-- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）、Web 検索バックエンド（`web-search.ts`）
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、フローティング会話列（`chat-float.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）、Web 検索バックエンド（`web-search.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
 - **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 

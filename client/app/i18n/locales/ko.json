@@ -44,6 +44,11 @@
     "next": "다음 일치",
     "close": "검색 닫기"
   },
+  "chatFloat": {
+    "title": "대화",
+    "dragHint": "드래그하여 이동",
+    "restore": "원래대로"
+  },
   "chatInput": {
     "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
     "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",
@@ -254,6 +259,8 @@
     },
     "collapseSidebar": "사이드바 접기",
     "expandSidebar": "사이드바 펼치기",
+    "floatChat": "대화를 플로팅으로 표시",
+    "restoreChat": "대화 막대 복원",
     "notification": "알림",
     "projectFiles": "프로젝트 파일",
     "projectFilesHint": "프로젝트 파일",

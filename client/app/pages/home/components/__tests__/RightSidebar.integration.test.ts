@@ -173,6 +173,19 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(collapsedWrapper.find('aside').attributes('style')).toBeUndefined();
   });
 
+  it('adds the float share to the rendered width and drops the resize grip', () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.width = 420;
+    const wrapper = mount(RightSidebar, { props: { extraWidth: 100 }, global: { stubs } });
+
+    // The share is presentation-only: the store keeps 420, the DOM shows 520.
+    expect(wrapper.find('aside').attributes('style')).toContain('width: 520px');
+    expect(wrapper.find('aside > div:last-child').attributes('style')).toContain('width: 520px');
+    expect(sidebarApi.width).toBe(420);
+    // A drag would move a width the user cannot see, so the grip is gone.
+    expect(wrapper.find('[role="separator"]').exists()).toBe(false);
+  });
+
   it('keeps the body mounted through the collapse animation, then drops it', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];

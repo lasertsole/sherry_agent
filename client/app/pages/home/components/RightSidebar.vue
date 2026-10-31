@@ -15,15 +15,17 @@
             'relative shrink border-l border-solid border-gray-light min-w-[280px] dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
-    :style="collapsed || store.maximized ? undefined : { width: `${store.width}px` }">
+    :style="collapsed || store.maximized ? undefined : { width: `${displayWidth}px` }">
     <!-- Resize handle on the left edge: dragging left widens the panel (it is
          right-anchored); the store clamps every step to the allowed band. The
          grip pill is the affordance — an 8px edge alone reads as a border, so
          the pill, the col-resize cursor and the tooltip say "drag me". Its
          greys are mode-independent: the theme accent resolves to white on a
-         dark-mode build, which disappears over a light panel. -->
+         dark-mode build, which disappears over a light panel. Hidden while the
+         chat column is floated: the extra width is a presentation override, so
+         a drag would move a width the user cannot see. -->
     <div
-      v-if="!collapsed && !store.maximized"
+      v-if="!collapsed && !store.maximized && props.extraWidth <= 0"
       class="group absolute left-0 top-0 h-full w-2 z-10 flex items-center justify-center cursor-col-resize"
       :class="{ 'bg-gray-400/20': dragging }"
       role="separator"
@@ -41,7 +43,7 @@
     <div
       v-if="contentMounted"
       class="flex flex-col h-full"
-      :style="store.maximized ? { width: '100%' } : { width: `${store.width}px` }">
+      :style="store.maximized ? { width: '100%' } : { width: `${displayWidth}px` }">
       <!-- Strip: the group pills (This session / Global — the tabs' scope) are FIXED at the
            left of the single tab row, and the active group's tab list scrolls to
            their right. The row keeps the shared h-15, so all three columns still
@@ -197,11 +199,17 @@ import { middleMinWidth } from '@/common/layout';
 import RecentClosedTabsMenu from './RecentClosedTabsMenu.vue';
 
 /** The session the main area shows (the recent-tabs menu filters by it). */
-defineProps<{ sessionId?: string }>();
+const props = withDefaults(defineProps<{ sessionId?: string; extraWidth?: number }>(), { extraWidth: 0 });
 
 const { t } = useI18n({ useScope: 'local' });
 
 const store = useRightSidebarStore();
+/**
+ * What the DOM renders: the stored width plus the share the shell hands over
+ * while the conversation column is floated. Presentation-only — the store is
+ * never written — so docking the chat restores this column exactly.
+ */
+const displayWidth = computed(() => store.width + Math.max(0, props.extraWidth));
 /**
  * Pixels the left column plus the conversation's floor need. The drag ceiling
  * subtracts them so the stored width is always one the flex row can actually

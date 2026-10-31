@@ -44,6 +44,11 @@
     "next": "Next match",
     "close": "Close search"
   },
+  "chatFloat": {
+    "title": "Conversation",
+    "dragHint": "Drag to move",
+    "restore": "Restore"
+  },
   "chatInput": {
     "maxImages": "You can upload at most {count} images",
     "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
@@ -254,6 +259,8 @@
     },
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
+    "floatChat": "Float conversation",
+    "restoreChat": "Restore conversation",
     "notification": "Notifications",
     "projectFiles": "Project files",
     "projectFilesHint": "Project files",

@@ -600,6 +600,19 @@ Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED
 - A match in a row the memory cap already RELEASED is not in `chatMessages` any more: `jumpToMatch` therefore asks the page for `resetExhausted()` + `loadOlderHistory()` once and retries; no row growth ⇒ give up (the occurrence no longer exists anywhere the reader can scroll to).
 - Labels are the central `chatFind.*` keys (four languages). Deliberately NOT done: regex, cross-session search, searching tool args/results, and the plan's advanced full-text `<mark>` highlighting (markdown output makes DOM text-node mapping non-trivial) — the MVP marks the current match by the ring alone.
 
+## Floating Conversation Column (`index.vue` / `common/floating-window.ts` / `stores/chat-float.ts`)
+
+The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit 恢复原样 button.
+
+- **Three presentations**: `docked` / `floating` / `hidden` (the existing collapsed state). `chatFloat` (`floating` + `anchor`, persisted to localStorage) is the only state; the middle column binds `data-presentation`, class `fixed` vs `relative` (never both — same-specificity Tailwind utilities) and `minWidth: 0` while floating (the 35% viewport floor would otherwise win over the computed width).
+- **Single instance**: the same middle-column DOM and the KeepAlive'd session page relocate, never remount — draft, scroll, streaming turn and HITL survive. No Teleport (moving scrollable DOM resets the scroll position).
+- **Geometry** (`common/floating-window.ts`, pure functions): 45% × 78% of the shell, clamped to 480–760 × 420–820, 16px margin, 9 anchors (default `center`); drag threshold 4px; drag positions coalesce through one rAF into a `shallowRef`; release snaps to the nearest anchor, and only the anchor is stored.
+- **Side columns**: the freed width is shared **equally between the EXPANDED side columns only** (one expanded → it takes all; none → nothing grows; a maximized right panel counts as unexpanded). `extraWidth` props add it to the rendered width only — no store is written, so docking restores both columns exactly. Their resize grips hide while a share is applied.
+- **Auto-collapse** is suspended while floating (`useAutoCollapse`'s `isSuspended`); docking calls its returned `measure()` after the layout settles (the resize path was paused).
+- **Right sidebar maximize linkage**: maximising auto-floats the conversation. At the moment it expands, capture `{leftExpanded, middleFloating}` BEFORE floating; on restore keep floating only when the left was expanded AND the conversation was already floating, otherwise dock. The snapshot is transient (not persisted); a boot with a persisted `maximized` uses the boot state as the snapshot, and the maximize path calls `expand()` so a persisted collapsed flag cannot leave an empty overlay with no restore button.
+- **Clipping**: the floating root must NOT use `overflow-hidden` — the composer toolbar's upward `ToolbarPopover` panels (`absolute z-50`) would be cut; rounded corners come from the root background plus the header. The chat's own scroller keeps its own overflow.
+- A boot with `floating` persisted restores the window; the maximize watcher's restore branch ignores its initial `false` (no snapshot), or every reload would dock it.
+
 ## Voice Input (`use-voice-input.ts` / `server/service/audio_transcribe_service.py`)
 
 The composer's mic button (`inputBox.vue`, in the `sendActions` cluster) records,

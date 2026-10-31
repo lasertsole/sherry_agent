@@ -102,6 +102,13 @@ export interface AutoCollapseDeps {
   setRightCollapsed: (collapsed: boolean) => void;
   /** Right column width in px. */
   rightSidebarWidth: () => number;
+  /**
+   * Pause the net while the conversation column is floated: the middle column
+   * then takes no flex width, so "viewport − side columns" no longer describes
+   * the conversation's width and measuring would retract the side columns the
+   * user just widened on any window resize.
+   */
+  isSuspended?: () => boolean;
 }
 
 /**
@@ -111,8 +118,11 @@ export interface AutoCollapseDeps {
  * so it measures the layout the user will actually get rather than the one
  * with a panel that is still animating out.
  * @param deps The two columns' refs.
+ * @returns A `measure` hook: call it after the floating column is docked (the
+ *   window-resize path is suspended while it floats, so the restored layout is
+ *   not evaluated until the caller asks).
  */
-export function useAutoCollapse(deps: AutoCollapseDeps): void {
+export function useAutoCollapse(deps: AutoCollapseDeps): { measure: () => void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let frame: number | undefined;
 
@@ -122,6 +132,7 @@ export function useAutoCollapse(deps: AutoCollapseDeps): void {
   });
 
   const measure = (): void => {
+    if (deps.isSuspended?.()) return;
     const viewport = window.innerWidth;
     const right = {
       collapsed: deps.isRightCollapsed(),
@@ -159,4 +170,6 @@ export function useAutoCollapse(deps: AutoCollapseDeps): void {
     if (timer) clearTimeout(timer);
     if (frame !== undefined) cancelAnimationFrame(frame);
   });
+
+  return { measure };
 }

@@ -44,6 +44,11 @@
     "next": "次の一致",
     "close": "検索を閉じる"
   },
+  "chatFloat": {
+    "title": "会話",
+    "dragHint": "ドラッグして移動",
+    "restore": "元に戻す"
+  },
   "chatInput": {
     "maxImages": "最大 {count} 枚の画像をアップロードできます",
     "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています",
@@ -254,6 +259,8 @@
     },
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開",
+    "floatChat": "会話をフローティング表示",
+    "restoreChat": "会話バーを元に戻す",
     "notification": "通知",
     "projectFiles": "プロジェクトファイル",
     "projectFilesHint": "プロジェクトファイル",

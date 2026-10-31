@@ -12,14 +12,16 @@
         ? 'w-0 border-r-0'
         : 'shrink-0 border-r border-solid border-gray-light bg-transparent dark:border-gray-dark dark:bg-transparent'
     ]"
-    :style="{ width: collapsed ? '0px' : sidebarWidth + 'px' }"
+    :style="{ width: collapsed ? '0px' : displayWidth + 'px' }"
     data-test="session-sidebar">
     <!-- Right-edge resize handle: dragging right widens the column (it is
          left-anchored). The store clamps every step, so the drag can never go
          below the 280px floor or past half the viewport. Hidden while
-         collapsed — there is no width to drag. -->
+         collapsed — there is no width to drag — and while the chat column is
+         floated (the extra width is a presentation override, not this column's
+         stored width, so a drag would move a width the user cannot see). -->
     <div
-      v-if="!collapsed"
+      v-if="!collapsed && extraWidth <= 0"
       class="group absolute right-0 top-0 z-10 flex h-full w-2 items-center justify-center cursor-col-resize"
       :class="{ 'bg-gray-400/20': resizing }"
       role="separator"
@@ -36,7 +38,7 @@
          when collapsed the outer overflow-hidden clips it wholesale. -->
     <div
       class="flex flex-col px-4 h-full"
-      :style="{ width: sidebarWidth + 'px' }">
+      :style="{ width: displayWidth + 'px' }">
       <!-- LOGO area (the theme switch and the language picker live in the top
            toolbar, immediately left of the menu button). -->
       <div
@@ -336,10 +338,20 @@ const localePath = useLocalePath();
 /** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
 
+/**
+ * Extra width added by the shell while the conversation column is floated: the
+ * middle column leaves the flex row and its width is shared between the side
+ * columns. This is a PRESENTATION override — the stored width below is never
+ * written — so docking the chat restores the column exactly.
+ */
+const props = withDefaults(defineProps<{ extraWidth?: number }>(), { extraWidth: 0 });
+
 // ── Width (draggable, persisted) ───────────────────────────────────────────
 /** The shell's left-column width, shared with the layout's auto-collapse. */
 const sidebarWidthStore = useSidebarWidthStore();
 const sidebarWidth = computed(() => sidebarWidthStore.width);
+/** What the DOM actually renders: the stored width plus the float's share. */
+const displayWidth = computed(() => sidebarWidth.value + Math.max(0, props.extraWidth));
 const rightSidebar = useRightSidebarStore();
 
 /**
@@ -469,11 +481,19 @@ const {
   virtualizer: sessionVirtualizer,
   virtualRows: sessionVirtualRows,
   totalSize: sessionTotalSize,
-  rowAt: sessionRowAt
+  rowAt: sessionRowAt,
+  remeasure: remeasureSessions
 } = useVirtualRows(
   sessionsScrollRef,
   () => sessionRows.value,
   () => SESSION_ROW_ESTIMATE_PX
+);
+
+// The float widens this column: titles wrap differently, so the virtual rows'
+// measured heights change — re-measure once the new width is on screen.
+watch(
+  () => props.extraWidth,
+  () => remeasureSessions()
 );
 
 /**

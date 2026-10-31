@@ -91,6 +91,7 @@ client/
 │   │   ├── main.css               # Tailwind v4 엔트리(@import 'tailwindcss') + @theme 토큰 + 리셋
 │   │   └── main.scss              # 전역 SCSS 엔트리(nuxt.config css에서 로드)
 │   ├── common/utils.ts            # 공유 유틸리티(dayjs 설정, formatCompactTimeString, ...)
+│   ├── common/floating-window.ts  # 플로팅 대화 열 지오메트리(앵커, 경계 클램프, 좌우 열 너비 분배)
 │   ├── components/
 │   │   ├── chat/inputBox.vue      # 채팅 입력 박스 컴포넌트(i18n 지원)
 │   │   ├── chat/ConversationFindBar.vue# 대화 내 검색 바(Ctrl+Shift+F): 목록 위에 떠 있고 레이아웃을 밀지 않음
@@ -194,6 +195,7 @@ client/
 │   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
 │   ├── stores/                    # Pinia 스토어
 │   │   ├── ui.ts               # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
+│   │   ├── chat-float.ts       # 플로팅 대화 열(열림/닫힘 + 스냅 앵커, 영속화)
 │   │   ├── subagent.ts         # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
 │   │   ├── todo.ts             # 세션 계획(todo) 목록 + 독 표시 여부
 │   │   ├── right-sidebar.ts    # 오른쪽 사이드바(접힘 / 너비 영속화, 열린 탭 종류)
@@ -401,7 +403,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 플로팅 대화 열(`chat-float.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 
