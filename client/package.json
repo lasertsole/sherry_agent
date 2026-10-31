@@ -25,7 +25,7 @@
     "@tanstack/vue-virtual": "^3.13.40",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "2.7.3",
-    "@tauri-apps/plugin-opener": "2.5.5",
+    "@tauri-apps/plugin-opener": "2.7.2",
     "@types/lodash-es": "^4.17.12",
     "cropperjs": "^1.6.3",
     "dayjs": "^1.11.23",
