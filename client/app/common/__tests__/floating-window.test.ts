@@ -173,12 +173,12 @@ describe('parseFloatingAnchor', () => {
 });
 
 describe('distributeSideExtra', () => {
-  it('splits the freed width equally when both sides are expanded', () => {
-    expect(distributeSideExtra(280, 552, 1280)).toEqual({ left: 224, right: 224 });
+  it('keeps the left width and gives the freed width to the right', () => {
+    expect(distributeSideExtra(280, 552, 1280)).toEqual({ left: 0, right: 448 });
   });
 
-  it('gives an odd extra pixel to the right', () => {
-    expect(distributeSideExtra(280, 551, 1280)).toEqual({ left: 224, right: 225 });
+  it('still gives the whole freed width to the right on an odd split', () => {
+    expect(distributeSideExtra(280, 551, 1280)).toEqual({ left: 0, right: 449 });
   });
 
   it('gives the whole freed width to the only expanded side', () => {

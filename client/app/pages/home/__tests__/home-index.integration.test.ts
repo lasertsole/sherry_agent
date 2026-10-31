@@ -619,17 +619,16 @@ describe('home/index.vue — floating conversation column', () => {
       expect(column.attributes('style')).toContain('min-width: 0px');
       expect(useChatFloatStore().floating).toBe(true);
 
-      // Left 360 and right 420 are expanded: the docked middle's width is split
-      // equally (the odd pixel goes right).
+      // Left 360 and right 420 are expanded: the left keeps its width and the
+      // right absorbs the docked middle's whole width.
       const extra = Math.max(0, 1440 - 360 - 420);
-      const leftExtra = Math.floor(extra / 2);
-      expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain(`width: ${360 + leftExtra}px`);
-      expect(wrapper.get('aside').attributes('style')).toContain(`width: ${420 + extra - leftExtra}px`);
+      expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain('width: 360px');
+      expect(wrapper.get('aside').attributes('style')).toContain(`width: ${420 + extra}px`);
       // The window owns the header drag handle and the explicit restore control.
       expect(wrapper.find('[data-test="chat-float-header"]').exists()).toBe(true);
       expect(wrapper.text()).toContain('恢复原样');
 
-      await wrapper.get('[data-test="chat-float-header"] button').trigger('click');
+      await wrapper.get('[data-test="chat-float-restore"]').trigger('click');
       await nextTick();
       expect(wrapper.get('[data-test="chat-column"]').attributes('data-presentation')).toBe('docked');
       expect(wrapper.get('[data-test="session-sidebar"]').attributes('style')).toContain('width: 360px');

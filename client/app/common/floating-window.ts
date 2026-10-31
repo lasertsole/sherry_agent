@@ -300,9 +300,10 @@ export function distributeSideExtra(leftBase: number, rightBase: number, shellWi
   const left = Math.max(0, leftBase);
   const right = Math.max(0, rightBase);
   const extra = Math.max(0, shellWidth - left - right);
-  const sides = (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0);
-  if (sides === 0) return { left: 0, right: 0 };
-  const leftExtra = left > 0 ? Math.floor(extra / sides) : 0;
-  const rightExtra = right > 0 ? extra - leftExtra : 0;
-  return { left: leftExtra, right: rightExtra };
+  if (left <= 0 && right <= 0) return { left: 0, right: 0 };
+  // The right column absorbs the freed width whenever it is expanded; the left
+  // column keeps its stored width. Only a left column with no right column
+  // beside it grows into the space.
+  if (right > 0) return { left: 0, right: extra };
+  return { left: extra, right: 0 };
 }
