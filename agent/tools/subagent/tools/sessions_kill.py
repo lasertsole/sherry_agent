@@ -5,6 +5,7 @@ from langchain.tools import BaseTool
 from loguru import logger
 
 from ..control import kill_subagent_run_with_cascade
+from ..spawn.privilege import resolve_caller_session_key
 
 
 class SessionsKillSchema(BaseModel):
@@ -44,7 +45,7 @@ class SessionsKillTool(BaseTool):
             "sessions_kill called: run_id={}, cascade={}, reason={}", run_id, cascade, reason
         )
 
-        requester_session_key = f"agent:main:session:{self.session_id}"
+        requester_session_key = resolve_caller_session_key(self.session_id)
 
         killed = await kill_subagent_run_with_cascade(
             run_id,

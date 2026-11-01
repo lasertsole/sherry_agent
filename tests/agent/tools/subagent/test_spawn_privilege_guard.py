@@ -179,7 +179,12 @@ class TestA1WhitelistIntersection:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.GENERAL
         assert run.inherited_tool_allow == []
-        assert run.inherited_tool_deny == ["sessions_spawn", "sessions_yield"]
+        assert run.inherited_tool_deny == [
+            "sessions_spawn",
+            "sessions_yield",
+            "subagents_list",
+            "sessions_send",
+        ]
 
     @pytest.mark.parametrize("hint", ["researcher", "executor", "reviewer", "librarian"])
     def test_builtin_roles_orchestrator_keep_spawn(self, monkeypatch, _captured_lane, hint):
@@ -196,10 +201,20 @@ class TestA2CallTimeGuard:
     def test_resolve_caller_session_key(self):
         assert privilege.resolve_caller_session_key("abc") == "agent:main:session:abc"
         assert (
+            privilege.resolve_caller_session_key("agent:main:session:abc")
+            == "agent:main:session:abc"
+        )
+        assert (
             privilege.resolve_caller_session_key("agent:main:subagent:x") == "agent:main:subagent:x"
         )
         assert (
             privilege.resolve_caller_session_key("agent:main:swarm:g:x") == "agent:main:swarm:g:x"
+        )
+        # A legacy double-prefixed child key resolves to the child's own key,
+        # not to a key the registry can never match.
+        assert (
+            privilege.resolve_caller_session_key("agent:main:session:agent:main:subagent:x")
+            == "agent:main:subagent:x"
         )
         assert privilege.resolve_caller_session_key("  ") == ""
 

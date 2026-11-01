@@ -30,8 +30,16 @@ from agent.tools.pub_base import SessionId
 
 
 def _session_key(session_id: str) -> str:
-    """Build the canonical requester session key from a raw session id."""
-    return f"agent:main:session:{session_id}"
+    """Build the canonical requester session key from the state session id.
+
+    The state ``session_id`` is a bare main id for the main agent but the full
+    ``agent:...:subagent:...`` key for a nested child. The shared resolver keeps
+    child/swarm keys intact, so nested spawns look their parent up at the right
+    depth and token attribution can walk to the root session.
+    """
+    from ..spawn.privilege import resolve_caller_session_key
+
+    return resolve_caller_session_key(session_id)
 
 
 @tool("sessions_spawn")
@@ -59,9 +67,11 @@ async def sessions_spawn_runtime_tool(
             description="Functional specialization of the child: general (full "
             "access), researcher (read-only search), executor (write + run), "
             "reviewer (read-only audit), librarian (read-only external-codebase "
-            "retrieval). Omit for the default. A specialized caller may only "
-            "spawn its own role, except an executor may also spawn researcher "
-            "and librarian children for read-only research before writing."
+            "retrieval). Omit for the default. A specialized caller may spawn "
+            "its own role; an executor may also spawn researcher and librarian "
+            "children for read-only research before writing, and a researcher "
+            "or librarian may spawn either research role. General and main are "
+            "unrestricted."
         ),
     ] = None,
     isolation: Annotated[

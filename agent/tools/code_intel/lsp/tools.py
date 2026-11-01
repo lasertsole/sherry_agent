@@ -1,10 +1,12 @@
-"""LangChain tool wrappers for LSP precise retrieval — RESEARCHER only.
+"""LangChain tool wrappers for LSP precise retrieval — CODE_INTEL_ROLES only.
 
 The eight tools (``lsp_goto_definition`` / ``lsp_find_references`` /
 ``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_rename`` /
 ``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are never registered in
 ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py`` injects them into
-a child agent only when its functional role is RESEARCHER.
+a child agent only when its functional role is in ``CODE_INTEL_ROLES``
+(researcher / librarian). Both roles are read-only, so the prompt keeps
+``lsp_rename`` / ``lsp_format`` in preview mode.
 
 Every tool is **fail-open**: before any request it checks server availability via
 :mod:`fallback`, and a missing server / failed start / timed-out request degrades

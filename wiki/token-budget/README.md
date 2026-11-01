@@ -71,11 +71,14 @@ The cap is based on tokens, never on this estimate.
 `TOKEN_BUDGET_TURN_CAP` is an optional cap for the CURRENT turn. `TokenBudget`
 mints a turn id at `before_agent` and resets `TOKEN_BUDGET_TURN_USED`,
 `TOKEN_BUDGET_TURN_MAIN_USED`, `TOKEN_BUDGET_TURN_CHILD_USED`,
-`TOKEN_BUDGET_TURN_COST` and `TOKEN_BUDGET_TURN_LIMITED`. Every spawned child
-gets `TOKEN_BUDGET_PARENT = {session_id, turn_id}` at spawn; `ChildTokenBudget`
-adds its model usage to the root parent's SESSION counters (always) and, while
-the parent is still on that turn, to the turn counters. The session `used/cost`
-therefore include all descendants.
+`TOKEN_BUDGET_TURN_COST` and `TOKEN_BUDGET_TURN_LIMITED`. Every spawned child —
+at ANY nesting depth — gets `TOKEN_BUDGET_PARENT = {session_id, turn_id}` at
+spawn, inherited from its parent's own attribution when it is a grandchild or
+deeper (it never re-roots at the immediate parent). `ChildTokenBudget` adds its
+model usage to the ROOT parent's SESSION counters (always) and, while the parent
+is still on that turn, to the turn counters. The turn total is therefore the
+main agent plus every descendant level; the session `used/cost` include them
+too.
 
 `GET /sessions/budget` also returns `turn_cap`, `session_turn_cap`,
 `default_turn_cap`, `inherited_turn`, `turn_used`, `turn_main_used`,

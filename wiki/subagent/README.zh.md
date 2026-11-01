@@ -105,7 +105,7 @@
 
 调用期守卫为 `sessions_spawn`（提权路径）兜底，工具与运行时 spawn 包装器都接入了它。`sessions_yield` 仅由组装期剥离保护。
 
-**功能角色遏制（第三道、正交的门）。** 深度决定子代理*能否* spawn；遏制决定它*能 spawn 哪个角色*。`_check_role_containment`（`spawn/core.py`）只读调用方自己的运行记录——单跳，绝不回溯祖先链——再查 `SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）：缺席条目意为「只同角色」，即 `researcher` / `reviewer` / `librarian` 保持的行为；`MAIN`（无运行记录）与 `general`（`tools: inherit` = 全部工具）直接短路为不受限，因为任何专用角色的白名单都已是它们的子集。唯一的放宽条目是 `executor`，它可额外派生**只读**的 `researcher` / `librarian`，以便先调研后写入。多层安全靠单跳不变量而非链遍历：允许的**非父角色子项必须只读**，于是写角色只能到达写角色、只读角色只能到达同类——没有任何路径回到写能力；未来若加入会成环的条目（例如 `researcher → executor`），会在不变量测试上失败，而不是开出一个洞。
+**功能角色遏制（第三道、正交的门）。** 深度决定子代理*能否* spawn；遏制决定它*能 spawn 哪个角色*。`_check_role_containment`（`spawn/core.py`）只读调用方自己的运行记录——单跳，绝不回溯祖先链——再查 `SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）：缺席条目意为「只同角色」，即 `reviewer` 保持的行为；`MAIN`（无运行记录）与 `general`（`tools: inherit` = 全部工具）直接短路为不受限，因为任何专用角色的白名单都已是它们的子集。放宽条目有两类：`executor` 可额外派生**只读**的 `researcher` / `librarian`，以便先调研后写入；两个研究角色除自身角色外还可互相派生。多层安全靠单跳不变量而非链遍历：允许的**非父角色子项必须只读**，于是写角色只能到达写角色、只读角色只能到达只读角色——没有任何路径回到写能力；未来若加入会成环的条目（例如 `researcher → executor`），会在不变量测试上失败，而不是开出一个洞。
 
 ## 🧪 完成判别器与 goal loop
 
@@ -169,7 +169,7 @@
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 命令族 | 自动记入验证证据的命令 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 原值 | 已配置的 serving model 输出预算 `W` 会把存储/投递/摘要/判别器/回读上限按 `W/8000` 缩放；未设置保持原值 |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 角色模型 profile 自己的输出上限（十进制字符串，最低 8K）；同时驱动子代理请求和结果文本上限，与 MAIN 环境预算无关 |
-| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | 执行者子代理的每回合模型+工具调用预算；其他子代理角色保持 `worker_max_iterations=60` |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | 执行者子代理的每回合模型调用预算（工具结果免费）；其他子代理角色保持 `worker_max_iterations=60` |
 
 ## 🗺️ 测试地图
 

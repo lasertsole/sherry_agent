@@ -105,7 +105,7 @@
 
 호출 시점 가드는 `sessions_spawn`(권한 상승 경로)을 도구와 런타임 spawn 래퍼 양쪽에서 뒷받침합니다. `sessions_yield`는 조립 시점 제거만으로 보호됩니다.
 
-**기능 역할 봉쇄(세 번째, 직교 게이트).** 깊이는 자식이 spawn을 *할 수 있는지*를 정하고, 봉쇄는 *어떤 역할*을 spawn할 수 있는지를 정합니다. `_check_role_containment`(`spawn/core.py`)는 요청자 자신의 run 레코드만 읽고(단일 홉, 조상 체인을 순회하지 않습니다) `SPAWN_ALLOWED_CHILD_ROLES`(`types/functional_role.py`)를 참조합니다: 항목이 없는 역할은 ‘같은 역할만’이며 `researcher` / `reviewer` / `librarian`이 그대로이고, `MAIN`(run 레코드 없음)과 `general`(`tools: inherit` = 모든 도구)은 무제한으로 단락됩니다——전문화 역할의 허용 목록은 모두 그 부분집합이기 때문입니다. 유일하게 확장된 항목은 `executor`로, 쓰기 전 조사를 위해 **읽기 전용** `researcher` / `librarian`을 추가로 spawn할 수 있습니다. 다단계 안전성은 체인 순회가 아니라 단일 홉 불변식에 기댑니다: 허용되는 **부모 이외의 자식은 반드시 읽기 전용**이므로 쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 같은 종류에만 도달하며 쓰기 능력으로 돌아가는 경로가 없습니다. 앞으로 순환을 만드는 항목(예: `researcher → executor`)을 추가하면 구멍이 열리는 대신 불변식 테스트에서 실패합니다.
+**기능 역할 봉쇄(세 번째, 직교 게이트).** 깊이는 자식이 spawn을 *할 수 있는지*를 정하고, 봉쇄는 *어떤 역할*을 spawn할 수 있는지를 정합니다. `_check_role_containment`(`spawn/core.py`)는 요청자 자신의 run 레코드만 읽고(단일 홉, 조상 체인을 순회하지 않습니다) `SPAWN_ALLOWED_CHILD_ROLES`(`types/functional_role.py`)를 참조합니다: 항목이 없는 역할은 ‘같은 역할만’이며 `reviewer`가 그대로이고, `MAIN`(run 레코드 없음)과 `general`(`tools: inherit` = 모든 도구)은 무제한으로 단락됩니다——전문화 역할의 허용 목록은 모두 그 부분집합이기 때문입니다. 확장 항목은 두 종류입니다: `executor`는 쓰기 전 조사를 위해 **읽기 전용** `researcher` / `librarian`을 추가로 spawn할 수 있고, 두 연구 역할은 자기 역할에 더해 서로를 spawn할 수 있습니다. 다단계 안전성은 체인 순회가 아니라 단일 홉 불변식에 기댑니다: 허용되는 **부모 이외의 자식은 반드시 읽기 전용**이므로 쓰기 역할은 쓰기 역할에만, 읽기 전용 역할은 읽기 전용 역할에만 도달하며 쓰기 능력으로 돌아가는 경로가 없습니다. 앞으로 순환을 만드는 항목(예: `researcher → executor`)을 추가하면 구멍이 열리는 대신 불변식 테스트에서 실패합니다.
 
 ## 🧪 완료 판정기와 goal loop
 
@@ -169,7 +169,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format 명령군 | 검증 증거로 자동 기록되는 명령 |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 기존 값 | 설정된 serving model 출력 예산 `W`에 따라 저장/전달/요약/판정/읽기 상한을 `W/8000`으로 조정합니다. 미설정 시 기존 값 유지 |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | 역할 모델 프로필 자체의 출력 상한(10진 문자열, 최소 8K)입니다. 자식 요청과 결과 텍스트 상한 모두에 사용되며 MAIN 환경 예산과 무관합니다 |
-| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 자식의 턴당 모델+도구 호출 예산입니다. 다른 서브에이전트 역할은 `worker_max_iterations=60`을 유지합니다 |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 자식의 턴당 모델 호출 예산(도구 결과는 무료)입니다. 다른 서브에이전트 역할은 `worker_max_iterations=60`을 유지합니다 |
 
 ## 🗺️ 테스트 맵
 

@@ -36,10 +36,16 @@ pytestmark = [pytest.mark.unit]
 
 
 class TestSlimmedDefaultDenylist:
-    def test_default_blocked_tools_slimmed_to_spawn_yield(self):
-        """The name-based blacklist contains ONLY the conditionally-unblockable
-        spawn/yield tools; the other four moved to metadata scope tags."""
-        assert DEFAULT_SUBAGENT_BLOCKED_TOOLS == ["sessions_spawn", "sessions_yield"]
+    def test_default_blocked_tools_are_the_conditionally_unblockable_set(self):
+        """The name-based blacklist holds ONLY tools an ORCHESTRATOR may
+        conditionally receive (spawn / yield / send / list); the main-only
+        tools are enforced through their metadata scope tag instead."""
+        assert DEFAULT_SUBAGENT_BLOCKED_TOOLS == [
+            "sessions_spawn",
+            "sessions_yield",
+            "subagents_list",
+            "sessions_send",
+        ]
 
     def test_four_high_risk_tools_not_in_blacklist(self):
         for name in ("memory", "skill_manage", "sessions_kill", "sessions_steer"):

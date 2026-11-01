@@ -66,10 +66,11 @@ model call，不再请求 provider。该 turn 以“请总结”的提示结束�
 `TOKEN_BUDGET_TURN_CAP` 是当前回合的可选上限。`TokenBudget` 在 `before_agent`
 时生成 turn id，并重置 `TOKEN_BUDGET_TURN_USED`、`TOKEN_BUDGET_TURN_MAIN_USED`、
 `TOKEN_BUDGET_TURN_CHILD_USED`、`TOKEN_BUDGET_TURN_COST` 和
-`TOKEN_BUDGET_TURN_LIMITED`。每个子代理在 spawn 时写入
-`TOKEN_BUDGET_PARENT = {session_id, turn_id}`；`ChildTokenBudget` 把它的 token
-计入根父会话的 SESSION 计数（始终），并在父代理仍处于同一回合时计入 turn 计数。
-因此 session 的 `used/cost` 也包含所有子代理。
+`TOKEN_BUDGET_TURN_LIMITED`。每个子代理——无论嵌套多少层——在 spawn 时写入
+`TOKEN_BUDGET_PARENT = {session_id, turn_id}`；孙代理及更深层会继承父代理已有的
+归属，绝不会把直接父代理重新当作根。`ChildTokenBudget` 把它的 token 计入根父会话的
+SESSION 计数（始终），并在父代理仍处于同一回合时计入 turn 计数。因此 turn 汇总
+= 主代理 + 所有层级的子代理；session 的 `used/cost` 也包含它们。
 
 `GET /sessions/budget` 额外返回 `turn_cap`、`session_turn_cap`、
 `default_turn_cap`、`inherited_turn`、`turn_used`、`turn_main_used`、

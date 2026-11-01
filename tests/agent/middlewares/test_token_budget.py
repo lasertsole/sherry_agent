@@ -472,3 +472,62 @@ async def test_child_usage_is_attributed_to_the_parent_turn(registers):
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 600
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 0
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) == 0
+
+
+GRANDCHILD = "agent:main:subagent:token-budget-grandchild"
+GREAT_GRANDCHILD = "agent:main:subagent:token-budget-great-grandchild"
+
+
+@pytest.mark.asyncio
+async def test_every_nesting_level_rolls_up_to_the_root_turn(registers):
+    """Every nesting level attributes to the ROOT session, not its parent child."""
+    mem, _db = registers
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_ID, "turn-1")
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP, 10_000)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_USED, 50)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED, 50)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_MAIN_USED, 50)
+    attr = {"session_id": SESSION, "turn_id": "turn-1"}
+    for child in (CHILD, GRANDCHILD, GREAT_GRANDCHILD):
+        mem.set_state(child, StateKey.TOKEN_BUDGET_PARENT, attr)
+
+    async def handler(_request):
+        return _ai(input_tokens=100, output_tokens=50)
+
+    for child in (CHILD, GRANDCHILD, GREAT_GRANDCHILD):
+        await ChildTokenBudget().awrap_model_call(
+            SimpleNamespace(state={"session_id": child}), handler
+        )
+
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_USED) == 500
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED) == 500
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_MAIN_USED) == 50
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) == 450
+
+
+@pytest.mark.asyncio
+async def test_grandchild_is_cut_off_by_the_root_turn_cap(registers):
+    """A deep child checks the ROOT's aggregate before calling the model."""
+    mem, _db = registers
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_ID, "turn-1")
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP, 1_000)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED, 1_000)
+    mem.set_state(
+        GRANDCHILD,
+        StateKey.TOKEN_BUDGET_PARENT,
+        {"session_id": SESSION, "turn_id": "turn-1"},
+    )
+    called: list[bool] = []
+
+    async def handler(_request):
+        called.append(True)
+        return _ai(input_tokens=1, output_tokens=1)
+
+    result = await ChildTokenBudget().awrap_model_call(
+        SimpleNamespace(state={"session_id": GRANDCHILD}), handler
+    )
+
+    assert isinstance(result, AIMessage)
+    assert "Turn token budget exhausted" in result.content
+    assert called == []
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_LIMITED) is True

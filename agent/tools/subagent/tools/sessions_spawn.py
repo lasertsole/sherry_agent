@@ -5,7 +5,7 @@ from langchain.tools import BaseTool
 
 from ..spawn import spawn_subagent_direct
 from ..spawn.plan import clamp_run_timeout_seconds
-from ..spawn.privilege import check_spawn_permission
+from ..spawn.privilege import check_spawn_permission, resolve_caller_session_key
 
 
 class AttachmentSchema(BaseModel):
@@ -53,9 +53,10 @@ class SessionsSpawnSchema(BaseModel):
         "general=full access, researcher=read-only search, "
         "executor=write+run, reviewer=read-only audit, "
         "librarian=read-only external codebase retrieval. "
-        "A specialized caller may only spawn its own role, except an executor "
-        "may also spawn researcher and librarian children for read-only "
-        "research before writing. Omit to inherit the default role.",
+        "A specialized caller may spawn its own role; an executor may also spawn "
+        "researcher and librarian children for read-only research before writing, "
+        "and a researcher or librarian may spawn either research role. General "
+        "and main are unrestricted. Omit to inherit the default role.",
     )
     extra_tools: list[str] | None = Field(
         default=None,
@@ -133,8 +134,10 @@ class SessionsSpawnTool(BaseTool):
         if not allowed:
             return f"Subagent spawn denied: status=forbidden, error={reason}"
 
-        # Build the requester session key from the current session_id
-        requester_session_key = f"agent:main:session:{self.session_id}"
+        # Build the requester session key from the current session_id. A nested
+        # child passes its full ``agent:...:subagent:...`` key, so resolve
+        # through the shared helper instead of prefixing unconditionally.
+        requester_session_key = resolve_caller_session_key(self.session_id)
 
         # Flatten AttachmentSchema list to dict list for internal APIs
         attach_dicts = None

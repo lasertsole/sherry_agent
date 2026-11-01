@@ -6,6 +6,7 @@ from loguru import logger
 
 from ..registry.queries import get_run_by_child_session_key
 from ..control.controller import can_control_run
+from ..spawn.privilege import resolve_caller_session_key
 
 
 class SessionsSendSchema(BaseModel):
@@ -41,7 +42,7 @@ class SessionsSendTool(BaseTool):
         message: str,
         max_turns: int = 1,
     ) -> str:
-        requester_key = f"agent:main:session:{self.session_id}"
+        requester_key = resolve_caller_session_key(self.session_id)
 
         run = get_run_by_child_session_key(target_session_key)
         if run is None:

@@ -251,14 +251,15 @@ User message → Robyn WS → agent.core.built_agent() graph
 
      Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
      reviewer / librarian) may only spawn roles on its allow-list
-     (`SPAWN_ALLOWED_CHILD_ROLES`, types/functional_role.py) — its own role
-     plus, for an executor, the READ-ONLY researcher / librarian, so it can
-     research before it writes; an absent entry means same-role only, MAIN and
-     general stay unrestricted, and the allow-list only ever adds read-only
-     roles — that single-hop rule is what keeps multi-hop safe (a write role
-     reaches only write roles), so a read-only researcher still cannot hire a
-     write-capable executor. The refusal names the allowed set and the way out,
-     and `functional_role` rides on the tool for a same-role fan-out
+     (`SPAWN_ALLOWED_CHILD_ROLES`, types/functional_role.py) — its own role,
+     plus, for an executor, the READ-ONLY researcher / librarian, and the two
+     research roles for each other. An absent entry means same-role only
+     (reviewer), MAIN and general stay unrestricted, and the allow-list only
+     ever adds read-only roles — that single-hop rule is what keeps multi-hop
+     safe (a write role reaches only write roles), so a read-only researcher
+     still cannot hire a write-capable executor. The refusal names the allowed
+     set and the way out, and `functional_role` rides on the tool for a
+     same-role fan-out
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on

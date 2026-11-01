@@ -8,10 +8,12 @@ escalation path without producing "crippled" children the way a tool
 intersection would.
 
 The rule is now table-driven (``SPAWN_ALLOWED_CHILD_ROLES``): an ABSENT entry
-still means same-role only, and an EXECUTOR entry adds the read-only researcher
-and librarian roles so an executor can research before it writes. Containment
-guards WRITE capability, so permitting read-only extras cannot escalate — the
-invariant tests at the bottom hold that line open for future entries.
+still means same-role only (reviewer), an EXECUTOR entry adds the read-only
+researcher and librarian roles so an executor can research before it writes,
+and the two research roles are mutually spawnable (plus same-role fan-out).
+Containment guards WRITE capability, so permitting read-only extras cannot
+escalate — the invariant tests at the bottom hold that line open for future
+entries.
 """
 
 from __future__ import annotations
@@ -76,7 +78,6 @@ class TestContainmentMatrix:
             (FunctionalRole.RESEARCHER, FunctionalRole.EXECUTOR),
             (FunctionalRole.RESEARCHER, FunctionalRole.GENERAL),
             (FunctionalRole.RESEARCHER, FunctionalRole.REVIEWER),
-            (FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN),
             # An executor's widening covers READ-ONLY roles only: general is an
             # escalation (every tool) and reviewer is semantically off-limits.
             (FunctionalRole.EXECUTOR, FunctionalRole.GENERAL),
@@ -101,6 +102,18 @@ class TestContainmentMatrix:
 
         assert _check_role_containment(_CALLER, child) is None
 
+    @pytest.mark.parametrize(
+        ("parent", "child"),
+        [
+            (FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN),
+            (FunctionalRole.LIBRARIAN, FunctionalRole.RESEARCHER),
+        ],
+    )
+    def test_the_research_roles_are_mutually_spawnable(self, parent_run, parent, child):
+        parent_run["run"] = _ParentRun(parent)
+
+        assert _check_role_containment(_CALLER, child) is None
+
     def test_the_refusal_names_the_way_out(self, parent_run):
         """The message must be actionable: it names every allowed role."""
         parent_run["run"] = _ParentRun(FunctionalRole.RESEARCHER)
@@ -110,6 +123,7 @@ class TestContainmentMatrix:
         assert refusal is not None
         assert "a researcher subagent can only spawn" in refusal
         assert "researcher" in refusal  # the allowed set is named
+        assert "librarian" in refusal
         assert "functional_role=" in refusal
         assert "use a general subagent or the main agent" in refusal
 
@@ -185,6 +199,45 @@ class TestContainmentInTheSpawnPipeline:
         assert result.status == "accepted", result.error
         assert reached, "the same-role spawn must reach the lane"
 
+    @pytest.mark.parametrize(
+        ("parent", "child"),
+        [
+            (FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN),
+            (FunctionalRole.LIBRARIAN, FunctionalRole.RESEARCHER),
+        ],
+    )
+    def test_a_research_role_reaches_the_lane_for_its_sibling_role(
+        self, parent_run, parent, child, monkeypatch
+    ):
+        parent_run["run"] = _ParentRun(parent)
+
+        import agent.tools.subagent.spawn.core as core
+        from agent.tools.subagent.registry import clear as clear_registry
+
+        reached: list[dict] = []
+
+        async def _record_lane(**kwargs) -> None:
+            reached.append(kwargs)
+
+        monkeypatch.setattr(core, "_execute_subagent_with_lane", _record_lane)
+
+        async def _drive():
+            result = await spawn_subagent_direct(
+                task="research the thing",
+                requester_session_key=_CALLER,
+                functional_role_hint=child.value,
+            )
+            await asyncio.sleep(0.05)
+            return result
+
+        try:
+            result = asyncio.run(_drive())
+        finally:
+            clear_registry()
+
+        assert result.status == "accepted", result.error
+        assert reached, "the cross-research spawn must reach the lane"
+
     def test_an_executor_reaches_the_lane_for_a_researcher_child(self, parent_run, monkeypatch):
         """The widening applies in the PIPELINE, not only in the helper."""
         parent_run["run"] = _ParentRun(FunctionalRole.EXECUTOR)
@@ -238,6 +291,7 @@ class TestRuntimeToolExposesTheRole:
             assert role in description
         assert "own role" in description
         assert "executor may also spawn researcher" in description
+        assert "researcher or librarian may spawn either research role" in description
 
     @pytest.mark.asyncio
     async def test_the_tool_forwards_the_role_to_the_pipeline(self, monkeypatch):
@@ -317,5 +371,10 @@ class TestSpawnAllowedMapInvariants:
                 continue  # unrestricted by design; never reads the map
             if role not in SPAWN_ALLOWED_CHILD_ROLES:
                 assert role not in SPAWN_ALLOWED_CHILD_ROLES.get(role, frozenset())
-        # The one widened role is executor; the read-only three stay closed.
-        assert set(SPAWN_ALLOWED_CHILD_ROLES) == {FunctionalRole.EXECUTOR}
+        # Executor plus the two mutually-spawnable research roles are widened;
+        # the reviewer stays same-role only.
+        assert set(SPAWN_ALLOWED_CHILD_ROLES) == {
+            FunctionalRole.EXECUTOR,
+            FunctionalRole.RESEARCHER,
+            FunctionalRole.LIBRARIAN,
+        }

@@ -69,9 +69,11 @@
 `before_agent`에서 turn id를 만들고 `TOKEN_BUDGET_TURN_USED`,
 `TOKEN_BUDGET_TURN_MAIN_USED`, `TOKEN_BUDGET_TURN_CHILD_USED`,
 `TOKEN_BUDGET_TURN_COST`, `TOKEN_BUDGET_TURN_LIMITED`를 초기화합니다. 각 자식은
-spawn 시 `TOKEN_BUDGET_PARENT = {session_id, turn_id}`를 받고,
+spawn 시 `TOKEN_BUDGET_PARENT = {session_id, turn_id}`를 받고, 손자 이하 깊이는
+부모의 기존 귀속을 그대로 상속합니다(직접 부모를 새 루트로 삼지 않습니다).
 `ChildTokenBudget`이 그 사용량을 루트 부모의 SESSION 카운터에(항상), 같은 턴이면
-turn 카운터에도 더합니다. 따라서 session의 `used/cost`에는 모든 자손이 포함됩니다.
+turn 카운터에도 더합니다. 따라서 turn 합계는 메인 + 모든 깊이의 자손이며,
+session의 `used/cost`에도 모든 자손이 포함됩니다.
 
 `GET /sessions/budget`은 `turn_cap`, `session_turn_cap`, `default_turn_cap`,
 `inherited_turn`, `turn_used`, `turn_main_used`, `turn_child_used`,

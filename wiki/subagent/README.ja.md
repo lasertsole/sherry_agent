@@ -105,7 +105,7 @@
 
 呼び出し時のガードは `sessions_spawn`（昇格経路）をツール側とランタイム spawn ラッパーの両方で支えます。`sessions_yield` は組み立て時の剥がしのみで保護されます。
 
-**機能ロールの封じ込め（3 つ目・直交するゲート）。** 深度は子が spawn を*行えるか*を決め、封じ込めはそれ*が spawn できるロール*を決めます。`_check_role_containment`（`spawn/core.py`）は要求元自身の run レコードだけを見て（単一ホップ。祖先チェーンは辿りません）、`SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）を参照します：エントリが無いロールは「同じロールのみ」で、`researcher` / `reviewer` / `librarian` はそのままです。`MAIN`（run レコード無し）と `general`（`tools: inherit` = 全ツール）は無制限として短絡します——特化ロールの許可リストはすべてその部分集合だからです。唯一の拡張エントリは `executor` で、書く前の調査のため**読み取り専用**の `researcher` / `librarian` を追加で spawn できます。多段の安全性はチェーン走査ではなく単一ホップの不変条件に依ります：許可される**親以外の子は必ず読み取り専用**なので、書き込みロールは書き込みロールにしか、読み取り専用ロールは同種にしか到達せず、書き込み能力へ戻る経路は存在しません。将来サイクルを成すエントリ（例：`researcher → executor`）を足すと、穴を開けるのではなく不変条件テストで失敗します。
+**機能ロールの封じ込め（3 つ目・直交するゲート）。** 深度は子が spawn を*行えるか*を決め、封じ込めはそれ*が spawn できるロール*を決めます。`_check_role_containment`（`spawn/core.py`）は要求元自身の run レコードだけを見て（単一ホップ。祖先チェーンは辿りません）、`SPAWN_ALLOWED_CHILD_ROLES`（`types/functional_role.py`）を参照します：エントリが無いロールは「同じロールのみ」で、`reviewer` はそのままです。`MAIN`（run レコード無し）と `general`（`tools: inherit` = 全ツール）は無制限として短絡します——特化ロールの許可リストはすべてその部分集合だからです。拡張エントリは 2 種類あります：`executor` は書く前の調査のため**読み取り専用**の `researcher` / `librarian` を追加で spawn でき、2 つの研究ロールは自分のロールに加えて互いを spawn できます。多段の安全性はチェーン走査ではなく単一ホップの不変条件に依ります：許可される**親以外の子は必ず読み取り専用**なので、書き込みロールは書き込みロールにしか、読み取り専用ロールは読み取り専用ロールにしか到達せず、書き込み能力へ戻る経路は存在しません。将来サイクルを成すエントリ（例：`researcher → executor`）を足すと、穴を開けるのではなく不変条件テストで失敗します。
 
 ## 🧪 完了判定器と goal loop
 
@@ -169,7 +169,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | `verify_commands` | `config/features/agent_side/evidence_ledger.py` | test / lint / build / typecheck / format のコマンド群 | 検証証跡として自動記録されるコマンド |
 | `result_text_caps` | `agent/tools/subagent/output_caps.py` | 旧値 | 設定された serving model の出力予算 `W` により、保存/配信/要約/判定/読み戻しの上限を `W/8000` で拡大縮小します。未設定なら旧値のままです |
 | `role_profile_max_output` | `AGENT_CONFIG.subagent_models[role].max_output_tokens` | `8192` | ロール モデル プロファイル自身の出力上限（10 進文字列、最低 8K）。子エージェントのリクエストと結果テキスト上限の両方に使われ、MAIN 環境予算とは独立です |
-| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 子エージェントのターンごとのモデル+ツール呼び出し予算。他のサブエージェント ロールは `worker_max_iterations=60` のままです |
+| `executor_max_iterations` | `config/features/agent_side/iteration_budget.py` | `90` | executor 子エージェントのターンごとのモデル呼び出し予算（ツール結果は無料）。他のサブエージェント ロールは `worker_max_iterations=60` のままです |
 
 ## 🗺️ テストマップ
 

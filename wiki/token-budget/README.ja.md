@@ -69,10 +69,11 @@ key/value エディタでも扱えます。既存ファイルに表がなけれ�
 `before_agent` で turn id を発行し、`TOKEN_BUDGET_TURN_USED`、
 `TOKEN_BUDGET_TURN_MAIN_USED`、`TOKEN_BUDGET_TURN_CHILD_USED`、
 `TOKEN_BUDGET_TURN_COST`、`TOKEN_BUDGET_TURN_LIMITED` をリセットします。各子は
-spawn 時に `TOKEN_BUDGET_PARENT = {session_id, turn_id}` を持ち、
-`ChildTokenBudget` がその使用量をルート親の SESSION カウンタへ（常に）、同じ
-ターン中なら turn カウンタへ加算します。したがって session の `used/cost` には
-全子孫が含まれます。
+spawn 時に `TOKEN_BUDGET_PARENT = {session_id, turn_id}` を持ち、孫以下は親の既存
+の帰属を継承します（直接の親を新しいルートにはしません）。`ChildTokenBudget` が
+その使用量をルート親の SESSION カウンタへ（常に）、同じターン中なら turn カウンタ
+へ加算します。したがって turn の合計はメイン + 全階層の子孫で、session の
+`used/cost` にも全子孫が含まれます。
 
 `GET /sessions/budget` は `turn_cap`、`session_turn_cap`、`default_turn_cap`、
 `inherited_turn`、`turn_used`、`turn_main_used`、`turn_child_used`、

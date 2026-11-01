@@ -8,6 +8,7 @@ from loguru import logger
 from config.features import SUBAGENT_INFRA
 from ..registry import register_yield_event, remove_yield_event
 from ..registry.queries import list_runs_for_requester
+from ..spawn.privilege import resolve_caller_session_key
 from ..types.registry import ExecutionStatus
 
 
@@ -42,7 +43,7 @@ class SessionsYieldTool(BaseTool):
         reason: str | None = None,
         timeout_seconds: float = SUBAGENT_INFRA["sessions_yield_default_timeout_seconds"],
     ) -> str:
-        session_key = f"agent:main:session:{self.session_id}"
+        session_key = resolve_caller_session_key(self.session_id)
         logger.info("sessions_yield called: session={}, reason={}", session_key, reason)
 
         # Check for active child sub-agents (PENDING children queue in the lane)
