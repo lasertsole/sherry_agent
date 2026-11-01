@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from runtime.session.core import SessionRegister
 from runtime.session.state_register import StateRegisterMeM
 
@@ -113,19 +114,39 @@ class TestIterationBudget:
             assert result is not None
             assert "exhausted" in result.content.lower() or "budget" in result.content.lower()
 
-    def test_wrap_tool_call_exhausted_returns_terminal(self, fresh_state_register):
-        ib = self._make_middleware(max_iterations=1)
+    def test_tool_calls_make_no_budget_hook(self):
+        """A tool-call pair costs ONE unit: only the AIMessage-producing model call."""
+        from langchain.agents.middleware import AgentMiddleware
+
+        from agent.middlewares.iteration_budget import IterationBudget
+
+        assert IterationBudget.wrap_tool_call is AgentMiddleware.wrap_tool_call
+        assert IterationBudget.awrap_tool_call is AgentMiddleware.awrap_tool_call
+
+    def test_model_calls_are_the_only_consumers(self, fresh_state_register):
+        """Tool results, HumanMessages and SystemMessages never charge the counter."""
+        ib = self._make_middleware(max_iterations=2)
         with patch(
             "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
         ):
+            state = self._make_state("s1")
+            # A pending user message / system reminder in state costs nothing on
+            # its own; only the model call that follows it does.
+            state["messages"] = [HumanMessage(content="hello")]
+            assert ib._remaining("s1") == 2
+
             request = MagicMock()
-            request.state = self._make_state("s1")
-            request.tool_call = {"name": "test_tool", "id": "call_123"}
-            # Consume budget
-            ib._consume("s1")
-            result = ib._wrap_tool_call_impl(request)
-            assert result is not None
-            assert "budget" in result.content.lower() or "exhausted" in result.content.lower()
+            request.state = state
+            assert ib._wrap_model_call_impl(request) is None  # model call 1
+            assert ib._remaining("s1") == 1
+
+            # The ToolMessage result is free; the next model call pays.
+            state["messages"] = [ToolMessage(content="tool result", tool_call_id="c1")]
+            assert ib._remaining("s1") == 1
+            assert ib._wrap_model_call_impl(request) is None  # model call 2
+            assert ib._remaining("s1") == 0
+            terminal = ib._wrap_model_call_impl(request)  # model call 3 refused
+            assert isinstance(terminal, AIMessage)
 
     def test_separate_sessions_independent(self, fresh_state_register):
         ib = self._make_middleware(max_iterations=1)

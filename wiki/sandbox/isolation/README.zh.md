@@ -148,7 +148,7 @@ bwrap
 
 **模块：** `agent/middlewares/path_guard/core.py` · **类：** `PathGuard(AgentMiddleware)` · **钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
 
-文件工具的门禁只能保护真正走到它们的调用；`PathGuard` 是注册在主 Agent 链中 `ToolCallNormalize` 正后方的调用点筛选器（`agent/core.py`）。由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`IterationBudget` → `ToolGuardrails` → `PathGuard` → 工具）：拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker / 子代理链不注册它——子工具保有自己的门禁，且子代理的外部访问本就硬拒绝。
+文件工具的门禁只能保护真正走到它们的调用；`PathGuard` 是注册在主 Agent 链中 `ToolCallNormalize` 正后方的调用点筛选器（`agent/core.py`）。由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`ToolGuardrails` → `PathGuard` → 工具）：拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker / 子代理链不注册它——子工具保有自己的门禁，且子代理的外部访问本就硬拒绝。
 
 筛选刻意保守：
 

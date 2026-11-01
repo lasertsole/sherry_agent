@@ -68,6 +68,10 @@ class TestSpawnFunctionalRole:
             "search_files",
             "terminal",
             "web_search",
+            "web_fetch",
+            "message_search",
+            "skill_view",
+            "skill_list",
             "share_finding",
             "peers_findings",
         ]
@@ -83,6 +87,10 @@ class TestSpawnFunctionalRole:
             "search_files",
             "terminal",
             "web_search",
+            "web_fetch",
+            "message_search",
+            "skill_view",
+            "skill_list",
             "share_finding",
             "peers_findings",
         ]

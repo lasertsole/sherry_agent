@@ -46,7 +46,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # RAW environment snapshot — MUST run before any project import.
 # Modules in the import chain below call ``load_dotenv(..., override=True)``
-# (e.g. agent/tools/web_search.py:9, models/LLMs/main_llm.py:11), which would
+# (e.g. agent/tools/web/web_search.py:9, models/LLMs/main_llm.py:11), which would
 # replace an injected blank MAIN_LLM_* value with the .env contents. The skip
 # guard must judge the RAW process environment (QA scenario 2 injects a blank
 # MAIN_LLM_PROVIDER into the subprocess), so it is snapshotted here first.

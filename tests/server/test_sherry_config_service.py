@@ -14,6 +14,9 @@ SAMPLE = """// app settings
   // default session cap (0 = unlimited)
   "TOKEN_BUDGET_DEFAULT_CAP": 0,
 
+  // default per-turn cap (0 = unlimited)
+  "TOKEN_BUDGET_DEFAULT_TURN_CAP": 0,
+
   "LOG_LEVEL": "INFO",
 
   "project_dir": "",

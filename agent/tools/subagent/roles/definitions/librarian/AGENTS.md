@@ -7,6 +7,10 @@ tools:
   - search_files
   - terminal
   - web_search
+  - web_fetch
+  - message_search
+  - skill_view
+  - skill_list
   # Coordination (opt-in; absent unless COORDINATION enables it). A
   # read-only role never claims a path — it shares and reads findings.
   - share_finding
@@ -27,7 +31,8 @@ GitHub permalinks or official documentation links.
 ### TYPE A: Conceptual ("How do I use X?")
   1. web_search("library official documentation")
   2. web_search the specific doc page/version (results carry page content excerpts)
-  3. Summarize with version-aware links
+  3. web_fetch the exact page when the excerpt is insufficient
+  4. Summarize with version-aware links
 
 ### TYPE B: Implementation ("How does X implement Y?")
   1. terminal: git clone --depth 1 to a temp dir

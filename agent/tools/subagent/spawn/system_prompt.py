@@ -1,7 +1,12 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
 from ..types.capability import SubagentSessionRole
-from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
+from ..types.functional_role import (
+    CODE_INTEL_ROLES,
+    PTC_ROLES,
+    SPAWN_ALLOWED_CHILD_ROLES,
+    FunctionalRole,
+)
 from ..types.registry import SubagentRunRecord
 
 
@@ -74,15 +79,20 @@ def build_subagent_system_prompt(
         "Focus ONLY on the assigned task. Do not take proactive actions beyond your task scope.",
         "Report your results concisely when done. Include key findings, decisions, and any data requested.",
         "If you encounter an error you cannot resolve, report it clearly and finish.",
-        "Do NOT poll for child completion. Completion notifications are push-based — you will be resumed automatically when children finish. Do NOT call `sessions_yield` or `subagents_list` in a loop to check if children are done.",
-        "If your output may be large, summarize the key points. Your full output may be truncated to fit delivery limits.",
     ]
+    if can_spawn:
+        rules.append(
+            "Do NOT poll for child completion. Completion notifications are push-based — you will be resumed automatically when children finish. Do NOT call `sessions_yield` or `subagents_list` in a loop to check if children are done."
+        )
+    rules.append(
+        "If your output may be large, summarize the key points. Your full output may be truncated to fit delivery limits."
+    )
     if can_spawn:
         rules.append(
             "When spawning child subagents, keep their tasks brief and focused. Track their session keys.\n"
             "Use `sessions_yield` ONCE to signal you are waiting — this is a signal, not a poll.\n"
-            "Use `sessions_kill` to cancel unneeded subagents.\n"
-            "Use `sessions_steer` to redirect subagents with new instructions."
+            "Use `sessions_send` to message a running child; child management tools "
+            "(`sessions_kill` / `sessions_steer`) belong to the main agent only."
         )
     sections.append("## Rules\n" + "\n".join(f"{i + 1}. {r}" for i, r in enumerate(rules)))
 
@@ -111,17 +121,34 @@ def build_subagent_system_prompt(
     )
     sections.append(dont_do)
 
-    # Section 5: Sub-Agent Spawning (conditional)
+    # Section 5: Sub-Agent Spawning (conditional on the NODE, not the role):
+    # a non-leaf gets both this guidance and the spawn/management tools; a leaf
+    # gets neither (the tool policy strips the whole control set).
     if can_spawn:
+        allowed = SPAWN_ALLOWED_CHILD_ROLES.get(functional_role, frozenset({functional_role}))
+        if functional_role == FunctionalRole.GENERAL:
+            allowed_text = "any functional role (general is unrestricted)"
+        else:
+            allowed_text = " / ".join(
+                role.value for role in sorted(allowed, key=lambda item: item.value)
+            )
+        read_only_note = ""
+        if functional_role in CODE_INTEL_ROLES:
+            read_only_note = (
+                "\n- Your children are read-only research workers; you still do not edit files."
+            )
         spawn_guidance = (
             "## Sub-Agent Spawning\n"
             "You may spawn child subagents via `sessions_spawn`.\n"
             "Guidelines:\n"
+            f"- Allowed child roles: {allowed_text}.{read_only_note}\n"
             "- Keep child tasks small and focused.\n"
             "- After spawning, use `sessions_yield` to signal you are waiting — do NOT poll.\n"
             "- You will be automatically resumed when children complete.\n"
             "- Use `subagents_list` to check status if needed.\n"
-            "- Use `sessions_kill` to cancel a child that is no longer needed.\n"
+            "- Use `sessions_send` to message a running child.\n"
+            "- `sessions_kill` / `sessions_steer` are main-agent only; a subagent "
+            "does not manage siblings.\n"
             f"- Maximum nesting depth: {max_depth}. You are at depth {depth}.\n"
             f"- You can spawn up to depth {max_depth} (leaf agents cannot spawn further)."
         )
@@ -145,12 +172,13 @@ def build_subagent_system_prompt(
             "jump/refs via the language server (1-based line/character)\n"
             "- `lsp_workspace_symbol` — fuzzy workspace symbol search\n"
             "- `lsp_call_hierarchy` — callers (incoming) / callees (outgoing) of a symbol\n"
-            "- `lsp_rename` — workspace rename; PREVIEWS by default (dry_run=true), "
-            "set dry_run=false to apply\n"
+            "- `lsp_rename` — workspace rename; PREVIEWS by default (dry_run=true). "
+            "Never pass dry_run=false: your role is read-only.\n"
             "- `lsp_diagnostics` — errors/warnings for a file (waits for the async "
             "publishDiagnostics notification)\n"
             "- `lsp_format` — formatting edits; PREVIEWS by default (write=false), "
-            "reports supported=false rather than faking success\n"
+            "reports supported=false rather than faking success. Never pass "
+            "write=true: your role is read-only.\n"
             "- `lsp_status` — honest availability of every configured language server "
             "(available / not_installed); starts nothing\n"
             "Workflow: explore(query) → lsp_find_references / callers for precision → "

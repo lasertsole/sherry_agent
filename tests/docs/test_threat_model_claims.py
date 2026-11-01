@@ -165,7 +165,7 @@ def test_the_write_and_output_boundary_table_matches_the_code():
 
 def test_every_mechanism_the_section_credits_is_actually_wired():
     """A module that is never called protects nothing — the failure mode this catches."""
-    terminal = pathlib.Path("agent/tools/terminal.py").read_text(encoding="utf-8")
+    terminal = pathlib.Path("agent/tools/terminal/core.py").read_text(encoding="utf-8")
     assert terminal.count("strip_control_sequences(") == 2, (
         "the terminal output must be stripped at both decode sites (sync and async)"
     )

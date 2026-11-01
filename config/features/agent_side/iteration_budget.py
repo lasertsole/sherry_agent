@@ -1,10 +1,15 @@
-"""Per-turn model+tool call budgets."""
+"""Per-turn model-call budgets (a tool-call pair costs one unit)."""
 
 from typing import TypedDict
 
 
 class IterationBudgetConfig(TypedDict):
-    """Per-turn model+tool call budgets and their registered values."""
+    """Per-turn model-call budgets and their registered values.
+
+    The counter charges one unit per model call (the AIMessage-producing
+    iteration). ToolMessage results, user messages and system reminders never
+    charge it, so a tool-call pair is not double-counted.
+    """
 
     default_max_iterations: int
     main_agent_max_iterations: int

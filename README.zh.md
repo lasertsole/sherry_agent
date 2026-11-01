@@ -134,10 +134,9 @@ sherry_agent/
 │       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
 │       ├── mcp_plugin.py   # MCP 工具集成
-│       ├── web_search.py   # 联网搜索工具（Tavily）
-│       ├── web_fetch.py    # 网页读取工具（markdown；公网 + 可选本地）
+│       ├── web/            # 联网搜索 + 网页读取工具
 │       ├── python_repl.py  # Python 代码执行
-│       ├── terminal.py     # 终端命令执行
+│       ├── terminal/       # 终端 + 后台任务工具
 │       ├── memory.py       # 记忆查看工具
 │       ├── question.py     # HITL 多选提问工具
 │       └── message_search.py # 会话 FTS5 搜索工具

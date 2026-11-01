@@ -193,22 +193,25 @@ class TestInheritedToolPolicy:
             FakeTool("sessions_spawn"),
             FakeTool("sessions_yield"),
             FakeTool("sessions_send"),
+            FakeTool("subagents_list"),
         ]
-        # Mirrors core.py ORCHESTRATOR branch: after slimming, DEFAULT minus
-        # spawn/yield is an EMPTY deny-list — it must stay authoritative
-        # (fallback must not re-add spawn/yield). The other high-risk tools
-        # (memory, skill_manage, sessions_kill, sessions_steer) are blocked
-        # via metadata scope tags, covered by test_inherited_tool_policy.py.
+        # Mirrors core.py ORCHESTRATOR branch: DEFAULT minus the four
+        # conditionally-unblockable control tools is an EMPTY deny-list — it
+        # must stay authoritative (the fallback must not re-add them). The
+        # other high-risk tools (memory, skill_manage, sessions_kill,
+        # sessions_steer) are blocked via metadata scope tags, covered by
+        # test_inherited_tool_policy.py.
         orchestrator_deny = [
             t
             for t in DEFAULT_SUBAGENT_BLOCKED_TOOLS
-            if t not in ("sessions_spawn", "sessions_yield")
+            if t not in ("sessions_spawn", "sessions_yield", "sessions_send", "subagents_list")
         ]
         result = apply_tool_policy(tools, [], orchestrator_deny)
         names = [t.name for t in result]
         assert "sessions_spawn" in names  # unblocked → recursion allowed
         assert "sessions_yield" in names  # unblocked → can yield
         assert "sessions_send" in names  # unaffected bidirectional comm
+        assert "subagents_list" in names  # child status inspection
 
     def test_none_deny_falls_back_to_default_blocked(self):
         """When no deny policy is provided (None), default-blocked tools are applied."""

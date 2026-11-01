@@ -6,6 +6,8 @@ from the controller session.
 
 from pydantic import BaseModel
 
+from ..capabilities import is_subagent_session
+
 
 class SubagentSpawnOwnership(BaseModel):
     """Resolved ownership: controller and completion delivery target."""
@@ -39,17 +41,24 @@ def resolve_spawn_ownership(
     When requester_session_key contains the main agent identifier without an
     explicit session segment, normalizes it to the canonical alias. Supports
     separate completion_owner_key for proxied spawn scenarios.
+
+    A child/swarm requester key is already canonical ownership: a nested
+    orchestrator must keep its own key as the controller and completion target,
+    so the main-agent normalization never applies to it.
     """
-    canonical_alias = _resolve_canonical_alias(requester_session_key, alias)
+    raw_requester = requester_session_key.strip() if requester_session_key else ""
+    if raw_requester and (is_subagent_session(raw_requester) or ":swarm:" in raw_requester):
+        canonical_alias = alias
+        controller_session_key = raw_requester
+    else:
+        canonical_alias = _resolve_canonical_alias(raw_requester, alias)
 
-    effective_requester = (
-        requester_session_key.strip() if requester_session_key else canonical_alias
-    )
-    if ":main:" in effective_requester and ":session:" not in effective_requester:
-        # Bare main-agent key without a session segment — normalize to alias
-        effective_requester = canonical_alias
+        effective_requester = raw_requester or canonical_alias
+        if ":main:" in effective_requester and ":session:" not in effective_requester:
+            # Bare main-agent key without a session segment — normalize to alias
+            effective_requester = canonical_alias
 
-    controller_session_key = effective_requester
+        controller_session_key = effective_requester
 
     trimmed_owner = completion_owner_key.strip() if completion_owner_key else None
     completion_requester_session_key = (

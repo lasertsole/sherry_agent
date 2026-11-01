@@ -148,7 +148,7 @@ bwrap
 
 **モジュール：** `agent/middlewares/path_guard/core.py` · **クラス：** `PathGuard(AgentMiddleware)` · **フック：** `wrap_tool_call` / `awrap_tool_call` のみ
 
-ファイルツールのゲートは、そこに到達した呼び出ししか守れません。`PathGuard` はメインエージェントチェーンで `ToolCallNormalize` の直後に登録される呼び出し地点のスクリーンです(`agent/core.py`)。リスト順が wrap フックの外側順になるため、`ToolGuardrails` の**内側**で実行されます(`IterationBudget` → `ToolGuardrails` → `PathGuard` → ツール)。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker / サブエージェントパイプラインには登録しません — 子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。
+ファイルツールのゲートは、そこに到達した呼び出ししか守れません。`PathGuard` はメインエージェントチェーンで `ToolCallNormalize` の直後に登録される呼び出し地点のスクリーンです(`agent/core.py`)。リスト順が wrap フックの外側順になるため、`ToolGuardrails` の**内側**で実行されます(`ToolGuardrails` → `PathGuard` → ツール)。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker / サブエージェントパイプラインには登録しません — 子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。
 
 スクリーニングは意図的に保守的です：
 

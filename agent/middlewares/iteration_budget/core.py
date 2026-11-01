@@ -1,7 +1,9 @@
-"""Per-agent iteration budget — consume/refund counter.
+"""Per-turn model-call budget for an agent.
 
 Each agent instance holds an :class:`IterationBudget`;
-the cap comes from ``max_iterations`` (default 50).
+the cap comes from ``max_iterations`` (default 50). One unit is charged per
+MODEL call (the call that produces an AIMessage); a tool-call pair costs one
+unit total because its ToolMessage result is free.
 
 When the budget is exhausted the middleware returns a terminal
 ``AIMessage`` instead of calling the model, forcing the conversation to
@@ -13,10 +15,8 @@ from __future__ import annotations
 from loguru import logger
 from langgraph.typing import ContextT
 from typing import override
-from typing import Any
 from collections.abc import Callable, Awaitable
-from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.prebuilt.tool_node import ToolCallRequest, Command
+from langchain_core.messages import AIMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import (
     ResponseT,
@@ -33,7 +33,14 @@ from agent.middlewares.subagent_completion_drain.core import _is_internal_comple
 
 
 class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
-    """Enforce a hard cap on the total number of model + tool iterations per turn.
+    """Enforce a hard cap on model-call iterations per turn.
+
+    One unit is charged per MODEL call (the call that produces an AIMessage),
+    never per stored message. A tool-call pair therefore costs exactly one
+    unit: the AIMessage carrying the call, while its ToolMessage result is
+    free. System reminders, HumanMessages (including queue/continuation
+    carriers) and SystemMessages never charge the counter on their own — they
+    are simply part of the prompt the next model call sees.
 
     The budget counter is stored in ``state_register_mem`` under the key
     ``iteration_budget`` so that it survives across middleware hooks within the
@@ -42,8 +49,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     Parameters
     ----------
     max_iterations : int
-        Maximum number of combined model-call + tool-call iterations allowed
-        in a single turn.  Default **50**.
+        Maximum number of model calls allowed in a single turn. Default **50**.
     """
 
     _BUDGET_KEY = StateKey.ITERATION_BUDGET
@@ -148,57 +154,6 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         terminal = self._wrap_model_call_impl(request)
-        if terminal is not None:
-            return terminal
-        return await handler(request)
-
-    def _wrap_tool_call_impl(
-        self,
-        request: ToolCallRequest,
-    ) -> ToolMessage | None:
-        """Check budget and return terminal ToolMessage if exhausted, or None to proceed."""
-        session_id = self._get_session_id(request.state)
-
-        if not self._consume(session_id):
-            tool_name: str = request.tool_call.get("name", "unknown")
-            logger.warning(
-                "IterationBudget exhausted during tool call [%s] for session %s.",
-                tool_name,
-                session_id,
-            )
-            return ToolMessage(
-                content=(
-                    f"Tool [{tool_name}] skipped — iteration budget "
-                    f"({self.max_iterations}) exhausted. "
-                    "No further actions can be taken this turn."
-                ),
-                tool_call_id=request.tool_call["id"],
-                name=tool_name,
-                status="error",
-            )
-
-        return None
-
-    @override
-    def wrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
-    ) -> ToolMessage | Command[Any]:
-        logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
-        terminal = self._wrap_tool_call_impl(request)
-        if terminal is not None:
-            return terminal
-        return handler(request)
-
-    @override
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
-    ) -> ToolMessage | Command[Any]:
-        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
-        terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal
         return await handler(request)

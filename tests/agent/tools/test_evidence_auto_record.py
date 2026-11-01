@@ -12,7 +12,7 @@ from agent.tools.pub_base.sandbox import SandboxPolicy
 from agent.tools.pub_base import evidence_recorder
 from agent.tools.pub_base.evidence_ledger import EvidenceLedger
 
-import agent.tools.terminal as terminal
+import agent.tools.terminal.core as terminal
 import agent.tools.python_repl as python_repl
 
 pytestmark = [pytest.mark.unit]

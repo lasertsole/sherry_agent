@@ -134,10 +134,9 @@ sherry_agent/
 │       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
 │       ├── mcp_plugin.py   # MCP 도구 통합
-│       ├── web_search.py   # 웹 검색 도구(Tavily)
-│       ├── web_fetch.py    # URL 읽기 도구(markdown; 공개 + 선택적 로컬)
+│       ├── web/            # 웹 검색 + 가져오기 도구
 │       ├── python_repl.py  # Python 코드 실행
-│       ├── terminal.py     # 터미널 명령 실행
+│       ├── terminal/       # 터미널 + 백그라운드 도구
 │       ├── memory.py       # 메모리 확인 도구
 │       ├── question.py     # HITL 다지선다 질문 도구
 │       └── message_search.py # 대화 FTS5 검색 도구

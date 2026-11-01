@@ -49,7 +49,7 @@ If not, it's too big — split it.
 ## Delegation Fields (optional but recommended)
 - category: quick|deep|ultrabrain|visual|git|writing — routing verdict for subagent dispatch
 - delegation: self|subagent — whether this todo should be delegated
-- subagent_id: set after dispatching a subagent (use the child_session_key returned by task tool)
+- subagent_id: set after dispatching a subagent (use the child_session_key returned by sessions_spawn)
 
 ## DAG / TaskFlow Fields (optional)
 - plan_ref: plan file path — session-scoped workspace/sessions/<session_id>/plans/*.md

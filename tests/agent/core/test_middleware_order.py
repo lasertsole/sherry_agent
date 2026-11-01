@@ -57,6 +57,7 @@ EXPECTED_ORDER = [
 SUBAGENT_EXPECTED_ORDER = [
     "Summarization",
     "IterationBudget",
+    "ChildTokenBudget",
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "OutputRepetitionGuard",

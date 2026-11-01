@@ -43,6 +43,8 @@ const primevueStubs = {
 interface PanelVm {
   unlimited: boolean;
   capInput: number | null;
+  turnUnlimited: boolean;
+  turnCapInput: number | null;
   saveCap: () => Promise<void>;
   resetUsage: () => Promise<void>;
 }
@@ -55,7 +57,18 @@ const state = {
   used: 250_000,
   cost: 0.1234,
   limited: false,
-  pending: false
+  pending: false,
+  turn_cap: null,
+  session_turn_cap: 0,
+  default_turn_cap: 0,
+  inherited_turn: false,
+  turn_used: 120_000,
+  turn_main_used: 100_000,
+  turn_child_used: 20_000,
+  turn_cost: 0.05,
+  turn_limited: false,
+  turn_pending: false,
+  turn_id: 't1'
 };
 
 async function mountPanel() {
@@ -69,7 +82,7 @@ async function mountPanel() {
 
 beforeEach(() => {
   budgetApi.fetchTokenBudget.mockReset().mockResolvedValue({ ...state });
-  budgetApi.setTokenBudgetCap.mockReset().mockResolvedValue({ pending: false });
+  budgetApi.setTokenBudgetCap.mockReset().mockResolvedValue({ pending: false, turn_pending: false });
   budgetApi.resetTokenBudgetUsage.mockReset().mockResolvedValue({ ...state, used: 0, cost: 0 });
 });
 
@@ -90,6 +103,7 @@ describe('TokenBudgetPanel', () => {
 
     expect(budgetApi.fetchTokenBudget).toHaveBeenCalledWith('s1');
     expect(wrapper.text()).toContain('250,000');
+    expect(wrapper.text()).toContain('120,000');
     expect(wrapper.text()).toContain('1,000,000');
     expect(wrapper.text()).toContain('$0.1234');
   });
@@ -101,7 +115,7 @@ describe('TokenBudgetPanel', () => {
     vm.capInput = 500_000;
 
     await vm.saveCap();
-    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 500_000);
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 500_000, 0);
 
     await vm.resetUsage();
     expect(budgetApi.resetTokenBudgetUsage).toHaveBeenCalledWith('s1');
@@ -114,7 +128,7 @@ describe('TokenBudgetPanel', () => {
     vm.unlimited = true;
 
     await vm.saveCap();
-    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0);
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0, 0);
   });
 
   it('treats an emptied cap field as unlimited', async () => {
@@ -134,7 +148,7 @@ describe('TokenBudgetPanel', () => {
 
     await vm.saveCap();
 
-    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0);
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 0, 0);
     expect(vm.unlimited).toBe(true);
   });
 
@@ -154,6 +168,17 @@ describe('TokenBudgetPanel', () => {
     expect(wrapper.text()).toContain('900,000');
     expect(wrapper.find('[data-test="budget-source"]').text()).toContain('沿用');
     expect(wrapper.find('[data-test="budget-source"]').text()).toContain('900,000');
+  });
+
+  it('saves a per-turn cap together with the session cap', async () => {
+    const wrapper = await mountPanel();
+    const vm = wrapper.vm as unknown as PanelVm;
+    vm.turnUnlimited = false;
+    vm.turnCapInput = 80_000;
+
+    await vm.saveCap();
+
+    expect(budgetApi.setTokenBudgetCap).toHaveBeenCalledWith('s1', 1_000_000, 80_000);
   });
 
   it('says when the session carries its own choice', async () => {

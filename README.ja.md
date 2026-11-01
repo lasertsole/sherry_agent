@@ -134,10 +134,9 @@ sherry_agent/
 │       ├── ptc/            # プログラム的ツール呼び出し（`execute_code` 子プロセスブリッジ）
 │       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
 │       ├── mcp_plugin.py   # MCP ツール統合
-│       ├── web_search.py   # Web 検索ツール（Tavily）
-│       ├── web_fetch.py    # URL 取得ツール（markdown、公開＋任意のローカル）
+│       ├── web/            # Web 検索 + 取得ツール
 │       ├── python_repl.py  # Python コード実行
-│       ├── terminal.py     # ターミナルコマンド実行
+│       ├── terminal/       # ターミナル + バックグラウンドツール
 │       ├── memory.py       # メモリ閲覧ツール
 │       ├── question.py     # HITL 多肢選択の質問ツール
 │       └── message_search.py # 会話 FTS5 検索ツール

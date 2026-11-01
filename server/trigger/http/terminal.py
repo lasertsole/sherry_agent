@@ -30,7 +30,7 @@ Endpoints:
 """
 
 from server.service.user_terminal_service import read_terminal_info, run_user_command
-from agent.tools.terminal_bg_registry import background_registry
+from agent.tools.terminal.bg_registry import background_registry
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
 

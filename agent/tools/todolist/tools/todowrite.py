@@ -239,7 +239,7 @@ async def todowrite(
     Priority: high|medium|low.
     Category (optional): quick|deep|ultrabrain|visual|git|writing.
     Delegation (optional): self|subagent.
-    Subagent_id (optional): child_session_key returned by task tool.
+    Subagent_id (optional): child_session_key returned by sessions_spawn.
     Plan_ref (optional): plan file path — session-scoped
     workspace/sessions/<session_id>/plans/*.md.
     Flow_id (optional): TaskFlow flow id this todo tracks.

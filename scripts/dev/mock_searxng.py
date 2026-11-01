@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A minimal SearXNG JSON API stand-in for local verification.
 
-Implements exactly what ``agent/tools/web_search_searxng.py`` calls:
+Implements exactly what ``agent/tools/web/web_search_searxng.py`` calls:
 ``GET /search?q=…&format=json&pageno=1`` (plus the optional engines /
 categories passthrough, echoed back in the payload so a test can assert they
 arrived). Results are synthetic and deterministic:

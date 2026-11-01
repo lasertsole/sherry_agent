@@ -19,7 +19,7 @@ Two design rules run through every guard below:
 |---|---|---|
 | **Text death loop** (one model call) | Same sentence / character run streamed forever | Per-family sampling penalty (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (worker) + `RepetitionGuardWrapper` (main-agent stream) |
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
-| **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 90 executor / 60 other workers, combined calls) |
+| **Unbounded turn** | Model calls never stop | `IterationBudget` (90 main / 90 executor / 60 other workers; model calls only — tool results are free) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
 | **Overflow retry spiral** | An oversized context is rejected → compression fires → the compacted context still overflows → the provider errors again | `Summarization`: no-LLM overflow tail clip first, then the existing overflow route, then forced recovery |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@ Details that matter:
 
 ### Turn level: `IterationBudget`
 
-Counts model calls and tool calls **combined** per turn. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage; an exhausted tool call returns an error ToolMessage so the model can wrap up instead of dying mid-loop. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+Counts **model calls** per turn, one unit each. A tool-call pair costs exactly one unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage **instead of calling the model**, so a tool call already requested by the last budgeted AIMessage still runs and its pair stays intact. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 
@@ -280,7 +280,7 @@ as messages the user wrote.
 | Guard | Altitude | State home | Reset when |
 |---|---|---|---|
 | `ToolGuardrails` | Turn (tool calls) | `state_register_mem` (`tool_guardrail_state`) | Every turn (`before_agent`) |
-| `IterationBudget` | Turn (call count) | `state_register_mem` | Every turn |
+| `IterationBudget` | Turn (model-call count) | `state_register_mem` | Every turn |
 | `MaxTokensBoostMiddleware` | Model call (truncation) | `request.model_settings` + `is_stream_turn` flag | Per turn; flag cleared in `_cleanup` |
 | `OutputRepetitionGuard` | Turn + session (text) | 6 session keys | Halt flag per turn; hash history per session (released on subagent teardown) |
 | `RepetitionGuardWrapper` | Stream call (text) | In-flight + halt key | Per model call |

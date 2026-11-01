@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-import agent.tools.web_search as web_search
+import agent.tools.web.web_search as web_search
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 

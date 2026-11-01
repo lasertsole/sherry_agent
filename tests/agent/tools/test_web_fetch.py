@@ -12,8 +12,8 @@ import sys
 
 import pytest
 
-from agent.tools import web_fetch as wf
-from agent.tools.web_fetch import web_fetch
+import agent.tools.web.web_fetch as wf
+from agent.tools.web.web_fetch import web_fetch
 from pub.func.validator.safe_fetch import FetchResult
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -395,7 +395,7 @@ class TestRegistration:
     def test_the_tool_is_in_the_main_builders_and_the_web_group(self):
         from agent.tools import _MAIN_TOOLS_BUILDERS
         from agent.tools.catalog import TOOL_GROUPS
-        from agent.tools.web_fetch import build_web_fetch_tool
+        from agent.tools.web.web_fetch import build_web_fetch_tool
 
         # The registry LIST, not ``build_main_tools()``: the subagent test
         # conftest replaces that function with ``lambda: []`` process-wide.

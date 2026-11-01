@@ -109,7 +109,7 @@ async def quiesce_session(
     # 3) Background terminals: kill the process tree, then wait for the ledger
     #    to report no running tasks.
     try:
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         background_registry.kill_session_tasks(session_id)
         budget = min(5.0, max(0.0, deadline - time.monotonic()))

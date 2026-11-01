@@ -66,12 +66,34 @@ import (the template supplies the default entries).
 
 The cap is based on tokens, never on this estimate.
 
+## 🧮 Per-turn budget (main + subagents)
+
+`TOKEN_BUDGET_TURN_CAP` is an optional cap for the CURRENT turn. `TokenBudget`
+mints a turn id at `before_agent` and resets `TOKEN_BUDGET_TURN_USED`,
+`TOKEN_BUDGET_TURN_MAIN_USED`, `TOKEN_BUDGET_TURN_CHILD_USED`,
+`TOKEN_BUDGET_TURN_COST` and `TOKEN_BUDGET_TURN_LIMITED`. Every spawned child —
+at ANY nesting depth — gets `TOKEN_BUDGET_PARENT = {session_id, turn_id}` at
+spawn, inherited from its parent's own attribution when it is a grandchild or
+deeper (it never re-roots at the immediate parent). `ChildTokenBudget` adds its
+model usage to the ROOT parent's SESSION counters (always) and, while the parent
+is still on that turn, to the turn counters. The turn total is therefore the
+main agent plus every descendant level; the session `used/cost` include them
+too.
+
+`GET /sessions/budget` also returns `turn_cap`, `session_turn_cap`,
+`default_turn_cap`, `inherited_turn`, `turn_used`, `turn_main_used`,
+`turn_child_used`, `turn_cost`, `turn_limited`, `turn_pending`. A per-turn cap
+is inherited from `sherry.jsonc`'s `TOKEN_BUDGET_DEFAULT_TURN_CAP` when the
+session never set one; `PUT /sessions/budget` accepts `turn_cap` alongside
+`cap` (each `null` clears that choice; `0` = explicitly unlimited). Reset clears
+both session and turn counters while preserving both caps.
+
 ## 🌐 HTTP API
 
 | Method | Path | Body / query |
 | :--- | :--- | :--- |
 | `GET` | `/sessions/budget` | `?session_id=<sid>` |
-| `PUT` | `/sessions/budget` | `{session_id, cap: int \| null}` |
+| `PUT` | `/sessions/budget` | `{session_id, cap?: int \| null, turn_cap?: int \| null}` |
 | `POST` | `/sessions/budget/reset` | `{session_id}` |
 
 ## 🧪 Tests

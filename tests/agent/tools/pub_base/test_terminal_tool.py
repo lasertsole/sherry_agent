@@ -31,7 +31,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 import agent.tools.pub_base.sandbox_guard as sandbox_guard
-import agent.tools.terminal as terminal
+import agent.tools.terminal.core as terminal
 
 
 def _set_policy(monkeypatch, policy):

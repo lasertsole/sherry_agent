@@ -286,7 +286,7 @@ export interface PresetCharacter {
 export interface SessionPresetBinding {
   /** Session id (primary key) */
   session_id: string;
-  /** Preset id at binding time: a built-in id ('sherry' | 'coding') or `user:<dexie id>` */
+  /** Preset id at binding time: a built-in id ('sherry' | 'companion' | 'pure') or `user:<dexie id>` */
   preset_id: string;
   /** Preset display name at binding time (fallback when a user preset was deleted) */
   preset_name: string;

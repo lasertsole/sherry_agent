@@ -19,7 +19,7 @@ import json
 from langchain_core.tools import BaseTool, tool
 
 from agent.tools.pub_base import SessionId
-from agent.tools.terminal_bg_registry import (
+from .bg_registry import (
     background_registry,
     read_output_tail,
 )

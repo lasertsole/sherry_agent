@@ -192,7 +192,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`(목록 순서)           | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (두 주입기 모두 새니타이즈 재작성 뒤에 위치하므로 주입 턴에도 메시지가 벗겨지지 않음)                                                                |
 | `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware가 LLM에 가장 가까움. Summarization은 LLMRetry가 바깥에서 그 T4/T5 복구 링을 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함)                 |
 | `after_model` (역순)                | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음)                                                                                                                                                                              |
-| `wrap_tool_call` (최외곽 → 최내곽)  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
+| `wrap_tool_call` (최외곽 → 최내곽)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순)                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄)                                                                                                                                                           |
 
 해당 페이즈의 후크를 구현한 미들웨어만 행에 표시합니다.
@@ -294,13 +294,13 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### IterationBudget
 
 **모듈:** `agent/middlewares/iteration_budget/core.py` · **클래스:** `IterationBudget(AgentMiddleware)`
-**후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
+**후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-한 턴 안의 **모델 호출 + 도구 호출 합계**에 대한 하드 상한. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트와 executor 서브에이전트는 `IterationBudget(90)`, 그 외 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
+한 턴 안의 **모델 호출 횟수**에 대한 하드 상한. 도구 호출 쌍은 총 1회만 소모합니다(호출을 담은 `AIMessage`를 만든 모델 호출). 그 `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않으며, 뒤따르는 모델 호출만 소모합니다. 생성자: `__init__(max_iterations: int = 50)`. 메인 에이전트와 executor 서브에이전트는 `IterationBudget(90)`, 그 외 워커 에이전트는 `IterationBudget(60)`을 등록합니다.
 
 - `before_agent`는 `state_register_mem`의 카운터를 리셋: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call`은 모델 호출당 1 소모. 예산이 소진되면 **모델을 호출하지 않고** 종단 `AIMessage`를 반환합니다.
-- `wrap_tool_call`은 도구 호출당 1 소모. 소진되면 실행 대신 오류 `ToolMessage`("Tool [x] skipped — iteration budget exhausted")를 반환합니다.
+- `wrap_tool_call` 후크는 **없습니다**. 도구를 요청한 `AIMessage` 뒤에 예산이 소진되어도 그 도구 호출과 결과는 끝까지 실행되며(쌍을 깨지 않음), **다음** 모델 호출이 종단 `AIMessage`를 반환합니다.
 
 ### ToolGuardrails
 
@@ -347,7 +347,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/path_guard/core.py` · **클래스:** `PathGuard(AgentMiddleware)`
 **후크:** `wrap_tool_call` / `awrap_tool_call` 전용
 
-각 도구의 `resolve_project_path()` / `resolve_external_path()` 패턴에 대한 심층 방어입니다. 자체 경로 검사를 잊은 도구도 트래버설이나 하드 거부 경로를 읽도록 유도될 수 없습니다. 메인 에이전트에서 `ToolCallNormalize` 바로 뒤에 등록되며, 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`IterationBudget` → `ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker 파이프라인에는 등록하지 않습니다: 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다.
+각 도구의 `resolve_project_path()` / `resolve_external_path()` 패턴에 대한 심층 방어입니다. 자체 경로 검사를 잊은 도구도 트래버설이나 하드 거부 경로를 읽도록 유도될 수 없습니다. 메인 에이전트에서 `ToolCallNormalize` 바로 뒤에 등록되며, 리스트 순서가 wrap 후크의 바깥 순서이므로 `ToolGuardrails` **안쪽**에서 실행됩니다(`ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → 도구). 거부는 일반 오류 `ToolMessage`로 ToolGuardrails에 평가되어 다른 도구 실패와 동일하게 취급됩니다. worker 파이프라인에는 등록하지 않습니다: 자식 도구는 자체 게이트를 유지하고, 서브에이전트의 외부 접근은 어차피 강제 거부입니다.
 
 스크리닝은 의도적으로 보수적입니다:
 
@@ -856,7 +856,7 @@ glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思
 | `llm_retry.py`            | `max_retries=3`, `base_delay=2.0`, `max_delay=60.0`, `jitter=0.3`, `stale_giveup_threshold=5`                                                                                                                     |
 | `context_guard.py`        | `output_cut_ratio=0.20`, `check_interval=20`                                                                                                                                                                      |
 
-> **관련되지만 독립적:** 도구별 타임아웃은 기능 레지스트리에 묶인 모듈 상수입니다(`config/features/agent_side/tools_timeouts.py`의 `TOOLS_TIMEOUTS`) — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `TOOL_CALL_TIMEOUT_MINUTES`(기본 5)는 `sherry.jsonc` 설정으로 `config/sherry_settings.py`를 거쳐 설정 서비스에 노출되지만, **이를 소비하는 도구 실행 경로는 없습니다** — 유효한 타임아웃 노브가 아닙니다. 요약 파이프라인은 `config/features/agent_side/summarization.py`에서 상수를 읽습니다.
+> **관련되지만 독립적:** 도구별 타임아웃은 기능 레지스트리에 묶인 모듈 상수입니다(`config/features/agent_side/tools_timeouts.py`의 `TOOLS_TIMEOUTS`) — `WEB_SEARCH_TIMEOUT = 15`(`agent/tools/web/web_search.py`), `TERMINAL_TIMEOUT = 30`(`agent/tools/terminal/core.py`), `PYTHON_REPL_TIMEOUT = 30`(`agent/tools/python_repl.py`, 만료 시 자식 프로세스 kill). `TOOL_CALL_TIMEOUT_MINUTES`(기본 5)는 `sherry.jsonc` 설정으로 `config/sherry_settings.py`를 거쳐 설정 서비스에 노출되지만, **이를 소비하는 도구 실행 경로는 없습니다** — 유효한 타임아웃 노브가 아닙니다. 요약 파이프라인은 `config/features/agent_side/summarization.py`에서 상수를 읽습니다.
 
 ### 빌드 예제(발췌)
 
@@ -960,7 +960,6 @@ agent = create_agent(
 │
 ├─ 루프: 도구 호출 (호출별)
 │   └─ wrap_tool_call
-│       · IterationBudget  1 소모. 소진 시 오류 ToolMessage
 │       · ToolGuardrails  block/halt 사전 점검 → 실행 → 평가 → warn/block/halt
 │       · ContextEvictionMiddleware  원본 결과를 퇴거/슬라이스된 뷰로 교체
 │       · PathGuard  도구 실행 전에 트래버설 / 하드 거부 경로 인자 거부

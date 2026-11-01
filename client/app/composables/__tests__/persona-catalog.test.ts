@@ -55,7 +55,6 @@ vi.mock('@/composables/db', () => db);
 const t = ((key: string, params?: Record<string, unknown>) => {
   const table: Record<string, string> = {
     'config.persona.preset.builtinPureName': '纯净',
-    'config.persona.preset.builtinCodingName': '编程助手',
     'config.persona.preset.builtinCompanionName': '情感陪伴',
     'config.persona.preset.defaultName': '全量',
     'config.persona.preset.defaultBadge': '默认',
@@ -116,7 +115,7 @@ const FACTS = {
     'SubagentCompletionDrainMiddleware'
   ],
   // The required multimedia chain first (the backend serves it that way), then
-  // the work-flow skills Coding Assistant picks and two it does not.
+  // the work-flow skills and two it does not.
   skills: [
     { name: 'image_to_text', required: true },
     { name: 'speech_to_text', required: true },
@@ -152,15 +151,15 @@ describe('persona catalogue', () => {
     vi.clearAllMocks();
   });
 
-  it('lists 纯净 / 编程助手 / 情感陪伴 / 全量, with 全量 the default', () => {
-    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
+  it('lists 纯净 / 情感陪伴 / 全量, with 全量 the default', () => {
+    expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'companion', 'sherry']);
     expect(DEFAULT_PRESET_ID).toBe('sherry');
     const entries = catalogEntries([]);
-    expect(entries.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
+    expect(entries.map(entry => entry.id)).toEqual(['pure', 'companion', 'sherry']);
     expect(entries.every(entry => entry.builtin)).toBe(true);
-    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '编程助手', '情感陪伴', '全量']);
+    expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '情感陪伴', '全量']);
     // Only the default carries the 默认 badge ("Default"); the other three read 内置 ("Built-in").
-    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '内置', '默认']);
+    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '默认']);
   });
 
   it('appends the saved presets after the built-ins', () => {
@@ -168,13 +167,12 @@ describe('persona catalogue', () => {
 
     expect(entries.map(entry => entry.id)).toEqual([
       'pure',
-      'coding',
       'companion',
       'sherry',
       userPresetEntryId(7),
       userPresetEntryId(9)
     ]);
-    expect(entryName(entries[4]!, t)).toBe('我的预设');
+    expect(entryName(entries[3]!, t)).toBe('我的预设');
   });
 
   it('composes the ROLE statement per name and drops blank ones', () => {
@@ -187,50 +185,8 @@ describe('persona catalogue', () => {
 
     expect(composeRoleFile(character('小樱', '小明'), t)).toBe('# ROLE.md\n\n你将扮演小樱。\n用户将扮演小明。\n');
     expect(composeRoleFile(character('小樱', ''), t)).toBe('# ROLE.md\n\n你将扮演小樱。\n');
-    // Both blank ⇒ no statement at all (the Coding Assistant default).
+    // Both blank ⇒ no statement at all (the Pure default).
     expect(composeRoleFile(character('', ''), t)).toBe('');
-  });
-
-  it('builds the 编程助手 payload with no roles and no soul / user profile', () => {
-    const payload = builtinPayload('coding', TEMPLATE, t, FACTS, 'zh');
-
-    expect(payload.content).toEqual({
-      'AGENTS.md': TEMPLATE['AGENTS.md'],
-      'SOUL.md': '',
-      'USER.md': '',
-      'ROLE.md': ''
-    });
-    expect(payload.character).toEqual({
-      aiName: '',
-      // No avatar of its own: both roles render the neutral placeholder.
-      aiAvatar: '',
-      userName: '',
-      userAvatar: ''
-    });
-    // Its agent block: every tool but the memory store, the required skills plus
-    // the four work-flow ones, and every optional middleware left ON.
-    expect(payload.agent!.tools).toEqual([
-      'read_file',
-      'terminal',
-      'message_search',
-      'web_search',
-      'taskflow_flow',
-      'todoread',
-      'sessions_spawn'
-    ]);
-    expect(payload.agent!.skills).toEqual([
-      ...REQUIRED_SKILLS,
-      'bugfix-contract',
-      'code-wiki',
-      'taskflow',
-      'todolist',
-      'ulw-execute'
-    ]);
-    expect(payload.agent!.middlewares_disabled).toBeUndefined();
-    // Every restricted preset turns the compression nudge off (only Full keeps it).
-    expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
-    // No built-in pins a model: null = follow the environment config.
-    expect(payload.mainModel).toBeNull();
   });
 
   it('builds the 全量 payload from the full template and the default roles', () => {
@@ -274,8 +230,8 @@ describe('persona catalogue', () => {
     // The disabled groups are the orchestration surfaces, and its nudge is off.
     expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
     expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
-    // The skills are the mirror image of Coding Assistant: the required chain plus every
-    // skill Coding Assistant does NOT pick (clawhub / cron here).
+    // The skills are the complementary set: the required chain plus every
+    // skill outside the work-flow set (clawhub / cron here).
     expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'clawhub', 'cron']);
   });
 
@@ -358,7 +314,7 @@ describe('persona catalogue', () => {
 
   it('refuses to compose a preset whose restriction needs the catalogue', () => {
     // A silent `{}` would apply the OPPOSITE of what these presets promise.
-    for (const id of ['pure', 'coding', 'companion'] as const) {
+    for (const id of ['pure', 'companion'] as const) {
       expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
     }
     // Full has no opinion at all, so it never needs the catalogue.
@@ -378,11 +334,11 @@ describe('persona catalogue', () => {
   it('loads a built-in payload from the language template and a saved preset from its row', async () => {
     bridge.readSystemPromptTemplate.mockResolvedValue(TEMPLATE);
 
-    const builtin = await loadPresetPayload(catalogEntries([])[3]!, 'zh', t, NO_AGENT);
+    const builtin = await loadPresetPayload(catalogEntries([])[2]!, 'zh', t, NO_AGENT);
     expect(bridge.readSystemPromptTemplate).toHaveBeenCalledWith('zh');
     expect(builtin.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
 
-    const user = await loadPresetPayload(catalogEntries([userPreset()])[4]!, 'zh', t, NO_AGENT);
+    const user = await loadPresetPayload(catalogEntries([userPreset()])[3]!, 'zh', t, NO_AGENT);
     expect(user.content).toEqual({
       'AGENTS.md': 'A',
       'SOUL.md': 'S',
@@ -414,7 +370,7 @@ describe('persona catalogue', () => {
   });
 
   it('pins an agent block on every preset except 全量', () => {
-    for (const id of ['pure', 'coding', 'companion'] as const) {
+    for (const id of ['pure', 'companion'] as const) {
       const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
       expect(payload.agent).not.toEqual({});
       // …and the nudge is the one option only Full leaves alone (absent = on).

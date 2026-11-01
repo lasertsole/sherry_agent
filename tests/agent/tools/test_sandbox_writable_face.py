@@ -110,9 +110,9 @@ class TestTerminalPassesTheSessionRoot:
         from agent.tools.terminal import build_terminal_tool
 
         backend = _RecordingBackend()
-        monkeypatch.setattr("agent.tools.terminal.get_backend", lambda _policy: backend)
+        monkeypatch.setattr("agent.tools.terminal.core.get_backend", lambda _policy: backend)
         monkeypatch.setattr(
-            "agent.tools.terminal.read_policy", lambda: sandbox_mod.SandboxPolicy.REQUIRED
+            "agent.tools.terminal.core.read_policy", lambda: sandbox_mod.SandboxPolicy.REQUIRED
         )
         tool = build_terminal_tool()
 

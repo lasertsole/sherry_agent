@@ -184,3 +184,23 @@ def test_a_parked_cap_applies_on_the_next_turn(registers, monkeypatch: pytest.Mo
     service.promote_pending_settings_sync(SESSION)
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_CAP) == 500
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_CAP_PENDING) is None
+
+
+def test_a_per_turn_cap_is_saved_and_reported(registers):
+    mem, _db = registers
+
+    put = asyncio.run(
+        session_settings_http.put_budget_handler(
+            _FakeRequest(body={"session_id": SESSION, "turn_cap": 400})
+        )
+    )
+    assert put.status_code == 200, put.description
+    assert '"turn_cap": 400' in put.description
+    assert '"turn_pending": false' in put.description
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP) == 400
+
+    after = asyncio.run(
+        session_settings_http.get_budget_handler(_FakeRequest(query_params={"session_id": SESSION}))
+    )
+    assert after.status_code == 200, after.description
+    assert '"turn_cap": 400' in after.description

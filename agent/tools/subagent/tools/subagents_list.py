@@ -3,6 +3,7 @@
 from pydantic import BaseModel
 from langchain.tools import BaseTool
 from ..control import build_subagent_list
+from ..spawn.privilege import resolve_caller_session_key
 
 
 class SubagentsListSchema(BaseModel):
@@ -24,8 +25,8 @@ class SubagentsListTool(BaseTool):
         raise NotImplementedError("Use async version")
 
     async def _arun(self) -> str:
-        # Build session key from current session_id
-        session_key = f"agent:main:session:{self.session_id}"
+        # Resolve the caller's own key: a nested orchestrator lists ITS children.
+        session_key = resolve_caller_session_key(self.session_id)
         info = build_subagent_list(session_key)
 
         lines = [

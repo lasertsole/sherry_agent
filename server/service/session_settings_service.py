@@ -43,7 +43,7 @@ from typing import Any
 
 from agent.tools.subagent.registry.session_state import is_session_busy
 from config.features.agent_side.token_guard import MIN_MAX_OUTPUT_TOKEN
-from agent.middlewares.token_budget import default_token_cap
+from agent.middlewares.token_budget import default_token_cap, default_turn_cap
 from runtime import StateKey, state_register_db, state_register_mem
 from pub.func.validator import is_safe_session_id
 
@@ -83,6 +83,7 @@ _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.SEARCH_BACKEND, StateKey.SEARCH_BACKEND_PENDING),
     (StateKey.CUSTOM_THINKING_MAPPING, StateKey.CUSTOM_THINKING_MAPPING_PENDING),
     (StateKey.TOKEN_BUDGET_CAP, StateKey.TOKEN_BUDGET_CAP_PENDING),
+    (StateKey.TOKEN_BUDGET_TURN_CAP, StateKey.TOKEN_BUDGET_TURN_CAP_PENDING),
 )
 
 
@@ -475,6 +476,12 @@ def promote_pending_settings_sync(session_id: str) -> list[str]:
             from agent.middlewares.token_budget import reset_budget_notice
 
             reset_budget_notice(session_id)
+        if live_key == StateKey.TOKEN_BUDGET_TURN_CAP:
+            # The per-turn cap has its own latch on the running turn.
+            _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED)
+            from agent.middlewares.token_budget import reset_budget_notice
+
+            reset_budget_notice(session_id)
         if live_key == StateKey.AGENT_CONFIG:
             # The promoted payload carries the skills selection, which lives
             # inside the cached system prompt — drop it so the next turn rebuilds
@@ -728,18 +735,19 @@ def get_token_budget_state(session_id: str) -> dict[str, Any]:
     """Return the session's budget state.
 
     Shape: ``{cap, session_cap, default_cap, inherited, used, cost, limited,
-    pending}``.
+    pending, turn_cap, session_turn_cap, default_turn_cap, inherited_turn,
+    turn_used, turn_main_used, turn_child_used, turn_cost, turn_limited,
+    turn_pending, turn_id}``.
 
-    * ``cap`` — the cap that will be ENFORCED on the next turn, ``None`` when
+    * ``cap`` / ``turn_cap`` — the caps enforced on the next turn, ``None`` when
       unlimited. A parked mid-turn choice counts (it lands at the turn end).
-    * ``session_cap`` — the session's OWN value: ``None`` = it never set one
-      (it inherits), ``0`` = explicitly unlimited, ``>0`` = a cap.
-    * ``default_cap`` — the app-config default (``sherry.jsonc``'s
-      ``TOKEN_BUDGET_DEFAULT_CAP``; ``0`` = unlimited).
-    * ``inherited`` — ``session_cap is None``.
-
-    ``used`` / ``cost`` accumulate across turns (``cost`` is an estimate);
-    ``pending`` reports that a cap change is parked.
+    * ``session_cap`` / ``session_turn_cap`` — the session's OWN values:
+      ``None`` = never set (inherits), ``0`` = explicitly unlimited, ``>0`` = a cap.
+    * ``default_cap`` / ``default_turn_cap`` — the app-config defaults.
+    * ``used`` / ``cost`` / ``limited`` — SESSION totals (main + children).
+    * ``turn_used`` / ``turn_main_used`` / ``turn_child_used`` / ``turn_cost`` /
+      ``turn_limited`` — the CURRENT turn's totals (main + all descendants).
+    * ``pending`` / ``turn_pending`` report parked cap changes.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
@@ -750,9 +758,22 @@ def get_token_budget_state(session_id: str) -> dict[str, Any]:
     session_cap = parked_value if parked else live_cap
     default_cap = default_token_cap()
     effective = int(session_cap) if session_cap is not None else default_cap
+    turn_parked, turn_parked_value = _pending_value(
+        session_id, StateKey.TOKEN_BUDGET_TURN_CAP_PENDING
+    )
+    live_turn_cap = _read_value(session_id, StateKey.TOKEN_BUDGET_TURN_CAP)
+    session_turn_cap = turn_parked_value if turn_parked else live_turn_cap
+    default_turn = default_turn_cap()
+    effective_turn = int(session_turn_cap) if session_turn_cap is not None else default_turn
     used = _read_value(session_id, StateKey.TOKEN_BUDGET_USED) or 0
     cost = _read_value(session_id, StateKey.TOKEN_BUDGET_COST) or 0.0
     limited = bool(_read_value(session_id, StateKey.TOKEN_BUDGET_LIMITED) or False)
+    turn_used = _read_value(session_id, StateKey.TOKEN_BUDGET_TURN_USED) or 0
+    turn_main_used = _read_value(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED) or 0
+    turn_child_used = _read_value(session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED) or 0
+    turn_cost = _read_value(session_id, StateKey.TOKEN_BUDGET_TURN_COST) or 0.0
+    turn_limited = bool(_read_value(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED) or False)
+    turn_id = str(_read_value(session_id, StateKey.TOKEN_BUDGET_TURN_ID) or "")
     return {
         "cap": effective if effective > 0 else None,
         "session_cap": int(session_cap) if session_cap is not None else None,
@@ -762,6 +783,17 @@ def get_token_budget_state(session_id: str) -> dict[str, Any]:
         "cost": round(float(cost), 6),
         "limited": limited,
         "pending": parked,
+        "turn_cap": effective_turn if effective_turn > 0 else None,
+        "session_turn_cap": int(session_turn_cap) if session_turn_cap is not None else None,
+        "default_turn_cap": default_turn,
+        "inherited_turn": session_turn_cap is None,
+        "turn_used": int(turn_used),
+        "turn_main_used": int(turn_main_used),
+        "turn_child_used": int(turn_child_used),
+        "turn_cost": round(float(turn_cost), 6),
+        "turn_limited": turn_limited,
+        "turn_pending": turn_parked,
+        "turn_id": turn_id,
     }
 
 
@@ -801,13 +833,52 @@ async def apply_token_budget_choice(session_id: str, cap: int | None) -> bool:
     )
 
 
+def _write_budget_turn_cap(session_id: str, cap: int | None) -> None:
+    """Live write of the per-turn cap; a new cap starts a fresh turn latch."""
+    if cap is None:
+        _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_CAP)
+    else:
+        _write_value(session_id, StateKey.TOKEN_BUDGET_TURN_CAP, int(cap))
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED)
+    from agent.middlewares.token_budget import reset_budget_notice
+
+    reset_budget_notice(session_id)
+
+
+async def apply_turn_token_budget_choice(session_id: str, turn_cap: int | None) -> bool:
+    """HTTP entry for a per-turn cap; returns ``pending``.
+
+    ``None`` clears the session's own per-turn cap (inherit
+    ``TOKEN_BUDGET_DEFAULT_TURN_CAP``), ``0`` is explicitly unlimited, and a
+    positive integer caps the CURRENT turn's total across the main agent and all
+    descendants. Same park/promote rule as the session cap.
+    """
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    if turn_cap is not None:
+        if isinstance(turn_cap, bool) or not isinstance(turn_cap, int) or turn_cap < 0:
+            raise ValueError("'turn_cap' must be a non-negative integer or null")
+    return await _apply_session_choice(
+        session_id,
+        live_key=StateKey.TOKEN_BUDGET_TURN_CAP,
+        pending_key=StateKey.TOKEN_BUDGET_TURN_CAP_PENDING,
+        value=turn_cap,
+        write_live=lambda: _write_budget_turn_cap(session_id, turn_cap),
+    )
+
+
 def reset_token_budget(session_id: str) -> dict[str, Any]:
-    """Clear USED / COST / LIMITED (the cap is preserved)."""
+    """Clear USED / COST / LIMITED and the current turn's counters (caps stay)."""
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
     _delete_value(session_id, StateKey.TOKEN_BUDGET_USED)
     _delete_value(session_id, StateKey.TOKEN_BUDGET_COST)
     _delete_value(session_id, StateKey.TOKEN_BUDGET_LIMITED)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_USED)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_MAIN_USED)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_CHILD_USED)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_COST)
+    _delete_value(session_id, StateKey.TOKEN_BUDGET_TURN_LIMITED)
     from agent.middlewares.token_budget import reset_budget_notice
 
     reset_budget_notice(session_id)
@@ -852,8 +923,8 @@ def get_search_backend_state(session_id: str) -> dict[str, Any]:
     session too; it then answers the availability + default view (no explicit
     choice to report), which is what the panel's per-provider rows need.
     """
-    from agent.tools.web_search import resolve_preferred_backend, tavily_available
-    from agent.tools.web_search_searxng import searxng_status
+    from agent.tools.web.web_search import resolve_preferred_backend, tavily_available
+    from agent.tools.web.web_search_searxng import searxng_status
 
     if session_id and not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")

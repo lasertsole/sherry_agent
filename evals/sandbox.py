@@ -1,20 +1,25 @@
 """Cross-platform eval sandbox.
 
 Redirects every persistence backend of the agent runtime into a per-run
-directory and strips the tool surface available to spawned children, so eval
-runs never touch the real repo DBs or the real workspace.
+directory, so eval runs never touch the real repo DBs or the real workspace.
+
+Spawned children keep the FULL tool surface by default: agentic coding evals
+must be able to delegate implementation to a child, and the official SWE-bench
+harness imposes no tool interface at all. ``restrict_child_tools=True`` is the
+opt-in isolation mode for suites that must not let a child mutate anything.
 
 Platform compatibility (Windows / macOS / Linux):
 - Persistence redirection uses pathlib + temp dirs only — no shell, no
   symlinks, no POSIX-only calls. Every redirected symbol is read at call time
   by its owning module, so patching after import is effective.
-- Child tool restriction is a name allowlist applied by patching
+- The opt-in child allowlist is applied by patching
   ``agent.tools.build_main_tools``; both spawn call sites import it lazily at
   call time, so the patch is honored for every spawned child.
-- ``terminal`` / ``python_repl`` are excluded from the allowlist entirely.
-  Should a future suite need them, the project's own OS sandbox applies via
-  ``SANDBOX_POLICY`` (bwrap on Linux, seatbelt on macOS, silent degrade on
-  Windows — see agent/tools/pub_base/sandbox.py).
+- In isolation mode ``terminal`` / ``python_repl`` are excluded from the
+  allowlist entirely. Should a suite need isolation *and* those tools, the
+  project's own OS sandbox applies via ``SANDBOX_POLICY`` (bwrap on Linux,
+  seatbelt on macOS, silent degrade on Windows — see
+  agent/tools/pub_base/sandbox.py).
 """
 
 from __future__ import annotations
@@ -39,14 +44,15 @@ _STORE_MODULES: dict[str, str] = {
 
 
 class EvalSandbox:
-    """Redirect runtime persistence + child tool policy into *results_dir*."""
+    """Redirect runtime persistence + (optionally) child tool policy."""
 
-    def __init__(self, results_dir: Path) -> None:
+    def __init__(self, results_dir: Path, *, restrict_child_tools: bool = False) -> None:
         self.root = results_dir / "sandbox"
         self.workspace = self.root / "workspace"
         self.src = self.root / "src"
         self.auto_skills_dir = self.root / "skills" / "auto"
         self.knowledge_plans_dir = self.workspace / "knowledge" / "plans"
+        self.restrict_child_tools = restrict_child_tools
         self._originals: dict[object, dict[str, Any]] = {}
         self._applied = False
         self._opened_connections: list[aiosqlite.Connection] = []
@@ -75,6 +81,9 @@ class EvalSandbox:
         self._set(pending, "_DB_PATH", pending_db)
 
     def _restrict_child_tools(self) -> None:
+        """Apply the opt-in read-only allowlist to spawned children."""
+        if not self.restrict_child_tools:
+            return
         # NOTE: this patches the SHARED builder, so a suite must import
         # agent.core BEFORE apply() — that binds the real builder at module
         # load, while the lazy imports in the spawn/steer paths see this patch.

@@ -63,7 +63,7 @@ def test_the_policy_covers_the_tools_that_actually_ship():
     vacuously (or fail, depending on collection order).
     """
     from agent.tools.message_search import build_message_search_tool
-    from agent.tools.web_search import build_web_search_tool
+    from agent.tools.web.web_search import build_web_search_tool
 
     shipped = {build_message_search_tool().name, build_web_search_tool().name}
 

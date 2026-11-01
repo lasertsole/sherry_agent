@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-import agent.tools.web_search as web_search
-import agent.tools.web_search_push as web_search_push
+import agent.tools.web.web_search as web_search
+import agent.tools.web.web_search_push as web_search_push
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
@@ -123,7 +123,7 @@ def searxng_stub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 @pytest.fixture(autouse=True)
 def _fresh_breaker():
     """The breaker is process-level state: every test starts and ends closed."""
-    from agent.tools.web_search_searxng import record_searxng_outcome
+    from agent.tools.web.web_search_searxng import record_searxng_outcome
 
     record_searxng_outcome(True)
     yield
@@ -543,7 +543,7 @@ def test_three_transport_failures_open_the_breaker(
     searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from config.features import WEB_SEARCH_CONFIG
-    from agent.tools.web_search_searxng import searxng_cooling_down
+    from agent.tools.web.web_search_searxng import searxng_cooling_down
 
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
@@ -562,7 +562,7 @@ def test_an_open_breaker_skips_the_dial_and_answers_a_stub(
     searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from config.features import WEB_SEARCH_CONFIG
-    from agent.tools.web_search_searxng import record_searxng_outcome
+    from agent.tools.web.web_search_searxng import record_searxng_outcome
 
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
@@ -583,7 +583,7 @@ def test_resolution_routes_away_from_a_cooling_instance(
     """During the cooldown SearXNG reads as unconfigured, so every existing rule
     (explicit choice, default, fallback) takes the other provider."""
     from runtime.session.state_keys import StateKey
-    from agent.tools.web_search_searxng import record_searxng_outcome
+    from agent.tools.web.web_search_searxng import record_searxng_outcome
 
     monkeypatch.setattr(
         "runtime.state_register_mem.get_state",
@@ -601,7 +601,7 @@ def test_an_http_status_error_does_not_open_the_breaker(
     searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from config.features import WEB_SEARCH_CONFIG
-    from agent.tools.web_search_searxng import searxng_cooling_down
+    from agent.tools.web.web_search_searxng import searxng_cooling_down
 
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 60)
@@ -621,7 +621,7 @@ def test_the_window_expiring_probes_and_pushes_recovery_on_success(
     searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from config.features import WEB_SEARCH_CONFIG
-    from agent.tools.web_search_searxng import record_searxng_outcome, searxng_cooling_down
+    from agent.tools.web.web_search_searxng import record_searxng_outcome, searxng_cooling_down
 
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 0.05)
@@ -645,7 +645,7 @@ def test_a_failed_probe_after_expiry_reopens_only_after_fresh_failures(
     searxng_stub: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from config.features import WEB_SEARCH_CONFIG
-    from agent.tools.web_search_searxng import record_searxng_outcome, searxng_cooling_down
+    from agent.tools.web.web_search_searxng import record_searxng_outcome, searxng_cooling_down
 
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_failure_threshold", 3)
     monkeypatch.setitem(WEB_SEARCH_CONFIG, "searxng_cooldown_seconds", 0.05)

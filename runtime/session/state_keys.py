@@ -28,6 +28,22 @@ class StateKey(StrEnum):
     TOKEN_BUDGET_COST = "token_budget_cost"
     TOKEN_BUDGET_LIMITED = "token_budget_limited"
 
+    # Per-TURN token budget, counted across the main agent AND every descendant
+    # subagent. TURN_CAP is optional (absent/0 = unlimited); TURN_ID is minted at
+    # before_agent; TURN_USED/MAIN_USED/CHILD_USED/COST reset each turn.
+    # TOKEN_BUDGET_PARENT is written on a CHILD session (the root parent's id +
+    # the turn id it was spawned in) so its model calls are attributed to the
+    # parent's current turn and session counters.
+    TOKEN_BUDGET_TURN_CAP = "token_budget_turn_cap"
+    TOKEN_BUDGET_TURN_CAP_PENDING = "token_budget_turn_cap_pending"
+    TOKEN_BUDGET_TURN_ID = "token_budget_turn_id"
+    TOKEN_BUDGET_TURN_USED = "token_budget_turn_used"
+    TOKEN_BUDGET_TURN_MAIN_USED = "token_budget_turn_main_used"
+    TOKEN_BUDGET_TURN_CHILD_USED = "token_budget_turn_child_used"
+    TOKEN_BUDGET_TURN_COST = "token_budget_turn_cost"
+    TOKEN_BUDGET_TURN_LIMITED = "token_budget_turn_limited"
+    TOKEN_BUDGET_PARENT = "token_budget_parent"
+
     TOOL_GUARDRAIL_STATE = "tool_guardrail_state"
     IS_STREAM_TURN = "is_stream_turn"
 

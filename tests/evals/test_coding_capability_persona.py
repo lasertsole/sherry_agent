@@ -1,7 +1,7 @@
 """The persona arms of the coding/swebench harness.
 
 The capability baseline seeds a NEUTRAL rules file on purpose (the shipped
-templates carry the persona and its orchestrator doctrine). The SWE-bench arm
+templates carry the persona and its task-management guidance). The SWE-bench arm
 can instead be run with that shipped 编码助手 preset system prompt (``--persona
 coding``) to measure what the production persona does to the benchmark —
 recorded, never silently mixed into the neutral baseline.
@@ -46,8 +46,10 @@ def test_coding_persona_copies_the_shipped_template(tmp_path) -> None:
         encoding="utf-8"
     )
     assert text == shipped
-    # The doctrine this arm exists to measure is present verbatim.
-    assert "ORCHESTRATOR" in text
+    # The shipped template's delegation guidance is present verbatim.
+    assert "sessions_spawn" in text
+    assert "NEVER THE IMPLEMENTER" not in text
+    assert any(marker in text for marker in harness._FORBIDDEN_MARKERS)
     assert harness._PERSONA_MODE == "coding"
     # The preset keeps the persona FILES empty; only the rules template is used.
     for name in harness._EMPTY_PERSONA_FILES:

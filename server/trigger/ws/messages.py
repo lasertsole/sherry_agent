@@ -600,7 +600,7 @@ async def _handle_terminal_bg_kill(
     ok = False
     reason: str | None = "missing task_id"
     if task_id:
-        from agent.tools.terminal_bg_registry import background_registry
+        from agent.tools.terminal.bg_registry import background_registry
 
         ok = background_registry.kill_task(task_id, session_id)
         reason = None if ok else "not_found_or_not_running"

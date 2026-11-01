@@ -6,7 +6,7 @@
 
 세 도구가 모델이 여러분의 머신에서 코드를 실행하게 합니다: `terminal`(셸 명령), `python_repl`(자식 프로세스 안의 Python), 그리고 PTC의 `execute_code`(RPC 브리지로 실제 도구를 호출할 수 있는, 자식 프로세스 안의 더 긴 Python 스크립트)입니다. 환각되거나 주입된 명령 하나가 환경 변수에서 API 키를 읽거나, 프로젝트 밖에 파일을 쓰거나, 다른 프로세스를 건드릴 수 있습니다. 샌드박스 계층은 이 세 가지를 모두 제한합니다.
 
-사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/tools/ptc/runner.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
+사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal/core.py`, `agent/tools/python_repl.py`, `agent/tools/ptc/runner.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
 
 ## 목차
 

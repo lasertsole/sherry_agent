@@ -6,7 +6,7 @@
 
 3つのツールがモデルにあなたのマシン上でのコード実行を許しています: `terminal`(シェルコマンド)、`python_repl`(子プロセス内の Python)、そして PTC の `execute_code`(RPC ブリッジ経由で実ツールを呼べる、子プロセス内のより長い Python スクリプト)です。幻覚やプロンプトインジェクションによる1つのコマンドが、環境変数から API キーを読み取ったり、プロジェクト外に書き込んだり、他のプロセスに触れたりできてしまいます。サンドボックス層はこの3つすべてを制限します。
 
-事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/tools/ptc/runner.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
+事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal/core.py`、`agent/tools/python_repl.py`、`agent/tools/ptc/runner.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
 
 ## 目次
 

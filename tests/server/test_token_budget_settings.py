@@ -124,6 +124,17 @@ async def test_reset_clears_usage_but_keeps_the_cap(registers):
         "cost": 0.0,
         "limited": False,
         "pending": False,
+        "turn_cap": None,
+        "session_turn_cap": None,
+        "default_turn_cap": 0,
+        "inherited_turn": True,
+        "turn_used": 0,
+        "turn_main_used": 0,
+        "turn_child_used": 0,
+        "turn_cost": 0.0,
+        "turn_limited": False,
+        "turn_pending": False,
+        "turn_id": "",
     }
     assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_CAP) == 5000
 
@@ -170,3 +181,40 @@ async def test_state_reports_inheritance_and_the_app_default(
     await service.apply_token_budget_choice(SESSION, None)
     inherited_again = service.get_token_budget_state(SESSION)
     assert inherited_again["inherited"] is True and inherited_again["cap"] == 9000
+
+
+@pytest.mark.asyncio
+async def test_apply_turn_cap_inherits_and_reports_its_own_state(
+    registers, monkeypatch: pytest.MonkeyPatch
+):
+    mem, _db = registers
+    monkeypatch.setattr(service, "default_turn_cap", lambda: 5000)
+
+    pending = await service.apply_turn_token_budget_choice(SESSION, 2000)
+    assert pending is False
+    assert mem.get_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CAP) == 2000
+    state = service.get_token_budget_state(SESSION)
+    assert state["turn_cap"] == 2000
+    assert state["session_turn_cap"] == 2000
+    assert state["inherited_turn"] is False
+
+    await service.apply_turn_token_budget_choice(SESSION, None)
+    inherited = service.get_token_budget_state(SESSION)
+    assert inherited["turn_cap"] == 5000
+    assert inherited["session_turn_cap"] is None
+    assert inherited["inherited_turn"] is True
+    assert inherited["default_turn_cap"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_the_turn_counters_too(registers):
+    mem, _db = registers
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_USED, 777)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_CHILD_USED, 333)
+    mem.set_state(SESSION, StateKey.TOKEN_BUDGET_TURN_LIMITED, True)
+
+    state = service.reset_token_budget(SESSION)
+
+    assert state["turn_used"] == 0
+    assert state["turn_child_used"] == 0
+    assert state["turn_limited"] is False

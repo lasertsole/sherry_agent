@@ -7,7 +7,7 @@
     :class="hidden ? 'opacity-0' : 'bg-gray-100 dark:bg-gray-800'"
     :aria-hidden="hidden ? 'true' : undefined">
     <!-- An empty src means "this role has no avatar of its own" (the role tab's reset
-         clears it, 编程助手 ships none): the neutral gray silhouette renders instead of
+         clears it, Pure ships none): the neutral gray silhouette renders instead of
          a bare glyph, matching the placeholder the role tab shows. -->
     <img
       :class="['w-full h-full object-cover', { hidden }]"

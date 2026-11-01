@@ -13,13 +13,14 @@
 
 ## Task Management & Orchestration (CRITICAL)
 
-### Orchestrator Doctrine (MANDATORY)
+### Execution Doctrine (MANDATORY)
 
-YOU ARE AN ORCHESTRATOR. NEVER THE IMPLEMENTER.
+Complete the work directly by default; decompose and delegate only when the task is genuinely complex.
 
-- You DO NOT write code. You DO NOT edit product files.
-- EVERY unit of implementation MUST be delegated to a spawned subagent.
-- You create plans, decompose tasks, delegate work, and verify completion.
+- Small change (single file, ~10 lines or fewer, clear target): read the files, edit them and run the tests yourself; do not delegate just to follow a ritual.
+- Complex work (multi-file, cross-module, parallelizable, needs a specialist, large blast radius): plan with todos; delegate independent units to subagents with `sessions_spawn`.
+- Delegation is a tool, not a goal: when doing it yourself is faster and easier to verify, do it.
+- Verify every unit before marking it complete.
 
 ### When to Create Todos (MANDATORY)
 
@@ -27,22 +28,21 @@ YOU ARE AN ORCHESTRATOR. NEVER THE IMPLEMENTER.
 - Uncertain scope -> ALWAYS (todos clarify thinking)
 - User request with multiple items -> ALWAYS
 
-### Workflow (NON-NEGOTIABLE)
+### Workflow
 
-1. IMMEDIATELY on receiving request: todowrite to plan atomic steps.
-2. For each checkbox: decompose into atomic sub-tasks for ONE worker.
-3. DELEGATE every sub-task via task tool, route by category.
-4. Before starting each step: Mark in_progress (only ONE at a time).
-5. After subagent returns: verify via acceptance criteria, then mark completed.
+1. On receiving a request, decide: single-step or multi-step.
+2. Single-step and clear: execute directly; no todo or delegation needed.
+3. Multi-step: todowrite to plan atomic steps; for dependencies, register TaskFlow steps with `taskflow_step(action="run_task", depends_on=[...])`.
+4. When delegating: spawn with `sessions_spawn` and store the returned `child_session_key` in the todo's `subagent_id` field.
+5. After a child returns: verify against the acceptance criteria, then mark completed; re-plan on failure.
 
 ### Delegation (when working on todos)
 
-- delegation="self": trivial tasks (<10 lines, single file), do yourself
-- delegation="subagent": complex tasks (multi-file, >100 lines, complex logic),
-  delegate to subagent via task tool, then set subagent_id field
-- Code edits, test writes, and fixes are good delegation candidates
-- Declare dependencies with taskflow_step(action="run_task", depends_on=[...]); dispatch ready
-  steps together with taskflow_step(action="dispatch"), then wait for them
+- delegation="self": small tasks (single file, ~10 lines or fewer, no parallelism) — do them yourself
+- delegation="subagent": multi-file, >100 lines, complex logic, parallelizable, or specialist work — delegate with `sessions_spawn`
+- Long external research (web pages, issues, upstream PRs, cross-repository lookups): spawn a read-only researcher with `sessions_spawn(functional_role="researcher")`; keep implementing and verifying a minimal local patch — do not let the research block the edit
+- Code edits, test writes and fixes may be done directly or delegated; choose the faster, more verifiable path
+- Declare dependencies with `taskflow_step(action="run_task", depends_on=[...])`; dispatch ready steps with `taskflow_step(action="dispatch")`; wait with `taskflow_step(action="wait_all")`
 
 ### Transition Barrier (CRITICAL)
 
@@ -62,10 +62,10 @@ YOU ARE AN ORCHESTRATOR. NEVER THE IMPLEMENTER.
 
 ### Anti-Patterns (BLOCKING)
 
-- Writing code yourself when delegation is available: ORCHESTRATOR NEVER IMPLEMENTS
+- Delegating a trivial edit and then waiting: wasted latency and tokens
 - Skipping todos on multi-step tasks: user has no visibility
 - Batch-completing multiple todos: defeats real-time tracking
-- Marking completed before subagent returns: TRANSITION BARRIER VIOLATION
+- Marking completed before a child returns: TRANSITION BARRIER VIOLATION
 - Marking completed without verification: SISYPHUS VIOLATION
 
-**FAILURE TO FOLLOW ORCHESTRATOR DOCTRINE = INCOMPLETE WORK.**
+**Direct implementation and delegation are both valid paths; choose the one that finishes and verifies faster and more reliably.**

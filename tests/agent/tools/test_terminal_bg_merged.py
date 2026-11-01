@@ -17,7 +17,7 @@ from langgraph.prebuilt import ToolNode
 from agent.tools import _MAIN_TOOLS_BUILDERS
 from agent.tools.catalog import TOOL_GROUPS, tool_catalog, tool_required
 from agent.tools.parallel_safety import READ_ONLY_TOOLS
-from agent.tools.terminal_bg_tools import (
+from agent.tools.terminal.bg_tools import (
     build_legacy_terminal_bg_tools,
     build_terminal_bg_tool,
     terminal_bg,
@@ -37,7 +37,7 @@ def _invoke(**args):
 def test_list_dispatches_to_the_legacy_handler(monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(
-        "agent.tools.terminal_bg_tools._list_session_tasks",
+        "agent.tools.terminal.bg_tools._list_session_tasks",
         lambda session_id: seen.append(session_id) or "listed",
     )
 
@@ -48,7 +48,7 @@ def test_list_dispatches_to_the_legacy_handler(monkeypatch):
 def test_output_dispatches_to_the_legacy_handler(monkeypatch):
     seen: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "agent.tools.terminal_bg_tools._read_task_output",
+        "agent.tools.terminal.bg_tools._read_task_output",
         lambda task_id, session_id: seen.append((task_id, session_id)) or "output",
     )
 
@@ -58,7 +58,7 @@ def test_output_dispatches_to_the_legacy_handler(monkeypatch):
 
 def test_action_is_normalized_before_dispatch(monkeypatch):
     monkeypatch.setattr(
-        "agent.tools.terminal_bg_tools._list_session_tasks", lambda session_id: "listed"
+        "agent.tools.terminal.bg_tools._list_session_tasks", lambda session_id: "listed"
     )
     assert _invoke(action="  LIST  ") == "listed"
 
@@ -106,7 +106,7 @@ def test_catalog_and_parallel_safety_use_the_merged_name():
 def test_toolnode_injects_the_session(monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(
-        "agent.tools.terminal_bg_tools._list_session_tasks",
+        "agent.tools.terminal.bg_tools._list_session_tasks",
         lambda session_id: seen.append(session_id) or "listed",
     )
 

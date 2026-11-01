@@ -50,6 +50,9 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # (0 = unlimited, the historical behaviour). A session's own cap wins; a
     # session that sets 0 stays unlimited even when this key is positive.
     "TOKEN_BUDGET_DEFAULT_CAP": 0,
+    # Default per-turn cap across the main agent and all its subagents
+    # (0 = unlimited). A session's own turn cap wins; 0 there is explicit.
+    "TOKEN_BUDGET_DEFAULT_TURN_CAP": 0,
     "LOG_LEVEL": "INFO",
     # Persisted process-level default project directory ("where the agent
     # works"). Empty = unset -> ROOT_DIR. SHERRY_PROJECT_DIR still wins over
@@ -93,6 +96,7 @@ _INT_KEYS = frozenset(
     {
         "TOOL_CALL_TIMEOUT_MINUTES",
         "TOKEN_BUDGET_DEFAULT_CAP",
+        "TOKEN_BUDGET_DEFAULT_TURN_CAP",
         "curator.interval_hours",
         "curator.stale_after_days",
         "curator.archive_after_days",

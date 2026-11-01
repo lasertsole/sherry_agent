@@ -9,7 +9,7 @@
     data-test="new-session-dialog">
     <div class="flex flex-col gap-3">
       <p class="m-0 text-xs text-gray-500 dark:text-gray-400">{{ t('personaPreset.selectHint') }}</p>
-      <!-- The catalogue: built-ins first (Coding Assistant is the default), then the saved presets. -->
+      <!-- The catalogue: built-ins first (Full is the default), then the saved presets. -->
       <div
         class="flex max-h-[46vh] flex-col gap-1 overflow-y-auto"
         data-test="new-session-preset-list">

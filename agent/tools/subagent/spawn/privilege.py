@@ -12,9 +12,8 @@ from ..capabilities import (
     is_subagent_session,
     resolve_subagent_capabilities,
 )
+from ..registry.session_keys import SESSION_KEY_PREFIX
 from .depth import get_subagent_depth
-
-SPAWN_YIELD_TOOLS = ("sessions_spawn", "sessions_yield")
 
 
 def resolve_caller_session_key(session_id: str) -> str:
@@ -23,10 +22,20 @@ def resolve_caller_session_key(session_id: str) -> str:
     Child/swarm session keys are already canonical and are used verbatim; any
     other id is a bare main-session id and gets the ``agent:main:session:``
     prefix. Blank input yields ``""``.
+
+    The already-prefixed main form is returned unchanged (not double-prefixed),
+    and a legacy key that prefixes a child/swarm key is unwrapped, so a caller
+    that passes the *state* ``session_id`` of a nested child resolves to the
+    child's own registry key rather than ``agent:main:session:agent:...``.
     """
     raw = (session_id or "").strip()
     if not raw:
         return ""
+    if raw.lower().startswith(SESSION_KEY_PREFIX):
+        remainder = raw[len(SESSION_KEY_PREFIX) :]
+        if is_subagent_session(remainder) or ":swarm:" in remainder:
+            return remainder
+        return raw
     if is_subagent_session(raw) or ":swarm:" in raw:
         return raw
     return f"agent:main:session:{raw}"

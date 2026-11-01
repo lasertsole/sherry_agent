@@ -17,7 +17,7 @@ def _fake_runtime(monkeypatch):
     import agent.tools.subagent.control.kill as kill_mod
     from types import SimpleNamespace
     import agent.tools.subagent.registry.queries as queries
-    import agent.tools.terminal_bg_registry as bg
+    import agent.tools.terminal.bg_registry as bg
     import server.service.turn_runner as turn_runner
 
     state = {"descendants": 1, "background": 1, "frozen": 0, "killed": []}

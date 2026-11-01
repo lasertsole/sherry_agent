@@ -72,11 +72,19 @@ from ..hooks.progress import fire_spawned_hook, fire_progress_hook, fire_ended_h
 # Only alphanumeric, underscore and hyphen allowed — prevents path/injection attacks via agent_id
 _VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-# Tools that only a spawning role (MAIN / ORCHESTRATOR) may hold. A functional
+# Tools that only a spawning node (MAIN / ORCHESTRATOR) may hold. A functional
 # role whitelist or a per-spawn extra_tools entry can name them, but the spawn
 # pipeline intersects the final allow-list with can_spawn_children(role) so a
-# LEAF can never be granted recursive spawning.
-_SPAWN_YIELD_TOOLS = ("sessions_spawn", "sessions_yield")
+# LEAF can never be granted recursive spawning or control over children.
+# The prompt's spawn section names exactly this set as usable and calls the
+# main-only management tools (sessions_kill / sessions_steer) out as unavailable,
+# so a child is never told to call a tool it does not have.
+_SPAWN_CONTROL_TOOLS = (
+    "sessions_spawn",
+    "sessions_yield",
+    "subagents_list",
+    "sessions_send",
+)
 
 #: Appended to an isolated child's system prompt: it works on a copy, and the
 #: completion merge is what carries its changes back.
@@ -176,10 +184,11 @@ def _check_role_containment(
     restriction: every specialized role's whitelist is a subset of theirs, so no
     escalation is possible. A specialized parent may spawn its OWN role plus any
     roles listed in ``SPAWN_ALLOWED_CHILD_ROLES`` — an executor may therefore
-    spawn read-only researcher / librarian children to research before it
-    writes. The map only ever permits READ-ONLY extras, so no write-capable
-    escalation path opens, and a role ABSENT from the map keeps the legacy
-    same-role-only rule (a read-only researcher still cannot hire an executor).
+    spawn read-only researcher / librarian children before it writes, and the
+    two research roles may spawn each other (or their own role). The map only
+    ever permits READ-ONLY extras, so no write-capable escalation path opens,
+    and a role ABSENT from the map keeps the legacy same-role-only rule (a
+    reviewer still cannot hire a researcher).
 
     Returns the refusal text, or ``None`` when the spawn is allowed.
     """
@@ -300,9 +309,9 @@ def _resolve_child_tool_policy(
     """Phases 8–8.6: the child's ``(allow, deny)`` tool policy.
 
     A functional role with an explicit tool list is a WHITELIST (deny cleared);
-    the depth role still controls spawn/yield, per-spawn ``extra_tools`` join
-    the whitelist, and the final allow-list is intersected with
-    ``can_spawn_children(role)`` so a LEAF can never be granted recursion.
+    the depth role still controls the spawn/management tools, per-spawn
+    ``extra_tools`` join the whitelist, and the final allow-list is intersected
+    with ``can_spawn_children(role)`` so a LEAF can never be granted recursion.
     """
     tool_allow: list[str] = []
     tool_deny = list(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
@@ -313,17 +322,18 @@ def _resolve_child_tool_policy(
         tool_allow = list(role_def.tools)
         tool_deny = []
 
-    # Depth role still controls spawn/yield.
+    # Depth role still controls the spawn/management tool set.
     if role == SubagentSessionRole.ORCHESTRATOR:
         if tool_allow:
-            # Whitelist mode: deny is already empty, so grant spawn/yield by
-            # adding them to the allow-list instead of removing from deny.
-            for t in _SPAWN_YIELD_TOOLS:
+            # Whitelist mode: deny is already empty, so grant the control tools
+            # by adding them to the allow-list instead of removing from deny.
+            for t in _SPAWN_CONTROL_TOOLS:
                 if t not in tool_allow:
                     tool_allow.append(t)
         else:
-            # Inherit mode: unblock spawn/yield by removing them from the deny list.
-            tool_deny = [t for t in tool_deny if t not in _SPAWN_YIELD_TOOLS]
+            # Inherit mode: unblock the control tools by removing them from the
+            # deny list.
+            tool_deny = [t for t in tool_deny if t not in _SPAWN_CONTROL_TOOLS]
 
     # Per-task tool attachment (deepagents TaskTools pattern): extra_tools are
     # attached on top of whatever the role already allows. In whitelist mode
@@ -335,7 +345,7 @@ def _resolve_child_tool_policy(
             tool_allow.append(name)
 
     if not can_spawn_children(role):
-        tool_allow = [t for t in tool_allow if t not in _SPAWN_YIELD_TOOLS]
+        tool_allow = [t for t in tool_allow if t not in _SPAWN_CONTROL_TOOLS]
     return tool_allow, tool_deny
 
 
@@ -1111,6 +1121,33 @@ def _bind_child_run_context(run: SubagentRunRecord) -> dict:
         normalize_session_key(run.spawned_by),
     )
     state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
+
+    # Token attribution: a child's model calls belong to the ROOT parent's
+    # session and the turn that spawned its tree. A direct child takes the root's
+    # current turn; every deeper level INHERITS its parent's attribution, so one
+    # spawn tree always lands in one turn and a grandchild never re-roots at its
+    # immediate parent.
+    parent_key = normalize_session_key(run.requester_session_key)
+    if parent_key:
+        parent_attr = state_register_mem.get_state(parent_key, StateKey.TOKEN_BUDGET_PARENT, None)
+        if isinstance(parent_attr, dict) and isinstance(parent_attr.get("session_id"), str):
+            root = parent_attr["session_id"]
+            turn_id = parent_attr.get("turn_id")
+        else:
+            root = parent_key
+            turn_id = state_register_mem.get_state(root, StateKey.TOKEN_BUDGET_TURN_ID, None)
+        if isinstance(root, str) and root:
+            # Write the attribution even without a turn id: the child still
+            # counts toward the root's SESSION usage, and ChildTokenBudget adds
+            # it to the current turn only when this id matches.
+            state_register_mem.set_state(
+                run.child_session_key,
+                StateKey.TOKEN_BUDGET_PARENT,
+                {
+                    "session_id": root,
+                    "turn_id": turn_id if isinstance(turn_id, str) else "",
+                },
+            )
     return agent_config
 
 
@@ -1546,6 +1583,7 @@ def _build_child_middlewares(
     budget; every other role keeps the standard worker budget.
     """
     from agent.middlewares import (
+        ChildTokenBudget,
         HeartbeatStaleness,
         InvalidToolCallRepairMiddleware,
         IterationBudget,
@@ -1582,6 +1620,7 @@ def _build_child_middlewares(
             ],
         ),
         IterationBudget(iteration_limit),
+        ChildTokenBudget(),
         ToolGuardrails(),
         # Same process/system and per-session interaction locks as the parent.
         ToolResourceLockMiddleware(),

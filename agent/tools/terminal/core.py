@@ -619,7 +619,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         import time as _time
         import uuid as _uuid
 
-        from agent.tools.terminal_bg_registry import (
+        from .bg_registry import (
             BackgroundTask,
             background_registry,
             open_background_output,
@@ -692,7 +692,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                         **_process_group_kwargs(),
                     )
         except Exception as exc:  # noqa: BLE001 - a refused spawn must not leak the file
-            from agent.tools.terminal_bg_registry import discard_background_output
+            from .bg_registry import discard_background_output
 
             discard_background_output(task)
             logger.debug("terminal background spawn failed", exc_info=True)

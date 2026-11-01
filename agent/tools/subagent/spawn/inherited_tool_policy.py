@@ -114,12 +114,14 @@ def apply_tool_policy(
     return result
 
 
-# Default blocked tools for sub-agents (prevents recursive spawning).
-# Kept name-based because ORCHESTRATOR conditionally unblocks spawn/yield and
-# metadata cannot express conditionality. The other high-risk tools (memory,
-# skill_manage, sessions_kill, sessions_steer) are restricted via the
-# non-overridable ``metadata["scope"] = "main_only"`` tag instead.
+# Default blocked tools for sub-agents (prevents recursive spawning and child
+# management). Kept name-based because ORCHESTRATOR conditionally unblocks
+# spawn/yield/send/list and metadata cannot express conditionality. The other
+# high-risk tools (memory, skill_manage, sessions_kill, sessions_steer) are
+# restricted via the non-overridable ``metadata["scope"] = "main_only"`` tag.
 DEFAULT_SUBAGENT_BLOCKED_TOOLS = [
     "sessions_spawn",
     "sessions_yield",
+    "subagents_list",
+    "sessions_send",
 ]
