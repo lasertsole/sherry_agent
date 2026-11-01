@@ -261,13 +261,13 @@ User message → Robyn WS → agent.core.built_agent() graph
      set and the way out, and `functional_role` rides on the tool for a
      same-role fan-out
 
-  Two eval-only middleware gates sit outside this product chain, appended only
-  for `evals-swe-*` sessions: `DelegateOnlyGate` (hard: removes the main
-  agent's read/search/write tools) and `DelegationPressureGate` (soft: 8 read
-  calls trigger one delegation directive, 16 block every read/write tool for
-  the rest of the turn; browser debugging tools are excluded from counting and
-  blocking, `after_agent` is the only reset, and an accepted spawn does not
-  unlock the turn). Both are disabled in product sessions.
+  `DelegationPressureGate` is a MAIN-agent-only middleware (never added to
+  `_build_child_middlewares`, and `_active` also rejects any
+  `:subagent:`/`:swarm:` session): 8 read calls trigger one delegation
+  directive, 16 block every read/write tool for the rest of the turn; browser
+  debugging tools are excluded from counting and blocking, `after_agent` is the
+  only reset, and an accepted spawn does not unlock the turn. `DelegateOnlyGate`
+  remains eval-only for `evals-swe-*` sessions.
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on

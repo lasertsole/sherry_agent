@@ -26,14 +26,10 @@ HARD instances?” — not “what is the leaderboard position?”.
 - The report is `evals/results/swebench/<run_id>/eval_report.json`; the
   per-instance diffs are next to it.
 
-## The failure history
+## The failure history (2026-11-01)
 
 | Run | Arm | Result | What happened |
 | :--- | :--- | :--- | :--- |
-| 2026-10-26 neutral | neutral rules, 90 iterations | 1/2 | Django resolved; Sympy produced no diff and exhausted the budget |
-| 2026-10-30 coding | coding template, read-only children | 0/2 | The template demanded delegation while children could not write; neither side edited |
-| 2026-10-31 225133 | softened prompt, full child tools | 1/2 | Sympy resolved; Django made 28 network searches and produced no diff |
-| 2026-10-31 234435 | long-research routing | 0/2 | Django's F2P failed; Sympy made 45 terminal calls, 32 identical |
 | 2026-11-01 000025 | prompt + no-edit gate | 1/2 dirty | Django added a test file; Sympy's 726-byte patch broke P2P |
 | 2026-11-01 002305 | delegate-only | 2/2 clean | Main agent had no direct tools; children implemented and verified |
 | 2026-11-01 143952 | first soft gate (10/20) | 1/2 | Gate forced a spawn, then the main agent patched repeatedly and broke P2P |
@@ -60,6 +56,15 @@ HARD instances?” — not “what is the leaderboard position?”.
 6. **Child results and child tokens were hard to observe.** A timed-out child’s
    checkpoint may be gone; the main agent sometimes re-spawned to learn status,
    and reports counted only the main session’s tokens.
+
+### Current resolutions
+
+1. **Fixed.** `IterationBudget` now charges one unit per model call; tool results are free.
+2. **Mitigated.** `DelegationPressureGate` blocks `terminal`/read tools after 16 reads for the rest of the turn. `ToolGuardrails` still does not hash non-idempotent terminal commands; a read-only command classifier remains open.
+3. **Mitigated.** The same gate blocks read/write at 16 and forces `sessions_spawn`. A dedicated verification gate that requires running the target tests is still open.
+4. **Still open.** The harness records `changed_paths` but does not invalidate a `tests/` edit. The soft gate reduces the chance but is not the official guard.
+5. **Partially mitigated.** The gate stops the main agent's post-spawn patch loop and delegates implementation; there is no hard "tests must pass before finish" gate yet.
+6. **Partially fixed.** The per-turn token budget now attributes the main agent + all descendant levels to the root turn; eval reports still count only the main session, and child checkpoint/result readback remains open.
 
 ## The no-edit gate and why it failed
 
@@ -106,6 +111,9 @@ reset, and the main agent then made roughly 70 `patch_file` attempts on
 - The counter resets only in `after_agent`; an accepted spawn does not unlock
   the turn, and a write does not reset the count. This is what stops the
   post-spawn patch loop that the first soft gate allowed.
+
+It is installed on the main agent only; the child middleware builder never adds
+it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.
 
 ## Results
 

@@ -435,8 +435,8 @@ def _build_middlewares(
 
         middlewares.append(DelegateOnlyGate())
     elif os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" or DELEGATION_PRESSURE["enabled"]:
-        # Soft arm: warn/block the configured tool family until a subagent is
-        # spawned. Delegate-only above is the hard arm and wins when both are on.
+        # Main-agent-only soft pressure: warn/block the configured read/write
+        # tools until the turn ends. Children never receive this middleware.
         from .middlewares.delegation_pressure import DelegationPressureGate
 
         middlewares.append(DelegationPressureGate())

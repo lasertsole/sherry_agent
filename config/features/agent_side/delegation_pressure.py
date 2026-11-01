@@ -25,7 +25,7 @@ class DelegationPressureConfig(TypedDict):
 #: every further read or write errors and points at sessions_spawn. The
 #: default pressure set is exploration; ``blocked_tools`` adds the write tools.
 DELEGATION_PRESSURE: DelegationPressureConfig = {
-    "enabled": False,
+    "enabled": True,
     "warn_after": 8,
     "block_after": 16,
     "pressure_tools": (

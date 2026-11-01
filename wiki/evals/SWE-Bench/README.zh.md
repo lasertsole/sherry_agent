@@ -22,14 +22,10 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
   （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。
 - 报告位于 `evals/results/swebench/<run_id>/eval_report.json`；各实例 diff 在同目录。
 
-## 失败历史
+## 失败历史（2026-11-01）
 
 | 运行 | Arm | 结果 | 发生了什么 |
 | :--- | :--- | :--- | :--- |
-| 2026-10-26 中性 | 中性规则，90 迭代 | 1/2 | Django resolved；Sympy 无 diff，预算耗尽 |
-| 2026-10-30 编码 | 编码模板，只读子代理 | 0/2 | 模板要求委派，但子代理不能写；双方都没有编辑 |
-| 2026-10-31 225133 | 软化提示词，全量子代理工具 | 1/2 | Sympy resolved；Django 28 次网络搜索且无 diff |
-| 2026-10-31 234435 | 长检索路由 | 0/2 | Django F2P 失败；Sympy 45 次 terminal，其中 32 次相同 |
 | 2026-11-01 000025 | 提示词 + no-edit 门 | 1/2 脏 | Django 新增测试文件；Sympy 726B patch 破坏 P2P |
 | 2026-11-01 002305 | delegate-only | 2/2 干净 | 主代理无直接工具；子代理实现并验证 |
 | 2026-11-01 143952 | 首版软门（10/20） | 1/2 | 门迫使 spawn，之后主代理反复 patch 并破坏 P2P |
@@ -50,6 +46,15 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
    P2P 回归直到判题时才被发现。
 6. **子代理结果与 token 难以观察。** 超时子代理的 checkpoint 可能已被清理；主代理
    有时为了确认状态重复 spawn，报告也只统计主 session 的 token。
+
+### 当前解决
+
+1. **已修复。** `IterationBudget` 只按模型调用计 1；工具结果免费。
+2. **已缓解。** `DelegationPressureGate` 在 16 次读后本回合阻断 `terminal`/读工具；`ToolGuardrails` 仍不对非幂等 terminal 做哈希，只读命令分类器仍待实现。
+3. **已缓解。** 同一门在 16 次后阻断读写并强制 `sessions_spawn`；要求运行目标测试的专门验证门仍未实现。
+4. **仍未解决。** harness 记录 `changed_paths`，但不会把 `tests/` 改动判 invalid；软门降低概率，但不是官方守卫。
+5. **部分缓解。** 门阻止主代理 spawn 后继续 patch 循环并转交实现；还没有“收尾前测试必须通过”的硬门。
+6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；eval 报告仍只统计主 session，子代理 checkpoint/结果回读仍未解决。
 
 ## no-edit 门及其失败原因
 
@@ -87,6 +92,9 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 浏览器调试工具既不计次也不阻断。
 - 计数器只在 `after_agent` 清零；accepted spawn 不解除本回合，写也不清零。
   这正是阻止首版软门“spawn 后继续 patch”的关键。
+
+它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝
+`:subagent:`/`:swarm:` 会话。
 
 ## 结果
 

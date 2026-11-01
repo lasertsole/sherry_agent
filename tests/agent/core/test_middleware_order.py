@@ -16,6 +16,7 @@ import pytest
 
 from agent import core as agent_core
 from agent.tools.subagent.spawn.core import _build_child_middlewares
+from config.features import DELEGATION_PRESSURE
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -48,6 +49,7 @@ EXPECTED_ORDER = [
     "OutputSafetyFilter",
     "Summarization",
     "InvalidToolCallRepairMiddleware",
+    "DelegationPressureGate",
 ]
 
 #: Child-chain order (``_build_child_middlewares``). Leaner by design — no
@@ -71,6 +73,9 @@ SUBAGENT_EXPECTED_ORDER = [
 def test_subagent_middleware_order_is_pinned() -> None:
     chain = _build_child_middlewares(auxiliary_llm=None, main_llm_context_window=131_072)
     assert [type(mw).__name__ for mw in chain] == SUBAGENT_EXPECTED_ORDER
+    # The delegation gate is a MAIN-agent-only middleware; a child must never
+    # inherit it even though its config entry is enabled.
+    assert "DelegationPressureGate" not in [type(mw).__name__ for mw in chain]
 
 
 class _NamedMiddleware:
@@ -114,12 +119,17 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
     monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
+    monkeypatch.setenv("SHERRY_EVAL_DELEGATE_ONLY", "0")
+    monkeypatch.setenv("SHERRY_EVAL_DELEGATION_PRESSURE", "0")
+    monkeypatch.setitem(DELEGATION_PRESSURE, "enabled", True)
     monkeypatch.setattr(agent_core, "main_llm_max_tokens", 65_536)
     from agent.wrapper import registry as wrapper_registry
 
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", 65_536)
 
     for name in EXPECTED_ORDER:
+        if name == "DelegationPressureGate":
+            continue  # the real gate is appended by the builder
         if name == "system_prompt_injection":
             monkeypatch.setattr(agent_core, name, _NamedMiddleware(name))
         else:
@@ -127,6 +137,6 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
 
     await agent_core.built_agent()
 
-    names = [item.name for item in captured["middleware"]]
+    names = [getattr(item, "name", type(item).__name__) for item in captured["middleware"]]
     assert names == EXPECTED_ORDER
     assert len(set(names)) == len(names)

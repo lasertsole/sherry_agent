@@ -144,7 +144,7 @@ SPOT_DEFAULTS = [
     (ITERATION_BUDGET, "main_agent_max_iterations", 90),
     (ITERATION_BUDGET, "worker_max_iterations", 60),
     (ITERATION_BUDGET, "executor_max_iterations", 90),
-    (DELEGATION_PRESSURE, "enabled", False),
+    (DELEGATION_PRESSURE, "enabled", True),
     (DELEGATION_PRESSURE, "warn_after", 8),
     (DELEGATION_PRESSURE, "block_after", 16),
     (HEARTBEAT_STALENESS, "heartbeat_interval_minutes", 1),

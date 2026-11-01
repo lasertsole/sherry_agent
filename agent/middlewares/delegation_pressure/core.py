@@ -1,4 +1,4 @@
-"""Per-turn delegation-pressure gate (8-read warn, 16-read read/write block).
+"""Main-agent delegation-pressure gate (8-read warn, 16-read read/write block).
 
 The counter is cumulative for ONE turn and resets only in ``after_agent``.
 At ``warn_after`` the main agent receives one directive to delegate; at
@@ -7,7 +7,9 @@ with an error pointing at ``sessions_spawn``. Spawning does NOT unlock the
 turn and writes do NOT reset the counter.
 
 Browser debugging tools are excluded from both counting and blocking: they are
-neither reads nor writes under this pressure model.
+neither reads nor writes under this pressure model. The middleware is installed
+on the main agent only; ``_active`` also rejects child/swarm sessions
+defensively.
 """
 
 from __future__ import annotations
@@ -48,6 +50,10 @@ class _PressureState:
 def _active(session_id: str) -> bool:
     if not session_id:
         return False
+    # Never active for a child, even if a future builder accidentally adds the
+    # middleware to the child chain: the gate is a MAIN-agent contract.
+    if ":subagent:" in session_id or ":swarm:" in session_id:
+        return False
     # The hard arm supersedes the soft one when both env flags are present.
     if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
         return False
@@ -84,10 +90,13 @@ class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentM
         return
 
     def _after_agent_impl(self, state: AgentState) -> None:
-        session_id = self._session_id(state)
-        if not _active(session_id):
-            return
-        self._save(session_id, _PressureState())
+        try:
+            session_id = self._session_id(state)
+            if not _active(session_id):
+                return
+            self._save(session_id, _PressureState())
+        except Exception:  # noqa: BLE001 - the turn-end hook must never fail a turn
+            logger.exception("DelegationPressureGate: after_agent failed; continuing")
 
     # ── messages ────────────────────────────────────────────────────────────
     def _directive(self, content: str) -> HumanMessage:

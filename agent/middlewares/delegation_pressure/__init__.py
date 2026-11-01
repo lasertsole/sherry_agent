@@ -1,4 +1,4 @@
-"""Eval-first delegation-pressure gate."""
+"""Main-agent-only delegation-pressure gate."""
 
 from .core import DelegationPressureGate as DelegationPressureGate
 

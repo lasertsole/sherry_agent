@@ -60,9 +60,9 @@
 
 每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
-### 回合级：`DelegationPressureGate`（仅评测）
+### 回合级：`DelegationPressureGate`（仅主 Agent）
 
-仅在 `SHERRY_EVAL_DELEGATION_PRESSURE=1` 且会话为 `evals-swe-*` 时启用。按单回合累计**读/探索类**工具调用：第 **8** 次注入一次去委派的指令；第 **16** 次后，本回合剩余时间内所有读写工具被阻断（浏览器调试工具既不计次也不阻断）。每次被阻断的调用都返回错误并指引 `sessions_spawn`；spawn 成功也**不会**解锁本回合，只有 `after_agent` 清零。写不会清零，回合内每次图调用都累计。
+安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **8** 次注入一次去委派的指令；第 **16** 次后，本回合剩余时间内所有读写工具被阻断（浏览器调试工具既不计次也不阻断）。每次被阻断的调用都返回错误并指引 `sessions_spawn`；spawn 成功也**不会**解锁本回合，只有 `after_agent` 清零。写不会清零，回合内每次图调用都累计。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

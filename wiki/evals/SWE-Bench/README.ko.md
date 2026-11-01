@@ -25,14 +25,10 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 - 리포트는 `evals/results/swebench/<run_id>/eval_report.json`; 인스턴스 diff는 같은
   디렉터리에 있습니다.
 
-## 실패 이력
+## 실패 이력(2026-11-01)
 
 | 실행 | Arm | 결과 | 무슨 일이 있었나 |
 | :--- | :--- | :--- | :--- |
-| 2026-10-26 중립 | 중립 규칙, 90 iteration | 1/2 | Django resolved; Sympy는 diff 없이 예산 소진 |
-| 2026-10-30 코딩 | 코딩 템플릿, 읽기 전용 자식 | 0/2 | 템플릿은 위임을 요구했지만 자식은 쓸 수 없었고, 양쪽 모두 편집하지 않음 |
-| 2026-10-31 225133 | 완화 프롬프트, 자식 전체 도구 | 1/2 | Sympy resolved; Django는 28회 네트워크 검색 후 diff 없음 |
-| 2026-10-31 234435 | 긴 조사 라우팅 | 0/2 | Django F2P 실패; Sympy는 45회 terminal, 32회 동일 |
 | 2026-11-01 000025 | 프롬프트 + no-edit 게이트 | 1/2 오염 | Django가 테스트 파일 추가; Sympy 726B patch가 P2P 파괴 |
 | 2026-11-01 002305 | delegate-only | 2/2 깨끗 | 메인에 직접 도구 없음; 자식이 구현·검증 |
 | 2026-11-01 143952 | 첫 소프트 게이트(10/20) | 1/2 | 게이트가 spawn을 강제한 뒤 메인이 patch를 반복해 P2P 파괴 |
@@ -56,6 +52,15 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 6. **자식 결과와 token을 관찰하기 어렵다.** 타임아웃된 자식의 checkpoint가 사라질 수
    있고, 메인은 상태 확인을 위해 다시 spawn했으며, 리포트는 메인 session token만
    셌다.
+
+### 현재 해결
+
+1. **수정됨.** `IterationBudget`은 모델 호출당 1단위; 도구 결과는 무료.
+2. **완화됨.** `DelegationPressureGate`는 16회 읽기 후 그 턴의 남은 동안 `terminal`/읽기 도구를 차단. `ToolGuardrails`는 비멱등 terminal을 해시하지 않으며 읽기 전용 명령 분류기는 미구현.
+3. **완화됨.** 같은 게이트가 16회에서 읽기/쓰기를 차단하고 `sessions_spawn`을 강제. 대상 테스트 실행을 요구하는 전용 검증 게이트는 미구현.
+4. **미해결.** harness는 `changed_paths`를 기록하지만 `tests/` 편집을 invalid로 만들지 않음. 소프트 게이트는 확률을 낮출 뿐 공식 가드가 아님.
+5. **부분 완화.** 게이트는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
+6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속. eval 리포트는 여전히 메인 session만 세고, 자식 checkpoint/결과 읽기는 미해결.
 
 ## no-edit 게이트와 실패 이유
 
@@ -97,6 +102,9 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 - 카운터는 `after_agent`에서만 리셋됩니다. accepted spawn은 턴을 풀지 않고 쓰기도
   리셋하지 않습니다. 이것이 첫 소프트 게이트가 허용한 "spawn 후 patch 루프"를
   막습니다.
+
+메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
+`:subagent:`/`:swarm:` 세션을 거부합니다.
 
 ## 결과
 
