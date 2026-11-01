@@ -188,7 +188,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`（列表顺序）           | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（两个注入器都排在净化重写之后，因此其消息在注入回合不会被剥离）                                                                             |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware 最贴近 LLM；Summarization 被 LLMRetry 从外部包住其 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序）                | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库）                                                                                                                                                                 |
-| `wrap_tool_call`（最外层 → 最内层）  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
+| `wrap_tool_call`（最外层 → 最内层）  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state）                     |
 | `after_agent`（逆序）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合）                                                                                                                                             |
 
 表中只列出在该阶段实现了对应钩子的中间件。
@@ -290,13 +290,13 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### IterationBudget
 
 **模块：** `agent/middlewares/iteration_budget/core.py` · **类：** `IterationBudget(AgentMiddleware)`
-**钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
+**钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-对**一个回合内模型调用 + 工具调用总和**的硬上限。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 与执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
+对**一个回合内模型调用次数**的硬上限。一次工具调用对只计 1 次：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。构造函数：`__init__(max_iterations: int = 50)`；主 Agent 与执行者（executor）注册 `IterationBudget(90)`，其他 worker Agent 注册 `IterationBudget(60)`。
 
 - `before_agent` 在 `state_register_mem` 中重置计数器：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` 每次模型调用消耗 1；预算耗尽时直接返回终止 `AIMessage`，**不再调用模型**。
-- `wrap_tool_call` 每次工具调用消耗 1；耗尽时返回错误 `ToolMessage`（"Tool [x] skipped — iteration budget exhausted"），不再执行。
+- **没有** `wrap_tool_call` 钩子：预算在一次请求工具的 `AIMessage` 后耗尽时，该工具调用及其结果仍会完整执行（成对不拆），由**下一次**模型调用返回终止 `AIMessage`。
 
 ### ToolGuardrails
 
@@ -343,7 +343,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/path_guard/core.py` · **类：** `PathGuard(AgentMiddleware)`
 **钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
 
-为各工具自己的 `resolve_project_path()` / `resolve_external_path()` 模式提供纵深防御：忘记做路径检查的工具仍无法被诱导读取穿越路径或硬拒绝路径。在主 Agent 中注册在 `ToolCallNormalize` 之后；由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`IterationBudget` → `ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → 工具），拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker 链不注册：子 Agent 的工具保有自己的门禁，且子代理的外部路径本就硬拒绝。
+为各工具自己的 `resolve_project_path()` / `resolve_external_path()` 模式提供纵深防御：忘记做路径检查的工具仍无法被诱导读取穿越路径或硬拒绝路径。在主 Agent 中注册在 `ToolCallNormalize` 之后；由于列表顺序即 wrap 钩子的外层顺序，它运行在 `ToolGuardrails` **之内**（`ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → 工具），拒绝会作为普通错误 `ToolMessage` 交给 ToolGuardrails 评估，与其他工具失败一视同仁。worker 链不注册：子 Agent 的工具保有自己的门禁，且子代理的外部路径本就硬拒绝。
 
 筛选刻意保守：
 
@@ -941,7 +941,6 @@ agent = create_agent(
 │
 ├─ 循环：工具调用（每次调用）
 │   └─ wrap_tool_call
-│       · IterationBudget  消耗 1；耗尽时返回错误 ToolMessage
 │       · ToolGuardrails  预检 block/halt → 执行 → 评估 → warn/block/halt
 │       · ContextEvictionMiddleware  把原始结果替换为驱逐/切片后的视图
 │       · PathGuard  在工具执行前拒绝穿越 / 硬拒绝的路径参数

@@ -111,7 +111,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | `before_model`（リスト順） | P1-9 のタグ付けは `ToolCallNormalize` / `SubagentCompletionDrainMiddleware` より先 |
 | `wrap_model_call`（外→内） | ContextEviction（P1-9 ビュー置換）→ … → Summarization → InvalidToolCallRepairMiddleware（最内層、LLM に最も近い） |
 | `after_model`（逆順） | `MessagePersistenceMiddleware` がモデル後の**最初**のフック —— HITL が拒否ツール呼び出しを剥がすか `GraphInterrupt` を上げる前に AI メッセージが永続化される |
-| `wrap_tool_call`（外→内） | IterationBudget → ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence（最内層）** —— 生の結果が先に書き込まれ、戻る途中でプレビューに差し替わる |
+| `wrap_tool_call`（外→内） | ToolGuardrails → ContextEviction → PathGuard → HeartbeatStaleness → HumanInTheLoop → **MessagePersistence（最内層）** —— 生の結果が先に書き込まれ、戻る途中でプレビューに差し替わる |
 
 相互作用マップ：
 

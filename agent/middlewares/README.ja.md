@@ -193,7 +193,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_model`（リスト順）           | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware（2 つのインジェクタはいずれもサニタイズ書き換えの後に位置するため、注入ターンでもメッセージが剥がされない）                                       |
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization→ InvalidToolCallRepairMiddleware（InvalidToolCallRepairMiddleware が LLM に最も近い。Summarization は LLMRetry が外側からその T4/T5 リカバリを包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする）                   |
 | `after_model`（逆順）                | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない）                                                                                                                                                                                     |
-| `wrap_tool_call`（最外層 → 最内層）  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
+| `wrap_tool_call`（最外層 → 最内層）  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順）                | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する）                                                                                                                                                                     |
 
 そのフェーズに該当するフックを実装しているミドルウェアだけを行に記載しています。
@@ -295,13 +295,13 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### IterationBudget
 
 **モジュール：** `agent/middlewares/iteration_budget/core.py` · **クラス：** `IterationBudget(AgentMiddleware)`
-**フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`wrap_tool_call` / `awrap_tool_call`
+**フック：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`
 
-1 ターン内の**モデル呼び出し + ツール呼び出しの合計**に対するハード上限。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントと executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
+1 ターン内の**モデル呼び出し回数**に対するハード上限。ツール呼び出しのペアは合計 1 回だけ消費します（呼び出しを行う `AIMessage` を生成したモデル呼び出し）。その `ToolMessage` 結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。コンストラクタ：`__init__(max_iterations: int = 50)`。メインエージェントと executor サブエージェントは `IterationBudget(90)`、その他のワーカーエージェントは `IterationBudget(60)` を登録します。
 
 - `before_agent` は `state_register_mem` のカウンターをリセット：`iteration_budget = max_iterations`、`iteration_budget_used = 0`。
 - `wrap_model_call` はモデル呼び出しごとに 1 消費。予算が尽きると**モデルを呼ばずに**終端 `AIMessage` を返します。
-- `wrap_tool_call` はツール呼び出しごとに 1 消費。尽きると実行の代わりにエラー `ToolMessage`（"Tool [x] skipped — iteration budget exhausted"）を返します。
+- `wrap_tool_call` フックは**ありません**。ツールを要求した `AIMessage` の後に予算が尽きても、そのツール呼び出しと結果は最後まで実行され（ペアを壊さない）、**次の**モデル呼び出しが終端 `AIMessage` を返します。
 
 ### ToolGuardrails
 
@@ -348,7 +348,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/path_guard/core.py` · **クラス：** `PathGuard(AgentMiddleware)`
 **フック：** `wrap_tool_call` / `awrap_tool_call` のみ
 
-各ツール自身の `resolve_project_path()` / `resolve_external_path()` パターンに対する多層防御です。パス検査を忘れたツールでも、トラバーサルやハード拒否パスを読ませることはできません。メインエージェントでは `ToolCallNormalize` の直後に登録され、リスト順が wrap フックの外側順になるため `ToolGuardrails` の**内側**で実行されます（`IterationBudget` → `ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → ツール）。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker パイプラインには登録しません：子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。
+各ツール自身の `resolve_project_path()` / `resolve_external_path()` パターンに対する多層防御です。パス検査を忘れたツールでも、トラバーサルやハード拒否パスを読ませることはできません。メインエージェントでは `ToolCallNormalize` の直後に登録され、リスト順が wrap フックの外側順になるため `ToolGuardrails` の**内側**で実行されます（`ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → ツール）。拒否は通常のエラー `ToolMessage` として ToolGuardrails に評価され、他のツール失敗と同じ扱いになります。worker パイプラインには登録しません：子ツールは自前のゲートを保ち、サブエージェントの外部アクセスはそもそも強制拒否です。
 
 スクリーニングは意図的に保守的です：
 
@@ -966,7 +966,6 @@ agent = create_agent(
 │
 ├─ ループ：ツール呼び出し（呼び出しごと）
 │   └─ wrap_tool_call
-│       · IterationBudget  1 消費。尽きたらエラー ToolMessage
 │       · ToolGuardrails  block/halt を事前チェック → 実行 → 評価 → warn/block/halt
 │       · ContextEvictionMiddleware  生の結果を退避/スライス済みビューへ置換
 │       · PathGuard  ツール実行前にトラバーサル / ハード拒否のパス引数を拒否

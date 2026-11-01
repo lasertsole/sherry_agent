@@ -193,7 +193,7 @@ Differences vs the main agent:
 | `before_model` (list order)               | ContextEvictionMiddleware (P1-9: tag the trailing oversized HumanMessage; the `before_agent` chain has already run, so media hints are in the text) → ToolCallNormalize → SubagentCompletionDrainMiddleware → TaskIntentMiddleware (both injectors sit after the sanitize rewrite, so their messages survive the injection turn)                                                                                                             |
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization → InvalidToolCallRepairMiddleware (InvalidToolCallRepairMiddleware sits closest to the LLM; Summarization is wrapped by LLMRetry's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations)                                                          |
 | `after_model` (reverse order)             | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush)                                                                                                                                                                                                          |
-| `wrap_tool_call` (outermost → innermost)  | IterationBudget → ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
+| `wrap_tool_call` (outermost → innermost)  | ToolGuardrails → ToolResourceLockMiddleware → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order)             | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn)                                                                                                                                                                                                              |
 
 Only the middlewares that implement a given hook appear in that phase's row.
@@ -295,13 +295,13 @@ Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_R
 ### IterationBudget
 
 **Module:** `agent/middlewares/iteration_budget/core.py` · **Class:** `IterationBudget(AgentMiddleware)`
-**Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `wrap_tool_call` / `awrap_tool_call`
+**Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`
 
-Hard cap on **model calls + tool calls combined** within one turn. Constructor: `__init__(max_iterations: int = 50)`; the main agent and the executor subagent register `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
+Hard cap on **model calls** within one turn. A tool-call pair costs exactly ONE unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Constructor: `__init__(max_iterations: int = 50)`; the main agent and the executor subagent register `IterationBudget(90)`, other worker agents `IterationBudget(60)`.
 
 - `before_agent` resets the counters in `state_register_mem`: `iteration_budget = max_iterations`, `iteration_budget_used = 0`.
 - `wrap_model_call` consumes 1 per model call; when the budget is exhausted it returns a terminal `AIMessage` **without calling the model**.
-- `wrap_tool_call` consumes 1 per tool call; when exhausted it returns an error `ToolMessage` ("Tool [x] skipped — iteration budget exhausted") instead of executing.
+- There is deliberately **no** `wrap_tool_call` hook. A budget that runs out after a tool-requesting `AIMessage` still lets that tool call and its result complete (the pair stays intact), and the NEXT model call returns the terminal `AIMessage` instead.
 
 ### ToolGuardrails
 
@@ -348,7 +348,7 @@ When the sanitizer changed nothing the hook returns `None` — no state write, n
 **Module:** `agent/middlewares/path_guard/core.py` · **Class:** `PathGuard(AgentMiddleware)`
 **Hooks:** `wrap_tool_call` / `awrap_tool_call` only
 
-Defense-in-depth for the per-tool `resolve_project_path()` / `resolve_external_path()` pattern: a tool that forgets its own path checks still cannot be driven to a traversal or hard-denied path. Registered in the main agent directly after `ToolCallNormalize`; because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`IterationBudget` → `ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → tool) and a rejection is a normal error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. Not registered in the worker pipeline: child tools keep their own gates, and subagent external access is hard-denied anyway.
+Defense-in-depth for the per-tool `resolve_project_path()` / `resolve_external_path()` pattern: a tool that forgets its own path checks still cannot be driven to a traversal or hard-denied path. Registered in the main agent directly after `ToolCallNormalize`; because list order composes wrap hooks outermost-first, it runs **inside** `ToolGuardrails` (`ToolGuardrails` → `ContextEvictionMiddleware` → `PathGuard` → tool) and a rejection is a normal error `ToolMessage` that ToolGuardrails evaluates like any other tool failure. Not registered in the worker pipeline: child tools keep their own gates, and subagent external access is hard-denied anyway.
 
 Screening is deliberately conservative:
 
@@ -969,7 +969,6 @@ user turn arrives
 │
 ├─ loop: tool calls (per call)
 │   └─ wrap_tool_call
-│       · IterationBudget  consume 1; error ToolMessage when exhausted
 │       · ToolGuardrails  pre-check block/halt → run → evaluate → warn/block/halt
 │       · ContextEvictionMiddleware  replace the raw result with the evicted/sliced view
 │       · PathGuard  reject traversal / hard-denied path args before the tool runs

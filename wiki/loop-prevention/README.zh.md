@@ -19,7 +19,7 @@
 |---|---|---|
 | **文字死亡循环**（单次模型调用） | 同一句话 / 同一串字符被永远流式输出 | 按模型族的采样惩罚（`frequency_penalty` / `presence_penalty`）→ `OutputRepetitionGuard`（worker）+ `RepetitionGuardWrapper`（主 Agent 流式层） |
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
-| **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / 执行者 90 次 / 其他 worker 60 次，合并计数） |
+| **无界回合** | 模型调用永不停止 | `IterationBudget`（主 Agent 90 次 / 执行者 90 次 / 其他 worker 60 次；只计模型调用，工具结果免费） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
 | **溢出重试螺旋** | 超长上下文被拒绝 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错 | `Summarization`：先做不调 LLM 的溢出尾部裁剪，再走既有溢出路由，最后强制恢复 |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@
 
 ### 回合级：`IterationBudget`
 
-每回合把模型调用和工具调用**合并**计数。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用返回一条终止 AIMessage；工具调用返回一条错误 ToolMessage，让模型得以收尾而不是死在循环中间。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 
@@ -239,7 +239,7 @@
 | 护栏 | 高度 | 状态所在 | 重置时机 |
 |---|---|---|---|
 | `ToolGuardrails` | 回合（工具调用） | `state_register_mem`（`tool_guardrail_state`） | 每回合（`before_agent`） |
-| `IterationBudget` | 回合（调用计数） | `state_register_mem` | 每回合 |
+| `IterationBudget` | 回合（模型调用计数） | `state_register_mem` | 每回合 |
 | `MaxTokensBoostMiddleware` | 模型调用（截断） | `request.model_settings` + `is_stream_turn` 标志 | 每回合；标志在 `_cleanup` 清除 |
 | `OutputRepetitionGuard` | 回合 + 会话（文本） | 6 个会话键 | halt 标志按回合；哈希历史按会话（子 Agent 拆除时释放） |
 | `RepetitionGuardWrapper` | 流式调用（文本） | in-flight + halt 键 | 每次模型调用 |

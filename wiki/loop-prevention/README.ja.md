@@ -19,7 +19,7 @@
 |---|---|---|
 | **テキストデスループ** (モデル呼び出し 1 回) | 同じ文 / 同じ文字列が永遠にストリーミングされる | モデルファミリー別サンプリングペナルティ (`frequency_penalty` / `presence_penalty`) → `OutputRepetitionGuard` (ワーカー) + `RepetitionGuardWrapper` (メインエージェントのストリーム) |
 | **ツール病理ループ** (ターン 1 回) | 同じ失敗するツール呼び出し、ピンポンペア、引数の改変 | `ToolGuardrails`: 5 種類の病理 → WARN → BLOCK → HALT、リカバリモード付き |
-| **無限ターン** | モデル/ツール呼び出しが止まらない | `IterationBudget` (メイン 90 / executor 90 / その他ワーカー 60、合算呼び出し) |
+| **無限ターン** | モデル呼び出しが止まらない | `IterationBudget` (メイン 90 / executor 90 / その他ワーカー 60、モデル呼び出しのみ — ツール結果は無料) |
 | **切断リトライスパイラル** | `max_tokens` で切断されたツール呼び出しがゴミ引数のまま実行 → エラー → モデルが再発行し、反復回数を無駄に焼く | `MaxTokensBoostMiddleware`: ミドルウェア内の有界再呼び出し(3 リトライ、ブースト上限、予算 +0) |
 | **オーバーフロー再試行スパイラル** | 過大なコンテキストが拒否される → 圧縮が走る → 圧縮後のコンテキストもまだオーバーフローする → プロバイダが再びエラーを返す | `Summarization`: LLM なしのオーバーフロー・テールクリップを最初に、次に既存ルート、最後に強制リカバリ |
 | **スタックしたターン** | 数分間まったく進まない (ハングしたツール、挟まったループ) | `HeartbeatStaleness` ウォッチドッグ → `HeartbeatTimeoutError` |
@@ -58,7 +58,7 @@
 
 ### ターンレベル: `IterationBudget`
 
-ターンごとにモデル呼び出しとツール呼び出しを**合算**して数えます。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。使い果たされたモデル呼び出しはターミナル AIMessage を返し、使い果たされたツール呼び出しはエラー ToolMessage を返すので、モデルはループの途中で死ぬことなく締めくくれます。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
+ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
 
 ### ターンレベル: `MaxTokensBoostMiddleware`、ツール呼び出し切断からの復旧
 
@@ -243,7 +243,7 @@
 | ガード | 高さ | 状態の住処 | リセットのタイミング |
 |---|---|---|---|
 | `ToolGuardrails` | ターン (ツール呼び出し) | `state_register_mem` (`tool_guardrail_state`) | 毎ターン (`before_agent`) |
-| `IterationBudget` | ターン (呼び出し回数) | `state_register_mem` | 毎ターン |
+| `IterationBudget` | ターン (モデル呼び出し回数) | `state_register_mem` | 毎ターン |
 | `MaxTokensBoostMiddleware` | モデル呼び出し (切断) | `request.model_settings` + `is_stream_turn` フラグ | 毎ターン; フラグは `_cleanup` でクリア |
 | `OutputRepetitionGuard` | ターン + セッション (テキスト) | 6 つのセッションキー | halt フラグはターンごと、ハッシュ履歴はセッションごと (サブエージェント解体で解放) |
 | `RepetitionGuardWrapper` | ストリーム呼び出し (テキスト) | in-flight + halt キー | モデル呼び出しごと |
