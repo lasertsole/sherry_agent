@@ -22,8 +22,8 @@
 
 ## 20261030_031038 — HARD 切片 @ 「编码助手」系统提示词（persona=coding）
 
-- 目的：验证 `TODO/计划_SWE-bench_失败复盘与整改_20261101.md` §2.4——换用内置编码助手预设的
-  系统提示词，能否让 90/90 迭代不再空转（4.2 的现象）。
+- 目的：验证编码助手预设的系统提示词能否让 90/90 迭代不再空转；该 arm 的完整分析见
+  `wiki/evals/SWE-Bench/`。
 - 命令：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --instance-cache-dir /tmp/swebench-instance-cache`
 - persona：`--persona coding` 把 `workspace/template/zh/AGENTS.md`（+ 空 SOUL/USER/ROLE）种进 eval
   workspace；报告记录 `persona.mode=coding`、`template_lang=zh`、`AGENTS.md` digest `004d7ef0885a169b`、
@@ -34,7 +34,7 @@
   skill_view 1；`write_file` / `patch_file` / `sessions_spawn` / `taskflow` 全为 0（无任何子代理 run）
 - 结论：编码助手模板的「编排者信条」禁止主代理编辑、要求委托，但模板工具名 `task`/`taskflow_step`
   与当前工具面（`sessions_spawn`/`taskflow`）不符，且本 harness 的子代理只读——模型既未编辑也未委托，
-  退化为纯 terminal 探索。Django 由中性臂的 resolved 退化为 no-edit。**该提示词不解决 4.2，且使 Django 退化。**
+  退化为纯 terminal 探索。Django 由中性臂的 resolved 退化为 no-edit。**该提示词不能解决空转问题，且使 Django 退化。**
 - 2026-10-31 更新：`EvalSandbox` 已改为默认给子代理全量工具（`restrict_child_tools=False`），
   本节“子代理只读”是当时的历史限制；TaskIntent/模板已改为小改动直接实现、复杂任务才委派，
   并把 `task` 工具名修正为 `sessions_spawn`。
