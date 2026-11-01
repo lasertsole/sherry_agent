@@ -231,10 +231,6 @@ def _run(
     live_sessions = harness._session_names(live_workspace)
 
     os.environ["SHERRY_WORKSPACE_DIR"] = str(eval_workspace)
-    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
-        os.environ.pop("SHERRY_EVAL_REQUIRE_EDIT", None)
-    else:
-        os.environ["SHERRY_EVAL_REQUIRE_EDIT"] = "1"
     import config.path  # noqa: F401 — hydrates .env / .models / .network
 
     # Bind the REAL build_main_tools before the sandbox applies: agent.core
@@ -613,8 +609,8 @@ def _write_run_meta(results_dir: Path, *, run_id: str, hard: bool) -> None:
         "argv": sys.argv[1:],
         "git_head": head,
         "hard": hard,
-        "no_edit_gate": os.getenv("SHERRY_EVAL_REQUIRE_EDIT") == "1",
         "delegate_only": os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1",
+        "delegation_pressure": os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1",
         "model": harness._model_info(),
         "sandbox_backend": _sandbox_backend(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -734,12 +730,15 @@ async def _run_instance(
                 "timeout": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
+        if (
+            os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1"
+            or os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1"
+        ):
             # The main turn may end right after spawning; let the detached child
             # finish (and write its diff) before the teardown cascade kills it.
             child_wait = await _wait_for_descendants(session_id, timeout_s)
             print(
-                f"[evals] {instance.instance_id}: delegate-only child wait {child_wait}",
+                f"[evals] {instance.instance_id}: delegated child wait {child_wait}",
                 flush=True,
             )
     finally:

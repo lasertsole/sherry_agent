@@ -11,7 +11,7 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
+**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/delegation_pressure/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 概要と脅威モデル
 
@@ -59,6 +59,10 @@
 ### ターンレベル: `IterationBudget`
 
 ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
+
+### ターンレベル: `DelegationPressureGate`（評価専用）
+
+`SHERRY_EVAL_DELEGATION_PRESSURE=1` かつ `evals-swe-*` セッションでのみ有効です。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、**8** 回で委譲を促す指示を 1 回注入し、**16** 回以降はそのターンの残りですべての読み取り/書き込みツールをブロックします（ブラウザのデバッグツールは計数もブロックも対象外）。ブロックされた呼び出しは毎回 `sessions_spawn` を指すエラーを返し、spawn が成功してもターンは解除されません——リセットは `after_agent` のみです。書き込みではリセットされず、ターン内のすべてのグラフ呼び出しで累積します。
 
 ### ターンレベル: `MaxTokensBoostMiddleware`、ツール呼び出し切断からの復旧
 

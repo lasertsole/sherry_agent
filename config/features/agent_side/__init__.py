@@ -39,6 +39,10 @@ from .iteration_budget import (
     IterationBudgetConfig as IterationBudgetConfig,
     ITERATION_BUDGET as ITERATION_BUDGET,
 )
+from .delegation_pressure import (
+    DelegationPressureConfig as DelegationPressureConfig,
+    DELEGATION_PRESSURE as DELEGATION_PRESSURE,
+)
 from .heartbeat_staleness import (
     HeartbeatStalenessConfig as HeartbeatStalenessConfig,
     HEARTBEAT_STALENESS as HEARTBEAT_STALENESS,

@@ -11,7 +11,7 @@ Two design rules run through every guard below:
 1. **Degrade, never crash.** Protection never takes the process down: background services *stop*, turns *end gracefully*, and the boot gate *narrows the footprint* to HTTP-only mode.
 2. **Always leave a hatch.** Every breaker has a documented manual reset (REST endpoint, state-file delete, or process restart).
 
-**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
+**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/delegation_pressure/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 Overview & Threat Model
 
@@ -59,6 +59,10 @@ Details that matter:
 ### Turn level: `IterationBudget`
 
 Counts **model calls** per turn, one unit each. A tool-call pair costs exactly one unit: the model call that produced the calling `AIMessage`; its `ToolMessage` result is free. `HumanMessage` / `SystemMessage` / injected system reminders never charge on their own — only the next model call does. Main agent and the executor subagent 90, other worker agents 60 (base default 50). An exhausted model call returns a terminal AIMessage **instead of calling the model**, so a tool call already requested by the last budgeted AIMessage still runs and its pair stays intact. Internal completion-notification turns are exempt (they don't pay iterations). Counters (`iteration_budget` / `iteration_budget_used`) reset every turn.
+
+### Turn level: `DelegationPressureGate` (eval-only)
+
+Active only with `SHERRY_EVAL_DELEGATION_PRESSURE=1` and an `evals-swe-*` session. It counts READ/exploration tool calls cumulatively within one turn: at **8** it injects one directive to delegate; at **16** it blocks every read/write tool for the rest of the turn (browser debugging tools are excluded from both counting and blocking). Each blocked call returns an error pointing at `sessions_spawn`; an accepted spawn does NOT unlock the turn — only `after_agent` resets the counter. Writes do not reset it, and every graph invocation inside the turn accumulates.
 
 ### Turn level: `MaxTokensBoostMiddleware`, tool-call truncation recovery
 

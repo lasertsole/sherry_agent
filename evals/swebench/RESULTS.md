@@ -6,6 +6,20 @@
 
 ---
 
+## 20261101_174750 — HARD 切片 @ `DelegationPressureGate`（8 次警告 / 16 次读写阻断）
+
+- 目的：验证软门——单回合累计读调用，8 次提醒、16 次后阻断读写，浏览器调试工具豁免，
+  `after_agent` 清零；不再依赖 worktree/shadow 写入检测。
+- 命令：`SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py --hard --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**2/2 resolved**，diff 干净（Django 无测试文件改动）；总 1693.4s，
+  主 session tokens 1,962,778 / 12,673，估算 $1.000。
+- 对照：同代码 delegate-only（`SHERRY_EVAL_DELEGATE_ONLY=1`）2/2，但总 3469s、$1.312；
+  旧 2026-11-01 002305 delegate-only 为 2/2 / 936s。
+- 结论：软门在 HARD 上达到与 delegate-only 相同的 resolved，且更快；Django 在 16 次读后
+  被阻断、主代理转交子代理完成，未出现上一轮的 patch 重试循环。
+
+---
+
 ## 20261030_031038 — HARD 切片 @ 「编码助手」系统提示词（persona=coding）
 
 - 目的：验证 `TODO/计划_SWE-bench_失败复盘与整改_20261101.md` §2.4——换用内置编码助手预设的
