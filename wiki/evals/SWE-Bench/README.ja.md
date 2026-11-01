@@ -1,0 +1,138 @@
+# SWE-Bench（host harness）
+
+SWE-Bench は公式 Docker 評価ではなく、リポジトリ自身の host harness で実行します。
+harness は各インスタンスの base commit を固定し、環境を作り、インスタンス自身の
+FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent がこのマシンで
+この 2 つの HARD インスタンスを修正できたか」であり、「リーダーボード順位は何か」
+ではありません。
+
+## 測るもの
+
+- `server.service.messages.async_generate` を通した**メイン agent**。実際の
+  ミドルウェアチェーンと選択されたツール面を使う。
+- それが spawn する**サブ agent**。ファイル書き込みと、harness が diff を読む前の
+  決着を含む。
+- **harness**：インスタンス初期化、公式テストパッチ、正確なテスト判定。harness
+  エラーは invalid として記録し、修正失敗とはしない。
+
+## Harness とスライス
+
+- データセット：`princeton-nlp/SWE-bench_Lite`、test split。
+- HARD スライス：`django__django-17051`、`sympy__sympy-20639`。
+- インスタンスキャッシュ：`--instance-cache-dir /tmp/swebench-instance-cache`。
+- Arm：中立プロンプト、`--persona coding`、delegate-only
+  （`SHERRY_EVAL_DELEGATE_ONLY=1`）、delegation pressure
+  （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。
+- レポートは `evals/results/swebench/<run_id>/eval_report.json`。インスタンス diff は
+  同じディレクトリにある。
+
+## 失敗の履歴
+
+| 実行 | Arm | 結果 | 何が起きたか |
+| :--- | :--- | :--- | :--- |
+| 2026-10-26 中立 | 中立ルール、90 イテレーション | 1/2 | Django resolved；Sympy は diff なしで予算切れ |
+| 2026-10-30 コーディング | コーディングテンプレート、読み取り専用の子 | 0/2 | テンプレートは委譲を要求したが子は書けず、双方が編集しなかった |
+| 2026-10-31 225133 | 緩和プロンプト、子に全ツール | 1/2 | Sympy resolved；Django は 28 回のネット検索で diff なし |
+| 2026-10-31 234435 | 長い調査ルーティング | 0/2 | Django の F2P 失敗；Sympy は 45 回 terminal、32 回が同一 |
+| 2026-11-01 000025 | プロンプト + no-edit ゲート | 1/2 汚い | Django がテストファイルを追加；Sympy の 726B patch が P2P を破壊 |
+| 2026-11-01 002305 | delegate-only | 2/2 クリーン | メインに直接ツールなし；子が実装と検証 |
+| 2026-11-01 143952 | 最初のソフトゲート（10/20） | 1/2 | ゲートが spawn を強制した後、メインが patch を繰り返して P2P を破壊 |
+| 2026-11-01 174750 | ソフトゲート（8/16、累積） | 2/2 クリーン | 16 回の読み取り後にメインの読み書きを停止し、実装を委譲 |
+
+## 露呈した問題
+
+1. **旧イテレーション予算はツールペアを二重に数えた。** ツール呼び出しは
+   `AIMessage` に 1、`ToolMessage` に 1 を消費し、90 は約 45 回のツールループに
+   見えた。現在はモデル呼び出しだけを数える。
+2. **`terminal` はループ検出の盲点。** `ToolGuardrails` は冪等ツールだけをハッシュ
+   する。`terminal` は非冪等なので、同一コマンド 32 回でも no-progress 判定にならない。
+3. **「情報が足りた」に収束点がなかった。** 変更箇所を特定した後も検証を続けるか、
+   上流 PR を探しに行った。編集と検証へ移ることを強制する仕組みがなかった。
+4. **評価 harness がテストファイル編集を拒否しなかった。** クリーン diff は製品契約の
+   一部だが、`changed_paths` は記録されるだけだった。テストファイルは対象テストを
+   通っても汚い成功になる。この穴はまだ開いており、今回の成功は偶然テストを
+   編集しなかっただけである。
+5. **書くことは検証ではない。** 最初の no-edit arm は patch を作ったが既存テストを
+   実行せず、P2P 回帰は判定時に初めて分かった。
+6. **子の結果と token が観測しにくい。** タイムアウトした子の checkpoint は消えて
+   いることがあり、メインは状態確認のため再 spawn し、レポートはメイン session の
+   token だけを数えていた。
+
+## no-edit ゲートとその失敗
+
+旧 eval ゲートは 15 回のツール呼び出しで警告し、イテレーション予算の 70% で調査を
+ブロックした。書き込みはどれでもリセットした。これにより 3 つの失敗が予測できた：
+
+- 書き込みを**ツール名**（`patch_file` / `write_file`）で検出したため、
+  `terminal cp` や heredoc 編集は見えなかった。Django はまさに `cp` でテスト
+  ファイルを作った。
+- **どんな**書き込みも成功とみなした。`tests/` 配下の書き込みや、すぐ戻した patch
+  も含む。
+- 最初の書き込みでそのターンの残りはゲートが無効になった。Sympy の最初の誤った
+  patch の後、約 30 回の terminal 探針と P2P 回帰は野放しだった。
+
+削除済みであり、収束機構にはできない。
+
+## read-before-write ライセンスが最初のソフトゲートのループを止めなかった理由
+
+`agent/tools/pub_base/read_state.py` のライセンスが守るのは **`write_file` の上書き**
+である。既存ファイルは、それを読んだ session だけが置換でき、読み取り revision が
+CAS の前提になる。これは **`patch_file` には適用されない**。`patch_file` は
+old_string/new_string、曖昧一致、stale-write CAS で置換し、事前の読み取りを要求せず、
+どちらのツールも patch が正しいかテストが通るかを知らない。
+
+最初のソフトゲート（10/20）は製品書き込みが入った時点でブロックを解除し、
+`patch_file` を対象にしていなかった。メインは researcher を spawn し、ゲートが
+リセットされ、その後 `compiler.py` に約 70 回の `patch_file` を試した。これは
+**patch リトライの病理**であり、未ライセンスの `write_file` 上書きではないため、
+ライセンスは発火しなかった。新しいゲートは読み取り閾値を超えた後
+`patch_file` もブロックする。
+
+## 成功した設計：DelegationPressureGate
+
+`agent/middlewares/delegation_pressure/core.py`：
+
+- 1 ターン内の**読み取り/探索**呼び出しを累積する。
+- **8** 回で委譲を促す指示を 1 回注入する。
+- **16** 回で、そのターンの残りすべての読み取り/書き込みツールをブロックする。
+  ブロックされた呼び出しは毎回 `sessions_spawn`（読み取り専用は researcher、
+  実装は executor）を指すエラーを返す。
+- ブラウザのデバッグツールは計数もブロックも対象外。
+- カウンタは `after_agent` でのみリセットされる。accepted spawn はターンを解除せず、
+  書き込みでもリセットされない。これが最初のソフトゲートが許した
+  「spawn 後の patch ループ」を止める。
+
+## 結果
+
+| Arm | Resolved | 時間 | メイン session tokens | 推定コスト |
+| :--- | :--- | :--- | :--- | :--- |
+| `DelegationPressureGate` 8/16（run 20261101_174750） | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| Delegate-only（run 20261101_145717） | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
+
+Django は製品コードとリリース文書だけを変更し、Sympy はライブラリ 1 ファイルだけを
+変更した。どちらの成功 diff にもテストファイルはない。token/cost はメイン session
+のみで、子の使用量は集計されていない。したがって 2 つの arm の比較は時間と
+メイン文脈のシグナルであり、完全な請求額ではない。
+
+## 再現
+
+```bash
+SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
+  --hard --persona coding --keep-instances \
+  --instance-cache-dir /tmp/swebench-instance-cache
+
+SHERRY_EVAL_DELEGATE_ONLY=1 uv run --no-sync python evals/swebench/suite.py \
+  --hard --persona coding --keep-instances \
+  --instance-cache-dir /tmp/swebench-instance-cache
+```
+
+## 注意
+
+- 2 インスタンスはシグナルであり、ベンチ順位ではない。一般的な改善を主張する前に
+  同じスライスを繰り返すこと。
+- host harness は公式 Docker harness ではない。Python と依存のバージョンが
+  ベンチマークイメージと異なる。
+- クリーンな結果はテスト編集ガードを閉じていない。harness は `changed_paths` の
+  `tests/` 配下を依然として invalid にすべきである。
+- ブラウザツールは設計上除外した。この実行はブラウザ駆動の調査について何も
+  証明しない。

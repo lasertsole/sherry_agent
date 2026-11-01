@@ -6,10 +6,24 @@
 
 ---
 
+## 20261101_174750 — HARD 切片 @ `DelegationPressureGate`（8 次警告 / 16 次读写阻断）
+
+- 目的：验证软门——单回合累计读调用，8 次提醒、16 次后阻断读写，浏览器调试工具豁免，
+  `after_agent` 清零；不再依赖 worktree/shadow 写入检测。
+- 命令：`SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py --hard --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**2/2 resolved**，diff 干净（Django 无测试文件改动）；总 1693.4s，
+  主 session tokens 1,962,778 / 12,673，估算 $1.000。
+- 对照：同代码 delegate-only（`SHERRY_EVAL_DELEGATE_ONLY=1`）2/2，但总 3469s、$1.312；
+  旧 2026-11-01 002305 delegate-only 为 2/2 / 936s。
+- 结论：软门在 HARD 上达到与 delegate-only 相同的 resolved，且更快；Django 在 16 次读后
+  被阻断、主代理转交子代理完成，未出现上一轮的 patch 重试循环。
+
+---
+
 ## 20261030_031038 — HARD 切片 @ 「编码助手」系统提示词（persona=coding）
 
-- 目的：验证 `TODO/计划_SWE-bench_失败复盘与整改_20261101.md` §2.4——换用内置编码助手预设的
-  系统提示词，能否让 90/90 迭代不再空转（4.2 的现象）。
+- 目的：验证编码助手预设的系统提示词能否让 90/90 迭代不再空转；该 arm 的完整分析见
+  `wiki/evals/SWE-Bench/`。
 - 命令：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --instance-cache-dir /tmp/swebench-instance-cache`
 - persona：`--persona coding` 把 `workspace/template/zh/AGENTS.md`（+ 空 SOUL/USER/ROLE）种进 eval
   workspace；报告记录 `persona.mode=coding`、`template_lang=zh`、`AGENTS.md` digest `004d7ef0885a169b`、
@@ -20,7 +34,7 @@
   skill_view 1；`write_file` / `patch_file` / `sessions_spawn` / `taskflow` 全为 0（无任何子代理 run）
 - 结论：编码助手模板的「编排者信条」禁止主代理编辑、要求委托，但模板工具名 `task`/`taskflow_step`
   与当前工具面（`sessions_spawn`/`taskflow`）不符，且本 harness 的子代理只读——模型既未编辑也未委托，
-  退化为纯 terminal 探索。Django 由中性臂的 resolved 退化为 no-edit。**该提示词不解决 4.2，且使 Django 退化。**
+  退化为纯 terminal 探索。Django 由中性臂的 resolved 退化为 no-edit。**该提示词不能解决空转问题，且使 Django 退化。**
 - 2026-10-31 更新：`EvalSandbox` 已改为默认给子代理全量工具（`restrict_child_tools=False`），
   本节“子代理只读”是当时的历史限制；TaskIntent/模板已改为小改动直接实现、复杂任务才委派，
   并把 `task` 工具名修正为 `sessions_spawn`。

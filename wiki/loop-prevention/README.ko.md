@@ -11,7 +11,7 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/delegation_pressure/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/wrapper/repetition_guard.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `models/LLMs/provider_repetition_penalty.py`, `config/models_settings.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 개요와 위협 모델
 
@@ -59,6 +59,10 @@
 ### 턴 수준: `IterationBudget`
 
 턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+
+### 턴 수준: `DelegationPressureGate`(평가 전용)
+
+`SHERRY_EVAL_DELEGATION_PRESSURE=1`이고 세션이 `evals-swe-*`일 때만 활성화됩니다. 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **8**회에 위임 지시를 한 번 주입하고, **16**회 이후에는 그 턴의 남은 동안 모든 읽기/쓰기 도구를 차단합니다(브라우저 디버깅 도구는 집계와 차단 모두 제외). 차단된 호출은 매번 `sessions_spawn`을 가리키는 오류를 반환하며, spawn이 성공해도 턴은 풀리지 않습니다——리셋은 `after_agent`에서만 일어납니다. 쓰기로는 리셋되지 않고, 턴 안의 모든 그래프 호출에서 누적됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 

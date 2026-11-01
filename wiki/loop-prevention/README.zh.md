@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
+**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/delegation_pressure/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`models/LLMs/provider_repetition_penalty.py`、`config/models_settings.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 总览与威胁模型
 
@@ -59,6 +59,10 @@
 ### 回合级：`IterationBudget`
 
 每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+
+### 回合级：`DelegationPressureGate`（仅评测）
+
+仅在 `SHERRY_EVAL_DELEGATION_PRESSURE=1` 且会话为 `evals-swe-*` 时启用。按单回合累计**读/探索类**工具调用：第 **8** 次注入一次去委派的指令；第 **16** 次后，本回合剩余时间内所有读写工具被阻断（浏览器调试工具既不计次也不阻断）。每次被阻断的调用都返回错误并指引 `sessions_spawn`；spawn 成功也**不会**解锁本回合，只有 `after_agent` 清零。写不会清零，回合内每次图调用都累计。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

@@ -14,6 +14,7 @@ from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from config.features import (
+    DELEGATION_PRESSURE,
     ITERATION_BUDGET,
     LLM_CLIENT_DEFAULTS,
     SUMMARIZATION,
@@ -427,18 +428,18 @@ def _build_middlewares(
         # layer, and it is idempotent (a strict parse succeeds untouched).
         InvalidToolCallRepairMiddleware(),
     ]
-    if os.getenv("SHERRY_EVAL_REQUIRE_EDIT") == "1":
-        # Eval-only convergence gate: SWE/coding sessions must produce a patch
-        # after a long no-write stretch. The product chain never sees it.
-        from .middlewares.no_edit_gate import NoEditGate
-
-        middlewares.append(NoEditGate())
     if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
         # Eval-only delegation arm: the main agent may not read/search/write;
         # it must use sessions_spawn. Child sessions keep their full tools.
         from .middlewares.delegate_only_gate import DelegateOnlyGate
 
         middlewares.append(DelegateOnlyGate())
+    elif os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" or DELEGATION_PRESSURE["enabled"]:
+        # Soft arm: warn/block the configured tool family until a subagent is
+        # spawned. Delegate-only above is the hard arm and wins when both are on.
+        from .middlewares.delegation_pressure import DelegationPressureGate
+
+        middlewares.append(DelegationPressureGate())
     return middlewares
 
 
