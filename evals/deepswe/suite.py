@@ -25,8 +25,13 @@ Usage::
     uv run python evals/deepswe/suite.py --dry-run
     uv run python evals/deepswe/suite.py httpx-streaming-json-iteration --timeout 1800
     uv run python evals/deepswe/suite.py --all --n-tasks 5 --keep-workdirs
+    uv run python evals/deepswe/suite.py --local
 
 ``--dry-run`` validates the dataset and task files without Docker or a model.
+``--local`` runs the Docker-free host mode in ``evals/deepswe/local.py``: a
+time-travelled checkout plus a task venv, graded by the same hidden tests and
+``grader.py``. It is a developer/CI convenience, NOT an official DeepSWE score,
+and it accepts Python tasks only.
 """
 
 from __future__ import annotations
@@ -106,6 +111,7 @@ def main() -> None:
         elif arg in {
             "--all",
             "--dry-run",
+            "--local",
             "--skip-self-check",
             "--keep-workdirs",
             "--update-baseline",
@@ -121,7 +127,7 @@ def main() -> None:
         raise SystemExit("name task ids or use --all, not both")
     timeout = max(60.0, min(float(timeout), _MAX_TIMEOUT_S))
 
-    if "--dry-run" not in flags:
+    if "--dry-run" not in flags and "--local" not in flags:
         docker_ok, docker_detail = external_bench.docker_available()
         if not docker_ok:
             print(
@@ -157,10 +163,25 @@ def main() -> None:
             )
         print(
             "[evals] dry-run only; a real run needs Docker and MAIN_LLM_API_KEY "
-            "(a skipped suite is not a pass)",
+            "(or --local for the Docker-free host mode); a skipped suite is not a pass",
             flush=True,
         )
         return
+
+    if "--local" in flags:
+        from evals.deepswe import local
+
+        raise SystemExit(
+            asyncio.run(
+                local.run(
+                    selected,
+                    timeout=timeout,
+                    skip_self_check="--skip-self-check" in flags,
+                    keep_workdirs="--keep-workdirs" in flags,
+                    update_baseline="--update-baseline" in flags,
+                )
+            )
+        )
 
     raise SystemExit(
         asyncio.run(
