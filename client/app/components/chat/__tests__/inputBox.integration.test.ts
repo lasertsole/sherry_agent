@@ -149,12 +149,16 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
   it('renders the mic button next to send and hides it while the box is disabled', async () => {
     const open = mountInput();
     await Promise.resolve();
-    expect(open.findAll('.sendActions button').length).toBe(2); // mic + send
+    expect(open.find('.insert-trigger').exists()).toBe(true);
+    expect(open.find('.voice').exists()).toBe(true);
+    expect(open.find('.send').exists()).toBe(true);
     expect(open.find('.voiceTimer').exists()).toBe(false);
 
     const locked = mountInput({ disabled: true, disabledText: '等待审批…' });
     await Promise.resolve();
-    expect(locked.findAll('.sendActions button').length).toBe(1); // send only
+    expect(locked.find('.insert-trigger').exists()).toBe(false);
+    expect(locked.find('.voice').exists()).toBe(false);
+    expect(locked.find('.send').exists()).toBe(true);
   });
 
   it('keeps the unconfigured mic clickable and explains on hover AND on click', async () => {
@@ -165,7 +169,7 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    const mic = wrapper.find('.sendActions button');
+    const mic = wrapper.find('.sendActions .voice');
     expect(mic.attributes('title')).toContain('未配置');
     expect(mic.attributes('disabled')).toBeUndefined();
 
@@ -182,7 +186,7 @@ describe('inputBox.vue voice input (integration, bridge mocked)', () => {
     const { track } = installRecordingStack();
     const wrapper = mountInput();
     await vi.advanceTimersByTimeAsync(0);
-    const mic = wrapper.find('.sendActions button');
+    const mic = wrapper.find('.sendActions .voice');
 
     await mic.trigger('click');
     await vi.advanceTimersByTimeAsync(300);

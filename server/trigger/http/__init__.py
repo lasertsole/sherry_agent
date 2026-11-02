@@ -7,6 +7,7 @@ import server.trigger.http.image
 import server.trigger.http.audio
 import server.trigger.http.video
 import server.trigger.http.skills
+import server.trigger.http.custom_commands
 import server.trigger.http.logs
 import server.trigger.http.curator
 import server.trigger.http.channels

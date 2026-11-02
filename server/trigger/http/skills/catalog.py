@@ -19,6 +19,9 @@ async def list_skills_handler(request):
                 "description": s["description"],
                 "location": s["location"],
                 "category": _get_category(s["location"]),
+                # Enabled state: uploaded third-party skills default inactive;
+                # the composer's `$` picker only lists active skills.
+                "active": bool(s.get("active", True)),
                 # Visibility scope from the SKILL.md frontmatter (default "all").
                 "scope": s.get("scope", "all"),
                 # Pin/fix state is surfaced so the client can render the correct

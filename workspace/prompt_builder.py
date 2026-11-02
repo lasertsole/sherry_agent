@@ -71,6 +71,12 @@ workspace files into them. Paths are relative to the session's working
 directory; use `read_file` / `search_files` on the named path instead of
 guessing a file's content from its name."""
 
+SKILL_REFERENCE_BLOCK = """## Skill References
+
+A user message may start a skill reference with `$name` (e.g. `$review`). When
+it does, treat it as a request to use that skill: load it with `skill_view`
+before doing the work. `$` is the composer's skill prefix, not a shell variable."""
+
 
 def _build_todo_block(session_id: str) -> str:
     """Render the session todo list (with each stable #todo_id), or "" on failure."""
@@ -479,7 +485,7 @@ def build_system_prompt(
     # keeps its builder above (``_build_todo_block`` etc.) — only the delivery
     # changed. This prompt is therefore safe to CACHE per session, which is
     # exactly what ``system_prompt_injection`` does.
-    parts = [*file_paths, skill_paths, FILE_REFERENCE_BLOCK]
+    parts = [*file_paths, skill_paths, SKILL_REFERENCE_BLOCK, FILE_REFERENCE_BLOCK]
 
     # Join with blank-line separators, skipping any empty parts.
     return "\n\n".join(p for p in parts if p)

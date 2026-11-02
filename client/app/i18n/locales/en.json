@@ -75,7 +75,20 @@
     "voicePermissionDenied": "Microphone permission was denied",
     "voiceTooShort": "Recording too short — hold and speak",
     "voiceWarming": "The speech model is loading for the first time — try again shortly",
-    "voiceFailed": "Speech recognition failed — please retry"
+    "voiceFailed": "Speech recognition failed — please retry",
+    "insertTrigger": "Insert",
+    "skillShortcut": "Skills",
+    "commandShortcut": "Commands",
+    "fileShortcut": "Files",
+    "skillPickerTitle": "Skills",
+    "commandPickerTitle": "Commands",
+    "noSkills": "No skills found",
+    "noCommands": "No commands found",
+    "loadingTriggers": "Loading…",
+    "commandArguments": "Command arguments",
+    "commandApply": "Apply",
+    "customCommand": "Custom",
+    "builtinCommand": "Built-in"
   },
   "sessionModelPicker": {
     "pending": "Applies next turn",

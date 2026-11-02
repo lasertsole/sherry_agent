@@ -429,6 +429,7 @@
                 :sending="isSending"
                 :disabled="!!hitlRequest"
                 :disabled-text="t('chatInput.waitingApproval')"
+                :session-id="sessionId"
                 @send="onComposerSend"
                 @stop="handleStop" />
             </div>

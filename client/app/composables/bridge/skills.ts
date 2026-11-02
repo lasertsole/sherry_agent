@@ -10,6 +10,10 @@ export interface SkillInfo {
   description: string;
   location: string;
   category: 'builtin' | 'auto' | 'third_party';
+  /** Frontmatter visibility scope (`all` / `subagent_only`). */
+  scope?: string;
+  /** Whether the skill is enabled in the 技能 tab (third-party uploads default inactive). */
+  active?: boolean;
   /** Whether the skill is excluded from curator maintenance (never merged/removed). */
   pinned?: boolean;
 }

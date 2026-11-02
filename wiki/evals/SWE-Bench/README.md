@@ -34,6 +34,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-01 002305 | delegate-only | 2/2 clean | Main agent had no direct tools; children implemented and verified |
 | 2026-11-01 143952 | first soft gate (10/20) | 1/2 | Gate forced a spawn, then the main agent patched repeatedly and broke P2P |
 | 2026-11-01 174750 | soft gate (8/16, cumulative) | 2/2 clean | Main was read/write-blocked after 16 reads and delegated the implementation |
+| 2026-11-03 010944 | 7/14 advisory (cumulative) | 0/2 | Django's condition-only change still failed the unique constraint; Sympy produced no diff and exhausted the 90-call budget |
 
 ## Problems exposed
 
@@ -102,7 +103,7 @@ blocked `patch_file` too, which is how the 2026-11-01 run ended; the current
 ## The current design: DelegationPressureGate (7/14 advisory)
 
 The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/14
-behavior below is the design reconciled on 2026-11-02.
+behavior below is the design reconciled on 2026-11-02. The 2026-11-03 rerun (0/2) is its first measurement; it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
@@ -123,6 +124,7 @@ it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.
 | Arm | Resolved | Duration | Main-session tokens | Estimated cost |
 | :--- | :--- | :--- | :--- | :--- |
 | `DelegationPressureGate` 8/16 (run 20261101_174750) | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| `DelegationPressureGate` 7/14 advisory (run 20261103_010944) | 0/2 | 669.7s | 8,370,656 / 31,119 | $4.232 |
 | Delegate-only (run 20261101_145717) | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
 
 Django changed product code and release docs only; Sympy changed one library

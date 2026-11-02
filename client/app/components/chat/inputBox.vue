@@ -19,6 +19,46 @@
       @keydown.stop="onComposerKeydown"></div>
 
     <div class="sendActions">
+      <!-- Discoverable entry for the hidden trigger characters: opens the same
+          skill/command pickers as `$` and `/`, or the sidebar file tree. -->
+      <Button
+        v-if="!disabled"
+        icon="pi pi-plus"
+        class="insert-trigger"
+        text
+        rounded
+        severity="secondary"
+        :aria-label="t('chatInput.insertTrigger')"
+        :title="t('chatInput.insertTrigger')"
+        @click="toggleInsertMenu" />
+      <Popover ref="insertMenuRef">
+        <div class="insert-menu">
+          <button
+            type="button"
+            class="insert-item"
+            @click="openSkillsFromMenu">
+            <span class="pi pi-bolt" />
+            <span>{{ t('chatInput.skillShortcut') }}</span>
+            <code>$</code>
+          </button>
+          <button
+            type="button"
+            class="insert-item"
+            @click="openCommandsFromMenu">
+            <span class="pi pi-slash" />
+            <span>{{ t('chatInput.commandShortcut') }}</span>
+            <code>/</code>
+          </button>
+          <button
+            type="button"
+            class="insert-item"
+            @click="openFilesFromMenu">
+            <span class="pi pi-folder" />
+            <span>{{ t('chatInput.fileShortcut') }}</span>
+            <code>@</code>
+          </button>
+        </div>
+      </Popover>
       <!-- Voice input: mic → record → transcribe → insert at the caret, fully
           inside this component (the composable is UI-free). Hidden while the
           box is disabled (a HITL card owns the input slot); disabled when STT
@@ -56,17 +96,29 @@
         :title="sendTitle"
         :disabled="!sendingAllowed || disabled" />
     </div>
+
+    <InputTriggerPanel
+      v-if="triggerKind"
+      ref="triggerPanelRef"
+      :kind="triggerKind"
+      :query="triggerQuery"
+      :anchor="triggerAnchor"
+      :session-id="sessionId"
+      @select="onTriggerSelect"
+      @close="closeTrigger" />
   </div>
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, watch, ref, type ShallowRef } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watch, ref, type ShallowRef } from 'vue';
 import { isEmpty } from 'lodash-es';
 import { useI18n } from 'vue-i18n';
 // Type-only: the mention helpers themselves are auto-imported composable
 // exports (the repo's `no-restricted-imports` rule keeps value imports out of
 // components).
 import type { FileMentionPayload } from '~/composables/use-file-mention';
+import type { TriggerKind } from '~/composables/use-input-trigger';
+import type { TriggerSelection } from '~/components/chat/InputTriggerPanel.vue';
 import type { VoiceErrorKind } from '~/composables/use-voice-input';
 
 const { t } = useI18n();
@@ -75,7 +127,8 @@ const { t } = useI18n();
 const props = withDefaults(defineProps<Props>(), {
   sending: false,
   disabled: false,
-  disabledText: ''
+  disabledText: '',
+  sessionId: ''
 });
 
 interface Props {
@@ -84,6 +137,8 @@ interface Props {
   disabled?: boolean;
   /** Placeholder text shown in the disabled state (e.g. "Waiting for approval…") */
   disabledText?: string;
+  /** Current session, used for workspace-scoped custom commands. */
+  sessionId?: string;
 }
 
 const emit = defineEmits<{
@@ -95,6 +150,19 @@ const emit = defineEmits<{
 
 /** Input area DOM */
 const inputDom: ShallowRef<HTMLElement | null> = useTemplateRef('inputDom');
+
+/** Insert (+ button) popover, and the `$`/`/` candidate panel it can open. */
+const insertMenuRef = useTemplateRef<{ toggle?: (event: Event) => void; hide?: () => void }>('insertMenuRef');
+const triggerPanelRef = useTemplateRef<{
+  move: (delta: number) => void;
+  selectActive: () => void;
+  close: () => void;
+}>('triggerPanelRef');
+const triggerKind = ref<TriggerKind | null>(null);
+const triggerQuery = ref('');
+const triggerAnchor = ref<{ left: number; top: number; width: number } | null>(null);
+let triggerTokenLength = 0;
+const ui = useUiStore();
 
 /**
  * Voice input state machine (mic button: record → transcribe → insert).
@@ -330,8 +398,116 @@ function handleKeyEscape(): void {
   writeDraftToInput(browsingSnapshot);
 }
 
+/** Anchor the picker to the composer's top edge (upward expansion). */
+function currentAnchor(): { left: number; top: number; width: number } | null {
+  const rect = inputDom.value?.getBoundingClientRect();
+  return rect ? { left: rect.left, top: rect.top, width: rect.width } : null;
+}
+
 /**
- * Input callback: strip contenteditable markup, keeping only plain text for validation
+ * Open the `$`/`/` picker, optionally seeding the query (the + button path).
+ * @param kind
+ * @param query
+ * @param tokenLength
+ */
+function openTrigger(kind: TriggerKind, query = '', tokenLength = 0): void {
+  triggerKind.value = kind;
+  triggerQuery.value = query;
+  triggerTokenLength = tokenLength;
+  triggerAnchor.value = currentAnchor();
+}
+
+/** Dismiss the picker without touching the composer. */
+function closeTrigger(): void {
+  triggerKind.value = null;
+  triggerQuery.value = '';
+  triggerAnchor.value = null;
+  triggerTokenLength = 0;
+}
+
+function toggleInsertMenu(event: Event): void {
+  insertMenuRef.value?.toggle?.(event);
+}
+
+function openSkillsFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  openTrigger('skill');
+}
+
+function openCommandsFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  openTrigger('slash');
+}
+
+/** Files keep their existing left-sidebar tree; the + entry reveals it. */
+function openFilesFromMenu(): void {
+  insertMenuRef.value?.hide?.();
+  ui.sidebarBody = 'files';
+  ui.filesSectionOpen = true;
+  ui.sidebarCollapsed = false;
+}
+
+/**
+ * Refresh the trigger state from the caret after every composer input.
+ * @param target
+ */
+function syncTriggerFromCaret(target: HTMLElement): void {
+  if (props.disabled || isCaretInCode(target)) {
+    closeTrigger();
+    return;
+  }
+  const before = textBeforeCaret(target);
+  const match = before === null ? null : detectTrigger(before, before.length);
+  if (!match) {
+    closeTrigger();
+    return;
+  }
+  openTrigger(match.kind, match.query, match.tokenLength);
+}
+
+/**
+ * Insert the selected skill/command (or run a built-in command).
+ * @param selection
+ */
+function onTriggerSelect(selection: TriggerSelection): void {
+  const tokenLength = triggerTokenLength;
+  if (tokenLength > 0) removeTriggerChars(tokenLength);
+
+  if (selection.kind === 'skill') {
+    insertChipAtCaret(inputDom.value, createSkillChip(selection.name));
+    closeTrigger();
+    return;
+  }
+
+  const command = selection.command;
+  if (command?.kind === 'builtin') {
+    inputDom.value?.focus();
+    inputDom.value?.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    void command.entry?.handler?.();
+  } else {
+    const body = (command?.body ?? '').replaceAll('$ARGUMENTS', selection.args ?? '');
+    insertChipAtCaret(inputDom.value, createCommandChip(selection.name, body || `/${selection.name}`));
+  }
+  closeTrigger();
+}
+
+/**
+ * Outside pointerdown dismisses the picker (the composer itself keeps it).
+ * @param event
+ */
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!triggerKind.value) return;
+  const target = event.target as Node | null;
+  if (
+    target &&
+    (inputDom.value?.contains(target) || (target as Element).closest?.('[data-test="input-trigger-panel"]'))
+  ) {
+    return;
+  }
+  closeTrigger();
+}
+
+/** Input callback: strip contenteditable markup, keeping only plain text for validation
  * @param event
  */
 function inputFunc(event: Event): void {
@@ -353,6 +529,7 @@ function inputFunc(event: Event): void {
   } else {
     draft.value = text.trim();
   }
+  syncTriggerFromCaret(target);
 }
 
 /**
@@ -366,6 +543,30 @@ function inputFunc(event: Event): void {
  * @param event
  */
 function onComposerKeydown(event: KeyboardEvent): void {
+  // The picker owns navigation while it is open; printable keys still reach the
+  // composer so the query keeps updating through `inputFunc`.
+  if (triggerKind.value && triggerPanelRef.value && !event.isComposing) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      triggerPanelRef.value.move(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      triggerPanelRef.value.move(-1);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      triggerPanelRef.value.selectActive();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTrigger();
+      return;
+    }
+  }
   if (matchesBinding(event, 'send-message')) {
     event.preventDefault();
     handleKeyEnter(event);
@@ -465,7 +666,19 @@ onMounted(() => {
   // Voice availability is a one-shot probe; a backend that is down leaves
   // `null` (unknown) and the button stays clickable.
   void voice.probeAvailability();
+  document.addEventListener('pointerdown', onDocumentPointerDown);
 });
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown);
+});
+
+watch(
+  () => props.disabled,
+  disabled => {
+    if (disabled) closeTrigger();
+  }
+);
 
 /**
  * Clears this session's history cache and browse state (for the parent to call when a session is deleted).
@@ -641,5 +854,39 @@ defineExpose({
   50% {
     opacity: 0.5;
   }
+}
+
+/* Insert-menu lives in a PrimeVue Popover teleported to <body>, so its styles
+   must be global to escape this component's scoped attribute. */
+:global(.insert-menu) {
+  display: flex;
+  min-width: 12rem;
+  flex-direction: column;
+  padding: 0.25rem;
+}
+
+:global(.insert-menu .insert-item) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+:global(.insert-menu .insert-item:hover) {
+  background: color-mix(in srgb, var(--p-primary-color, #0ea5e9) 14%, transparent);
+}
+
+:global(.insert-menu .insert-item code) {
+  margin-left: auto;
+  border-radius: 0.25rem;
+  background: var(--p-surface-100, #f3f4f6);
+  padding: 0 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
 }
 </style>

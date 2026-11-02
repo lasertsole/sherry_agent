@@ -75,7 +75,20 @@
     "voicePermissionDenied": "마이크 권한이 거부되었습니다",
     "voiceTooShort": "녹음이 너무 짧습니다. 다시 말해 주세요",
     "voiceWarming": "음성 인식 모델을 처음 로드하는 중입니다. 잠시 후 다시 시도하세요",
-    "voiceFailed": "음성 인식에 실패했습니다. 다시 시도하세요"
+    "voiceFailed": "음성 인식에 실패했습니다. 다시 시도하세요",
+    "insertTrigger": "삽입",
+    "skillShortcut": "스킬",
+    "commandShortcut": "명령",
+    "fileShortcut": "파일",
+    "skillPickerTitle": "스킬",
+    "commandPickerTitle": "명령",
+    "noSkills": "스킬 없음",
+    "noCommands": "명령 없음",
+    "loadingTriggers": "불러오는 중…",
+    "commandArguments": "명령 인수",
+    "commandApply": "적용",
+    "customCommand": "사용자 정의",
+    "builtinCommand": "내장"
   },
   "sessionModelPicker": {
     "pending": "다음 턴에 적용",

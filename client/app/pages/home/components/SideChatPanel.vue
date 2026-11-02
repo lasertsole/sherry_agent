@@ -141,6 +141,7 @@
           ref="chatInputBoxRef"
           v-model:draft="draft"
           :sending="isSending"
+          :session-id="sessionId"
           @send="handleSend"
           @stop="handleStop" />
       </div>

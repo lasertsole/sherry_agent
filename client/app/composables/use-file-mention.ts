@@ -31,6 +31,13 @@ export const FILE_MENTION_MIME = 'text/x-sherry-file';
 /** The chip class (`contenteditable=false` atoms inside the composer). */
 export const FILE_MENTION_CLASS = 'file-mention-chip';
 
+/** Skill chips inserted by the `$` picker. */
+export const SKILL_MENTION_CLASS = 'skill-mention-chip';
+/** Command chips inserted by the `/` picker. */
+export const COMMAND_MENTION_CLASS = 'command-mention-chip';
+/** The expanded prompt body carried by a command chip. */
+export const COMMAND_BODY_ATTR = 'data-command-body';
+
 /**
  * The mention text a payload stands for: `@./relative/path` (a directory keeps
  * its trailing slash). The `./` prefix keeps the reference unambiguous for the
@@ -128,6 +135,16 @@ export function extractTextForSend(inputEl: HTMLElement | null): string {
     const el = node as HTMLElement;
     if (el.classList.contains(FILE_MENTION_CLASS)) {
       result += el.dataset.filePath ?? el.textContent ?? '';
+      continue;
+    }
+    if (el.classList.contains(SKILL_MENTION_CLASS)) {
+      result += `$${el.dataset.skill ?? el.textContent?.replace(/^\$/, '') ?? ''}`;
+      continue;
+    }
+    if (el.classList.contains(COMMAND_MENTION_CLASS)) {
+      // A custom command sends its expanded prompt body, never the visible
+      // `/name` label; the body was substituted when the chip was inserted.
+      result += el.getAttribute(COMMAND_BODY_ATTR) ?? el.textContent ?? '';
       continue;
     }
     if (el.classList.contains(QUOTE_CHIP_CLASS)) {
