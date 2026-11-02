@@ -68,3 +68,4 @@ guarantee.
   checkouts outside the checkout for that reason.
 
 The local runner's unit tests are in `tests/evals/test_deepswe_local.py`.
+Failure records are kept in [RESULTS.md](RESULTS.md).
