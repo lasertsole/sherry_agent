@@ -15,7 +15,7 @@
 
 - 在选定切片上报告 **N of M**，绝不把百分比说成排行榜名次。
 - 区分 **harness** 结果与 **模型** 结果：provider 错误、测试补丁未应用或超时都不是“修复失败”。
-- 记录 **arm**（中性提示词、编码模板、delegate-only、delegation-pressure）、模型、git 版本和完整命令。
+- 记录 **arm**（中性提示词、编码模板、delegation-pressure）、模型、git 版本和完整命令。
 - 干净 diff 是判定的一部分：`tests/` 下的改动或破坏 PASS_TO_PASS 都不算成功，即使目标测试通过。
 - 只覆盖主 session 的 token/cost 数字必须注明；目前并非每份报告都聚合子 session 用量。
 

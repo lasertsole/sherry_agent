@@ -77,7 +77,8 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
-  │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → UserHooks → ContextEviction(P0-2/P2-4)
+  │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
   │     keywords plus question/chat patterns, then a length fallback over 100 chars.
@@ -263,14 +264,14 @@ User message → Robyn WS → agent.core.built_agent() graph
 
   `DelegationPressureGate` is a MAIN-agent-only middleware (never added to
   `_build_child_middlewares`, and `_active` also rejects any
-  `:subagent:`/`:swarm:` session): 8 read calls trigger one delegation
-  directive, 16 block every read/write tool for the rest of the turn; browser
-  debugging tools are excluded from counting and blocking. A successful
-  accepted/pending `sessions_spawn` releases the block and restarts the count,
-  so the main agent can inspect/verify and the gate re-arms on another 8/16
-  reads; a failed spawn does not reset, writes alone do not reset, and
-  `after_agent` also resets at the turn boundary. `DelegateOnlyGate` remains
-  eval-only for `evals-swe-*` sessions.
+  `:subagent:`/`:swarm:` session): at 7 read calls it injects a
+  `<system-reminder source="delegation_pressure">` delegation warning through
+  its own mid-turn `abefore_model` path; at 14 it injects the escalated
+  `<system-reminder>` with stronger language. Tools remain available at both
+  levels — the gate advises, never blocks. Browser debugging tools are excluded
+  from counting. A successful accepted/pending `sessions_spawn` resets the
+  counter; a failed spawn does not reset, writes alone do not reset, and
+  `after_agent` also resets at the turn boundary.
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
@@ -746,15 +747,18 @@ part of this directory.
 `<root>/AGENTS.md` and falls back to `CLAUDE.md`. It is
 registered as the `project_instructions` reminder source
 (`agent/middlewares/reminder_catalog/sources.py`, priority 62 between continuity
-65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`) —
-never the cached system prompt, so a large file cannot invalidate the provider
-prefix cache and a directory switch automatically re-reads the new project's
-file. Only an EXPLICIT root contributes these files: a session binding or a
-process default (`SHERRY_PROJECT_DIR` / `sherry.jsonc`) counts, while the
-`project_dir_source == "default"` fallback to the sherry checkout injects
-nothing — the checkout's own AGENTS.md is the agent's developer guide, never the
-user's project rules. No nested traversal (git root → cwd) yet, no file creation,
-no `.gitignore` edits.
+65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`,
+`transient=True`) — never the cached system prompt, so a large file cannot
+invalidate the provider prefix cache and a directory switch automatically
+re-reads the new project's file. The reminder is visible only on the turn its
+content changed (directory switch / first turn / post-compaction); the next
+turn's whole-list rewrite strips the old reminder from `messages[:-1]`, so it
+does not occupy every later context window. Only an EXPLICIT root contributes
+these files: a session binding or a process default (`SHERRY_PROJECT_DIR` /
+`sherry.jsonc`) counts, while the `project_dir_source == "default"` fallback to
+the sherry checkout injects nothing — the checkout's own AGENTS.md is the
+agent's developer guide, never the user's project rules. No nested traversal
+(git root → cwd) yet, no file creation, no `.gitignore` edits.
 
 **FACTS.md is ONE global, system-level file.** All three memory files live in
 `workspace/memory/` (`MEMORY.md`, `USER.md`, `FACTS.md`) and are loaded by the

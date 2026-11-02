@@ -19,9 +19,9 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 - 데이터셋: `princeton-nlp/SWE-bench_Lite`, test split.
 - HARD 슬라이스: `django__django-17051`, `sympy__sympy-20639`.
 - 인스턴스 캐시: `--instance-cache-dir /tmp/swebench-instance-cache`.
-- Arm: 중립 프롬프트, `--persona coding`, delegate-only
-  (`SHERRY_EVAL_DELEGATE_ONLY=1`), delegation pressure
-  (`SHERRY_EVAL_DELEGATION_PRESSURE=1`).
+- Arm: 중립 프롬프트, `--persona coding`, delegation pressure
+  (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). delegate-only arm과 그 미들웨어는
+  2026-11-02에 삭제되었으며, 오래된 결과 행은 기록으로만 남깁니다.
 - 리포트는 `evals/results/swebench/<run_id>/eval_report.json`; 인스턴스 diff는 같은
   디렉터리에 있습니다.
 
@@ -56,10 +56,10 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ### 현재 해결
 
 1. **수정됨.** `IterationBudget`은 모델 호출당 1단위; 도구 결과는 무료.
-2. **완화됨.** `DelegationPressureGate`는 16회 읽기 후 그 턴의 남은 동안 `terminal`/읽기 도구를 차단. `ToolGuardrails`는 비멱등 terminal을 해시하지 않으며 읽기 전용 명령 분류기는 미구현.
-3. **완화됨.** 같은 게이트가 16회에서 읽기/쓰기를 차단하고 `sessions_spawn`을 강제. 대상 테스트 실행을 요구하는 전용 검증 게이트는 미구현.
+2. **완화됨.** `DelegationPressureGate`는 7회 읽기에서 `<system-reminder>` 경고, 14회에서 escalated 버전을 주입하며 `terminal`/읽기 도구는 계속 사용 가능합니다. `ToolGuardrails`는 비멱등 terminal을 해시하지 않으며 읽기 전용 명령 분류기는 미구현.
+3. **부분 완화.** escalated 리마인더는 14회에서 `sessions_spawn`을 권하지만 더 이상 도구를 차단하지 않습니다. 대상 테스트 실행을 요구하는 전용 검증 게이트는 미구현.
 4. **미해결.** harness는 `changed_paths`를 기록하지만 `tests/` 편집을 invalid로 만들지 않음. 소프트 게이트는 확률을 낮출 뿐 공식 가드가 아님.
-5. **부분 완화.** 게이트는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
+5. **부분 완화.** escalated 리마인더는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하도록 권하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
 6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속. eval 리포트는 여전히 메인 session만 세고, 자식 checkpoint/결과 읽기는 미해결.
 
 ## no-edit 게이트와 실패 이유
@@ -86,21 +86,23 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 첫 소프트 게이트(10/20)는 제품 쓰기가 들어오면 차단을 풀었고 `patch_file`을 대상에
 넣지 않았습니다. 메인은 researcher를 spawn했고 게이트가 리셋된 뒤 `compiler.py`에
 약 70회 `patch_file`을 시도했습니다. 이는 **patch 재시도 병리**이지 라이선스 없는
-`write_file` 덮어쓰기가 아니므로 라이선스는 발동하지 않았습니다. 새 게이트는 읽기
-임계값을 넘으면 `patch_file`도 차단합니다.
+`write_file` 덮어쓰기가 아니므로 라이선스는 발동하지 않았습니다. 이전 8/16 게이트는
+`patch_file`도 차단했고 2026-11-01 실행은 그렇게 끝났습니다. 현재 7/14 조언형 설계는
+차단을 의도적으로 제거했습니다.
 
-## 성공한 설계: DelegationPressureGate
+## 현재 설계: DelegationPressureGate(7/14 조언형)
+
+2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/14
+조언형 동작은 2026-11-02에 충돌을 해소해 확정한 설계입니다.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - 한 턴 안의 **읽기/탐색** 호출을 누적합니다.
-- **8**회에서 위임 지시를 한 번 주입합니다.
-- **16**회에서 그 턴의 남은 모든 읽기/쓰기 도구를 차단합니다. 차단된 호출은 매번
-  `sessions_spawn`(읽기 전용은 researcher, 구현은 executor)을 가리키는 오류를
-  반환합니다.
-- 브라우저 디버깅 도구는 집계와 차단 모두 제외됩니다.
-- accepted/pending spawn이 성공하면 차단을 해제하고 카운트를 리셋해 메인
-  에이전트가 검사/검증할 수 있으며, 이후 8/16에서 다시 작동합니다. 실패한 spawn과
+- **7**회에서 게이트 자체의 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입합니다.
+- **14**회에서 더 강한 escalated 시스템 리마인더를 주입합니다. 도구는 계속 사용 가능하며 게이트는 조언만 하고 차단하지 않습니다.
+- 브라우저 디버깅 도구는 집계에서 제외됩니다.
+- accepted/pending spawn이 성공하면 카운트를 리셋해 메인
+  에이전트가 검사/검증할 수 있으며, 이후 7/14에서 다시 작동합니다. 실패한 spawn과
   쓰기만으로는 리셋되지 않고, `after_agent`도 턴 경계에서 리셋합니다.
 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
@@ -122,10 +124,6 @@ Django는 제품 코드와 릴리스 문서만 바꿨고, Sympy는 라이브러�
 
 ```bash
 SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
-
-SHERRY_EVAL_DELEGATE_ONLY=1 uv run --no-sync python evals/swebench/suite.py \
   --hard --persona coding --keep-instances \
   --instance-cache-dir /tmp/swebench-instance-cache
 ```

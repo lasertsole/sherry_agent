@@ -27,20 +27,20 @@ todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuati
 
 目录注册了八个来源（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。它们都走同一通道（`CURRENT_TURN`），且都带 `only_if_changed=True`——载荷与上次注入**逐字节相同**的来源**不会**重复注入，即使冷却已过。目录**每轮只解析一次，仅在首个模型调用**（最后一条消息是真实用户消息时）；已恢复的轮次若在其用户消息前已带提醒块，则跳过重复注入。
 
-| 来源（`source_id`） | 优先级 | 预算（字符） | 冷却 | 注入内容 |
+| 来源（`source_id`） | 优先级 | 预算（字符） | 冷却 | Transient | 注入内容 |
 |---|---|---|---|---|
-| `plan_mode_block` | 85 | 2 000 | 0 —— 每轮 | 计划模式状态/指令（agent 是否处于计划模式） |
-| `todo_block` | 80 | 1 500 | 0 —— 每轮 | agent 当前的 todo / 工作计划列表 |
-| `taskflow_status` | 75 | 2 000 | 5 轮 | TaskFlow 看板状态（被引导的看板） |
-| `boulder_status` | 70 | 1 000 | 5 轮 | Boulder / 活动工作指针 |
-| `continuity_context` | 65 | 1 000 | 0 —— 每轮 | 跨轮次的连续性上下文 |
-| `project_instructions` | 62 | 8 000 | 0 —— 每轮 | 项目的 `AGENTS.md`（回退 `CLAUDE.md`） |
-| `project_dir_notice` | 60 | 500 | 0 —— 每轮 | 工作目录通知 |
-| `knowledge_index` | 50 | 1 000 | 0 —— 每轮 | 知识索引 |
+| `plan_mode_block` | 85 | 2 000 | 0 —— 每轮 | No | 计划模式状态/指令（agent 是否处于计划模式） |
+| `todo_block` | 80 | 1 500 | 0 —— 每轮 | No | agent 当前的 todo / 工作计划列表 |
+| `taskflow_status` | 75 | 2 000 | 5 轮 | No | TaskFlow 看板状态（被引导的看板） |
+| `boulder_status` | 70 | 1 000 | 5 轮 | No | Boulder / 活动工作指针 |
+| `continuity_context` | 65 | 1 000 | 0 —— 每轮 | No | 跨轮次的连续性上下文 |
+| `project_instructions` | 62 | 8 000 | 0 —— 每轮 | Yes | 项目的 `AGENTS.md`（回退 `CLAUDE.md`） |
+| `project_dir_notice` | 60 | 500 | 0 —— 每轮 | No | 工作目录通知 |
+| `knowledge_index` | 50 | 1 000 | 0 —— 每轮 | No | 知识索引 |
 
 **如何理解频率。** `cooldown_turns = 0` 表示*每轮都符合条件*——只要内容自上次注入后发生了变化就重新注入；内容很少变化的来源（如 `project_instructions`）尽管每轮都符合条件，实际注入很少；而内容经常变化的来源（如 `todo_block`）多数轮次都会注入。`cooldown_turns = 5`（TaskFlow 看板、boulder）表示*至多每 5 轮一次*，且仅在内容也确有变化时；未变化的看板即便本可注入，也会静默 5 轮。节流状态只为**真正注入过**的来源推进，被抑制的来源不会"白白消耗"冷却。
 
-**跨轮持久化。** 注入的提醒是转录中的一条 `HumanMessage`；中间件每轮做 whole-list rewrite 时通过 `messages[:-1]` 原样重发，所以它会留在上下文窗口里直到压缩把它丢弃（压缩后 `reset_session` 清除变化检测 hash，下一轮从 live state 重新注入）。这意味着像 `project_instructions`（≤ 8 000 字符）这样的大体积 `only_if_changed` 来源，首次注入后每轮都占据消息列表——即使在它未被重新解析的轮次也是如此。
+**跨轮持久化。** 非 transient 的提醒是转录中的 `HumanMessage`；中间件每轮做 whole-list rewrite 时通过 `messages[:-1]` 原样重发，所以它会留在上下文窗口里直到压缩把它丢弃（压缩后 `reset_session` 清除变化检测 hash，下一轮从 live state 重新注入）。**Transient 来源**（`transient=True`）是例外：在它未被重新解析的轮次，rewrite 会从 `messages[:-1]` 中剥掉旧提醒，因此 `project_instructions` 只在内容变化的那一轮（以及压缩后的第一轮）出现。模型读一次即可，不会占据后续每一轮。
 
 **注入触发链。** 一个来源要在某一轮被注入，必须按顺序通过以下每一道关卡（`core.py` 的 `resolve_injections` + `dynamic.py` 的中间件门）：
 
@@ -53,4 +53,7 @@ todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuati
 
 **优先级即预算顺序。** `resolve_injections` 按优先级降序排列；在 `REMINDER_CATALOG["total_budget_chars"]`（30 000）上限下，优先级最低的来源会被整条丢弃（绝不截断半句），直到剩余集合放得下。投递时反转保留集合，使最高优先级的视图（计划模式，然后 todo 列表）落在块尾部、紧贴本轮用户消息——先实时状态，后请求。
 
+**工具结果增强**是独立的逐调用队列：工具返回后把提示追加到 `ToolMessage`（JSON 工具写入 `advisory` 字段，纯文本追加后缀）。它与本回合级提醒层正交；见 [工具结果增强](../tool-result-enrichment/README.zh.md)。
+
 **不属于本目录。** `TaskIntent` 转向、todo 续跑指令、workspace 通知各自保留独立注入路径，未在此注册；目录是叠加层，迁移分批进行。
+**DelegationPressureGate**（`agent/middlewares/delegation_pressure/core.py`）把自己的 warn / escalated 指令以 `<system-reminder source="delegation_pressure">` 形式注入，并使用标准提醒 metadata（`provenance="reminder_catalog"`），但走它自己的 `abefore_model` 路径，而不是目录的 `resolve_injections`。目录只在每轮首个模型调用（最后一条是真实用户消息时）解析；delegation pressure 在回合中段（7 / 14 次工具调用后、后续模型调用）触发，目录的 first-call-only 门会挡住它。它概念上是最高优先级：触发时目录是 no-op，指令被追加到消息列表尾部、最贴近生成点。工具始终可用；它只警告，不阻断。

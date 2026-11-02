@@ -6,7 +6,9 @@
 
 ---
 
-The enrichment middleware (`ToolResultEnrichmentMiddleware`) is the **outermost** `wrap_tool_call` layer — registered before `ToolGuardrails`, so it sees the final result after every other middleware has processed it. After the handler returns, it runs every registered injector, collects non-`None` outputs, and injects them into the `ToolMessage.content`.
+The enrichment middleware (`ToolResultEnrichmentMiddleware`, the result-appendix layer) is the **outermost** `wrap_tool_call` layer — registered before `ToolGuardrails`, so it sees the final result after every other middleware has processed it. After the handler returns, it runs every registered injector, collects non-`None` outputs, and injects them into the `ToolMessage.content`.
+
+**Ordering contract:** because it is the outermost layer, enrichment runs on the way OUT — only after `ContextEvictionMiddleware` has already evicted or sliced the raw result. The advisory is appended to the model-visible (possibly evicted) `ToolMessage`, never to the raw text; the eviction layer never sees or rewrites the appended hint, and an already-offloaded result is enriched in its preview form.
 
 ## JSON-Aware Dual-Mode Injection
 
@@ -27,19 +29,9 @@ The catalogue registers injectors via `ToolResultInjector` dataclass (`agent/mid
 
 | Injector | Priority | `only_if_changed` | Applies to | Injects |
 |---|---|---|---|---|
-| `delegation_hint` | 80 | `False` | All tools | A delegation-pressure advisory when `read_calls >= warn_after` (7) or `>= block_after` (14). Reads the gate's `_PressureState` directly. |
 | `hook_context` | 60 | `True` | All tools | `additionalContext` from `PostToolUse` hooks (`UserHooksMiddleware`), stashed by `_dispatch` and drained by the injector. |
 
 **Priority ordering**: injectors are sorted by ascending priority — low priority is appended first (top of the suffix block), high priority last (bottom — closest to the model's attention).
-
-## DelegationPressureGate Integration
-
-The gate's warn / escalated directives are delivered **solely** through the `delegation_hint` injector — no `abefore_model` HumanMessage injection. Once `read_calls` reaches the threshold, **every** subsequent tool result (read, write, all tools) carries the advisory:
-
-- `read_calls >= 7` (`warn_after`): `[Advisory: N read/exploration calls this turn. Consider delegating via sessions_spawn...]`
-- `read_calls >= 14` (`block_after`): `[Advisory: N read/exploration calls this turn — Delegate NOW via sessions_spawn...]`
-
-A successful `sessions_spawn` (accepted/pending) resets `read_calls` to 0 in `_post_tool` — the spawn result itself does not carry a hint (the injector reads 0 → below threshold → returns `None`). Subsequent tool results are hint-free until 7 more reads accumulate.
 
 ## UserHooksMiddleware Wiring
 

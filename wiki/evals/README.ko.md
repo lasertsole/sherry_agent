@@ -17,7 +17,7 @@
 - 선택한 슬라이스에서 **N of M**을 보고하고, 백분율을 리더보드 순위로 제시하지 않습니다.
 - **harness** 결과와 **모델** 결과를 구분합니다. provider 오류, 테스트 패치 미적용,
   타임아웃은 "수정 실패"가 아닙니다.
-- **arm**(중립 프롬프트, 코딩 템플릿, delegate-only, delegation-pressure), 모델,
+- **arm**(중립 프롬프트, 코딩 템플릿, delegation-pressure), 모델,
   git revision, 정확한 명령을 기록합니다.
 - 깨끗한 diff도 판정의 일부입니다. `tests/` 아래 변경이나 PASS_TO_PASS 파괴는 대상
   테스트가 통과해도 성공이 아닙니다.

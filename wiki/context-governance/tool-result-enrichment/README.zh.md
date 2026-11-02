@@ -6,7 +6,9 @@
 
 ---
 
-增强中间件（`ToolResultEnrichmentMiddleware`）是 `wrap_tool_call` 链的**最外层**——注册在 `ToolGuardrails` 之前，看到的是所有其他中间件处理后的最终结果。handler 返回后，它跑所有注册的注入器，收集非 `None` 输出，注入到 `ToolMessage.content`。
+增强中间件（`ToolResultEnrichmentMiddleware`，即 result-appendix 结果附录层）是 `wrap_tool_call` 链的**最外层**——注册在 `ToolGuardrails` 之前，看到的是所有其他中间件处理后的最终结果。handler 返回后，它跑所有注册的注入器，收集非 `None` 输出，注入到 `ToolMessage.content`。
+
+**顺序契约：**正因为处于最外层，增强在返回路径上最后执行——必须等 `ContextEvictionMiddleware` 已完成驱逐或切片之后才生效。提示追加到模型可见的（可能已被驱逐的）`ToolMessage` 上，绝不写进原始文本；驱逐层看不到、也不会改写追加的提示，已被驱逐的结果以其预览形态接收增强。
 
 ## JSON 感知双模式注入
 
@@ -27,19 +29,9 @@
 
 | 注入器 | 优先级 | `only_if_changed` | 适用工具 | 注入内容 |
 |---|---|---|---|---|
-| `delegation_hint` | 80 | `False` | 所有工具 | `read_calls >= warn_after`（7）或 `>= block_after`（14）时的委派压力提示。直接读 gate 的 `_PressureState`。 |
 | `hook_context` | 60 | `True` | 所有工具 | `PostToolUse` hook 的 `additionalContext`（`UserHooksMiddleware`），由 `_dispatch` stash、注入器 drain。 |
 
 **优先级排序**：按优先级升序排列——低优先级先追加（在文本上方），高优先级后追加（在文本底部，最靠近模型注意力）。
-
-## DelegationPressureGate 集成
-
-gate 的 warn / escalated 指令**只**通过 `delegation_hint` 注入器投递——不走 `abefore_model` HumanMessage 注入。`read_calls` 达到阈值后，**每个**后续工具结果（read、write、所有工具）都带提示：
-
-- `read_calls >= 7`（`warn_after`）：`[Advisory: N read/exploration calls this turn. Consider delegating via sessions_spawn...]`
-- `read_calls >= 14`（`block_after`）：`[Advisory: N read/exploration calls this turn — Delegate NOW via sessions_spawn...]`
-
-成功的 `sessions_spawn`（accepted/pending）在 `_post_tool` 中重置 `read_calls` 为 0——spawn 结果本身不带提示（注入器读到 0 → 低于阈值 → 返回 `None`）。后续工具结果也不带提示，直到再积累 7 次 read。
 
 ## UserHooksMiddleware 接线
 

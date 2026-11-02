@@ -117,6 +117,11 @@ def register_default_sources() -> None:
             budget_chars=8000,
             priority=62,
             only_if_changed=True,
+            # 8 k of semi-stable AGENTS.md content: inject it on the turn it
+            # changed (directory switch / first turn / post-compaction), then
+            # strip it from the message list on later turns. The model reads it
+            # once; keeping it resident would waste every subsequent context.
+            transient=True,
         )
     )
     register(

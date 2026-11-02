@@ -27,20 +27,20 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 カタログは 8 個のソースを登録します（`agent/middlewares/reminder_catalog/sources.py::register_default_sources`）。すべて同じチャネル（`CURRENT_TURN`）に乗り、すべて `only_if_changed=True` を持ちます——前回注入と**バイト同一**のペイロードは、クールダウンが過ぎていても再注入**されません**。カタログは**1 ターンにつき 1 回のみ、最初のモデル呼び出しで**解決されます（最後のメッセージが本物のユーザーメッセージのとき）。再開ターンがユーザーメッセージより前に既にブロックを持っていれば再注入をスキップします。
 
-| ソース（`source_id`） | 優先度 | 予算（文字） | クールダウン | 注入内容 |
+| ソース（`source_id`） | 優先度 | 予算（文字） | クールダウン | Transient | 注入内容 |
 |---|---|---|---|---|
-| `plan_mode_block` | 85 | 2 000 | 0 —— 毎ターン | プランモード状態 / 指示（エージェントがプランモード中か） |
-| `todo_block` | 80 | 1 500 | 0 —— 毎ターン | エージェントの現在の todo / 作業プランリスト |
-| `taskflow_status` | 75 | 2 000 | 5 ターン | TaskFlow ボード状態（ステア済みボード） |
-| `boulder_status` | 70 | 1 000 | 5 ターン | Boulder / アクティブ作業ポインタ |
-| `continuity_context` | 65 | 1 000 | 0 —— 毎ターン | ターン間の継続コンテキスト |
-| `project_instructions` | 62 | 8 000 | 0 —— 毎ターン | プロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`） |
-| `project_dir_notice` | 60 | 500 | 0 —— 毎ターン | 作業ディレクトリ通知 |
-| `knowledge_index` | 50 | 1 000 | 0 —— 毎ターン | 知識索引 |
+| `plan_mode_block` | 85 | 2 000 | 0 —— 毎ターン | No | プランモード状態 / 指示（エージェントがプランモード中か） |
+| `todo_block` | 80 | 1 500 | 0 —— 毎ターン | No | エージェントの現在の todo / 作業プランリスト |
+| `taskflow_status` | 75 | 2 000 | 5 ターン | No | TaskFlow ボード状態（ステア済みボード） |
+| `boulder_status` | 70 | 1 000 | 5 ターン | No | Boulder / アクティブ作業ポインタ |
+| `continuity_context` | 65 | 1 000 | 0 —— 毎ターン | No | ターン間の継続コンテキスト |
+| `project_instructions` | 62 | 8 000 | 0 —— 毎ターン | Yes | プロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`） |
+| `project_dir_notice` | 60 | 500 | 0 —— 毎ターン | No | 作業ディレクトリ通知 |
+| `knowledge_index` | 50 | 1 000 | 0 —— 毎ターン | No | 知識索引 |
 
 **頻度の読み方。** `cooldown_turns = 0` は*毎ターン対象*——前回注入から内容が変化すれば再注入されます; 内容がめったに変わらないソース（`project_instructions` など）は毎ターン対象でも注入はまれで、頻繁に変わるソース（`todo_block` など）はほとんどのターンで注入されます。`cooldown_turns = 5`（TaskFlow ボード、boulder）は*最大でも 5 ターンに 1 回*、かつ内容も変化したときのみ。変化していないボードは対象であっても 5 ターン沈黙します。スロットル管理状態は実際に注入されたソースだけ進み、抑制されたソースはクールダウンを「無駄に消費」しません。
 
-**ターン間の持続。** 注入されたリマインダーはトランスクリプト内の `HumanMessage` であり、ミドルウェアの whole-list rewrite が後続ターンで `messages[:-1]` 経由で再送するため、圧縮で破棄されるまでコンテキストウィンドウに留まります（圧縮後の `reset_session` が変化検出ハッシュをクリアし、次ターンに live state から再注入します）。つまり `project_instructions`（≤ 8 000 文字）のような大容量の `only_if_changed` ソースは、最初の注入後、再解決されないターンでも毎ターンメッセージリストを占有します。
+**ターン間の持続。** 非 transient のリマインダーはトランスクリプト内の `HumanMessage` であり、ミドルウェアの whole-list rewrite が後続ターンで `messages[:-1]` 経由で再送するため、圧縮で破棄されるまでコンテキストウィンドウに留まります（圧縮後の `reset_session` が変化検出ハッシュをクリアし、次ターンに live state から再注入します）。**Transient ソース**（`transient=True`）は例外です: 再解決されないターンでは、rewrite が `messages[:-1]` から古いリマインダーを剥がすため、`project_instructions` は内容が変化したターン（および圧縮後の最初のターン）にだけ現れます。モデルは一度読めば十分で、以後の全ターンを占有しません。
 
 **注入ゲートチェーン。** ソースが特定のターンに注入されるには、以下のチェックを順番にすべて通過する必要があります（`core.py` の `resolve_injections` + `dynamic.py` のミドルウェアゲート）:
 
@@ -53,4 +53,7 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 **優先度が予算順序。** `resolve_injections` は優先度降順で並べます; `REMINDER_CATALOG["total_budget_chars"]`（30 000）上限の下、最低優先度のソースを丸ごと落とし（途中で切ることはしない）、残りが収まるまで繰り返します。配信は保持セットを反転させ、最高優先度のビュー（プランモード、次に todo リスト）をブロック末尾、ターンのユーザーメッセージの直前に置きます——ライブ状態が先、リクエストが後。
 
+**ツール結果エンリッチメント**は別の呼び出し単位のキューです: ツール返却後に `ToolMessage` へアドバイスを追加します(JSON ツールは `advisory` フィールド、プレーンテキストは末尾の接尾辞)。このターン単位のリマインダー層とは直交します — [ツール結果エンリッチメント](../tool-result-enrichment/README.ja.md) を参照。
+
 **本カタログ外。** `TaskIntent` ステアリング、todo 継続指令、ワークスペース通知はそれぞれ独自の注入経路を保ち、ここには登録されません; カタログはオーバーレイで、移行は段階的です。
+**DelegationPressureGate** (`agent/middlewares/delegation_pressure/core.py`) は warn / escalated 指令を `<system-reminder source="delegation_pressure">` として、標準の提醒 metadata(`provenance="reminder_catalog"`) 付きで注入しますが、カタログの `resolve_injections` ではなく独自の `abefore_model` 経路を使います。カタログはターンの最初のモデル呼び出し(最後が本物のユーザーメッセージのとき)にしか解決しませんが、delegation pressure はターン途中(7 / 14 回のツール呼び出し後、続くモデル呼び出し)に発火するため、first-call-only ゲートでは止まってしまいます。概念的には最高優先度です: 発火時カタログは no-op で、指令はメッセージリスト末尾、生成点に最も近い位置に追加されます。ツールは利用可能なままで、警告するだけでブロックしません。

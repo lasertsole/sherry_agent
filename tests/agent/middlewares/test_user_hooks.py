@@ -20,9 +20,26 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 from agent.middlewares.user_hooks import UserHooksMiddleware
 from agent.middlewares.user_hooks.core import hook_matcher_matches
+from agent.middlewares.tool_result_enrichment import (
+    ToolResultEnrichmentMiddleware,
+    clear_hook_context,
+    clear_session as clear_enrichment_session,
+)
 from config.features import USER_HOOKS
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def _clear_enrichment_state():
+    for session_id in ("sess-1", "sess-hook"):
+        clear_hook_context(session_id)
+        clear_enrichment_session(session_id)
+    yield
+    for session_id in ("sess-1", "sess-hook"):
+        clear_hook_context(session_id)
+        clear_enrichment_session(session_id)
+
 
 #: A hook script that echoes the payload it received back on stdout (and then
 #: whatever the test appends), so a dispatch can be asserted from the outside.
@@ -237,6 +254,23 @@ class TestDispatch:
         result = await middleware.awrap_tool_call(_request("write_file"), _ok_handler)
 
         assert result.content == "done"
+
+    @pytest.mark.asyncio
+    async def test_additional_context_reaches_the_enrichment_middleware(self):
+        hook = (
+            f"{sys.executable} -c \"import json;print(json.dumps({{'additionalContext': 'hi'}}))\""
+        )
+        hooks = _middleware(PostToolUse=[{"command": hook}])
+        enrichment = ToolResultEnrichmentMiddleware()
+
+        async def chain(request: Any) -> ToolMessage:
+            return await hooks.awrap_tool_call(request, _ok_handler)
+
+        result = await enrichment.awrap_tool_call(
+            _request("write_file", session="sess-hook"), chain
+        )
+
+        assert result.content == "done\n\n[Hook context]: hi"
 
     @pytest.mark.asyncio
     async def test_a_failing_hook_never_breaks_the_turn(self):

@@ -6,7 +6,9 @@
 
 ---
 
-エンリッチメントミドルウェア(`ToolResultEnrichmentMiddleware`)は `wrap_tool_call` チェーンの**最外層**です — `ToolGuardrails` の前に登録され、他のすべてのミドルウェアが処理した最終結果を見ます。handler 返却後、登録されたすべてのインジェクターを実行し、`None` 以外の出力を収集して `ToolMessage.content` に注入します。
+エンリッチメントミドルウェア(`ToolResultEnrichmentMiddleware`、result-appendix 層)は `wrap_tool_call` チェーンの**最外層**です — `ToolGuardrails` の前に登録され、他のすべてのミドルウェアが処理した最終結果を見ます。handler 返却後、登録されたすべてのインジェクターを実行し、`None` 以外の出力を収集して `ToolMessage.content` に注入します。
+
+**順序契約:** 最外層であるため、エンリッチメントは戻り経路で最後に実行されます — `ContextEvictionMiddleware` がすでに生の結果を退避またはスライスした後にのみ有効になります。アドバイスはモデルに見える(退避済みかもしれない)`ToolMessage` に追加され、生テキストには決して書き込まれません。退避層は追加されたヒントを見ることも書き換えることもなく、退避済みの結果はそのプレビュー形態のまま強化されます。
 
 ## JSON 認識デュアルモード注入
 
@@ -27,19 +29,9 @@
 
 | インジェクター | 優先度 | `only_if_changed` | 対象 | 注入内容 |
 |---|---|---|---|---|
-| `delegation_hint` | 80 | `False` | すべてのツール | `read_calls >= warn_after`(7) または `>= block_after`(14) の時の委任圧力アドバイス。ゲートの `_PressureState` を直接読みます。 |
 | `hook_context` | 60 | `True` | すべてのツール | `PostToolUse` フックの `additionalContext`(`UserHooksMiddleware`), `_dispatch` が stash しインジェクターが drain します。 |
 
 **優先度ソート**: 優先度昇順で並べ替え — 低優先度が先に追加(テキスト上部)、高優先度が最後に追加(テキスト下部 — モデルの注意力に最も近い)。
-
-## DelegationPressureGate 統合
-
-ゲートの warn / escalated 指令は**唯一** `delegation_hint` インジェクターを通じて配信されます — `abefore_model` HumanMessage 注入はありません。`read_calls` が閾値に達すると、**すべての**後続ツール結果(read, write, すべてのツール)がアドバイスを持ちます:
-
-- `read_calls >= 7`(`warn_after`): `[Advisory: N read/exploration calls this turn. Consider delegating via sessions_spawn...]`
-- `read_calls >= 14`(`block_after`): `[Advisory: N read/exploration calls this turn — Delegate NOW via sessions_spawn...]`
-
-成功した `sessions_spawn`(accepted/pending)は `_post_tool` で `read_calls` を 0 にリセット — spawn 結果自体はヒントを持ちません(インジェクターが 0 を読む → 閾値未満 → `None` 返却)。後続ツール結果も 7 回さらに read が蓄積するまでヒントなしです。
 
 ## UserHooksMiddleware 接続
 

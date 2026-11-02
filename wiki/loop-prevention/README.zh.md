@@ -62,7 +62,7 @@
 
 ### 回合级：`DelegationPressureGate`（仅主 Agent）
 
-安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **8** 次注入一次去委派的指令；第 **16** 次后，本回合剩余时间内所有读写工具被阻断（浏览器调试工具既不计次也不阻断）。每次被阻断的调用都返回错误并指引 `sessions_spawn`。成功 accepted/pending 的 spawn 会解除阻断并重新计数，主 Agent 可以检查/验证，之后再次达到 8/16 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
+安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **14** 次注入语气更强的 escalated 系统提醒。两个阶段工具都保持可用——门只建议，不阻断（浏览器调试工具不计次）。成功 accepted/pending 的 spawn 会清零计数，主 Agent 可以检查/验证，之后再次达到 7/14 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
 
 ### 回合级：`MaxTokensBoostMiddleware`，工具调用截断恢复
 

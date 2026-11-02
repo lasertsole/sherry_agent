@@ -28,6 +28,7 @@ EXPECTED_ORDER = [
     "MultimodalProcessor",
     "IterationBudget",
     "TokenBudget",
+    "ToolResultEnrichmentMiddleware",
     "ToolGuardrails",
     "ToolResourceLockMiddleware",
     "UserHooksMiddleware",
@@ -119,7 +120,6 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
     monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
-    monkeypatch.setenv("SHERRY_EVAL_DELEGATE_ONLY", "0")
     monkeypatch.setenv("SHERRY_EVAL_DELEGATION_PRESSURE", "0")
     monkeypatch.setitem(DELEGATION_PRESSURE, "enabled", True)
     monkeypatch.setattr(agent_core, "main_llm_max_tokens", 65_536)
@@ -128,8 +128,8 @@ async def test_built_agent_middleware_order_is_pinned(monkeypatch: pytest.Monkey
     monkeypatch.setattr(wrapper_registry, "main_llm_max_tokens", 65_536)
 
     for name in EXPECTED_ORDER:
-        if name == "DelegationPressureGate":
-            continue  # the real gate is appended by the builder
+        if name in {"DelegationPressureGate", "ToolResultEnrichmentMiddleware"}:
+            continue  # the real middleware is constructed by the builder
         if name == "system_prompt_injection":
             monkeypatch.setattr(agent_core, name, _NamedMiddleware(name))
         else:

@@ -83,31 +83,14 @@ _SWEBENCH_AGENTS_APPENDIX = """
   issue tracker / upstream history for an existing fix before inventing one.
 """
 
-_DELEGATE_ONLY_APPENDIX = """
-
-## Delegate-only arm (this evaluation)
-
-- Your own read/search/browser/terminal/python/write tools are DISABLED for the
-  main agent. You must delegate.
-- Spawn an executor with
-  `sessions_spawn(functional_role="executor", ...)` and give it the full task,
-  the repository path, and the instruction to implement the fix and run the
-  relevant tests.
-- Do not stop after spawning. Poll `subagents_list` / `sessions_messages`
-  until the child is done, then use its report (changed files, test command and
-  output, remaining failures). You cannot inspect or edit the code yourself.
-- If the child failed, spawn a follow-up executor or a reviewer; do not try to
-  read or patch the repository yourself.
-"""
-
 
 def _append_agents_appendix(workspace: Path) -> None:
     """Append the swebench arm's environment notes to the seeded rules file."""
     rules = workspace / "AGENTS.md"
-    appendix = _SWEBENCH_AGENTS_APPENDIX
-    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
-        appendix += _DELEGATE_ONLY_APPENDIX
-    rules.write_text(rules.read_text(encoding="utf-8") + appendix, encoding="utf-8")
+    rules.write_text(
+        rules.read_text(encoding="utf-8") + _SWEBENCH_AGENTS_APPENDIX,
+        encoding="utf-8",
+    )
 
 
 def _probe_web() -> dict[str, Any]:
@@ -609,7 +592,6 @@ def _write_run_meta(results_dir: Path, *, run_id: str, hard: bool) -> None:
         "argv": sys.argv[1:],
         "git_head": head,
         "hard": hard,
-        "delegate_only": os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1",
         "delegation_pressure": os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1",
         "model": harness._model_info(),
         "sandbox_backend": _sandbox_backend(),
@@ -650,7 +632,7 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
 
 
 async def _wait_for_descendants(session_id: str, timeout_s: float) -> dict[str, Any]:
-    """Wait for spawned children to settle before teardown (delegate-only).
+    """Wait for spawned children to settle before teardown (delegation pressure).
 
     ``_drive`` returns when the MAIN turn ends; a delegated child is detached
     and the teardown cascade would otherwise kill it before it writes. Poll the
@@ -730,10 +712,7 @@ async def _run_instance(
                 "timeout": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        if (
-            os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1"
-            or os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1"
-        ):
+        if os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1":
             # The main turn may end right after spawning; let the detached child
             # finish (and write its diff) before the teardown cascade kills it.
             child_wait = await _wait_for_descendants(session_id, timeout_s)

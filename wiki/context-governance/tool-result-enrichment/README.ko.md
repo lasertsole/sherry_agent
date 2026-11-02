@@ -6,7 +6,9 @@
 
 ---
 
-보강 미들웨어(`ToolResultEnrichmentMiddleware`)는 `wrap_tool_call` 체인의 **최외곽**입니다 — `ToolGuardrails` 이전에 등록되어, 다른 모든 미들웨어가 처리한 최종 결과를 봅니다. handler가 반환한 후, 등록된 모든 인젝터를 실행하여 `None`이 아닌 출력을 수집하고 `ToolMessage.content`에 주입합니다.
+보강 미들웨어(`ToolResultEnrichmentMiddleware`, result-appendix 계층)는 `wrap_tool_call` 체인의 **최외곽**입니다 — `ToolGuardrails` 이전에 등록되어, 다른 모든 미들웨어가 처리한 최종 결과를 봅니다. handler가 반환한 후, 등록된 모든 인젝터를 실행하여 `None`이 아닌 출력을 수집하고 `ToolMessage.content`에 주입합니다.
+
+**순서 계약:** 최외곽 계층이므로 보강은 반환 경로에서 마지막에 실행됩니다 — `ContextEvictionMiddleware`가 이미 원본 결과를 축출하거나 슬라이스한 뒤에만 적용됩니다. 조언은 모델이 보는(축출되었을 수 있는) `ToolMessage`에 추가되며 원본 텍스트에는 절대 쓰지 않습니다. 축출 계층은 추가된 힌트를 보거나 다시 쓰지 않으며, 이미 축출된 결과는 그 미리보기 형태로 보강됩니다.
 
 ## JSON 인식 듀얼 모드 주입
 
@@ -27,19 +29,9 @@
 
 | 인젝터 | 우선순위 | `only_if_changed` | 적용 대상 | 주입 내용 |
 |---|---|---|---|---|
-| `delegation_hint` | 80 | `False` | 모든 도구 | `read_calls >= warn_after`(7) 또는 `>= block_after`(14)일 때 위임 압력 조언. 게이트의 `_PressureState`를 직접 읽습니다. |
 | `hook_context` | 60 | `True` | 모든 도구 | `PostToolUse` 훅의 `additionalContext`(`UserHooksMiddleware`), `_dispatch`가 stash하고 인젝터가 drain합니다. |
 
 **우선순위 정렬**: 우선순위 오름차순으로 정렬 — 낮은 우선순위가 먼저 추가(텍스트 상단), 높은 우선순위가 마지막에 추가(텍스트 하단 — 모델 주의력에 가장 가까움).
-
-## DelegationPressureGate 통합
-
-게이트의 warn / escalated 지시는 **오직** `delegation_hint` 인젝터를 통해 전달됩니다 — `abefore_model` HumanMessage 주입은 없습니다. `read_calls`가 임계값에 도달하면, **모든** 후속 도구 결과(read, write, 모든 도구)가 조언을 담습니다:
-
-- `read_calls >= 7`(`warn_after`): `[Advisory: N read/exploration calls this turn. Consider delegating via sessions_spawn...]`
-- `read_calls >= 14`(`block_after`): `[Advisory: N read/exploration calls this turn — Delegate NOW via sessions_spawn...]`
-
-성공적인 `sessions_spawn`(accepted/pending)은 `_post_tool`에서 `read_calls`를 0으로 리셋 — spawn 결과 자체는 힌트를 담지 않습니다(인젝터가 0을 읽음 → 임계값 미만 → `None` 반환). 후속 도구 결과도 7회 더 read가 누적될 때까지 힌트가 없습니다.
 
 ## UserHooksMiddleware 연결
 

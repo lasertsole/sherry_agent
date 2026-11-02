@@ -27,20 +27,20 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 
 카탈로그는 8개 소스를 등록합니다(`agent/middlewares/reminder_catalog/sources.py::register_default_sources`). 모두 같은 채널(`CURRENT_TURN`)을 타며, 모두 `only_if_changed=True`를 가집니다——이전 주입과 **바이트 동일**한 페이로드는 쿨다운이 지났어도 재주입**되지 않습니다**. 카탈로그는**턴당 1회만, 첫 모델 호출에서** 해결됩니다(마지막 메시지가 진짜 사용자 메시지일 때). 재개 턴이 사용자 메시지보다 앞에 이미 블록을 가지고 있으면 재주입을 건너뜁니다.
 
-| 소스(`source_id`) | 우선순위 | 예산(문자) | 쿨다운 | 주입 내용 |
+| 소스(`source_id`) | 우선순위 | 예산(문자) | 쿨다운 | Transient | 주입 내용 |
 |---|---|---|---|---|
-| `plan_mode_block` | 85 | 2 000 | 0 —— 매 턴 | 플랜 모드 상태 / 지시(에이전트가 플랜 모드 중인지) |
-| `todo_block` | 80 | 1 500 | 0 —— 매 턴 | 에이전트의 현재 todo / 작업 플랜 목록 |
-| `taskflow_status` | 75 | 2 000 | 5 턴 | TaskFlow 보드 상태(스티어된 보드) |
-| `boulder_status` | 70 | 1 000 | 5 턴 | Boulder / 활성 작업 포인터 |
-| `continuity_context` | 65 | 1 000 | 0 —— 매 턴 | 턴 간 연속성 컨텍스트 |
-| `project_instructions` | 62 | 8 000 | 0 —— 매 턴 | 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`) |
-| `project_dir_notice` | 60 | 500 | 0 —— 매 턴 | 작업 디렉터리 알림 |
-| `knowledge_index` | 50 | 1 000 | 0 —— 매 턴 | 지식 인덱스 |
+| `plan_mode_block` | 85 | 2 000 | 0 —— 매 턴 | No | 플랜 모드 상태 / 지시(에이전트가 플랜 모드 중인지) |
+| `todo_block` | 80 | 1 500 | 0 —— 매 턴 | No | 에이전트의 현재 todo / 작업 플랜 목록 |
+| `taskflow_status` | 75 | 2 000 | 5 턴 | No | TaskFlow 보드 상태(스티어된 보드) |
+| `boulder_status` | 70 | 1 000 | 5 턴 | No | Boulder / 활성 작업 포인터 |
+| `continuity_context` | 65 | 1 000 | 0 —— 매 턴 | No | 턴 간 연속성 컨텍스트 |
+| `project_instructions` | 62 | 8 000 | 0 —— 매 턴 | Yes | 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`) |
+| `project_dir_notice` | 60 | 500 | 0 —— 매 턴 | No | 작업 디렉터리 알림 |
+| `knowledge_index` | 50 | 1 000 | 0 —— 매 턴 | No | 지식 인덱스 |
 
 **빈도 읽는 법.** `cooldown_turns = 0`은*매 턴 대상*——이전 주입 이후 내용이 변하면 재주입됩니다; 내용이 거의 변하지 않는 소스(`project_instructions` 등)는 매 턴 대상이어도 주입은 드물고, 자주 변하는 소스(`todo_block` 등)는 대부분의 턴에 주입됩니다. `cooldown_turns = 5`(TaskFlow 보드, boulder)는*최대 5 턴에 1회*, 그리고 내용도 변했을 때만. 변하지 않은 보드는 대상이어도 5 턴 동안 조용합니다. 스로틀 관리 상태는 실제로 주입된 소스만 진행되며, 억제된 소스는 쿨다운을「헛으로 소비」하지 않습니다.
 
-**턴 간 지속.** 주입된 리마인더는 트랜스크립트 내의 `HumanMessage`이며, 미들웨어의 whole-list rewrite가 후속 턴에서 `messages[:-1]`을 통해 재전송하므로, 압축으로 폐기될 때까지 컨텍스트 윈도우에 남습니다(압축 후 `reset_session`이 변화 감지 해시를 지우고, 다음 턴에 live state에서 재주입합니다). 즉 `project_instructions`(≤ 8 000 문자) 같은 대용량 `only_if_changed` 소스는 첫 주입 후, 재해결되지 않는 턴에서도 매 턴 메시지 목록을 점유합니다.
+**턴 간 지속.** non-transient 리마인더는 트랜스크립트 내의 `HumanMessage`이며, 미들웨어의 whole-list rewrite가 후속 턴에서 `messages[:-1]`을 통해 재전송하므로, 압축으로 폐기될 때까지 컨텍스트 윈도우에 남습니다(압축 후 `reset_session`이 변화 감지 해시를 지우고, 다음 턴에 live state에서 재주입합니다). **Transient 소스**(`transient=True`)는 예외입니다: 재해결되지 않는 턴에는 rewrite가 `messages[:-1]`에서 오래된 리마인더를 제거하므로 `project_instructions`는 내용이 바뀐 턴(그리고 압축 후 첫 턴)에만 나타납니다. 모델이 한 번 읽으면 충분하며 이후 모든 턴을 점유하지 않습니다.
 
 **주입 게이트 체인.** 소스가 특정 턴에 주입되려면 다음 검사를 순서대로 모두 통과해야 합니다(`core.py`의 `resolve_injections` + `dynamic.py`의 미들웨어 게이트):
 
@@ -53,4 +53,7 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 
 **우선순위가 예산 순서.** `resolve_injections`는 우선순위 내림차순으로 정렬합니다; `REMINDER_CATALOG["total_budget_chars"]`(30 000) 상한 아래에서 최저 우선순위 소스를 통째로 버리고(중간을 자르지 않음), 나머지가 들어갈 때까지 반복합니다. 전달은 유지 세트를 뒤집어, 최고 우선순위 뷰(플랜 모드, 그리고 todo 목록)를 블록 꼬리, 턴의 사용자 메시지 바로 앞에 둡니다 — 라이브 상태가 먼저, 요청이 나중.
 
+**도구 결과 보강**은 별도의 호출 단위 큐입니다: 도구 반환 후 `ToolMessage`에 조언을 추가합니다(JSON 도구는 `advisory` 필드, 일반 텍스트는 끝의 접미사). 이 턴 단위 리마인더 계층과 직교합니다 — [도구 결과 보강](../tool-result-enrichment/README.ko.md)을 참고하세요.
+
 **본 카탈로그 외.** `TaskIntent` 스티어링, todo 계속 지시문, 워크스페이스 알림은 각각 고유 주입 경로를 유지하며 여기에 등록되지 않습니다; 카탈로그는 오버레이이고 마이그레이션은 단계적입니다.
+**DelegationPressureGate** (`agent/middlewares/delegation_pressure/core.py`)는 warn / escalated 지시를 `<system-reminder source="delegation_pressure">` 형식과 표준 알림 metadata(`provenance="reminder_catalog"`)로 주입하지만, 카탈로그의 `resolve_injections`가 아니라 자체 `abefore_model` 경로를 사용합니다. 카탈로그는 턴의 첫 모델 호출(마지막 메시지가 실제 사용자 메시지일 때)에만 해석하지만, delegation pressure는 턴 중간(7 / 14회 도구 호출 이후, 이어지는 모델 호출)에 발생하므로 first-call-only 게이트가 막습니다. 개념적으로 최고 우선순위입니다: 발생 시 카탈로그는 no-op이고, 지시는 메시지 목록 끝, 생성 지점에 가장 가까운 위치에 추가됩니다. 도구는 계속 사용 가능하며 경고만 하고 차단하지 않습니다.

@@ -27,20 +27,20 @@ The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `Tod
 
 The catalogue registers eight sources (`agent/middlewares/reminder_catalog/sources.py::register_default_sources`). All ride the same channel (`CURRENT_TURN`) and all carry `only_if_changed=True` — a source whose payload is byte-identical to its last injection is **not** re-injected, even when its cooldown has elapsed. The catalogue resolves **once per turn, on the first model call only** (when the last message is a genuine user message); a resumed turn that already carries the block before its user message skips re-injection.
 
-| Source (`source_id`) | Priority | Budget (chars) | Cooldown | Injects |
+| Source (`source_id`) | Priority | Budget (chars) | Cooldown | Transient | Injects |
 |---|---|---|---|---|
-| `plan_mode_block` | 85 | 2 000 | 0 — every turn | Plan-mode status / directive (whether the agent is in plan mode) |
-| `todo_block` | 80 | 1 500 | 0 — every turn | The agent's current todo / working plan list |
-| `taskflow_status` | 75 | 2 000 | 5 turns | TaskFlow board state (steered board) |
-| `boulder_status` | 70 | 1 000 | 5 turns | Boulder / active-work pointer |
-| `continuity_context` | 65 | 1 000 | 0 — every turn | Carry-over continuity context across turns |
-| `project_instructions` | 62 | 8 000 | 0 — every turn | The project's `AGENTS.md` (fallback `CLAUDE.md`) |
-| `project_dir_notice` | 60 | 500 | 0 — every turn | Working directory notice |
-| `knowledge_index` | 50 | 1 000 | 0 — every turn | Knowledge index |
+| `plan_mode_block` | 85 | 2 000 | 0 — every turn | No | Plan-mode status / directive (whether the agent is in plan mode) |
+| `todo_block` | 80 | 1 500 | 0 — every turn | No | The agent's current todo / working plan list |
+| `taskflow_status` | 75 | 2 000 | 5 turns | No | TaskFlow board state (steered board) |
+| `boulder_status` | 70 | 1 000 | 5 turns | No | Boulder / active-work pointer |
+| `continuity_context` | 65 | 1 000 | 0 — every turn | No | Carry-over continuity context across turns |
+| `project_instructions` | 62 | 8 000 | 0 — every turn | Yes | The project's `AGENTS.md` (fallback `CLAUDE.md`) |
+| `project_dir_notice` | 60 | 500 | 0 — every turn | No | Working directory notice |
+| `knowledge_index` | 50 | 1 000 | 0 — every turn | No | Knowledge index |
 
 **How to read the frequency.** `cooldown_turns = 0` means *eligible every turn* — the source re-injects whenever its content changed since the last injection; a source whose content rarely changes (like `project_instructions`) injects rarely despite being eligible every turn, while one that changes often (like `todo_block`) injects most turns. `cooldown_turns = 5` (TaskFlow board, boulder) means *at most once every 5 turns*, and only then if the content also moved; a board that did not change is silent for 5 turns even if it would otherwise be eligible. The throttle bookkeeping advances only for sources actually injected, so a suppressed source does not "consume" its cooldown.
 
-**Persistence across turns.** An injected reminder is a `HumanMessage` in the transcript; the middleware's whole-list rewrite re-emits it through `messages[:-1]` on subsequent turns, so it stays in the context window until a compaction discards it (the post-compaction `reset_session` clears the change-detection hash, so the next turn re-injects from live state). This means a large `only_if_changed` source like `project_instructions` (≤ 8 000 chars) occupies the message list every turn after its first injection — even on turns it is not re-resolved.
+**Persistence across turns.** Non-transient reminders are `HumanMessage`s in the transcript; the middleware's whole-list rewrite re-emits them through `messages[:-1]` on subsequent turns, so they stay in the context window until a compaction discards them (the post-compaction `reset_session` clears the change-detection hash, so the next turn re-injects from live state). **Transient sources** (`transient=True`) are the exception: the rewrite strips their old reminder from `messages[:-1]` on every turn they are not re-resolved, so `project_instructions` appears only on the turn its content changed (and the first turn after compaction). The model reads it once; it does not occupy every later turn.
 
 **Injection gate chain.** A source must pass every check below, in order, to be injected on a given turn (`resolve_injections` in `core.py` + the middleware gate in `dynamic.py`):
 
@@ -53,4 +53,7 @@ The catalogue registers eight sources (`agent/middlewares/reminder_catalog/sourc
 
 **Priority is the budget order.** `resolve_injections` sorts by descending priority; under the `REMINDER_CATALOG["total_budget_chars"]` (30 000) ceiling the lowest-priority source is dropped whole (never truncated mid-thought) until the remaining set fits. Delivery reverses the kept set so the highest-priority view (plan mode, then the todo list) lands at the tail of the block, immediately before the turn's user message — live state first, then the request.
 
+**Tool-result enrichment** is a separate, per-call queue: it appends advisories to a `ToolMessage` after the tool returns (JSON tools get an `advisory` field, plain text gets a suffix). It is orthogonal to this turn-level reminder layer; see [Tool-Result Enrichment](../tool-result-enrichment/README.md).
+
 **Not part of this catalogue.** `TaskIntent` steering, the todo-continuation directive, and workspace notices keep their own injection paths and are not registered here; the catalogue is an overlay, migration is batched.
+**DelegationPressureGate** (`agent/middlewares/delegation_pressure/core.py`) injects its warn / escalated directives as `<system-reminder source="delegation_pressure">` messages with the standard reminder metadata contract (`provenance="reminder_catalog"`), through its OWN `abefore_model` path — not the catalogue's `resolve_injections`. The catalogue resolves only on the turn's first model call (when the last message is a genuine user message); delegation pressure triggers mid-turn (after 7 / 14 tool calls, on subsequent model calls), so the first-call-only gate would block it. It is conceptually priority 100: on the mid-turn calls where it fires the catalogue is a no-op, and the directive is appended at the tail of the message list, closest to the generation point. Tools remain available; it warns, it never blocks.
