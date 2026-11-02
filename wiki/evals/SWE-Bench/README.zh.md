@@ -90,8 +90,9 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 第 **16** 次读后，本回合剩余时间阻断所有读写工具。每次被阻断的调用都返回错误，
   并指引 `sessions_spawn`（只读研究用 researcher，实现用 executor）。
 - 浏览器调试工具既不计次也不阻断。
-- 计数器只在 `after_agent` 清零；accepted spawn 不解除本回合，写也不清零。
-  这正是阻止首版软门“spawn 后继续 patch”的关键。
+- accepted/pending 的 spawn 成功会解除阻断并重新计数，主 Agent 可以检查/验证，
+  之后再次达到 8/16 时门会重新生效；失败 spawn 和写本身不清零，
+  `after_agent` 也会在回合边界清零。
 
 它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝
 `:subagent:`/`:swarm:` 会话。

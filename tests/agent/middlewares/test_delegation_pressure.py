@@ -50,12 +50,23 @@ def _request(name: str, **args: Any) -> SimpleNamespace:
     )
 
 
-async def _run(gate: DelegationPressureGate, name: str) -> tuple[Any, list[str]]:
+async def _run(
+    gate: DelegationPressureGate,
+    name: str,
+    *,
+    content: str = "ok",
+    status: str = "success",
+) -> tuple[Any, list[str]]:
     calls: list[str] = []
 
     async def handler(request):
         calls.append(str(request.tool_call["name"]))
-        return ToolMessage(content="ok", tool_call_id=str(request.tool_call["id"]), name=name)
+        return ToolMessage(
+            content=content,
+            tool_call_id=str(request.tool_call["id"]),
+            name=name,
+            status=status,
+        )
 
     out = await gate.awrap_tool_call(_request(name), handler)
     return out, calls
@@ -110,21 +121,83 @@ async def test_warn_eight_then_block_reads_and_writes_until_after_agent(
     assert calls == ["browser"]
     assert (await _run(gate, "browser_evaluate"))[0].status != "error"
 
-    # A spawn is allowed but does not unlock the turn.
-    spawn, calls = await _run(gate, "sessions_spawn")
+    # A successful spawn releases the block and restarts the count.
+    spawn, calls = await _run(
+        gate,
+        "sessions_spawn",
+        content="Subagent spawned: status=accepted, run_id=run-1",
+    )
     assert spawn.status != "error"
     assert calls == ["sessions_spawn"]
-    still_blocked, calls = await _run(gate, "read_file")
-    assert still_blocked.status == "error"
-    assert calls == []
+    assert _state(gate).read_calls == 0
+    assert _state(gate).blocked is False
 
-    # after_agent is the only reset.
+    allowed, calls = await _run(gate, "read_file")
+    assert allowed.status != "error"
+    assert calls == ["read_file"]
+    assert _state(gate).read_calls == 1
+
+    # The gate re-arms after another block_after reads in the same turn.
+    for _ in range(3):
+        await _run(gate, "read_file")
+    assert _state(gate).blocked is True
+
+    # after_agent still resets at the turn boundary.
     gate._after_agent_impl(state_obj)
     assert _state(gate).read_calls == 0
     assert _state(gate).blocked is False
     next_turn, calls = await _run(gate, "read_file")
     assert next_turn.status != "error"
     assert calls == ["read_file"]
+
+
+@pytest.mark.asyncio
+async def test_failed_spawn_does_not_unlock_or_reset(gate: DelegationPressureGate):
+    for _ in range(4):
+        await _run(gate, "read_file")
+    assert _state(gate).blocked is True
+    assert _state(gate).read_calls == 4
+
+    failed, calls = await _run(
+        gate,
+        "sessions_spawn",
+        content="Error: spawn rejected",
+        status="error",
+    )
+    assert calls == ["sessions_spawn"]
+    assert _state(gate).blocked is True
+    assert _state(gate).read_calls == 4
+
+    still_blocked, calls = await _run(gate, "read_file")
+    assert failed.status == "error"
+    assert still_blocked.status == "error"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_successful_spawn_before_block_resets_and_rearms_warning(
+    gate: DelegationPressureGate,
+):
+    state_obj = {"session_id": _SESSION}
+    await _run(gate, "read_file")
+    await _run(gate, "read_file")
+    warn = await gate.abefore_model(state_obj)
+    assert warn is not None
+    assert _state(gate).warned is True
+
+    await _run(
+        gate,
+        "sessions_spawn",
+        content="Subagent spawned: status=pending, run_id=run-2",
+    )
+    assert _state(gate).read_calls == 0
+    assert _state(gate).warned is False
+
+    await _run(gate, "read_file")
+    await _run(gate, "read_file")
+    warn_again = await gate.abefore_model(state_obj)
+    assert warn_again is not None
+    assert "DELEGATION PRESSURE" in warn_again["messages"][0].content
 
 
 @pytest.mark.asyncio

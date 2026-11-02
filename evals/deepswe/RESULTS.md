@@ -73,3 +73,23 @@ JSON 读取入口；不是 harness 错误也不是 P2P 回归。
   “超时未采集”，不是主 agent 真的没有调用工具。
 - 失败补丁和逐测试失败信息在：
   `evals/results/deepswe-local/20261101_233217/`。
+
+---
+
+## 20261102_083002 — 方案 C（无 WebSocket busy steering）验证
+
+- 命令：`uv run --no-sync python evals/deepswe/suite.py --local --skip-self-check --keep-workdirs cattrs-partial-structuring-recovery --timeout 1200`
+- 目的：验证无 WebSocket 时，子代理完成消息会进入 `SteeringQueue`，并由
+  `SubagentCompletionDrainMiddleware` 在下一模型调用前注入。
+- 结果：**未超时**，537.5s；0/69 F2P，7/7 P2P；P2P 无回归，agent 未解决任务。
+- 日志证据：08:34、08:36 等出现
+  `completion drain: injecting 1 subagent completion message(s)`；主 transcript 中
+  能看到 `[subagent:... completed]` 的 carrier。
+- 仍然失败的原因：
+  1. 第一个实现子代理以 DeepSeek `reasoning_content` 400 结束；
+  2. 压力门在 16 次读后阻断读写，主 agent 看到完成结果却无法修改
+     `src/cattrs/partial.py`，只能反复派只读状态检查子代理；
+  3. 补丁只有 `src/cattrs/partial.py`，缺少 `__init__.py` 导出和
+     `converters.py` 的 `refine` 修复。
+- 结论：方案 C 解决了“子代理结果不可见”，但压力门的恢复窗口和子代理 thinking
+  400 仍是独立阻塞项。

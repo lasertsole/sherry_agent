@@ -108,9 +108,10 @@ reset, and the main agent then made roughly 70 `patch_file` attempts on
   blocked call returns an error naming `sessions_spawn` (researcher for
   read-only work, executor for implementation).
 - Browser debugging tools are excluded from both counting and blocking.
-- The counter resets only in `after_agent`; an accepted spawn does not unlock
-  the turn, and a write does not reset the count. This is what stops the
-  post-spawn patch loop that the first soft gate allowed.
+- An accepted/pending successful spawn releases the block and restarts the
+  count, so the main agent can inspect/verify and the gate re-arms on another
+  8/16 reads. A failed spawn and writes alone do not reset it; `after_agent`
+  also resets at the turn boundary.
 
 It is installed on the main agent only; the child middleware builder never adds
 it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.

@@ -1,10 +1,24 @@
 # DeepSWE 本地测试失败原因分析
 
 - 建档日期：2026-11-02
-- 状态：**原因已定位，修复待做**
+- 状态：**方案 C 已落地（2026-11-02）；压力门与子代理 400 待做**
 - 运行：`20261101_233217`，DeepSWE 默认切片，`--local --timeout 1200`
 - 原始记录：[evals/deepswe/RESULTS.md](../evals/deepswe/RESULTS.md)
 - 原始报告（gitignored）：`evals/results/deepswe-local/20261101_233217/`
+
+## 进度（2026-11-02）
+
+方案 C 已实现：没有 WebSocket 但主 session busy 时，完成消息进入
+`SteeringQueue`；`SubagentCompletionDrainMiddleware` 在下一模型调用前注入。
+`cattrs` 本地复跑日志已出现 `completion drain: injecting 1 subagent completion
+message(s)`，主 agent 的 transcript 也确实看到了子代理结果。
+
+但同一次复跑仍以 0/69 F2P 结束（537.5s，无超时）：第一个实现子代理以
+DeepSeek `reasoning_content` 400 失败；之后主 agent 被压力门锁在“不能读写、
+只能 spawn”的状态，只能反复派只读状态检查，无法修改 `src/cattrs/partial.py`。
+所以 C 解决的是“结果不可见”，**没有解决压力门让主 agent 无法修复的问题**。
+下一步优先处理 P1 的压力门恢复窗口和 P1 的子代理 thinking 400。
+
 
 ## 0. 结论
 
@@ -149,17 +163,16 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
 
 ### P0 — 让完成消息真正到达 agent
 
-- [ ] 在 eval harness（`evals/coding_capability/suite.py::_drive` 或
-  `evals/deepswe/agent_worker.py`）启动一个与生产等价的完成消息消费者：
-  - 方案 A：绑定一个假 WebSocket，让 `_route_completion_injection` 的 third path
-    走 auto-turn/steering；
-  - 方案 B：消费 `EventBus`，把 `subagent_result` 转成主 session 的
-    `HumanMessage`/internal carrier，推入当前 turn 的 state；
-  - 方案 C：让 `sessions_yield` 返回完成消息本身，而不是只返回一句“delivered”。
-- [ ] 添加回归测试：主 agent 在 `sessions_yield` 后必须能在 transcript 中看到
-  子代理结果；没有 WebSocket 的 eval 路径也必须可见。
+- [x] **方案 C 已落地（2026-11-02）**：`_route_completion_injection` 不再要求
+  WebSocket 才入队；主 session busy 时统一写 `SteeringQueue`，由
+  `SubagentCompletionDrainMiddleware` 在下一模型调用前注入；只有 idle 且无 WS
+  时才跳过 auto-turn。本地 `cattrs` 复跑已看到
+  `completion drain: injecting 1 subagent completion message(s)`。
+- [x] 添加回归测试：`test_no_ws_busy_routes_to_steering` +
+  `test_busy_parent_without_websocket_reaches_steering`；现有 WS busy / idle /
+  consumed / error 路径仍通过。
 - [ ] 验证生产路径没有被测试 harness 的改动绕过：third path 的 WS 检查、auto-turn
-  deferral、steering queue 仍按原语义工作。
+  deferral、steering queue 仍按原语义工作（C 改动已保留 idle+WS→auto-turn）。
 
 ### P0 — 修复 `sessions_messages` 的兜底读取
 
@@ -180,7 +193,9 @@ Error code: 400 - The `reasoning_content` in the thinking mode must be passed ba
   `sessions_messages` 兜底；当前 directive 只说去 spawn。
 - [ ] 增加“完成已交付/结果已消费”的可观测状态；主 agent 不应在结果已返回后继续
   spawn。
-- [ ] 保留“spawn 不解除本回合、写不清零”的约束，不要回到首版软门的 patch 循环。
+- [x] 成功 accepted/pending 的 `sessions_spawn` 解除阻断并清零重新计数；
+  失败 spawn 和写本身不清零。后续需观察这是否重新引入 patch 循环，必要时加
+  spawn 次数/无进展上限。
 
 ### P1 — DeepSeek thinking 重放
 

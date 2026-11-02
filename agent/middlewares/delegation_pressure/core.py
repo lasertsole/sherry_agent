@@ -1,10 +1,12 @@
 """Main-agent delegation-pressure gate (8-read warn, 16-read read/write block).
 
-The counter is cumulative for ONE turn and resets only in ``after_agent``.
-At ``warn_after`` the main agent receives one directive to delegate; at
-``block_after`` every read/write tool call is refused for the rest of the turn
-with an error pointing at ``sessions_spawn``. Spawning does NOT unlock the
-turn and writes do NOT reset the counter.
+The counter is cumulative for ONE turn. At ``warn_after`` the main agent
+receives one directive to delegate; at ``block_after`` every read/write tool
+call is refused for the rest of the turn with an error pointing at
+``sessions_spawn``. A successful spawn (accepted or pending) releases the block
+and resets the counter so the main agent can inspect/verify and a later 8/16
+cycle re-arms; a failed spawn does not reset. Writes alone do not reset the
+counter. ``after_agent`` also resets it at the turn boundary.
 
 Browser debugging tools are excluded from both counting and blocking: they are
 neither reads nor writes under this pressure model. The middleware is installed
@@ -63,7 +65,7 @@ def _active(session_id: str) -> bool:
 
 
 class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentMiddleware):
-    """Warn at 8 reads, then block read/write tools for the rest of the turn."""
+    """Warn at 8 reads, block at 16, release and recount after an accepted spawn."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -149,6 +151,33 @@ class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentM
     def _excluded(self, name: str) -> bool:
         return name in self._excluded_tools or name.startswith("browser_")
 
+    @staticmethod
+    def _spawn_accepted(result: Any) -> bool:
+        """True only for a positively accepted/pending ``sessions_spawn`` result.
+
+        A failed spawn must not release the pressure: the model still has no
+        delegated work and should correct the spawn contract instead of
+        returning to its blocked read/write loop.
+        """
+        status = str(getattr(result, "status", "") or "").lower()
+        if status in {"error", "failed"}:
+            return False
+        content = getattr(result, "content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                str(part.get("text", "")) if isinstance(part, dict) else str(part)
+                for part in content
+            )
+        text = str(content or "").lower()
+        return any(
+            marker in text
+            for marker in (
+                "subagent spawned",
+                "status=accepted",
+                "status=pending",
+            )
+        )
+
     # ── tool hooks ──────────────────────────────────────────────────────────
     def _pre_tool(self, request: ToolCallRequest) -> ToolMessage | None:
         session_id = str((request.state or {}).get("session_id") or "")
@@ -172,9 +201,20 @@ class DelegationPressureGate(AfterAgentHooksMixin, BeforeAgentHooksMixin, AgentM
         if not _active(session_id):
             return
         name = str(request.tool_call.get("name") or "")
+        state = self._get(session_id)
+        if name == "sessions_spawn" and self._spawn_accepted(result):
+            # A successful hand-off is the gate's purpose. Release the block
+            # and restart the count so the main agent can inspect/verify; a
+            # later 8/16-read pressure cycle will arm again. A failed spawn is
+            # not a hand-off and deliberately falls through without a reset.
+            self._save(session_id, _PressureState())
+            logger.info(
+                "DelegationPressureGate: accepted spawn reset the pressure count session={}",
+                session_id,
+            )
+            return
         if self._excluded(name) or name not in self._pressure_tools:
             return
-        state = self._get(session_id)
         if state.blocked:
             return
         if state.read_calls >= DELEGATION_PRESSURE["block_after"]:

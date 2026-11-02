@@ -99,9 +99,9 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
   `sessions_spawn`(읽기 전용은 researcher, 구현은 executor)을 가리키는 오류를
   반환합니다.
 - 브라우저 디버깅 도구는 집계와 차단 모두 제외됩니다.
-- 카운터는 `after_agent`에서만 리셋됩니다. accepted spawn은 턴을 풀지 않고 쓰기도
-  리셋하지 않습니다. 이것이 첫 소프트 게이트가 허용한 "spawn 후 patch 루프"를
-  막습니다.
+- accepted/pending spawn이 성공하면 차단을 해제하고 카운트를 리셋해 메인
+  에이전트가 검사/검증할 수 있으며, 이후 8/16에서 다시 작동합니다. 실패한 spawn과
+  쓰기만으로는 리셋되지 않고, `after_agent`도 턴 경계에서 리셋합니다.
 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
 `:subagent:`/`:swarm:` 세션을 거부합니다.

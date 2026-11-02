@@ -265,9 +265,12 @@ User message → Robyn WS → agent.core.built_agent() graph
   `_build_child_middlewares`, and `_active` also rejects any
   `:subagent:`/`:swarm:` session): 8 read calls trigger one delegation
   directive, 16 block every read/write tool for the rest of the turn; browser
-  debugging tools are excluded from counting and blocking, `after_agent` is the
-  only reset, and an accepted spawn does not unlock the turn. `DelegateOnlyGate`
-  remains eval-only for `evals-swe-*` sessions.
+  debugging tools are excluded from counting and blocking. A successful
+  accepted/pending `sessions_spawn` releases the block and restarts the count,
+  so the main agent can inspect/verify and the gate re-arms on another 8/16
+  reads; a failed spawn does not reset, writes alone do not reset, and
+  `after_agent` also resets at the turn boundary. `DelegateOnlyGate` remains
+  eval-only for `evals-swe-*` sessions.
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
