@@ -757,6 +757,7 @@ class MemoryTool(BaseTool):
     metadata: dict = {
         "idempotent": True,
         "nudge": True,
+        "nudge_memory": True,
         "scope": "main_only",
         "side_effect_scope": "session",
     }

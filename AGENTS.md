@@ -77,7 +77,8 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
-  │    → ToolGuardrails → ToolResourceLock → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → UserHooks → ContextEviction(P0-2/P2-4)
+  │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is RULES-ONLY: four-language rules — EN/ZH/JA/KO
   │     keywords plus question/chat patterns, then a length fallback over 100 chars.
@@ -261,13 +262,16 @@ User message → Robyn WS → agent.core.built_agent() graph
      set and the way out, and `functional_role` rides on the tool for a
      same-role fan-out
 
-  Two eval-only middleware gates sit outside this product chain, appended only
-  for `evals-swe-*` sessions: `DelegateOnlyGate` (hard: removes the main
-  agent's read/search/write tools) and `DelegationPressureGate` (soft: 8 read
-  calls trigger one delegation directive, 16 block every read/write tool for
-  the rest of the turn; browser debugging tools are excluded from counting and
-  blocking, `after_agent` is the only reset, and an accepted spawn does not
-  unlock the turn). Both are disabled in product sessions.
+  `DelegationPressureGate` is a MAIN-agent-only middleware (never added to
+  `_build_child_middlewares`, and `_active` also rejects any
+  `:subagent:`/`:swarm:` session): at 7 read calls it injects a
+  `<system-reminder source="delegation_pressure">` delegation warning through
+  its own mid-turn `abefore_model` path; at 14 it injects the escalated
+  `<system-reminder>` with stronger language. Tools remain available at both
+  levels — the gate advises, never blocks. Browser debugging tools are excluded
+  from counting. A successful accepted/pending `sessions_spawn` resets the
+  counter; a failed spawn does not reset, writes alone do not reset, and
+  `after_agent` also resets at the turn boundary.
 
   completion gates (all always-on, all fail-open):
     · Tier 1 schema gate — a step's response_schema is validated on
@@ -743,15 +747,18 @@ part of this directory.
 `<root>/AGENTS.md` and falls back to `CLAUDE.md`. It is
 registered as the `project_instructions` reminder source
 (`agent/middlewares/reminder_catalog/sources.py`, priority 62 between continuity
-65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`) —
-never the cached system prompt, so a large file cannot invalidate the provider
-prefix cache and a directory switch automatically re-reads the new project's
-file. Only an EXPLICIT root contributes these files: a session binding or a
-process default (`SHERRY_PROJECT_DIR` / `sherry.jsonc`) counts, while the
-`project_dir_source == "default"` fallback to the sherry checkout injects
-nothing — the checkout's own AGENTS.md is the agent's developer guide, never the
-user's project rules. No nested traversal (git root → cwd) yet, no file creation,
-no `.gitignore` edits.
+65 and the directory notice 60, `budget_chars` 8 000, `only_if_changed=True`,
+`transient=True`) — never the cached system prompt, so a large file cannot
+invalidate the provider prefix cache and a directory switch automatically
+re-reads the new project's file. The reminder is visible only on the turn its
+content changed (directory switch / first turn / post-compaction); the next
+turn's whole-list rewrite strips the old reminder from `messages[:-1]`, so it
+does not occupy every later context window. Only an EXPLICIT root contributes
+these files: a session binding or a process default (`SHERRY_PROJECT_DIR` /
+`sherry.jsonc`) counts, while the `project_dir_source == "default"` fallback to
+the sherry checkout injects nothing — the checkout's own AGENTS.md is the
+agent's developer guide, never the user's project rules. No nested traversal
+(git root → cwd) yet, no file creation, no `.gitignore` edits.
 
 **FACTS.md is ONE global, system-level file.** All three memory files live in
 `workspace/memory/` (`MEMORY.md`, `USER.md`, `FACTS.md`) and are loaded by the
@@ -925,23 +932,21 @@ away (last session closed, binding cleared).
 
 ## Packaged Desktop App (Tauri) (`client/src-tauri/`)
 
-A release is a UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
+A release is ONE UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
 build` (client/) bundles the static SPA, the Rust shell AND the CPU backend tree
-(`bundle.resources = ["sherry-backend/"]`, unpacked into the resource dir by the
-desktop workflow before the build) — first launch runs with zero downloads.
-`packaging/build_backend.py` still produces the per-platform backend archive as
-a GitHub release asset, now the DOWNLOAD FALLBACK (an older installer, a
-stripped install, a resource mismatch), and `packaging/build_cuda_pack.py`
-produces the optional Linux-only CUDA pack asset the user opts into from the
-model settings tab. `.github/workflows/desktop-build.yml` builds all of it on
+(`bundle.resources = ["sherry-backend/"]`, built by `packaging/build_backend.py`
+on the same runner immediately before the bundle) — first launch runs with zero
+downloads. There is no separate backend archive and no first-run backend
+download fallback. `packaging/build_cuda_pack.py` still produces the optional
+Linux-only CUDA pack asset the user opts into from the model settings tab.
+`.github/workflows/desktop-build.yml` builds the unified installer on
 ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a
-`v*` tag): `build-tauri` needs `build-backend` (and `build-cuda-pack` runs
-beside them), so the installer carries its own backend.
+`v*` tag); each matrix leg builds its own backend inside the Tauri job.
 
 Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
-`tests/`, `evals/`, `wiki/` and `wiki/` trees (plus frontend `*.test.*` /
-`*.spec.*` files) in BOTH halves, and `build_backend.py` runs the backend half
-itself before the tree is compressed. `.dockerignore` applies the same boundary
+`tests/`, `evals/` and `wiki/` trees (plus frontend `*.test.*` / `*.spec.*`
+files) in BOTH halves, and `build_backend.py` runs the backend half itself after
+freezing. `.dockerignore` applies the same boundary
 to the server image. The wiki/wiki trees are also outside the pre-commit hooks
 and the code CI jobs (docs parity/link gates run in their own job); see
 `.github/workflows/ci.yml`.
@@ -951,29 +956,20 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   output needs a Nitro server and is NOT it).
 - **Backend build**: `packaging/build_backend.py` runs PyInstaller **onedir**
   into `client/src-tauri/sherry-backend/` (per-OS; PyInstaller cannot
-  cross-compile), writes the `VERSION` marker (the `tauri.conf.json` version —
-  what `package_info()` reports and the value the shell compares) and the
-  archive is built with the tree's CONTENTS at its root. The entry
+  cross-compile) and writes the `VERSION` marker (the `tauri.conf.json` version —
+  what `package_info()` reports and the value the shell compares). The entry
   (`packaging/backend_entry.py`) imports `server.__main__` STATICALLY and calls
   its `main()` — a `runpy.run_module` is invisible to the freezer, which is how
-  the first build shipped without the `server` package at all. The Linux job
-  swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB saved
-  — the difference between fitting the asset cap and not); macOS/Windows wheels
-  are already CPU-only.
-- **Which backend runs**: the shell prefers the BUNDLED tree —
-  `resource_dir()/sherry-backend/sherry-backend` present _and_ its `VERSION`
-  equal to this build's → spawn it straight away (`"Using the bundled Python
-  backend (no download)"`). Otherwise `services/backend_downloader.rs` owns the
-  fallback: download `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest
-  release (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background
-  thread, unpack into a staging dir with the system `tar`, swap it in, then
-  spawn it. Tauri events (`backend-download-started` / `-progress` /
-  `-complete` / `-error`, plus the `backend_download_status` pull and the
-  `retry_backend_download` command; `use-backend-download.ts` +
-  `BackendDownloadOverlay.vue` render it, and the SPA reloads once the backend
-  is up). The whole path is gated on `cfg!(dev)` being FALSE: a dev build
-  (`pnpm tauri dev`, a plain `cargo build`) neither ships nor downloads a
-  frozen backend, and spawns `python -m server` from the checkout when
+  the first build shipped without the `server` package at all. The Linux matrix
+  leg swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB
+  saved — the difference between fitting the release asset cap and not);
+  macOS/Windows wheels are already CPU-only.
+- **Which backend runs**: only the BUNDLED tree. `services/backend_bundle.rs`
+  requires `resource_dir()/sherry-backend/sherry-backend` AND a `VERSION` equal
+  to this build's before the shell spawns it; a missing or mismatched tree is
+  logged as a broken install and there is no runtime download UI or fallback.
+  A dev build (`pnpm tauri dev`, a plain `cargo build`) neither ships nor starts
+  a frozen backend, and spawns `python -m server` from the checkout when
   `EMA_AUTO_START_BACKEND` asks for it.
 - **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
   `nvidia-smi` / the kernel-module record and gates the model settings tab's
@@ -1005,8 +1001,8 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   `.env`, `.models` / `.network` (gitignored; seeded from their templates),
   `sherry.jsonc`, and the WRITABLE half of the skills tree
   (`USER_SKILLS_DIR`, i.e. `auto/` + `plugins/`, with the loader scanning both
-  it and the shipped `skills/builtin`). The downloaded backend tree lives there
-  too — the installed app is read-only and is replaced by updates. Unset (a
+  it and the shipped `skills/builtin`). The backend's writable data lives there;
+  the bundled code tree stays read-only and is replaced by updates. Unset (a
   checkout, a server, CI) every
   path stays exactly where it was, so nothing changes for existing installs; a
   first run seeds `.env` (from the tracked file) / `.models` / `.network` (from
@@ -1475,6 +1471,21 @@ false` = under `skills/plugins/`); each tool entry also carries the
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
   nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 /
   情感陪伴 pin `nudge: false`.
+- **Session-end memory salvage**: MAIN-session deletion (`purge_session` →
+  `nudges.salvage_session_memory`) snapshots the post-compaction checkpoint
+  transcript, the session model, the system prompt and the tool face BEFORE any
+  destructive step, computes the normal compression cutoff READ-ONLY (no
+  summary/pruning/offload/state write), then schedules a detached two-wave
+  memory review and lets the delete proceed immediately. Wave 1 reviews the
+  prefix a compression would have discarded with the captured model/prompt/tool
+  face (cache-warm); after it writes MEMORY.md/USER.md/FACTS.md, wave 2 reloads
+  memory, rebuilds the system prompt non-persistently, and reviews the preserved
+  tail with a `memory`-only face. Both waves run under the NUDGE lane with
+  per-wave derived session keys and no checkpointer; `_NudgeLimitTool` admits
+  only `memory` (`metadata["nudge_memory"]`). The snapshot has a 5 s budget and
+  every step is fail-open; side chats/subagent children do not run this path, and
+  a process exit may abandon an unfinished background wave. Config:
+  `NUDGE["session_end_review_enabled"]` / `session_end_review_timeout_s`.
 - **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
   — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
   `agent_switch._RENAMED_MIDDLEWARES` — `TaskIntentMiddleware`,
@@ -2091,7 +2102,7 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
 | `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
 | `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
+| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
 | `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).

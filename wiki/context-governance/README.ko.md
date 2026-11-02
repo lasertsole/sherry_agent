@@ -22,6 +22,8 @@
   - [🧵 체인 요약 필터링](eviction/README.ko.md#-체인-요약-필터링)
 - [Message 행의 턴 식별자](#-message-행의-턴-식별자)
 - [상호작용과 순서 보장](#-상호작용과-순서-보장)
+- [안정적인 시스템 프롬프트와 리마인더 층](system-reminder/README.ko.md)
+- [도구 결과 보강 큐](tool-result-enrichment/README.ko.md)
 - [설정](#%EF%B8%8F-설정)
 - [테스트 맵](#-테스트-맵)
 - [정리 의미론과 한계](#-정리-의미론과-한계)
@@ -125,25 +127,6 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | **프리픽스 캐싱** | P1-9는 id로 메시지를 제자리 갱신하고(내용 동일, id 동일) 다른 것은 다시 쓰지 않으므로, 모델 가시 프리픽스는 프리뷰 뷰가 실제로 다를 때만 무효화된다; 도구 축출은 메시지가 state에 들어가기 전에 일어나므로 모델이 보는 것은 처음부터 프리뷰판뿐이다 |
 | **도구 페어링 / 새니타이저** | 모든 대체가 `id`와 `tool_call_id`를 보존한다; `sanitize_tool_use_result_pairing`이 축출 때문에 수리할 일은 결코 없고, 스텁은 계속 유효한 페어링 입력이다 |
 | **서브에이전트 세션** | 자식 파이프라인은 `ContextEvictionMiddleware`와 `MessagePersistenceMiddleware`를 **등록하지 않는다**: 자식 트랜스크립트는 완전한 도구 결과를 유지하고 checkpoint에만 존재한다 |
-
-## 🧱 안정적인 시스템 프롬프트와 리마인더 층
-
-시스템 프롬프트에는 **안정적** 내용만 들어갑니다: persona 파일, memory 블록, 스킬 인덱스. 모든 **라이브** 뷰 — 플랜 모드, 작업 디렉터리, 프로젝트 지시(`AGENTS.md`, 폴백 `CLAUDE.md`), todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스 — 는 대신 각 턴의 첫 모델 호출에 `<system-reminder source="…">` HumanMessage로 주입됩니다(`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 카탈로그). 이유는 두 가지입니다: 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것(persona 포함)의 prefix 캐시를 무효화합니다; 캐시 미스에서만 재구성되는 프롬프트는 다음 재구성까지 **오래된** todo 목록을 보여줍니다.
-
-동결된 메모리 스냅샷에는 의도적인 예외가 하나 있습니다. 세션 모델 전환은 새로운 provider 캐시 네임스페이스로 들어가고, 사고 모드 전환은 동일한 prefix에서 `cache_read`가 0이 되는 것이 실측되었습니다——어느 쪽이든 캐시는 이미 차갑습니다. `ThinkingControlMiddleware`의 `before_model` 훅은 해당 턴의 `(thinking key, profile fingerprint, mapping fingerprint)`을 마지막 적용 값과 비교하고(그래프가 매 턴 재구성되므로 프로세스 수준에서 보관), 변경이 있으면 `system_prompt_injection` 전에 `MemoryStore` 스냅샷을 다시 로드하고 두 레지스터에서 `StateKey.SYSTEM_PROMPT`를 삭제합니다. 전환된 턴의 첫 모델 호출은 세션 중간에 기록된 `FACTS.md` / `MEMORY.md` / `USER.md`를 봅니다. 첫 턴, 변경 없음, 재로드 실패는 캐시를 유지하며, 전송이 없으면 발화하지 않습니다.
-
-FACTS.md는 전역이므로 디렉터리 전환이 메모리용 캐시 프롬프트를 무효화하지 않습니다. 같은 턴의 `project_instructions` 리마인더는 새 프로젝트의 `AGENTS.md`(폴백 `CLAUDE.md`)를 다시 읽고, `only_if_changed`로 내용이 달라질 때만 재주입합니다.
-
-| 관심사 | 규칙 |
-|---|---|
-| 무엇을 주입하나 | builder가 텍스트를 돌려준 소스마다 리마인더 1건: 예산 순서는 높음→낮음, 전달 시 낮음→높음으로 뒤집어 최고 우선순위를 꼬리에 둡니다; `origin=<소스 id>`, `provenance="reminder_catalog"`, `internal=True` |
-| 예산 | 호출마다 모든 소스 합계 `REMINDER_CATALOG["total_budget_chars"]`(30 000) — 초과 시 최저 우선순위를 통째로 버리고 문장 중간을 자르지 않습니다 |
-| 스로틀 | 소스는 `cooldown_turns`(TaskFlow 보드 / boulder: 5)와 `only_if_changed`(동일 내용은 반복하지 않음)를 선언할 수 있습니다; 상태는 실제로 주입된 소스만 진행됩니다 |
-| 압축 후 | 압축이 카탈로그를 리셋하므로 다음 턴에 모든 소스가 live state에서 재주입됩니다 — 리마인더 층은 기록의 생존에 의존하지 않습니다 |
-| 이스케이프 | 페이로드 안에 중첩된 `<system-reminder>` 태그(todo 텍스트는 사용자 영향 가능)는 이스케이프됩니다. 그렇지 않으면 태그를 일찍 닫아 이 층을 사칭할 수 있습니다 |
-| 턴 내 위치 | 턴의 첫 모델 호출에만 — TaskIntent와 같은 "마지막 메시지가 진짜 사용자 메시지" 판정. 인간 메시지를 훑는 스캐너(`split_into_turns`, HITL의 운영자 판정, 요약 라벨)는 `pub.func.message.system_reminder`를 통해 리마인더를 건너뜁니다 |
-
-todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(`TodoContinuationEnforcer`에서 개명; 감독하는 "플랜" = todos + TaskFlow flows)는 `todowrite`를 호출하지 않은 턴 수를 세고, `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 넛지를 덧붙입니다 — 스냅샷 기반 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다).
 
 ## 🧩 Provider 프롬프트 캐시 (Anthropic)
 

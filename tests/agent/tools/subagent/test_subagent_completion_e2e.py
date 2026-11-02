@@ -529,6 +529,41 @@ async def test_failed_run_notifies_parent(e2e_env):
     assert await sq.drain(sid) == []  # exactly once
 
 
+async def test_busy_parent_without_websocket_reaches_steering(e2e_env):
+    """The in-process eval/headless case: no WS, but a live turn must still steer."""
+    sid = "e2e-headless-busy"
+    assert relation_register.get_websocket_by_session_id(sid) is None
+    run = register_run(
+        child_session_key="agent:main:subagent:e2e-headless-1",
+        requester_session_key=f"agent:main:session:{sid}",
+        task="headless child",
+        label="worker-headless",
+    )
+
+    try:
+        state_register_mem.set_state(sid, "answering", True)
+        await asyncio.wait_for(
+            complete_subagent_run(
+                run.run_id,
+                RunOutcome(status=RunOutcomeStatus.OK),
+                "headless result",
+            ),
+            timeout=_TIMEOUT,
+        )
+
+        items = await sq.drain(sid)
+        assert len(items) == 1
+        item = items[0]
+        assert item.consumed is True
+        _assert_completion_carrier(item.message, "worker-headless", "completed", run.run_id)
+        assert item.message.content.endswith("headless result")
+        row = await e2e_env.store.get(run.run_id)
+        assert row is not None and row.status == PendingInjectionStatus.CONSUMED
+        assert await sq.drain(sid) == []  # exactly once
+    finally:
+        state_register_mem.clear_session(sid)
+
+
 # ---------------------------------------------------------------------------
 # 4. Crash recovery: no loss, no duplicates
 # ---------------------------------------------------------------------------

@@ -2,13 +2,16 @@
 
 Supports dual-path delivery: sub→sub internal injection vs sub→user completion
 message. Classifies errors as transient/permanent and applies appropriate retry
-schedules including compaction-retry for nested sub-agent scenarios. adds a third, additive path: when a run announces to a main-agent WS
-session, the completion is also routed into the requester's turn pipeline
-(busy → steering queue, idle → auto-turn trigger). Channel
-sessions and non-session requesters keep the notification-bell status quo;
-consumed injections are never re-enqueued; failed runs follow the same
-routing. The third path is best-effort and log-only — it never awaits a
-turn/model call and never alters the dual-path result.
+schedules including compaction-retry for nested sub-agent scenarios. Adds a
+third, additive path: when a run announces to a main-agent session, the
+completion is also routed into the requester's turn pipeline. A busy session
+(including a headless/in-process turn without a WebSocket) goes to the
+persistent steering queue, where ``SubagentCompletionDrainMiddleware`` injects
+it before the next model call; an idle WebSocket session triggers auto-turn.
+An idle no-WebSocket session keeps the notification-bell status quo. Consumed
+injections are never re-enqueued; failed runs follow the same routing. The
+third path is best-effort and log-only — it never awaits a turn/model call and
+never alters the dual-path result.
 """
 
 import asyncio
@@ -217,10 +220,13 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     """Route one completion injection into the requester's turn pipeline (the third path).
 
     Guards (any miss short-circuits to the status quo): main-session key prefix;
-    live websocket binding (WS-only); run not already consumed (one query +
-    one if). Routing: busy → steering queue; idle → auto-turn trigger.
-    A not-triggered outcome or any exception falls back to the steering queue
-    (never drop). Never awaits a turn/model call.
+    run not already consumed (one query + one if). A bound WebSocket is required
+    only for the IDLE auto-turn path: a busy session without a WebSocket (for
+    example the in-process eval harness) still queues the completion in the
+    persistent steering queue, which ``SubagentCompletionDrainMiddleware``
+    drains before the next model call in that same turn. An idle session with no
+    WebSocket keeps the old notification-bell status quo (no auto-turn).
+    Never awaits a turn/model call.
     """
     raw = (run.requester_session_key or "").strip()
     if not raw:
@@ -230,8 +236,7 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     bare = normalize_session_key(raw)
     if not bare or bare == raw:
         return  # child/swarm/unknown keys carry no main-session prefix — status quo
-    if _get_bound_websocket(bare) is None:
-        return  # no websocket (channel session or unbound) — notification-bell status quo
+    websocket = _get_bound_websocket(bare)
 
     from ..registry.pending_injections import PendingInjectionStatus
 
@@ -256,6 +261,13 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
         state = _detect_session_state(bare)
         if state.busy:
             await _enqueue_steering(bare, injection)
+            return
+        if websocket is None:
+            # No WS and idle: do not auto-start a turn without a turn pipeline.
+            logger.debug(
+                "Third path skipped for run {}: no websocket and session is idle",
+                run.run_id,
+            )
             return
         result = await _trigger_auto_turn(bare, injection)
         if getattr(result, "outcome", None) == _AUTO_TURN_TRIGGERED:

@@ -5,7 +5,7 @@
 //! (`sherry-cuda-pack-<platform>-<arch>.tar.gz`, Linux only) the user opts into
 //! from the model settings tab — see [`super::cuda_detect`] for the gate.
 //!
-//! Mirrors [`super::backend_downloader`] on purpose (same staging + swap, same
+//! Mirrors the shared [`super::download`] primitives (same staging + swap, same
 //! VERSION gate, same event shape) with TWO additions:
 //!
 //! * **HTTP Range resume (C2)** — a multi-GiB download on a home connection
@@ -32,9 +32,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use ts_rs::TS;
 
-use crate::services::backend_downloader::{
-    versions_match, DownloadEvents, DownloadProgress,
-};
+use crate::services::download::{versions_match, DownloadEvents, DownloadProgress};
 
 /// The pack's directory name inside the app home.
 pub const PACK_DIR: &str = "sherry-cuda-pack";
@@ -42,7 +40,7 @@ pub const PACK_DIR: &str = "sherry-cuda-pack";
 const DOWNLOAD_TMP: &str = "sherry-cuda-pack-download.tmp";
 /// Where an archive is unpacked before it replaces the live pack.
 const STAGING_DIR: &str = "sherry-cuda-pack.incoming";
-/// Progress throttle (same reasoning as the backend downloader).
+/// Progress throttle (same reasoning as the shared download primitives).
 const PROGRESS_MIN_INTERVAL: Duration = Duration::from_millis(200);
 /// Whole-request cap for a multi-GiB archive on a slow link.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(7200);
@@ -441,10 +439,10 @@ impl CudaPackDownloader {
 }
 
 fn default_base_url() -> String {
-    std::env::var("EMA_BACKEND_URL_BASE").unwrap_or_else(|_| {
+    std::env::var("EMA_CUDA_PACK_URL_BASE").unwrap_or_else(|_| {
         format!(
             "https://github.com/{}/releases/latest/download",
-            crate::services::backend_downloader::GITHUB_REPO
+            crate::services::download::GITHUB_REPO
         )
     })
 }

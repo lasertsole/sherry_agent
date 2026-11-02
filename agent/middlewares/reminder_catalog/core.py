@@ -39,6 +39,7 @@ __all__ = [
     "registered_sources",
     "register",
     "resolve_injections",
+    "transient_source_ids",
 ]
 
 
@@ -73,6 +74,10 @@ class ReminderSource:
     :param cooldown_turns: Inject at most once per N turns (0 = no cooldown).
     :param only_if_changed: Skip when the rendered text is identical to the last
         text this session injected for the source.
+    :param transient: When True, the reminder is stripped from the message list
+        on turns it is not re-resolved, so it only occupies context on the turn
+        its content changed (and the first turn after a compaction). Use for
+        large, semi-stable payloads (project_instructions).
     """
 
     source_id: str
@@ -84,6 +89,7 @@ class ReminderSource:
     only_if_changed: bool = False
     is_meta: bool = True
     tags: tuple[str, ...] = field(default_factory=tuple)
+    transient: bool = False
 
 
 #: Registered sources by id (registration order is not significant: the
@@ -111,6 +117,11 @@ def register(source: ReminderSource) -> None:
 def registered_sources() -> dict[str, ReminderSource]:
     """The registered sources (a copy — callers must not mutate the registry)."""
     return dict(_SOURCES)
+
+
+def transient_source_ids() -> frozenset[str]:
+    """Source ids whose reminders must not persist beyond their injection turn."""
+    return frozenset(src.source_id for src in _SOURCES.values() if src.transient)
 
 
 def _content_hash(text: str) -> str:

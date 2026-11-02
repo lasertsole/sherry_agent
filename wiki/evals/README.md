@@ -19,8 +19,8 @@ a score is not a capability percentage.
   leaderboard position.
 - Separate the **harness** result from the **model** result: a provider error, a
   missing test patch or a timeout is not a failed fix.
-- Record the **arm** (neutral prompt, coding template, delegate-only,
-  delegation-pressure), the model, the git revision and the exact command.
+- Record the **arm** (neutral prompt, coding template, delegation-pressure),
+  the model, the git revision and the exact command.
 - A clean diff is part of the verdict: a change under `tests/` or a broken
   PASS_TO_PASS is not a success, even when the target test passes.
 - Token and cost figures that cover only the main session must say so; child

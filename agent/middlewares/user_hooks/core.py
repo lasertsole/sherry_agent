@@ -71,9 +71,10 @@ STEP1_EVENTS: frozenset[str] = frozenset({"PostToolUse", "PostToolUseFailure", "
 class HookOutcome:
     """What one hook run produced.
 
-    Step 1 reads ``status`` (and logs the rest): ``decision`` / ``updated_input``
-    are the Step-2/3 fields, parsed so the contract is visible and refuses to
-    grow silently.
+    Step 1 reads ``status`` and ``additional_context`` (the latter is wired
+    through the enrichment queue): ``decision`` / ``updated_input`` are the
+    Step-2/3 fields, parsed so the contract is visible and refuses to grow
+    silently.
     """
 
     status: str  # "success" | "blocked" | "failed" | "cancelled" | "timed_out"
@@ -321,7 +322,18 @@ class UserHooksMiddleware(AgentMiddleware):
             payload["error"] = _preview(result.content, USER_HOOKS["error_preview_chars"])
         else:
             payload["result"] = _preview(result.content, USER_HOOKS["result_preview_chars"])
-        await self._dispatch(event, payload, session_id, tool_name)
+        outcomes = await self._dispatch(event, payload, session_id, tool_name)
+        # Wire additionalContext through the enrichment queue instead of
+        # discarding it.  The injector (registered in the enrichment middleware
+        # OUTSIDE this one) drains the stash and appends it to the result.
+        # Failure results are skipped by the enricher, so only a successful
+        # PostToolUse outcome may stash text.
+        if not failed:
+            from agent.middlewares.tool_result_enrichment.injectors import stash_hook_context
+
+            for _runner, outcome in outcomes:
+                if outcome.additional_context:
+                    stash_hook_context(session_id, outcome.additional_context)
         return result
 
     @override

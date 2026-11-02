@@ -95,6 +95,10 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 세션은 자기 자신의 상태를 받지 않습니다(`last_session_id == session_id → ""`). 조회에 **channel id와 chat id가 모두** 필요하므로, 채널 바인딩이 없는 순수 WebSocket 세션은 연속성 블록을 받지 못합니다. 저장소는 데이터베이스가 아니라 파일 시스템의 JSON(`channel:chat` 키, 퇴화 시 `session_id`)입니다.
 
+## 🧹 세션 삭제 시 메모리 구제
+
+메인 세션을 파기하기 전에 `purge_session`은 독립 memory review(`nudges.salvage_session_memory`)도 예약합니다. 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 예약 직후 반환합니다. 삭제는 모델을 기다리지 않습니다. 1파는 압축이 버렸을 프리픽스를 캡처한(cache-warm) 모델/프롬프트/도구 면으로 review합니다. 기록 후 2파는 memory를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며 `memory` 전용 도구 면으로 보존 꼬리를 review합니다. 두 파 모두 NUDGE 레인, 파생 세션 키(`<id>::session-end-salvage:1|2`), checkpointer 없이 실행됩니다. `nudge_memory` metadata 게이트가 삭제 후 `knowledge`/plan 도구를 거부합니다. 모든 실패는 fail-open이며 프로세스 종료는 미완료 파를 포기할 수 있습니다. 사이드 채팅/서브에이전트 자식은 포함되지 않습니다. 위 continuity는 다음 대화를 위해 마지막 AI 응답을 저장하고, 이 구제는 영속 memory 파일을 씁니다.
+
 ## ♻️ TaskFlow 자동 재개
 
 활성 flow는 시스템 프롬프트로 다시 떠올라 새 세션이 미완료 작업을 이어받을 수 있게 합니다. 세 개의 독립적 판독기가 같은 레시피를 씁니다 — 세션 범위의 `get_active_flows_sync(session_id)`를 `PromptDataProvider.get_active_flows(session_id)`를 통해 가져옵니다:

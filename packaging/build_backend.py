@@ -1,20 +1,19 @@
-"""Build the desktop backend tree (PyInstaller onedir) for the release archive.
+"""Build the desktop backend tree (PyInstaller onedir) for the unified installer.
 
-    uv run --with pyinstaller python packaging/build_backend.py
+    uv sync
+    uv pip install pyinstaller
+    uv run --no-sync python packaging/build_backend.py
 
 Writes ``client/src-tauri/sherry-backend/`` — the executable, its ``_internal``
-tree, the shipped data files and a ``VERSION`` marker. That directory's
-CONTENTS become the per-platform release archive
-(``sherry-backend-<os>-<arch>.tar.gz|.zip``, built by
-``.github/workflows/desktop-build.yml``), which the desktop shell downloads on
-its first launch into ``<app_home>/sherry-backend/`` and spawns (see
-``client/src-tauri/src/services/backend_downloader.rs``).
+tree, the shipped data files and a ``VERSION`` marker. ``pnpm tauri build`` then
+packs that tree through ``bundle.resources`` into the platform installer; there
+is no separate backend archive or first-run download.
 
-The ``VERSION`` marker is what keeps that download to once per release: it holds
-the installer's own version (``client/src-tauri/tauri.conf.json``, the field the
-shell reports as ``package_info().version``), and a tree whose marker differs is
-re-downloaded. Do not derive it from a git tag or a branch name — the shell
-compares it against the version it was built with.
+The ``VERSION`` marker holds the installer's own version
+(``client/src-tauri/tauri.conf.json``, the field the shell reports as
+``package_info().version``); a tree whose marker differs from this build is not
+started. Do not derive it from a git tag or a branch name — the shell compares
+it against the version it was built with.
 
 ONEDIR on purpose: the dependency tree is measured in gigabytes, so a onefile
 build would unpack it on every launch.
@@ -105,7 +104,7 @@ EXCLUDES = (
 def installer_version() -> str:
     """The version the Tauri installer reports — ``tauri.conf.json``'s ``version``.
 
-    The shell re-downloads the backend when this differs from the tree's
+    The shell refuses a bundled backend when this differs from the tree's
     ``VERSION`` marker, and the value it compares against is the config the
     installer was built from, so the marker must come from the same field.
     """

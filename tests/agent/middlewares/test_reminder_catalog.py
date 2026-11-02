@@ -60,6 +60,15 @@ def _isolated_catalog(monkeypatch):
             budget_chars=100,
             cooldown_turns=5,
         ),
+        "delta": ReminderSource(
+            source_id="delta",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=lambda sid, state: state.get("delta_text"),
+            priority=40,
+            budget_chars=100,
+            only_if_changed=True,
+            transient=True,
+        ),
     }
     monkeypatch.setattr(dynamic_mod, "_TURN_COUNTS", {})
     import agent.middlewares.reminder_catalog.core as core_mod
@@ -174,7 +183,22 @@ class TestRegistration:
         assert source.priority == 62, "between continuity (65) and the dir notice (60)"
         assert source.budget_chars == 8_000
         assert source.only_if_changed is True
+        assert source.transient is True, (
+            "8 k of AGENTS.md must not persist beyond the turn it was injected on"
+        )
         assert source.channel is ReminderChannel.CURRENT_TURN
+
+    def test_only_project_instructions_is_transient(self, _isolated_catalog):
+        transient = {
+            source_id for source_id, source in _isolated_catalog["real"].items() if source.transient
+        }
+
+        assert transient == {"project_instructions"}
+
+    def test_transient_source_ids_reads_the_live_registry(self, _isolated_catalog):
+        from agent.middlewares.reminder_catalog.core import transient_source_ids
+
+        assert transient_source_ids() == {"delta"}
 
     def test_an_unconsumed_channel_is_refused(self):
         with pytest.raises(ValueError, match="no consumer yet"):
@@ -324,6 +348,113 @@ class TestMiddleware:
         await mw.abefore_model({**self._state(HumanMessage(content="2")), "alpha_text": "C"})
 
         assert dynamic_mod._TURN_COUNTS["s-catalog"] == 2, "only real user turns count"
+
+    @pytest.mark.asyncio
+    async def test_a_transient_reminder_is_stripped_on_the_next_turn(self):
+        """A transient source's reminder must not persist beyond its injection turn."""
+        mw = DynamicReminderMiddleware()
+
+        out1 = await mw.abefore_model(
+            {**self._state(HumanMessage(content="first")), "delta_text": "D1"}
+        )
+        assert out1 is not None
+        old_delta = next(
+            m
+            for m in out1["messages"]
+            if isinstance(m, HumanMessage)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "delta"
+        )
+        assert old_delta.content.startswith('<system-reminder source="delta">')
+
+        # The previous turn's reminder sits before the prior answer, then the
+        # new user message starts the next turn. The content is unchanged, so
+        # the source is not re-injected, but the old reminder must be stripped.
+        out2 = await mw.abefore_model(
+            {
+                **self._state(
+                    old_delta,
+                    HumanMessage(content="first"),
+                    AIMessage(content="answer"),
+                    HumanMessage(content="second"),
+                ),
+                "delta_text": "D1",
+            }
+        )
+        assert out2 is not None, "must rewrite to strip the old transient reminder"
+        assert not any(
+            isinstance(m, HumanMessage)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "delta"
+            for m in out2["messages"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_injections_still_rewrite_to_strip_transient_reminders(self):
+        """The early return must not skip cleanup when old transient reminders exist."""
+        mw = DynamicReminderMiddleware()
+        old_delta = HumanMessage(
+            content=wrap_reminder("delta", "stale content"),
+            metadata=system_reminder_metadata("delta"),
+        )
+
+        out = await mw.abefore_model(
+            self._state(
+                old_delta,
+                HumanMessage(content="first"),
+                AIMessage(content="answer"),
+                HumanMessage(content="next turn"),
+            )
+        )
+
+        assert out is not None
+        assert not any(
+            isinstance(m, HumanMessage)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "delta"
+            for m in out["messages"]
+        ), "the stale transient reminder was stripped"
+
+    @pytest.mark.asyncio
+    async def test_empty_injections_with_no_transient_reminder_is_a_noop(self):
+        """The original early-return behavior is preserved when there is nothing to clean."""
+        mw = DynamicReminderMiddleware()
+
+        assert await mw.abefore_model(self._state(HumanMessage(content="hi"))) is None
+
+    @pytest.mark.asyncio
+    async def test_a_transient_reminder_is_replaced_when_content_changes(self):
+        """A changed transient source replaces the old reminder, not duplicates it."""
+        mw = DynamicReminderMiddleware()
+
+        out1 = await mw.abefore_model(
+            {**self._state(HumanMessage(content="first")), "delta_text": "D1"}
+        )
+        assert out1 is not None
+        old_delta = next(
+            m
+            for m in out1["messages"]
+            if isinstance(m, HumanMessage)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "delta"
+        )
+
+        out2 = await mw.abefore_model(
+            {
+                **self._state(
+                    old_delta,
+                    HumanMessage(content="first"),
+                    AIMessage(content="answer"),
+                    HumanMessage(content="second"),
+                ),
+                "delta_text": "D2",
+            }
+        )
+        assert out2 is not None
+        delta_msgs = [
+            m
+            for m in out2["messages"]
+            if isinstance(m, HumanMessage)
+            and (getattr(m, "metadata", None) or {}).get("origin") == "delta"
+        ]
+        assert len(delta_msgs) == 1
+        assert "D2" in delta_msgs[0].content
 
     @pytest.mark.asyncio
     async def test_a_broken_registry_is_fail_open(self, monkeypatch: pytest.MonkeyPatch):

@@ -1,11 +1,13 @@
 """Unit tests for the task 9 third delivery path (announce/delivery.py).
 
 Third path (additive, after the existing dual-path dispatch): when a completed
-subagent run announces to a main-agent WS session, the completion is ALSO
-routed into the requester's turn pipeline — busy -> task 6 steering queue,
-idle -> task 8 auto-turn trigger. Guards (task 9 frozen contract):
+subagent run announces to a main-agent session, the completion is ALSO routed
+into the requester's turn pipeline — busy -> task 6 steering queue, idle with a
+live WebSocket -> task 8 auto-turn trigger. A busy session without a WebSocket
+(the in-process eval/headless harness) still steers; an idle no-WS session keeps
+the old notification-bell status quo. Guards (task 9 frozen contract):
 
-- channel sessions / non-session requesters short-circuit (Q2 status quo);
+- non-session requesters short-circuit; idle no-WS sessions do not auto-turn;
 - already-consumed injections are never re-enqueued (Q4: no double-inject);
 - failed runs announce with the task 4 builder vocabulary (Q3);
 - a third-path error never alters the existing dual-path result.
@@ -127,9 +129,10 @@ async def test_consumed_run_not_enqueued(_seams):
 
 
 @pytest.mark.asyncio
-async def test_channel_session_short_circuits(_seams):
-    # Prefixed main-session key but no websocket binding -> channel session:
-    # notification-bell status quo (Q2), no turn-input routing at all.
+async def test_no_ws_idle_does_not_auto_turn(_seams):
+    # No websocket and idle: there is no turn pipeline to start, so the old
+    # notification-bell status quo remains. Busy detection still runs so the
+    # no-WS busy case can be routed (test below).
     _seams["state"]["ws"] = False
     run = _make_run(requester_session_key="agent:main:session:qq-session")
 
@@ -137,7 +140,28 @@ async def test_channel_session_short_circuits(_seams):
 
     assert _seams["calls"]["steering"] == []
     assert _seams["calls"]["turns"] == []
-    assert _seams["calls"]["detect"] == []
+    assert _seams["calls"]["detect"] == ["qq-session"]
+
+
+@pytest.mark.asyncio
+async def test_no_ws_busy_routes_to_steering(_seams):
+    # The in-process eval/headless case: a live turn has no WS binding, but the
+    # completion still belongs in that turn's steering queue for the drain
+    # middleware to inject before the next model call.
+    _seams["state"]["ws"] = False
+    _seams["state"]["busy"] = True
+    run = _make_run(requester_session_key="agent:main:session:headless-1")
+
+    await dl._maybe_route_third_path(run, AnnounceDeliveryResult(success=True))
+
+    steered = _seams["calls"]["steering"]
+    assert len(steered) == 1
+    bare, msg = steered[0]
+    assert bare == "headless-1"
+    assert msg.content.startswith("[subagent:worker-1 completed]")
+    assert msg.content.endswith("All done")
+    assert _seams["calls"]["turns"] == []
+    assert _seams["calls"]["detect"] == ["headless-1"]
 
 
 @pytest.mark.asyncio

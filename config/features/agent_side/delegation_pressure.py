@@ -1,33 +1,31 @@
 """Per-turn delegation-pressure budgets.
 
 The gate accumulates READ/exploration calls within one turn. At ``warn_after``
-it injects one directive; at ``block_after`` it blocks the configured
-read+write tools for the REST OF THE TURN (only ``after_agent`` resets the
-counter). Browser debugging tools are explicitly excluded from both counting
-and blocking: they are neither reads nor writes for this pressure model.
+it injects one system-reminder directive; at ``block_after`` it injects an
+escalated system-reminder. Tools remain available — this gate advises, never
+blocks. Browser debugging tools are explicitly excluded from counting: they
+are neither reads nor writes for this pressure model.
 """
 
 from typing import TypedDict
 
 
 class DelegationPressureConfig(TypedDict):
-    """Turn-scoped read pressure and the tools it blocks."""
+    """Turn-scoped read pressure and its escalation thresholds."""
 
     enabled: bool
     warn_after: int
     block_after: int
     pressure_tools: tuple[str, ...]
-    blocked_tools: tuple[str, ...]
     excluded_tools: tuple[str, ...]
 
 
-#: A main agent that has read/explored 16 times in one turn is done reading:
-#: every further read or write errors and points at sessions_spawn. The
-#: default pressure set is exploration; ``blocked_tools`` adds the write tools.
+#: A main agent that has read/explored 14 times in one turn receives an
+#: escalated directive to delegate; tools remain available.
 DELEGATION_PRESSURE: DelegationPressureConfig = {
-    "enabled": False,
-    "warn_after": 8,
-    "block_after": 16,
+    "enabled": True,
+    "warn_after": 7,
+    "block_after": 14,
     "pressure_tools": (
         "read_file",
         "search_files",
@@ -39,20 +37,6 @@ DELEGATION_PRESSURE: DelegationPressureConfig = {
         "terminal",
         "terminal_bg",
         "python_repl",
-    ),
-    "blocked_tools": (
-        "read_file",
-        "search_files",
-        "message_search",
-        "web_search",
-        "web_fetch",
-        "skill_view",
-        "knowledge",
-        "terminal",
-        "terminal_bg",
-        "python_repl",
-        "patch_file",
-        "write_file",
     ),
     "excluded_tools": (
         "browser",

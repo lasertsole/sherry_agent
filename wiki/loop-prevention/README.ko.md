@@ -60,9 +60,9 @@
 
 턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
 
-### 턴 수준: `DelegationPressureGate`(평가 전용)
+### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
-`SHERRY_EVAL_DELEGATION_PRESSURE=1`이고 세션이 `evals-swe-*`일 때만 활성화됩니다. 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **8**회에 위임 지시를 한 번 주입하고, **16**회 이후에는 그 턴의 남은 동안 모든 읽기/쓰기 도구를 차단합니다(브라우저 디버깅 도구는 집계와 차단 모두 제외). 차단된 호출은 매번 `sessions_spawn`을 가리키는 오류를 반환하며, spawn이 성공해도 턴은 풀리지 않습니다——리셋은 `after_agent`에서만 일어납니다. 쓰기로는 리셋되지 않고, 턴 안의 모든 그래프 호출에서 누적됩니다.
+메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **14**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/14에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
 
 ### 턴 수준: `MaxTokensBoostMiddleware`, 도구 호출 잘림 복구
 

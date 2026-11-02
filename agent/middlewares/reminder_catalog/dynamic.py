@@ -28,7 +28,7 @@ from pub.func.message.system_reminder import (
     wrap_reminder,
 )
 
-from .core import clear_session, resolve_injections
+from .core import clear_session, resolve_injections, transient_source_ids
 
 __all__ = ["DynamicReminderMiddleware"]
 
@@ -61,6 +61,14 @@ def _already_injected_this_turn(messages: list[Any]) -> bool:
         if is_system_reminder(message):
             return True
     return False
+
+
+def _is_transient_reminder(msg: Any, transient_ids: frozenset[str]) -> bool:
+    """True when *msg* is a reminder for a transient source."""
+    if not transient_ids or not is_system_reminder(msg):
+        return False
+    meta = getattr(msg, "metadata", None) or {}
+    return meta.get("origin") in transient_ids
 
 
 class DynamicReminderMiddleware(AgentMiddleware):
@@ -97,9 +105,8 @@ class DynamicReminderMiddleware(AgentMiddleware):
             turn = _TURN_COUNTS.get(session_id, 0) + 1
             _TURN_COUNTS[session_id] = turn
 
+            transient_ids = transient_source_ids()
             injections = resolve_injections(session_id, state, current_turn=turn)
-            if not injections:
-                return None
 
             reminders = [
                 HumanMessage(
@@ -114,6 +121,21 @@ class DynamicReminderMiddleware(AgentMiddleware):
                 # the user's own input last).
                 for source_id, content in reversed(list(injections.items()))
             ]
+
+            # Strip reminders from transient sources that were injected on an
+            # earlier turn. Without this, an only_if_changed source
+            # (project_instructions: 8 k of AGENTS.md) would ride every turn's
+            # context through the messages[:-1] re-emit.
+            tail = messages[:-1]
+            stripped = False
+            if transient_ids:
+                filtered = [msg for msg in tail if not _is_transient_reminder(msg, transient_ids)]
+                stripped = len(filtered) < len(tail)
+                tail = filtered
+
+            if not injections and not stripped:
+                return None
+
             logger.debug(
                 "DynamicReminderMiddleware: injecting {} reminder(s) for session {} (turn {}): {}",
                 len(reminders),
@@ -129,7 +151,7 @@ class DynamicReminderMiddleware(AgentMiddleware):
             return {
                 "messages": [
                     RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                    *messages[:-1],
+                    *tail,
                     *reminders,
                     messages[-1],
                 ]

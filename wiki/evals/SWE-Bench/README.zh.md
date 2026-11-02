@@ -17,19 +17,15 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 - 数据集：`princeton-nlp/SWE-bench_Lite`，test split。
 - HARD 切片：`django__django-17051`、`sympy__sympy-20639`。
 - 实例缓存：`--instance-cache-dir /tmp/swebench-instance-cache`。
-- Arm：中性提示词、`--persona coding`、delegate-only
-  （`SHERRY_EVAL_DELEGATE_ONLY=1`）、delegation pressure
-  （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。
+- Arm：中性提示词、`--persona coding`、delegation pressure
+  （`SHERRY_EVAL_DELEGATION_PRESSURE=1`）。delegate-only arm 及其中间件已于
+  2026-11-02 删除；旧结果行只保留为历史。
 - 报告位于 `evals/results/swebench/<run_id>/eval_report.json`；各实例 diff 在同目录。
 
-## 失败历史
+## 失败历史（2026-11-01）
 
 | 运行 | Arm | 结果 | 发生了什么 |
 | :--- | :--- | :--- | :--- |
-| 2026-10-26 中性 | 中性规则，90 迭代 | 1/2 | Django resolved；Sympy 无 diff，预算耗尽 |
-| 2026-10-30 编码 | 编码模板，只读子代理 | 0/2 | 模板要求委派，但子代理不能写；双方都没有编辑 |
-| 2026-10-31 225133 | 软化提示词，全量子代理工具 | 1/2 | Sympy resolved；Django 28 次网络搜索且无 diff |
-| 2026-10-31 234435 | 长检索路由 | 0/2 | Django F2P 失败；Sympy 45 次 terminal，其中 32 次相同 |
 | 2026-11-01 000025 | 提示词 + no-edit 门 | 1/2 脏 | Django 新增测试文件；Sympy 726B patch 破坏 P2P |
 | 2026-11-01 002305 | delegate-only | 2/2 干净 | 主代理无直接工具；子代理实现并验证 |
 | 2026-11-01 143952 | 首版软门（10/20） | 1/2 | 门迫使 spawn，之后主代理反复 patch 并破坏 P2P |
@@ -50,6 +46,15 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
    P2P 回归直到判题时才被发现。
 6. **子代理结果与 token 难以观察。** 超时子代理的 checkpoint 可能已被清理；主代理
    有时为了确认状态重复 spawn，报告也只统计主 session 的 token。
+
+### 当前解决
+
+1. **已修复。** `IterationBudget` 只按模型调用计 1；工具结果免费。
+2. **已缓解。** `DelegationPressureGate` 在第 7 次读时注入 `<system-reminder>` 警告、第 14 次注入 escalated 版本，`terminal`/读工具仍可用；`ToolGuardrails` 仍不对非幂等 terminal 做哈希，只读命令分类器仍待实现。
+3. **部分缓解。** escalated 提醒在第 14 次读时推动 `sessions_spawn`，但不再阻断工具；要求运行目标测试的专门验证门仍未实现。
+4. **仍未解决。** harness 记录 `changed_paths`，但不会把 `tests/` 改动判 invalid；软门降低概率，但不是官方守卫。
+5. **部分缓解。** escalated 提醒推动主代理停止 spawn 后的 patch 循环并转交实现；还没有“收尾前测试必须通过”的硬门。
+6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；eval 报告仍只统计主 session，子代理 checkpoint/结果回读仍未解决。
 
 ## no-edit 门及其失败原因
 
@@ -74,19 +79,24 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 首版软门（10/20）在任何产品写入后立即解除阻断，且没有把 `patch_file` 纳入目标。
 主代理 spawn 了一个 researcher，门复位，随后主代理在 `compiler.py` 上连续约 70 次
 `patch_file`。这是**patch 重试病理**，不是未授权的 `write_file` 覆盖，所以许可证
-从未触发。新门在超过读取阈值后也会阻断 `patch_file`。
+从未触发。早先的 8/16 门也会阻断 `patch_file`，2026-11-01 的运行正是这样收尾的；当前 7/14 建议式设计已刻意移除阻断。
 
-## 成功设计：DelegationPressureGate
+## 当前设计：DelegationPressureGate（7/14 建议式）
+
+2026-11-01 的运行测量的是早先的 8/16 硬阻断版本；下面的 7/14 行为是 2026-11-02 合并冲突后确定的设计。
 
 `agent/middlewares/delegation_pressure/core.py`：
 
 - 在单回合内累计**读/探索**调用。
-- 第 **8** 次读时注入一次委派指令。
-- 第 **16** 次读后，本回合剩余时间阻断所有读写工具。每次被阻断的调用都返回错误，
-  并指引 `sessions_spawn`（只读研究用 researcher，实现用 executor）。
-- 浏览器调试工具既不计次也不阻断。
-- 计数器只在 `after_agent` 清零；accepted spawn 不解除本回合，写也不清零。
-  这正是阻止首版软门“spawn 后继续 patch”的关键。
+- 第 **7** 次读时，通过 gate 自己的 mid-turn `abefore_model` 注入一条 `<system-reminder source="delegation_pressure">` 警告。
+- 第 **14** 次读时注入语气更强的 escalated 系统提醒；工具始终可用，门只建议、不阻断。
+- 浏览器调试工具不计次。
+- accepted/pending 的 spawn 成功会重新计数，主 Agent 可以检查/验证，
+  之后再次达到 7/14 时门会重新生效；失败 spawn 和写本身不清零，
+  `after_agent` 也会在回合边界清零。
+
+它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝
+`:subagent:`/`:swarm:` 会话。
 
 ## 结果
 
@@ -103,10 +113,6 @@ Django 只改了产品代码与发布文档；Sympy 只改了一个库文件。�
 
 ```bash
 SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
-
-SHERRY_EVAL_DELEGATE_ONLY=1 uv run --no-sync python evals/swebench/suite.py \
   --hard --persona coding --keep-instances \
   --instance-cache-dir /tmp/swebench-instance-cache
 ```

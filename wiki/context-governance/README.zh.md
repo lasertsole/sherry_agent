@@ -22,6 +22,8 @@ Agent 产出的每条消息都有双重价值：既是**原始历史**（真实�
   - [🧵 链式摘要过滤](eviction/README.zh.md#-链式摘要过滤)
 - [Message 行上的 Turn 身份](#-message-行上的-turn-身份)
 - [交互与顺序保证](#-交互与顺序保证)
+- [稳定系统提示词与提醒层](system-reminder/README.zh.md)
+- [工具结果增强队列](tool-result-enrichment/README.zh.md)
 - [配置](#%EF%B8%8F-配置)
 - [测试地图](#-测试地图)
 - [清除语义与局限](#-清除语义与局限)
@@ -124,25 +126,6 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **前缀缓存** | P1-9 按 id 原地更新消息（内容相同、id 相同）且不重写其他内容，因此只有当预览视图确实不同时才使模型可见前缀失效；工具驱逐发生在消息进入 state 之前，模型见到的自始至终只有预览这一版 |
 | **工具配对 / 净化器** | 所有替换都保留 `id` 与 `tool_call_id`；`sanitize_tool_use_result_pairing` 永远不需要为驱逐做修复，stub 依旧是合法的配对输入 |
 | **子代理会话** | 子代理管线**不**注册 `ContextEvictionMiddleware` 与 `MessagePersistenceMiddleware`：子转录保留完整工具结果，且只存在于 checkpoint |
-
-## 🧱 稳定系统提示词与提醒层
-
-系统提示词只承载**稳定**内容：persona 文件、memory 块与技能索引。所有**实时**视图——计划模式、工作目录、项目指令（`AGENTS.md`，回退 `CLAUDE.md`）、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引——改为在每轮首个模型调用时以 `<system-reminder source="…">` HumanMessage 注入（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 目录）。两个原因：首个 token 每轮都变的提示词会让提供方的前缀缓存从那里起全部失效（persona 也被连累）；而只在缓存未命中时重建的提示词，在下一次重建之前展示的是**过期**的 todo 列表。
-
-冻结的记忆快照有一个刻意的例外。切换会话模型会进入新的提供方缓存命名空间；切换思考模式经实测在同一前缀上把 `cache_read` 打到 0——两种情况下缓存本来就要冷。`ThinkingControlMiddleware` 的 `before_model` 钩子比较本轮 `(thinking key, profile fingerprint, mapping fingerprint)` 与上次实际应用值（进程级保存，因为图每轮重建），变化时在 `system_prompt_injection` 之前重载 `MemoryStore` 快照并从两个寄存器删除 `StateKey.SYSTEM_PROMPT`。切换后的首轮首个模型调用因此能看到会话中途写入的 `FACTS.md` / `MEMORY.md` / `USER.md`。首轮、控制未变、重载失败都保留原缓存；没有发送就不会触发。
-
-FACTS.md 是全局文件，目录切换不再使缓存提示词失效。同一轮的 `project_instructions` 提醒仍会重新读取新项目的 `AGENTS.md`（回退 `CLAUDE.md`），并靠 `only_if_changed` 每份不同内容只注入一次。
-
-| 关注点 | 规则 |
-|---|---|
-| 注入什么 | 每个 builder 返回文本的来源各注入一条提醒：预算顺序为高→低，投递时反转为低→高，使最高优先级位于尾部；标记 `origin=<来源 id>`、`provenance="reminder_catalog"`、`internal=True` |
-| 预算 | 每次调用全部来源合计 `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超预算时整条丢弃优先级最低者，绝不把一条提醒截成半句 |
-| 节流 | 来源可声明 `cooldown_turns`（TaskFlow 看板 / boulder：5）与 `only_if_changed`（内容相同不重复注入）；节流状态只为**真正注入过**的来源推进 |
-| 压缩之后 | 压缩会重置目录，于是下一轮从 live state 重新注入每个来源——提醒层不依赖历史是否幸存 |
-| 转义 | 载荷内嵌套的 `<system-reminder>` 标签（todo 文本可被用户影响）会被转义，否则载荷可提前闭合标签、冒充这一层 |
-| 轮内定位 | 只在每轮首个模型调用注入——与 TaskIntent 相同的「最后一条消息是真实用户消息」判定；遍历人类消息的扫描器（`split_into_turns`、HITL 无操作者判定、摘要标签）通过 `pub.func.message.system_reminder` 跳过提醒 |
-
-todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuationEnforcer` 更名；它监督的"计划"= todos + TaskFlow flows）统计未调用 `todowrite` 的轮数，超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后追加 `[REMINDER: TODO TRACKING]` 提醒——这是基于快照的停滞检测唯一看不见的形态（模型推进 TaskFlow 会让 streak 清零，而 todo 列表在腐烂）。
 
 ## 🧩 Provider 提示词缓存（Anthropic）
 

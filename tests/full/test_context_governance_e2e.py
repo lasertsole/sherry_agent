@@ -75,7 +75,7 @@ pytestmark = [pytest.mark.llm_e2e, pytest.mark.system, pytest.mark.timeout(900)]
 _CTX_WINDOW = 41_600  # 41600 − 16000 reserve = usable 25600 (compact @ 20480)
 _EVICTED_PATH_RE = re.compile(r"\[evicted to: (.*?)\]")
 _TOOL_PAYLOAD_CODE = 'for i in range(400):\n    print("line-%04d " % i + "X" * 60)'
-_READ_FILE_LINES = 3_000
+_READ_FILE_LINES = 400
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +375,10 @@ async def test_p2_4_read_file_slice_real_graph() -> None:
     file_name = f"e2e_readfile_{uuid.uuid4().hex[:8]}.txt"
     file_path = Path(TEMP_DIR) / file_name
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"row {i:05d}: " + ("abcdefghij" * 4) for i in range(_READ_FILE_LINES)]
+    # The page must be COMPLETE (under read_file's 4000-token budget) yet
+    # larger than the 4000-char slice threshold; a self-truncated page is
+    # deliberately left alone by slice_read_file_result.
+    lines = [f"row {i:05d}: abcdefghij" for i in range(_READ_FILE_LINES)]
     file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         graph = await _real_graph()
@@ -403,8 +406,9 @@ async def test_p2_4_read_file_slice_real_graph() -> None:
         tool_rows = _rows_with_role(sid, "tool")
         assert len(tool_rows) == 1
         full_result = tool_rows[0]["content"]
-        assert '"total_lines": 3000' in full_result
-        assert len(full_result) > 20_000
+        assert '"total_lines": 400' in full_result
+        assert '"truncated": false' in full_result
+        assert len(full_result) > 8_000
         assert sliced_text == full_result[:4_000] + _READ_FILE_SLICE_NOTICE
 
         # P2-4: slicing writes nothing — no eviction file for this session.

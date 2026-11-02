@@ -48,6 +48,7 @@ from .middlewares import (
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.user_hooks import UserHooksMiddleware
+from .middlewares.tool_result_enrichment import ToolResultEnrichmentMiddleware
 from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
 from .middlewares.tool_selection import ToolSelectionMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -333,6 +334,10 @@ def _build_middlewares(
         # iteration cap is decided first, and outside the model call so the
         # terminal message short-circuits before any provider request.
         TokenBudget(),
+        # Outermost wrap_tool_call: append the injector queue's output to the
+        # final ToolMessage (after ToolGuardrails has appended its warning or
+        # produced a blocked error). Error results are passed through untouched.
+        ToolResultEnrichmentMiddleware(),
         ToolGuardrails(),
         # Process-wide shell/code and per-session HITL resource locks. Registered
         # after ToolGuardrails (inner to it), so a blocked call never waits on a
@@ -428,15 +433,9 @@ def _build_middlewares(
         # layer, and it is idempotent (a strict parse succeeds untouched).
         InvalidToolCallRepairMiddleware(),
     ]
-    if os.getenv("SHERRY_EVAL_DELEGATE_ONLY") == "1":
-        # Eval-only delegation arm: the main agent may not read/search/write;
-        # it must use sessions_spawn. Child sessions keep their full tools.
-        from .middlewares.delegate_only_gate import DelegateOnlyGate
-
-        middlewares.append(DelegateOnlyGate())
-    elif os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" or DELEGATION_PRESSURE["enabled"]:
-        # Soft arm: warn/block the configured tool family until a subagent is
-        # spawned. Delegate-only above is the hard arm and wins when both are on.
+    if os.getenv("SHERRY_EVAL_DELEGATION_PRESSURE") == "1" or DELEGATION_PRESSURE["enabled"]:
+        # Main-agent-only soft pressure: warn/block the configured read/write
+        # tools until the turn ends. Children never receive this middleware.
         from .middlewares.delegation_pressure import DelegationPressureGate
 
         middlewares.append(DelegationPressureGate())

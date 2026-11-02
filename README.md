@@ -421,14 +421,15 @@ pnpm tauri dev    # native desktop mode
 
 The client connects to the Python backend at `http://127.0.0.1:8080` by default (configurable via `VITE_API_BACK_URL` in `client/.env`). See the [client README](client/README.md) for details.
 
-**Packaging the desktop app** produces TWO artifacts: the installer (front end + Rust shell — no Python, no venv and no checkout on the target machine) and the backend archive the app downloads on its first launch, because GitHub caps a release asset at 2 GiB and the backend is well past that:
+**Packaging the desktop app** produces ONE unified installer: the front end, the Rust shell and the CPU Python backend are packed into the same deb/rpm/AppImage/msi/dmg. There is no separate backend download on first launch:
 
 ```bash
-uv run --with pyinstaller python packaging/build_backend.py   # backend → client/src-tauri/sherry-backend/
-cd client && pnpm tauri build                                 # → deb / rpm / AppImage / msi / dmg
+uv sync && uv pip install pyinstaller
+uv run --no-sync python packaging/build_backend.py   # backend → client/src-tauri/sherry-backend/
+cd client && pnpm tauri build                         # packs backend + SPA + shell
 ```
 
-`.github/workflows/desktop-build.yml` builds both on all three platforms. Both steps are per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` / `.models` / `.network` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, **Model Config** writes the keys, and the next launch picks them up.
+`.github/workflows/desktop-build.yml` builds the unified installer on all three platforms. The backend build and the installer are both per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` / `.models` / `.network` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, **Model Config** writes the keys, and the next launch picks them up.
 
 ---
 

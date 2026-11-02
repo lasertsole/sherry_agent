@@ -95,6 +95,10 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 会话永远不会收到自己的状态（`last_session_id == session_id → ""`）。由于查询同时要求 **channel id 与 chat id**，没有渠道绑定的纯 WebSocket 会话拿不到连续性区块。存储是文件系统上的 JSON（以 `channel:chat` 为键，退化时以 `session_id` 为键），而不是数据库。
 
+## 🧹 会话删除时的记忆抢救
+
+销毁主会话前，`purge_session` 还会调度一次独立的 memory review（`nudges.salvage_session_memory`）。它快照压缩后的 checkpoint transcript、模型、系统提示词和工具面，只读计算正常压缩切割线，调度后立即返回；删除不等待模型。第一波用捕获的（cache-warm）模型/提示词/工具面复盘本会被压缩丢弃的前缀；写完后，第二波重新加载 memory、非持久化重建系统提示词，并用仅 `memory` 工具面复盘保留的尾部。两波都在 NUDGE 车道运行，使用派生会话键（`<id>::session-end-salvage:1|2`），无 checkpointer；`nudge_memory` metadata 门禁阻止删除后调用 `knowledge`/plan 工具。所有失败均 fail-open，进程退出可能放弃未完成的一波，侧边会话/子代理不包含在内。上面的 continuity 保存最后一条 AI 回复供下一次对话；本抢救写入持久 memory 文件。
+
 ## ♻️ TaskFlow 自动恢复
 
 活动 flow 会被重新浮现到系统提示词中，使新会话能接手未完成的工作。三个独立的读取者使用同一套配方——会话级 `get_active_flows_sync(session_id)`，经由 `PromptDataProvider.get_active_flows(session_id)` 获取：

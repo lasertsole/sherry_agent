@@ -20,20 +20,16 @@ HARD instances?” — not “what is the leaderboard position?”.
 - Dataset: `princeton-nlp/SWE-bench_Lite`, test split.
 - HARD slice: `django__django-17051`, `sympy__sympy-20639`.
 - Instance cache: `--instance-cache-dir /tmp/swebench-instance-cache`.
-- Arms: neutral prompt, `--persona coding`, delegate-only
-  (`SHERRY_EVAL_DELEGATE_ONLY=1`), and delegation pressure
-  (`SHERRY_EVAL_DELEGATION_PRESSURE=1`).
+- Arms: neutral prompt, `--persona coding`, and delegation pressure
+  (`SHERRY_EVAL_DELEGATION_PRESSURE=1`). The delegate-only arm was removed
+  with its middleware on 2026-11-02; older result rows are kept as history.
 - The report is `evals/results/swebench/<run_id>/eval_report.json`; the
   per-instance diffs are next to it.
 
-## The failure history
+## The failure history (2026-11-01)
 
 | Run | Arm | Result | What happened |
 | :--- | :--- | :--- | :--- |
-| 2026-10-26 neutral | neutral rules, 90 iterations | 1/2 | Django resolved; Sympy produced no diff and exhausted the budget |
-| 2026-10-30 coding | coding template, read-only children | 0/2 | The template demanded delegation while children could not write; neither side edited |
-| 2026-10-31 225133 | softened prompt, full child tools | 1/2 | Sympy resolved; Django made 28 network searches and produced no diff |
-| 2026-10-31 234435 | long-research routing | 0/2 | Django's F2P failed; Sympy made 45 terminal calls, 32 identical |
 | 2026-11-01 000025 | prompt + no-edit gate | 1/2 dirty | Django added a test file; Sympy's 726-byte patch broke P2P |
 | 2026-11-01 002305 | delegate-only | 2/2 clean | Main agent had no direct tools; children implemented and verified |
 | 2026-11-01 143952 | first soft gate (10/20) | 1/2 | Gate forced a spawn, then the main agent patched repeatedly and broke P2P |
@@ -60,6 +56,15 @@ HARD instances?” — not “what is the leaderboard position?”.
 6. **Child results and child tokens were hard to observe.** A timed-out child’s
    checkpoint may be gone; the main agent sometimes re-spawned to learn status,
    and reports counted only the main session’s tokens.
+
+### Current resolutions
+
+1. **Fixed.** `IterationBudget` now charges one unit per model call; tool results are free.
+2. **Mitigated.** `DelegationPressureGate` injects a `<system-reminder>` warning at 7 reads and the escalated one at 14; `terminal`/read tools remain available. `ToolGuardrails` still does not hash non-idempotent terminal commands; a read-only command classifier remains open.
+3. **Partially mitigated.** The escalated reminder urges `sessions_spawn` at 14 but no longer blocks tools. A dedicated verification gate that requires running the target tests is still open.
+4. **Still open.** The harness records `changed_paths` but does not invalidate a `tests/` edit. The soft gate reduces the chance but is not the official guard.
+5. **Partially mitigated.** The escalated reminder pushes the main agent to stop its post-spawn patch loop and delegate; there is no hard "tests must pass before finish" gate yet.
+6. **Partially fixed.** The per-turn token budget now attributes the main agent + all descendant levels to the root turn; eval reports still count only the main session, and child checkpoint/result readback remains open.
 
 ## The no-edit gate and why it failed
 
@@ -90,22 +95,28 @@ The first soft gate (10/20) ended its block as soon as a product write landed
 and did not target `patch_file`. The main agent spawned a researcher, the gate
 reset, and the main agent then made roughly 70 `patch_file` attempts on
 `compiler.py`. That loop was a **patch-retry pathology**, not an unlicensed
-`write_file` overwrite, so the license never fired. The new gate blocks
-`patch_file` too once the turn is over the read threshold.
+`write_file` overwrite, so the license never fired. The earlier 8/16 gate
+blocked `patch_file` too, which is how the 2026-11-01 run ended; the current
+7/14 advisory design deliberately removed blocking.
 
-## The successful design: DelegationPressureGate
+## The current design: DelegationPressureGate (7/14 advisory)
+
+The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/14
+behavior below is the design reconciled on 2026-11-02.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
 - Counts **read/exploration** calls cumulatively within one turn.
-- At **8** reads, injects one directive to delegate.
-- At **16** reads, blocks every read/write tool for the rest of the turn. Each
-  blocked call returns an error naming `sessions_spawn` (researcher for
-  read-only work, executor for implementation).
-- Browser debugging tools are excluded from both counting and blocking.
-- The counter resets only in `after_agent`; an accepted spawn does not unlock
-  the turn, and a write does not reset the count. This is what stops the
-  post-spawn patch loop that the first soft gate allowed.
+- At **7** reads, injects one `<system-reminder source="delegation_pressure">` warning through the gate's own mid-turn `abefore_model` path.
+- At **14** reads, injects the escalated system-reminder with stronger language. Tools remain available; the gate advises, never blocks.
+- Browser debugging tools are excluded from counting.
+- An accepted/pending successful spawn restarts the count, so the main agent
+  can inspect/verify and the gate re-arms on another 7/14 reads. A failed spawn
+  and writes alone do not reset it; `after_agent` also resets at the turn
+  boundary.
+
+It is installed on the main agent only; the child middleware builder never adds
+it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.
 
 ## Results
 
@@ -123,10 +134,6 @@ compared as a timing and main-context signal, not as a full bill.
 
 ```bash
 SHERRY_EVAL_DELEGATION_PRESSURE=1 uv run --no-sync python evals/swebench/suite.py \
-  --hard --persona coding --keep-instances \
-  --instance-cache-dir /tmp/swebench-instance-cache
-
-SHERRY_EVAL_DELEGATE_ONLY=1 uv run --no-sync python evals/swebench/suite.py \
   --hard --persona coding --keep-instances \
   --instance-cache-dir /tmp/swebench-instance-cache
 ```
