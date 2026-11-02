@@ -1,7 +1,7 @@
 # 计划组：插件市场 + 沙箱化插件 UI + Gen-UI（长期路线）
 
 - 建档日期：2026-10-23
-- 状态：**长期规划，待评审**。这是 sherry 前端最大的功能缺口（ZCode 有完整市场 + 沙箱 + Gen-UI，sherry 的 MCP tab 是空占位符），需分四个阶段逐步落地，每阶段可独立交付。
+- 状态：**Phase 0 已落地（2026-10-24）；Phase 1-3 待做，待评审**。这是 sherry 前端最大的功能缺口（ZCode 有完整市场 + 沙箱 + Gen-UI，sherry 的 MCP tab 已实现但只读），需三个阶段逐步落地，每阶段可独立交付。
 - **文档范围**：从 sherry 当前空白的 MCP 占位符出发，规划一条到完整插件生态的路线：Phase 0 MCP 服务配置 → Phase 1 插件市场 → Phase 2 沙箱化插件 UI → Phase 3 Gen-UI。每个阶段给出目标、改动清单、工程量、验收标准。
 - **硬约束**：每个阶段独立可交付（不跳阶段也可用）；沙箱隔离是安全红线（插件 UI 不能拿到宿主权限）；现有 Channels 功能不破坏；后端改动 additive。
 - 关联代码：
@@ -64,47 +64,20 @@ ZCode 的插件系统是一个完整生态：
 
 ---
 
-## Phase 0：MCP 服务配置（基础层）
+## Phase 0：MCP 服务配置（基础层）— ✅ 已落地
 
-### 目标
+### 实际实现（2026-10-24）
 
-替换 `ExtendPanel.vue` 的空 MCP 占位符，实现 MCP server CRUD + 工具发现 + 会话级启用。
+| 组件 | 文件 | 状态 |
+|---|---|---|
+| MCP loader | `agent/tools/mcp_plugin.py` — `build_mcp_tools()` 合并 bundled (`plugins/mcp_server/config.json`) + user drop folder (`APP_HOME/mcp_servers/`)，每 server 一个 `MultiServerMCPClient`（单 server 崩溃不影响其他） | ✅ 已接入 `build_main_tools()` |
+| 后端 service | `server/service/mcp_service.py` — `mcp_servers_snapshot()` 只读快照（name/source/command/has_error/error） | ✅ |
+| HTTP route | `server/trigger/http/mcp.py` — `GET /mcp/servers` | ✅ |
+| 前端 composable | `client/app/composables/use-mcp-servers.ts` — 模块级 ref（非 Pinia store），状态 `servers`/`userDir`/`loading`/`canRestart` | ✅ |
+| 前端 bridge | `client/app/composables/bridge/mcp-servers.ts` — `fetchMcpServers()` | ✅ |
+| ExtendPanel MCP tab | `client/app/pages/home/components/ExtendPanel.vue:177-264` — server 列表（bundled + user，错误标记，source badge）+ 打开文件夹 + 刷新 + 桌面端重启后端按钮 | ✅ |
 
-### 改动清单
-
-#### 后端
-
-- [ ] **P0.1** 新建 `server/service/mcp_service.py`：
-  - MCP server registry（SQLite 或 JSON）：`{name, command, args, env, enabled, scope}`
-  - `list_mcp_servers()` / `add_mcp_server(config)` / `update_mcp_server(name, config)` / `remove_mcp_server(name)` / `toggle_mcp_server(name, enabled)`
-  - 参考现有 `skill_scan_*.py` 的扫描模式 + `agent_config_service.py` 的配置持久化
-- [ ] **P0.2** MCP server 连接管理：
-  - 启动/停止 MCP server 进程（stdio/SSE 两种 transport）
-  - 工具发现：连接后枚举 server 提供的 tools → 注册到 agent 工具面
-  - 参考 sherry 已有的 `agent/tools/__init__.py::build_main_tools()` 扩展点
-- [ ] **P0.3** HTTP routes：`GET /mcp/servers`、`POST /mcp/servers`、`PUT /mcp/servers/:name`、`DELETE /mcp/servers/:name`、`GET /mcp/servers/:name/tools`
-
-#### 前端
-
-- [ ] **P0.4** 新建 `client/app/stores/mcp.ts`（Pinia store）：
-  - state: `servers: McpServerConfig[]`, `toolsByServer: Record<name, Tool[]>`, `loading`, `error`
-  - actions: `load()`、`add(config)`、`update(name, config)`、`remove(name)`、`toggle(name, enabled)`
-- [ ] **P0.5** `ExtendPanel.vue:132-145` MCP tab 改造：
-  - 替换占位符为 MCP server 列表（卡片网格，同 Channels tab 模式 `:66-130`）
-  - 每张卡片：name + command + enabled 开关 + 工具数量 + 编辑/删除
-  - "添加 MCP 服务"按钮 → `McpServerDialog.vue`（name/command/args/env 表单）
-  - 连接状态指示（运行中/已停止/错误）
-- [ ] **P0.6** 新建 `McpServerDialog.vue`：表单 + 连接测试（"测试连接"按钮调 `GET /mcp/servers/:name/tools`）
-- [ ] **P0.7** i18n：四语言增 `mcp.*` 键
-
-### 工程量
-4-6 天
-
-### 验收
-- [ ] **F3**：Channels tab 不受影响
-- [ ] **F4**：后端 additive
-- [ ] MCP tab 显示 server 列表 + 增删改 + 启停
-- [ ] MCP server 工具出现在 agent 工具面
+**与原计划的差异**：原计划 P0.1-P0.7 设想的是 in-app CRUD（增删改 MCP server 配置）。实际实现是**文件投放 + 后端重启**模式——用户把 `<name>.json` 或 `<name>/config.json` 放到 `APP_HOME/mcp_servers/`，重启后端生效。没有 in-app 增删改、没有连接测试。如果 Phase 1 需要动态安装 MCP server（作为插件的一部分），需要补 CRUD 后端。
 
 ---
 
@@ -120,14 +93,53 @@ ZCode 的插件系统是一个完整生态：
 
 - [ ] **P1.1** 新建 `server/service/plugin_service.py`：
   - **Source 解析**（参考 ZCode 多态 source）：
-    - GitHub `owner/repo` → `git clone`
-    - git URL → `git clone`
-    - HTTP URL → 下载 manifest JSON
-    - 本地路径 → 直接读
-  - **Manifest 解析**：`marketplace.json`（插件列表）+ 每个 plugin 的 `plugin.json`（name/version/description/componentTypes/tools/skills/hooks/mcp）
-  - **安装**：clone/下载到 `plugins/installed/<name>/`，扫描 componentTypes，注册 tools/skills/hooks/mcp
-  - **卸载**：删除目录 + 注销注册
-  - **更新**：`git pull` / 重新下载 + 原子替换注册
+    - GitHub `owner/repo` → `git clone https://github.com/owner/repo.git`
+    - git URL（`https://`/`git://`/`ssh://`） → `git clone <url>`
+    - HTTP URL → `GET <url>` 下载 manifest JSON
+    - 本地路径 → 直接读（Tauri `@tauri-apps/plugin-dialog` 选目录）
+  - **Manifest schema**：
+
+    ```jsonc
+    // marketplace.json（市场源根文件）
+    {
+      "name": "sherry-official",
+      "description": "Sherry official plugin marketplace",
+      "plugins": [
+        { "name": "code-reviewer", "version": "1.0.0", "path": "./plugins/code-reviewer" }
+      ]
+    }
+    ```
+
+    ```jsonc
+    // plugin.json（每个插件目录内）
+    {
+      "name": "code-reviewer",
+      "version": "1.0.0",
+      "description": "Code review assistant",
+      "author": "sherry",
+      "componentTypes": ["mcp"],        // "mcp" | "skill" | "hook" | "ui"
+      "mcp": {                           // componentTypes 含 "mcp" 时
+        "config": { "command": "node", "args": ["server.js"] }
+      },
+      "skills": ["review"],              // componentTypes 含 "skill" 时，skill 目录列表
+      "hooks": {                         // componentTypes 含 "hook" 时
+        "PostToolUse": [{ "command": "node hook.js", "matcher": "patch_file" }]
+      }
+    }
+    ```
+
+  - **安装管线**：
+    1. `resolve_source(source)` → 确定 source 类型 → clone/下载/读取到临时目录
+    2. `parse_manifest(tmp_dir)` → 读 `marketplace.json` → 对每个 plugin 读 `plugin.json`
+    3. `validate(plugin)` → 校验 name 格式（`^[a-z0-9-]+$`）、version（semver）、componentTypes 非空
+    4. `install(plugin, scope)` → 原子复制到 `APP_HOME/plugins/installed/<name>/`（user scope）或 `<project>/.sherry/plugins/<name>/`（workspace scope）
+    5. `register(plugin)` → 按 componentTypes 注册：
+       - `"mcp"` → 写 `<name>.json` 到 `APP_HOME/mcp_servers/`（复用 Phase 0 的 MCP loader 自动发现）
+       - `"skill"` → 复制 skill 目录到 `APP_HOME/skills/auto/<name>/`（复用 `skills/loader.py::scan_skills()`）
+       - `"hook"` → 写入 `sherry.jsonc` 的 `hooks` 段（复用 `config/sherry_settings.py::load_sherry_hooks`）
+    6. `cleanup(tmp_dir)` → 删除临时目录
+  - **卸载**：删除 `plugins/installed/<name>/` + 按注册逆序注销（删 MCP config、删 skill 目录、从 hooks 移除）
+  - **更新**：`git pull` / 重新下载 → 校验新 manifest → 原子替换 `plugins/installed/<name>/` → 重新注册
 - [ ] **P1.2** 新建 `server/DAO/plugin_store.py`（SQLite）：
   - `marketplaces(id, name, source, install_location, last_updated, plugin_count, is_official)`
   - `installed_plugins(id, name, marketplace, version, enabled, scope, install_path, installed_at, component_types)`
@@ -197,6 +209,40 @@ sherry 是 Tauri（桌面）+ Web 两种形态。沙箱方案需兼顾：
   - `frame-ancestors` = sherry origin only
   - `form-action 'none'`、`object-src 'none'`
   - `'unsafe-eval'`/`'wasm-unsafe-eval'` 仅在插件声明时放开
+  - 完整 CSP 示例：`default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'; form-action 'none'; object-src 'none'`
+
+#### postMessage JSON-RPC 协议
+
+宿主↔iframe 通信使用 JSON-RPC 2.0 over `window.postMessage`：
+
+```typescript
+// 宿主 → iframe（通知 / 推送状态）
+{ jsonrpc: "2.0", method: "ui/initialize", params: { toolInput, toolOutput, theme, locale, displayMode, hostCapabilities } }
+{ jsonrpc: "2.0", method: "ui/theme-changed", params: { variables: { "--color-bg": "#1a1a2e", ... } } }
+{ jsonrpc: "2.0", method: "ui/teardown" }
+
+// iframe → 宿主（请求 / alias API 调用）
+{ jsonrpc: "2.0", id: "rpc-1", method: "sherry/callTool", params: { name: "read_file", args: { path: "src/main.ts" } } }
+{ jsonrpc: "2.0", id: "rpc-2", method: "sherry/notifyIntrinsicHeight", params: { height: 320 } }
+{ jsonrpc: "2.0", id: "rpc-3", method: "sherry/sendFollowUpMessage", params: { prompt: "Review the changes" } }
+
+// 宿主 → iframe（响应）
+{ jsonrpc: "2.0", id: "rpc-1", result: { content: "1|import os..." } }
+{ jsonrpc: "2.0", id: "rpc-1", error: { code: -32601, message: "tool not found" } }
+```
+
+**method 白名单**（宿主只接受这些 method）：
+
+| Method | 说明 | 限频 |
+|---|---|---|
+| `sherry/callTool` | 调 agent 工具（name + args） | 无 |
+| `sherry/readResource` | 读 MCP resource（uri） | 无 |
+| `sherry/listResources` | 列 MCP resources | 无 |
+| `sherry/sendFollowUpMessage` | 发 follow-up 消息（注入到对话） | 每会话 4 次 |
+| `sherry/openExternal` | 打开外部链接（宿主校验 href） | 无 |
+| `sherry/downloadFile` | 下载文件（items: `{filename, content}[]`） | 无 |
+| `sherry/notifyIntrinsicHeight` | 报告 iframe 内容高度（自适应） | 无 |
+| `sherry/setWidgetState` | 读写 widgetState（≤16KiB，回传模型用） | 无 |
 
 #### 前端
 
@@ -259,36 +305,93 @@ sherry 是 Tauri（桌面）+ Web 两种形态。沙箱方案需兼顾：
 - [ ] **P3.1** 定义 Gen-UI 标记协议（参考 ZCode `packages/shared/src/gen-ui/contract.ts`）：
   - LLM 在回复文本中嵌入 `::visualize{path="dashboard.html" title="仪表盘" mode="wide"}`
   - `path` = 小写连字符 `.html` 文件名（严格校验 `^[a-z0-9]+(?:-[a-z0-9]+)*\.html$`）
+  - `mode` = `"inline"`（对话流内锚点）| `"wide"`（Dialog 弹窗，同沙箱原子移动不 remount）
+  - `title` = 可选，Dialog 标题
   - HTML 上限 5MB
-  - 解析器：扫描 assistant text → 提取 `::visualize` 标记 → 分割为 `text` + `ui` + `pending` 段
+  - **解析器规则**：
+    ```
+    输入: "Here's the analysis:\n::visualize{path=\"chart.html\" title=\"趋势图\" mode=\"inline\"}\nThe chart above shows..."
+    输出段:
+      text:  "Here's the analysis:\n"
+      ui:    { path: "chart.html", title: "趋势图", mode: "inline" }
+      text:  "\nThe chart above shows..."
+    ```
+    - 标记必须在行首（前面只能有空白）或独占一行
+    - 一条回复可以有多个 `::visualize` 标记，按顺序分段
+    - 标记格式错误（path 不合法、HTML 超限、文件不存在）→ 标记降级为纯文本显示 `[Gen-UI Error: <reason>]`
+  - **HTML 来源**：LLM 通过 `write_file` 工具写入 `workspace/.sherry/gen-ui/<path>`，宿主通过 `GET /gen-ui/:path` 读取（per-project，同项目目录绑定）
 
 #### 前端
 
 - [ ] **P3.2** 新建 `client/app/composables/use-gen-ui.ts`（Gen-UI 页面控制器，移植 ZCode `adapters/page.ts`）：
   - `createGenUiPage(path, html, target)` → 创建沙箱（复用 Phase 2 的 `use-plugin-sandbox.ts`）+ `AppBridge` handshake
-  - 注册 Gen-UI 方法 handler：
-    - `zcode/gen-ui/state`（读写 widgetState，≤16KiB）
-    - `zcode/gen-ui/follow-up`（发 follow-up 消息，需用户确认）
-    - `zcode/gen-ui/tweak`（读 tweak 定义）
-    - `zcode/gen-ui/presentation`（展示模式）
+  - 注册 Gen-UI 方法 handler（方法名用 `sherry/` 前缀，不用 `zcode/`）：
+    - `sherry/gen-ui/state`（读写 widgetState，≤16KiB JSON）
+    - `sherry/gen-ui/follow-up`（发 follow-up 消息，需用户确认）
+    - `sherry/gen-ui/tweak`（读 tweak 定义——插件通过此方法声明可调参数）
+    - `sherry/gen-ui/presentation`（展示模式切换 inline ↔ expand）
   - 主题投射（复用 Phase 2 的 CSS 变量投射）
   - retained page owner（IntersectionObserver 追踪可见性，离屏 5 分钟 suspend，复用 Phase 2 容量管理）
 
+  **tweak 定义协议**（插件通过 `sherry/gen-ui/tweak` 声明）：
+
+  ```jsonc
+  {
+    "groups": [
+      {
+        "label": "Chart Options",
+        "controls": [
+          { "key": "color", "type": "color", "label": "Line color", "default": "#3b82f6" },
+          { "key": "width", "type": "slider", "label": "Line width", "min": 1, "max": 10, "step": 1, "default": 2 },
+          { "key": "smooth", "type": "toggle", "label": "Smooth curve", "default": false },
+          { "key": "type", "type": "select", "label": "Chart type", "options": ["line","bar","area"], "default": "line" }
+        ]
+      }
+    ]
+  }
+  ```
+
+  **widgetState 数据模型**：
+
+  ```jsonc
+  // 插件通过 sherry/gen-ui/state 写入，宿主存储并回传模型
+  {
+    "color": "#ef4444",
+    "width": 3,
+    "smooth": true,
+    "type": "bar"
+  }
+  ```
+
 - [ ] **P3.3** 新建 `client/app/components/gen-ui/GenUiCard.vue`（参考 ZCode `GenUiCard.tsx`）：
   - 解析 assistant text 的 `::visualize` 标记 → `text` 段走 markdown 渲染 + `ui` 段走 `GenUiCard`
-  - inline 模式（锚点绑定到对话流）+ expand 模式（Dialog 弹窗，同沙箱原子移动不 remount）
+  - inline 模式（锚点绑定到对话流，高度自适应 80-1200px）+ expand 模式（Dialog 弹窗，同沙箱原子移动不 remount）
   - copy-image（`page.copyImage()` → 离屏 canvas → 剪贴板）
+  - TweakPanel toggle 按钮（inline 模式在卡片底部，expand 模式在 Dialog 侧栏）
 
 - [ ] **P3.4** 新建 `client/app/components/gen-ui/TweakPanel.vue`（参考 ZCode `TweakPanel.tsx`）：
-  - 渲染控件组：slider（`<input type=range>`）、color（`<input type=color>`）、toggle（checkbox）、select（`<select>`）
-  - **实时调参**：change → `page.setTweaks(next)` → 投射到沙箱 hostContext → 插件即时重渲染（无 round-trip）
-  - **预览/原始切换**：`page.previewTweaks(!preview)` → 投射空值 = 原始状态
-  - **Reset**：`page.setTweaks(original)`
-  - **Submit**：`page.submitTweaks(values)` → 组装 JSON → `followUp("Update the Gen UI file <path> with these settings:\n<json>")` → LLM 重写 HTML → 卡片重新渲染
+  - 渲染控件组：slider（`<input type=range>`）、color（`<input type=color>`）、toggle（PrimeVue ToggleSwitch）、select（PrimeVue Select）
+  - **实时调参**：change → `page.setTweaks(next)` → 投射到沙箱 hostContext → 插件即时重渲染（无 round-trip 到模型）
+  - **预览/原始切换**：`page.previewTweaks(!preview)` → 投射空值 = 原始状态，切换回投射当前值
+  - **Reset**：`page.setTweaks(original)` → 恢复插件声明的 default 值
+  - **Submit 流程**：
+    1. `page.submitTweaks(values)` → 收集当前 tweak 值
+    2. 组装 JSON：`{ "color": "#ef4444", "width": 3, "smooth": true, "type": "bar" }`
+    3. 发 follow-up：`Update the Gen UI file <path> with these settings:\n<json>`
+    4. LLM 收到 follow-up → 用 `write_file` 重写 `workspace/.sherry/gen-ui/<path>`
+    5. 宿主检测到文件变更 → `page.reload(newHtml)` → 卡片重新渲染
+    6. widgetState 清空（新版本从 default 开始）
 
-- [ ] **P3.5** `ChatBox.vue` 改造：AI 消息渲染检测 `::visualize` 标记 → 分段渲染（text + GenUiCard）
-- [ ] **P3.6** Gen-UI 文件存储：LLM 生成的 HTML 存到 `workspace/.sherry/gen-ui/<path>`（per-project），通过 `GET /gen-ui/:path` 读取
-- [ ] **P3.7** widgetState 投射回模型：state 作为 `<untrusted_gen_ui_state>` 块注入下一轮 model context（参考 ZCode `buildGenUiModelContext`），输入时 strip（`stripGenUiModelContext`）
+- [ ] **P3.5** `ChatBox.vue` 改造：AI 消息渲染检测 `::visualize` 标记 → 分段渲染（text + GenUiCard）。标记解析在 `use-chat-stream.ts` 的 chunk 处理后做（流式时不解析，`done` 后整体扫描）
+- [ ] **P3.6** Gen-UI 文件存储 + HTTP route：
+  - LLM 通过 `write_file` 写入 `<project>/.sherry/gen-ui/<path>`（per-project，同项目目录绑定）
+  - 新增 `GET /gen-ui/:path`（scoped to session's project directory，复用 `resolve_within` 边界检查）
+  - 文件 watcher（Tauri `@tauri-apps/plugin-fs` watch 或 polling）→ 检测变更 → 通知前端 reload
+- [ ] **P3.7** widgetState 投射回模型：
+  - 插件通过 `sherry/gen-ui/state` 写入的 state（≤16KiB JSON）存到 session state register
+  - 下一轮 model context 注入 `<untrusted_gen_ui_state path="chart.html">\n{state_json}\n</untrusted_gen_ui_state>`（参考 ZCode `buildGenUiModelContext`）
+  - 标记为 `untrusted`：state 来自沙箱插件，模型不应盲信（可能被恶意插件注入 prompt injection）
+  - 用户输入时 strip（`stripGenUiModelContext`——扫描用户消息移除伪标记，防止用户伪造 state）
 
 ### 工程量
 10-14 天
@@ -306,42 +409,48 @@ sherry 是 Tauri（桌面）+ Web 两种形态。沙箱方案需兼顾：
 ## 总执行顺序与里程碑
 
 ```
-Phase 0：MCP 服务配置（4-6 天）
-  ├─ 后端 mcp_service + routes
-  ├─ 前端 mcp store + ExtendPanel MCP tab
-  └─ MCP 工具注册到 agent 工具面
+Phase 0：MCP 服务配置 ✅ 已落地（2026-10-24）
+  ├─ mcp_plugin.py loader + build_mcp_tools() 接入 agent 工具面
+  ├─ mcp_service.py + GET /mcp/servers
+  ├─ use-mcp-servers.ts composable + bridge
+  └─ ExtendPanel.vue MCP tab（server 列表 + 错误标记 + 重启后端）
       │
-      ↓ （Phase 1 依赖 Phase 0 的 MCP/插件注册基础）
+      ↓ （Phase 1 依赖 Phase 0 的 MCP/skill/hook 注册基础）
 Phase 1：插件市场（8-12 天）
-  ├─ 后端 plugin_service + source 解析 + DAO
-  ├─ 前端 plugin-management store + PluginStorePanel
-  └─ 安装/卸载/更新/启用 + 工具/skills/hooks 注册
+  ├─ 后端 plugin_service + source 解析 + manifest schema + DAO
+  ├─ 安装管线（clone → parse → validate → install → register）
+  ├─ 注册复用现有 loader：MCP config → mcp_servers/、skill → skills/auto/、hook → sherry.jsonc
+  ├─ 前端 plugin-management store + PluginStorePanel + AddMarketplaceSourceDialog
+  └─ 安装/卸载/更新/启用 + scope（workspace/user）
       │
-      ↓ （Phase 2 依赖 Phase 1 的插件体系）
+      ↓ （Phase 2 依赖 Phase 1 的插件体系，但不依赖市场——MCP 工具可直接返回 display.ui）
 Phase 2：沙箱化插件 UI（12-16 天）
-  ├─ MCP 工具 display.ui 扩展
-  ├─ iframe sandbox + postMessage JSON-RPC
-  ├─ window.sherry alias API
+  ├─ MCP 工具 display.ui 扩展 + 后端 HTML/CSP 校验
+  ├─ postMessage JSON-RPC 协议（method 白名单 + 限频）
+  ├─ iframe sandbox + window.sherry alias API（8 个 method）
   ├─ PluginUiCard（inline）+ PluginUiSidePane（侧栏）
-  └─ 主题投射 + permission gate
+  ├─ CSP：default-src 'none' + frame-ancestors self + per-resource 声明
+  └─ 主题投射 + permission gate + fail-open 退化
       │
       ↓ （Phase 3 依赖 Phase 2 的沙箱基建）
 Phase 3：Gen-UI（10-14 天）
-  ├─ ::visualize 标记协议 + 解析器
-  ├─ GenUiCard + TweakPanel
-  ├─ retained page owner + 离屏 suspend
-  └─ widgetState 回传模型
+  ├─ ::visualize 标记协议 + 解析器（行首锚定，多标记分段，错误降级）
+  ├─ GenUiCard（inline + expand，复用 Phase 2 沙箱）
+  ├─ TweakPanel（slider/color/toggle/select，实时调参无 round-trip）
+  ├─ Submit 流程（tweak JSON → follow-up → LLM 重写 HTML → reload）
+  ├─ Gen-UI 文件存储 + GET /gen-ui/:path + 文件 watcher
+  └─ widgetState 回传模型（<untrusted_gen_ui_state>，untrusted 标记 + strip）
 
-总工程量：34-48 天（约 7-10 周）
+总工程量：30-42 天（约 6-9 周，Phase 0 已完成不计入）
 ```
 
-**关键依赖链**：Phase 0 → Phase 1 → Phase 2 → Phase 3。每阶段独立可交付，但后阶段依赖前阶段的基建。
+**关键依赖链**：Phase 0 ✅ → Phase 1 → Phase 2 → Phase 3。每阶段独立可交付，但后阶段依赖前阶段的基建。
 
 **里程碑**：
-- Phase 0 完成 → sherry 有 MCP 服务配置（对标 ZCode 的 MCP settings）
-- Phase 1 完成 → sherry 有插件市场（对标 ZCode 的 PluginStorePage）
-- Phase 2 完成 → sherry 有沙箱插件 UI（对标 ZCode 的 plugin-ui + sandbox）
-- Phase 3 完成 → sherry 有 Gen-UI（对标 ZCode 的 gen-ui + TweakPanel）
+- ~~Phase 0 完成~~ ✅ → sherry 有 MCP 服务配置（文件投放 + 后端重启模式）
+- Phase 1 完成 → sherry 有插件市场（多态 source + manifest + 安装/卸载/更新）
+- Phase 2 完成 → sherry 有沙箱插件 UI（iframe sandbox + window.sherry alias + postMessage RPC）
+- Phase 3 完成 → sherry 有 Gen-UI（::visualize 标记 + TweakPanel + widgetState 回传）
 
 ---
 
