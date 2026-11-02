@@ -22,6 +22,8 @@
   - [🧵 チェーン要約のフィルタリング](eviction/README.ja.md#-チェーン要約のフィルタリング)
 - [Message 行のターン識別子](#-message-行のターン識別子)
 - [相互作用と順序保証](#-相互作用と順序保証)
+- [安定したシステムプロンプトとリマインダー層](system-reminder/README.ja.md)
+- [ツール結果エンリッチメントキュー](tool-result-enrichment/README.ja.md)
 - [設定](#%EF%B8%8F-設定)
 - [テストマップ](#-テストマップ)
 - [クリアの意味論と限界](#-クリアの意味論と限界)
@@ -125,25 +127,6 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | **プレフィックスキャッシュ** | P1-9 は id によりその場でメッセージを更新し（内容同一・id 同一）、他は何も書き換えないので、モデル可視プレフィックスが無効化されるのはプレビュービューが実際に異なるときだけ；ツール退避はメッセージが state に入る前に起きるので、モデルが見るのは最初からプレビュー版だけ |
 | **ツールペアリング / サニタイザ** | すべての置換が `id` と `tool_call_id` を保持する；`sanitize_tool_use_result_pairing` が退避のために修復することは決してなく、スタブは有効なペアリング入力であり続ける |
 | **サブエージェントセッション** | 子パイプラインは `ContextEvictionMiddleware` と `MessagePersistenceMiddleware` を**登録しない**：子トランスクリプトは完全なツール結果を保ち、checkpoint のみに存在する |
-
-## 🧱 安定したシステムプロンプトとリマインダー層
-
-システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、プロジェクト指示（`AGENTS.md`、フォールバック `CLAUDE.md`）、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
-
-凍結されたメモリスナップショットには意図的な例外が 1 つあります。セッションのモデル切替は新しい provider キャッシュ名前空間に入り、思考モード切替は同一プレフィックスで `cache_read` が 0 になることを実測済みです——どちらもキャッシュは元々冷えます。`ThinkingControlMiddleware` の `before_model` フックは、そのターンの `(thinking key, profile fingerprint, mapping fingerprint)` を最後に適用した値と比較し（グラフは毎ターン再構築されるためプロセスレベルで保持）、変化があれば `system_prompt_injection` より前に `MemoryStore` のスナップショットを再読み込みし、両レジスタから `StateKey.SYSTEM_PROMPT` を削除します。切替後のターンの最初のモデル呼び出しは、セッション途中に書かれた `FACTS.md` / `MEMORY.md` / `USER.md` を見ます。初回ターン、変化なし、再読み込み失敗ではキャッシュを保持し、送信なしでは発火しません。
-
-FACTS.md はグローバルなので、ディレクトリ切替でメモリ用のキャッシュプロンプトは無効化されません。同じターンの `project_instructions` リマインダーは新しいプロジェクトの `AGENTS.md`（フォールバック `CLAUDE.md`）を読み直し、`only_if_changed` により内容が変わるまで再注入しません。
-
-| 関心事 | ルール |
-|---|---|
-| 何を注入するか | builder がテキストを返したソースごとに 1 件: 予算順は高→低、配信時は低→高に反転して最高優先度を末尾に置く。`origin=<ソース ID>`、`provenance="reminder_catalog"`、`internal=True` |
-| 予算 | 呼び出しごとに全ソース合計で `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超過時は最低優先度を丸ごと落とし、途中で切ることはしない |
-| スロットル | ソースは `cooldown_turns`（TaskFlow ボード / boulder: 5）と `only_if_changed`（同一内容は繰り返さない）を宣言できる。管理状態は実際に注入されたソースだけ進む |
-| 圧縮後 | 圧縮がカタログをリセットするため、次のターンに全ソースが live state から再注入される——リマインダー層は履歴の生存に依存しない |
-| エスケープ | ペイロード内のネストした `<system-reminder>` タグ（todo テキストはユーザーの影響を受けうる）はエスケープされる。さもなければタグを早期に閉じてこの層を装える |
-| ターン内の位置 | ターンの最初のモデル呼び出しのみ——TaskIntent と同じ「最後のメッセージが本物のユーザーメッセージ」判定。人間メッセージを走査するスキャナ（`split_into_turns`、HITL のオペレーター判定、要約ラベル）は `pub.func.message.system_reminder` 経由でリマインダーを飛ばす |
-
-todo リストにはもう 1 つの防護があります: `PlanContinuationEnforcer`（`TodoContinuationEnforcer` から改名。監督する「プラン」= todos + TaskFlow flows）は `todowrite` を呼ばないターン数を数え、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` を追記します——スナップショット方式の停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。
 
 ## 🧩 Provider プロンプトキャッシュ（Anthropic）
 

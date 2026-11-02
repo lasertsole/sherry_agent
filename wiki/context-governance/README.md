@@ -22,6 +22,8 @@ Every message the agent produces is valuable twice: once as **raw history** (wha
   - [🧵 Chain-Summary Filtering](eviction/README.md#-chain-summary-filtering)
 - [Turn Identity on Message Rows](#-turn-identity-on-message-rows)
 - [Interactions & Ordering](#-interactions--ordering)
+- [Stable System Prompt & the Reminder Layer](system-reminder/README.md)
+- [Tool-Result Enrichment Queue](tool-result-enrichment/README.md)
 - [Configuration](#%EF%B8%8F-configuration)
 - [Testing Map](#-testing-map)
 - [Clearing Semantics & Limitations](#-clearing-semantics--limitations)
@@ -128,25 +130,6 @@ The interaction map:
 | **Prefix caching** | P1-9 updates the message in place by id (same content, same id) and rewrites nothing else, so the model-visible prefix is only invalidated when the preview view actually differs; tool eviction happens before the message ever enters state, so the preview is the only version the model ever sees |
 | **Tool pairing / sanitizer** | All replacements preserve `id` and `tool_call_id`; `sanitize_tool_use_result_pairing` never needs to repair an eviction, and the stubs remain valid pairing inputs |
 | **Subagent sessions** | Child pipelines do **not** register `ContextEvictionMiddleware` or `MessagePersistenceMiddleware`: child transcripts keep their full tool results and stay checkpoint-only |
-
-## 🧱 Stable System Prompt & the Reminder Layer
-
-The system prompt holds **stable** content only: persona files, the memory blocks and the skills index. Every LIVE view — plan mode, the working directory, the project instructions (`AGENTS.md`, fallback `CLAUDE.md`), the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index — is injected instead as a `<system-reminder source="…">` HumanMessage on each turn's first model call (`DynamicReminderMiddleware` + the catalogue in `agent/middlewares/reminder_catalog/`). Two reasons: a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it (persona included), and a prompt that is only rebuilt on a cache miss shows a STALE todo list between rebuilds.
-
-The frozen memory snapshot has one deliberate exception. A session model switch starts a new provider cache namespace, and a thinking switch was measured to drop `cache_read` to 0 on an identical prefix; the cache is already cold either way. `ThinkingControlMiddleware`'s `before_model` hook compares the turn's `(thinking key, profile fingerprint, mapping fingerprint)` with the last applied one (process-level, because the graph is rebuilt every turn) and, on a change, reloads `MemoryStore`'s snapshot and deletes `StateKey.SYSTEM_PROMPT` from both registers before `system_prompt_injection` runs. The first model call of the switched turn therefore sees mid-session `FACTS.md` / `MEMORY.md` / `USER.md` writes. A first turn, an unchanged control, and a failed reload all keep the cached prompt; no turn is triggered without a send.
-
-FACTS.md is global, so a directory switch no longer invalidates the cached prompt for memory. The same turn's `project_instructions` reminder still re-reads the new project's `AGENTS.md` (fallback `CLAUDE.md`) and injects it once per distinct content (`only_if_changed`).
-
-| Concern | Rule |
-|---|---|
-| What is injected | One reminder per source whose builder returned text: budget order high→low, delivered low→high so the highest priority sits at the tail, tagged `origin=<source id>`, `provenance="reminder_catalog"`, `internal=True` |
-| Budget | `REMINDER_CATALOG["total_budget_chars"]` (30 000) across all sources per call — the lowest priority is dropped whole, never truncated mid-thought |
-| Throttle | A source may declare `cooldown_turns` (TaskFlow board / boulder: 5) and `only_if_changed` (an identical payload is not repeated); the bookkeeping advances only for sources actually injected |
-| After compression | The compaction resets the catalogue, so the next turn re-injects every source from live state — the reminder layer does not depend on history surviving |
-| Escaping | Nested `<system-reminder>` tags inside a payload (todo text is user-influenced) are escaped, or the payload could close the tag and impersonate the layer |
-| Turn scoping | Injected on the first model call of a turn only — the same "last message is a genuine user message" test TaskIntent uses; the scanners that walk human messages (`split_into_turns`, HITL's headless check, the summarizer labels) skip reminders through `pub.func.message.system_reminder` |
-
-The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `TodoContinuationEnforcer`; it supervises the plan = todos + TaskFlow flows) counts turns without a `todowrite` call and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), appends a `[REMINDER: TODO TRACKING]` nudge to the continuation directive — the one shape the snapshot-based stagnation check cannot catch (an agent advancing TaskFlow clears the streak while the todo list rots).
 
 ## 🧩 Provider Prompt Caching (Anthropic)
 
