@@ -3,15 +3,12 @@
 //! Spawns the backend as a child process when the Tauri app starts and kills it
 //! on exit. Two launch shapes:
 //!
-//! * **Packaged** — the PyInstaller build the shell either ships inside the
-//!   bundle (`resource_dir/sherry-backend/`, the unified installer) or downloads
-//!   from the repository's GitHub releases on the first launch of a packaged
-//!   app (see [`super::backend_downloader`], the transitional fallback). A
-//!   packaged app ALWAYS starts one of them: the machine has no checkout, no
-//!   venv and no `python` to fall back to.
+//! * **Packaged** — the PyInstaller tree shipped inside the unified installer's
+//!   resources (`resource_dir/sherry-backend/`). A packaged app always starts
+//!   it: the machine has no checkout, no venv and no `python` to fall back to.
 //! * **Checkout** — `python -m server` from the project root. Kept for
-//!   `pnpm tauri dev`: a development build neither ships nor downloads the
-//!   frozen backend, and starting the checkout server is opt-in through
+//!   `pnpm tauri dev`: a development build neither ships nor starts the frozen
+//!   backend, and starting the checkout server is opt-in through
 //!   `EMA_AUTO_START_BACKEND`.
 //!
 //! Either way the child gets `--sherry-home <app-data-dir>` on its command
@@ -31,11 +28,11 @@ use std::sync::Mutex;
 /// Which command starts the backend.
 #[derive(Debug, Clone)]
 pub enum BackendCommand {
-    /// The bundled/downloaded PyInstaller executable, plus the CUDA pack
-    /// directory whose libraries join the loader search path when the pack is
-    /// present AND its `VERSION` matches the backend tree's (packing-plan
-    /// D2/R1; the decision is made per start, so a restart after the download
-    /// picks the pack up without rebuilding the manager).
+    /// The bundled PyInstaller executable, plus the CUDA pack directory whose
+    /// libraries join the loader search path when the pack is present AND its
+    /// `VERSION` matches the backend tree's (packing-plan D2/R1; the decision is
+    /// made per start, so a restart after the download picks the pack up
+    /// without rebuilding the manager).
     Packaged {
         exe: PathBuf,
         cuda_pack_dir: Option<PathBuf>,
@@ -67,12 +64,13 @@ fn dynamic_loader_path() -> Option<&'static str> {
 /// freshly downloaded pack without rebuilding the manager.
 #[cfg(target_os = "linux")]
 fn cuda_pack_usable(exe: &Path, pack_dir: &Path) -> bool {
-    use crate::services::backend_downloader::versions_match;
+    use crate::services::backend_bundle::VERSION_FILE;
+    use crate::services::download::versions_match;
 
-    let pack_version = std::fs::read_to_string(pack_dir.join("VERSION")).unwrap_or_default();
+    let pack_version = std::fs::read_to_string(pack_dir.join(VERSION_FILE)).unwrap_or_default();
     let backend_version = exe
         .parent()
-        .and_then(|tree| std::fs::read_to_string(tree.join("VERSION")).ok())
+        .and_then(|tree| std::fs::read_to_string(tree.join(VERSION_FILE)).ok())
         .unwrap_or_default();
     versions_match(&pack_version, &backend_version)
         && !crate::services::cuda_pack_downloader::CudaPackDownloader::library_dirs(pack_dir)

@@ -932,23 +932,21 @@ away (last session closed, binding cleared).
 
 ## Packaged Desktop App (Tauri) (`client/src-tauri/`)
 
-A release is a UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
+A release is ONE UNIFIED installer (packing-plan, Electron-style): `pnpm tauri
 build` (client/) bundles the static SPA, the Rust shell AND the CPU backend tree
-(`bundle.resources = ["sherry-backend/"]`, unpacked into the resource dir by the
-desktop workflow before the build) — first launch runs with zero downloads.
-`packaging/build_backend.py` still produces the per-platform backend archive as
-a GitHub release asset, now the DOWNLOAD FALLBACK (an older installer, a
-stripped install, a resource mismatch), and `packaging/build_cuda_pack.py`
-produces the optional Linux-only CUDA pack asset the user opts into from the
-model settings tab. `.github/workflows/desktop-build.yml` builds all of it on
+(`bundle.resources = ["sherry-backend/"]`, built by `packaging/build_backend.py`
+on the same runner immediately before the bundle) — first launch runs with zero
+downloads. There is no separate backend archive and no first-run backend
+download fallback. `packaging/build_cuda_pack.py` still produces the optional
+Linux-only CUDA pack asset the user opts into from the model settings tab.
+`.github/workflows/desktop-build.yml` builds the unified installer on
 ubuntu/windows/macos (artifacts for a push to `main`, a GitHub Release for a
-`v*` tag): `build-tauri` needs `build-backend` (and `build-cuda-pack` runs
-beside them), so the installer carries its own backend.
+`v*` tag); each matrix leg builds its own backend inside the Tauri job.
 
 Release hygiene is a build gate: `packaging/check_release.py` rejects the repo's
-`tests/`, `evals/`, `wiki/` and `wiki/` trees (plus frontend `*.test.*` /
-`*.spec.*` files) in BOTH halves, and `build_backend.py` runs the backend half
-itself before the tree is compressed. `.dockerignore` applies the same boundary
+`tests/`, `evals/` and `wiki/` trees (plus frontend `*.test.*` / `*.spec.*`
+files) in BOTH halves, and `build_backend.py` runs the backend half itself after
+freezing. `.dockerignore` applies the same boundary
 to the server image. The wiki/wiki trees are also outside the pre-commit hooks
 and the code CI jobs (docs parity/link gates run in their own job); see
 `.github/workflows/ci.yml`.
@@ -958,29 +956,20 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   output needs a Nitro server and is NOT it).
 - **Backend build**: `packaging/build_backend.py` runs PyInstaller **onedir**
   into `client/src-tauri/sherry-backend/` (per-OS; PyInstaller cannot
-  cross-compile), writes the `VERSION` marker (the `tauri.conf.json` version —
-  what `package_info()` reports and the value the shell compares) and the
-  archive is built with the tree's CONTENTS at its root. The entry
+  cross-compile) and writes the `VERSION` marker (the `tauri.conf.json` version —
+  what `package_info()` reports and the value the shell compares). The entry
   (`packaging/backend_entry.py`) imports `server.__main__` STATICALLY and calls
   its `main()` — a `runpy.run_module` is invisible to the freezer, which is how
-  the first build shipped without the `server` package at all. The Linux job
-  swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB saved
-  — the difference between fitting the asset cap and not); macOS/Windows wheels
-  are already CPU-only.
-- **Which backend runs**: the shell prefers the BUNDLED tree —
-  `resource_dir()/sherry-backend/sherry-backend` present _and_ its `VERSION`
-  equal to this build's → spawn it straight away (`"Using the bundled Python
-  backend (no download)"`). Otherwise `services/backend_downloader.rs` owns the
-  fallback: download `sherry-backend-<os>-<arch>.tar.gz|.zip` from the latest
-  release (`EMA_BACKEND_URL_BASE` overrides the base URL) on a background
-  thread, unpack into a staging dir with the system `tar`, swap it in, then
-  spawn it. Tauri events (`backend-download-started` / `-progress` /
-  `-complete` / `-error`, plus the `backend_download_status` pull and the
-  `retry_backend_download` command; `use-backend-download.ts` +
-  `BackendDownloadOverlay.vue` render it, and the SPA reloads once the backend
-  is up). The whole path is gated on `cfg!(dev)` being FALSE: a dev build
-  (`pnpm tauri dev`, a plain `cargo build`) neither ships nor downloads a
-  frozen backend, and spawns `python -m server` from the checkout when
+  the first build shipped without the `server` package at all. The Linux matrix
+  leg swaps PyPI's CUDA-pulling `torch` for PyTorch's CPU-only wheel (~5 GiB
+  saved — the difference between fitting the release asset cap and not);
+  macOS/Windows wheels are already CPU-only.
+- **Which backend runs**: only the BUNDLED tree. `services/backend_bundle.rs`
+  requires `resource_dir()/sherry-backend/sherry-backend` AND a `VERSION` equal
+  to this build's before the shell spawns it; a missing or mismatched tree is
+  logged as a broken install and there is no runtime download UI or fallback.
+  A dev build (`pnpm tauri dev`, a plain `cargo build`) neither ships nor starts
+  a frozen backend, and spawns `python -m server` from the checkout when
   `EMA_AUTO_START_BACKEND` asks for it.
 - **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
   `nvidia-smi` / the kernel-module record and gates the model settings tab's
@@ -1012,8 +1001,8 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   `.env`, `.models` / `.network` (gitignored; seeded from their templates),
   `sherry.jsonc`, and the WRITABLE half of the skills tree
   (`USER_SKILLS_DIR`, i.e. `auto/` + `plugins/`, with the loader scanning both
-  it and the shipped `skills/builtin`). The downloaded backend tree lives there
-  too — the installed app is read-only and is replaced by updates. Unset (a
+  it and the shipped `skills/builtin`). The backend's writable data lives there;
+  the bundled code tree stays read-only and is replaced by updates. Unset (a
   checkout, a server, CI) every
   path stays exactly where it was, so nothing changes for existing installs; a
   first run seeds `.env` (from the tracked file) / `.models` / `.network` (from

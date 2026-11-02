@@ -65,7 +65,7 @@ User interaction (Vue component)
     -> Reactive UI update
 ```
 
-**Note on the Tauri mode**: `bridge.ts` carries the Tauri IPC code path (`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`) mirroring `app/types/backend/*` (ts-rs generated). `src-tauri/src/` implements the desktop shell: `services/python_process.rs` spawns the Python backend with `SHERRY_HOME` pointed at the app-data directory, `services/backend_downloader.rs` downloads that backend on the first launch of a packaged build (GitHub release asset + Tauri progress events), `services/python_bridge.rs` talks to it over HTTP, and `commands/` holds the IPC entry points. Several flows (heartbeat, cron, skills, channels, curator, logs, `/env`, subagent steering) bypass Rust entirely and always go through `fetchApi` in both modes.
+**Note on the Tauri mode**: `bridge.ts` carries the Tauri IPC code path (`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`) mirroring `app/types/backend/*` (ts-rs generated). `src-tauri/src/` implements the desktop shell: `services/python_process.rs` spawns the bundled Python backend with `SHERRY_HOME` pointed at the app-data directory, `services/backend_bundle.rs` locates and version-checks that backend inside the installer's resources (there is no runtime download), `services/python_bridge.rs` talks to it over HTTP, and `commands/` holds the IPC entry points. Several flows (heartbeat, cron, skills, channels, curator, logs, `/env`, subagent steering) bypass Rust entirely and always go through `fetchApi` in both modes.
 
 ---
 
@@ -233,7 +233,7 @@ client/
 │   │                              #   global-shortcut:default, window-state:default)
 │   ├── icons/                     # App icons
 │   ├── resources/                 # Placeholder dirs (skills/, templates/) — not a bundle resource
-│   ├── src/                       # Desktop shell: services/ (python_process, backend_downloader,
+│   ├── src/                       # Desktop shell: services/ (python_process, backend_bundle,
 │   │                              #   python_bridge), commands/ — plus placeholder modules
 │   ├── tests/                     # Rust test placeholders (empty mod.rs + .gitkeep dirs)
 │   ├── benches/                   # Benchmark placeholder

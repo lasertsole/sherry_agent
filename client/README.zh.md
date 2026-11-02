@@ -65,7 +65,7 @@
     -> 响应式 UI 更新
 ```
 
-**关于 Tauri 模式的说明**：`bridge.ts` 保留了 Tauri IPC 代码路径（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`），与 `app/types/backend/*`（ts-rs 生成）一一对应。`src-tauri/src/` 实现了桌面外壳：`services/python_process.rs` 启动 Python 后端并把 `SHERRY_HOME` 指向应用数据目录，`services/backend_downloader.rs` 在打包版首次启动时下载该后端（GitHub Release 资产 + Tauri 进度事件），`services/python_bridge.rs` 通过 HTTP 与后端通信，`commands/` 是 IPC 入口。此外，若干流程（心跳、定时任务、技能、通道、curator、日志、`/env`、子智能体操控）完全绕过 Rust，在两种模式下都始终走 `fetchApi`。
+**关于 Tauri 模式的说明**：`bridge.ts` 保留了 Tauri IPC 代码路径（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`），与 `app/types/backend/*`（ts-rs 生成）一一对应。`src-tauri/src/` 实现了桌面外壳：`services/python_process.rs` 启动 Python 后端并把 `SHERRY_HOME` 指向应用数据目录，`services/backend_bundle.rs` 定位并校验安装包资源中的后端（运行时不再下载），`services/python_bridge.rs` 通过 HTTP 与后端通信，`commands/` 是 IPC 入口。此外，若干流程（心跳、定时任务、技能、通道、curator、日志、`/env`、子智能体操控）完全绕过 Rust，在两种模式下都始终走 `fetchApi`。
 
 ---
 
@@ -234,7 +234,7 @@ client/
 │   │                              #   global-shortcut:default、window-state:default）
 │   ├── icons/                     # 应用图标
 │   ├── resources/                 # 占位目录（skills/、templates/）——已不是打包资源
-│   ├── src/                       # 桌面外壳：services/（python_process、backend_downloader、
+│   ├── src/                       # 桌面外壳：services/（python_process、backend_bundle、
 │   │                              #   python_bridge）、commands/ —— 另有占位模块
 │   ├── tests/                     # Rust 测试占位（空 mod.rs + .gitkeep 目录）
 │   ├── benches/                   # 基准测试占位

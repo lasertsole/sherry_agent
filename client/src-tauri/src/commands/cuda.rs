@@ -3,15 +3,14 @@
 //!
 //! The pack is Linux-only and optional: `cuda_support` gates the whole card
 //! (the model settings tab renders it only when the host has an NVIDIA
-//! driver), and the download runs on a background thread exactly like the
-//! first-run backend download, reporting through the
+//! driver), and the download runs on a background thread, reporting through the
 //! `cuda-pack-download-*` Tauri events (the pull half lives here).
 
-use crate::services::backend_downloader::DownloadEvents;
 use crate::services::cuda_detect::{self, CudaSupport};
 use crate::services::cuda_pack_downloader::{
     CudaPackDownloadState, CudaPackDownloader, CudaPackStatus, TauriCudaPackEvents,
 };
+use crate::services::download::DownloadEvents;
 use tauri::Manager;
 
 /// The host's CUDA support (the model settings tab's visibility gate).

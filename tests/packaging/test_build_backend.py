@@ -1,14 +1,14 @@
 """The desktop backend builder's version contract.
 
 ``packaging/build_backend.py`` stamps a ``VERSION`` marker into the built tree,
-and the desktop shell (``client/src-tauri/src/services/backend_downloader.rs``)
-re-downloads the backend whenever that marker differs from the version the
-installer itself reports. The two sides must therefore read the ONE version the
-installer is built from: ``client/src-tauri/tauri.conf.json``'s ``version``
+and the desktop shell (``client/src-tauri/src/services/backend_bundle.rs``)
+refuses to start a bundled backend whenever that marker differs from the version
+the installer itself reports. The two sides must therefore read the ONE version
+the installer is built from: ``client/src-tauri/tauri.conf.json``'s ``version``
 field, which Tauri hands back to the shell as ``package_info().version``.
 
 These tests pin that source and the marker's format. Deriving it from a git tag
-or a branch name would make the shell re-download the backend on every launch.
+or a branch name would make every installer refuse its own backend.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def test_the_marker_defaults_to_the_installer_version(tmp_path: Path):
 
 def test_a_missing_version_falls_back_to_a_placeholder(tmp_path: Path, monkeypatch):
     # A malformed config must not crash the build; the shell then treats the
-    # tree as stale and re-downloads, which is the safe direction.
+    # tree as stale and refuses to start it, which is the safe direction.
     module = _load_build_backend()
     empty = tmp_path / "tauri.conf.json"
     empty.write_text("{}", encoding="utf-8")

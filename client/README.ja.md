@@ -65,7 +65,7 @@
     -> リアクティブな UI 更新
 ```
 
-**Tauri モードに関する注記**：`bridge.ts` には Tauri IPC コードパス（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`）が `app/types/backend/*`（ts-rs 生成）と対応して残っています。`src-tauri/src/` はデスクトップシェルを実装します：`services/python_process.rs` が `SHERRY_HOME` をアプリデータディレクトリに向けて Python バックエンドを起動し、`services/backend_downloader.rs` がパッケージ版の初回起動時にそのバックエンドをダウンロードし（GitHub リリース資産 + Tauri 進捗イベント）、`services/python_bridge.rs` が HTTP でバックエンドと通信し、`commands/` が IPC エントリポイントです。さらに、一部のフロー（ハートビート、cron、スキル、チャネル、curator、ログ、`/env`、サブエージェントのステア）は Rust を完全にバイパスし、両モードで常に `fetchApi` を経由します。
+**Tauri モードに関する注記**：`bridge.ts` には Tauri IPC コードパス（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`）が `app/types/backend/*`（ts-rs 生成）と対応して残っています。`src-tauri/src/` はデスクトップシェルを実装します：`services/python_process.rs` が `SHERRY_HOME` をアプリデータディレクトリに向けて Python バックエンドを起動し、`services/backend_bundle.rs` がインストーラーのリソース内のバックエンドを特定してバージョン検証し（実行時のダウンロードはなし）、`services/python_bridge.rs` が HTTP でバックエンドと通信し、`commands/` が IPC エントリポイントです。さらに、一部のフロー（ハートビート、cron、スキル、チャネル、curator、ログ、`/env`、サブエージェントのステア）は Rust を完全にバイパスし、両モードで常に `fetchApi` を経由します。
 
 ---
 
@@ -234,7 +234,7 @@ client/
 │   │                              #   global-shortcut:default、window-state:default）
 │   ├── icons/                     # アプリアイコン
 │   ├── resources/                 # プレースホルダーディレクトリ（skills/、templates/）——バンドルリソースではありません
-│   ├── src/                       # デスクトップシェル：services/（python_process、backend_downloader、
+│   ├── src/                       # デスクトップシェル：services/（python_process、backend_bundle、
 │   │                              #   python_bridge）、commands/ —— ほかにプレースホルダーモジュール
 │   ├── tests/                     # Rust テストプレースホルダー（空 mod.rs + .gitkeep ディレクトリ）
 │   ├── benches/                   # ベンチマークプレースホルダー

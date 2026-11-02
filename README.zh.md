@@ -420,14 +420,15 @@ pnpm tauri dev    # 原生桌面模式
 
 客户端默认连接 `http://127.0.0.1:8080` 的 Python 后端（可通过 `client/.env` 中的 `VITE_API_BACK_URL` 配置）。详见[客户端 README](client/README.md)。
 
-**打包桌面应用** 产出两份东西：安装包（前端 + Rust 外壳——目标机器不需要 Python、虚拟环境或源码），以及首次启动时下载的后端压缩包——GitHub 单个 Release 文件上限 2 GiB，而后端远超这个限制：
+**打包桌面应用** 产出**一个统一安装包**：前端、Rust 外壳与 CPU Python 后端打进同一个 deb/rpm/AppImage/msi/dmg；首次启动不再下载后端：
 
 ```bash
-uv run --with pyinstaller python packaging/build_backend.py   # 后端 → client/src-tauri/sherry-backend/
-cd client && pnpm tauri build                                 # → deb / rpm / AppImage / msi / dmg
+uv sync && uv pip install pyinstaller
+uv run --no-sync python packaging/build_backend.py   # 后端 → client/src-tauri/sherry-backend/
+cd client && pnpm tauri build                         # 后端 + 前端 + 外壳打进同一个安装包
 ```
 
-`.github/workflows/desktop-build.yml` 在三个平台分别构建这两份产物。两步都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env` / `.models` / `.network`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
+`.github/workflows/desktop-build.yml` 在三个平台分别构建统一安装包。后端构建与安装包打包都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env` / `.models` / `.network`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
 
 ---
 

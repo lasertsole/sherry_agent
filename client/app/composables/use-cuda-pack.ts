@@ -7,7 +7,7 @@
  * This composable mirrors the shell's detection + download state into
  * reactive refs and exposes the card's actions.
  *
- * Two rules keep it honest (the same shape as `use-backend-download`):
+ * Two rules keep it honest (the same shape as the other download-state composables):
  *
  * - The state is PULLED once over IPC on init and the Tauri events take over
  *   from there — events are broadcast, not queued.

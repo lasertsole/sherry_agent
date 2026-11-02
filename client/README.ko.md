@@ -65,7 +65,7 @@
     -> 반응형 UI 업데이트
 ```
 
-**Tauri 모드 참고 사항**: `bridge.ts`에는 Tauri IPC 코드 경로(`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`)가 `app/types/backend/*`(ts-rs 생성)와 대응되어 남아 있습니다. `src-tauri/src/`는 데스크톱 셸을 구현합니다: `services/python_process.rs`가 `SHERRY_HOME`을 앱 데이터 디렉터리로 향하게 하여 Python 백엔드를 실행하고, `services/backend_downloader.rs`는 패키지 빌드의 최초 실행 시 그 백엔드를 내려받으며(GitHub 릴리스 자산 + Tauri 진행 이벤트), `services/python_bridge.rs`가 HTTP로 백엔드와 통신하고, `commands/`가 IPC 진입점입니다. 또한 일부 흐름(하트비트, cron, 스킬, 채널, curator, 로그, `/env`, 서브에이전트 스티어)은 Rust를 완전히 우회하며 두 모드 모두에서 항상 `fetchApi`를 거칩니다.
+**Tauri 모드 참고 사항**: `bridge.ts`에는 Tauri IPC 코드 경로(`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`)가 `app/types/backend/*`(ts-rs 생성)와 대응되어 남아 있습니다. `src-tauri/src/`는 데스크톱 셸을 구현합니다: `services/python_process.rs`가 `SHERRY_HOME`을 앱 데이터 디렉터리로 향하게 하여 Python 백엔드를 실행하고, `services/backend_bundle.rs`가 설치 파일 리소스 안의 백엔드를 찾아 버전을 검증하며(런타임 다운로드 없음), `services/python_bridge.rs`가 HTTP로 백엔드와 통신하고, `commands/`가 IPC 진입점입니다. 또한 일부 흐름(하트비트, cron, 스킬, 채널, curator, 로그, `/env`, 서브에이전트 스티어)은 Rust를 완전히 우회하며 두 모드 모두에서 항상 `fetchApi`를 거칩니다.
 
 ---
 
@@ -234,7 +234,7 @@ client/
 │   │                              #   global-shortcut:default, window-state:default)
 │   ├── icons/                     # 앱 아이콘
 │   ├── resources/                 # 플레이스홀더 디렉터리(skills/, templates/)——번들 리소스가 아님
-│   ├── src/                       # 데스크톱 셸: services/(python_process, backend_downloader,
+│   ├── src/                       # 데스크톱 셸: services/(python_process, backend_bundle,
 │   │                              #   python_bridge), commands/ —— 그 외 플레이스홀더 모듈
 │   ├── tests/                     # Rust 테스트 플레이스홀더(빈 mod.rs + .gitkeep 디렉터리)
 │   ├── benches/                   # 벤치마크 플레이스홀더
