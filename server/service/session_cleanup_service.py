@@ -27,9 +27,11 @@ def _session_folder(session_id: str) -> str:
 async def purge_session(session_id: str) -> None:
     """Purge a session and its whole sub-agent descendant tree.
 
-    Continuity is saved for the MAIN session first, then the descendant
-    registry rows/checkpoints/session data are removed, then the main session's
-    own stores are purged.
+    Continuity is saved for the MAIN session first, then its transcript is
+    snapshotted and a detached two-wave memory review is scheduled; the
+    descendant registry rows/checkpoints/session data and the main session's own
+    stores are removed immediately afterwards. The salvage is best-effort and
+    never delays the delete beyond its short snapshot.
     """
     if not is_safe_session_id(session_id):
         raise ValueError(f"invalid session_id: {session_id!r}")
@@ -40,6 +42,20 @@ async def purge_session(session_id: str) -> None:
     except Exception:  # non-critical: must not block session cleanup
         logger.debug(
             "session continuity save failed on session end (continuing): session_id={}",
+            session_id,
+            exc_info=True,
+        )
+    # Snapshot the MAIN session and schedule the detached two-wave memory review
+    # BEFORE any destructive step. The snapshot is bounded; the model work runs
+    # in the background, so deletion still returns immediately. Fail-open: a
+    # broken/timed-out snapshot must never keep the session alive.
+    try:
+        from agent.middlewares.summarization.nudges import salvage_session_memory
+
+        await salvage_session_memory(session_id)
+    except Exception:  # noqa: BLE001 - deletion owns the transaction
+        logger.warning(
+            "session-end memory salvage failed to schedule (continuing): session_id={}",
             session_id,
             exc_info=True,
         )

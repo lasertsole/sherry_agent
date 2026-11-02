@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 3 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに、破棄されるメッセージだけを受け取り、そのターン自身のモデルとプレフィックスでキャッシュ温存のまま走る）、プランがターン境界で完了したときの plan extraction、圧縮後の todo fork。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
+本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに、破棄されるメッセージだけを受け取り、そのターン自身のモデルとプレフィックスでキャッシュ温存のまま走る）、プランがターン境界で完了したときの plan extraction、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage（捕捉した圧縮カットに対してバックグラウンドで 2 波の memory review を走らせる）。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 
@@ -20,6 +20,7 @@
 | 圧縮のたび | memory review（`_nudge_memory`）：**破棄される**スライスだけを**原文のまま**、そのターンが使ったモデル構成（`_build_session_model`）で送り、セッションのシステムプロンプトとツール面も再現してプレフィックスキャッシュに命中させる；`NUDGE["memory_review_mode"] = "digest"` なら折り畳む（直近 24 件は原文、それ以前は 1 行に切詰め） | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 | プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | plan extraction（`_run_plan_extraction`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）が**補助モデル**で専用 agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使い、**会話履歴を一切渡さない** | ① 知識 JSON ② `skills/auto/`（クラスレベルスキル + `<module>-notes`） ③ FACTS.md |
 | 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の nudge agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
+| メインセッション削除時（purge 前） | session-end salvage（`salvage_session_memory`）：checkpoint transcript をスナップショットし、モデル/システムプロンプト/ツール面を捕捉し、通常の圧縮カットを読み取り専用で計算して、独立した 2 波の memory review をスケジュールする——第 1 波は破棄されるはずのプレフィックス、第 2 波は memory 再読込とプロンプト再構築後の保持尾部 | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 
 ## トリガ詳細
 
@@ -71,6 +72,15 @@
 
 fork の結果メッセージはログのみ。メイングラフやその checkpointer には何も届かず、派生セッションのミドルウェア状態は `finally` でクリアされる。
 
+### 4. セッション削除（メインのみ）
+
+`purge_session` がメインセッションを破棄する前に、`salvage_session_memory` が圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、独立した 2 波のバックグラウンド review をスケジュールする。削除要求はモデルを待たない：同期処理はスナップショットだけで、予算は 5 秒。サイドチャットとサブエージェントの子はこの経路に入らない。
+
+- **第 1 波**は `messages[:cutoff]`——圧縮が破棄したはずのプレフィックス——を、キャプチャ済みのモデル、システムプロンプト、ツール面で処理する。圧縮時 review と同じ cache-warm 形状で、要約は生成せず、圧縮状態にも触れない。
+- **第 2 波**は `messages[cutoff:]`——保持される末尾——を処理する。第 1 波が memory を書いた後、タスクは `MEMORY.md`/`USER.md`/`FACTS.md` を再読み込みし、システムプロンプトを非永続的に再構築し（セッションは削除済み）、`memory` のみのツール面で末尾を review する。再構築に失敗した場合はキャプチャ済みプロンプトへフォールバックする。
+- 両波は NUDGE レーンで、波ごとの派生セッションキー（`<session_id>::session-end-salvage:1|2`）と checkpointer なしで走る。キーは `finally` でクリアする。`memory` ツールの `nudge_memory` metadata が実行ゲートなので、第 1 波は cache-warm のためにセッションツール面を再現できても、削除後に `knowledge` や plan ツールを呼ぶことはできない。
+- スナップショット、プロンプト再構築、タイムアウト、モデル例外などの失敗はすべて記録して握り潰す。プロセス終了は未完了のバックグラウンド review を放棄しうる——即時削除のための受け入れたトレードオフである。設定：`NUDGE["session_end_review_enabled"]` と `NUDGE["session_end_review_timeout_s"]`（波ごと、既定 120 秒）。
+
 ## Curator（スキルキュレーション）
 
 **frontmatter 契約（インデックスそのものがトリガー）。** `<available_skills>` が描画するのはスキルの frontmatter だけ——本文はロード後に読まれます——なので、これらのフィールドがルーティング信号です: `description`（能力の要約）、`when_to_use`（**必須**：これらの経路が作成・修正するすべてのスキルに、それを読み込むべき具体的なシナリオ／ユーザー意図を記載）、`when_not_to_use`（任意：除外条件と代替手段）。ローダーはこの 2 つのタグを CJK 対応のトークン予算（60 / 50 / 50 トークン）で描画し XML エスケープします。クライアントのスキルツールチップも同じ 3 フィールドを表示します。キュレーターはさらに狭い第 2 層を加えます: アンブレラの frontmatter がスキル全体を覆い、各 `##` サブ能力セクションは自身の `**When to use:**` 行で始まります（実際の除外がある場合のみ `**When NOT to use:**` も）。これによりモデルは `skill_view` 後に正しいセクションを選べます。決定的フォールバックも同じ形を書き、条件はマージ理由から抽出します。
@@ -90,7 +100,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 
 **LLM 統合。** `curator.consolidate` が有効（既定で有効）なとき、`run_curator_review()` は非 pinned スキルの候補リストを描画し（`context_engine/curator/review.py:69`）、メイン LLM（temperature 0.3）に重複する狭いスキルをクラスレベルの umbrella スキルへ統合させる（`CURATOR_REVIEW_PROMPT`、`context_engine/curator/review.py:16`）。新しい umbrella とそのサポートファイルは `skills/auto/` 配下へ生成・永続化される（`_generate_umbrella_skill`、`context_engine/curator/umbrella.py:86`；`_apply_consolidation`、`context_engine/curator/orchestrator.py:163`）。統合はこのパス唯一の LLM ステップで、失敗は捕捉され実行は継続する。
 
-**3 本の抽出経路との関係。** 経路 2（圧縮時 plan extraction）が生産者である：`skill_manage` を通じて `skills/auto/` を作成・修正する。Curator はその同じ産出の下流メンテナであり、plan extraction が作ったスキルを遷移・統合・剪定する。残り 2 経路は `skills/auto/` に一切触れない（それぞれ MEMORY.md / USER.md / FACTS.md、`todos.db` に書く）ため、Curator と交差しない。
+**4 本の抽出経路との関係。** 経路 2（圧縮時 plan extraction）が生産者である：`skill_manage` を通じて `skills/auto/` を作成・修正する。Curator はその同じ産出の下流メンテナであり、plan extraction が作ったスキルを遷移・統合・剪定する。残り 3 経路は `skills/auto/` に一切触れない（それぞれ MEMORY.md / USER.md / FACTS.md、`todos.db`、削除時の memory サルベージに書く）ため、Curator と交差しない。
 
 **状態と境界。** 実行状態は `skills/.curator_state`（`context_engine/curator/constants.py:3`、`context_engine/curator/state.py` が読み書き）；各実行は `logs/curator/{timestamp}/` 配下に `run.json` + `REPORT.md` を書く（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。範囲は `skills/auto/` のみ——内蔵スキルには決して触れず、pinned スキルはすべての破壊的遷移を迂回し、パス全体はバックグラウンドスレッドで走り会話ターン経路を占めない。詳細：[curator/README.md](../../context_engine/curator/README.ja.md)。
 
@@ -101,11 +111,13 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 | nudge metadata 許可リスト（`metadata["nudge"]`、`_NudgeLimitTool` 既定規則） | memory nudge と plan extraction は nudge 段階用にタグ付けされたツールしか呼べない。それ以外のメインツールはエラー `ToolMessage` を返し、実行されない。 |
 | 圧縮 metadata 許可リスト（`metadata["todo_update"] is True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")`） | 圧縮 fork は該当 metadata マーク付き `todowrite` シムだけを許可する。 |
 | 派生セッションキー `<id>::compression-todo` | 圧縮 fork の `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 状態キーがメインセッションと衝突しない。fork 実行中、メインセッションは `awrap_model_call` の最中だからである。`compression_todo_update_lock` だけが意図的にメインセッションへ書かれ、クロスパス再入コーディネータとして働く。 |
+| 派生セッションキー `<id>::session-end-salvage:1|2` | 削除後の 2 波 review は波ごとの派生キーで走り、エンジン状態は `finally` でクリアされる。削除済みセッションの state を復活させない。タスク集合 `_SESSION_END_REVIEW_TASKS` が強参照を保持する。 |
+| `nudge_memory` 実行ゲート（`metadata["nudge_memory"] is True`、`_NudgeLimitTool(allowed_metadata_key="nudge_memory")`） | 第 1 波は cache-warm のためにセッションツール面を再現できるが、実行できるのは `memory` だけ。削除後は `knowledge` と plan ツールが拒否される。 |
 | メインセッション束縛の `todowrite` シム | fork グラフは派生キーで走るため、状態注入された実 `todowrite` は誤ったセッションを解決してしまう。シムは実ツールの `args_schema` と `description` を逐語的に再利用し（スキーマドリフトゼロ）、注入 `session_id` を捨て、構築時に捕捉したメインセッション id を束縛する。 |
 | 読み取り専用 fork、checkpointer なし | 各 nudge / 抽出 fork の結果メッセージはログのみで破棄される。fork に checkpointer はなく、メイングラフ状態を書けない。 |
 | セッション単位の再入ロック | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` が同一抽出経路の重複実行を防ぐ。nudge ロック保持中、圧縮スケジューラは派遣を完全にスキップする（キューイングなし）。 |
 | fail-open 境界 | 各経路は `try/except` で作業を包み、ログして返す。抽出失敗がターン、圧縮、他の抽出へ伝播しない。 |
-| バックグラウンドタスクの参照保持 | `_COMPRESSION_TODO_TASKS` 集合が強参照を保持し、asyncio が実行中タスクを GC しないようにする。 |
+| バックグラウンドタスクの参照保持 | `_COMPRESSION_TODO_TASKS` と `_SESSION_END_REVIEW_TASKS` 集合が強参照を保持し、asyncio が実行中タスクを GC しないようにする。 |
 
 ## ストレージと上限
 
@@ -124,6 +136,8 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 圧縮後 todo fork を有効化 |
 | `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | todo 完了時の plan extraction を有効化 |
+| `session_end_review_enabled` | `NUDGE` | `True` | メインセッション削除時のサルベージを有効化 |
+| `session_end_review_timeout_s` | `NUDGE` | `120` | 削除サルベージの波ごとのモデル呼び出し予算 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 実際の圧縮後の能動的圧縮クールダウン |
 | `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL`（`config/features/agent_side/memory_tool.py`） | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md の上限 |
 
@@ -142,6 +156,7 @@ uv run pytest \
     tests/agent/tools/test_memory_store_facts.py -q
 ```
 
+- `test_session_end_nudge.py`：削除スナップショット、読み取り専用の圧縮カット、第 1 波 → プロンプト再構築 → 第 2 波の順序、cutoff/空/スイッチ/重複/失敗の各分岐、派生状態のクリア、両波が MEMORY.md/USER.md に届くことを検証する。
 - `test_compression_todo_update.py`：トリガゲート、fire-and-forget スケジュール、再入ロック、fail-open 解放、プロンプト内容、`todo_update` metadata ゲート、および完全 fork 隔離（派生キー、メインセッション `todowrite` シム、checkpointer / メッセージ漏洩なし）。
 - `test_compression_nudges.py`：圧縮時ディスパッチ（memory review が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。`test_memory_review_digest.py` が破棄スライスの配線、cache_warm のモデル再構築（descriptor のフィールド、環境既定へのフォールバック、セッションのツール面）、`memory_review_mode="digest"` での折り畳みを固定します。永続化アサーションは `tests/agent/middlewares/message_persistence/` にあります。
 - `test_compression_cooldown_persist.py`：クールダウンの再起動間生存。

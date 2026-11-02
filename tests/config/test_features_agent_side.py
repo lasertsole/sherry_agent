@@ -208,6 +208,8 @@ SPOT_DEFAULTS = [
     # (the confirm_all mode gates every change regardless of this flag).
     (HITL_DEFAULTS, "first_call_confirmation_enabled", False),
     (NUDGE, "plan_extraction_enabled", True),
+    (NUDGE, "session_end_review_enabled", True),
+    (NUDGE, "session_end_review_timeout_s", 120),
     (MEMORY_TOOL, "memory_char_limit", 2_200),
     (MEMORY_TOOL, "user_char_limit", 1_375),
     (MEMORY_TOOL, "facts_char_limit", 1_375),

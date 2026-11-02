@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 세 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 해당 턴 자신의 모델과 프리픽스에서 캐시 온존으로 실행), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 후 todo fork. 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 해당 턴 자신의 모델과 프리픽스에서 캐시 온존으로 실행), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage(캡처한 압축 컷에 대해 백그라운드 2파 memory review를 실행). 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 
@@ -20,6 +20,7 @@
 | 압축마다 | memory review(`_nudge_memory`): **버려질** 슬라이스만 **원문 그대로** 해당 턴이 사용한 모델 구성(`_build_session_model`)으로 보내고, 세션의 시스템 프롬프트와 도구 면도 재현해 프리픽스 캐시에 적중시킴; `NUDGE["memory_review_mode"] = "digest"`면 대신 접음(최근 24개는 원문, 그 이전은 한 줄로 절단) | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 | 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | plan extraction(`_run_plan_extraction`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`)이 **보조 모델**로 전용 agent를 fork하고 `_PLAN_EXTRACTION_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | ① 지식 JSON ② `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`) ③ FACTS.md |
 | 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget nudge agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
+| 메인 세션 삭제 시(purge 전) | session-end salvage(`salvage_session_memory`): checkpoint transcript를 스냅샷하고 모델/시스템 프롬프트/도구 면을 캡처하며, 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 독립적인 2파 memory review를 예약한다 — 1파는 버려질 프리픽스, 2파는 memory 재로드와 프롬프트 재구축 후 보존 꼬리 | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 
 ## 트리거 상세
 
@@ -71,6 +72,15 @@
 
 fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 checkpointer에 아무것도 도달하지 않으며, 파생 세션의 미들웨어 상태는 `finally`에서 정리됩니다.
 
+### 4. 세션 삭제(메인만)
+
+`purge_session`이 메인 세션을 파기하기 전에 `salvage_session_memory`가 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고, 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 독립적인 백그라운드 2파 review를 예약합니다. 삭제 요청은 모델을 기다리지 않습니다. 동기 단계는 스냅샷뿐이며 예산은 5초입니다. 사이드 채팅과 서브에이전트 자식은 이 경로에 들어오지 않습니다.
+
+- **1파**는 `messages[:cutoff]`——압축이 버렸을 프리픽스——를 캡처한 모델, 시스템 프롬프트, 도구 면으로 처리합니다. 압축 시 review와 같은 cache-warm 형태이며 요약을 만들지 않고 압축 상태도 건드리지 않습니다.
+- **2파**는 `messages[cutoff:]`——보존되는 꼬리——를 처리합니다. 1파가 memory를 쓴 뒤 작업은 `MEMORY.md`/`USER.md`/`FACTS.md`를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며(세션은 삭제됨), `memory` 전용 도구 면으로 꼬리를 review합니다. 재구축 실패 시 캡처한 프롬프트로 폴백합니다.
+- 두 파 모두 NUDGE 레인에서 파별 파생 세션 키(`<session_id>::session-end-salvage:1|2`)와 checkpointer 없이 실행됩니다. 키는 `finally`에서 정리됩니다. `memory` 도구의 `nudge_memory` metadata가 실행 게이트이므로 1파는 cache-warm을 위해 세션 도구 면을 재현할 수 있지만 삭제 후 `knowledge`나 plan 도구를 호출할 수는 없습니다.
+- 스냅샷, 프롬프트 재구축, 타임아웃, 모델 예외 등 모든 실패는 기록하고 삼킵니다. 프로세스 종료는 미완료 백그라운드 review를 포기할 수 있으며 이는 즉시 삭제의 수용된 트레이드오프입니다. 설정: `NUDGE["session_end_review_enabled"]`와 `NUDGE["session_end_review_timeout_s"]`(파별, 기본 120초).
+
 ## Curator(스킬 큐레이션)
 
 **frontmatter 계약(인덱스 자체가 트리거).** `<available_skills>`는 스킬의 frontmatter만 렌더합니다 — 본문은 로드 후에 읽힙니다 — 따라서 이 필드들이 라우팅 신호입니다: `description`(능력 요약), `when_to_use`(**필수**: 이 경로들이 만들거나 고치는 모든 스킬에, 그것을 로드해야 하는 구체적 시나리오/사용자 의도를 명시), `when_not_to_use`(선택: 제외 조건과 대안). 로더는 두 태그를 CJK 인식 토큰 예산(60 / 50 / 50 토큰)으로 렌더하고 XML 이스케이프합니다. 클라이언트 스킬 툴팁도 같은 세 필드를 보여줍니다. 큐레이터는 더 좁은 두 번째 층을 더합니다: 엄브렐라의 frontmatter가 스킬 전체를 덮고, 각 `##` 하위 능력 섹션이 자체 `**When to use:**` 줄로 시작합니다(실제 제외가 있을 때만 `**When NOT to use:**`도). 그래서 모델은 `skill_view` 후 올바른 섹션을 고를 수 있습니다. 결정적 폴백도 같은 모양을 쓰며 조건은 병합 이유에서 추출합니다.
@@ -90,7 +100,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 
 **LLM 통합.** `curator.consolidate`가 켜져 있으면(기본 켜짐), `run_curator_review()`가 비-pinned 스킬 후보 목록을 렌더링하고(`context_engine/curator/review.py:69`) 메인 LLM(temperature 0.3)에게 겹치는 좁은 스킬들을 클래스 레벨 umbrella 스킬로 병합하도록 요청합니다(`CURATOR_REVIEW_PROMPT`, `context_engine/curator/review.py:16`). 새 umbrella와 지원 파일은 `skills/auto/` 아래에 생성·영속화됩니다(`_generate_umbrella_skill`, `context_engine/curator/umbrella.py:86`; `_apply_consolidation`, `context_engine/curator/orchestrator.py:163`). 통합은 이 패스의 유일한 LLM 단계이며, 실패는 잡히고 실행은 계속됩니다.
 
-**세 개 추출 경로와의 관계.** 경로 2(압축 시점 plan extraction)가 생산자입니다: `skill_manage`를 통해 `skills/auto/`를 생성·패치합니다. Curator는 바로 그 산출물의 하류 유지보수자로, plan extraction이 만든 스킬을 전이·통합·정리합니다. 나머지 두 경로는 `skills/auto/`를 전혀 건드리지 않으므로(각각 MEMORY.md / USER.md / FACTS.md, `todos.db`에 씀) Curator와 교차하지 않습니다.
+**네 개 추출 경로와의 관계.** 경로 2(압축 시점 plan extraction)가 생산자입니다: `skill_manage`를 통해 `skills/auto/`를 생성·패치합니다. Curator는 바로 그 산출물의 하류 유지보수자로, plan extraction이 만든 스킬을 전이·통합·정리합니다. 나머지 세 경로는 `skills/auto/`를 전혀 건드리지 않으므로(각각 MEMORY.md / USER.md / FACTS.md, `todos.db`, 삭제 시 memory salvage에 씀) Curator와 교차하지 않습니다.
 
 **상태와 경계.** 실행 상태는 `skills/.curator_state`(`context_engine/curator/constants.py:3`, `context_engine/curator/state.py`가 읽고 씀); 각 실행은 `logs/curator/{timestamp}/` 아래에 `run.json` + `REPORT.md`를 씁니다(`context_engine/curator/constants.py:4`; `context_engine/curator/report.py:196-205`). 범위는 `skills/auto/`뿐——내장 스킬은 절대 건드리지 않고, pinned 스킬은 모든 파괴적 전이를 우회하며, 패스 전체가 백그라운드 스레드에서 실행되어 대화 턴 경로를 차지하지 않습니다. 전체 세부사항: [curator/README.md](../../context_engine/curator/README.ko.md).
 
@@ -101,11 +111,13 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | nudge metadata 허용 목록(`metadata["nudge"]`, `_NudgeLimitTool` 기본 규칙) | memory nudge와 plan extraction은 nudge 단계용으로 태그된 도구만 호출할 수 있습니다. 다른 모든 메인 도구는 오류 `ToolMessage`를 반환하고 실행되지 않습니다. |
 | 압축 metadata 허용 목록(`metadata["todo_update"] is True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`) | 압축 fork는 해당 metadata 마커가 붙은 `todowrite` 심만 허용합니다. |
 | 파생 세션 키 `<id>::compression-todo` | 압축 fork의 `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 상태 키가 메인 세션과 충돌하지 않습니다. fork가 도는 동안 메인 세션은 `awrap_model_call` 중이기 때문입니다. `compression_todo_update_lock`만 의도적으로 메인 세션에 기록되어 교차 경로 재진입 조정자 역할을 합니다. |
+| 파생 세션 키 `<id>::session-end-salvage:1|2` | 삭제 후 2파 review는 파별 파생 키로 실행되고 엔진 상태는 `finally`에서 정리되어 삭제된 세션 state를 되살리지 않습니다. 작업 집합 `_SESSION_END_REVIEW_TASKS`가 강한 참조를 유지합니다. |
+| `nudge_memory` 실행 게이트(`metadata["nudge_memory"] is True`, `_NudgeLimitTool(allowed_metadata_key="nudge_memory")`) | 1파는 cache-warm을 위해 세션 도구 면을 재현할 수 있지만 실행 가능한 것은 `memory`뿐입니다. 삭제 후 `knowledge`와 plan 도구는 거부됩니다. |
 | 메인 세션 바인딩 `todowrite` 심 | fork 그래프는 파생 키로 돌기 때문에, 상태 주입된 실제 `todowrite`는 잘못된 세션을 해석합니다. 심은 실제 도구의 `args_schema`와 `description`을 그대로 재사용하고(스키마 드리프트 제로), 주입된 `session_id`를 버리며, 빌드 시점에 캡처한 메인 세션 id를 바인딩합니다. |
 | 읽기 전용 fork, checkpointer 없음 | 각 nudge / 추출 fork의 결과 메시지는 로그만 남기고 버립니다. fork에는 checkpointer가 없어 메인 그래프 상태를 쓸 수 없습니다. |
 | 세션별 재진입 락 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock`, `compression_todo_update_lock`이 같은 추출 경로의 중복 실행을 막습니다. nudge 락이 잡혀 있는 동안 압축 스케줄러는 디스패치를 완전히 건너뜁니다(큐잉 없음). |
 | fail-open 경계 | 각 경로는 `try/except`로 작업을 감싸고, 기록하고 반환합니다. 어떤 추출 실패도 턴, 압축, 다른 추출로 전파되지 않습니다. |
-| 백그라운드 작업 참조 유지 | `_COMPRESSION_TODO_TASKS` 집합이 강한 참조를 유지해 asyncio가 진행 중 작업을 GC하지 못하게 합니다. |
+| 백그라운드 작업 참조 유지 | `_COMPRESSION_TODO_TASKS`와 `_SESSION_END_REVIEW_TASKS` 집합이 강한 참조를 유지해 asyncio가 진행 중 작업을 GC하지 못하게 합니다. |
 
 ## 저장소와 상한
 
@@ -124,6 +136,8 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`(`config/features/agent_side/summarization.py`) | `True` | 압축 후 todo fork 활성화 |
 | `plan_extraction_enabled` | `NUDGE`(`config/features/agent_side/nudge.py`) | `True` | todo 완료 시 plan extraction 활성화 |
+| `session_end_review_enabled` | `NUDGE` | `True` | 메인 세션 삭제 시 salvage 활성화 |
+| `session_end_review_timeout_s` | `NUDGE` | `120` | 삭제 salvage의 파별 모델 호출 예산 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 실제 압축 후 능동 압축 쿨다운 |
 | `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL`(`config/features/agent_side/memory_tool.py`) | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md 상한 |
 
@@ -142,6 +156,7 @@ uv run pytest \
     tests/agent/tools/test_memory_store_facts.py -q
 ```
 
+- `test_session_end_nudge.py`: 삭제 스냅샷, 읽기 전용 압축 컷, 1파 → 프롬프트 재구축 → 2파 순서, cutoff/빈 입력/스위치/중복/실패 분기, 파생 상태 정리, 두 파가 MEMORY.md/USER.md에 도달하는지 검증합니다.
 - `test_compression_todo_update.py`: 트리거 게이트, fire-and-forget 예약, 재진입 락, fail-open 해제, 프롬프트 내용, `todo_update` metadata 게이트, 그리고 완전한 fork 격리(파생 키, 메인 세션 `todowrite` 심, checkpointer / 메시지 누출 없음).
 - `test_compression_nudges.py`: 압축 시점 디스패치(memory review가 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). `test_memory_review_digest.py`가 버려질 슬라이스 배선, cache_warm의 모델 재구축(descriptor 필드, 환경 기본값 폴백, 세션 도구 면), `memory_review_mode="digest"`에서의 접기를 고정합니다. 영속화 단언은 `tests/agent/middlewares/message_persistence/`에 있습니다.
 - `test_compression_cooldown_persist.py`: 쿨다운의 재시작 간 생존.

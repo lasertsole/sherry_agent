@@ -95,6 +95,10 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 A session never receives its own state (`last_session_id == session_id → ""`). Because the lookup requires **both** a channel id and a chat id, pure WebSocket sessions with no channel binding get no continuity block. Storage is filesystem JSON (keyed by `channel:chat`, falling back to `session_id`), not a database.
 
+## 🧹 Session-End Memory Salvage
+
+`purge_session` also schedules a detached memory review before destroying a MAIN session (`nudges.salvage_session_memory`). It snapshots the post-compaction checkpoint transcript, model, system prompt and tool face, computes the normal compression cutoff **read-only**, and returns immediately after scheduling; the delete does not wait for the model. Wave 1 reviews the prefix a compression would have discarded with the captured (cache-warm) model/prompt/tool face; after it writes MEMORY.md/USER.md/FACTS.md, wave 2 reloads memory, rebuilds the system prompt non-persistently, and reviews the preserved tail with a `memory`-only face. Both waves use the NUDGE lane, derived session keys (`<id>::session-end-salvage:1|2`), and no checkpointer; the `nudge_memory` metadata gate blocks `knowledge`/plan tools after deletion. Every failure is fail-open, a process exit may abandon an unfinished wave, and side chats/subagent children are not included. Continuity (above) stores the last AI reply for the next conversation; this salvage writes durable memory files.
+
 ## ♻️ TaskFlow Auto-Resume
 
 Active flows are re-surfaced into the system prompt so a fresh session can pick up unfinished work. Three independent readers use the same recipe — the session-scoped `get_active_flows_sync(session_id)` reached through `PromptDataProvider.get_active_flows(session_id)`:

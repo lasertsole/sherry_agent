@@ -58,6 +58,20 @@ _MEMORY_REVIEW_PROMPT = (
     "If nothing is worth saving, just say 'Nothing to save.' and stop."
 )
 
+#: Session deletion mirrors the compression cut without compressing: wave 1
+#: covers the prefix that would have been discarded, wave 2 the preserved tail.
+_SESSION_END_REVIEW_FIRST_PROMPT = (
+    "This session is being deleted. The messages above are the earlier portion "
+    "that a compression would have discarded. Rescue any durable information — "
+    "user preferences, corrections, project conventions, or system-level pitfalls — "
+    "before the transcript disappears.\n\n" + _MEMORY_REVIEW_PROMPT
+)
+_SESSION_END_REVIEW_REST_PROMPT = (
+    "This session is being deleted. The messages above are the remaining portion "
+    "after that compression line; memory was just refreshed from the earlier "
+    "portion. Rescue any durable information that is not already saved.\n\n" + _MEMORY_REVIEW_PROMPT
+)
+
 
 def _render_facts_context() -> tuple[str, str]:
     """Return ``(current FACTS.md content, formatted char limit)`` for nudge prompts.
@@ -450,6 +464,14 @@ _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 # holds only weak references to tasks).
 _COMPRESSION_NUDGE_TASKS: set[asyncio.Task[None]] = set()
 
+# Session-end salvage: deletion snapshots the transcript, schedules this task,
+# and returns to the purge. The derived session keys carry the fork's engine
+# state so a deleted session's state is never recreated.
+_SESSION_END_REVIEW_SESSION_SUFFIX = "::session-end-salvage"
+_SESSION_END_REVIEW_TASKS: set[asyncio.Task[None]] = set()
+_SESSION_END_REVIEW_INFLIGHT: set[str] = set()
+_SESSION_END_SNAPSHOT_TIMEOUT_S = 5.0
+
 
 def _plan_snapshot_hash(todos: list[dict]) -> str:
     """Content fingerprint of the plan (id + content + status + plan_ref).
@@ -737,6 +759,37 @@ def _build_session_model(session_id: str) -> Any:
     return build_main_llm(temperature=temperature, custom_mapping=custom_mapping, **thinking_kwargs)
 
 
+def _build_memory_review_agent(
+    model: Any,
+    system_prompt: str,
+    tools: Sequence[BaseTool],
+    *,
+    allowed_metadata_key: str | None = None,
+):
+    """Build one memory-review fork from CAPTURED model/prompt/tool inputs.
+
+    Split from :func:`_create_memory_review_agent` so the session-end salvage
+    can build its agents from values snapshotted before the session is purged.
+    The fork has no checkpointer; its result messages never reach the main graph.
+    ``allowed_metadata_key`` is the session-end ``memory``-only gate; the
+    compression review leaves it ``None`` and keeps the broader nudge allowlist.
+    """
+    from agent.middlewares import ToolCallNormalize, ToolGuardrails
+
+    return create_agent(
+        model=model,
+        state_schema=StateSchema,
+        system_prompt=system_prompt,
+        middleware=[
+            _NudgeLimitTool(allowed_metadata_key=allowed_metadata_key),
+            ToolCallNormalize(),
+            ToolGuardrails(),
+            _get_iteration_budget(),
+        ],
+        tools=list(tools),
+    )
+
+
 async def _create_memory_review_agent(session_id: str, system_prompt: str):
     """The memory review's agent: the MAIN model the turn ran on.
 
@@ -755,19 +808,10 @@ async def _create_memory_review_agent(session_id: str, system_prompt: str):
     system prompt, the session's own tool face and order. The nudge gate still
     applies — the review may only EXECUTE the tools carrying ``nudge: True``.
     """
-    from agent.middlewares import ToolCallNormalize, ToolGuardrails
-
-    return create_agent(
-        model=_build_session_model(session_id),
-        state_schema=StateSchema,
-        system_prompt=system_prompt,
-        middleware=[
-            _NudgeLimitTool(),
-            ToolCallNormalize(),
-            ToolGuardrails(),
-            _get_iteration_budget(),
-        ],
-        tools=_session_tool_face(session_id),
+    return _build_memory_review_agent(
+        _build_session_model(session_id),
+        system_prompt,
+        _session_tool_face(session_id),
     )
 
 
@@ -902,6 +946,41 @@ def _cache_hit_tokens(message: Any) -> int | None:
     return _cache_read_tokens_from_usage(metadata)
 
 
+async def _invoke_memory_review(
+    agent: Any,
+    session_id: str,
+    messages: Sequence[BaseMessage],
+    prompt_template: str,
+) -> Any:
+    """Invoke one memory-review fork under the NUDGE lane.
+
+    ``session_id`` is the state identity for the fork (compression uses the main
+    session; session-end salvage uses a per-wave derived key so the deleted
+    session's state is never recreated). ``prompt_template`` may contain the
+    FACTS placeholders rendered by :func:`_render_prompt_facts`.
+    """
+    sanitized = sanitize_tool_use_result_pairing(list(messages))
+    async with lane_slot(LaneType.NUDGE):
+        res = await agent.ainvoke(
+            input={
+                "session_id": session_id,
+                "messages": [
+                    *sanitized,
+                    HumanMessage(content=_render_prompt_facts(prompt_template)),
+                ],
+            }
+        )
+    reply = res["messages"][-1]
+    cache_read = _cache_hit_tokens(reply)
+    logger.info(
+        "memory review done: session={} prefix_served_from_cache={}",
+        session_id,
+        cache_read if cache_read is not None else "unknown",
+    )
+    logger.debug("nudge memory res is {}", reply)
+    return reply
+
+
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
     """Compression-time memory review: the main model, on the turn's own prefix.
 
@@ -919,28 +998,260 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
     state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
     try:
         prepared = _memory_review_messages(session_id, messages)
-        sanitized = sanitize_tool_use_result_pairing(prepared)
-        async with lane_slot(LaneType.NUDGE):
-            _agent = await _create_memory_review_agent(session_id, system_prompt)
-            res = await _agent.ainvoke(
-                input={
-                    "session_id": session_id,
-                    "messages": [
-                        *sanitized,
-                        HumanMessage(content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT)),
-                    ],
-                }
-            )
-        reply = res["messages"][-1]
-        cache_read = _cache_hit_tokens(reply)
-        logger.info(
-            "memory review done: session={} prefix_served_from_cache={}",
-            session_id,
-            cache_read if cache_read is not None else "unknown",
-        )
-        logger.debug("nudge memory res is {}", reply)
+        agent = await _create_memory_review_agent(session_id, system_prompt)
+        await _invoke_memory_review(agent, session_id, prepared, _MEMORY_REVIEW_PROMPT)
     finally:
         state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
+
+
+def _memory_only_tool_face() -> list[BaseTool]:
+    """The second session-end wave's face: only the memory tool."""
+    from agent.tools.memory import build_memory_tool
+
+    return [build_memory_tool()]
+
+
+def _session_end_cutoff(messages: list[BaseMessage], session_id: str) -> int:
+    """The read-only compression cut for the captured session transcript.
+
+    This deliberately does NOT run any compression step: no non-LLM pruning, no
+    media offload, no summary, no checkpoint write. It only reuses the existing
+    preserve-budget cutoff so the two salvage waves cover exactly the prefix a
+    compression would have discarded and the tail it would have kept.
+    """
+    from agent.middlewares.summarization.core import Summarization
+    from models.LLMs.main_llm import max_tokens as main_llm_context_window
+
+    try:
+        window = int(main_llm_context_window) if main_llm_context_window else None
+    except (TypeError, ValueError):
+        window = None
+    summarizer = Summarization(model=None, main_llm_context_window=window)
+    cutoff = summarizer._determine_cutoff(messages, session_id)
+    return max(0, min(int(cutoff), len(messages)))
+
+
+async def _snapshot_session_for_salvage(
+    session_id: str,
+) -> tuple[list[BaseMessage], Any, str, list[BaseTool], int] | None:
+    """Capture everything the detached review needs before the purge starts.
+
+    The checkpoint read is the only framework interaction. The model, system
+    prompt and tool face are captured here rather than resolved by the background
+    task because the session's config/registers are gone once the purge lands.
+    """
+    from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
+    from agent.state_port import read_messages
+
+    messages = list(await read_messages(session_id))
+    if not messages:
+        return None
+    system_prompt = _get_and_reload_system_prompt(session_id)
+    model = _build_session_model(session_id)
+    tools = list(_session_tool_face(session_id))
+    if not any(getattr(tool, "name", "") == "memory" for tool in tools):
+        tools = _memory_only_tool_face()
+    cutoff = _session_end_cutoff(messages, session_id)
+    return messages, model, system_prompt, tools, cutoff
+
+
+def _rebuild_session_end_prompt(session_id: str, fallback: str) -> str:
+    """Reload memory after wave 1 and rebuild the second wave's system prompt.
+
+    The rebuild is intentionally NON-persisting: the session is being deleted,
+    so writing the prompt back through ``_persist_system_prompt`` would recreate
+    its state-register rows. A rebuild failure falls back to the captured prompt.
+    """
+    try:
+        from agent.tools.memory import memory_store
+        from workspace.prompt_builder import build_system_prompt
+
+        memory_store.load_from_disk()
+        rebuilt = build_system_prompt(session_id=session_id)
+        return rebuilt or fallback
+    except Exception:  # noqa: BLE001 - the second wave must still run
+        logger.warning(
+            "session-end memory review: prompt rebuild failed; using captured prompt session={}",
+            session_id,
+            exc_info=True,
+        )
+        return fallback
+
+
+async def _run_session_end_wave(
+    *,
+    session_id: str,
+    wave: int,
+    model: Any,
+    system_prompt: str,
+    tools: Sequence[BaseTool],
+    messages: Sequence[BaseMessage],
+    prompt_template: str,
+) -> bool:
+    """Run one detached review wave under its own derived session key."""
+    derived_session_id = f"{session_id}{_SESSION_END_REVIEW_SESSION_SUFFIX}:{wave}"
+    try:
+        agent = _build_memory_review_agent(
+            model,
+            system_prompt,
+            tools,
+            allowed_metadata_key="nudge_memory",
+        )
+        timeout = max(1.0, float(NUDGE["session_end_review_timeout_s"]))
+        await asyncio.wait_for(
+            _invoke_memory_review(agent, derived_session_id, messages, prompt_template),
+            timeout=timeout,
+        )
+        return True
+    except Exception:  # noqa: BLE001 - a deleted session's review is best-effort
+        logger.exception(
+            "session-end memory review wave {} failed (fail-open) session={}",
+            wave,
+            session_id,
+        )
+        return False
+    finally:
+        try:
+            state_register_mem.clear_session(derived_session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "session-end memory review: failed to clear derived state {}: {}",
+                derived_session_id,
+                exc,
+            )
+
+
+async def _run_session_end_salvage(
+    *,
+    session_id: str,
+    model: Any,
+    system_prompt: str,
+    tools: Sequence[BaseTool],
+    first_wave: Sequence[BaseMessage],
+    rest_wave: Sequence[BaseMessage],
+) -> None:
+    """Run the two deletion-time waves in order, each independently fail-open."""
+    first_ok = False
+    if first_wave:
+        first_ok = await _run_session_end_wave(
+            session_id=session_id,
+            wave=1,
+            model=model,
+            system_prompt=system_prompt,
+            tools=tools,
+            messages=first_wave,
+            prompt_template=_SESSION_END_REVIEW_FIRST_PROMPT,
+        )
+    if not rest_wave:
+        return
+    updated_prompt = system_prompt
+    if first_ok:
+        updated_prompt = _rebuild_session_end_prompt(session_id, system_prompt)
+    await _run_session_end_wave(
+        session_id=session_id,
+        wave=2,
+        model=model,
+        system_prompt=updated_prompt,
+        tools=_memory_only_tool_face(),
+        messages=rest_wave,
+        prompt_template=_SESSION_END_REVIEW_REST_PROMPT,
+    )
+
+
+async def salvage_session_memory(session_id: str) -> bool:
+    """Snapshot a session and schedule its detached session-end memory review.
+
+    Called by ``purge_session`` BEFORE any destructive step. It returns as soon
+    as the snapshot is captured and the background task is scheduled; the purge
+    therefore proceeds immediately. The snapshot has its own short budget so a
+    slow checkpoint read cannot delay deletion indefinitely.
+
+    Scope is the MAIN session only; side chats and subagent children are not
+    passed through this function. The review writes global memory files, uses no
+    checkpointer, and never resurrects the deleted session's state.
+    """
+    if not bool(NUDGE.get("session_end_review_enabled", True)):
+        return False
+    try:
+        from agent.middlewares.agent_switch import middleware_option
+
+        if not middleware_option(session_id, "Summarization", "nudge"):
+            return False
+    except Exception:  # noqa: BLE001 - config resolution must not block deletion
+        logger.debug(
+            "session-end memory review: nudge option unresolved for {}; skipping",
+            session_id,
+            exc_info=True,
+        )
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("session-end memory review: no running loop for {}", session_id)
+        return False
+    if session_id in _SESSION_END_REVIEW_INFLIGHT:
+        return False
+
+    _SESSION_END_REVIEW_INFLIGHT.add(session_id)
+    try:
+        snapshot = await asyncio.wait_for(
+            _snapshot_session_for_salvage(session_id),
+            timeout=_SESSION_END_SNAPSHOT_TIMEOUT_S,
+        )
+    except asyncio.CancelledError:
+        _SESSION_END_REVIEW_INFLIGHT.discard(session_id)
+        raise
+    except Exception:  # noqa: BLE001 - deletion continues without salvage
+        _SESSION_END_REVIEW_INFLIGHT.discard(session_id)
+        logger.warning(
+            "session-end memory review: snapshot failed/ timed out (fail-open) session={}",
+            session_id,
+            exc_info=True,
+        )
+        return False
+    if snapshot is None:
+        _SESSION_END_REVIEW_INFLIGHT.discard(session_id)
+        logger.debug("session-end memory review: no transcript to salvage for {}", session_id)
+        return False
+
+    messages, model, system_prompt, tools, cutoff = snapshot
+    if cutoff > 0:
+        first_wave = messages[:cutoff]
+        rest_wave = messages[cutoff:]
+    else:
+        first_wave = messages
+        rest_wave = []
+
+    coro = _run_session_end_salvage(
+        session_id=session_id,
+        model=model,
+        system_prompt=system_prompt,
+        tools=tools,
+        first_wave=first_wave,
+        rest_wave=rest_wave,
+    )
+    try:
+        task = loop.create_task(coro)
+    except RuntimeError:  # pragma: no cover - the loop vanished after the check
+        coro.close()
+        _SESSION_END_REVIEW_INFLIGHT.discard(session_id)
+        return False
+
+    _SESSION_END_REVIEW_TASKS.add(task)
+
+    def _done(completed: asyncio.Task[None]) -> None:
+        _SESSION_END_REVIEW_TASKS.discard(completed)
+        _SESSION_END_REVIEW_INFLIGHT.discard(session_id)
+
+    task.add_done_callback(_done)
+    logger.info(
+        "session-end memory review scheduled session={} cutoff={} first={} rest={}",
+        session_id,
+        cutoff,
+        len(first_wave),
+        len(rest_wave),
+    )
+    return True
 
 
 async def _create_plan_extraction_agent(system_prompt: str):

@@ -44,9 +44,14 @@ def _isolate_dao(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         return None
 
     from server.service import session_cleanup_service as dao
+    from agent.middlewares.summarization import nudges as nudge_mod
+
+    async def _noop_salvage(session_id: str) -> bool:
+        return False
 
     monkeypatch.setattr("context_engine.session_continuity.auto_save_on_session_end", _noop)
     monkeypatch.setattr("context_engine.delete_messages_by_session", lambda session_id: 0)
+    monkeypatch.setattr(nudge_mod, "salvage_session_memory", _noop_salvage)
     monkeypatch.setattr(dao, "delete_thread_history", _noop)
     monkeypatch.setattr(dao, "clear_all_register_sessions", lambda *a, **k: None)
     monkeypatch.setattr(dao, "SESSIONS_DIR", tmp_path / "sessions")
@@ -206,3 +211,59 @@ async def test_evidence_purge_failure_does_not_block_session_cleanup(
     monkeypatch.setattr(EvidenceLedger, "purge_session", _boom)
 
     await dao.purge_session("sess-1")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_purge_session_schedules_salvage_before_destroying_stores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from server.service import session_cleanup_service as dao
+    from server.service import side_chat_service
+
+    _isolate_dao(monkeypatch, tmp_path)
+    order: list[str] = []
+
+    def _recorder(name: str):
+        async def _record(*_args, **_kwargs):
+            order.append(name)
+
+        return _record
+
+    monkeypatch.setattr(
+        "context_engine.session_continuity.auto_save_on_session_end", _recorder("continuity")
+    )
+    monkeypatch.setattr(
+        "agent.middlewares.summarization.nudges.salvage_session_memory", _recorder("salvage")
+    )
+    monkeypatch.setattr(dao, "purge_subagent_subtree_for_session", _recorder("subtree"))
+    monkeypatch.setattr(side_chat_service, "purge_side_chat_children", _recorder("sidechat"))
+    monkeypatch.setattr(dao, "purge_session_data", _recorder("data"))
+
+    await dao.purge_session("sess-order")
+
+    assert order == ["continuity", "salvage", "subtree", "sidechat", "data"]
+
+
+@pytest.mark.asyncio
+async def test_salvage_failure_does_not_block_the_purge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from server.service import session_cleanup_service as dao
+
+    _isolate_dao(monkeypatch, tmp_path)
+    called: list[str] = []
+
+    async def _broken_salvage(_session_id: str) -> bool:
+        raise RuntimeError("snapshot exploded")
+
+    async def _record_data(_session_id: str) -> None:
+        called.append("data")
+
+    monkeypatch.setattr(
+        "agent.middlewares.summarization.nudges.salvage_session_memory", _broken_salvage
+    )
+    monkeypatch.setattr(dao, "purge_session_data", _record_data)
+
+    await dao.purge_session("sess-broken-salvage")
+
+    assert called == ["data"]

@@ -1482,6 +1482,21 @@ false` = under `skills/plugins/`); each tool entry also carries the
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
   nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 /
   情感陪伴 pin `nudge: false`.
+- **Session-end memory salvage**: MAIN-session deletion (`purge_session` →
+  `nudges.salvage_session_memory`) snapshots the post-compaction checkpoint
+  transcript, the session model, the system prompt and the tool face BEFORE any
+  destructive step, computes the normal compression cutoff READ-ONLY (no
+  summary/pruning/offload/state write), then schedules a detached two-wave
+  memory review and lets the delete proceed immediately. Wave 1 reviews the
+  prefix a compression would have discarded with the captured model/prompt/tool
+  face (cache-warm); after it writes MEMORY.md/USER.md/FACTS.md, wave 2 reloads
+  memory, rebuilds the system prompt non-persistently, and reviews the preserved
+  tail with a `memory`-only face. Both waves run under the NUDGE lane with
+  per-wave derived session keys and no checkpointer; `_NudgeLimitTool` admits
+  only `memory` (`metadata["nudge_memory"]`). The snapshot has a 5 s budget and
+  every step is fail-open; side chats/subagent children do not run this path, and
+  a process exit may abandon an unfinished background wave. Config:
+  `NUDGE["session_end_review_enabled"]` / `session_end_review_timeout_s`.
 - **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
   — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
   `agent_switch._RENAMED_MIDDLEWARES` — `TaskIntentMiddleware`,
@@ -2098,7 +2113,7 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | ---------- | ------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------- |
 | `MAIN`     | main-agent turn (`_run_executor`)                            | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]`     |
 | `SUBAGENT` | child-agent executions (spawn + steer)                       | 8                                                                     | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
+| `NUDGE`    | nudge/persistence calls (`summarization/nudges.py`, 4 sites) | 4                                                                     | `LANE_SYSTEM["nudge_max_concurrent"]`    |
 | `NESTED`   | `sessions_send` reply turns (serial)                         | 1                                                                     | `LANE_SYSTEM["nested_max_concurrent"]`   |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).

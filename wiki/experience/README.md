@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Three extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression, handed the messages about to be discarded and run cache-warm on the turn's own model + prefix), plan extraction when the plan completes at a turn boundary, and the post-compression todo fork. The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
+This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression, handed the messages about to be discarded and run cache-warm on the turn's own model + prefix), plan extraction when the plan completes at a turn boundary, the post-compression todo fork, and the MAIN-session deletion salvage (a detached two-wave memory review over the captured compression cut). The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
 
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
@@ -20,6 +20,7 @@ This document covers the experience system: **when** the agent extracts experien
 | Every compression | Memory review (`_nudge_memory`): the DISCARDED slice, sent VERBATIM on the turn's own model configuration (`_build_session_model`) with the session's system prompt and tool face, so the request is a prefix-cache hit — `NUDGE["memory_review_mode"] = "digest"` folds it instead (recent 24 messages verbatim, older ones one truncated line each) | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
 | The plan completes — every todo `completed` / `cancelled` at a turn boundary (NOT at compression) | Plan extraction (`_run_plan_extraction`): the completion hook (`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`) forks a dedicated agent on the AUXILIARY model with `_PLAN_EXTRACTION_PROMPT` and NO conversation history | ① knowledge JSON, ② `skills/auto/` (class-level skills + `<module>-notes`), ③ FACTS.md |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
+| Deleting a MAIN session (before purge) | Session-end salvage (`salvage_session_memory`): snapshots the checkpoint transcript, captures the model/system prompt/tool face, computes the compression cutoff READ-ONLY, then runs two detached memory reviews — wave 1 over the would-be-compressed prefix, wave 2 over the preserved tail after reloading memory and rebuilding the prompt | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
 
 ## Trigger Details
 
@@ -71,6 +72,15 @@ At the same compression point, `_schedule_compression_todo_update` (`summarizati
 
 The fork result messages are logged only. Nothing reaches the main graph or its checkpointer, and the derived session's middleware state is cleared in `finally`.
 
+### 4. Session deletion (MAIN only)
+
+Before `purge_session` destroys a main session, `salvage_session_memory` snapshots the post-compaction checkpoint transcript plus the model, system prompt and tool face, computes the normal compression cutoff **read-only**, and schedules a detached two-wave review. The delete request does not wait for the model: the snapshot is the only synchronous work, and it has a 5 s budget. Side chats and subagent children never enter this path.
+
+- **Wave 1** covers `messages[:cutoff]` — the prefix a compression would have discarded — with the captured model, system prompt and tool face, so it follows the same cache-warm shape as the compression-time review. No summary is generated and no compression state is touched.
+- **Wave 2** covers `messages[cutoff:]` — the preserved tail. After wave 1 writes memory, the task reloads `MEMORY.md`/`USER.md`/`FACTS.md`, rebuilds the system prompt without persisting it (the session is gone), and runs the tail with a `memory`-only tool face. A rebuild failure falls back to the captured prompt.
+- Both waves run under the NUDGE lane with per-wave derived session keys (`<session_id>::session-end-salvage:1|2`) and no checkpointer; the keys are cleared in `finally`. The `memory` tool's `nudge_memory` metadata is the execution gate, so the first wave can mirror the session tool face for cache-warm without being able to call `knowledge` or plan tools after the purge.
+- Every failure — snapshot, prompt rebuild, timeout, model error — is logged and swallowed. A process exit can abandon an unfinished background review; this is the accepted trade-off for immediate deletion. Config: `NUDGE["session_end_review_enabled"]` and `NUDGE["session_end_review_timeout_s"]` (per wave, default 120 s).
+
 ## Curator (Skill Curation)
 
 **Frontmatter contract (the index IS the trigger).** `<available_skills>` renders only a skill's frontmatter — the body is read after loading — so those fields are the routing signal: `description` (capability summary), `when_to_use` (**required** on every skill these paths create or patch: the specific scenarios / user intents that should load it) and `when_not_to_use` (optional: exclusions and alternatives). The loader renders both extra tags with CJK-aware token budgets (60 / 50 / 50 tokens) and XML-escapes them; the client's skill tooltip shows the same three fields. The curator adds a second, narrower level: the umbrella's frontmatter covers the whole skill, and every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when there is a genuine exclusion), so the model can pick the right section after `skill_view`. Its deterministic fallback writes the same shape, extracting the conditions from the merge reasons.
@@ -90,7 +100,7 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 
 **LLM consolidation.** When `curator.consolidate` is on (default true), `run_curator_review()` renders the candidate list of non-pinned skills (`context_engine/curator/review.py:69`) and asks the main LLM at temperature 0.3 to merge overlapping narrow skills into class-level umbrella skills (`CURATOR_REVIEW_PROMPT`, `context_engine/curator/review.py:16`). New umbrellas and their support files are generated and persisted under `skills/auto/` (`_generate_umbrella_skill`, `context_engine/curator/umbrella.py:86`; `_apply_consolidation`, `context_engine/curator/orchestrator.py:163`). Consolidation is the only LLM step of the pass; failures are caught and the run continues.
 
-**Relation to the three extraction paths.** Path 2 (compression-time plan extraction) is the producer: it creates or patches `skills/auto/` through `skill_manage`. The Curator is the downstream maintainer of that same output — it transitions, consolidates and prunes what plan extraction created. The other two paths never touch `skills/auto/` (they write MEMORY.md / USER.md / FACTS.md and `todos.db`), so they never intersect the Curator.
+**Relation to the four extraction paths.** Path 2 (compression-time plan extraction) is the producer: it creates or patches `skills/auto/` through `skill_manage`. The Curator is the downstream maintainer of that same output — it transitions, consolidates and prunes what plan extraction created. The other three paths never touch `skills/auto/` (they write MEMORY.md / USER.md / FACTS.md, `todos.db`, or the deletion-time memory salvage), so they never intersect the Curator.
 
 **State and boundaries.** Run state lives in `skills/.curator_state` (`context_engine/curator/constants.py:3`, loaded/saved by `context_engine/curator/state.py`); each run writes `run.json` + `REPORT.md` under `logs/curator/{timestamp}/` (`context_engine/curator/constants.py:4`; `context_engine/curator/report.py:196-205`). Scope is `skills/auto/` only — built-in skills are never touched, pinned skills bypass every destructive transition, and the whole pass runs in a background thread, off the conversation turn path. Full detail: [curator/README.md](../../context_engine/curator/README.md).
 
@@ -101,11 +111,13 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 | Nudge metadata allowlist (`metadata["nudge"]`, `_NudgeLimitTool` default) | Memory nudge and plan extraction may only call tools tagged for the nudge phase. Every other main tool returns an error `ToolMessage` instead of executing. |
 | Compression metadata allowlist (`metadata["todo_update"] is True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`) | The compression fork admits exactly the metadata-marked `todowrite` shim. |
 | Derived session key `<id>::compression-todo` | The compression fork's `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` state keys cannot collide with the main session, which is mid `awrap_model_call` while the fork runs. Only `compression_todo_update_lock` is deliberately written on the main session, as the cross-path re-entrancy coordinator. |
+| Derived session keys `<id>::session-end-salvage:1|2` | The deletion waves run after the session's registers are cleared; their engine state lives under per-wave keys and is cleared in `finally`, so the review cannot resurrect the deleted session's state. |
+| `nudge_memory` execution gate (`metadata["nudge_memory"] is True`, `_NudgeLimitTool(allowed_metadata_key="nudge_memory")`) | Session-end wave 1 can mirror the session tool face for cache-warm while only the `memory` tool is executable; `knowledge` and plan tools are refused after deletion. |
 | Main-session-bound `todowrite` shim | The fork graph runs under the derived key, so the state-injected real `todowrite` would resolve the wrong session. The shim reuses the real tool's `args_schema` and `description` verbatim (zero schema drift), drops the injected `session_id`, and binds the main session id captured at build time. |
 | Read-only forks, no checkpointer | Every nudge / extraction fork's result messages are logged and discarded. The forks have no checkpointer, so they cannot write the main graph's state. |
 | Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, the compression scheduler skips dispatch entirely (nothing is queued). |
 | Fail-open boundaries | Every path wraps its work in `try/except`, logs, and returns. No extraction failure propagates into a turn, a compression, or another extraction. |
-| Background-task reference retention | The `_COMPRESSION_TODO_TASKS` set holds strong refs so asyncio cannot garbage-collect an in-flight task. |
+| Background-task reference retention | The `_COMPRESSION_TODO_TASKS` and `_SESSION_END_REVIEW_TASKS` sets hold strong refs so asyncio cannot garbage-collect an in-flight task. |
 
 ## Storage & Limits
 
@@ -124,6 +136,8 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
 | `plan_extraction_enabled` | `NUDGE` (`config/features/agent_side/nudge.py`) | `True` | Enables todo-complete plan extraction |
+| `session_end_review_enabled` | `NUDGE` | `True` | Enables the MAIN-session deletion salvage |
+| `session_end_review_timeout_s` | `NUDGE` | `120` | Per-wave model-call budget for the deletion salvage |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | Proactive-compression cooldown after an actual compression |
 | `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL` (`config/features/agent_side/memory_tool.py`) | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md caps |
 
@@ -133,6 +147,7 @@ Focused tests:
 
 ```bash
 uv run pytest \
+    tests/agent/middlewares/test_session_end_nudge.py \
     tests/agent/middlewares/test_compression_todo_update.py \
     tests/agent/middlewares/test_compression_nudges.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
@@ -142,6 +157,7 @@ uv run pytest \
     tests/agent/tools/test_memory_store_facts.py -q
 ```
 
+- `test_session_end_nudge.py`: the deletion snapshot, the read-only compression split, wave 1 → prompt rebuild → wave 2 ordering, cutoff/empty/switch/duplicate/failure branches, derived-state cleanup, and both waves reaching MEMORY.md/USER.md.
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
 - `test_compression_nudges.py`: compression-time dispatch (the memory review fires from the compact seam; a no-cut compaction dispatches nothing). `test_memory_review_digest.py` pins the discarded-slice wiring, the cache-warm model rebuild (descriptor fields, env-default fallback, session tool face) and the fold under ``memory_review_mode="digest"``. Persistence assertions live in `tests/agent/middlewares/message_persistence/`.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.

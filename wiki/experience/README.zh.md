@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入三条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 plan extraction、压缩后 todo fork。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 plan extraction、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
@@ -20,6 +20,7 @@
 | 每次压缩 | 记忆复盘（`_nudge_memory`）：只收**被丢弃**的那段，**原文**发在"本轮刚用过的"模型配置上（`_build_session_model`），并复刻会话的系统提示词与工具面，使请求命中前缀缓存；`NUDGE["memory_review_mode"] = "digest"` 则改为折叠（最近 24 条原文，更早的每条截断成一行） | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 | 计划完成——轮次边界上全部 todo 为 `completed` / `cancelled`（**不在压缩时**） | plan extraction（`_run_plan_extraction`）：完成钩子（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）用**辅助模型** fork 一个专用 agent，使用 `_PLAN_EXTRACTION_PROMPT`，且**不带任何对话历史** | ① 知识 JSON ② `skills/auto/`（类级技能 + `<module>-notes`） ③ FACTS.md |
 | 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget nudge agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
+| 删除主会话（purge 之前） | session-end salvage（`salvage_session_memory`）：快照 checkpoint transcript，捕获模型/系统提示词/工具面，只读计算压缩切割线，然后运行两次独立 memory review——第一波处理本会被压缩的前缀，第二波在重载 memory 并重建提示词后处理保留的尾部 | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
 
 ## 触发详情
 
@@ -71,6 +72,15 @@
 
 fork 的结果消息只记录日志。任何内容都不会进入主图或其 checkpointer，派生会话的中间件状态在 `finally` 中清理。
 
+### 4. 会话删除（仅主会话）
+
+`purge_session` 销毁主会话前，`salvage_session_memory` 对压缩后的 checkpoint transcript、模型、系统提示词和工具面做快照，只读计算正常压缩切割线，然后调度一个独立的后台两波复盘。删除请求不等待模型：同步阶段只有快照，预算 5 秒。侧边会话和子代理不进入此路径。
+
+- **第一波**处理 `messages[:cutoff]`——本会被压缩丢弃的前缀——使用捕获的模型、系统提示词和工具面，保持与压缩时复盘相同的 cache-warm 形态；不生成摘要，不触碰压缩状态。
+- **第二波**处理 `messages[cutoff:]`——保留的尾部。第一波写入 memory 后，任务重新加载 `MEMORY.md`/`USER.md`/`FACTS.md`，非持久化重建系统提示词（会话已删除），并用仅 `memory` 工具面复盘尾部。重建失败则回退到捕获的提示词。
+- 两波都在 NUDGE 车道运行，各自使用派生的会话键（`<session_id>::session-end-salvage:1|2`），无 checkpointer；键在 `finally` 清理。`memory` 工具的 `nudge_memory` metadata 是执行门禁，因此第一波可以为了 cache-warm 复刻会话工具面，但删除后无法调用 `knowledge` 或 plan 工具。
+- 快照、提示词重建、超时、模型异常等所有失败都记录并吞掉。进程退出可能放弃未完成的后台复盘，这是立即删除的既定取舍。配置：`NUDGE["session_end_review_enabled"]` 与 `NUDGE["session_end_review_timeout_s"]`（每波，默认 120 秒）。
+
 ## Curator（技能策展）
 
 **frontmatter 契约（索引就是触发器）。** `<available_skills>` 只渲染技能的 frontmatter —— 正文要加载后才读 —— 所以这些字段就是路由信号：`description`（能力概述）、`when_to_use`（**必填**：这些路径创建或修补的每个技能都要写，写明应该加载它的具体场景／用户意图）与 `when_not_to_use`（可选：排除条件与替代方案）。加载器用 CJK 感知的 token 预算（60 / 50 / 50 token）渲染这两个附加标签并做 XML 转义；前端技能 tooltip 展示同样三个字段。curator 还加了更窄的第二层：伞状技能的 frontmatter 覆盖整个技能，而每个 `##` 子能力段落以自己的一行 `**When to use:**` 开头（确有排除时才加 `**When NOT to use:**`），模型 `skill_view` 后即可选对段落。它的确定性回退写出同样的形状，从合并理由里启发式提取这些条件。
@@ -90,7 +100,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 **LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/review.py:69`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/review.py:16`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/umbrella.py:86`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:163`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
 
-**与三条抽取路径的关系。** 路径 2（压缩时 plan extraction）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 plan extraction 创建的技能做流转、合并与修剪。另外两条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`todos.db`），因此与 Curator 没有交集。
+**与四条抽取路径的关系。** 路径 2（压缩时 plan extraction）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 plan extraction 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、`todos.db`，以及删除时的 memory 抢救），因此与 Curator 没有交集。
 
 **状态与边界。** 运行状态存于 `skills/.curator_state`（`context_engine/curator/constants.py:3`，由 `context_engine/curator/state.py` 读写）；每次运行在 `logs/curator/{timestamp}/` 下写出 `run.json` + `REPORT.md`（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。范围仅限 `skills/auto/`——绝不触碰内置技能，pinned 技能跳过所有破坏性流转，整个流程在后台线程运行，不占对话回合路径。完整细节：[curator/README.md](../../context_engine/curator/README.zh.md)。
 
@@ -101,11 +111,13 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 | nudge metadata 白名单（`metadata["nudge"]`，`_NudgeLimitTool` 默认规则） | memory nudge 与 plan extraction 只能调用带 nudge 阶段标记的工具。其它任何主工具都返回错误 `ToolMessage`，不执行。 |
 | 压缩 metadata 白名单（`metadata["todo_update"] is True`，`_NudgeLimitTool(allowed_metadata_key="todo_update")`） | 压缩 fork 恰好只放行带该 metadata 标记的 `todowrite` 垫片。 |
 | 派生会话键 `<id>::compression-todo` | 压缩 fork 的 `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 状态键不会与主会话冲突，因为 fork 运行期间主会话正处在 `awrap_model_call` 中。只有 `compression_todo_update_lock` 有意写在主会话上，作为跨路径防重入协调器。 |
+| 派生会话键 `<id>::session-end-salvage:1|2` | 删除后的两波复盘运行在每波派生键下，引擎状态在 `finally` 中清理，不会复活已删除会话的 state；任务集合 `_SESSION_END_REVIEW_TASKS` 持有强引用。 |
+| `nudge_memory` 执行门禁（`metadata["nudge_memory"] is True`，`_NudgeLimitTool(allowed_metadata_key="nudge_memory")`） | 第一波可以为 cache-warm 复刻会话工具面，但只有 `memory` 可执行；删除后 `knowledge` 与 plan 工具被拒绝。 |
 | 绑定主会话的 `todowrite` 垫片 | fork 图运行在派生键下，因此由状态注入的真实 `todowrite` 会解析到错误会话。垫片逐字复用真实工具的 `args_schema` 与 `description`（零 schema 漂移），丢弃注入的 `session_id`，并绑定构建时捕获的主会话 id。 |
 | 只读 fork、无 checkpointer | 每个 nudge / 抽取 fork 的结果消息都只记录并丢弃。fork 无 checkpointer，无法写主图状态。 |
 | 每会话防重入锁 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` 阻止同一抽取路径重叠运行。任一 nudge 锁被持有时，压缩调度器完全跳过派发（不排队）。 |
 | fail-open 边界 | 每条路径都用 `try/except` 包裹工作、记录日志并返回。任何抽取失败都不会传播进回合、压缩或其它抽取。 |
-| 后台任务引用保留 | `_COMPRESSION_TODO_TASKS` 集合持有强引用，防止 asyncio 回收在途任务。 |
+| 后台任务引用保留 | `_COMPRESSION_TODO_TASKS` 与 `_SESSION_END_REVIEW_TASKS` 集合持有强引用，防止 asyncio 回收在途任务。 |
 
 ## 存储与上限
 
@@ -124,6 +136,8 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
 | `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | 启用 todo 完成时的 plan extraction |
+| `session_end_review_enabled` | `NUDGE` | `True` | 启用主会话删除时的抢救 |
+| `session_end_review_timeout_s` | `NUDGE` | `120` | 删除抢救每波的模型调用预算 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 实际压缩后的主动压缩冷却 |
 | `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL`（`config/features/agent_side/memory_tool.py`） | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md 上限 |
 
@@ -142,6 +156,7 @@ uv run pytest \
     tests/agent/tools/test_memory_store_facts.py -q
 ```
 
+- `test_session_end_nudge.py`：删除快照、只读压缩切割、第一波 → 提示词重建 → 第二波顺序、cutoff/空/开关/重复/失败分支、派生状态清理，以及两波都写入 MEMORY.md/USER.md。
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
 - `test_compression_nudges.py`：压缩时派发（memory review 从 compact 接缝触发；无切点压缩不派发）。`test_memory_review_digest.py` 钉住被丢弃段的接线、cache_warm 的模型重建（descriptor 字段、环境默认回退、会话工具面），以及 `memory_review_mode="digest"` 下的折叠。持久化断言位于 `tests/agent/middlewares/message_persistence/`。
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。

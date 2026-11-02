@@ -1,7 +1,8 @@
-"""Compression-time nudge settings.
+"""Experience-extraction nudge settings.
 
-The memory review is dispatched on every compression, and plan extraction fires
-when the plan completes at a turn boundary.
+The memory review is dispatched on every compression, plan extraction fires when
+the plan completes at a turn boundary, and MAIN-session deletion schedules a
+detached two-wave memory salvage before the purge.
 """
 
 from typing import TypedDict
@@ -23,9 +24,18 @@ class NudgeConfig(TypedDict):
     #:   has a small window), the fold bounds the input regardless of provider
     #:   behaviour, at the price of losing the older detail.
     memory_review_mode: str
+    #: Main-session deletion runs a detached, two-wave memory review over the
+    #: captured transcript before the stores are purged. The delete request never
+    #: waits for it; a process exit may abandon the unfinished review.
+    session_end_review_enabled: bool
+    #: Per-wave model-call budget for the session-end review. A timed-out wave is
+    #: logged and abandoned; the deletion already completed.
+    session_end_review_timeout_s: int
 
 
 NUDGE: NudgeConfig = {
     "plan_extraction_enabled": True,
     "memory_review_mode": "cache_warm",
+    "session_end_review_enabled": True,
+    "session_end_review_timeout_s": 120,
 }
