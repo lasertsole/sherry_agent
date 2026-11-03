@@ -196,7 +196,10 @@
     "filterToggle": "Filter",
     "noSearchResults": "No matching sessions",
     "searchPlaceholder": "Search sessions by title…",
-    "selectAll": "Select All"
+    "selectAll": "Select All",
+    "pin": "Pin to top",
+    "unpin": "Unpin",
+    "pinnedLabel": "Pinned"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec}s ago",
@@ -546,7 +549,11 @@
       "everySeconds": "Every {n} seconds",
       "everyMinutes": "Every {n} minutes",
       "everyHours": "Every {n} hours",
-      "everyDays": "Every {n} days"
+      "everyDays": "Every {n} days",
+      "unitSeconds": "Seconds",
+      "unitMinutes": "Minutes",
+      "unitHours": "Hours",
+      "unitDays": "Days"
     },
     "heartbeat": {
       "addTask": "Add task",

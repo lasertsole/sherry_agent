@@ -125,3 +125,19 @@ export function filterSessions<T extends { title: string; createTime: string }>(
   if (!hasActiveSessionFilter(keyword, range)) return list;
   return list.filter(item => matchesSessionFilter(item, keyword, range));
 }
+
+/**
+ * Put pinned sessions first, preserving the caller's order inside each group.
+ *
+ * A stable sort is required: the server's newest-first order (and the
+ * placeholders' own order) must survive; pinning only moves rows between the
+ * two groups.
+ *
+ * @param list Session list in its display order.
+ * @param pinned Pinned session ids.
+ * @returns The original array reference when nothing is pinned, otherwise a sorted copy.
+ */
+export function sortPinnedFirst<T extends { id: string }>(list: T[], pinned: readonly string[]): T[] {
+  if (!pinned.length || !list.some(item => pinned.includes(item.id))) return list;
+  return [...list].sort((a, b) => Number(pinned.includes(b.id)) - Number(pinned.includes(a.id)));
+}

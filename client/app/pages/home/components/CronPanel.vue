@@ -323,12 +323,12 @@ const scheduleTypeOptions = computed(() => [
   { label: t('config.cron.typeCron'), value: 'cron' }
 ]);
 
-const everyUnitOptions = [
-  { label: '秒 / seconds', value: 's' },
-  { label: '分 / minutes', value: 'm' },
-  { label: '时 / hours', value: 'h' },
-  { label: '天 / days', value: 'd' }
-];
+const everyUnitOptions = computed(() => [
+  { label: t('config.cron.unitSeconds'), value: 's' },
+  { label: t('config.cron.unitMinutes'), value: 'm' },
+  { label: t('config.cron.unitHours'), value: 'h' },
+  { label: t('config.cron.unitDays'), value: 'd' }
+]);
 
 const MIN_EVERY_MS = 1000;
 

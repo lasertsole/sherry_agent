@@ -90,7 +90,7 @@ const props = withDefaults(
 );
 const emits = defineEmits<{ 'update:modelValue': [value: boolean]; cropped: [dataUrl: string] }>();
 
-const dialogTitle = computed(() => props.header || '裁剪图片');
+const dialogTitle = computed(() => props.header || t('config.crop.title'));
 
 const visible = ref(props.modelValue);
 watch(

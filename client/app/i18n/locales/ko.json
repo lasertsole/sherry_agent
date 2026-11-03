@@ -196,7 +196,10 @@
     "filterToggle": "필터",
     "noSearchResults": "일치하는 세션이 없습니다",
     "searchPlaceholder": "세션 제목 검색…",
-    "selectAll": "전체 선택"
+    "selectAll": "전체 선택",
+    "pin": "상단 고정",
+    "unpin": "고정 해제",
+    "pinnedLabel": "고정됨"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec}초 전",
@@ -546,7 +549,11 @@
       "everySeconds": "매 {n}초",
       "everyMinutes": "매 {n}분",
       "everyHours": "매 {n}시간",
-      "everyDays": "매 {n}일"
+      "everyDays": "매 {n}일",
+      "unitSeconds": "초",
+      "unitMinutes": "분",
+      "unitHours": "시간",
+      "unitDays": "일"
     },
     "heartbeat": {
       "addTask": "작업 추가",

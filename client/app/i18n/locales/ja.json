@@ -196,7 +196,10 @@
     "filterToggle": "絞り込み",
     "noSearchResults": "一致するセッションがありません",
     "searchPlaceholder": "セッションタイトルを検索…",
-    "selectAll": "すべて選択"
+    "selectAll": "すべて選択",
+    "pin": "トップに固定",
+    "unpin": "固定を解除",
+    "pinnedLabel": "固定済み"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -546,7 +549,11 @@
       "everySeconds": "{n} 秒ごと",
       "everyMinutes": "{n} 分ごと",
       "everyHours": "{n} 時間ごと",
-      "everyDays": "{n} 日ごと"
+      "everyDays": "{n} 日ごと",
+      "unitSeconds": "秒",
+      "unitMinutes": "分",
+      "unitHours": "時間",
+      "unitDays": "日"
     },
     "heartbeat": {
       "addTask": "タスクを追加",

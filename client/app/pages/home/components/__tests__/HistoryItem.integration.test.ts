@@ -54,6 +54,25 @@ describe('HistoryItem.vue (integration, backend mocked)', () => {
     expect((emitted as unknown as [string][])[0][0]).toBe('s1');
   });
 
+  it('emits contextMenu on right-click and suppresses the native menu', async () => {
+    const wrapper = mountItem({ historyRecord: record, isActive: false, pinned: false });
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    wrapper.find('.p-3').element.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    const emitted = wrapper.emitted('contextMenu');
+    expect(emitted).toBeTruthy();
+    expect((emitted as unknown as [MouseEvent, string][])[0][1]).toBe('s1');
+  });
+
+  it('shows the pin mark only for a pinned row', () => {
+    const pinned = mountItem({ historyRecord: record, isActive: false, pinned: true });
+    expect(pinned.find('.pi-thumbtack').exists()).toBe(true);
+
+    const unpinned = mountItem({ historyRecord: record, isActive: false, pinned: false });
+    expect(unpinned.find('.pi-thumbtack').exists()).toBe(false);
+  });
+
   it('uses isActive-prop styling for the active session', () => {
     const active = mountItem({ historyRecord: record, isActive: true });
     // Active rows highlight via bg-[#c1d6e5]! (text-theme-main is already in the base class list).

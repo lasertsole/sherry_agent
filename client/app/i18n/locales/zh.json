@@ -196,7 +196,10 @@
     "filterToggle": "筛选",
     "noSearchResults": "没有匹配的会话",
     "searchPlaceholder": "搜索会话标题…",
-    "selectAll": "全选"
+    "selectAll": "全选",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "pinnedLabel": "已置顶"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -546,7 +549,11 @@
       "everySeconds": "每 {n} 秒",
       "everyMinutes": "每 {n} 分钟",
       "everyHours": "每 {n} 小时",
-      "everyDays": "每 {n} 天"
+      "everyDays": "每 {n} 天",
+      "unitSeconds": "秒",
+      "unitMinutes": "分",
+      "unitHours": "小时",
+      "unitDays": "天"
     },
     "heartbeat": {
       "addTask": "添加任务",

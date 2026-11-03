@@ -6,6 +6,7 @@
       { 'text-theme-main bg-[#c1d6e5]! ': props.isActive }
     ]"
     @click="emits('chooseSession', props.historyRecord.id)"
+    @contextmenu="onContextMenu"
     role="button"
     tabindex="0"
     @keydown.enter.prevent="emits('chooseSession', props.historyRecord.id)"
@@ -36,6 +37,12 @@
         :class="props.historyRecord.renamed ? 'text-amber-600 dark:text-amber-400' : ''">
         {{ props.historyRecord?.title || t('history.newSession') }}
       </div>
+      <!-- Pinned mark: the row sorts to the top of the list. -->
+      <i
+        v-if="props.pinned"
+        class="pi pi-thumbtack shrink-0 text-[10px] text-theme-main"
+        :title="t('history.pinnedLabel')"
+        :aria-label="t('history.pinnedLabel')" />
       <!-- Branch mark: this row is a fork of another session. Clicking jumps to
            the parent (the fork's own rows stay untouched). -->
       <button
@@ -100,6 +107,8 @@ const modelList = defineModel('selectedList', { type: Array, default: () => [] }
 interface Props {
   historyRecord: SessionRecord;
   isActive: boolean;
+  /** Whether this row is pinned to the top of the session list. */
+  pinned?: boolean;
 }
 const props = defineProps<Props>();
 
@@ -110,6 +119,7 @@ const emits = defineEmits<{
   chooseSession: [id: string];
   deleteSession: [id: string];
   renameSession: [id: string, title: string];
+  contextMenu: [event: MouseEvent, id: string];
 }>();
 
 /** Render the backend's compact time string (YYYYMMDDHHmmss) using the current locale's date format */
@@ -119,6 +129,20 @@ const formattedCreateTime = computed(() => {
   const format = t('history.dateFormat') || 'YYYY-MM-DD HH:mm';
   return formatCompactTimeString(timeStr, format);
 });
+
+/**
+ * Right-click the row body: open the parent's one ContextMenu anchored at the
+ * pointer. Inputs keep their native menu (the inline title editor needs
+ * cut/copy/paste); the checkbox is left alone too.
+ * @param event The row's contextmenu event.
+ */
+function onContextMenu(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+  event.preventDefault();
+  event.stopPropagation();
+  emits('contextMenu', event, props.historyRecord.id);
+}
 
 /** Delete session: PrimeVue confirm dialog (replacing native confirm); emits the deleteSession event to the parent on confirmation */
 const handleDelete = () => {
