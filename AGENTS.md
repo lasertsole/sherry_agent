@@ -250,6 +250,26 @@ User message → Robyn WS → agent.core.built_agent() graph
      (`release_child_session_state`) — there is no live child agent whose
      `finally` would.
 
+     `runtime/effects/` is an OPT-IN second layer over those recoveries (all
+     `effects.*` flags default false; flags off means the previous paths run
+     unchanged). It stores one intent row per `(kind, key)` in
+     `src/data/effects/effects.db` for the three restart-sensitive deliveries
+     (plan continuation, subagent completion notice, auto-turn). Re-enqueueing
+     increments `generation` and resets attempts; every terminal transition is
+     a CAS on `(id, generation, status='in_flight')`, so a slow worker holding
+     an old generation cannot complete the new pending row. `due_at` is
+     WALL-CLOCK (a monotonic reading from the previous process is meaningless
+     after a restart): boot replay returns in-flight rows to pending, overdue
+     rows fire immediately, future rows keep their delay. `effects.shadow_mode`
+     records and runs the original path (observation); execution requires
+     `effects.enabled` + `effects.worker_enabled` and is disabled in shadow
+     mode. The three call sites return "accepted" after enqueue and the worker
+     re-enters the original implementation through the `_from_effects=True`
+     seam, so there is no recursion. `effects.restart_replay` also applies the
+     restart terminal table, which delegates the two existing state machines to
+     `restore_runs_from_disk` and the boot-recovery queue requeue (both
+     idempotent). The existing sweepers stay in place as the fallback.
+
      Spawns are ROLE-CONTAINED: a specialized child (researcher / executor /
      reviewer / librarian) may only spawn roles on its allow-list
      (`SPAWN_ALLOWED_CHILD_ROLES`, types/functional_role.py) — its own role,

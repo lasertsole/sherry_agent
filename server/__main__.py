@@ -255,6 +255,16 @@ def main() -> None:
     except Exception:
         logger.exception("boot recovery failed; starting anyway")
 
+    # Restart-recovery effects: opt-in (effects.enabled + effects.restart_replay).
+    # The terminal declarations and intent replay are async, so they use the
+    # same one-shot loop style as boot recovery.
+    from server.service.effects.boot import run_restart_recovery
+
+    try:
+        asyncio.run(run_restart_recovery())
+    except Exception:
+        logger.exception("effects restart recovery failed; starting anyway")
+
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle
 
@@ -326,6 +336,19 @@ def main() -> None:
     video_dir.mkdir(parents=True, exist_ok=True)
 
     app.serve_directory(route="/video", directory_path=os.path.join(os.getcwd(), str(video_dir)))
+
+    # The effect worker needs the server's long-lived loop, so it starts from
+    # the Robyn startup event instead of a one-shot asyncio.run. The function
+    # is a no-op unless effects.enabled + effects.worker_enabled are on.
+    async def _start_effects_worker() -> None:
+        from server.service.effects.boot import start_worker
+
+        try:
+            await start_worker()
+        except Exception:
+            logger.exception("effects worker failed to start; continuing without it")
+
+    app.startup_handler(_start_effects_worker)
 
     app.start(host=API_HOST, port=API_PORT)
 

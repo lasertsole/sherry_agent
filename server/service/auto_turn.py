@@ -23,7 +23,9 @@ persistence door), loguru-only logging.
 """
 
 import asyncio
+import hashlib
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
@@ -88,7 +90,9 @@ async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
     )
 
 
-async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> AutoTurnResult:
+async def maybe_trigger_auto_turn(
+    session_key: str, injection: HumanMessage, *, _from_effects: bool = False
+) -> AutoTurnResult:
     """Snapshot idleness and spawn the fire-and-forget auto turn (zero awaits here).
 
     A session that is busy ONLY because the turn it just finished is still
@@ -96,11 +100,61 @@ async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> 
     caller *is* that turn's graph hook, so the runner waits (bounded) for the
     end that is already under way before it fires. Every other busy reason —
     a HITL wait, another auto turn — is a real refusal, returned unchanged.
+
+    With the effect-queue execution flags on, a new turn is ENQUEUED and
+    answered as ``triggered``; the worker later calls the implementation with
+    ``_from_effects=True``, so the busy/wait semantics above still run there.
+    Shadow mode records the intent and runs this function unchanged.
     """
     bare = normalize_session_key(session_key)
     if not bare:
         # Not our problem ( addresses real sessions): zero side effects.
         return AutoTurnResult(AutoTurnOutcome.BUSY, bare, "unknown_session")
+
+    from runtime.effects import intent_log
+
+    shadow_id: int | None = None
+    shadow_generation: int | None = None
+    if not _from_effects:
+        from runtime.effects.config import (
+            effects_execution_enabled,
+            effects_shadow_enabled,
+        )
+
+        content = str(injection.content)
+        digest = hashlib.sha256(content.encode("utf-8", "surrogateescape")).hexdigest()[:16]
+        payload = {
+            "session_key": session_key,
+            "content": content,
+            "metadata": getattr(injection, "metadata", None),
+        }
+        if effects_execution_enabled():
+            intent_log.enqueue(kind="auto_turn", key=f"turn:{bare}:{digest}", payload=payload)
+            return AutoTurnResult(AutoTurnOutcome.TRIGGERED, bare, "effects_queue")
+        if effects_shadow_enabled():
+            shadow_id, shadow_generation = intent_log.enqueue(
+                kind="auto_turn", key=f"turn:{bare}:{digest}", payload=payload
+            )
+
+    try:
+        result = await _maybe_trigger_auto_turn_impl(bare, injection)
+    except Exception:
+        if shadow_id is not None and shadow_generation is not None:
+            try:
+                intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
+            except Exception:  # noqa: BLE001 - observation never breaks the path
+                logger.exception("auto_turn: shadow retry mark failed")
+        raise
+
+    if shadow_id is not None and shadow_generation is not None:
+        if result.outcome == AutoTurnOutcome.TRIGGERED:
+            intent_log.mark_done(shadow_id, shadow_generation)
+        else:
+            intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
+    return result
+
+
+async def _maybe_trigger_auto_turn_impl(bare: str, injection: HumanMessage) -> AutoTurnResult:
     st = detect_state(bare)
     if st.busy and st.reason not in _SELF_BUSY_REASONS:
         return AutoTurnResult(AutoTurnOutcome.BUSY, bare, st.reason)

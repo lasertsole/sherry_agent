@@ -179,6 +179,41 @@ from MesMemory, then the edited text is re-run as a new turn that reuses the
 old turn number. The client drops the corresponding Dexie cache rows too, or
 the next history merge would resurrect them.
 
+## Opt-in Effect Queue (restart intents)
+
+`runtime/effects/` adds a durable intent log for the three restart-sensitive
+delivery paths (plan continuation, subagent completion notice, auto-turn). It is
+OFF by default and additive: every existing boot sweeper and synchronous path
+stays in place.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `effects.enabled` | false | master switch; without it nothing in this package runs |
+| `effects.shadow_mode` | false | record the intent and run the ORIGINAL path (observation only) |
+| `effects.worker_enabled` | false | start the worker; execution requires master + this + not shadow |
+| `effects.restart_replay` | false | at boot, apply the terminal table and replay in-flight intents |
+
+- The queue is one SQLite file (`src/data/effects/effects.db`), separate from
+  every existing store. `(kind, key)` is unique; re-enqueueing increments
+  `generation` and resets attempts.
+- Every terminal transition is a CAS on `(id, generation, status='in_flight')`.
+  A slow worker holding an old generation therefore cannot mark the new
+  pending row done.
+- `due_at` uses wall-clock time: the queue survives a restart, where a
+  monotonic reading from the previous process is meaningless. Boot replay
+  resets `in_flight` to pending (due now); future pending rows keep their delay.
+- The restart terminal table declares the two existing state machines —
+  `subagent_runs` (delegated to `restore_runs_from_disk`) and
+  `user_input_queue` (delegated to the boot recovery requeue). Both helpers are
+  idempotent; the table does not re-implement them.
+- With the execution flags on, the three call sites enqueue and answer
+  accepted; the worker calls the original implementation through a
+  `_from_effects=True` seam, so there is no recursion. Shadow mode records and
+  runs the original path unchanged. With the flags off (the default), the
+  original path is byte-for-byte unchanged.
+- `scripts/verify_effects_shadow.py` prints per-kind/status counts and compares
+  completion notices with the registry's DELIVERED rows.
+
 ## Code Map
 
 - `server/service/stream_dispatch.py`: `StreamTurn` (`ai_text`, `_frame_seq`, `turn_id`, `_ACTIVE_TURNS`) and `active_turn_snapshot`.

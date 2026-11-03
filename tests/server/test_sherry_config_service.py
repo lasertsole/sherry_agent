@@ -44,6 +44,16 @@ SAMPLE = """// app settings
   // load_sherry_hooks (lists of objects), not by this scalar service.
   "hooks": {
     "enabled": false
+  },
+  "effects": {
+    "enabled": false,
+    "shadow_mode": false,
+    "worker_enabled": false,
+    "restart_replay": false,
+    "poll_interval_s": 2,
+    "retry_initial_s": 5,
+    "retry_max_s": 300,
+    "max_attempts": 10
   }
 }
 """

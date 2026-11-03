@@ -105,5 +105,36 @@
     // ,"Stop": [
     //   { "command": "curl -s -X POST http://localhost:9999/turn-done --data-binary @-", "matcher": "*", "timeout_ms": 3000 }
     // ]
+  },
+
+  // Restart-recovery effect queue (runtime/effects/ + server/service/effects/).
+  // OFF by default: the existing boot sweepers and synchronous delivery paths
+  // stay in charge. shadow_mode records intents while the original path still
+  // runs; execution requires enabled + worker_enabled and is disabled while
+  // shadow_mode is on.
+  "effects": {
+    // Master switch
+    "enabled": false,
+
+    // Record intents, run the original path (observation only)
+    "shadow_mode": false,
+
+    // Start the worker; execution also needs enabled and non-shadow mode
+    "worker_enabled": false,
+
+    // At boot, apply the restart terminal table and replay in-flight intents
+    "restart_replay": false,
+
+    // Worker polling interval (seconds)
+    "poll_interval_s": 2,
+
+    // Exponential backoff base (seconds)
+    "retry_initial_s": 5,
+
+    // Backoff ceiling (seconds)
+    "retry_max_s": 300,
+
+    // Attempts before an intent is abandoned
+    "max_attempts": 10
   }
 }

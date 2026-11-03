@@ -181,6 +181,37 @@ model_retry / invalid_tool_call）が `seq=0` のため、並べ替えないと�
 ターンとして再実行します。クライアントも Dexie キャッシュの該当行を消します。
 そうしないと次の履歴マージで復活します。
 
+## オプトイン Effect キュー（再起動インテント）
+
+`runtime/effects/` は再起動に敏感な 3 つの配信経路（計画継続、サブエージェント
+完了通知、auto-turn）に永続インテントログを追加します。デフォルトは OFF で
+additive です: 既存の boot sweeper と同期経路はすべて残ります。
+
+| フラグ | デフォルト | 意味 |
+|---|---|---|
+| `effects.enabled` | false | マスタースイッチ。OFF ならこのパッケージは何もしません |
+| `effects.shadow_mode` | false | インテントを記録し、元の経路を実行（観測のみ） |
+| `effects.worker_enabled` | false | worker を起動。実行にはマスター + これ + 非 shadow が必要 |
+| `effects.restart_replay` | false | 起動時に終態宣言表を適用し、in-flight インテントを再送 |
+
+- キューは独立した SQLite ファイル（`src/data/effects/effects.db`）で、既存の
+  store を変更しません。`(kind, key)` は一意で、再エンキューは `generation` を
+  進め、attempts をリセットします。
+- すべての終態遷移は `(id, generation, status='in_flight')` の CAS です。古い
+  generation を持つ遅い worker は、新しい pending 行を done にできません。
+- `due_at` は壁時計時間です: キューは再起動をまたぐため、前プロセスの monotonic
+  値は次のプロセスでは意味を持ちません。起動時の replay は `in_flight` を
+  pending（即時）に戻し、未来の pending 行は遅延を保ちます。
+- 再起動終態宣言表は既存の 2 つの状態機械を登録します: `subagent_runs`
+  （`restore_runs_from_disk` に委譲）と `user_input_queue`（boot recovery の
+  requeue に委譲）。どちらも冪等で、表は再実装しません。
+- 実行フラグが ON のとき、3 つの呼び出し点はエンキューして accepted を返し、
+  worker は `_from_effects=True` の接縫で元の実装を呼ぶため再帰しません。
+  shadow モードは記録して元の経路をそのまま実行します。フラグ OFF（デフォルト）
+  では元の経路がバイト単位で変わりません。
+- `scripts/verify_effects_shadow.py` は kind/status 別の件数を表示し、完了通知を
+  registry の DELIVERED 行と比較します。
+
 ## コードマップ
 
 - `server/service/stream_dispatch.py`：`StreamTurn`（`ai_text`、`_frame_seq`、`turn_id`、`_ACTIVE_TURNS`）と `active_turn_snapshot`。
