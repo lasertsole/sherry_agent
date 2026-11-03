@@ -114,46 +114,6 @@ class TestIterationBudget:
             assert result is not None
             assert "exhausted" in result.content.lower() or "budget" in result.content.lower()
 
-    def test_budget_warning_injected_once_at_the_ratio(self, fresh_state_register):
-        ib = self._make_middleware(max_iterations=5)  # warn at int(5 * 0.8) = 4
-        with patch(
-            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
-        ):
-            request = MagicMock()
-            request.state = self._make_state("s1")
-            request.messages = [HumanMessage(content="hello")]
-            prepared = MagicMock(name="prepared")
-            request.override.return_value = prepared
-
-            results = [ib._wrap_model_call_impl(request) for _ in range(5)]
-
-            assert results[:3] == [None, None, None]
-            assert results[3] is prepared
-            assert results[4] is None  # latch: injected once per turn
-            request.override.assert_called_once()
-            injected = request.override.call_args.kwargs["messages"][-1]
-            assert "[SYSTEM DIRECTIVE: ITERATION BUDGET]" in injected.content
-            assert injected.metadata["provenance"] == "iteration_budget"
-
-            # The latch resets with the per-turn counters.
-            ib._before_agent_impl(self._make_state("s1"))
-            assert ib._wrap_model_call_impl(request) is None  # used=1
-
-    def test_wrap_model_call_forwards_the_prepared_request(self, fresh_state_register):
-        ib = self._make_middleware(max_iterations=2)  # warn at 1
-        with patch(
-            "agent.middlewares.iteration_budget.core.state_register_mem", fresh_state_register
-        ):
-            request = MagicMock()
-            request.state = self._make_state("s1")
-            request.messages = [HumanMessage(content="hello")]
-            prepared = MagicMock(name="prepared")
-            request.override.return_value = prepared
-            handler = MagicMock(return_value="response")
-
-            assert ib.wrap_model_call(request, handler) == "response"
-            handler.assert_called_once_with(prepared)
-
     def test_tool_calls_make_no_budget_hook(self):
         """A tool-call pair costs ONE unit: only the AIMessage-producing model call."""
         from langchain.agents.middleware import AgentMiddleware
@@ -177,9 +137,6 @@ class TestIterationBudget:
 
             request = MagicMock()
             request.state = state
-            # 80% of a 2-call budget is reached on the first call; the harness
-            # only cares that the counter charges, so keep the model view as-is.
-            request.override.return_value = None
             assert ib._wrap_model_call_impl(request) is None  # model call 1
             assert ib._remaining("s1") == 1
 

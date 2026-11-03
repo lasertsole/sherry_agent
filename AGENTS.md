@@ -2519,11 +2519,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   the failure/no-progress counters and call records: the
   old probes answered the pre-edit file, so verification must be possible
   again. A scratch `write_file` (a new probe file) does NOT carry the flag.
-  `IterationBudget` adds a one-shot request-only convergence directive at
-  `budget_warning_ratio` (0.8): `[SYSTEM DIRECTIVE: ITERATION BUDGET]` names
-  the calls used/remaining and tells the model to stop exploring, apply its
-  candidate change and run the target tests. It is never persisted and never
-  blocks a tool. ToolGuardrails' failure path also sees network-command errors:
+  ToolGuardrails' failure path also sees network-command errors:
   terminal `curl`/`wget`/`git fetch` non-zero exits and `web_fetch` HTTP 4xx/5xx
   raise `ToolException` (`status="error"`), while local test/compile failures
   keep returning their output with `status="success"`.

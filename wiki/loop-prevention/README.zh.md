@@ -68,8 +68,6 @@
 
 每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
 
-达到 `budget_warning_ratio`（默认 0.8）时，中间件向模型视图追加**一次**仅请求可见的 `[SYSTEM DIRECTIVE: ITERATION BUDGET]` 消息（绝不持久化），写明已用/剩余调用数，并要求模型停止探索、应用最小可辩护的修改、运行目标测试、不要重复已知结果的实验。每回合的闩锁保证只注入一次；该指令从不拦截工具，预算到 100% 仍会正常结束回合。
-
 ### 回合级：`DelegationPressureGate`（仅主 Agent）
 
 安装在主 Agent 上，子代理永远不会安装（子代理 builder 不添加它，`_active` 也会拒绝 `:subagent:`/`:swarm:` 会话）。按单回合累计**读/探索类**工具调用：第 **7** 次通过自己的 mid-turn `abefore_model` 路径注入一条 `<system-reminder source="delegation_pressure">` 警告；第 **14** 次注入语气更强的 escalated 系统提醒。两个阶段工具都保持可用——门只建议，不阻断（浏览器调试工具不计次）。成功 accepted/pending 的 spawn 会清零计数，主 Agent 可以检查/验证，之后再次达到 7/14 时门会重新生效；失败 spawn 不清零。写本身不会清零，回合内每次图调用都累计，直到 spawn 或 `after_agent` 清零。`SHERRY_EVAL_DELEGATION_PRESSURE=1` 仍是显式评测 arm 开关；产品主链始终包含该门。
@@ -272,7 +270,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
-- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）、`result_repetition_warn_after`（3）、`result_repetition_block_after`（6）；工具可用自己的 metadata 覆盖签名阈值（terminal 声明 5）。警告预算用尽后，该精确的重复工具 + 参数签名在本回合剩余时间内被 BLOCK；不同参数变体仍然允许。`IterationBudget` 另有 `budget_warning_ratio`（0.8）控制一次性收敛指令。
+- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）、`result_repetition_warn_after`（3）、`result_repetition_block_after`（6）；工具可用自己的 metadata 覆盖签名阈值（terminal 声明 5）。警告预算用尽后，该精确的重复工具 + 参数签名在本回合剩余时间内被 BLOCK；不同参数变体仍然允许。
 - Announce 投递旋钮（子 Agent announce 配置）：`announce_retry_max=3` 配 5s / 10s / 20s 瞬态延迟，另有 `max_announce_retry_count=10` 和 24 小时 run 过期。
 
 手动恢复速查表：

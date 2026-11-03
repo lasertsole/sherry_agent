@@ -15,11 +15,6 @@ class IterationBudgetConfig(TypedDict):
     main_agent_max_iterations: int
     worker_max_iterations: int
     executor_max_iterations: int
-    #: Fraction of the budget at which ONE request-only convergence directive is
-    #: injected (``[SYSTEM DIRECTIVE: ITERATION BUDGET]``). It tells the model to
-    #: stop exploring and verify/apply what it has; it never blocks a tool. The
-    #: latch resets with the per-turn counters.
-    budget_warning_ratio: float
 
 
 ITERATION_BUDGET: IterationBudgetConfig = {
@@ -30,5 +25,4 @@ ITERATION_BUDGET: IterationBudgetConfig = {
     # because implementation + verification loops routinely exceed a plain
     # researcher/reviewer's 60-call ceiling.
     "executor_max_iterations": 90,
-    "budget_warning_ratio": 0.8,
 }

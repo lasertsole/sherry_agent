@@ -68,8 +68,6 @@
 
 ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
 
-`budget_warning_ratio`（デフォルト 0.8）に達すると、ミドルウェアはリクエスト限りの `[SYSTEM DIRECTIVE: ITERATION BUDGET]` メッセージを**1 回だけ**モデルビューに追加します（永続化はされません）。使用済み/残り呼び出し数を示し、探索をやめて最小限の防御可能な変更を適用し、対象テストを実行し、結果が既知の実験を繰り返さないよう指示します。ターンごとのラッチで 1 回に抑えられ、ツールをブロックすることはなく、予算 100% では従来どおりターンが終了します。
-
 ### ターンレベル: `DelegationPressureGate`（メインエージェント専用）
 
 メインエージェントに搭載され、サブエージェントには決して入りません（子ビルダーは追加せず、`_active` も `:subagent:`/`:swarm:` セッションを拒否します）。1 ターン内の**読み取り/探索**ツール呼び出しを累積し、**7** 回で独自の mid-turn `abefore_model` 経路から `<system-reminder source="delegation_pressure">` 警告を 1 回注入し、**14** 回でより強い escalated システムリマインダーを注入します。どちらの段階でもツールは利用可能なまま — ゲートは助言し、ブロックしません（ブラウザのデバッグツールは計数対象外）。accepted/pending の spawn が成功するとカウントをリセットし、メインエージェントは検査/検証でき、その後の 7/14 で再び作動します。失敗した spawn はリセットしません。書き込みだけではリセットされず、ターン内のすべてのグラフ呼び出しは spawn または `after_agent` まで累積します。`SHERRY_EVAL_DELEGATION_PRESSURE=1` は明示的な評価 arm の選択子として残り、製品のメインチェーンには常に含まれます。
@@ -276,7 +274,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` でデフォルト 5) は現在**ドキュメント専用**です: これを消費するコードはありません。実際に有効なツール別の上限は定数です(web 検索 15s、ターミナル 30s、python REPL 30s)。これをループ境界として当てにしないでください。
 - ワーカーはミドルウェアとして `OutputRepetitionGuard` を受け取り、メインエージェントは `RepetitionGuardWrapper` でラップされます(ミドルウェアフックは生のストリームチャンクを見えません)。
 - `MaxTokensBoostMiddleware` は環境変数ノブを持つ唯一のガードです: `MAIN_LLM_OUTPUT_MAX_TOKEN`(デフォルト 8192)がインポート時に読まれブーストの base になります; 上限(32768)とリトライ回数(3)はコード定数です。
-- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)、`streak_warn_after` (3)、`streak_max_warnings_per_turn` (3)。ツールは自身の metadata で署名しきい値を上書きできます(terminal は 5 を宣言)。警告予算を使い切ると、その正確な繰り返しツール + 引数シグネチャはターン終了まで BLOCK されます(異なる引数バリアントは引き続き許可)。`result_repetition_warn_after`(3) と `result_repetition_block_after`(6) が結果反復を、`IterationBudget.budget_warning_ratio`(0.8) が一度きりの収束指令を制御します。
+- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)、`streak_warn_after` (3)、`streak_max_warnings_per_turn` (3)。ツールは自身の metadata で署名しきい値を上書きできます(terminal は 5 を宣言)。警告予算を使い切ると、その正確な繰り返しツール + 引数シグネチャはターン終了まで BLOCK されます(異なる引数バリアントは引き続き許可)。`result_repetition_warn_after`(3) と `result_repetition_block_after`(6) が結果反復を制御します。
 - Announce 配送のノブ (サブエージェント announce 設定): 5s / 10s / 20s の一時的遅延を伴う `announce_retry_max=3`、さらに `max_announce_retry_count=10` と 24 時間の run 失効。
 
 手動回復のチートシート:

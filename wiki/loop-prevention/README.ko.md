@@ -68,8 +68,6 @@
 
 턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
 
-`budget_warning_ratio`(기본 0.8)에 도달하면 미들웨어가 요청에만 보이는 `[SYSTEM DIRECTIVE: ITERATION BUDGET]` 메시지를 **한 번** 모델 뷰에 추가합니다(영속화되지 않음). 사용/남은 호출 수를 알리고, 탐색을 멈추고 최소한의 방어 가능한 변경을 적용하며 대상 테스트를 실행하고 결과를 이미 아는 실험을 반복하지 말라고 지시합니다. 턴별 래치로 한 번만 주입되며 도구를 차단하지 않고, 예산 100%에서는 기존처럼 턴이 종료됩니다.
-
 ### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
 메인 에이전트에 설치되며 서브에이전트에는 절대 설치되지 않습니다(자식 빌더가 추가하지 않고, `_active`도 `:subagent:`/`:swarm:` 세션을 거부합니다). 한 턴 안의 **읽기/탐색** 도구 호출을 누적해 **7**회에 자체 mid-turn `abefore_model` 경로로 `<system-reminder source="delegation_pressure">` 경고를 한 번 주입하고, **14**회에 더 강한 escalated 시스템 리마인더를 주입합니다. 두 단계 모두 도구는 계속 사용 가능하며 — 게이트는 조언만 하고 차단하지 않습니다(브라우저 디버깅 도구는 집계 제외). accepted/pending spawn이 성공하면 카운트를 리셋해 메인 에이전트가 검사/검증할 수 있고, 이후 7/14에서 다시 작동합니다. 실패한 spawn은 리셋하지 않습니다. 쓰기만으로는 리셋되지 않으며, 턴 안의 모든 그래프 호출은 spawn 또는 `after_agent`까지 누적됩니다. `SHERRY_EVAL_DELEGATION_PRESSURE=1`은 명시적 평가 arm 선택자로 남고, 제품 메인 체인에는 항상 포함됩니다.
@@ -275,7 +273,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
-- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 시그니처 임계값을 덮어쓸 수 있습니다(terminal은 5 선언). 경고 예산을 다 쓰면 그 정확한 반복 도구 + 인자 시그니처가 턴이 끝날 때까지 BLOCK됩니다(다른 인자 변형은 계속 허용). `result_repetition_warn_after`(3)와 `result_repetition_block_after`(6)가 결과 반복을, `IterationBudget.budget_warning_ratio`(0.8)가 일회성 수렴 지시를 제어합니다.
+- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 시그니처 임계값을 덮어쓸 수 있습니다(terminal은 5 선언). 경고 예산을 다 쓰면 그 정확한 반복 도구 + 인자 시그니처가 턴이 끝날 때까지 BLOCK됩니다(다른 인자 변형은 계속 허용). `result_repetition_warn_after`(3)와 `result_repetition_block_after`(6)가 결과 반복을 제어합니다.
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
 수동 복구 치트시트:
