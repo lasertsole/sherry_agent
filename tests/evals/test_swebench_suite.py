@@ -67,8 +67,8 @@ async def test_a_quiesce_timeout_is_a_harness_error(tmp_path, monkeypatch):
     monkeypatch.setattr(suite.harness, "_drive", _drive)
     monkeypatch.setattr(suite.teardown, "quiesce_session", _quiesce)
     monkeypatch.setattr(suite, "_session_evidence", _evidence)
-    monkeypatch.setattr(suite.instances, "diff", lambda _i: "")
-    monkeypatch.setattr(suite.instances, "changed_paths", lambda _i: [])
+    monkeypatch.setattr(suite.instances, "diff", lambda _i, **_k: "")
+    monkeypatch.setattr(suite.instances, "changed_paths", lambda _i, **_k: [])
     monkeypatch.setattr(suite.instances, "revert", lambda _i, **_k: None)
 
     result = await suite._run_instance(_instance(tmp_path), tmp_path)
@@ -126,3 +126,47 @@ def test_tool_result_stats_separates_empty_evicted_and_missing():
         "ttl": 1,
         "sliced": 1,
     }
+
+
+def test_target_tests_block_exposes_the_patch_and_f2p_names():
+    instance = SimpleNamespace(
+        test_patch="diff --git a/tests/test_x.py b/tests/test_x.py\n+assert x\n"
+    )
+
+    block = suite._target_tests_block(instance, ["tests/test_x.py::test_x"])
+
+    assert "Evaluation tests (read-only)" in block
+    assert "FAIL_TO_PASS" in block
+    assert "tests/test_x.py::test_x" in block
+    assert "diff --git a/tests/test_x.py" in block
+
+
+def test_target_tests_block_is_empty_without_a_patch():
+    instance = SimpleNamespace(test_patch="")
+
+    assert suite._target_tests_block(instance, ["t"]) == ""
+
+
+def test_target_tests_block_truncates_a_large_patch():
+    instance = SimpleNamespace(test_patch="x" * (suite._TEST_EXPOSURE_MAX_CHARS + 100))
+
+    block = suite._target_tests_block(instance, ["t"])
+
+    assert "test patch truncated" in block
+    assert "x" * (suite._TEST_EXPOSURE_MAX_CHARS + 1) not in block
+
+
+def test_target_tests_block_marks_preapplied_tests():
+    instance = SimpleNamespace(test_patch="diff --git a/tests/test_x.py b/tests/test_x.py\n")
+
+    block = suite._target_tests_block(instance, ["t"], preapplied=True)
+
+    assert "ALREADY APPLIED" in block
+
+
+def test_the_dirty_diff_gate_recognises_test_paths():
+    assert suite._looks_like_test("tests/bulk_create/test_dbg.py") is True
+    assert suite._looks_like_test("pkg/tests/test_x.py") is True
+    assert suite._looks_like_test("test_dbg.py") is True
+    assert suite._looks_like_test("django/db/models/query.py") is False
+    assert suite._looks_like_test("fix_compiler.py") is False

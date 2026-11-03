@@ -111,8 +111,7 @@
      阻断当前 terminal），否则 agent 仍可用到 90 次；这与当前计划的 WARN-only
      设计冲突，需要单独评审。
   3. **预算**：在 diff 已存在但目标测试失败时，harness 应优先要求运行目标测试，
-     而不是继续全局探测；考虑在 70-80% 预算时注入一次强制的 `patch_file` /
-     target-test checkpoint。
+     而不是继续全局探测。
   4. DeepSWE 仍未运行（SWE 未全通过）。
 
 ---
@@ -125,20 +124,19 @@
 - 观察：同一 terminal 命令在约 20 次时被精确签名 BLOCK；agent 随即改写
   `probe1.py`…`probe19.py`，每次参数不同、输出逐字节相同，签名检测无法命中。
   这些探针文件还被算进了 diff，`pretty.py` 一次都没改。
-- 修改建议：增加“非幂等工具连续返回相同结果”的检测（结果重复），并在
-  80% 预算注入一次收敛指令。
+- 修改建议：增加“非幂等工具连续返回相同结果”的检测（结果重复）。
 
 ---
 
-## 20261103_205218 — 结果重复 + 80% 收敛指令（0/1）
+## 20261103_205218 — 结果重复 + 编辑后解锁（0/1）
 
-- 目的：验证结果重复拦截和预算收敛指令。
+- 目的：验证结果重复拦截，以及编辑后能否恢复验证。
 - 命令同上。
 - 结果：**0/1**；185.0s；91 次工具调用；90 次模型调用耗尽。
 - 观察：terminal 在第 10 次调用时因连续 6 次相同结果被 BLOCK；python_repl
-  在第 30 次时同样被 BLOCK；80% 指令在 72/90 时注入。agent 在第 72 次才
-  `patch_file`，但 terminal/python_repl 仍处于封锁状态，随后把剩余 18 次调用
-  花在 `read_file` 与已被拦截的 python_repl 之间，无法验证补丁。
+  在第 30 次时同样被 BLOCK。agent 在第 72 次才 `patch_file`，但
+  terminal/python_repl 仍处于封锁状态，随后把剩余 18 次调用花在 `read_file`
+  与已被拦截的 python_repl 之间，无法验证补丁。
 - 修改建议：成功的源码编辑（`patch_file` 的 `clears_guardrail_blocks` metadata）
   应清空旧探针留下的所有 block/streak，让 agent 能验证新补丁；新建探针文件的
   `write_file` 不携带该标记，不能重新打开循环。
@@ -163,6 +161,26 @@
 - 修改建议：
   1. 若要让该实例可解，harness 需要在运行前暴露目标测试（或至少给出
      NumberSymbol vs Symbol 的期望矩阵），否则模型只能猜维护者的语义选择。
-  2. 收敛链路保留签名拦截、结果重复拦截、编辑后解除拦截；**80% 收敛指令已按
-     后续要求移除**，上面的运行记录反映的是当时的实现。
+  2. 收敛链路保留签名拦截、结果重复拦截、编辑后解除拦截。
   3. DeepSWE 仍未运行（SWE 未全通过）。
+
+---
+
+## 20261104_003521 — 目标测试写进 prompt（0/2）
+
+- 目的：按计划建议，把实例的 test patch 和 FAIL_TO_PASS 名称放进任务 prompt（checkout 不预打补丁）。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**0/2**；396.5s；Django / Sympy 各 90 次模型调用耗尽；`target_tests_exposed=true`。
+- 观察：Django 产出源码候选补丁但仍未通过；Sympy 只写了 `repro_issue.py`，没有改
+  `pretty.py`。仅仅把测试放进 prompt 还不够，agent 无法真正运行目标测试。
+
+## 20261104_004714 — 目标测试预先应用到 checkout（1/2）
+
+- 目的：把 test patch 在 agent 运行前应用到 checkout，并按计划建议把 F2P 名称/测试内容写进 prompt；判题前重置测试文件再按官方 test patch 判题。
+- 命令同上。
+- 结果：**1/2**；487.5s；Django **resolved=True**（F2P/P2P 全通过）；Sympy 0/1；总成本约 $3.57。
+- 观察：Django 的 90 次调用耗尽，但最终补丁正确；Sympy 在 `_print_Pow` 使用了
+  `e.is_Symbol` 条件，`1/x_17` 是 `Pow` 而不是 Symbol，P2P/F2P 都失败；它还写了一个
+  45 行的 `repro_issue.py` 并反复重写/运行，未再回到库源码。
+- 结论：暴露并预应用目标测试对 Django 有效；Sympy 剩余问题是模型正确性/收敛能力，
+  不是测试不可见。后续单独重跑 Sympy（20261104_005721）仍 0/1。
