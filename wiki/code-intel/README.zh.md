@@ -102,6 +102,20 @@ child agent assembly (spawn/core.py)
 | `impact` | 符号名 | 传递调用者（爆炸半径），含深度与经由的名字 | 深度 3，`truncated` 标志 |
 | `path` | 两个符号名 | 跨 calls/imports/inherits/mixins 的最短有向跳序列，每跳带边类型与 confidence | 深度 3，`truncated` 标志 |
 
+### 增量刷新：shadow 快路径与查询缓存
+
+索引在可能时根据项目的 shadow-git 快照刷新，而不是全量 walk：
+
+| 层 | 机制 | 回退 |
+|---|---|---|
+| 水位线 | `index_meta_summary`（单行）保存上次索引的 shadow HEAD；HEAD 一致时直接返回空 `IndexResult`。 | 首次索引、无 shadow store 或 walk 被截断 |
+| Diff | `diff_between_commits_with_status`（只读）列出水位线与当前 HEAD 之间 A/M/D/R/C 的文件；只重新解析这些文件，删除/重命名的旧路径会被 drop。 | diff 达到 500 上限、为空或 git 失败 |
+| 外部编辑 | 从 `index_meta` 取最近 20 个文件采样 stat；mtime/size 任一变化都会回退到全量 walk（shadow-git 只看到 agent 写入）。 | stat 失败也走 walk |
+| 边的解析 | 只解析变更文件发出的、或指向变更/删除符号的未解析边。 | 过滤参数超过 800 时使用全量 resolver |
+| 查询缓存 | 每个 `CodeQuery` 以 `(shadow HEAD, index generation)` 为版本缓存结果；外部编辑会推进 generation，即使 HEAD 未变。最多 256 条。 | 无 shadow store 时不缓存 |
+
+原有全量 walk 完全不变，仍是快路径无法证明时的回退。`IndexResult.total_*` 改为懒加载（只有读取属性时才跑 5 条 `COUNT(*)`），schema DDL 每个 indexer 实例只执行一次。读连接仍按调用创建/关闭：查询缓存已经消除了重复查询的 DB 成本，而共享连接没有明确的生命周期所有者（agent 工具集会重建），因此刻意不保持常开。
+
 ## 🕸️ 图边与路径查询
 
 索引不再只有调用边。三张并列表与 `call_edges` 并排，且从不改动后者：
@@ -261,6 +275,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | 领域 | 测试 |
 |------|------|
 | 符号索引、调用图与端到端查询 | `tests/agent/tools/code_intel/test_indexer.py`、`tests/agent/tools/code_intel/test_query.py`、`tests/agent/tools/code_intel/test_e2e.py`、`tests/agent/tools/code_intel/test_integration.py` |
+| Shadow 快路径、懒加载计数与查询缓存 | `tests/agent/tools/code_intel/test_shadow_fast_path.py` |
 | 索引工具与角色隔离 | `tests/agent/tools/code_intel/test_tools.py`、`tests/agent/tools/code_intel/test_integration.py` |
 | ast-grep 发现、预置与工具 | `tests/agent/tools/code_intel/ast_grep/test_resolver.py`、`tests/agent/tools/code_intel/ast_grep/test_provisioner.py`、`tests/agent/tools/code_intel/ast_grep/test_runner.py`、`tests/agent/tools/code_intel/ast_grep/test_install_hints.py`、`tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py` |
 | LSP 协议、解析器、安装器、回退、客户端、管理器与工具 | `tests/agent/tools/code_intel/lsp/test_protocol.py`、`tests/agent/tools/code_intel/lsp/test_resolver.py`、`tests/agent/tools/code_intel/lsp/test_installer.py`、`tests/agent/tools/code_intel/lsp/test_fallback.py`、`tests/agent/tools/code_intel/lsp/test_client.py`、`tests/agent/tools/code_intel/lsp/test_manager.py`、`tests/agent/tools/code_intel/lsp/test_lsp_tools.py`、`tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |

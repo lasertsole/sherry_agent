@@ -2585,6 +2585,19 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   `SHERRY_CODE_INTEL_DB` overrides the path, with the shared `CODE_INTEL_DIR`
   as the no-root fallback. The index root itself is resolved PER CALL
   (env override > session project dir > process default), like ast-grep and LSP
+- the code-intel index is refreshed from the project's shadow-git snapshot
+  (`agent/tools/pub_base/shadow_git.py::diff_between_commits_with_status`,
+  READ-ONLY — it never creates the store) instead of a full walk:
+  `index_meta_summary` stores the last indexed shadow HEAD; a matching HEAD
+  short-circuits, a changed HEAD re-parses only the A/M/D/R/C paths and
+  resolves only the affected edges, and a 20-file `index_meta` stat sample
+  falls back to the full walk for an external-editor change (shadow-git only
+  sees agent writes). Every uncertain case — no store, first index, a capped
+  or empty diff, a git failure, a stat failure, a truncated walk — uses the
+  original walk; `force=True` bypasses the fast path. `CodeQuery` keeps a
+  bounded (256) result cache keyed by `(shadow HEAD, indexer generation)`
+  (the generation moves on an external edit even when HEAD does not), and
+  `IndexResult.total_*` counts are lazy.
 - the code-intel semantic layer is OPTIONAL and CODE-EMBEDDER-ONLY: BGE remains
   the text embedder (`context_engine` / multimodal RAG) and is never used here.
   `CODE_INTEL_SEMANTIC["enabled"]` gates registration; without a valid profile

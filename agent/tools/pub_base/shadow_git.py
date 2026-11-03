@@ -25,6 +25,8 @@ from pub.git_head import SHADOW_REF, shadow_head
 
 __all__ = [
     "SHADOW_REF",
+    "diff_between_commits",
+    "diff_between_commits_with_status",
     "ensure_checkpoint",
     "list_checkpoints",
     "list_restorable_files",
@@ -315,6 +317,77 @@ def diff_changed_paths(project_root: Path, *, cap: int = 200) -> list[str]:
         return []
     paths = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     return paths[:cap]
+
+
+def _run_shadow_readonly(
+    project_root: Path, args: list[str], *, timeout: float = 10
+) -> subprocess.CompletedProcess[str] | None:
+    """Run a read-only git command against an EXISTING shadow store.
+
+    Unlike :func:`run_shadow`, this never calls ``_ensure_store``: a read path
+    must not create ``.sherry/shadow-git`` or rewrite its ``info/exclude`` just
+    to ask a question. ``None`` means the store is absent (or unreadable), and
+    the caller must fall back to its non-shadow behaviour.
+    """
+    root = project_root.resolve()
+    store = shadow_store(root)
+    if not (store / "HEAD").exists():
+        return None
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(root),
+            env={**os.environ, **shadow_env(root)},
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("shadow read-only git failed (fail-open): {}", exc)
+        return None
+
+
+def diff_between_commits(
+    project_root: Path, from_sha: str, to_sha: str, *, cap: int = 500
+) -> list[str]:
+    """Project-relative paths that differ between two shadow snapshots.
+
+    READ-ONLY: a missing store or any git failure yields ``[]``; the store is
+    never created or mutated. Deleted paths ARE included (git's own semantics);
+    callers that need the status use :func:`diff_between_commits_with_status`.
+    """
+    result = _run_shadow_readonly(project_root, ["diff", "--name-only", f"{from_sha}..{to_sha}"])
+    if result is None or result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()][:cap]
+
+
+def diff_between_commits_with_status(
+    project_root: Path, from_sha: str, to_sha: str, *, cap: int = 500
+) -> list[tuple[str, str, str | None]]:
+    """``git diff --name-status`` between two snapshots, as structured entries.
+
+    Returns ``[(status, path, renamed_to), ...]`` where ``status`` is the first
+    letter of git's status code (``A``/``M``/``D``/``R``/``C``); ``renamed_to``
+    is the new path for ``R``/``C`` and ``None`` otherwise. READ-ONLY and
+    fail-open: a missing store, a bad revision or a timeout yields ``[]``.
+    """
+    result = _run_shadow_readonly(project_root, ["diff", "--name-status", f"{from_sha}..{to_sha}"])
+    if result is None or result.returncode != 0:
+        return []
+    entries: list[tuple[str, str, str | None]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2 or not parts[0]:
+            continue
+        status = parts[0][0]
+        if status in {"R", "C"} and len(parts) >= 3:
+            entries.append((status, parts[1], parts[2]))
+        else:
+            entries.append((status, parts[1], None))
+        if len(entries) >= cap:
+            break
+    return entries
 
 
 def ensure_checkpoint(

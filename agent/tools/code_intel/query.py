@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from config.features.agent_side import CODE_INTEL, CodeIntelConfig
 
-from .indexer import CodeIndexer, levenshtein
+from .indexer import CodeIndexer, IndexResult, levenshtein
 
 _SPLIT_RE = re.compile(r"[^0-9a-zA-Z]+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -221,6 +225,59 @@ def _score(name: str, query: str, tokens: list[str]) -> float:
     return best
 
 
+_CACHE_MISS = object()
+_CACHE_MAX = 256
+
+
+def _cached_query(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Cache one public query until the index version moves.
+
+    The wrapper refreshes the index FIRST (the shadow fast path is cheap), so a
+    user editing in an external IDE still invalidates the cache through the
+    indexer's generation counter — even though the shadow HEAD is unchanged.
+    """
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(self: CodeQuery, *args: Any, **kwargs: Any) -> Any:
+        try:
+            bound = signature.bind(self, *args, **kwargs)
+            bound.apply_defaults()
+            root = bound.arguments.get("root")
+            if root is None:
+                return fn(self, *args, **kwargs)
+            key = (
+                fn.__name__,
+                str(root),
+                tuple(
+                    (name, repr(value))
+                    for name, value in sorted(bound.arguments.items())
+                    if name not in {"self", "root"}
+                ),
+            )
+        except Exception:  # noqa: BLE001 - any introspection doubt = no cache
+            return fn(self, *args, **kwargs)
+
+        index_result: IndexResult | None = None
+        try:
+            index_result = self._ensure_index(root)
+        except Exception:  # noqa: BLE001, S110 - the query itself surfaces the failure
+            pass
+        version = (
+            (index_result.shadow_head, self._indexer.generation)
+            if index_result is not None and index_result.shadow_head
+            else None
+        )
+        cached = self._cache_get(key, version)
+        if cached is not _CACHE_MISS:
+            return cached
+        value = fn(self, *args, **kwargs)
+        self._cache_put(key, value, version)
+        return value
+
+    return wrapper
+
+
 class CodeQuery:
     """Read-side queries over the symbol index built by :class:`CodeIndexer`."""
 
@@ -233,6 +290,32 @@ class CodeQuery:
         self._db_path = str(db_path)
         self._config = config or CODE_INTEL
         self._indexer = indexer or CodeIndexer(self._db_path, self._config)
+        # Per-CodeQuery = per agent tool set. The version pairs the shadow HEAD
+        # with the indexer generation, so both an agent write and an external
+        # edit (which moves only the generation) invalidate it.
+        self._result_cache: dict[tuple[Any, ...], Any] = {}
+        self._cache_version_seen: tuple[str, int] | None = None
+
+    # -- cache -------------------------------------------------------------
+
+    def _cache_get(self, key: tuple[Any, ...], version: tuple[str, int] | None) -> Any:
+        if version is None:
+            return _CACHE_MISS  # no shadow store: behave exactly as before
+        if version != self._cache_version_seen:
+            self._result_cache.clear()
+            self._cache_version_seen = version
+            return _CACHE_MISS
+        return self._result_cache.get(key, _CACHE_MISS)
+
+    def _cache_put(self, key: tuple[Any, ...], value: Any, version: tuple[str, int] | None) -> None:
+        if version is None:
+            return
+        if version != self._cache_version_seen:
+            self._result_cache.clear()
+            self._cache_version_seen = version
+        if len(self._result_cache) >= _CACHE_MAX:
+            self._result_cache.pop(next(iter(self._result_cache)))
+        self._result_cache[key] = value
 
     # -- infrastructure ----------------------------------------------------
 
@@ -242,9 +325,9 @@ class CodeQuery:
         conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
-    def _ensure_index(self, root: Path) -> None:
+    def _ensure_index(self, root: Path) -> IndexResult:
         """Build or refresh the incremental index for *root* (no-op when unchanged)."""
-        self._indexer.index_directory(root)
+        return self._indexer.index_directory(root)
 
     # -- matching ----------------------------------------------------------
 
@@ -318,9 +401,9 @@ class CodeQuery:
 
     # -- public queries ----------------------------------------------------
 
+    @_cached_query
     def explore(self, query: str, root: Path) -> ExploreResult:
         """Fuzzy intent → symbol source + immediate call paths."""
-        self._ensure_index(root)
         limit = int(self._config["code_intel_explore_max_symbols"])
         conn = self._connect()
         try:
@@ -354,27 +437,27 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def callers(self, symbol_name: str, root: Path) -> list[CallerInfo]:
         """All functions/methods that call *symbol_name*."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             return self._callers_for(conn, self._resolve_symbol_ids(conn, symbol_name), symbol_name)
         finally:
             conn.close()
 
+    @_cached_query
     def callees(self, symbol_name: str, root: Path) -> list[CalleeInfo]:
         """All calls emitted by *symbol_name*."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             return self._callees_for(conn, self._resolve_symbol_ids(conn, symbol_name))
         finally:
             conn.close()
 
+    @_cached_query
     def impact(self, symbol_name: str, root: Path) -> ImpactResult:
         """Transitive callers of *symbol_name*, bounded by the configured depth."""
-        self._ensure_index(root)
         max_depth = int(self._config["code_intel_call_graph_max_depth"])
         conn = self._connect()
         try:
@@ -407,9 +490,9 @@ class CodeQuery:
 
     # -- graph queries (SHERRY-PATCH: imports/inherits/mixins + path) -------
 
+    @_cached_query
     def imports_of(self, symbol_name: str, root: Path) -> list[ImportInfo]:
         """Imports of a symbol (function-local) plus its file's module-scope imports."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             ids = self._resolve_symbol_ids(conn, symbol_name)
@@ -458,9 +541,9 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def importers_of(self, symbol_name: str, root: Path) -> list[ImporterInfo]:
         """Symbols (and module scopes) that import *symbol_name*."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             ids = self._resolve_symbol_ids(conn, symbol_name)
@@ -500,16 +583,17 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def inherits_from(self, symbol_name: str, root: Path) -> list[InheritInfo]:
         """Parents a class/interface/trait extends."""
         return self._inherit_rows(symbol_name, root, direction="up")
 
+    @_cached_query
     def subclasses_of(self, symbol_name: str, root: Path) -> list[InheritInfo]:
         """Classes/interfaces that extend *symbol_name*."""
         return self._inherit_rows(symbol_name, root, direction="down")
 
     def _inherit_rows(self, symbol_name: str, root: Path, *, direction: str) -> list[InheritInfo]:
-        self._ensure_index(root)
         conn = self._connect()
         try:
             ids = self._resolve_symbol_ids(conn, symbol_name)
@@ -568,16 +652,17 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def mixins_of(self, symbol_name: str, root: Path) -> list[InheritInfo]:
         """Interfaces/traits/mixins implemented by *symbol_name*."""
         return self._mixin_rows(symbol_name, root, direction="up")
 
+    @_cached_query
     def mixins_in_by(self, symbol_name: str, root: Path) -> list[InheritInfo]:
         """Hosts that implement the given interface/trait/mixin."""
         return self._mixin_rows(symbol_name, root, direction="down")
 
     def _mixin_rows(self, symbol_name: str, root: Path, *, direction: str) -> list[InheritInfo]:
-        self._ensure_index(root)
         conn = self._connect()
         try:
             ids = self._resolve_symbol_ids(conn, symbol_name)
@@ -632,6 +717,7 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def path(
         self,
         symbol_a: str,
@@ -644,7 +730,6 @@ class CodeQuery:
         Bidirectional BFS: forward from A over outgoing edges, backward from B
         over incoming edges. Independent of :meth:`impact` (C2).
         """
-        self._ensure_index(root)
         allowed = tuple(edge_types or ("calls", "imports", "inherits", "mixes_in"))
         max_hops = int(self._config["code_intel_call_graph_max_depth"])
         conn = self._connect()
@@ -856,9 +941,9 @@ class CodeQuery:
             current = prev
         return path
 
+    @_cached_query
     def god_nodes(self, root: Path, limit: int = 10) -> list[NodeDegree]:
         """Top symbols by total resolved degree across the four edge families."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             in_degree: dict[int, int] = {}
@@ -911,9 +996,9 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def communities(self, root: Path) -> list[Community]:
         """Louvain communities over the resolved graph (networkx optional)."""
-        self._ensure_index(root)
         conn = self._connect()
         try:
             max_symbols = int(self._config["code_intel_communities_max_symbols"])
@@ -968,6 +1053,7 @@ class CodeQuery:
         finally:
             conn.close()
 
+    @_cached_query
     def community_of(self, symbol_name: str, root: Path) -> Community | None:
         for community in self.communities(root):
             if symbol_name in community.symbols:

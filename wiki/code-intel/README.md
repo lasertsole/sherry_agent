@@ -120,6 +120,24 @@ Queries refresh the incremental index before they read, so a search after edits 
 | `impact` | symbol name | transitive callers (blast radius), with depth and the name reached through | depth 3, `truncated` flag |
 | `path` | two symbol names | shortest directed hop sequence across calls/imports/inherits/mixins, each hop with edge type + confidence | depth 3, `truncated` flag |
 
+### Incremental refresh: shadow fast path & query cache
+
+The index is refreshed from the project's shadow-git snapshot instead of a full
+walk whenever possible:
+
+| Layer | Mechanism | Fallback |
+|---|---|---|
+| Watermark | `index_meta_summary` (one row) stores the last indexed shadow HEAD. A matching HEAD short-circuits with an empty `IndexResult`. | first index, no shadow store, or a truncated walk |
+| Diff | `diff_between_commits_with_status` (READ-ONLY) names A/M/D/R/C files between the watermark and the current HEAD; only those are re-parsed, and deleted/renamed old paths are dropped. | a capped (500) diff, an empty diff, or a git failure |
+| External edits | a 20-file sample from `index_meta` is stat-compared; any mtime/size difference falls back to the full walk (shadow-git only sees agent writes). | a stat failure also walks |
+| Edge resolve | only unresolved edges from the changed files or naming a changed/removed symbol are resolved. | more than 800 filter parameters use the full resolver |
+| Query cache | a per-`CodeQuery` cache keyed by `(shadow HEAD, index generation)`; an external edit moves the generation even though HEAD is unchanged. Bounded to 256 entries. | no shadow store disables caching |
+
+The original full walk is unchanged and remains the fallback for every case the
+fast path cannot prove. `IndexResult.total_*` counts are lazy (the five
+`COUNT(*)` scans run only when the property is read), and the schema DDL runs
+once per indexer instance. Read connections stay per call: the query cache removes the repeated-query cost, and a shared connection has no lifecycle owner (the agent tool set is rebuilt), so it is deliberately not kept open.
+
 ## 🕸️ Graph Edges & Path Queries
 
 The index is no longer call-only. Three parallel tables sit beside `call_edges`
@@ -283,6 +301,7 @@ Any machine that lacks these capabilities degrades instead of failing: an unreso
 | Area | Tests |
 |------|-------|
 | Symbol index, call graph, and end-to-end queries | `tests/agent/tools/code_intel/test_indexer.py`, `tests/agent/tools/code_intel/test_query.py`, `tests/agent/tools/code_intel/test_e2e.py`, `tests/agent/tools/code_intel/test_integration.py` |
+| Shadow fast path, lazy counts, and query cache | `tests/agent/tools/code_intel/test_shadow_fast_path.py` |
 | Index tools and role isolation | `tests/agent/tools/code_intel/test_tools.py`, `tests/agent/tools/code_intel/test_integration.py` |
 | ast-grep discovery, provisioning, and tools | `tests/agent/tools/code_intel/ast_grep/test_resolver.py`, `tests/agent/tools/code_intel/ast_grep/test_provisioner.py`, `tests/agent/tools/code_intel/ast_grep/test_runner.py`, `tests/agent/tools/code_intel/ast_grep/test_install_hints.py`, `tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py` |
 | LSP protocol, resolver, installer, fallback, client, manager, and tools | `tests/agent/tools/code_intel/lsp/test_protocol.py`, `tests/agent/tools/code_intel/lsp/test_resolver.py`, `tests/agent/tools/code_intel/lsp/test_installer.py`, `tests/agent/tools/code_intel/lsp/test_fallback.py`, `tests/agent/tools/code_intel/lsp/test_client.py`, `tests/agent/tools/code_intel/lsp/test_manager.py`, `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`, `tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |

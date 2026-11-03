@@ -102,6 +102,20 @@ child agent assembly (spawn/core.py)
 | `impact` | シンボル名 | 推移的な呼び出し元（ブラスト半径）、深さと経由した名前付き | 深さ 3、`truncated` フラグ |
 | `path` | 2 つのシンボル名 | calls/imports/inherits/mixins をまたぐ最短の有向ホップ列（各ホップに辺種別と confidence） | 深さ 3、`truncated` フラグ |
 
+### 増分リフレッシュ: shadow 高速パスとクエリキャッシュ
+
+索引は可能な限り、全走査ではなくプロジェクトの shadow-git スナップショットから更新されます：
+
+| 層 | 仕組み | フォールバック |
+|---|---|---|
+| ウォーターマーク | `index_meta_summary`（1 行）が最後に索引した shadow HEAD を保持します。HEAD が一致すれば空の `IndexResult` で短絡します。 | 初回索引、shadow store なし、または走査が切り詰められた場合 |
+| Diff | `diff_between_commits_with_status`（読み取り専用）がウォーターマークと現在の HEAD の間の A/M/D/R/C ファイルを列挙します。それだけを再解析し、削除/リネームされた旧パスは drop します。 | 500 件上限の diff、空の diff、または git 失敗 |
+| 外部編集 | `index_meta` の最近 20 ファイルを stat でサンプリングし、mtime/size の差があれば全走査に戻ります（shadow-git は agent の書き込みしか見ません）。 | stat 失敗も走査に戻ります |
+| 辺の解決 | 変更ファイルから出る未解決辺、または変更/削除されたシンボル名を指す未解決辺だけを解決します。 | フィルタ引数が 800 を超える場合は全解決 |
+| クエリキャッシュ | `CodeQuery` ごとに `(shadow HEAD, index generation)` をバージョンとして結果をキャッシュします。外部編集は HEAD が同じでも generation を進めます。最大 256 件。 | shadow store がない場合はキャッシュしない |
+
+元の全走査は変更されておらず、高速パスが証明できないあらゆるケースのフォールバックです。`IndexResult.total_*` は遅延取得になり（プロパティを読んだときだけ 5 つの `COUNT(*)` を実行）、schema DDL は indexer インスタンスごとに 1 回だけ実行されます。読み取り接続は呼び出しごとに開閉します: クエリキャッシュが繰り返しクエリの DB コストを消し、共有接続には明確なライフサイクル所有者がない（agent のツールセットは再構築される）ため、常時開いたままにはしません。
+
 ## 🕸️ グラフ辺とパスクエリ
 
 索引は呼び出し辺だけではなくなりました。`call_edges`（一切変更しません）の隣に
@@ -264,6 +278,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | 領域 | テスト |
 |------|--------|
 | シンボル索引、呼び出しグラフ、エンドツーエンド照会 | `tests/agent/tools/code_intel/test_indexer.py`、`tests/agent/tools/code_intel/test_query.py`、`tests/agent/tools/code_intel/test_e2e.py`、`tests/agent/tools/code_intel/test_integration.py` |
+| shadow 高速パス、遅延カウント、クエリキャッシュ | `tests/agent/tools/code_intel/test_shadow_fast_path.py` |
 | 索引ツールとロール分離 | `tests/agent/tools/code_intel/test_tools.py`、`tests/agent/tools/code_intel/test_integration.py` |
 | ast-grep の発見、プロビジョニング、ツール | `tests/agent/tools/code_intel/ast_grep/test_resolver.py`、`tests/agent/tools/code_intel/ast_grep/test_provisioner.py`、`tests/agent/tools/code_intel/ast_grep/test_runner.py`、`tests/agent/tools/code_intel/ast_grep/test_install_hints.py`、`tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py` |
 | LSP のプロトコル、リゾルバ、インストーラ、フォールバック、クライアント、マネージャ、ツール | `tests/agent/tools/code_intel/lsp/test_protocol.py`、`tests/agent/tools/code_intel/lsp/test_resolver.py`、`tests/agent/tools/code_intel/lsp/test_installer.py`、`tests/agent/tools/code_intel/lsp/test_fallback.py`、`tests/agent/tools/code_intel/lsp/test_client.py`、`tests/agent/tools/code_intel/lsp/test_manager.py`、`tests/agent/tools/code_intel/lsp/test_lsp_tools.py`、`tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |
