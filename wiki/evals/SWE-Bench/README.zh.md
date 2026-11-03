@@ -55,8 +55,8 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 ### 当前解决
 
 1. **已修复。** `IterationBudget` 只按模型调用计 1；工具结果免费。
-2. **已缓解。** `DelegationPressureGate` 在第 7 次读时注入 `<system-reminder>` 警告、第 14 次注入 escalated 版本，`terminal`/读工具仍可用；`ToolGuardrails` 仍不对非幂等 terminal 做哈希，只读命令分类器仍待实现。
-3. **部分缓解。** escalated 提醒在第 14 次读时推动 `sessions_spawn`，但不再阻断工具；要求运行目标测试的专门验证门仍未实现。
+2. **已修复。** `ToolGuardrails` 增加了不看状态签名的连击检测（工具 + 参数哈希；3 次相同调用，terminal 用自身 metadata 声明的 5 次），每回合最多警告 3 次，之后封锁该精确签名；另有非幂等工具的结果重复检测（3 次警告、6 次连续相同结果封锁工具）。`patch_file` 成功（metadata `clears_guardrail_blocks`）会清空 block、连击和失败计数，让验证可以继续。不再需要只读命令分类器。
+3. **由工具护栏缓解，不是硬性收尾门。** 被封锁的签名会迫使 agent 换方法；20261103_210023 的 Sympy 运行在 28 次模型调用内收敛，并运行了邻近测试文件，prompt 现在也要求这样做。独立的“收尾前测试必须通过”门仍不存在；80% 预算指令曾实现，后按要求移除。
 4. **仍未解决。** harness 记录 `changed_paths`，但不会把 `tests/` 改动判 invalid；软门降低概率，但不是官方守卫。
 5. **部分缓解。** escalated 提醒推动主代理停止 spawn 后的 patch 循环并转交实现；还没有“收尾前测试必须通过”的硬门。
 6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；eval 报告仍只统计主 session，子代理 checkpoint/结果回读仍未解决。
@@ -102,6 +102,20 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 
 它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝
 `:subagent:`/`:swarm:` 会话。
+
+## 网络状态桥接
+
+失败形态属于网络的 terminal 命令现在会变成工具错误：`curl` / `wget` / `http` /
+`https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup` 非零退出，或
+`git clone|fetch|pull|push|ls-remote|remote|submodule` 非零退出，都会 raise
+`ToolException`。`handle_tool_error` 把它转成 `ToolMessage(status="error")`，
+exact-failure 计数因此生效。本地命令（pytest、编译器、脚本）的非零退出仍作为
+普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch`
+的 HTTP 4xx/5xx 同样 raise。
+
+eval harness 还会在运行前探测 GitHub；探测不到网络时，它会向种子 `AGENTS.md`
+追加“不要继续探测网络”的 directive。这消除了 Sympy 的 curl/GitHub 探测循环。
+Sympy 剩余的 F2P 失败是 NumberSymbol vs Symbol 的隐藏测试语义，不是网络探测。
 
 ## 结果
 

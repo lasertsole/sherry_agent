@@ -65,8 +65,8 @@ HARD instances?” — not “what is the leaderboard position?”.
 ### Current resolutions
 
 1. **Fixed.** `IterationBudget` now charges one unit per model call; tool results are free.
-2. **Mitigated.** `DelegationPressureGate` injects a `<system-reminder>` warning at 7 reads and the escalated one at 14; `terminal`/read tools remain available. `ToolGuardrails` still does not hash non-idempotent terminal commands; a read-only command classifier remains open.
-3. **Partially mitigated.** The escalated reminder urges `sessions_spawn` at 14 but no longer blocks tools. A dedicated verification gate that requires running the target tests is still open.
+2. **Fixed.** `ToolGuardrails` now carries a status-blind signature streak (tool + args hash; 3 identical calls, terminal 5 in its own metadata) that warns up to 3 times per turn and then blocks that exact signature, plus a result-repetition detector for non-idempotent tools (3 warnings, 6 consecutive identical results block the tool). A successful `patch_file` (metadata `clears_guardrail_blocks`) clears the blocks, streaks and failure counters so verification can resume. No read-only command classifier is needed.
+3. **Mitigated by the tool guards, not a hard finish gate.** Blocked signatures force a different approach, the 20261103_210023 Sympy run converged in 28 model calls and ran the neighboring test file, and the prompt now requires it. A separate "tests must pass before finish" gate does not exist; the 80% budget directive was tried and removed by request.
 4. **Still open.** The harness records `changed_paths` but does not invalidate a `tests/` edit. The soft gate reduces the chance but is not the official guard.
 5. **Partially mitigated.** The escalated reminder pushes the main agent to stop its post-spawn patch loop and delegate; there is no hard "tests must pass before finish" gate yet.
 6. **Partially fixed.** The per-turn token budget now attributes the main agent + all descendant levels to the root turn; eval reports still count only the main session, and child checkpoint/result readback remains open.
@@ -122,6 +122,23 @@ behavior below is the design reconciled on 2026-11-02. The 2026-11-03 rerun (0/2
 
 It is installed on the main agent only; the child middleware builder never adds
 it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.
+
+## Network status bridge
+
+Terminal commands whose failure is network-shaped are tool errors now: a non-zero
+exit from `curl` / `wget` / `http` / `https` / `ssh` / `scp` / `sftp` / `ping` /
+`dig` / `nslookup`, or from `git clone|fetch|pull|push|ls-remote|remote|submodule`,
+raises `ToolException`. `handle_tool_error` turns that into
+`ToolMessage(status="error")`, so the exact-failure counter sees it. Local
+commands (pytest, compilers, scripts) keep their non-zero exit as normal text
+(`status="success"`) so the agent can read the failure and iterate. `web_fetch`
+HTTP 4xx/5xx likewise raises.
+
+The eval harness also probes GitHub before a run; when the probe cannot reach
+the network it appends a "do not keep probing the network" directive to the
+seeded `AGENTS.md`. This removed the Sympy curl/GitHub probe loop. The remaining
+Sympy F2P failure is the hidden NumberSymbol-vs-Symbol test semantics, not
+network probing.
 
 ## Results
 

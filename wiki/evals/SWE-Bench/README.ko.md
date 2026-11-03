@@ -61,8 +61,8 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ### 현재 해결
 
 1. **수정됨.** `IterationBudget`은 모델 호출당 1단위; 도구 결과는 무료.
-2. **완화됨.** `DelegationPressureGate`는 7회 읽기에서 `<system-reminder>` 경고, 14회에서 escalated 버전을 주입하며 `terminal`/읽기 도구는 계속 사용 가능합니다. `ToolGuardrails`는 비멱등 terminal을 해시하지 않으며 읽기 전용 명령 분류기는 미구현.
-3. **부분 완화.** escalated 리마인더는 14회에서 `sessions_spawn`을 권하지만 더 이상 도구를 차단하지 않습니다. 대상 테스트 실행을 요구하는 전용 검증 게이트는 미구현.
+2. **수정됨.** `ToolGuardrails`에 상태 무관 시그니처 연속(도구 + 인자 해시, 3회 동일 호출, terminal은 자체 metadata의 5회)을 추가해 턴당 최대 3회 경고한 뒤 그 정확한 시그니처를 차단합니다. 비멱등 도구의 결과 반복(3회 경고, 6회 연속 동일 결과 시 도구 차단)도 있습니다. `patch_file` 성공 시(metadata `clears_guardrail_blocks`) 차단·연속·실패 카운터를 지워 검증을 재개할 수 있습니다. 읽기 전용 명령 분류기는 필요 없습니다.
+3. **도구 가드에 의한 완화이며 하드 종료 게이트는 아님.** 차단된 시그니처는 다른 접근을 강제하고, 20261103_210023 Sympy 실행은 28회 모델 호출로 수렴해 인접 테스트 파일을 실행했으며 prompt도 이를 요구합니다. 독립적인 '종료 전 테스트 통과 필수' 게이트는 없습니다. 80% 예산 지시는 구현 후 요구에 따라 제거되었습니다.
 4. **미해결.** harness는 `changed_paths`를 기록하지만 `tests/` 편집을 invalid로 만들지 않음. 소프트 게이트는 확률을 낮출 뿐 공식 가드가 아님.
 5. **부분 완화.** escalated 리마인더는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하도록 권하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
 6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속. eval 리포트는 여전히 메인 session만 세고, 자식 checkpoint/결과 읽기는 미해결.
@@ -112,6 +112,22 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
 `:subagent:`/`:swarm:` 세션을 거부합니다.
+
+## 네트워크 상태 브리지
+
+실패가 네트워크 성격인 terminal 명령은 이제 도구 오류가 됩니다: `curl` / `wget` /
+`http` / `https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup`의 비영
+종료, 또는 `git clone|fetch|pull|push|ls-remote|remote|submodule`의 비영 종료는
+`ToolException`을 발생시킵니다. `handle_tool_error`가 이를
+`ToolMessage(status="error")`로 바꾸므로 exact-failure 카운터가 인식합니다. 로컬
+명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로
+반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도
+동일하게 raise합니다.
+
+eval harness는 실행 전에 GitHub를 프로브하고, 도달할 수 없으면 시드된
+`AGENTS.md`에 "네트워크를 계속 탐색하지 말라"는 directive를 추가합니다. 이것이
+Sympy의 curl/GitHub 탐색 루프를 제거했습니다. 남은 Sympy F2P 실패는
+NumberSymbol vs Symbol의 숨은 테스트 의미론이며 네트워크 탐색이 아닙니다.
 
 ## 결과
 

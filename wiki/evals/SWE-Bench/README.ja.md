@@ -62,8 +62,8 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 ### 現在の解決
 
 1. **修正済み。** `IterationBudget` はモデル呼び出しごとに 1 単位。ツール結果は無料。
-2. **緩和済み。** `DelegationPressureGate` は 7 回目の読み取りで `<system-reminder>` 警告、14 回目で escalated 版を注入し、`terminal`/読み取りツールは利用可能なままです。`ToolGuardrails` は非冪等 terminal をハッシュせず、読み取り専用コマンド分類は未実装。
-3. **部分的に緩和。** escalated リマインダーは 14 回目で `sessions_spawn` を促しますが、ツールをブロックしなくなりました。対象テスト実行を要求する専用の検証ゲートは未実装。
+2. **修正済み。** `ToolGuardrails` にステータス非依存のシグネチャ連続（ツール + 引数ハッシュ、3 回の同一呼び出し、terminal は自身の metadata で 5）を追加し、1 ターン最大 3 回警告した後、その正確なシグネチャをブロックします。さらに非冪等ツールの結果反復（3 回警告、6 回連続同一結果でツールをブロック）も持ちます。`patch_file` 成功時（metadata `clears_guardrail_blocks`）はブロック・連続・失敗カウンタを消去し、検証を再開できます。読み取り専用コマンド分類器は不要です。
+3. **ツールガードによる緩和であり、ハードな終了ゲートではない。** ブロックされたシグネチャは別の方法を強制し、20261103_210023 の Sympy 実行は 28 回のモデル呼び出しで収束して隣接テストファイルを実行し、prompt もそれを要求します。「終了前にテスト通過必須」の独立ゲートは存在しません。80% 予算指令は実装後に要件により削除されました。
 4. **未解決。** harness は `changed_paths` を記録するが `tests/` の編集を invalid にしない。ソフトゲートは確率を下げるが公式のガードではない。
 5. **部分的に緩和。** escalated リマインダーは spawn 後の主エージェントの patch ループを止め実装を委譲するよう促すが、「終了前にテスト通過必須」のハードゲートはない。
 6. **部分的に修正。** ターンごとの token 予算はメイン + 全階層の子孫をルートターンに帰属する。eval レポートは依然メイン session のみを数え、子 checkpoint/結果の読み戻しは未解決。
@@ -116,6 +116,22 @@ old_string/new_string、曖昧一致、stale-write CAS で置換し、事前の�
 
 これはメインエージェントにのみインストールされる。子ミドルウェアビルダーは追加せず、
 `_active` も `:subagent:`/`:swarm:` セッションを拒否する。
+
+## ネットワーク状態ブリッジ
+
+失敗がネットワーク由来の terminal コマンドはツールエラーになります: `curl` /
+`wget` / `http` / `https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup`
+の非ゼロ終了、または `git clone|fetch|pull|push|ls-remote|remote|submodule` の
+非ゼロ終了は `ToolException` を raise します。`handle_tool_error` が
+`ToolMessage(status="error")` に変えるため、exact-failure カウンタが認識します。
+ローカルコマンド（pytest、コンパイラ、スクリプト）の非ゼロ終了は通常のテキスト
+（`status="success"`）のまま返り、agent は失敗を読んで反復できます。`web_fetch`
+の HTTP 4xx/5xx も同様に raise します。
+
+eval harness は実行前に GitHub をプローブし、到達できない場合はシードされた
+`AGENTS.md` に「ネットワークを探り続けない」directive を追加します。これで Sympy
+の curl/GitHub 探査ループは解消しました。残る Sympy の F2P 失敗は
+NumberSymbol vs Symbol の隠れたテスト意味論であり、ネットワーク探査ではありません。
 
 ## 結果
 
