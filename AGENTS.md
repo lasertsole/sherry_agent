@@ -382,8 +382,8 @@ A message sent while the session is busy is persisted as a `QUEUED` row in
 `user_input_queue` (SQLite, `server/queue/user_input_queue.py`; cap =
 `INPUT_QUEUE["max_active_per_session"]`, dedup by `client_msg_id`) and answered
 by the `queued` WS frame with its FIFO position. The composer says so: while a
-turn runs, `inputBox.vue`'s placeholder switches from 请输入内容 to
-`chatInput.queueHint` (继续输入消息以排队 — four languages in the component's
+turn runs, `inputBox.vue`'s placeholder switches from "Type a message" to
+`chatInput.queueHint` ("Keep typing to queue" — four languages in the component's
 inline block), and that hint is skipped when the box is disabled (a HITL prompt
 takes the input slot; the disabled text wins). The turn runner drains those
 rows **one per turn** (`server/service/turn_runner.py::_drain_loop` claims a
@@ -403,8 +403,8 @@ stays the single ordering rule; the row keeps its real `created_at`).
 
 ## Interrupted-Answer Continuation & Message Edit (`server/service/resumable_breakpoint.py`)
 
-Two chat-row actions on the SAME per-session agent socket: **继续生成** (resume an
-interrupted pure-text answer) and **编辑消息** (rewrite a sent user message and
+Two chat-row actions on the SAME per-session agent socket: **Continue generation** (resume an
+interrupted pure-text answer) and **Edit message** (rewrite a sent user message and
 re-run that turn). Both are additive WS frames; both fail open with one ack.
 
 **Continue.** The cancel / heartbeat-timeout path already heals the checkpoint
@@ -490,14 +490,14 @@ works.
   `ChatBox` adds `data-message-id` / `data-message-role` to each message row;
   `selection-enabled` is false while a HITL card owns the input (the page passes
   `!hitlRequest`), and `allow-side-chat` is false inside the side panel.
-- **添加到当前会话** — `ChatBox` emits `selection-add`; the page calls
+- **Add to current session** — `ChatBox` emits `selection-add`; the page calls
   `inputBox.addQuoteChip(text, sourceLabel)` →
   `use-text-selection.ts::insertQuoteChip` inserts an atomic
   `<span contenteditable="false" class="text-quote-chip" data-quote-text="…">`
   (the label is a 40-char preview). `extractTextForSend` now turns that chip into
   a markdown blockquote (`> line` per line) and never leaks the preview; the
   file-mention branch is unchanged and still extracts `@path`.
-- **在辅助会话中提问** — the SERVER creates the child
+- **Ask in a side chat** — the SERVER creates the child
   (`POST /sessions/side_chat`, `server/service/side_chat_service.py`) as a
   COMPLETE FORK of the parent agent (NOT a subagent): its first turn is seeded
   with the parent's checkpoint transcript — including tool/browser results that
@@ -540,7 +540,7 @@ works.
   tab's X), and a boot sweep removes links whose parent is gone. A side chat can
   never parent another side chat. The strip's down-arrow button
   (`RecentClosedTabsMenu.vue`, the LEFTMOST control in the tab-strip row) opens
-  a two-tab menu (当前会话 / 全局) of recently closed tabs: closing a tab records
+  a two-tab menu (Current session / Global) of recently closed tabs: closing a tab records
   it in `rightSidebar.recentClosed` (per parent session for side chats, per
   active session for other session tabs, all global tabs for every session;
   persisted). Each session group keeps its newest 10 pages and the global group
@@ -548,7 +548,7 @@ works.
   are forgotten (single or batch delete), so another session never sees them.
   Restoring a side chat reopens the panel on the SAME child session with its
   history, using `prefillQuote: false` so the original quote chip is not
-  inserted again. The 当前会话 tab group is PER SESSION: every session-scoped tab
+  inserted again. The **Current session** tab group is PER SESSION: every session-scoped tab
   carries its owning `sessionId`, `setActiveSession` (driven by the shell's route
   watch) shows only that session's tabs and restores its last active one — or no
   tab at all — so switching to a new session never displays the previous
@@ -557,7 +557,7 @@ works.
 - **i18n** — menu and chip labels are `chat.selection.*` (central locales); the
   side panel's HITL copy mirrors `[sid].vue`'s inline `hitl.*` block.
 
-**会话分支 / Branch (`fork_turn_num`).** A branch is the same fork machinery
+**Branch (`fork_turn_num`).** A branch is the same fork machinery
 with its fork point parameterized. `POST /sessions/side_chat` accepts an
 optional `fork_turn_num`; the link table stores it, and an older
 `side_chats.db` gains the missing columns on first connect (additive
@@ -581,7 +581,7 @@ the count matches the client's `turn_num`. A turn cut off mid-tool has no safe
 answer boundary, so the cut stops BEFORE that turn's work instead of replaying
 the parent's dangling tool call; a compacted turn yields an empty cut and falls
 back to the bounded text snapshot. `fork_turn_num=None` keeps a quote side chat
-byte-for-byte. The UI entry is the AI bubble's 分叉 button (hover, beside copy;
+byte-for-byte. The UI entry is the AI bubble's Fork button (hover, beside copy;
 emits the row's turn number) — unlike a quote side chat it opens no panel: the
 page creates the child and `router.push`es to it. It is hidden while a turn
 streams (the parent checkpoint must be settled) and inside a child session
@@ -595,7 +595,7 @@ starts empty exactly like a side chat's (the inherited transcript is model-only)
 
 ## Live-Stream Safety Filter (`agent/middlewares/safety_filter/`)
 
-Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE through an mtime cache — the 系统配置 → 直播安全 tab flips them from a switch, so the cache is one `stat` in the steady state). The app ships **no word list**: the rules file (`safety_filter.keyword_file`, inside the workspace) is operator-maintained, because choosing one is a legal decision this project does not make.
+Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE through an mtime cache — the System Config → Live Safety tab flips them from a switch, so the cache is one `stat` in the steady state). The app ships **no word list**: the rules file (`safety_filter.keyword_file`, inside the workspace) is operator-maintained, because choosing one is a legal decision this project does not make.
 
 - **Rules** (`rules.py`): `{pattern, type: exact|contains|regex, action: block|replace|warn, scope: input|output|both, replacement}`; validated (count / pattern / replacement caps, regex compiles) before writing, compiled with an mtime cache so an edit applies without a restart, and fail-open (a broken file reads as no rules).
 - **Input** (`InputSafetyFilter`, `awrap_model_call`): a `block` hit returns `safe_refusal_message` WITHOUT calling the provider; `warn`/`replace` pass through and only notify (the input side never rewrites the user's own text).
@@ -606,9 +606,9 @@ Three layers, OFF by default (`sherry.jsonc` `safety_filter.*`, read LIVE throug
 
 ## First-Run Onboarding (`OnboardingDialog.vue` / `use-app-flags.ts`)
 
-A four-step tour (welcome → preset → core controls → ready) shown once per INSTALL, not once per visit: the shell checks `onboarding_completed` at boot and the tour writes it on BOTH exits (开始使用 and 跳过). The flag lives in Dexie (`appFlags`, schema v6, via the `readAppFlag`/`writeAppFlag` wrappers) with a **localStorage mirror** that is read FIRST — a browser whose IndexedDB is blocked (hardened profile, private mode) would otherwise resurrect the tour on every entry, which is exactly the failure the mirror prevents; a failed write to either store never throws.
+A four-step tour (welcome → preset → core controls → ready) shown once per INSTALL, not once per visit: the shell checks `onboarding_completed` at boot and the tour writes it on BOTH exits (Get started and Skip). The flag lives in Dexie (`appFlags`, schema v6, via the `readAppFlag`/`writeAppFlag` wrappers) with a **localStorage mirror** that is read FIRST — a browser whose IndexedDB is blocked (hardened profile, private mode) would otherwise resurrect the tour on every entry, which is exactly the failure the mirror prevents; a failed write to either store never throws.
 
-`createSessionFromPreset` (`persona-catalog.ts`) is the ONE session-creation orchestration the tour and `NewSessionPresetDialog.confirm()` share (apply preset → bind preset → character snapshot → placeholder meta → `session:created` → `localePath('/home/<sid>')`); the caller injects `ensureCharacter` (the page's helper) so the catalogue module never imports a component. 跳过 records the flag and opens the ordinary preset dialog (the previous first-run behavior); a failed 开始使用 keeps the dialog open, shows the error and leaves the flag UNSET so the tour returns next boot. The dialog is not mask/Esc dismissable (no stray click can silently drop the user into an empty UI).
+`createSessionFromPreset` (`persona-catalog.ts`) is the ONE session-creation orchestration the tour and `NewSessionPresetDialog.confirm()` share (apply preset → bind preset → character snapshot → placeholder meta → `session:created` → `localePath('/home/<sid>')`); the caller injects `ensureCharacter` (the page's helper) so the catalogue module never imports a component. Skip records the flag and opens the ordinary preset dialog (the previous first-run behavior); a failed Get started keeps the dialog open, shows the error and leaves the flag UNSET so the tour returns next boot. The dialog is not mask/Esc dismissable (no stray click can silently drop the user into an empty UI).
 
 ## Composer Input Triggers (`inputBox.vue` / `use-input-trigger.ts`)
 
@@ -623,7 +623,7 @@ One binding table (`SHORTCUT_BINDINGS`) declares every chord with its built-in d
 
 `ctrl` means the platform PRIMARY modifier: `comboFromEvent` folds Cmd into it, so one table serves macOS and Windows/Linux, and `formatCombo` renders ⌘⇧F vs Ctrl+Shift+F (the send button's tooltip is built from it, so it follows a rebind). Overrides persist in Dexie (`shortcuts` table, schema v5) as `{id, keys}` JSON; deleting the row restores the default.
 
-The UI is the **快捷键 tab of 菜单 → 系统配置** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "与 X 冲突，未保存") and the row stays in capture.
+The UI is the **Shortcuts tab of Menu → System Config** (`ShortcutSettingsSection.vue`, appended LAST in `ConfigPanel.vue` — the panel's footer/embedder logic is keyed by tab INDEX — and it saves on its own, like the language tab). Capture runs as a WINDOW CAPTURE-PHASE listener with `stopImmediatePropagation`, so the chord being recorded never reaches the app's dispatcher (recording Ctrl+K must not open the palette); Esc cancels the capture, a bare modifier is ignored, a chord another binding already owns is refused (red "Conflicts with X, not saved") and the row stays in capture.
 
 Not migrated on purpose: component-local `@keydown` on list items / overlays (they are internal UI interactions, not user-rebindable commands) and `BrowserPanel`'s CDP key forwarding.
 
@@ -639,13 +639,13 @@ Ctrl/Cmd+Shift+F opens a floating find bar over the chat. It searches the LOADED
 
 ## Floating Conversation Column (`index.vue` / `common/floating-window.ts` / `stores/chat-float.ts`)
 
-The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit 恢复原样 button. While the window is out, BOTH sidebar collapse buttons (left and right) are hidden — the window owns its restore control; Ctrl+B still closes it and collapses the left column.
+The middle column can leave the shell's flex row and become a draggable window (ZCode's side-pane full-view float applied to the conversation). Entry is the toolbar button IMMEDIATELY RIGHT of the collapse-left button (the folder button shifts one seat right), shown only at viewport ≥ 640px; the same button toggles back, and the window's own header carries an explicit Restore button. While the window is out, BOTH sidebar collapse buttons (left and right) are hidden — the window owns its restore control; Ctrl+B still closes it and collapses the left column.
 
 - **Three presentations**: `docked` / `floating` / `input-only` (plus the existing `hidden` column state). `chatFloat` (`floating` + `anchor` + user `width`/`height` + `collapsed`, persisted to localStorage) is the only state; the middle column binds `data-presentation`, class `fixed` vs `relative` (never both — same-specificity Tailwind utilities) and `minWidth: 0` while floating (the 35% viewport floor would otherwise win over the computed width).
 - **Single instance**: the same middle-column DOM and the KeepAlive'd session page relocate, never remount — draft, scroll, streaming turn and HITL survive. No Teleport (moving scrollable DOM resets the scroll position).
 - **Geometry** (`common/floating-window.ts`, pure functions): the default size is 45% × 78% of the shell clamped to 480–760 × 420–820; a user-resized size uses the wider drag band 360–1200 × 260–900, always clamped to the slot; 16px margin, 9 anchors (default `center`); drag threshold 4px; drag positions coalesce through one rAF into a `shallowRef`; release snaps to the nearest anchor. The anchor and the size are stored; a resize also keeps a transient top-left (it wins over the anchor until the next header drag).
 - **Edge resize**: three thin grips — left/right change the width (the opposite edge stays put), the bottom changes the height. The collapsed toggle-state is separate from the size.
-- **Input-only bar**: dragging the bottom edge below the 260px expanded minimum snaps to the input-only presentation — the window height becomes the measured composer dock (`[data-test="chat-composer-dock"]` in `[sid].vue`, which wraps the attachment previews, HITL/edit banners and the input box), the float header AND the shell toolbar unmount, and the composer's bottom stays where it was. The normal window's header carries a one-click 收起为输入框 button (next to 恢复原样), and a visible 展开对话 pill just above the bar is the way back (bottom-anchored, restoring the stored/default height). Width/height/collapsed persist across reloads; docking resets `collapsed` so the next open is the normal window.
+- **Input-only bar**: dragging the bottom edge below the 260px expanded minimum snaps to the input-only presentation — the window height becomes the measured composer dock (`[data-test="chat-composer-dock"]` in `[sid].vue`, which wraps the attachment previews, HITL/edit banners and the input box), the float header AND the shell toolbar unmount, and the composer's bottom stays where it was. The normal window's header carries a one-click Collapse to input bar button (next to Restore), and a visible Expand conversation pill just above the bar is the way back (bottom-anchored, restoring the stored/default height). Width/height/collapsed persist across reloads; docking resets `collapsed` so the next open is the normal window.
 - **Side columns**: the right column absorbs the middle column's freed width whenever it is EXPANDED; the left column keeps its stored width (only a left column with no right column beside it grows into the space; neither expanded → nothing grows; a maximized right panel counts as unexpanded). `extraWidth` props add it to the rendered width only — no store is written, so docking restores both columns exactly. A side's resize grip hides while it carries a share.
 - **Auto-collapse** is suspended while floating (`useAutoCollapse`'s `isSuspended`); docking calls its returned `measure()` after the layout settles (the resize path was paused).
 - **Right sidebar maximize linkage**: maximising auto-floats the conversation. At the moment it expands, capture `{leftExpanded, middleFloating}` BEFORE floating; on restore keep floating only when the left was expanded AND the conversation was already floating, otherwise dock. The snapshot is transient (not persisted); a boot with a persisted `maximized` uses the boot state as the snapshot, and the maximize path calls `expand()` so a persisted collapsed flag cannot leave an empty overlay with no restore button.
@@ -715,7 +715,7 @@ its notice as "the working directory moved to X, whose repository is on Y"
 `metadata={"origin": "project_dir"|"git_head", "internal": True,
 "provenance": "workspace_notice"}`: the message store keeps that origin on the
 row (both row builders), and the chat renders a non-`user` origin as a neutral
-system card (labels 项目目录切换 / 分支切换, folder and branch glyphs) instead of a
+system card (labels Project directory switch / Branch switch, folder and branch glyphs) instead of a
 user bubble. Because they are human rows, the scanners that walk human messages
 skip them through `pub.func.message.workspace_notice.is_workspace_notice`:
 `split_into_turns` (a notice is not a turn boundary), HITL's
@@ -742,7 +742,7 @@ Derivation: a subagent inherits the parent's binding at spawn
 CHILD session's own binding, so a child is frozen to the root it started with
 and does not follow a later parent switch. `sessions_spawn(cwd=...)` overrides
 it. The prompt gains a `## Current Working Directory` block naming the effective
-root, and marks an unbound session with 未绑定项目目录 instead of quietly
+root, and marks an unbound session with no project directory bound instead of quietly
 pointing the model at the sherry checkout.
 
 **The root is a small project-level config surface.** `.sherry/` is the ONE
@@ -824,7 +824,7 @@ object URL with the global click-to-zoom overlay; the format classifier
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
 (`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs
-to that session, so it opens under 当前会话 like the commit diff). The tree stays
+to that session, so it opens under Current session like the commit diff). The tree stays
 READ-ONLY but its rows are actionable (ZCode's workspace-file-tree parity): one
 `<ContextMenu>` per tree (rows emit their right-click upward — a per-row popup
 would mount one hidden menu per file) offers Open / Open with (viewer, plus the
@@ -842,8 +842,8 @@ extracts — `extractTextForSend` also feeds the draft model, so chips never lea
 their label into a message). "Add to chat" travels the app-wide mitt bus
 (`chat:file-mention` with the session id) from the left sidebar to the chat page,
 which relays it to the composer it owns; the agent learns the convention from a
-stable `## File References` block in the system prompt. The sidebar's 工作目录 body stacks TWO collapsible sections —
-文件树 and the read-only **Git Graph** (`GET /git/graph`,
+stable `## File References` block in the system prompt. The sidebar's Working directory body stacks TWO collapsible sections —
+File tree and the read-only **Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
 `git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
@@ -855,8 +855,8 @@ repository (or a host without git) answers `available: false` with a reason
 instead of an error, so the panel renders its own empty state. `GitGraphPanel.vue`
 lays the commits into lanes and draws one SVG per row (merges and HEAD get their
 own node shapes), and it is the client's only consumer of that route. The two
-sidebar section headers (文件树 / Git Graph) share one row.
-The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
+sidebar section headers (File tree / Git Graph) share one row.
+The row's context menu offers Reset / Checkout — `POST /git/reset` (`soft`/`mixed`/
 `hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
 with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
 the files that commit touched directly under that row (an accordion, never a block
@@ -884,11 +884,11 @@ ref-chip menu (or in a terminal, or a commit/reset outside the session) still
 reaches the AGENT as the git notice described under Project Directory Binding:
 the next turn's transcript gets one `git_head` card before the human message.
 
-The taskbar's **hammer button opens a three-entry toolbox** (浏览器 / 终端 /
-白板) as the same dialog shape the settings menu uses. The browser and the
+The taskbar's **hammer button opens a three-entry toolbox** (Browser / Terminal /
+Whiteboard) as the same dialog shape the settings menu uses. The browser and the
 terminal open a right-sidebar tab in the SESSION group PER CLICK (a fresh
-`instance` key in the tab payload — the strip numbers the twins 浏览器 1 /
-浏览器 2, and each panel keeps its own history / scrollback under
+`instance` key in the tab payload — the strip numbers the twins Browser 1 /
+Browser 2, and each panel keeps its own history / scrollback under
 `<sessionId>::<instance>`); the whiteboard is deliberately NOT a twin (one board
 per session tab: a second click must show the same drawing), and the settings
 entries keep deduping on their empty payload (`toolboxTools` in
@@ -896,11 +896,11 @@ entries keep deduping on their empty payload (`toolboxTools` in
 the settings grid — a pinned test keeps the grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay
 blank, which the empty state says), a **free-size mode** that emulates a mobile
-device viewport (resizable frame with edge/corner handles), and 打开调试工具,
+device viewport (resizable frame with edge/corner handles), and Open DevTools,
 which opens the page in a real window because an iframe cannot hand out devtools;
 the terminal is a console for commands the
 OPERATOR types: `GET /terminal/info` names the directory (the session's project
-directory — the selected 工作目录 wins) and `POST /terminal/run` executes one line
+directory — the selected Working directory wins) and `POST /terminal/run` executes one line
 through `/bin/sh -c` there with a scrubbed environment, bounded by
 `TOOLS_TIMEOUTS["user_terminal_timeout_seconds"]` and an output cap, answering the
 exit code instead of raising. It is a one-shot console, not a PTY — an interactive
@@ -915,7 +915,7 @@ canvas) and `stores/whiteboard.ts` owns the boards (in memory, keyed by the
 tab's `boardId`, undo/redo as two stacks — a new stroke clears the redo stack —
 plus a 5 000-stroke cap; closing the tab does not delete the board). The tab is
 SESSION-scoped and opened at the wide 640px width; there are no text/shape tools
-and no persistence (a reload starts empty). **加入对话** exports the board to a
+and no persistence (a reload starts empty). **Add to conversation** exports the board to a
 PNG, strips the data-URL prefix and emits `chat:add-image` with
 `{sessionId, payload: {base64, name}}` — the SAME mitt relay shape as
 `chat:file-mention`; `[sid].vue` pushes it into the pending `selectedImages`
@@ -935,7 +935,7 @@ newest row instead of appending (CDP reports several frames per navigation), the
 table is capped at 500 rows (oldest pruned), and the dropdown
 (`BrowserHistoryDropdown.vue`) matches URL or title case-insensitively, newest
 first, showing a favicon (hidden when it 404s), the relative age in the active
-language and a 当前会话 mark, with a clear action for the whole history.
+language and a Current session mark, with a clear action for the whole history.
 Both panels keep their state in
 `stores/toolbox.ts` because the sidebar unmounts an inactive panel.
 
@@ -1036,7 +1036,7 @@ and the code CI jobs (docs parity/link gates run in their own job); see
 - **First run without a model**: the boot's 200K token gate aborts a SERVER,
   but the packaged shell passes the bare `--sherry-desktop` flag (packaged
   only; `SHERRY_DESKTOP=1` is the transitional env fallback), which lets an
-  UNCONFIGURED desktop app serve anyway, so the window can open and 模型配置
+  UNCONFIGURED desktop app serve anyway, so the window can open and Model Config
   can write the files; a CONFIGURED-but-invalid value still aborts. The
   backend must be restarted (relaunch the app) after configuring — the runtime
   reads the file at boot.
@@ -1113,7 +1113,7 @@ timeout / retries / per-provider max-output), and `*_MODEL_LOCAL=true` reuses
 the auxiliary GGUF — there is no second local model to download. A configured
 `*_MAX_TOKEN` must be >= 200000 (200K) and `*_MAX_OUTPUT_TOKEN` empty or
 >= 8192 (8K): the save path refuses a smaller value and the boot/runtime gates
-abort, exactly like the main/auxiliary keys. The 模型配置 tab renders both
+abort, exactly like the main/auxiliary keys. The Model Config tab renders both
 families as model-profile cards, whose local entry reports the aux family's
 download progress; a pre-existing `.models` gains a wholly missing family block
 on import (`ensure_models_config_file`), because the panel only renders keys the
@@ -1128,13 +1128,13 @@ Drift is refused, not merged: `server/service/env.py` treats the moved keys as
 `SPLIT_OUT_KEYS` (the two registries are the source of truth) — a legacy `.env`
 line is neither shown by `GET /env` nor accepted by `PUT /env` (the error names
 the file to edit). `GET/PUT /models-config` and `GET/PUT /network-config`
-(mirroring `/sherry-config`) are the writers; the 模型配置 tab merges the three
+(mirroring `/sherry-config`) are the writers; the Model Config tab merges the three
 sources and routes each group's save back to its own endpoint, while the
-模型联网 tab writes Tavily / SearXNG through `PUT /network-config`.
+Model Network tab writes Tavily / SearXNG through `PUT /network-config`.
 `.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
 `.models` / `.network` keep one.
 
-The 模型配置 panel's built-in local entry (embedding, reranker, ITTT / VTTT,
+The Model Config panel's built-in local entry (embedding, reranker, ITTT / VTTT,
 auxiliary) prefetches the same GGUFs the runtime would download lazily, with a
 live progress bar. `config/features/infra_side/model_downloads.py` (`MODEL_DOWNLOADS`)
 lists each family's files and their `model_weight` target; `models/downloader.py`
@@ -1165,8 +1165,8 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   effective context window (an optional family with an empty own window falls
   back to the auxiliary window or the remote default). `/models-config` rejects
   `output >= window`, and the
-  模型配置 input blocks the same comparison against the draft's sibling
-  `*_MAX_TOKEN`. The panel labels it 最大输出窗口 and every
+  Model Config input blocks the same comparison against the draft's sibling
+  `*_MAX_TOKEN`. The panel labels it Max output window and every
   model category title carries a help mark describing its purpose/use cases
   (four languages). `models/LLMs/provider_max_output.py` maps the
   provider to the kwarg `init_chat_model`'s class accepts — `max_tokens` for
@@ -1183,7 +1183,7 @@ embedder publishes the same event with `kind: "code_embedder"` and keeps its own
   OpenAI-compatible and Google get both fields, Ollama additionally gets its
   native `repeat_penalty` (1.1), and Anthropic / Bedrock / an OpenAI reasoning
   model (o-series / gpt-5, whose API rejects the parameter) / an unknown
-  gateway get none (M4). The 模型配置 panel renders each pair as a number input that
+  gateway get none (M4). The Model Config panel renders each pair as a number input that
   rejects non-numeric keystrokes and clamps to the range; this is preventive,
   and `OutputRepetitionGuard` remains the reactive backstop.
 - **Compression line** — `agent/middlewares/summarization/thresholds.py` is the
@@ -1392,11 +1392,11 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
   (“Plan mode is active…”). `sessions_spawn` is deliberately NOT on the
   whitelist: a child runs with its own session's state, so a spawned executor
   could write before approval.
-- **The human can pin it too**: the toolbar's 访问模式 control gained a 计划模式
+- **The human can pin it too**: the toolbar's Access mode control gained a Plan mode
   entry (`PUT /sessions/access_mode` `mode=plan`) which sets the same
   `PLAN_STATUS`; the mode it reports is DERIVED from the plan status, so a plan
   the agent entered by itself shows up in the control as well, and switching to
-  any other mode resets the status (leaving 计划模式 cancels the flow).
+  any other mode resets the status (leaving Plan mode cancels the flow).
 - **The prompt** carries it too: `workspace/prompt_builder.py` appends
   `_build_plan_mode_block()` on every call (never frozen, so entering/leaving
   takes effect immediately and a compression cannot lose it) — the four-phase
@@ -1415,19 +1415,19 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
   (`PLAN_MODE["max_plan_chars"]`, refused, never truncated) and the mutation
   budget. `PLAN_MODE["enabled"] = False` unregisters both tools and nothing
   else changes. The client renders the plan as an approval card in the input
-  slot ([sid].vue, `isPlanHitl`) with the plan text, a feedback field, 退回修改
-  and 批准 (the reject+message path is the “request changes” decision).
+  slot ([sid].vue, `isPlanHitl`) with the plan text, a feedback field, **Request changes**
+  and **Approve** (the reject+message path is the “request changes” decision).
 - Chain membership and order are unchanged (no new middleware); the tools join
-  `_MAIN_TOOLS_BUILDERS` and the `plan_mode` catalogue group, so the 预设-工具
+  `_MAIN_TOOLS_BUILDERS` and the `plan_mode` catalogue group, so the **Preset - Tools**
   tab can switch them per session. Tests:
   `tests/agent/tools/plan_mode/` + the plan-mode cases in
   `tests/agent/middlewares/test_tool_selection.py`.
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
-The 预设角色 panel (the 菜单 entry renamed from 预设; it sits immediately after the 系统配置 entry, which leads the nine-grid, and the right
-sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
-per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
+The Preset Character panel (the Menu entry renamed from Preset; it sits immediately after the System Config entry, which leads the nine-grid, and the right
+sidebar's tab label — global and **Current session** alike — carries the same name) covers one JSON payload
+per session in its last four tabs (Tools / Middleware / Agent model / Skills), stored under
 `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
 the model/thinking controls)::
 
@@ -1438,9 +1438,9 @@ the model/thinking controls)::
 - `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
   - `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
-    the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
+    the skill list carries the ACTIVE skills visible to main plus the Built-in / Third-party split (`builtin:
 false` = under `skills/plugins/`); each tool entry also carries the
-    tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
+    tool's own first description line (bounded) — the Tools tabs show it as a hover tooltip, so
     it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
     reads/writes the payload; the service rejects an unknown tool / skill / role, and any
     system-required middleware name, with a 400 that names it.
@@ -1449,9 +1449,9 @@ false` = under `skills/plugins/`); each tool entry also carries the
   what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
   checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
   list). Unset config = every tool. `agent/tools/catalog.py` carries the three rules the
-  payload obeys: `TOOL_ORDER` (group render order — 技能 / 终端与代码 / 文件读写 / 交互 first,
+  payload obeys: `TOOL_ORDER` (group render order — Skills / Terminal & Code / File I/O / Interaction first,
   memory fifth, then the task and delegation surfaces), `REQUIRED_TOOLS` (the file tools, code
-  execution, the three skill tools, `question` and `message_search` — the 工具 tab shows those
+  execution, the three skill tools, `question` and `message_search` — the Tools tab shows those
   rows as locked chips with NO checkbox, the service 400s on a payload that omits one, and
   `enabled_tool_names()` unions
   them back in so an older register value cannot strip them either), and `BULK_ONLY_GROUPS`
@@ -1461,7 +1461,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   the system prompt — `null`/absent = every skill (today's behaviour), an explicit list is EXACT
   (an empty list means only the required chain). `skills/loader.py::REQUIRED_SKILLS` is the
   multimedia chain (`image_to_text` / `speech_to_text` / `video_text_to_text` / `text_to_image`):
-  the catalogue marks it `required`, serves it FIRST (the 技能 tab renders those rows as locked
+  the catalogue marks it `required`, serves it FIRST (the Skills tab renders those rows as locked
   chips with no checkbox), the service 400s on a payload that drops one, and
   `build_system_prompt` unions them back for a stale register value. `workspace/prompt_builder.build_system_prompt` reads the
   session's selection through `runtime/session/agent_config_view.py::session_skill_names` and
@@ -1473,7 +1473,7 @@ false` = under `skills/plugins/`); each tool entry also carries the
   `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
 - **Middleware options** (`AGENT_CONFIG["middleware_options"]`): a REQUIRED entry cannot be
   switched off, so its tuning rides here — today exactly one pair, `Summarization.nudge` (the
-  中间件 tab renders it as its own section with a switch). The service rejects an unknown section /
+  Middleware tab renders it as its own section with a switch). The service rejects an unknown section /
   option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
   `memory` (the nudge writes memory THROUGH that tool). At runtime
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
@@ -1493,8 +1493,8 @@ false` = under `skills/plugins/`); each tool entry also carries the
   snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
   the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
-  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 /
-  情感陪伴 pin `nudge: false`.
+  nudge back. Of the built-ins only Full leaves it alone (absent = on): Pure /
+  Emotional companion pin `nudge: false`.
 - **Session-end memory salvage**: MAIN-session deletion (`purge_session` →
   `nudges.salvage_session_memory`) snapshots the post-compaction checkpoint
   transcript, the session model, the system prompt and the tool face BEFORE any
@@ -1526,40 +1526,40 @@ false` = under `skills/plugins/`); each tool entry also carries the
   requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
   key / base_url can change), with the role's `model_tier` as the fallback. `steer` re-reads the
   same profile so a steered run keeps its model.
-- **代理模型** is the 子代理模型 tab renamed, split into 主代理 (the main agent's model — a profile
-  picker whose "follow the environment config" entry maps to `null`) and 子代理 (the per-role
+- **Agent model** is the Sub-agent model tab renamed, split into **Main Agent** (the main agent's model — a profile
+  picker whose "follow the environment config" entry maps to `null`) and **Sub-agent** (the per-role
   pickers). It is a PRESET-level field (`PersonaPreset.main_model`, applied through
   `PUT /sessions/model` so the session-model control stays the single owner of that key) rather
-  than part of the agent payload. The 当前会话预设 viewer puts 代理模型 FIRST (the session's own
+  than part of the agent payload. The Current Session Preset viewer puts Agent model FIRST (the session's own
   model pair is what it is opened for), and BOTH of its sub-tabs write through the
-  session-model store — 主代理 is literally the same control as the toolbar's model switch
+  session-model store — **Main Agent** is literally the same control as the toolbar's model switch
   (one store, one endpoint, so the two can never disagree; the toolbar shows the parked
-  change with its 下一轮生效 badge) and 子代理 keeps the role pickers.
-- Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
-  应用 writes it to the open session (the new-session dialog writes it for the session it just
-  created), and the read-only 当前会话预设 tab summarises it (skills read-only there, the
+  change with its "Takes effect next turn" badge) and Sub-agent keeps the role pickers.
+- Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); **Save preset** stores it,
+  **Apply** writes it to the open session (the new-session dialog writes it for the session it just
+  created), and the read-only Current Session Preset tab summarises it (skills read-only there, the
   subagent-model picker editable).
-- **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
-  内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag), 代理模型 = 主代理 /
-  子代理. The pills are a VIEW filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
+- **The agent-config tabs split into sub-tabs** where the catalogue has two natures: Tools =
+  Built-in / MCP (`group === 'mcp'`), Skills = Built-in / Third-party (`builtin` flag), Agent model = Main agent /
+  Sub-agent. The pills are a VIEW filter — the preset's draft stays whole, and the count (selected n/m) spans the whole catalogue.
 - **Three built-in presets**, in display order — the whole spectrum
-  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
+  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): Pure (nobody named, every
   persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
-  off), 情感陪伴 (the full role-play
-  persona with the 任务与计划 / 子代理 tool groups off, every optional middleware off, the
+  off), Emotional companion (the full role-play
+  persona with the Tasks & Planning / Sub-agent tool groups off, every optional middleware off, the
   required chain plus every skill outside the coding work-flow set
   (`COMPANION_EXCLUDED_SKILLS`), the
-  task-orchestration sections stripped out of 运行守则 — `stripTaskSections`, a per-language
+  task-orchestration sections stripped out of Operating Rules — `stripTaskSections`, a per-language
   heading/label filter pinned by a test that reads the four shipped templates — and the
   couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
   `COMPANION_DROPPED_RELATIONSHIP_MARKERS`, the same per-language-template pin, so a companion
-  session keeps the persona's warmth without the shipped templates' romantic pairing) and 全量 (the
+  session keeps the persona's warmth without the shipped templates' romantic pairing) and Full (the
   DEFAULT — the same full persona with everything on and every skill in the index).
   Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
   (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
-  throws instead of silently applying every tool. The `sherry` id names 全量 (the label
+  throws instead of silently applying every tool. The `sherry` id names Full (the label
   changed; sessions already bound to it keep the stored name), and its shipped character is
-  still 橘雪莉.
+  still Sherry.
 
 ## User Login (`server/service/auth_service.py`)
 
@@ -1643,7 +1643,7 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 
 **Client**: `pages/login.vue`, `middleware/auth.global.ts` (per-navigation
 `/auth/status` decision), `stores/auth.ts`, `pages/home/components/AccountSettingsPanel.vue`
-(menu → 账户, a right-sidebar tab), `composables/bridge/auth.ts` (raw transport:
+(menu → Account, a right-sidebar tab), `composables/bridge/auth.ts` (raw transport:
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
@@ -1655,7 +1655,7 @@ codes in, no generic toasts) and the transport's own 401 → refresh-once → re
 - The watcher keeps the story straight: after `proc.wait()` a task whose status is already `killed` only records `exit_code` (a killed process exits non-zero, and rewriting that as `failed` would make the panel flicker killed → failed); the exit frame carries `status` + `reason` (`killed` / `exited`), and the auto-turn notice says "stopped by user" instead of "FAILED". A natural failure still reads `failed` / `exited`.
 - Two entry points, one method: the agent's `terminal_bg(action="kill", task_id=...)` (main-agent-only, like the other actions) and the UI's `terminal_bg_kill` WS frame, which answers `terminal_bg_kill_ack {ok, task_id, reason}` and lets the watcher's `terminal_bg_exit` confirm the final state.
 - Live updates: `_run_background` pushes `terminal_bg_started` after registering the task, so an open popover adds the row without polling; `GET /terminal/bg?session_id=` is the snapshot for mount / reconnect (the registry is process-level and NOT persisted — after a restart an empty list is correct, not lost work).
-- The display lives in the toolbar's terminal entry — the third icon above the input box (`TasksButton.vue`), whose popover already lists running sub-agents and foreground tool calls; its third section is `BackgroundCommandsSection.vue` (command / status chip, pid in the row tooltip, 终止 on each row), rendered only while the session has commands STILL RUNNING — a settled command leaves the FRONTEND list (its notification is the chat's background card, its log stays on the backend and its record stays readable through `terminal_bg`), and the header counts the running ones only. Nothing about background commands is persisted client-side: the composable is in-memory (snapshot + frames), and no Dexie table holds them. The entry's badge counts sub-agents + foreground calls + running background commands, so a lone detached command is still visible. `use-background-tasks.ts` owns the state (snapshot + the three frames) and `index/[sid].vue` passes it down, so the section is a pure view. It used to be a collapsible strip under the message list; that slot is now free for the chat.
+- The display lives in the toolbar's terminal entry — the third icon above the input box (`TasksButton.vue`), whose popover already lists running sub-agents and foreground tool calls; its third section is `BackgroundCommandsSection.vue` (command / status chip, pid in the row tooltip, Stop on each row), rendered only while the session has commands STILL RUNNING — a settled command leaves the FRONTEND list (its notification is the chat's background card, its log stays on the backend and its record stays readable through `terminal_bg`), and the header counts the running ones only. Nothing about background commands is persisted client-side: the composable is in-memory (snapshot + frames), and no Dexie table holds them. The entry's badge counts sub-agents + foreground calls + running background commands, so a lone detached command is still visible. `use-background-tasks.ts` owns the state (snapshot + the three frames) and `index/[sid].vue` passes it down, so the section is a pure view. It used to be a collapsible strip under the message list; that slot is now free for the chat.
 - Freshness is the SNAPSHOT's job, not one frame's: `terminal_bg_exit` is a best-effort session broadcast and is silently dropped when no socket is registered for the session (verified live 2026-10-30: a command killed between turns stayed "running"), so the popover re-pulls `GET /terminal/bg` every time it OPENS (a cache-busted `_=<ms>` param — a snapshot is state, never a cacheable document) and the page re-pulls once ~1.2 s after a kill click. A requested stop renders its own chip (`backgroundTasks.statusStopping`, amber) instead of a stale "running", and `applySnapshot` drops ids that are no longer running from the in-flight stop set, so the row can never claim a stop is still pending after the snapshot settled it.
 
 ## Command Palette (`client/app/components/CommandPalette.vue`)
@@ -1671,13 +1671,13 @@ registries, not a second dispatch table:
   `highlightLabel` (escaped first, THEN the match is wrapped in `<mark>` — the
   label is user/page-provided text rendered through `v-html`).
 - `pages/home/commands.ts` — the static half is DERIVED from `headerTools` /
-  `toolboxTools` (the 菜单 grid is the source of truth, so a new tile appears in
-  both), plus the notification bell and 新建会话; handlers call the existing
+  `toolboxTools` (the Menu grid is the source of truth, so a new tile appears in
+  both), plus the notification bell and New chat; handlers call the existing
   `buildHomeToolbarCommands` registry and `useNewSessionStore().openDialog()`.
 - The dynamic half (skill index + recent sessions) is pulled on every open and
   replaces the previous dynamic set.
 - Search history is Dexie v4 (`commandHistory`, additive table; one row per
-  command id, capped 50, newest first), rendered as 最近使用 on an empty query.
+  command id, capped 50, newest first), rendered as Recently used on an empty query.
 - The shell (`pages/home/index.vue`) mounts it, registers the static batch under
   a `watch(locale, …, {immediate: true})` (labels are resolved i18n text — a
   `watchEffect` would retrigger itself because registering reads and writes the
@@ -1706,7 +1706,7 @@ The shell is one flex row — left session column, conversation, right sidebar �
 - **The right sidebar's tab strip is an equal-width, proportional-shrink row**
   (`RightSidebar.vue` + `composables/use-tabs-overflow.ts`): every tab is
   `flex-[1_1_9.75rem] min-w-15 max-w-39` — a 156px basis and ceiling, a 60px
-  floor — so a tab's width never follows its title (白板 and 浏览器 2 are the
+  floor — so a tab's width never follows its title (Whiteboard and Browser 2 are the
   same width) and a crowded strip narrows ALL tabs equally before anything
   scrolls. Only when N tabs at their 60px floor no longer fit
   (`N*60 + (N-1)*4 > viewport`) does `overflow-x-auto` take over, with the
@@ -1718,7 +1718,7 @@ The shell is one flex row — left session column, conversation, right sidebar �
   layout but only fully opaque on the ACTIVE tab (idle tabs show it on hover),
   so hovering never shifts the title.
 
-The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the 菜单 button. The interface language lives in the 菜单's FIRST entry, 系统配置, as its LAST tab (国际化): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
+The toolbar keeps ONE app-wide switch — the theme toggle, immediately left of the Menu button. The interface language lives in the Menu's FIRST entry, System Config, as its LAST tab (Internationalization): the panel is the app-wide settings surface, and a user who cannot read the current UI finds the language before anything else there. The tab is appended last on purpose — the panel's footer / embedder-refresh / dirty-state logic is keyed by tab INDEX, so inserting it anywhere else would silently re-target those rules. Every switch funnels through `useLocaleSwitch` (`setLocale` **plus** the `i18n_redirected` cookie `app.vue` reads at boot — `setLocale` alone switches the session and forgets the choice on reload).
 
 ## Session Token Budget (`agent/middlewares/token_budget/`)
 
@@ -1736,7 +1736,7 @@ twin (`TOKEN_BUDGET_CAP_PENDING`) uses the same busy → park / turn-end promote
 rule as the thinking/model controls; `POST /sessions/budget/reset` clears
 USED/COST/LIMITED and the per-turn counters but keeps both caps. The UI is a SESSION-scoped right-sidebar tab
 (`tokenBudget`, `client/app/pages/home/components/TokenBudgetPanel.vue`): the cap
-belongs to one conversation, so it is NOT a 系统配置 tab any more. It is opened
+belongs to one conversation, so it is NOT a System Config tab any more. It is opened
 from the context-ring popover's footer entry (`ContextUsageButton.vue` →
 `openTab('tokenBudget', { sessionId })`, which also closes the popover) and takes
 its session from the tab payload like every other session panel; it shows a
@@ -1780,7 +1780,7 @@ the file does not carry yet is still LISTED (with its default; the next write
 appends its line before the closing brace and fixes the previous comma), and the
 panel renders a localized label + one-line hint per key from
 `SHERRY_ENTRY_SLUGS` (an unknown key falls back to its raw key with no hint).
-「重置为默认值」 fills the form with those defaults (the footer's 保存 still
+**Reset to defaults** fills the form with those defaults (the footer's Save still
 writes them), and it is disabled once nothing differs.
 
 Pricing is USER-CONFIGURABLE, not hardcoded: `.models` carries
@@ -1821,10 +1821,10 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
 `web_search` is ONE tool over two interchangeable providers — the Tavily branch
 pins `name = "web_search"` (TavilySearch's own default would ship the swap as a
-second tool name), so the model, the per-session tool selection and the 工具 tab
+second tool name), so the model, the per-session tool selection and the Tools tab
 all see the same tool whatever serves a call. Which one serves a call is resolved per call
 (`resolve_preferred_backend`): the session's explicit choice
-(`StateKey.SEARCH_BACKEND`, written by the 模型联网 panel through
+(`StateKey.SEARCH_BACKEND`, written by the Model Network panel through
 `PUT /sessions/search_backend` and parked/promoted at the turn boundary like the
 thinking and model controls) → else `WEB_SEARCH_CONFIG["default_backend"]` →
 else availability (a default whose provider is unconfigured switches to the
@@ -1840,7 +1840,7 @@ the best-effort `search_backend_fallback` frame
 (`{from, backend, reason, message}`, reason ∈ `tavily_auth_failed` /
 `tavily_timeout` / `tavily_error`; an auth failure skips the retries) to the
 session's websocket, exactly like the TaskFlow progress push. `client/app/stores/web-search.ts`
-turns it into a 通知 entry (source `web_search`, reasons localized from the
+turns it into a Notifications entry (source `web_search`, reasons localized from the
 CODE at push time through `resolveRuntimeT`, whose `t` takes named params) and
 the bell's unread badge lights up — the listener lives in the app shell
 (`pages/home/index.vue`), because the frame arrives while a TURN runs and the
@@ -1856,10 +1856,10 @@ TLS-verification toggle for MITM proxies. It NEVER raises: every failure returns
 naming the status and whether the request went `via proxy …` or over a `direct
 connection`. `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` /
 `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.network`, and
-so does `TAVILY_API_KEY`: the 模型联网 tab is their ONLY editing surface
+so does `TAVILY_API_KEY`: the Model Network tab is their ONLY editing surface
 (`SERVER_HTTP["env_panel_hidden_prefixes"]` withholds `TAVILY_`/`SEARXNG_` from
-`GET /env` AND `GET /network-config`, so the 模型配置 tab — `config.tabs.env`,
-renamed from 环境配置 — never shows a second, drift-prone editor; writes go
+`GET /env` AND `GET /network-config`, so the Model Config tab — `config.tabs.env`,
+renamed from Environment Config — never shows a second, drift-prone editor; writes go
 through `PUT /network-config`, reads through the state payload's `env` block,
 and the Tavily VALUE never leaves the server). They are read at BOOT, so the panel's save says so — while the
 per-session radio applies at once.
@@ -1982,7 +1982,7 @@ the join key between `messages` and `trajectory_events.turn_id`.
 ## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
-「模型配置」 panel grows a `SHERRY_BROWSER` group for its switches (they live in
+「Model Config」 panel grows a `SHERRY_BROWSER` group for its switches (they live in
 `.network`)). With the feature off no browser tool is registered, every
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 
@@ -2029,8 +2029,8 @@ back to its iframe mode otherwise (`composables/browser-channel.ts` owns the
 socket). Free size drives REAL device emulation
 (`Emulation.setDeviceMetricsOverride`) and pointer coordinates map through the
 emulated viewport, never through the screencast frame's pixel size (Chrome's
-mobile emulation reports its own scale, measured 393x852 -> 554x1200); 打开调试
-工具 opens the inspector as a page the panel watches. There is NO approval gate
+mobile emulation reports its own scale, measured 393x852 -> 554x1200); Open DevTools
+Tools opens the inspector as a page the panel watches. There is NO approval gate
 on browser actions — the panel IS the human's window on the same page (ZCode
 parity); the external-path HITL gate still covers `terminal`/skills.
 
@@ -2300,28 +2300,29 @@ each suite is the version-controlled reference (threshold + model id).
 - **Docs language** (`scripts/check_doc_language.py`): the parity gate compares
   STRUCTURE across the four languages and the link gate only resolves targets, so a
   label from ANOTHER language used to pass every gate — live-verified twice: Chinese UI
-  labels inside English sentences (模型配置, 继续生成 … in the README's Runtime section
-  and six wiki pages) and 「模型配置」 inside the Japanese/Korean READMEs. The rules are
-  per document language, in ONE table: ENGLISH documents (`README.md` plus every
-  `wiki/**/README.md`, nested pages included) may carry no CJK ideographs at all, while
-  the JAPANESE / KOREAN documents (`README.ja.md` / `README.ko.md` and their wiki
-  siblings) may carry no SIMPLIFIED-CHINESE-ONLY character from the shared list in
-  `scripts/data/simplified_chinese_only.txt` — a Simplified-only form (时, 图, 问 …) is a
+  labels inside English sentences (Model Config, Continue generation … in the README's Runtime section
+  and six wiki pages) and the localized Model Config label inside the Japanese/Korean
+  READMEs. The rules are per document language, in ONE table: ENGLISH documents
+  (`README.md` plus every `wiki/**/README.md`, nested pages included) may carry no CJK
+  ideographs at all, while the JAPANESE / KOREAN documents (`README.ja.md` /
+  `README.ko.md` and their wiki siblings) may carry no SIMPLIFIED-CHINESE-ONLY character
+  from the shared list in `scripts/data/simplified_chinese_only.txt` — a Simplified-only
+  form (for example, the simplified character for "time", "figure" or "ask") is a
   Chinese leak, while kanji Japanese also uses is fine. That list is curated, not
-  exhaustive: characters whose simplified form is ordinary Japanese (体/国/数/条/后/万/号
-  等) are deliberately absent, so a label built only from shared characters (模型配置,
-  分叉) is NOT detectable — the gate targets mixed-language prose, not every possible
-  label. It ignores what is not prose: fenced blocks, inline code spans, HTML comments
-  and markdown link TARGETS (a link may point at a Chinese-named file); the four
-  language names (中文 / 简体中文 / 日本語 / 한국어) are allow-listed for the language
-  switcher. The Chinese source pages and `AGENTS.md` are never scanned — the first are
-  the source language, the second quotes the Chinese labels on purpose. A genuine label
-  goes in a code span, never the allowlist. The SAME list backs the client gate:
+  exhaustive: characters whose simplified form is ordinary Japanese (shared numerals
+  and everyday characters) are deliberately absent, so a label built only from shared
+  characters (Model Config, Fork) is NOT detectable — the gate targets mixed-language
+  prose, not every possible label. It ignores what is not prose: fenced blocks, inline
+  code spans, HTML comments and markdown link TARGETS (a link may point at a
+  Chinese-named file); the four language names in their native scripts are allow-listed
+  for the language switcher. The Chinese source pages are never scanned (they are the
+  source language); `AGENTS.md` is outside the parity set. A genuine label goes in a
+  code span, never the allowlist. The SAME list backs the client gate:
   `client/app/composables/__tests__/locale-language.ts` (CJK runs / Simplified-only
   detection / leaf walker) is asserted by `locales.test.ts` over the four central
   dictionaries AND by `i18nBlocks.test.ts` over every SFC `<i18n>` block — an `en` value
   may carry no CJK, a `ja`/`ko` value no Simplified-only character (that gate caught the
-  same `菜单-预设角色` leak in `en.json` and five inline blocks).
+  same Menu → Preset Character label leak in `en.json` and five inline blocks).
   `tests/scripts/test_check_doc_language.py` pins prose findings, the per-language
   rules, the non-prose exemptions, the allowlist and the file selection.
 - **Docs parity** (`scripts/check_docs_parity.py`): gates every four-language README group on structure plus semantic metrics — link-target sets with per-target language variants (a translation that links a foreign README the EN reference does not link fails, while the language switcher and own-language links pass), per-section body-length ratio plus a non-empty check for even the smallest EN sections, a language-independent heading-marker sequence (inline code spans + link targets, order-canonicalized) that fails a heading reordered under an unchanged level sequence, and a per-section invariant-token multiset (code spans + file paths + ENV names + numbers, matched by substring so dropped backticks are not drift) that fails a long but stale translation which lost ≥2 code-span/path tokens or all of them. Section pairing matches headings by marker fingerprint first, then occurrence index (the index-fallback count and the marker-less-reorder residual limitation are printed in the summary). The ratio band is a calibration snapshot: `--calibrate` prints the per-language distribution and its margin, and `tests/scripts/test_check_docs_parity.py` pins the smallest legitimate ratio at ≥1.15× the band so a denser legitimate section turns the test red before the band silently narrows — re-run `--calibrate` and update the constants' comment before changing any band. Exempting a group via `ALLOWLIST` is a last resort: the reason must contain an explicit "Fixing the document(s) is wrong because …" clause followed by a substantive rationale, be ≥40 chars, and may not open with placeholder text; stale entries fail the gate, and tests pin the mapping empty so every addition requires an explicit test edit
@@ -2374,7 +2375,7 @@ each suite is the version-controlled reference (threshold + model id).
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_flow(action="plan")`'s planner may emit the field and `taskflow_step(action="update_steps")` may change it.
 - `terminal` accepts a per-call `timeout` (seconds; default `TOOLS_TIMEOUTS["terminal_timeout_seconds"]` = 30, ceiling `terminal_max_timeout_seconds` = 600 via `_resolve_timeout` — 0/negative means 'unset') and a `run_in_background` flag: a backgrounded command returns immediately with a `bg-<hex>` task id, its output goes to a RETAINED file under the session's `evicted/` (`terminal-bg-<task-id>.log`, never a sweepable temp file) and STAYS there after the command exits — the log is the durable record (`terminal_bg(action="output")` reads it while running AND afterwards; only session deletion removes it), the watcher on the server loop announces the exit (WS frame `terminal_bg_exit` + a `background_task` auto-turn). `terminal_bg(action="list"|"output", task_id=...)` (`scope=main_only`, catalogue group `terminal`) is how the agent reads status and a bounded 8 KiB TAIL; the per-session live task count is capped by `TERMINAL_BG` (10), and `purge_session` SIGTERMs a deleted session's running tasks before its folder goes.
-- terminal HITL cards can offer **本会话允许** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.
+- terminal HITL cards can offer **Allow for this session** (`decision: "session"`): it writes the command's two-word pattern to `HITL_SESSION_APPROVED_KEY`, while `approve` stays one-shot. The option is sent only for cacheable ordinary commands; dangerous commands, confirm-all and clawhub never write it, and `check_command` moves dangerous detection BEFORE Layer 6 so a stored pattern can never auto-approve a dangerous command (permanent Layer 5 ALWAYS still wins). The card labels are four-language.
 - on Windows the unsandboxed spawn prefers a Git-for-Windows `bash.exe` (`pub_base/shell_resolver.py`, standard paths then inferred from `git.exe`, cached per process): the tool promises a POSIX shell, and `cmd.exe` would quietly change what `&` / `&&` / `$()` / `2>&1` mean. No Git Bash → the platform shell.
 - the eviction PREVIEW marks a mid-line cut instead of letting it read as a line ending: the in-memory renderer appends `\u2026`, the file-on-disk reader detects the cut by peeking past `_PREVIEW_LINE_MAX_BYTES` (and, for the tail window, by checking whether the byte before the walk's stop is a newline), and either path appends one note naming the same fallback tools — a normal preview is byte-identical to before (the note is absent, never empty).
 - `terminal`'s stdout is fd-direct-written: BOTH spawn sites (`_execute_sync` and `_arun`) hand the child a FILE for `stdout` (stderr merged into it via `STDOUT`, unchanged) opened as `.sherry-tmp-stdout-*.log` in the session directory, then wait on the process instead of draining a pipe. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read whole and unlinked; at or above it, it is renamed to `SESSIONS_DIR/<session_id>/evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a head/tail preview comes back (`pub/func/message/eviction.py::build_file_preview` → `_read_head_tail`, byte-budgeted: 8 KiB per side and 2 KiB per line, so a newline-free 500 MB output is still a few KB — the total is `stat().st_size` BYTES, lines are never counted). A timed-out/cancelled/failed run discards its temp file; leftovers from a hard kill are swept by the shared `.sherry-tmp-` + `.swp`/`.log` contract in `atomic_write.py` (sweeping runs on the way into the next `_open_stdout_tmp`). A 0-byte result becomes `(no output)` before the tool returns — never an empty ToolMessage, which the pairing sanitizer would otherwise turn into a misleading missing placeholder — and the eviction preview starts with `[evicted to: <path>]` plus an explicit `read_file` hint.
@@ -2474,7 +2475,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
 - the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears. A completed plan (no incomplete todo, no open flow) earns ONE `[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]` auto-turn before the gate treats it as done: the paranoid prompt asks the agent to re-read the diff, actually run the tests/typecheck/lint and launch user-facing changes. It is a PROMPT, not a gate (no evidence query, no HITL, no schema); a process-local fingerprint throttles it to once per completed plan, a changed plan re-arms it, a refused delivery is retried, and a TaskFlow session skips it (its finish gates own verification).
 - todo identity is `todo_id`, not `position`: each row gets a per-session monotonic id, the system reminder renders it as `#N`, and `todowrite` actions `patch` / `add(after_todo_id=…)` / `remove` / `reattach` / `list_orphans` address it. `replace` is still the default full-list rewrite and reissues every id (it reads `MAX(todo_id)` before DELETE, so an old id can never silently point at a new row); local actions preserve `flow_id` / `step_id` / `plan_ref`. A missing id raises `TodoIdNotFoundError` and the tool answers with the current valid list. The store creates only the current schema (`todo_id INTEGER NOT NULL`, unique `(session_id, todo_id)` index), with no old-table backfill; `position` is display order only and insertion shifts it via `TODOLIST_INFRA["position_shift_offset"]`.
 - Todo↔TaskFlow reference integrity is enforced at four points: (1) a full `todowrite` replacement that drops a flow's GC-root todo runs `compensate_orphaned_flows` immediately (`TODOLIST_INFRA["orphan_flow_on_drop"]`: `cancel` default, `refuse` rejects the rewrite, `sweep_only` leaves it to the sweep), kills the flow's live detached children (fail-open) and the tool result carries a `[REFERENCE INTEGRITY]` warning; (2) one session-scoped sweep follows the replacement with the CONFIGURED grace window (a just-completed root on its way to `taskflow_flow(action="finish")` is not collected; the targeted compensation already handled the dropped flows); (3) `taskflow_flow(action="create")` / `taskflow_flow(action="plan")` answer a similar active same-session flow with a reuse-or-`ack_dup=True` warning (normalized substring or Jaccard > 0.7; `resumed_from` skips it; a terminal flow never counts); (4) a terminal flow notifies its root at once — `completed` on finish, `cancelled` on fail/cancel — while the sweeper's delayed cancel remains the backstop. All four are fail-open; both notification helpers update only non-terminal rows (idempotent).
-- a middleware row in 预设角色-中间件 must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
+- a middleware row in Preset Character - Middleware must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer's serializer (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced. Each source also declares `compress_exclude` (default True; `continuity_context` opts out with False): the injector stamps it into the message metadata and `_filter_summary_messages` drops those reminders before the summary prompt, so a stale live-view snapshot never reaches the summarizer. `is_user_message` (`pub/func/message/classify.py`, a positive fail-closed `metadata.origin == "user"` test) is the one user-content check used by the summarizer's serializer, static fallback and latest-eviction-pointer paths.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
   after `ToolResourceLockMiddleware`, which itself sits right after
@@ -2496,7 +2497,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   — the tool result rides through untouched. `hooks.enabled` defaults OFF
   (`USER_HOOKS["enabled"]`): the config file is git-tracked, so executing its
   commands must be a deliberate act. Added to `MIDDLEWARE_ORDER` +
-  `GATEABLE_MIDDLEWARES` (the 预设-中间件 switch calls `middleware_enabled`), and
+  `GATEABLE_MIDDLEWARES` (the Preset - Middleware switch calls `middleware_enabled`), and
   the config is read once at construction (change = restart).
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
@@ -2626,7 +2627,7 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   The Jina backend is lazy (`onnxruntime` + `RobertaTokenizerFast`, mean pooling);
   switching profiles purges the old `code_embeddings` rows, including legacy
   `bge-m3` rows, so no BGE vector can be scored. It is OFF by default: merely
-  having the files is not enough — the 模型配置 panel downloads the model and
+  having the files is not enough — the Model Config panel downloads the model and
   writes the opt-in marker (`GET /code-embedder/status`, `POST /code-embedder/download`,
   `DELETE /code-embedder` disables; the download runs in a background thread).
 - truncation is budgeted in TOKENS, CJK-aware (`pub/func/message/token_truncation.py`):
