@@ -2504,7 +2504,12 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   non-terminal `taskflow_flow(action="create")` does the same (terminal flows still error).
   A new signature-based tool-loop middleware was **not** added: 204 historical
   tool calls showed zero consecutive same-name + same-args successful mutating
-  runs; `ToolGuardrails` remains the detector.
+  runs; `ToolGuardrails` remains the detector. That detector now ALSO carries a
+  status-blind signature streak (3 identical tool+args calls; terminal 5) that
+  WARNs and resets, capped at 3 warnings per turn, and its failure path sees
+  network-command errors: terminal `curl`/`wget`/`git fetch` non-zero exits and
+  `web_fetch` HTTP 4xx/5xx raise `ToolException` (`status="error"`), while local
+  test/compile failures keep returning their output with `status="success"`.
 - TaskFlow orphan collection is an **unreferenced-flow GC plus liveness** (v3),
   replacing the per-scenario fixes: every
   `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a

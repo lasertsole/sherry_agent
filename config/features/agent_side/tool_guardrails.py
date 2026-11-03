@@ -19,6 +19,13 @@ class ToolGuardrailsConfig(TypedDict):
     arg_churn_min_calls_per_variant: int
     arg_churn_warn_after: int
     arg_churn_block_after: int
+    #: Signature-level repetition (same tool + same stable args, regardless of
+    #: result status). ToolGuardrails warns and resets the streak; it never
+    #: blocks on this signal alone. Terminal gets a higher threshold because
+    #: re-running the same test command can be a legitimate iteration.
+    streak_warn_after: int
+    streak_terminal_warn_after: int
+    streak_max_warnings_per_turn: int
     recovery_mode_enabled: bool
     recovery_max_violations: int
 
@@ -37,6 +44,9 @@ TOOL_GUARDRAILS: ToolGuardrailsConfig = {
     "arg_churn_min_calls_per_variant": 3,
     "arg_churn_warn_after": 3,
     "arg_churn_block_after": 5,
+    "streak_warn_after": 3,
+    "streak_terminal_warn_after": 5,
+    "streak_max_warnings_per_turn": 3,
     "recovery_mode_enabled": True,
     "recovery_max_violations": 1,
 }

@@ -49,6 +49,9 @@ Active on the main agent, worker agents, and nudge sub-agents. Every tool call r
 | Idempotent no-progress | Same idempotent tool (or idempotent action of a grouped tool) returning a result hash an earlier call of it already produced | 2 | 5 | HALT at 5 |
 | Ping-pong | Unbroken A → B → A → B bouncing where both consecutive calls are stagnant | 4 | 6 | HALT at 6 |
 | Argument churn | Same idempotent tool cycling argument variants whose result stays unchanged (stagnant) | 3 variants | 5 variants | HALT at 5 |
+| Signature streak (status-blind) | Same tool + same argument hash repeated consecutively, regardless of result status (terminal uses 5) | 3 (terminal: 5) | never | WARN only, max 3 per turn; resets on a signature change |
+
+Network-command failures are now bridged to tool errors: a non-zero `curl`/`wget`/`git fetch`/`git clone` raises `ToolException`, so `handle_tool_error` produces `ToolMessage(status="error")` and the exact-failure counter sees it. Local commands (pytest, compilers, scripts) keep their non-zero exit as normal text (`status="success"`) so the agent can read the failure and iterate. `web_fetch` HTTP 4xx/5xx likewise raises. The signature streak catches the other blind spot: successful-looking repeats with identical arguments; it warns only, never blocks.
 
 Details that matter:
 
@@ -303,7 +306,7 @@ Within a turn, the turn guards are orthogonal and fire in parallel: `OutputRepet
 - `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `sherry.jsonc`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
 - Workers get `OutputRepetitionGuard` as middleware; the main agent is wrapped by `RepetitionGuardWrapper` (middleware hooks do not see raw stream chunks).
 - `MaxTokensBoostMiddleware` is the one guard with an env knob: `MAIN_LLM_OUTPUT_MAX_TOKEN` (default 8192) sets the boost base read at import time; the cap (32768) and retry count (3) are code constants.
-- `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1).
+- `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1), `streak_warn_after` (3), `streak_terminal_warn_after` (5), `streak_max_warnings_per_turn` (3).
 - Announce delivery knobs (subagent announce config): `announce_retry_max=3` with 5s / 10s / 20s transient delays, plus `max_announce_retry_count=10` and a 24h run expiry.
 
 Manual recovery cheatsheet:

@@ -49,6 +49,9 @@
 | 멱등 무진전 | 동일한 멱등 도구(또는 그룹 도구의 멱등 action)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 | 5 | 5에서 HALT |
 | 핑퐁 | 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진전 | 4 | 6 | 6에서 HALT |
 | 인자 갱신 | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환 | 3개 변형 | 5개 변형 | 5에서 HALT |
+| 시그니처 연속(상태 무관) | 같은 도구 + 같은 인자 해시의 연속 호출. 결과 상태와 무관(terminal은 5) | 3(terminal: 5) | 없음 | WARN만, 턴당 최대 3회. 시그니처가 바뀌면 리셋 |
+
+네트워크 명령 실패는 이제 도구 오류로 연결됩니다: `curl`/`wget`/`git fetch`/`git clone` 등의 비영 종료는 `ToolException`을 발생시켜 `handle_tool_error`가 `ToolMessage(status="error")`를 만들고 exact-failure 카운터가 인식합니다. 로컬 명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로 반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도 동일하게 raise합니다. 시그니처 연속은 또 다른 사각지대(인자가 같고 성공처럼 보이는 반복)를 잡지만 경고만 하고 차단하지 않습니다.
 
 중요한 세부 사항:
 
@@ -265,7 +268,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
-- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1).
+- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_terminal_warn_after` (5), `streak_max_warnings_per_turn` (3).
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
 수동 복구 치트시트:

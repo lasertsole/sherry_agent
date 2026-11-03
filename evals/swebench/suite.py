@@ -74,8 +74,8 @@ _SWEBENCH_AGENTS_APPENDIX = """
 
 ## Environment and workflow notes (this evaluation arm)
 
-- Network: the `terminal` tool reaches the public internet directly (a
-  `curl -m 5` is a safe probe). `web_search` has no backend configured here.
+- Network: probe with a short `curl` only when it can change the fix; `web_search`
+  has no backend configured here.
 - The checkout is a shallow clone at a single commit: `git log` shows no
   future commits; an upstream fix can only be found over the network.
 - Bug-fix tasks: synthesize the behavior contract before patching — see the
@@ -83,12 +83,27 @@ _SWEBENCH_AGENTS_APPENDIX = """
   issue tracker / upstream history for an existing fix before inventing one.
 """
 
+_NETWORK_UNAVAILABLE_NOTE = (
+    "\n- **Network unavailable this run** (terminal probe: HTTP {code}). "
+    "Do NOT keep retrying curl / git / GitHub: inspect the local code and tests, "
+    "make the smallest verifiable change, and run the target test.\n"
+)
 
-def _append_agents_appendix(workspace: Path) -> None:
-    """Append the swebench arm's environment notes to the seeded rules file."""
+
+def _append_agents_appendix(workspace: Path, web: dict[str, Any] | None = None) -> None:
+    """Append the swebench arm's environment notes to the seeded rules file.
+
+    The network line is dynamic: a run whose probe cannot reach GitHub gets an
+    explicit "stop probing" directive, which removes the exact loop that
+    exhausted the Sympy instance's call budget.
+    """
     rules = workspace / "AGENTS.md"
+    appendix = _SWEBENCH_AGENTS_APPENDIX
+    if web is not None and not web.get("terminal_egress"):
+        code = web.get("http_code") or "unreachable"
+        appendix += _NETWORK_UNAVAILABLE_NOTE.format(code=code)
     rules.write_text(
-        rules.read_text(encoding="utf-8") + _SWEBENCH_AGENTS_APPENDIX,
+        rules.read_text(encoding="utf-8") + appendix,
         encoding="utf-8",
     )
 
@@ -229,8 +244,9 @@ def _run(
         )
         return 3
 
+    web_probe = _probe_web()
     harness._seed_persona(eval_workspace, persona=persona)
-    _append_agents_appendix(eval_workspace)
+    _append_agents_appendix(eval_workspace, web_probe)
     harness.init_agent()
     main_tools = harness._main_tool_names()
     missing = sorted(
@@ -322,7 +338,7 @@ def _run(
         # This run's probed network reality (default-off philosophy: the record
         # says what was reachable; nothing was switched on for it).
         "environment": {
-            "web": _probe_web(),
+            "web": web_probe,
             "sandbox_backend": _sandbox_backend(),
         },
         "persona_mode": persona,

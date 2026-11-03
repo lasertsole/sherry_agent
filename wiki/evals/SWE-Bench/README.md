@@ -35,6 +35,7 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-01 143952 | first soft gate (10/20) | 1/2 | Gate forced a spawn, then the main agent patched repeatedly and broke P2P |
 | 2026-11-01 174750 | soft gate (8/16, cumulative) | 2/2 clean | Main was read/write-blocked after 16 reads and delegated the implementation |
 | 2026-11-03 010944 | 7/14 advisory (cumulative) | 0/2 | Django's condition-only change still failed the unique constraint; Sympy produced no diff and exhausted the 90-call budget |
+| 2026-11-03 194320 | network bridge + signature streak (Sympy only) | 0/1 | Non-empty diff, but `test_pretty_sqrt` P2P regressed; streak stayed WARN-only and the 90-call budget was exhausted |
 
 ## Problems exposed
 

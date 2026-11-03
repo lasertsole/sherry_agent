@@ -86,3 +86,31 @@
      网络失败显式标为 degraded，并提示模型直接走本地代码/测试，而不是反复探测
      GitHub。
   4. **DeepSWE**：按约定“SWE 全通过才跑 DeepSWE”，本次 **未运行**。
+
+---
+
+## 20261103_194320 — 网络状态桥接 + 签名 streak（Sympy 单实例，0/1）
+
+- 目的：验证 P0a（网络命令 status 桥接）+ P1（签名 streak）+ P2（网络感知
+  directive）是否让 Sympy 在预算内产出 diff，并修复上一轮的空 diff。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**0/1**；281.2s；tokens 3,472,950 / 16,953；估算 $1.762。
+- 改善：diff 非空（`sympy/printing/pretty/pretty.py`，897 B），不再像上一轮那样
+  0 diff；主代理仍耗尽 90 次模型调用。
+- 新失败：F2P/P2P 都失败。P2P 的 `test_pretty_sqrt` 期望 `2**(1/x)` 仍使用根号
+  表示，代理新增的 `e.is_Rational` 条件把这种非有理指数的符号形式也排除了，输出
+  变成普通分数指数格式。
+- 日志：ToolGuardrails 在 terminal 上触发 3 次 WARN（签名 streak），但它是
+  WARN-only，达到 `streak_max_warnings_per_turn=3` 后不再有动作；主代理继续探测到
+  budget exhausted。
+- 修改建议：
+  1. **Sympy 正确性**：不要用 `e.is_Rational` 作为根号路径的总开关；需要保留
+     `2**(1/x)` 这类 `d` 为符号 Atom 的根号打印，只排除 `exp(-1)` 等非根号表达式。
+     先跑目标 P2P（`test_pretty_sqrt`）再收口。
+  2. **收敛强度**：签名 streak 连续命中并耗尽 3 次警告后，应升级为 BLOCK（或至少
+     阻断当前 terminal），否则 agent 仍可用到 90 次；这与当前计划的 WARN-only
+     设计冲突，需要单独评审。
+  3. **预算**：在 diff 已存在但目标测试失败时，harness 应优先要求运行目标测试，
+     而不是继续全局探测；考虑在 70-80% 预算时注入一次强制的 `patch_file` /
+     target-test checkpoint。
+  4. DeepSWE 仍未运行（SWE 未全通过）。

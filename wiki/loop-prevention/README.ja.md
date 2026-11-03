@@ -49,6 +49,9 @@
 | 冪等無進行 | 同一の冪等ツール（またはグループ化ツールの冪等 action）が、そのターン内で既に返した結果ハッシュを返す | 2 | 5 | 5 で HALT |
 | ピンポン | 途切れない A → B → A → B の往復で、連続する 2 呼び出しがともに無進捗 | 4 | 6 | 6 で HALT |
 | 引数改変 | 同じ冪等ツールが、結果の変わらない引数バリアントを巡回 | 3 変種 | 5 変種 | 5 で HALT |
+| シグネチャ連続（ステータス非依存） | 同一ツール + 同一引数ハッシュの連続呼び出し。結果ステータスは問わない（terminal は 5） | 3（terminal: 5） | なし | WARN のみ、1 ターン最大 3 回。シグネチャ変更でリセット |
+
+ネットワークコマンドの失敗はツールエラーへ橋渡しされます: `curl`/`wget`/`git fetch`/`git clone` などの非ゼロ終了は `ToolException` を投げ、`handle_tool_error` により `ToolMessage(status="error")` となって exact-failure カウンタに届きます。ローカルコマンド（pytest、コンパイラ、スクリプト）の非ゼロ終了は通常のテキスト（`status="success"`）のまま返り、agent は失敗を読んで反復できます。`web_fetch` の HTTP 4xx/5xx も同様に raise します。シグネチャ連続はもう一つの盲点（引数が同一で成功に見える繰り返し）を捉えますが、警告のみでブロックしません。
 
 重要な詳細:
 
@@ -266,7 +269,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` でデフォルト 5) は現在**ドキュメント専用**です: これを消費するコードはありません。実際に有効なツール別の上限は定数です(web 検索 15s、ターミナル 30s、python REPL 30s)。これをループ境界として当てにしないでください。
 - ワーカーはミドルウェアとして `OutputRepetitionGuard` を受け取り、メインエージェントは `RepetitionGuardWrapper` でラップされます(ミドルウェアフックは生のストリームチャンクを見えません)。
 - `MaxTokensBoostMiddleware` は環境変数ノブを持つ唯一のガードです: `MAIN_LLM_OUTPUT_MAX_TOKEN`(デフォルト 8192)がインポート時に読まれブーストの base になります; 上限(32768)とリトライ回数(3)はコード定数です。
-- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)。
+- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)、`streak_warn_after` (3)、`streak_terminal_warn_after` (5)、`streak_max_warnings_per_turn` (3)。
 - Announce 配送のノブ (サブエージェント announce 設定): 5s / 10s / 20s の一時的遅延を伴う `announce_retry_max=3`、さらに `max_announce_retry_count=10` と 24 時間の run 失効。
 
 手動回復のチートシート:

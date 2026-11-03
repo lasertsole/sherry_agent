@@ -2,8 +2,8 @@
 
 Two branches share one tail: public URLs go through the SSRF guard + DNS pinning
 (`safe_fetch`), a local/private address needs the opt-in switch, and both end in
-the HTML→markdown step plus the character cap. Every transport failure is text,
-never an exception.
+the HTML→markdown step plus the character cap. Transport failures are text;
+HTTP 4xx/5xx raise ToolException so the failure guardrails see an error status.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 
 import pytest
+from langchain_core.tools import ToolException
 
 import agent.tools.web.web_fetch as wf
 from agent.tools.web.web_fetch import web_fetch
@@ -195,7 +196,8 @@ class TestTransientRetry:
             [FetchResult(ok=True, body=b"gone", status=404, final_url="https://example.com/x")],
         )
 
-        await web_fetch.coroutine(url="https://example.com/x")
+        with pytest.raises(ToolException, match="HTTP 404"):
+            await web_fetch.coroutine(url="https://example.com/x")
 
         assert len(calls) == 1
 

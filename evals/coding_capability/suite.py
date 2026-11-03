@@ -106,8 +106,8 @@ _PERSONA_TEMPLATE_LANG = "zh"
 _FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "sessions_spawn", "subagent_id")
 
 _PROCEED_DIRECTIVE = (
-    "Do not ask questions and do not delegate. Implement the change yourself in the "
-    "repository and make `python -m pytest -q` pass."
+    "Do not ask questions. Implement the change in the repository and make "
+    "`python -m pytest -q` pass."
 )
 
 

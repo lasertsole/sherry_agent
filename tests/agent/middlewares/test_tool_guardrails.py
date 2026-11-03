@@ -466,3 +466,86 @@ def test_recovery_state_resets_per_turn():
     assert fresh.recovery_mode is False
     assert fresh.recovery_violation_count == 0
     assert fresh.blocked_tools == set()
+
+
+# ------------------------------------------------------- signature streak (status-blind)
+def test_signature_streak_warns_on_identical_successful_args():
+    mw = make_mw(streak_warn_after=3)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        call(mw, gs, "web_search", "same-args", f"r{index}", is_idempotent=False)
+        for index in range(3)
+    ]
+
+    assert actions[:2] == [ALLOW, ALLOW]
+    assert actions[2] == WARN
+    assert gs.last_pathology == ("tool_repetition", 3, 3)
+
+
+def test_signature_streak_resets_when_the_signature_changes():
+    mw = make_mw(streak_warn_after=3)
+    gs = mod._TurnGuardrailState()
+
+    for _ in range(2):
+        call(mw, gs, "web_search", "args-a", "ra", is_idempotent=False)
+    call(mw, gs, "web_search", "args-b", "rb", is_idempotent=False)
+    for _ in range(2):
+        action = call(mw, gs, "web_search", "args-a", "rc", is_idempotent=False)
+
+    assert action == ALLOW
+    assert gs.last_pathology is None
+
+
+def test_terminal_signature_streak_uses_the_higher_threshold():
+    mw = make_mw(streak_warn_after=3, streak_terminal_warn_after=5)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        call(mw, gs, "terminal", "same-command", f"r{index}", is_idempotent=False)
+        for index in range(5)
+    ]
+
+    assert actions[:4] == [ALLOW] * 4
+    assert actions[4] == WARN
+    assert gs.last_pathology == ("tool_repetition", 5, 5)
+
+
+def test_signature_streak_warnings_are_capped_per_turn():
+    mw = make_mw(streak_warn_after=3, streak_max_warnings_per_turn=1)
+    gs = mod._TurnGuardrailState()
+
+    first_cycle = [
+        call(mw, gs, "T", "same", f"r{index}", is_idempotent=False) for index in range(3)
+    ]
+    second_cycle = [
+        call(mw, gs, "T", "same", f"s{index}", is_idempotent=False) for index in range(3)
+    ]
+
+    assert first_cycle[-1] == WARN
+    assert second_cycle[-1] == ALLOW
+    assert gs.streak_warning_count == 1
+
+
+def test_args_hash_is_independent_of_key_order():
+    assert mod.args_hash({"a": 1, "b": 2}) == mod.args_hash({"b": 2, "a": 1})
+
+
+def test_wrap_message_names_the_signature_streak_pathology():
+    mw = make_mw(streak_warn_after=3)
+    sess = "sess-streak-message"
+    outputs = [
+        wrap_call(
+            mw,
+            sess,
+            "web_search",
+            {"q": "same"},
+            f"result-{index}",
+            f"c{index}",
+            tool=NON_IDEMPOTENT_TOOL,
+        )
+        for index in range(3)
+    ]
+
+    assert "repeated identical call" in outputs[-1].content
+    assert outputs[-1].status == "success"

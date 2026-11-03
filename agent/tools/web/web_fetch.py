@@ -21,7 +21,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, ToolException, tool
 from loguru import logger
 
 from config.features import TOOLS_TIMEOUTS
@@ -215,6 +215,12 @@ async def web_fetch(url: str) -> str:
             f"[... truncated at {max_chars} chars; the page was {len(content)} chars. "
             "Fetch a more specific URL for the rest.]"
         )
+    # `safe_fetch` reports any HTTP response as a successful transport (ok=True),
+    # so a 403/404/500 would otherwise become status="success" and escape the
+    # failure guardrails. The body is still useful for the model: keep it in
+    # the ToolException message.
+    if result.status >= 400:
+        raise ToolException(f"HTTP {result.status} for {result.final_url or url}\n\n{content}")
     return f"URL: {result.final_url or url}\nStatus: {result.status}\n\n{content}"
 
 

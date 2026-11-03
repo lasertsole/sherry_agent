@@ -43,6 +43,9 @@ class ToolCallGuardrailConfig:
     arg_churn_min_calls_per_variant: int = TOOL_GUARDRAILS["arg_churn_min_calls_per_variant"]
     arg_churn_warn_after: int = TOOL_GUARDRAILS["arg_churn_warn_after"]
     arg_churn_block_after: int = TOOL_GUARDRAILS["arg_churn_block_after"]
+    streak_warn_after: int = TOOL_GUARDRAILS["streak_warn_after"]
+    streak_terminal_warn_after: int = TOOL_GUARDRAILS["streak_terminal_warn_after"]
+    streak_max_warnings_per_turn: int = TOOL_GUARDRAILS["streak_max_warnings_per_turn"]
     recovery_mode_enabled: bool = TOOL_GUARDRAILS["recovery_mode_enabled"]
     recovery_max_violations: int = TOOL_GUARDRAILS["recovery_max_violations"]
 
@@ -68,6 +71,11 @@ class _TurnGuardrailState:
     halt_decision: GuardrailAction | None = None
     ping_pong_counts: dict[str, int] = field(default_factory=dict)
     arg_churn_variants: dict[tuple[str, str], int] = field(default_factory=dict)
+    #: Signature-level repetition (tool + stable args). The status-blind signal
+    #: catches successful-but-useless repeats the failure paths cannot see.
+    last_signature: str | None = None
+    signature_streak: int = 0
+    streak_warning_count: int = 0
     last_pathology: tuple[str, int, int] | None = None
     recovery_mode: bool = False
     recovery_violation_count: int = 0
@@ -156,6 +164,31 @@ class ToolGuardrails(AgentMiddleware):
             content.encode(errors="surrogateescape"), usedforsecurity=False
         ).hexdigest()
 
+    def _streak_threshold(self, tool_name: str) -> int:
+        """The signature-streak warning threshold for one tool.
+
+        Terminal is deliberately more tolerant: rerunning the same test command
+        is a legitimate edit/verify iteration. Other tools warn at 3.
+        """
+        if tool_name == "terminal":
+            return self.config.streak_terminal_warn_after
+        return self.config.streak_warn_after
+
+    @staticmethod
+    def _update_signature_streak(gs: _TurnGuardrailState, tool_name: str, args_hash: str) -> None:
+        """Advance the status-blind tool+args streak.
+
+        ``args_hash`` is the existing stable argument digest (sorted keys), so
+        reordered JSON objects are the same call. A different signature resets
+        the streak; the streak is independent of the result status.
+        """
+        signature = f"{tool_name}:{args_hash}"
+        if gs.last_signature == signature:
+            gs.signature_streak += 1
+        else:
+            gs.last_signature = signature
+            gs.signature_streak = 1
+
     def _evaluate(
         self,
         gs: _TurnGuardrailState,
@@ -167,6 +200,7 @@ class ToolGuardrails(AgentMiddleware):
         is_stagnant: bool,
     ) -> GuardrailAction:
         gs.last_pathology = None
+        self._update_signature_streak(gs, tool_name, args_hash)
 
         if gs.halt_decision is not None:
             return GuardrailAction.HALT
@@ -226,6 +260,21 @@ class ToolGuardrails(AgentMiddleware):
             action = self._evaluate_pair_pathologies(
                 gs, tool_name, args_hash, result_hash, is_error, action, is_stagnant
             )
+
+        # Signature-level repetition is the status-blind complement to the
+        # failure paths: exact failure sees status="error", this sees a
+        # successful call repeated with the same args (a 403 body, the same
+        # git log, the same search). Warn only when no stronger pathology fired.
+        if action == GuardrailAction.ALLOW and self.config.warnings_enabled:
+            threshold = self._streak_threshold(tool_name)
+            if (
+                gs.signature_streak >= threshold
+                and gs.streak_warning_count < self.config.streak_max_warnings_per_turn
+            ):
+                gs.streak_warning_count += 1
+                gs.last_pathology = ("tool_repetition", gs.signature_streak, threshold)
+                action = GuardrailAction.WARN
+                gs.signature_streak = 0
 
         if action == GuardrailAction.BLOCK and self.config.recovery_mode_enabled:
             # Recovery mode: the first BLOCK enters recovery; further BLOCKs count
@@ -491,7 +540,12 @@ class ToolGuardrails(AgentMiddleware):
             logger.warning("ToolGuardrails WARN: session={} tool={}", session_id, tool_name)
             if gs.last_pathology is not None:
                 kind, count, limit = gs.last_pathology
-                pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
+                if kind == "ping_pong":
+                    pathology = "ping-pong loop"
+                elif kind == "argument_churn":
+                    pathology = "argument churn"
+                else:
+                    pathology = "repeated identical call"
                 warning = self._warning_message(tool_name, pathology, count, limit)
             elif is_error:
                 exact_key = f"{tool_name}:{args_digest}"
