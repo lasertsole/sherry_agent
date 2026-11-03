@@ -265,7 +265,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
-- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_terminal_warn_after`（5）、`streak_max_warnings_per_turn`（3）。
+- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）；工具可用自己的 metadata 覆盖阈值（terminal 声明 5）。
 - Announce 投递旋钮（子 Agent announce 配置）：`announce_retry_max=3` 配 5s / 10s / 20s 瞬态延迟，另有 `max_announce_retry_count=10` 和 24 小时 run 过期。
 
 手动恢复速查表：

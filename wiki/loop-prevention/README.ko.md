@@ -268,7 +268,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
-- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_terminal_warn_after` (5), `streak_max_warnings_per_turn` (3).
+- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 임계값을 덮어쓸 수 있습니다(terminal은 5 선언).
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
 수동 복구 치트시트:

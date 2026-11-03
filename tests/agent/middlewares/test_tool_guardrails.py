@@ -45,7 +45,7 @@ def _is_stagnant(gs, name, result_hash, is_idempotent):
     return any(rec.name == name and rec.result_hash == result_hash for rec in reversed(gs.records))
 
 
-def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=True):
+def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=True, tool=None):
     """Mimic production order: record appended BEFORE _evaluate (impl L263-272)."""
     is_stagnant = _is_stagnant(gs, name, result_hash, is_idempotent)
     gs.records.append(
@@ -57,7 +57,9 @@ def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=Tru
             is_stagnant=is_stagnant,
         )
     )
-    return mw._evaluate(gs, name, args_hash, result_hash, is_error, is_idempotent, is_stagnant)
+    return mw._evaluate(
+        gs, name, args_hash, result_hash, is_error, is_idempotent, is_stagnant, tool=tool
+    )
 
 
 IDEMPOTENT_TOOL = SimpleNamespace(metadata={"idempotent": True})
@@ -497,12 +499,21 @@ def test_signature_streak_resets_when_the_signature_changes():
     assert gs.last_pathology is None
 
 
-def test_terminal_signature_streak_uses_the_higher_threshold():
-    mw = make_mw(streak_warn_after=3, streak_terminal_warn_after=5)
+def test_terminal_signature_streak_uses_the_tools_metadata_threshold():
+    mw = make_mw(streak_warn_after=3)
     gs = mod._TurnGuardrailState()
+    terminal_tool = SimpleNamespace(metadata={"streak_warn_after": 5})
 
     actions = [
-        call(mw, gs, "terminal", "same-command", f"r{index}", is_idempotent=False)
+        call(
+            mw,
+            gs,
+            "terminal",
+            "same-command",
+            f"r{index}",
+            is_idempotent=False,
+            tool=terminal_tool,
+        )
         for index in range(5)
     ]
 

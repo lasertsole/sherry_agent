@@ -352,7 +352,14 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         self.root_dir = root_dir
         # Detect system encoding (Windows typically uses GBK/codepage 936)
         self._encoding = locale.getpreferredencoding() or "utf-8"
-        self.metadata = {"idempotent": False, "side_effect_scope": "system"}
+        #: ``streak_warn_after`` is tool-owned, not a ToolGuardrails special
+        #: case: rerunning the same test command can be a legitimate edit/verify
+        #: iteration, so terminal declares its own higher repeat threshold.
+        self.metadata = {
+            "idempotent": False,
+            "side_effect_scope": "system",
+            "streak_warn_after": 5,
+        }
 
     # ── Guards & helpers ────────────────────────────────────────────────────
 

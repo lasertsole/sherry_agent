@@ -306,7 +306,7 @@ Within a turn, the turn guards are orthogonal and fire in parallel: `OutputRepet
 - `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `sherry.jsonc`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
 - Workers get `OutputRepetitionGuard` as middleware; the main agent is wrapped by `RepetitionGuardWrapper` (middleware hooks do not see raw stream chunks).
 - `MaxTokensBoostMiddleware` is the one guard with an env knob: `MAIN_LLM_OUTPUT_MAX_TOKEN` (default 8192) sets the boost base read at import time; the cap (32768) and retry count (3) are code constants.
-- `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1), `streak_warn_after` (3), `streak_terminal_warn_after` (5), `streak_max_warnings_per_turn` (3).
+- `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3); a tool may override the threshold in its own metadata (terminal declares 5).
 - Announce delivery knobs (subagent announce config): `announce_retry_max=3` with 5s / 10s / 20s transient delays, plus `max_announce_retry_count=10` and a 24h run expiry.
 
 Manual recovery cheatsheet:

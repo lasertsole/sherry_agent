@@ -44,7 +44,6 @@ class ToolCallGuardrailConfig:
     arg_churn_warn_after: int = TOOL_GUARDRAILS["arg_churn_warn_after"]
     arg_churn_block_after: int = TOOL_GUARDRAILS["arg_churn_block_after"]
     streak_warn_after: int = TOOL_GUARDRAILS["streak_warn_after"]
-    streak_terminal_warn_after: int = TOOL_GUARDRAILS["streak_terminal_warn_after"]
     streak_max_warnings_per_turn: int = TOOL_GUARDRAILS["streak_max_warnings_per_turn"]
     recovery_mode_enabled: bool = TOOL_GUARDRAILS["recovery_mode_enabled"]
     recovery_max_violations: int = TOOL_GUARDRAILS["recovery_max_violations"]
@@ -164,14 +163,19 @@ class ToolGuardrails(AgentMiddleware):
             content.encode(errors="surrogateescape"), usedforsecurity=False
         ).hexdigest()
 
-    def _streak_threshold(self, tool_name: str) -> int:
-        """The signature-streak warning threshold for one tool.
+    def _streak_threshold(self, tool: Any, tool_name: str) -> int:
+        """The signature-streak warning threshold for one call.
 
-        Terminal is deliberately more tolerant: rerunning the same test command
-        is a legitimate edit/verify iteration. Other tools warn at 3.
+        A tool can own its tolerance in metadata (terminal declares 5 because
+        rerunning the same test command can be a legitimate edit/verify step);
+        otherwise the global default applies. The middleware never special-cases
+        a tool name.
         """
-        if tool_name == "terminal":
-            return self.config.streak_terminal_warn_after
+        metadata = getattr(tool, "metadata", None)
+        if isinstance(metadata, dict):
+            value = metadata.get("streak_warn_after")
+            if isinstance(value, int) and value > 0:
+                return value
         return self.config.streak_warn_after
 
     @staticmethod
@@ -198,6 +202,7 @@ class ToolGuardrails(AgentMiddleware):
         is_error: bool,
         is_idempotent: bool,
         is_stagnant: bool,
+        tool: Any | None = None,
     ) -> GuardrailAction:
         gs.last_pathology = None
         self._update_signature_streak(gs, tool_name, args_hash)
@@ -266,7 +271,7 @@ class ToolGuardrails(AgentMiddleware):
         # successful call repeated with the same args (a 403 body, the same
         # git log, the same search). Warn only when no stronger pathology fired.
         if action == GuardrailAction.ALLOW and self.config.warnings_enabled:
-            threshold = self._streak_threshold(tool_name)
+            threshold = self._streak_threshold(tool, tool_name)
             if (
                 gs.signature_streak >= threshold
                 and gs.streak_warning_count < self.config.streak_max_warnings_per_turn
@@ -473,7 +478,14 @@ class ToolGuardrails(AgentMiddleware):
             gs.records = gs.records[-_MAX_RECORDS:]
 
         action = self._evaluate(
-            gs, tool_name, args_digest, result_hash, is_error, is_idempotent, is_stagnant
+            gs,
+            tool_name,
+            args_digest,
+            result_hash,
+            is_error,
+            is_idempotent,
+            is_stagnant,
+            tool=request.tool,
         )
         self._save_state(session_id, gs)
 
