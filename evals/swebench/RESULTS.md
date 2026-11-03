@@ -114,3 +114,55 @@
      而不是继续全局探测；考虑在 70-80% 预算时注入一次强制的 `patch_file` /
      target-test checkpoint。
   4. DeepSWE 仍未运行（SWE 未全通过）。
+
+---
+
+## 20261103_203547 — 签名 BLOCK 后改用探针文件（0/1）
+
+- 目的：验证“警告预算用尽后拦截精确签名”是否终止同一 terminal 命令的重复。
+- 命令：`uv run --no-sync python evals/swebench/suite.py --hard sympy__sympy-20639 --persona coding --keep-instances --instance-cache-dir /tmp/swebench-instance-cache`
+- 结果：**0/1**；196.7s；96 次工具调用；90 次模型调用耗尽。
+- 观察：同一 terminal 命令在约 20 次时被精确签名 BLOCK；agent 随即改写
+  `probe1.py`…`probe19.py`，每次参数不同、输出逐字节相同，签名检测无法命中。
+  这些探针文件还被算进了 diff，`pretty.py` 一次都没改。
+- 修改建议：增加“非幂等工具连续返回相同结果”的检测（结果重复），并在
+  80% 预算注入一次收敛指令。
+
+---
+
+## 20261103_205218 — 结果重复 + 80% 收敛指令（0/1）
+
+- 目的：验证结果重复拦截和预算收敛指令。
+- 命令同上。
+- 结果：**0/1**；185.0s；91 次工具调用；90 次模型调用耗尽。
+- 观察：terminal 在第 10 次调用时因连续 6 次相同结果被 BLOCK；python_repl
+  在第 30 次时同样被 BLOCK；80% 指令在 72/90 时注入。agent 在第 72 次才
+  `patch_file`，但 terminal/python_repl 仍处于封锁状态，随后把剩余 18 次调用
+  花在 `read_file` 与已被拦截的 python_repl 之间，无法验证补丁。
+- 修改建议：成功的源码编辑（`patch_file` 的 `clears_guardrail_blocks` metadata）
+  应清空旧探针留下的所有 block/streak，让 agent 能验证新补丁；新建探针文件的
+  `write_file` 不携带该标记，不能重新打开循环。
+
+---
+
+## 20261103_210023 — 源码编辑解除拦截（0/1，收敛正常）
+
+- 目的：验证“patch_file 成功后解除拦截”能否让 agent 在预算内完成编辑→验证循环。
+- 命令同上。
+- 结果：**0/1**；92.4s；33 次工具调用；仅 28 次模型调用，未触发任何 ToolGuardrails
+  事件，也未耗尽预算。
+- 观察：agent 正常定位 `_print_Pow`，一次 patch 后主动运行 `test_pretty.py`；
+  P2P 通过，F2P 失败。补丁把根号路径限定为 `e.is_Rational` 或
+  `e.is_Pow and e.exp is S.NegativeOne and e.base is d`，修好了报告中的
+  `pi**(1/E)`（`exp(-1)` 不是 Pow），但没有处理 `pi**(1/pi)`、`pi**(1/EulerGamma)`。
+- F2P 分析：`test_issue_17616` 要求 NumberSymbol 分母（pi/E/EulerGamma）退回
+  指数记法，而 Symbol 分母（`7**(1/x_17)`）保留根号；test patch 同时把
+  `test_issue_6285` 中 `Pow(x, 1/pi)` 的旧期望（根号）改成指数记法。仓库里
+  现有的 `test_issue_6285` 断言的恰是**旧行为**，因此这个语义选择无法仅凭
+  issue + 现有测试推导出来；本轮失败是信息缺口/模型泛化不足，不是循环或预算。
+- 修改建议：
+  1. 若要让该实例可解，harness 需要在运行前暴露目标测试（或至少给出
+     NumberSymbol vs Symbol 的期望矩阵），否则模型只能猜维护者的语义选择。
+  2. 当前收敛链路已正常：签名拦截、结果重复拦截、80% 指令、编辑后解除拦截
+     都在对应场景生效；继续保留。
+  3. DeepSWE 仍未运行（SWE 未全通过）。

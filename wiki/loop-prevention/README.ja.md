@@ -50,8 +50,13 @@
 | ピンポン | 途切れない A → B → A → B の往復で、連続する 2 呼び出しがともに無進捗 | 4 | 6 | 6 で HALT |
 | 引数改変 | 同じ冪等ツールが、結果の変わらない引数バリアントを巡回 | 3 変種 | 5 変種 | 5 で HALT |
 | シグネチャ連続（ステータス非依存） | 同一ツール + 同一引数ハッシュの連続呼び出し。結果ステータスは問わない（terminal は 5） | 3（terminal: 5） | 警告予算を使い切った後、その正確なシグネチャ | 1 ターン最大 3 回 WARN、その後はその正確な呼び出しをターン終了までブロック。シグネチャ変更でリセット |
+| 結果反復（非冪等ツール） | 引数が変わり続けても同一ツールがバイト単位で同じ結果を連続返却（`probe1.py`、`probe2.py`…） | 3 | 6 | 6 で HALT |
 
 ネットワークコマンドの失敗はツールエラーへ橋渡しされます: `curl`/`wget`/`git fetch`/`git clone` などの非ゼロ終了は `ToolException` を投げ、`handle_tool_error` により `ToolMessage(status="error")` となって exact-failure カウンタに届きます。ローカルコマンド（pytest、コンパイラ、スクリプト）の非ゼロ終了は通常のテキスト（`status="success"`）のまま返り、agent は失敗を読んで反復できます。`web_fetch` の HTTP 4xx/5xx も同様に raise します。シグネチャ連続はもう一つの盲点（引数が同一で成功に見える繰り返し）を捉えます。`streak_max_warnings_per_turn` 回まで警告し、予算を使い切るとその正確なツール + 引数シグネチャをターン終了までブロックします。これにより、同一コマンドを再実行し続ける退化的なループが反復予算を食い尽くせなくなります。ブロックはそのシグネチャに限定され（他の引数やツールは利用可能）、リカバリモードもバイパスします（繰り返しブロックを一度限りの再試行として解放してはいけません）。
+
+**結果反復**はシグネチャ検出がまだ見逃すループを補います: 呼び出しごとに引数は変わるのに出力はバイト単位で同一、という形です。SWE 20261103_203547 の Sympy 実行が典型例で、agent は `probe1.py` から `probe19.py` を書き、毎回同じ `prettyForm` を出力しながら 90 回の予算を使い切り、ライブラリ本体には触れませんでした。検出器は非冪等ツールについて「ツールごとの連続同一結果」を数え（冪等ツールは既存の no-progress 連鎖が担当）、`result_repetition_warn_after` でツールごとに一度警告し、`result_repetition_block_after` でツール全体をブロックします。シグネチャブロック同様リカバリモードをバイパスし、ブロックはターン終了まで続きます。他のツール（書き込みツールを含む）は引き続き利用できるため、agent はぐるぐる回っていた変更を適用できます。
+
+**成功したソース編集はブロックを解除します**: `patch_file` は自身の metadata で `clears_guardrail_blocks` を宣言し、ToolGuardrails はその呼び出しが成功した時点で累積したブロック・シグネチャ・結果連続記録に加え、失敗/無進捗カウンタと呼び出し記録もすべて破棄します。ガードを作動させたプローブは編集前のファイルに答えたものなので、検証ツールをブロックしたままでは新しい候補をテストできません。一方、新しい `probeN.py` を作る `write_file` はこのフラグを持たないため、自分が属するループを再び開くことはできません。
 
 重要な詳細:
 
@@ -62,6 +67,8 @@
 ### ターンレベル: `IterationBudget`
 
 ターンごとに**モデル呼び出し**だけを 1 回 1 単位で数えます。ツール呼び出しのペアは合計 1 単位です——呼び出しを行う `AIMessage` を生成したモデル呼び出しで、`ToolMessage` の結果は無料です。`HumanMessage` / `SystemMessage` / 注入された system-reminder 自体は消費せず、続くモデル呼び出しだけが消費します。メインエージェントと executor サブエージェントは 90、その他のワーカーエージェントは 60 (ベースデフォルト 50)。予算が尽きたモデル呼び出しは**モデルを呼ばずに**ターミナル AIMessage を返すので、最後にツールを要求した AIMessage のツール呼び出しと結果は最後まで実行されます(ペアを壊しません)。内部の完了通知ターンは免除されます(反復回数を消費しません)。カウンタ(`iteration_budget` / `iteration_budget_used`)は毎ターン リセットされます。
+
+`budget_warning_ratio`（デフォルト 0.8）に達すると、ミドルウェアはリクエスト限りの `[SYSTEM DIRECTIVE: ITERATION BUDGET]` メッセージを**1 回だけ**モデルビューに追加します（永続化はされません）。使用済み/残り呼び出し数を示し、探索をやめて最小限の防御可能な変更を適用し、対象テストを実行し、結果が既知の実験を繰り返さないよう指示します。ターンごとのラッチで 1 回に抑えられ、ツールをブロックすることはなく、予算 100% では従来どおりターンが終了します。
 
 ### ターンレベル: `DelegationPressureGate`（メインエージェント専用）
 
@@ -269,7 +276,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` でデフォルト 5) は現在**ドキュメント専用**です: これを消費するコードはありません。実際に有効なツール別の上限は定数です(web 検索 15s、ターミナル 30s、python REPL 30s)。これをループ境界として当てにしないでください。
 - ワーカーはミドルウェアとして `OutputRepetitionGuard` を受け取り、メインエージェントは `RepetitionGuardWrapper` でラップされます(ミドルウェアフックは生のストリームチャンクを見えません)。
 - `MaxTokensBoostMiddleware` は環境変数ノブを持つ唯一のガードです: `MAIN_LLM_OUTPUT_MAX_TOKEN`(デフォルト 8192)がインポート時に読まれブーストの base になります; 上限(32768)とリトライ回数(3)はコード定数です。
-- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)、`streak_warn_after` (3)、`streak_max_warnings_per_turn` (3)。ツールは自身の metadata でしきい値を上書きできます(terminal は 5 を宣言)。警告予算を使い切ると、その正確な繰り返しツール + 引数シグネチャはターン終了まで BLOCK されます(異なる引数バリアントは引き続き許可)。
+- `ToolGuardrails` のノブ: `warnings_enabled` (デフォルト True)、`hard_stop_enabled` (デフォルト False、BLOCK はブロックのまま)、`recovery_mode_enabled` (デフォルト True)、`recovery_max_violations` (デフォルト 1)、`streak_warn_after` (3)、`streak_max_warnings_per_turn` (3)。ツールは自身の metadata で署名しきい値を上書きできます(terminal は 5 を宣言)。警告予算を使い切ると、その正確な繰り返しツール + 引数シグネチャはターン終了まで BLOCK されます(異なる引数バリアントは引き続き許可)。`result_repetition_warn_after`(3) と `result_repetition_block_after`(6) が結果反復を、`IterationBudget.budget_warning_ratio`(0.8) が一度きりの収束指令を制御します。
 - Announce 配送のノブ (サブエージェント announce 設定): 5s / 10s / 20s の一時的遅延を伴う `announce_retry_max=3`、さらに `max_announce_retry_count=10` と 24 時間の run 失効。
 
 手動回復のチートシート:

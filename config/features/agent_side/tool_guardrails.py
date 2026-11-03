@@ -19,6 +19,14 @@ class ToolGuardrailsConfig(TypedDict):
     arg_churn_min_calls_per_variant: int
     arg_churn_warn_after: int
     arg_churn_block_after: int
+    #: Result-level repetition for NON-idempotent tools: the same tool returns
+    #: an identical result hash across different calls (which the signature
+    #: streak cannot see, because the arguments differ). Idempotent tools already
+    #: use the no-progress chain. Once the block threshold is crossed the whole
+    #: tool is blocked for the rest of the turn; recovery mode deliberately does
+    #: not release it, because releasing it only feeds the same loop.
+    result_repetition_warn_after: int
+    result_repetition_block_after: int
     #: Signature-level repetition (same tool + same stable args, regardless of
     #: result status). The first ``streak_max_warnings_per_turn`` streaks WARN
     #: and reset; once that budget is spent the exact signature is BLOCKED for
@@ -45,6 +53,8 @@ TOOL_GUARDRAILS: ToolGuardrailsConfig = {
     "ping_pong_block_after": 6,
     "arg_churn_min_calls_per_variant": 3,
     "arg_churn_warn_after": 3,
+    "result_repetition_warn_after": 3,
+    "result_repetition_block_after": 6,
     "arg_churn_block_after": 5,
     "streak_warn_after": 3,
     "streak_max_warnings_per_turn": 3,

@@ -50,8 +50,13 @@
 | 乒乓 | 不间断的 A → B → A → B 往返，且相邻两次调用均无进展 | 4 | 6 | 6 次时 HALT |
 | 参数翻新 | 同一幂等工具轮换参数变体但结果不变（无进展） | 3 种变体 | 5 种变体 | 5 种时 HALT |
 | 签名连击（不看状态） | 同一工具 + 相同参数哈希连续重复，无论结果状态（terminal 用 5） | 3（terminal：5） | 警告预算用尽后，拦截该精确签名 | 每回合最多 WARN 3 次；随后该精确调用在本回合剩余时间内被拦截，签名变化会重置连击 |
+| 结果重复（非幂等工具） | 同一工具在参数不断变化时连续返回逐字节相同的结果（`probe1.py`、`probe2.py`……） | 3 | 6 | 6 次时 HALT |
 
 网络命令失败现在会桥接为工具错误：`curl`/`wget`/`git fetch`/`git clone` 等非零退出码会 raise `ToolException`，经 `handle_tool_error` 变成 `ToolMessage(status="error")`，让 exact-failure 计数生效。本地命令（pytest、编译器、脚本）的非零退出仍作为普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch` 的 HTTP 4xx/5xx 同样 raise。签名连击补上另一个盲区：参数完全相同、结果看似成功的重复。它最多警告 `streak_max_warnings_per_turn` 次；预算用尽后，该精确的工具 + 参数签名会在本回合剩余时间内被拦截，因此反复重跑同一条命令的退化循环无法耗尽整个迭代预算。拦截只作用于该签名——其他参数和工具仍然可用——且绕过恢复模式（重复拦截不应被当作一次性重试放行）。
+
+**结果重复**补上签名检测仍看不到的循环：参数每次都在变，输出却逐字节相同。SWE 20261103_203547 的 Sympy 运行就是典型：agent 写了 `probe1.py` 到 `probe19.py`，每次打印同一个 `prettyForm`，耗尽 90 次调用却没碰库代码。检测器对非幂等工具维护“每工具连续相同结果”的计数（幂等工具已由 no-progress 链覆盖），达到 `result_repetition_warn_after` 时每工具警告一次，达到 `result_repetition_block_after` 时拦截整个工具；与签名拦截一样绕过恢复模式，拦截持续到本回合结束。其他工具（包括写工具）仍然可用，agent 仍能完成它一直绕圈的那次修改。
+
+**成功的源码编辑会解除这些拦截**：`patch_file` 在自己的 metadata 中声明 `clears_guardrail_blocks`，ToolGuardrails 在该调用成功时清空所有已累计的拦截、签名、结果连击，以及失败/无进展计数与调用记录。触发护栏的探针是由编辑前的旧文件回答的，继续封锁验证工具只会让 agent 无法测试新候选；而新建 `probeN.py` 的 `write_file` 不携带该标记，因此无法重新打开它自己所在的循环。
 
 值得注意的细节：
 
@@ -62,6 +67,8 @@
 ### 回合级：`IterationBudget`
 
 每回合只计**模型调用**，每次 1 单位。一次工具调用对只算 1 单位：产生该调用 `AIMessage` 的那次模型调用；其 `ToolMessage` 结果免费。`HumanMessage` / `SystemMessage` / 注入的 system-reminder 本身不计次——只有随后的模型调用才计。主 Agent 与执行者（executor）90 次，其他 worker Agent 60 次（基础默认 50）。预算耗尽时，模型调用**不再调用模型**、直接返回终止 AIMessage；因此最后一条已请求工具的 AIMessage 仍会完整执行其工具调用并拿到 ToolMessage（成对不拆）。内部完成通知回合豁免（不消耗迭代次数）。计数器（`iteration_budget` / `iteration_budget_used`）每回合重置。
+
+达到 `budget_warning_ratio`（默认 0.8）时，中间件向模型视图追加**一次**仅请求可见的 `[SYSTEM DIRECTIVE: ITERATION BUDGET]` 消息（绝不持久化），写明已用/剩余调用数，并要求模型停止探索、应用最小可辩护的修改、运行目标测试、不要重复已知结果的实验。每回合的闩锁保证只注入一次；该指令从不拦截工具，预算到 100% 仍会正常结束回合。
 
 ### 回合级：`DelegationPressureGate`（仅主 Agent）
 
@@ -265,7 +272,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
-- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）；工具可用自己的 metadata 覆盖阈值（terminal 声明 5）。警告预算用尽后，该精确的重复工具 + 参数签名在本回合剩余时间内被 BLOCK；不同参数变体仍然允许。
+- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）、`result_repetition_warn_after`（3）、`result_repetition_block_after`（6）；工具可用自己的 metadata 覆盖签名阈值（terminal 声明 5）。警告预算用尽后，该精确的重复工具 + 参数签名在本回合剩余时间内被 BLOCK；不同参数变体仍然允许。`IterationBudget` 另有 `budget_warning_ratio`（0.8）控制一次性收敛指令。
 - Announce 投递旋钮（子 Agent announce 配置）：`announce_retry_max=3` 配 5s / 10s / 20s 瞬态延迟，另有 `max_announce_retry_count=10` 和 24 小时 run 过期。
 
 手动恢复速查表：

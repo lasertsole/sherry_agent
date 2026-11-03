@@ -2508,11 +2508,25 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   status-blind signature streak (3 identical tool+args calls; terminal declares 5
   in its own metadata) that WARNs up to 3 times per turn and then BLOCKs that
   exact signature for the rest of the turn — other argument variants and tools
-  stay available, and the block deliberately bypasses recovery mode — and
-  its failure path sees network-command errors: terminal `curl`/`wget`/`git
-  fetch` non-zero exits and `web_fetch` HTTP 4xx/5xx raise `ToolException`
-  (`status="error"`), while local test/compile failures keep returning their
-  output with `status="success"`.
+  stay available, and the block deliberately bypasses recovery mode. A second
+  status-blind detector closes the loop the signature streak cannot see: a
+  NON-idempotent tool returning a byte-identical result across consecutive
+  calls whose arguments DIFFER (the Sympy `probe1.py`…`probe19.py` loop) warns
+  once per tool at `result_repetition_warn_after` (3) and blocks the whole tool
+  at `result_repetition_block_after` (6), also bypassing recovery mode. A
+  successful call whose tool metadata declares `clears_guardrail_blocks`
+  (`patch_file`) clears every accumulated block/signature/result streak plus
+  the failure/no-progress counters and call records: the
+  old probes answered the pre-edit file, so verification must be possible
+  again. A scratch `write_file` (a new probe file) does NOT carry the flag.
+  `IterationBudget` adds a one-shot request-only convergence directive at
+  `budget_warning_ratio` (0.8): `[SYSTEM DIRECTIVE: ITERATION BUDGET]` names
+  the calls used/remaining and tells the model to stop exploring, apply its
+  candidate change and run the target tests. It is never persisted and never
+  blocks a tool. ToolGuardrails' failure path also sees network-command errors:
+  terminal `curl`/`wget`/`git fetch` non-zero exits and `web_fetch` HTTP 4xx/5xx
+  raise `ToolException` (`status="error"`), while local test/compile failures
+  keep returning their output with `status="success"`.
 - TaskFlow orphan collection is an **unreferenced-flow GC plus liveness** (v3),
   replacing the per-scenario fixes: every
   `taskflow_flow(action="create")`/`taskflow_flow(action="plan")` binds a

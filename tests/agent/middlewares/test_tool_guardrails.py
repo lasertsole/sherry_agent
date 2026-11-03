@@ -45,7 +45,17 @@ def _is_stagnant(gs, name, result_hash, is_idempotent):
     return any(rec.name == name and rec.result_hash == result_hash for rec in reversed(gs.records))
 
 
-def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=True, tool=None):
+def call(
+    mw,
+    gs,
+    name,
+    args_hash,
+    result_hash,
+    is_error=False,
+    is_idempotent=True,
+    tool=None,
+    output_hash=None,
+):
     """Mimic production order: record appended BEFORE _evaluate (impl L263-272)."""
     is_stagnant = _is_stagnant(gs, name, result_hash, is_idempotent)
     gs.records.append(
@@ -58,7 +68,15 @@ def call(mw, gs, name, args_hash, result_hash, is_error=False, is_idempotent=Tru
         )
     )
     return mw._evaluate(
-        gs, name, args_hash, result_hash, is_error, is_idempotent, is_stagnant, tool=tool
+        gs,
+        name,
+        args_hash,
+        result_hash,
+        is_error,
+        is_idempotent,
+        is_stagnant,
+        tool=tool,
+        output_hash=output_hash,
     )
 
 
@@ -609,6 +627,163 @@ def test_signature_block_covers_only_the_repeated_arguments():
 
     # A different argument variant stays available.
     assert mw._wrap_tool_call_precheck(_mkreq(ses, "web_search", {"q": "other"}, "c8")) is None
+
+
+def test_result_repetition_warns_once_then_blocks_the_tool():
+    mw = make_mw(result_repetition_warn_after=3, result_repetition_block_after=6)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        call(
+            mw,
+            gs,
+            "terminal",
+            f"probe-{index}",
+            None,
+            is_idempotent=False,
+            output_hash="same-output",
+        )
+        for index in range(6)
+    ]
+
+    assert actions[:2] == [ALLOW, ALLOW]
+    assert actions[2] == WARN
+    assert actions[3:5] == [ALLOW, ALLOW]
+    assert actions[5] == BLOCK
+    assert "terminal" in gs.blocked_tools
+    assert gs.recovery_mode is False
+
+
+def test_result_repetition_resets_when_the_result_changes():
+    mw = make_mw(result_repetition_warn_after=3, result_repetition_block_after=6)
+    gs = mod._TurnGuardrailState()
+
+    actions = [
+        call(
+            mw,
+            gs,
+            "terminal",
+            f"probe-{index}",
+            None,
+            is_idempotent=False,
+            output_hash=f"output-{index}",
+        )
+        for index in range(6)
+    ]
+
+    assert actions == [ALLOW] * 6
+    assert gs.result_repetition_streaks["terminal"] == 1
+
+
+def test_wrap_result_repetition_blocks_the_tool_channel():
+    mw = make_mw(result_repetition_warn_after=3, result_repetition_block_after=6)
+    ses = "sess-result-repetition"
+
+    outputs = [
+        wrap_call(
+            mw,
+            ses,
+            "terminal",
+            {"commands": f"python probe{index}.py"},
+            "identical output",
+            f"c{index}",
+            tool=NON_IDEMPOTENT_TOOL,
+        )
+        for index in range(6)
+    ]
+
+    assert "repeated identical result" in outputs[2].content
+    assert outputs[2].status == "success"
+    assert "repeated identical result" in outputs[5].content
+    assert outputs[5].status == "error"
+
+    gs = mw._get_state(ses)
+    assert "terminal" in gs.blocked_tools
+    assert gs.recovery_mode is False
+    blocked = mw._wrap_tool_call_precheck(
+        _mkreq(ses, "terminal", {"commands": "python probe7.py"}, "c7")
+    )
+    assert blocked is not None
+    assert blocked.status == "error"
+
+
+def test_successful_source_edit_clears_stale_blocks():
+    mw = make_mw(result_repetition_warn_after=3, result_repetition_block_after=6)
+    ses = "sess-progress-clears"
+    for index in range(6):
+        wrap_call(
+            mw,
+            ses,
+            "terminal",
+            {"commands": f"python probe{index}.py"},
+            "identical output",
+            f"c{index}",
+            tool=NON_IDEMPOTENT_TOOL,
+        )
+
+    gs = mw._get_state(ses)
+    assert "terminal" in gs.blocked_tools
+    assert gs.result_repetition_streaks
+
+    patcher = SimpleNamespace(
+        metadata={
+            "idempotent": False,
+            "side_effect_scope": "workspace",
+            "clears_guardrail_blocks": True,
+        }
+    )
+    edited = wrap_call(
+        mw,
+        ses,
+        "patch_file",
+        {"file_path": "m.py", "old_string": "a", "new_string": "b"},
+        '{"success": true, "path": "/m.py"}',
+        "p1",
+        tool=patcher,
+    )
+
+    assert edited.status == "success"
+    assert gs.blocked_tools == set()
+    assert gs.blocked_signatures == set()
+    assert "terminal" not in gs.result_repetition_streaks
+    # The pre-edit failure/no-progress counters and records are gone too, so the
+    # first failure of the new candidate does not immediately re-block.
+    assert gs.exact_failure_counts == {}
+    assert gs.no_progress_counts == {}
+    assert [rec.name for rec in gs.records] == ["patch_file"]
+    assert gs.recovery_mode is False
+    # Verification is possible again after the edit.
+    assert (
+        mw._wrap_tool_call_precheck(_mkreq(ses, "terminal", {"commands": "verify.py"}, "c9"))
+        is None
+    )
+
+
+def test_scratch_write_does_not_clear_blocks():
+    mw = make_mw(result_repetition_warn_after=3, result_repetition_block_after=6)
+    ses = "sess-scratch-no-clear"
+    for index in range(6):
+        wrap_call(
+            mw,
+            ses,
+            "terminal",
+            {"commands": f"python probe{index}.py"},
+            "identical output",
+            f"c{index}",
+            tool=NON_IDEMPOTENT_TOOL,
+        )
+
+    wrap_call(
+        mw,
+        ses,
+        "write_file",
+        {"file_path": "probe20.py", "text": "print(1)"},
+        '{"success": true, "path": "/probe20.py", "isNew": true}',
+        "w1",
+        tool=NON_IDEMPOTENT_TOOL,
+    )
+
+    assert "terminal" in mw._get_state(ses).blocked_tools
 
 
 def test_args_hash_is_independent_of_key_order():

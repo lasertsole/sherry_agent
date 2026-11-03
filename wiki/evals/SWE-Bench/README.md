@@ -36,6 +36,9 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-01 174750 | soft gate (8/16, cumulative) | 2/2 clean | Main was read/write-blocked after 16 reads and delegated the implementation |
 | 2026-11-03 010944 | 7/14 advisory (cumulative) | 0/2 | Django's condition-only change still failed the unique constraint; Sympy produced no diff and exhausted the 90-call budget |
 | 2026-11-03 194320 | network bridge + signature streak (Sympy only) | 0/1 | Non-empty diff, but `test_pretty_sqrt` P2P regressed; streak stayed WARN-only and the 90-call budget was exhausted |
+| 2026-11-03 203547 | + exact-signature block (Sympy only) | 0/1 | The repeat blocked at ~20 calls, but the agent switched to `probe1.py`…`probe19.py` (same output, different args) and still exhausted 90 calls |
+| 2026-11-03 205218 | + result repetition + 80% directive (Sympy only) | 0/1 | terminal/python_repl blocked at 6 identical results; the 80% directive fired, but the agent patched at 72/90 and could no longer run verification |
+| 2026-11-03 210023 | + blocks released by a successful `patch_file` (Sympy only) | 0/1 | Clean 28-call run, no guardrail trip; P2P passed, F2P missed the hidden NumberSymbol-vs-Symbol semantics (the repo's existing `test_issue_6285` asserts the OLD behavior) |
 
 ## Problems exposed
 

@@ -50,8 +50,13 @@
 | 핑퐁 | 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진전 | 4 | 6 | 6에서 HALT |
 | 인자 갱신 | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환 | 3개 변형 | 5개 변형 | 5에서 HALT |
 | 시그니처 연속(상태 무관) | 같은 도구 + 같은 인자 해시의 연속 호출. 결과 상태와 무관(terminal은 5) | 3(terminal: 5) | 경고 예산 소진 후 해당 정확한 시그니처 | 턴당 최대 3회 WARN, 이후 그 정확한 호출을 턴이 끝날 때까지 차단. 시그니처가 바뀌면 리셋 |
+| 결과 반복(비멱등 도구) | 인자는 계속 바뀌는데 같은 도구가 바이트 단위로 동일한 결과를 연속 반환(`probe1.py`, `probe2.py`…) | 3 | 6 | 6에서 HALT |
 
 네트워크 명령 실패는 이제 도구 오류로 연결됩니다: `curl`/`wget`/`git fetch`/`git clone` 등의 비영 종료는 `ToolException`을 발생시켜 `handle_tool_error`가 `ToolMessage(status="error")`를 만들고 exact-failure 카운터가 인식합니다. 로컬 명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로 반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도 동일하게 raise합니다. 시그니처 연속은 또 다른 사각지대(인자가 같고 성공처럼 보이는 반복)를 잡습니다. `streak_max_warnings_per_turn`회까지 경고하고, 예산을 다 쓰면 그 정확한 도구 + 인자 시그니처를 턴이 끝날 때까지 차단합니다. 따라서 같은 명령을 계속 재실행하는 퇴화 루프가 전체 반복 예산을 소진할 수 없습니다. 차단은 해당 시그니처에만 적용되며(다른 인자와 도구는 계속 사용 가능), 복구 모드를 우회합니다(반복 차단을 일회성 재시도로 풀어서는 안 됩니다).
+
+**결과 반복**은 시그니처 탐지가 아직 놓치는 루프를 보완합니다: 호출마다 인자는 바뀌지만 출력은 바이트 단위로 동일한 경우입니다. SWE 20261103_203547의 Sympy 실행이 대표적입니다 — agent는 `probe1.py`부터 `probe19.py`까지 작성해 매번 같은 `prettyForm`을 출력하면서 90회 예산을 모두 쓰고 라이브러리 코드는 건드리지 않았습니다. 탐지기는 비멱등 도구에 대해 '도구별 연속 동일 결과'를 세고(멱등 도구는 기존 no-progress 체인이 담당), `result_repetition_warn_after`에서 도구별로 한 번 경고하며, `result_repetition_block_after`에서 도구 전체를 차단합니다. 시그니처 차단과 마찬가지로 복구 모드를 우회하고 턴이 끝날 때까지 유지됩니다. 다른 도구(쓰기 도구 포함)는 계속 사용할 수 있으므로 agent는 맴돌던 변경을 적용할 수 있습니다.
+
+**성공한 소스 편집은 차단을 해제합니다**: `patch_file`은 자체 metadata에 `clears_guardrail_blocks`를 선언하고, ToolGuardrails는 그 호출이 성공하면 누적된 모든 차단·시그니처·결과 연속 기록과 실패/무진전 카운터 및 호출 기록을 지웁니다. 가드를 작동시킨 프로브는 편집 전 파일이 답한 것이므로, 검증 도구를 계속 차단하면 agent가 새 후보를 테스트할 수 없습니다. 반면 새 `probeN.py`를 만드는 `write_file`은 이 플래그가 없어 자신이 속한 루프를 다시 열 수 없습니다.
 
 중요한 세부 사항:
 
@@ -62,6 +67,8 @@
 ### 턴 수준: `IterationBudget`
 
 턴당 **모델 호출**만 1회 1단위로 셉니다. 도구 호출 쌍은 총 1단위입니다——호출을 담은 `AIMessage`를 만든 모델 호출이며, `ToolMessage` 결과는 무료입니다. `HumanMessage` / `SystemMessage` / 주입된 system-reminder 자체는 소모하지 않고, 뒤따르는 모델 호출만 소모합니다. 메인 에이전트와 executor 서브에이전트는 90, 그 외 워커 에이전트는 60 (기본값 50). 소진된 모델 호출은 **모델을 호출하지 않고** 터미널 AIMessage를 반환하므로, 마지막으로 도구를 요청한 AIMessage의 도구 호출과 결과는 끝까지 실행됩니다(쌍을 깨지 않음). 내부 완료 통지 턴은 면제됩니다(반복을 소모하지 않음). 카운터(`iteration_budget` / `iteration_budget_used`)는 매 턴 리셋됩니다.
+
+`budget_warning_ratio`(기본 0.8)에 도달하면 미들웨어가 요청에만 보이는 `[SYSTEM DIRECTIVE: ITERATION BUDGET]` 메시지를 **한 번** 모델 뷰에 추가합니다(영속화되지 않음). 사용/남은 호출 수를 알리고, 탐색을 멈추고 최소한의 방어 가능한 변경을 적용하며 대상 테스트를 실행하고 결과를 이미 아는 실험을 반복하지 말라고 지시합니다. 턴별 래치로 한 번만 주입되며 도구를 차단하지 않고, 예산 100%에서는 기존처럼 턴이 종료됩니다.
 
 ### 턴 수준: `DelegationPressureGate`(메인 에이전트 전용)
 
@@ -268,7 +275,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
-- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 임계값을 덮어쓸 수 있습니다(terminal은 5 선언). 경고 예산을 다 쓰면 그 정확한 반복 도구 + 인자 시그니처가 턴이 끝날 때까지 BLOCK됩니다(다른 인자 변형은 계속 허용).
+- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 시그니처 임계값을 덮어쓸 수 있습니다(terminal은 5 선언). 경고 예산을 다 쓰면 그 정확한 반복 도구 + 인자 시그니처가 턴이 끝날 때까지 BLOCK됩니다(다른 인자 변형은 계속 허용). `result_repetition_warn_after`(3)와 `result_repetition_block_after`(6)가 결과 반복을, `IterationBudget.budget_warning_ratio`(0.8)가 일회성 수렴 지시를 제어합니다.
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
 수동 복구 치트시트:
