@@ -69,6 +69,14 @@ def _isolated_catalog(monkeypatch):
             only_if_changed=True,
             transient=True,
         ),
+        "epsilon": ReminderSource(
+            source_id="epsilon",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=lambda sid, state: state.get("epsilon_text"),
+            priority=60,
+            budget_chars=100,
+            compress_exclude=False,
+        ),
     }
     monkeypatch.setattr(dynamic_mod, "_TURN_COUNTS", {})
     import agent.middlewares.reminder_catalog.core as core_mod
@@ -229,12 +237,27 @@ class TestWrapping:
     def test_the_metadata_contract_identifies_a_reminder(self):
         meta = system_reminder_metadata("todo_block")
 
-        assert meta == {"origin": "todo_block", "internal": True, "provenance": "reminder_catalog"}
+        assert meta == {
+            "origin": "todo_block",
+            "internal": True,
+            "provenance": "reminder_catalog",
+            "compress_exclude": True,
+        }
         msg = HumanMessage(content="x", metadata=meta)
         assert is_system_reminder(msg) is True
         # Other internal carriers are NOT reminders.
         assert is_system_reminder(HumanMessage(content="x", metadata={"internal": True})) is False
         assert is_system_reminder(HumanMessage(content="x")) is False
+
+    def test_the_real_catalog_keeps_continuity_for_compression(self, _isolated_catalog):
+        real = _isolated_catalog["real"]
+
+        assert real["continuity_context"].compress_exclude is False
+        assert all(
+            source.compress_exclude
+            for source_id, source in real.items()
+            if source_id != "continuity_context"
+        ), "every other live view is re-derived and excluded from summaries"
 
 
 class TestMiddleware:
@@ -263,6 +286,18 @@ class TestMiddleware:
         assert origins == ["beta", "alpha"], "low priority first, high priority last in the block"
         assert all(m.metadata["provenance"] == "reminder_catalog" for m in reminders)
         assert reminders[-1].content.startswith('<system-reminder source="alpha">')
+
+    @pytest.mark.asyncio
+    async def test_injection_stamps_the_sources_compress_policy(self):
+        mw = DynamicReminderMiddleware()
+        state = self._state(HumanMessage(content="hi"))
+
+        out = await mw.abefore_model({**state, "alpha_text": "A", "epsilon_text": "E"})
+
+        assert out is not None
+        by_origin = {m.metadata["origin"]: m.metadata for m in out["messages"][1:-1]}
+        assert by_origin["alpha"]["compress_exclude"] is True
+        assert by_origin["epsilon"]["compress_exclude"] is False
 
     @pytest.mark.asyncio
     async def test_a_mid_turn_call_injects_nothing(self):

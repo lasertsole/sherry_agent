@@ -40,6 +40,8 @@ todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuati
 
 **如何理解频率。** `cooldown_turns = 0` 表示*每轮都符合条件*——只要内容自上次注入后发生了变化就重新注入；内容很少变化的来源（如 `project_instructions`）尽管每轮都符合条件，实际注入很少；而内容经常变化的来源（如 `todo_block`）多数轮次都会注入。`cooldown_turns = 5`（TaskFlow 看板、boulder）表示*至多每 5 轮一次*，且仅在内容也确有变化时；未变化的看板即便本可注入，也会静默 5 轮。节流状态只为**真正注入过**的来源推进，被抑制的来源不会"白白消耗"冷却。
 
+**压缩过滤。** 每个 source 声明 `compress_exclude`（默认 `True`）；`DynamicReminderMiddleware` 把它写入消息 metadata，`_filter_summary_messages` 在构建摘要 prompt 前丢弃这些 reminder。live view 每轮都会重新派生，压缩前的快照就是噪音；`continuity_context` 是唯一设置 `compress_exclude=False` 的 source，序列化为 `[Continuity]`。标签出现前注入的旧 reminder 没有该键，继续走旧行为。真实用户轮次由 `pub.func.message.classify.is_user_message`（`metadata.origin == "user"`，fail-closed）识别，因此注入的 HumanMessage 在摘要里永远不会被标成 `[User]`。
+
 **跨轮持久化。** 非 transient 的提醒是转录中的 `HumanMessage`；中间件每轮做 whole-list rewrite 时通过 `messages[:-1]` 原样重发，所以它会留在上下文窗口里直到压缩把它丢弃（压缩后 `reset_session` 清除变化检测 hash，下一轮从 live state 重新注入）。**Transient 来源**（`transient=True`）是例外：在它未被重新解析的轮次，rewrite 会从 `messages[:-1]` 中剥掉旧提醒，因此 `project_instructions` 只在内容变化的那一轮（以及压缩后的第一轮）出现。模型读一次即可，不会占据后续每一轮。
 
 **注入触发链。** 一个来源要在某一轮被注入，必须按顺序通过以下每一道关卡（`core.py` 的 `resolve_injections` + `dynamic.py` 的中间件门）：

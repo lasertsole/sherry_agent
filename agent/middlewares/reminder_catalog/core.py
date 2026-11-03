@@ -78,6 +78,10 @@ class ReminderSource:
         on turns it is not re-resolved, so it only occupies context on the turn
         its content changed (and the first turn after a compaction). Use for
         large, semi-stable payloads (project_instructions).
+    :param compress_exclude: When True, a summarization pass drops this
+        reminder before feeding the messages to the summarizer. Reminders are
+        re-derived from live state every turn, so an old snapshot is noise in a
+        summary; a source that carries cross-turn continuity opts out.
     """
 
     source_id: str
@@ -90,6 +94,7 @@ class ReminderSource:
     is_meta: bool = True
     tags: tuple[str, ...] = field(default_factory=tuple)
     transient: bool = False
+    compress_exclude: bool = True
 
 
 #: Registered sources by id (registration order is not significant: the

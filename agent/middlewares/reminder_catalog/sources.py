@@ -97,6 +97,9 @@ def register_default_sources() -> None:
             budget_chars=1000,
             priority=65,
             only_if_changed=True,
+            # Cross-turn continuity is still useful after a compaction; the
+            # other live views are re-derived and should not reach the summary.
+            compress_exclude=False,
         )
     )
     register(

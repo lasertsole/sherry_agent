@@ -54,6 +54,27 @@ Two registrations exist:
 
 Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`).
 
+### Summary input filtering
+
+The summarizer never sees the live reminder layer's stale snapshots.
+`_filter_summary_messages` drops (a) the previous summary pair
+(`lc_source="summarization"`) and (b) catalog reminders whose source declared
+`compress_exclude` (the default: plan mode, todo, TaskFlow, boulder, project
+instructions, directory notice, knowledge index). Their content was a snapshot
+of the injection turn and the next turn rebuilds it from live state, so it is
+noise in a summary. `continuity_context` declares `compress_exclude=False` and
+stays; reminders injected before the tag existed carry no key and keep the
+legacy behavior.
+
+The serializer labels a HumanMessage `[User]` only when
+`pub.func.message.classify.is_user_message` is true — a positive, fail-closed
+check of `metadata.origin == "user"`. A surviving `compress_exclude=False`
+reminder is `[Continuity]`; every other injected HumanMessage (workspace
+notice, continuation directive, subagent completion, task-intent steering,
+cron result) is `[System notice]`. The static fallback and
+`_latest_human_eviction_ref` use the same test, so an injected carrier can
+never become the summary's Goal or the latest user request.
+
 ## 🪙 Token Estimation (No Tokenizer)
 
 `pub/func/estimate_tokens.py` (230 lines) is deliberately tokenizer-free and deterministic, with a three-tier fallback:

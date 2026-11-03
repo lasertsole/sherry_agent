@@ -373,7 +373,11 @@ class TestLatestRequestVerbatimAndEviction:
         model = _StubModel(structured=SummaryDoc(latest_user_request=self._LONG))
         mw = summarization_module.Summarization(model=model)
         messages = [
-            HumanMessage(content=self._LONG, additional_kwargs={EVICTED_TO_KEY: evicted_to}),
+            HumanMessage(
+                content=self._LONG,
+                metadata={"origin": "user"},
+                additional_kwargs={EVICTED_TO_KEY: evicted_to},
+            ),
             AIMessage(content="working on it"),
         ]
 
@@ -398,9 +402,17 @@ class TestLatestRequestVerbatimAndEviction:
         model = _StubModel(structured=SummaryDoc(latest_user_request=last_text))
         mw = summarization_module.Summarization(model=model)
         messages = [
-            HumanMessage(content=first_text, additional_kwargs={EVICTED_TO_KEY: "/evicted/a.md"}),
-            HumanMessage(content=second_text, additional_kwargs={EVICTED_TO_KEY: "/evicted/b.md"}),
-            HumanMessage(content=last_text),
+            HumanMessage(
+                content=first_text,
+                metadata={"origin": "user"},
+                additional_kwargs={EVICTED_TO_KEY: "/evicted/a.md"},
+            ),
+            HumanMessage(
+                content=second_text,
+                metadata={"origin": "user"},
+                additional_kwargs={EVICTED_TO_KEY: "/evicted/b.md"},
+            ),
+            HumanMessage(content=last_text, metadata={"origin": "user"}),
         ]
 
         doc = mw._create_summary(messages, session_id=sid)
@@ -423,7 +435,10 @@ class TestLatestRequestVerbatimAndEviction:
         monkeypatch.setattr(summarization_module, "resolve_active_plan", lambda _sid: None)
         model = _StubModel(structured=SummaryDoc(latest_user_request="plain question"))
         mw = summarization_module.Summarization(model=model)
-        doc = mw._create_summary([HumanMessage(content="plain question")], session_id=sid)
+        doc = mw._create_summary(
+            [HumanMessage(content="plain question", metadata={"origin": "user"})],
+            session_id=sid,
+        )
         assert isinstance(doc, SummaryDoc)
         assert doc.latest_user_request == "plain question"
         assert "evicted to" not in render_summary_markdown(doc)
@@ -434,7 +449,11 @@ class TestLatestRequestVerbatimAndEviction:
         model = _StubModel(structured=SummaryDoc(latest_user_request=self._LONG))
         mw = summarization_module.Summarization(model=model)
         messages = [
-            HumanMessage(content=self._LONG, additional_kwargs={EVICTED_TO_KEY: evicted_to}),
+            HumanMessage(
+                content=self._LONG,
+                metadata={"origin": "user"},
+                additional_kwargs={EVICTED_TO_KEY: evicted_to},
+            ),
             HumanMessage(
                 content="<task intent steering>",
                 metadata={"origin": "task_intent", "internal": True},

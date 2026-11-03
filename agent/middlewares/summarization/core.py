@@ -81,6 +81,7 @@ from .summary_generation import (
     _extract_file_operations as _extract_file_operations,
     _filter_summary_messages as _filter_summary_messages,
     _format_file_ops as _format_file_ops,
+    _latest_human_eviction_ref as _latest_human_eviction_ref,
     _parse_file_ops_from_summary as _parse_file_ops_from_summary,
     _serialize_for_summary as _serialize_for_summary,
 )

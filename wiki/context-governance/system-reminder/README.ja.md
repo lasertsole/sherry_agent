@@ -40,6 +40,8 @@ todo リストにはもう 1 つの防護があります: `PlanContinuationEnfor
 
 **頻度の読み方。** `cooldown_turns = 0` は*毎ターン対象*——前回注入から内容が変化すれば再注入されます; 内容がめったに変わらないソース（`project_instructions` など）は毎ターン対象でも注入はまれで、頻繁に変わるソース（`todo_block` など）はほとんどのターンで注入されます。`cooldown_turns = 5`（TaskFlow ボード、boulder）は*最大でも 5 ターンに 1 回*、かつ内容も変化したときのみ。変化していないボードは対象であっても 5 ターン沈黙します。スロットル管理状態は実際に注入されたソースだけ進み、抑制されたソースはクールダウンを「無駄に消費」しません。
 
+**圧縮フィルタ。** 各 source は `compress_exclude`（デフォルト `True`）を宣言し、`DynamicReminderMiddleware` がそれをメッセージ metadata に刻み、`_filter_summary_messages` が要約 prompt を組み立てる前にそれらの reminder を落とします。live view は毎ターン再派生されるため、圧縮前のスナップショットはノイズです。`continuity_context` だけが `compress_exclude=False` を設定し、`[Continuity]` としてシリアライズされます。タグ導入前に注入された古い reminder はキーを持たず、従来の挙動を保ちます。実際のユーザーターンは `pub.func.message.classify.is_user_message`（`metadata.origin == "user"`、fail-closed）で判定されるため、注入された HumanMessage が要約で `[User]` とラベルされることはありません。
+
 **ターン間の持続。** 非 transient のリマインダーはトランスクリプト内の `HumanMessage` であり、ミドルウェアの whole-list rewrite が後続ターンで `messages[:-1]` 経由で再送するため、圧縮で破棄されるまでコンテキストウィンドウに留まります（圧縮後の `reset_session` が変化検出ハッシュをクリアし、次ターンに live state から再注入します）。**Transient ソース**（`transient=True`）は例外です: 再解決されないターンでは、rewrite が `messages[:-1]` から古いリマインダーを剥がすため、`project_instructions` は内容が変化したターン（および圧縮後の最初のターン）にだけ現れます。モデルは一度読めば十分で、以後の全ターンを占有しません。
 
 **注入ゲートチェーン。** ソースが特定のターンに注入されるには、以下のチェックを順番にすべて通過する必要があります（`core.py` の `resolve_injections` + `dynamic.py` のミドルウェアゲート）:

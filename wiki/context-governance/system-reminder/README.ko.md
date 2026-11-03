@@ -40,6 +40,8 @@ todo 목록에는 보호가 하나 더 있습니다: `PlanContinuationEnforcer`(
 
 **빈도 읽는 법.** `cooldown_turns = 0`은*매 턴 대상*——이전 주입 이후 내용이 변하면 재주입됩니다; 내용이 거의 변하지 않는 소스(`project_instructions` 등)는 매 턴 대상이어도 주입은 드물고, 자주 변하는 소스(`todo_block` 등)는 대부분의 턴에 주입됩니다. `cooldown_turns = 5`(TaskFlow 보드, boulder)는*최대 5 턴에 1회*, 그리고 내용도 변했을 때만. 변하지 않은 보드는 대상이어도 5 턴 동안 조용합니다. 스로틀 관리 상태는 실제로 주입된 소스만 진행되며, 억제된 소스는 쿨다운을「헛으로 소비」하지 않습니다.
 
+**압축 필터링.** 각 source는 `compress_exclude`(기본 `True`)를 선언하고, `DynamicReminderMiddleware`가 이를 메시지 metadata에 기록하며, `_filter_summary_messages`가 요약 prompt를 만들기 전에 해당 reminder를 제거합니다. live view는 매 턴 다시 파생되므로 압축 전 스냅샷은 노이즈입니다. `continuity_context`만 `compress_exclude=False`를 설정하고 `[Continuity]`로 직렬화됩니다. 태그 도입 전에 주입된 오래된 reminder는 키가 없어 기존 동작을 유지합니다. 실제 사용자 턴은 `pub.func.message.classify.is_user_message`(`metadata.origin == "user"`, fail-closed)로 식별되므로 주입된 HumanMessage가 요약에서 `[User]`로 표시되는 일은 없습니다.
+
 **턴 간 지속.** non-transient 리마인더는 트랜스크립트 내의 `HumanMessage`이며, 미들웨어의 whole-list rewrite가 후속 턴에서 `messages[:-1]`을 통해 재전송하므로, 압축으로 폐기될 때까지 컨텍스트 윈도우에 남습니다(압축 후 `reset_session`이 변화 감지 해시를 지우고, 다음 턴에 live state에서 재주입합니다). **Transient 소스**(`transient=True`)는 예외입니다: 재해결되지 않는 턴에는 rewrite가 `messages[:-1]`에서 오래된 리마인더를 제거하므로 `project_instructions`는 내용이 바뀐 턴(그리고 압축 후 첫 턴)에만 나타납니다. 모델이 한 번 읽으면 충분하며 이후 모든 턴을 점유하지 않습니다.
 
 **주입 게이트 체인.** 소스가 특정 턴에 주입되려면 다음 검사를 순서대로 모두 통과해야 합니다(`core.py`의 `resolve_injections` + `dynamic.py`의 미들웨어 게이트):

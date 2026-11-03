@@ -54,6 +54,26 @@ AIMessage(<summary>, lc_source="summarization")
 
 둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)를 전달합니다.
 
+### 요약 입력 필터링
+
+요약기는 reminder 계층의 오래된 스냅샷을 보지 않습니다.
+`_filter_summary_messages`는 (a) 직전 요약 쌍
+(`lc_source="summarization"`)과 (b) source가 `compress_exclude`를 선언한
+카탈로그 reminder(기본값: plan mode, todo, TaskFlow, boulder, project
+instructions, 디렉터리 알림, knowledge index)를 제거합니다. 이 내용은 주입된
+턴의 스냅샷이며 다음 턴에 live state에서 다시 파생되므로 요약에서는 노이즈입니다.
+`continuity_context`는 `compress_exclude=False`를 선언해 남습니다. 태그 도입 전에
+주입된 오래된 reminder에는 키가 없어 기존 동작을 유지합니다.
+
+직렬화기는 `pub.func.message.classify.is_user_message`가 참일 때만
+HumanMessage를 `[User]`로 표시합니다 — `metadata.origin == "user"`에 대한
+긍정적이고 fail-closed인 검사입니다. 남은 `compress_exclude=False` reminder는
+`[Continuity]`, 그 밖의 주입 HumanMessage(workspace notice, continuation
+지시, 서브에이전트 완료 알림, task-intent steering, cron 결과)는
+`[System notice]`입니다. 정적 fallback과 `_latest_human_eviction_ref`도 같은
+검사를 사용하므로 주입 캐리어가 요약의 Goal이나 최신 사용자 요청이 될 수
+없습니다.
+
 ## 🪙 토큰 추정 (토크나이저 없음)
 
 `pub/func/estimate_tokens.py`(230행)는 의도적으로 토크나이저 없이 결정론적으로 동작하며, 3단계 폴백을 가집니다:

@@ -46,16 +46,21 @@ _OPEN = "<system-reminder"
 _CLOSE_TAG = "</system-reminder>"
 
 
-def system_reminder_metadata(source_id: str) -> dict[str, Any]:
+def system_reminder_metadata(source_id: str, *, compress_exclude: bool = True) -> dict[str, Any]:
     """The metadata a reminder carries (frozen shape).
 
     :param source_id: Which live view the reminder renders.
+    :param compress_exclude: Whether a summarization pass should drop this
+        reminder from the messages it feeds to the summarizer. Defaults to
+        ``True`` because reminders are re-derived from live state every turn;
+        a source that carries history (continuity_context) opts out.
     :returns: A fresh dict (callers may hand it straight to a message).
     """
     return {
         "origin": source_id,
         "internal": True,
         "provenance": REMINDER_PROVENANCE,
+        "compress_exclude": compress_exclude,
     }
 
 

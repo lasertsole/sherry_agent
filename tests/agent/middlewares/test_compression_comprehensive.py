@@ -1034,14 +1034,14 @@ def compact_then_truncate_messages():
     (2002) does NOT cover the overflow (~2158) -> compact_then_truncate
     (auxiliary-LLM summary + target truncation)."""
     return [
-        HumanMessage(content="h" * 103000),
+        HumanMessage(content="h" * 103000, metadata={"origin": "user"}),
         _ai_with_call("p9-c1"),
         ToolMessage(content="x" * 8000, tool_call_id="p9-c1"),
-        HumanMessage(content="q2"),
+        HumanMessage(content="q2", metadata={"origin": "user"}),
         AIMessage(content="a2"),
-        HumanMessage(content="q3"),
+        HumanMessage(content="q3", metadata={"origin": "user"}),
         AIMessage(content="a3"),
-        HumanMessage(content="q4"),
+        HumanMessage(content="q4", metadata={"origin": "user"}),
         AIMessage(content="a4"),
     ]
 
@@ -1591,10 +1591,10 @@ class TestSummaryMessageFiltering:
         state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
         prior_pair = mw._build_new_messages("PRIOR-SKIP-BODY-9d2b")
         messages = [*prior_pair, *compact_then_truncate_messages()]
-        # Sanity: without filtering the static fallback WOULD use the prior
-        # summary question as its Goal section (non-vacuous leak guard).
-        fallback = mget("_build_static_fallback_summary")
-        assert "What did we do so far?" in fallback(messages)
+        # Sanity: without filtering the serialized conversation WOULD carry the
+        # prior summary question (non-vacuous leak guard).
+        serialize = mget("_serialize_for_summary")
+        assert "What did we do so far?" in serialize(messages)
 
         req = make_request(messages, session_id=sid, model=stub)
         out = mw._apply_compression_under_lock(req, sid)
@@ -1603,6 +1603,7 @@ class TestSummaryMessageFiltering:
         assert final[0].content == "What did we do so far?"
         assert isinstance(final[1], AIMessage)
         assert "What did we do so far?" not in final[1].content
+        assert "PRIOR-SKIP-BODY-9d2b" not in final[1].content
         assert stub.calls == []  # skip_llm never invokes the auxiliary LLM
 
     def test_build_new_messages_marks_human(self):
@@ -1623,7 +1624,7 @@ class TestSummaryMessageFiltering:
             },
         )
         messages = [
-            HumanMessage(content="fix the parser"),
+            HumanMessage(content="fix the parser", metadata={"origin": "user"}),
             AIMessage(content="working on it"),
             notice,
         ]

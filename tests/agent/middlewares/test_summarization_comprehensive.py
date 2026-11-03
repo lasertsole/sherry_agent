@@ -733,7 +733,12 @@ class TestSummarizationCore:
 
     def test_serialize_role_labels(self):
         serialize = mget("_serialize_for_summary")
-        out = serialize([HumanMessage(content="hello"), AIMessage(content="hi there")])
+        out = serialize(
+            [
+                HumanMessage(content="hello", metadata={"origin": "user"}),
+                AIMessage(content="hi there"),
+            ]
+        )
         assert "[User]: hello" in out
         assert "[Assistant]: hi there" in out
 
@@ -753,7 +758,7 @@ class TestSummarizationCore:
             },
         )
 
-        out = serialize([notice, HumanMessage(content="hello")])
+        out = serialize([notice, HumanMessage(content="hello", metadata={"origin": "user"})])
 
         assert "[System notice]: [Git 分支/HEAD 已变化] moved to dev" in out
         assert "[User]: [Git" not in out
@@ -1318,7 +1323,7 @@ class TestSummarizationFallback:
 
     def test_static_fallback_contains_all_sections(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build([HumanMessage(content="finish the task")])
+        text = build([HumanMessage(content="finish the task", metadata={"origin": "user"})])
         for section in (
             "## Latest Unresolved User Request",
             "## Goal",
@@ -1335,7 +1340,7 @@ class TestSummarizationFallback:
         build = mget("_build_static_fallback_summary")
         text = build(
             [
-                HumanMessage(content="finish the task"),
+                HumanMessage(content="finish the task", metadata={"origin": "user"}),
                 ToolMessage(
                     content="tool exploded",
                     tool_call_id="t8-fe-1",
@@ -1371,7 +1376,7 @@ class TestSummarizationFallback:
         build = mget("_build_static_fallback_summary")
         text = build(
             [
-                HumanMessage(content="G" * 20000),
+                HumanMessage(content="G" * 20000, metadata={"origin": "user"}),
                 AIMessage(content="E" * 20000),
             ]
         )
@@ -1379,7 +1384,7 @@ class TestSummarizationFallback:
 
     def test_static_fallback_goal_capped(self, sid):
         build = mget("_build_static_fallback_summary")
-        text = build([HumanMessage(content="G" * 5000)])
+        text = build([HumanMessage(content="G" * 5000, metadata={"origin": "user"})])
         assert "G" * 5000 not in text
         assert "G" * (LATEST_USER_REQUEST_MAX_CHARS + 1) not in text
 

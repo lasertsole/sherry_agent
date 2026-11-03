@@ -54,6 +54,27 @@ AIMessage(<summary>, lc_source="summarization")
 
 どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）を渡します。
 
+### 要約入力のフィルタ
+
+要約器は reminder レイヤの古いスナップショットを見ません。
+`_filter_summary_messages` は (a) 直前の要約ペア
+(`lc_source="summarization"`) と、(b) source が `compress_exclude` を宣言した
+カタログ reminder（デフォルト: plan mode、todo、TaskFlow、boulder、project
+instructions、ディレクトリ通知、knowledge index）を除外します。これらの内容は
+注入ターンのスナップショットで、次のターンには live state から再派生されるため、
+要約にはノイズでしかありません。`continuity_context` は
+`compress_exclude=False` を宣言して残ります。タグ導入前に注入された古い
+reminder にはキーがなく、従来の挙動を保ちます。
+
+シリアライザは `pub.func.message.classify.is_user_message` が真のときだけ
+HumanMessage を `[User]` とラベルします — `metadata.origin == "user"` の
+肯定的で fail-closed な検査です。残った `compress_exclude=False` の reminder は
+`[Continuity]`、その他の注入 HumanMessage（workspace notice、continuation
+ディレクティブ、サブエージェント完了通知、task-intent steering、cron 結果）は
+`[System notice]` です。静的 fallback と `_latest_human_eviction_ref` も同じ
+検査を使うため、注入キャリアが要約の Goal や最新ユーザー要求になることは
+ありません。
+
 ## 🪙 トークン推定（トークナイザなし）
 
 `pub/func/estimate_tokens.py`（230 行）は意図的にトークナイザを使わず、決定論的に動作し、3 段階のフォールバックを持ちます:
