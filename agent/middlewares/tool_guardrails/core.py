@@ -75,6 +75,8 @@ class _TurnGuardrailState:
     last_signature: str | None = None
     signature_streak: int = 0
     streak_warning_count: int = 0
+    #: Exact tool+args signatures blocked after the warning budget was spent.
+    blocked_signatures: set[str] = field(default_factory=set)
     last_pathology: tuple[str, int, int] | None = None
     recovery_mode: bool = False
     recovery_violation_count: int = 0
@@ -179,6 +181,10 @@ class ToolGuardrails(AgentMiddleware):
         return self.config.streak_warn_after
 
     @staticmethod
+    def _signature(tool_name: str, args_hash: str) -> str:
+        return f"{tool_name}:{args_hash}"
+
+    @staticmethod
     def _update_signature_streak(gs: _TurnGuardrailState, tool_name: str, args_hash: str) -> None:
         """Advance the status-blind tool+args streak.
 
@@ -186,7 +192,7 @@ class ToolGuardrails(AgentMiddleware):
         reordered JSON objects are the same call. A different signature resets
         the streak; the streak is independent of the result status.
         """
-        signature = f"{tool_name}:{args_hash}"
+        signature = ToolGuardrails._signature(tool_name, args_hash)
         if gs.last_signature == signature:
             gs.signature_streak += 1
         else:
@@ -269,19 +275,35 @@ class ToolGuardrails(AgentMiddleware):
         # Signature-level repetition is the status-blind complement to the
         # failure paths: exact failure sees status="error", this sees a
         # successful call repeated with the same args (a 403 body, the same
-        # git log, the same search). Warn only when no stronger pathology fired.
+        # git log, the same search). The warning budget is bounded; once it is
+        # spent, only that exact signature is blocked (other args and tools
+        # stay available).
         if action == GuardrailAction.ALLOW and self.config.warnings_enabled:
             threshold = self._streak_threshold(tool, tool_name)
-            if (
-                gs.signature_streak >= threshold
-                and gs.streak_warning_count < self.config.streak_max_warnings_per_turn
-            ):
-                gs.streak_warning_count += 1
-                gs.last_pathology = ("tool_repetition", gs.signature_streak, threshold)
-                action = GuardrailAction.WARN
+            if gs.signature_streak >= threshold:
+                signature = self._signature(tool_name, args_hash)
+                if gs.streak_warning_count < self.config.streak_max_warnings_per_turn:
+                    gs.streak_warning_count += 1
+                    gs.last_pathology = ("tool_repetition", gs.signature_streak, threshold)
+                    action = GuardrailAction.WARN
+                else:
+                    gs.blocked_signatures.add(signature)
+                    gs.last_pathology = ("tool_repetition", gs.signature_streak, threshold)
+                    action = (
+                        GuardrailAction.HALT
+                        if self.config.hard_stop_enabled
+                        else GuardrailAction.BLOCK
+                    )
                 gs.signature_streak = 0
 
-        if action == GuardrailAction.BLOCK and self.config.recovery_mode_enabled:
+        repetition_block = (
+            gs.last_pathology is not None and gs.last_pathology[0] == "tool_repetition"
+        )
+        if (
+            action == GuardrailAction.BLOCK
+            and self.config.recovery_mode_enabled
+            and not repetition_block
+        ):
             # Recovery mode: the first BLOCK enters recovery; further BLOCKs count
             # as violations and escalate to HALT once the limit is exceeded.
             if not gs.recovery_mode:
@@ -293,7 +315,7 @@ class ToolGuardrails(AgentMiddleware):
 
         if action == GuardrailAction.HALT:
             gs.halt_decision = action
-        elif action == GuardrailAction.BLOCK:
+        elif action == GuardrailAction.BLOCK and not repetition_block:
             gs.blocked_tools.add(tool_name)
 
         return action
@@ -511,7 +533,12 @@ class ToolGuardrails(AgentMiddleware):
             logger.error("ToolGuardrails BLOCK: session={} tool={}", session_id, tool_name)
             if gs.last_pathology is not None:
                 kind, count, limit = gs.last_pathology
-                pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
+                if kind == "ping_pong":
+                    pathology = "ping-pong loop"
+                elif kind == "argument_churn":
+                    pathology = "argument churn"
+                else:
+                    pathology = "repeated identical call"
             elif gs.recovery_mode:
                 return ToolMessage(
                     content=(
@@ -617,6 +644,16 @@ class ToolGuardrails(AgentMiddleware):
                 name=tool_name,
                 status="error",
             )
+
+        if gs.blocked_signatures:
+            args_digest = args_hash(request.tool_call.get("args", {}) or {})
+            if self._signature(tool_name, args_digest) in gs.blocked_signatures:
+                return ToolMessage(
+                    content=self._block_message(tool_name, "repeated identical call", 0, 0),
+                    tool_call_id=request.tool_call.get("id", ""),
+                    name=tool_name,
+                    status="error",
+                )
 
         if self.config.recovery_mode_enabled and gs.recovery_mode and tool_name in gs.blocked_tools:
             # Recovery mode: release the blocked tool once so the retry goes

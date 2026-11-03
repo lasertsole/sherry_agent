@@ -49,9 +49,9 @@
 | 幂等无进展 | 同一幂等工具（或分组工具的幂等 action）返回它在本回合中已产出过的结果哈希 | 2 | 5 | 5 次时 HALT |
 | 乒乓 | 不间断的 A → B → A → B 往返，且相邻两次调用均无进展 | 4 | 6 | 6 次时 HALT |
 | 参数翻新 | 同一幂等工具轮换参数变体但结果不变（无进展） | 3 种变体 | 5 种变体 | 5 种时 HALT |
-| 签名连击（不看状态） | 同一工具 + 相同参数哈希连续重复，无论结果状态（terminal 用 5） | 3（terminal：5） | 从不 | 仅 WARN，每回合最多 3 次；签名变化即重置 |
+| 签名连击（不看状态） | 同一工具 + 相同参数哈希连续重复，无论结果状态（terminal 用 5） | 3（terminal：5） | 警告预算用尽后，拦截该精确签名 | 每回合最多 WARN 3 次；随后该精确调用在本回合剩余时间内被拦截，签名变化会重置连击 |
 
-网络命令失败现在会桥接为工具错误：`curl`/`wget`/`git fetch`/`git clone` 等非零退出码会 raise `ToolException`，经 `handle_tool_error` 变成 `ToolMessage(status="error")`，让 exact-failure 计数生效。本地命令（pytest、编译器、脚本）的非零退出仍作为普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch` 的 HTTP 4xx/5xx 同样 raise。签名连击补上另一个盲区：参数完全相同、结果看似成功的重复；它只警告，不阻断。
+网络命令失败现在会桥接为工具错误：`curl`/`wget`/`git fetch`/`git clone` 等非零退出码会 raise `ToolException`，经 `handle_tool_error` 变成 `ToolMessage(status="error")`，让 exact-failure 计数生效。本地命令（pytest、编译器、脚本）的非零退出仍作为普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch` 的 HTTP 4xx/5xx 同样 raise。签名连击补上另一个盲区：参数完全相同、结果看似成功的重复。它最多警告 `streak_max_warnings_per_turn` 次；预算用尽后，该精确的工具 + 参数签名会在本回合剩余时间内被拦截，因此反复重跑同一条命令的退化循环无法耗尽整个迭代预算。拦截只作用于该签名——其他参数和工具仍然可用——且绕过恢复模式（重复拦截不应被当作一次性重试放行）。
 
 值得注意的细节：
 
@@ -265,7 +265,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
-- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）；工具可用自己的 metadata 覆盖阈值（terminal 声明 5）。
+- `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）、`streak_warn_after`（3）、`streak_max_warnings_per_turn`（3）；工具可用自己的 metadata 覆盖阈值（terminal 声明 5）。警告预算用尽后，该精确的重复工具 + 参数签名在本回合剩余时间内被 BLOCK；不同参数变体仍然允许。
 - Announce 投递旋钮（子 Agent announce 配置）：`announce_retry_max=3` 配 5s / 10s / 20s 瞬态延迟，另有 `max_announce_retry_count=10` 和 24 小时 run 过期。
 
 手动恢复速查表：

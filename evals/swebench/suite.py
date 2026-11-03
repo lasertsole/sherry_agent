@@ -60,6 +60,13 @@ issue in the library source.
 
 - The project's environment interpreter is the `python` on PATH (`python -m
   pytest <path>` runs a test file). Use it if you want to run tests.
+- Before you stop: run the tests that cover every source file you changed —
+  the neighboring test module, plus your reproduction of the reported issue.
+  A patch that fixes the reported case but breaks a neighboring test is not
+  complete; investigate every failure you introduced.
+- Do not repeat an identical command after its output has told you what you
+  need. Once a candidate patch exists, spend the remaining budget verifying
+  and refining it, not re-probing the environment.
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
 

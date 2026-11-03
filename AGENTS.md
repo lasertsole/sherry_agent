@@ -2506,7 +2506,9 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   tool calls showed zero consecutive same-name + same-args successful mutating
   runs; `ToolGuardrails` remains the detector. That detector now ALSO carries a
   status-blind signature streak (3 identical tool+args calls; terminal declares 5
-  in its own metadata) that WARNs and resets, capped at 3 warnings per turn, and
+  in its own metadata) that WARNs up to 3 times per turn and then BLOCKs that
+  exact signature for the rest of the turn — other argument variants and tools
+  stay available, and the block deliberately bypasses recovery mode — and
   its failure path sees network-command errors: terminal `curl`/`wget`/`git
   fetch` non-zero exits and `web_fetch` HTTP 4xx/5xx raise `ToolException`
   (`status="error"`), while local test/compile failures keep returning their

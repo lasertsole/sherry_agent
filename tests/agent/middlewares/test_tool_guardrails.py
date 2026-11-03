@@ -522,7 +522,7 @@ def test_terminal_signature_streak_uses_the_tools_metadata_threshold():
     assert gs.last_pathology == ("tool_repetition", 5, 5)
 
 
-def test_signature_streak_warnings_are_capped_per_turn():
+def test_signature_streak_blocks_the_exact_call_after_the_warning_budget():
     mw = make_mw(streak_warn_after=3, streak_max_warnings_per_turn=1)
     gs = mod._TurnGuardrailState()
 
@@ -534,8 +534,81 @@ def test_signature_streak_warnings_are_capped_per_turn():
     ]
 
     assert first_cycle[-1] == WARN
-    assert second_cycle[-1] == ALLOW
+    assert second_cycle[-1] == BLOCK
     assert gs.streak_warning_count == 1
+    assert "T:same" in gs.blocked_signatures
+
+
+def test_terminal_streak_blocks_after_three_warnings_not_never():
+    """SWE 20261103_194320: one terminal command ran 69 times; WARN-only
+    never stopped it and the agent exhausted its 90-call budget."""
+    mw = make_mw(streak_warn_after=3)
+    gs = mod._TurnGuardrailState()
+    terminal_tool = SimpleNamespace(metadata={"streak_warn_after": 5})
+
+    actions = [
+        call(
+            mw,
+            gs,
+            "terminal",
+            "same-command",
+            f"r{index}",
+            is_idempotent=False,
+            tool=terminal_tool,
+        )
+        for index in range(20)
+    ]
+
+    assert (
+        actions[:19]
+        == [ALLOW] * 4 + [WARN] + [ALLOW] * 4 + [WARN] + [ALLOW] * 4 + [WARN] + [ALLOW] * 4
+    )
+    assert actions[19] == BLOCK
+    assert "terminal:same-command" in gs.blocked_signatures
+
+
+def test_signature_streak_hard_stop_halts_after_the_warning_budget():
+    mw = make_mw(
+        streak_warn_after=3,
+        streak_max_warnings_per_turn=1,
+        hard_stop_enabled=True,
+    )
+    gs = mod._TurnGuardrailState()
+
+    for index in range(3):
+        call(mw, gs, "T", "same", f"r{index}", is_idempotent=False)
+    actions = [call(mw, gs, "T", "same", f"s{index}", is_idempotent=False) for index in range(3)]
+
+    assert actions[-1] == HALT
+    assert gs.halt_decision == HALT
+
+
+def test_signature_block_covers_only_the_repeated_arguments():
+    mw = make_mw(streak_warn_after=3, streak_max_warnings_per_turn=1)
+    ses = "sess-streak-scoped"
+    for index in range(6):
+        wrap_call(
+            mw,
+            ses,
+            "web_search",
+            {"q": "same"},
+            f"r{index}",
+            f"c{index}",
+            tool=NON_IDEMPOTENT_TOOL,
+        )
+
+    # The blocked signature is refused BEFORE execution; recovery mode must not
+    # release it (repetition blocks deliberately bypass recovery).
+    gs = mw._get_state(ses)
+    assert gs.recovery_mode is False
+    assert "web_search" not in gs.blocked_tools
+    blocked = mw._wrap_tool_call_precheck(_mkreq(ses, "web_search", {"q": "same"}, "c7"))
+    assert blocked is not None
+    assert "repeated identical call" in blocked.content
+    assert blocked.status == "error"
+
+    # A different argument variant stays available.
+    assert mw._wrap_tool_call_precheck(_mkreq(ses, "web_search", {"q": "other"}, "c8")) is None
 
 
 def test_args_hash_is_independent_of_key_order():

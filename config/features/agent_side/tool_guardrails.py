@@ -20,10 +20,12 @@ class ToolGuardrailsConfig(TypedDict):
     arg_churn_warn_after: int
     arg_churn_block_after: int
     #: Signature-level repetition (same tool + same stable args, regardless of
-    #: result status). ToolGuardrails warns and resets the streak; it never
-    #: blocks on this signal alone. A tool may override the threshold with its
-    #: own ``metadata["streak_warn_after"]`` (terminal declares 5 because
-    #: re-running the same test command can be a legitimate iteration).
+    #: result status). The first ``streak_max_warnings_per_turn`` streaks WARN
+    #: and reset; once that budget is spent the exact signature is BLOCKED for
+    #: the rest of the turn (other arguments and tools stay available). A tool
+    #: may override the threshold with its own ``metadata["streak_warn_after"]``
+    #: (terminal declares 5 because re-running the same test command can be a
+    #: legitimate iteration).
     streak_warn_after: int
     streak_max_warnings_per_turn: int
     recovery_mode_enabled: bool
