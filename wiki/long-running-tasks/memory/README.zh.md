@@ -12,12 +12,12 @@
 
 | 层 | 存储 | 位置 | 是否进入提示词？ |
 | :--- | :--- | :--- | :--- |
-| **L1 —— 精炼记忆** | `MEMORY.md`（Agent 笔记）+ `USER.md`（用户画像） | `workspace/memory/`（`MEMORY_DIR`） | 是——冻结快照，始终注入 |
+| **L1 —— 精炼记忆** | `memory_entries` 行（`memory` Agent 笔记、`user` 用户画像、`facts` 系统坑） | MesMemory SQLite（`mes_memory.db`）的 `memory_entries` 表 | 是——冻结快照，始终注入 |
 | **L2 —— 原始历史** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | 否——由 `context_engine` / `message_search` 检索 |
 
-文件是**以独占一行的分隔符 `§` 分隔的纯文本条目**——`ENTRY_DELIMITER = "\n§\n"`（`agent/tools/memory.py:53`），没有 YAML frontmatter，也没有项目符号前缀。条目可以跨多行。
+一个条目是 `memory_entries` 中的**一行 SQLite 记录**；`§` 分隔符只保留在遗留导入与 `GET/PUT /memory` 兼容路径中。条目可以跨多行，没有 YAML frontmatter，也没有项目符号前缀。
 
-第 1 层由 `MemoryStore` 管理（`memory.py:104`）：每个文件的字符上限为 `2200`（memory）和 `1375`（user），注入扫描（`_MEMORY_THREAT_PATTERNS`，`memory.py:68`）会拒绝提示词注入与凭证外泄内容，配合跨平台文件锁、原子写入和精确匹配去重。实时条目会立即改动，而提示词使用的是一份在 `load_from_disk()` 时捕获的**冻结快照**，以保持会话期内前缀缓存稳定。
+第 1 层由 `MemoryStore` 管理（`agent/tools/memory.py::load_from_store`）：每个目标的字符上限为 `2200`（memory）、`1375`（user）和 `1375`（facts），注入扫描（`_MEMORY_THREAT_PATTERNS`）会拒绝提示词注入与凭证外泄内容，配合精确匹配去重；并发安全由 SQLite WAL 提供，不再使用文件锁和原子重写。行上记录 `origin_session`、`usage_count` 和 `last_used`；渲染块仅在来源已知时追加 `[origin: …, created: …, used: Nx]`，`memory(action="read")` 会累加使用次数。实时行会立即改动，而提示词使用的是一份在 `load_from_store()` 时捕获的**冻结快照**，以保持会话期内前缀缓存稳定。遗留的 `MEMORY.md`/`USER.md`/`FACTS.md` 会在启动时导入一次（`context_engine/store/memory_migration.py`）并改名为 `*.md.bak`；只要表里已有任意一行，导入即跳过。
 
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
@@ -43,12 +43,10 @@ if taskflow_ctx:
 # subagent_completion_drain/core.py:93-117
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
-    memory_store.load_from_disk()
-    for target in ("memory", "user"):
-        memory_store.save_to_disk(target)
+    memory_store.load_from_store()
 ```
 
-父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`**，因此子 Agent 的写入在文件层面本已可见。可能发生漂移的是父 Agent 的内存视图——实时条目，以及构建系统提示词时用的那份**冻结快照**——当进程外的写入者更新了 `MEMORY.md` / `USER.md` 时就会如此。**先重载**的顺序是关键的：若在重载前就把陈旧的内存列表持久化，会覆盖并发写入者，因此对账必须对每个目标执行先加载、后持久化。
+父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`**（底层是 SQLite），因此子 Agent 的写入已经持久化。可能发生漂移的是父 Agent 的内存视图——实时行，以及构建系统提示词时用的那份**冻结快照**。重载既是关键也是充分的：SQLite 是唯一事实来源，没有回写步骤，重载也不会覆盖并发写入者（旧的 load → persist 对账会）。
 
 与排空一样，回流也是**失败开放**的——记忆 I/O 失败会被记录并吞掉，完成载体仍会抵达父回合。排空会让父 Agent 对完成保持警惕：会话没有通过证据时，它会在载体之后追加一条强制校验门控消息，提醒父 Agent：完成只是一份 `DoneClaim`，而不是已验证的结果（在把待办标记为完成之前，先用 `todoread` 校验、对照验收标准，并排查陈旧状态）。
 
@@ -97,7 +95,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 会话删除时的记忆抢救
 
-销毁主会话前，`purge_session` 还会调度一次独立的 memory review（`nudges.salvage_session_memory`）。它快照压缩后的 checkpoint transcript、模型、系统提示词和工具面，只读计算正常压缩切割线，调度后立即返回；删除不等待模型。第一波用捕获的（cache-warm）模型/提示词/工具面复盘本会被压缩丢弃的前缀；写完后，第二波重新加载 memory、非持久化重建系统提示词，并用仅 `memory` 工具面复盘保留的尾部。两波都在 NUDGE 车道运行，使用派生会话键（`<id>::session-end-salvage:1|2`），无 checkpointer；`nudge_memory` metadata 门禁阻止删除后调用 `knowledge`/plan 工具。所有失败均 fail-open，进程退出可能放弃未完成的一波，侧边会话/子代理不包含在内。上面的 continuity 保存最后一条 AI 回复供下一次对话；本抢救写入持久 memory 文件。
+销毁主会话前，`purge_session` 还会调度一次独立的 memory review（`nudges.salvage_session_memory`）。它快照压缩后的 checkpoint transcript、模型、系统提示词和工具面，只读计算正常压缩切割线，调度后立即返回；删除不等待模型。第一波用捕获的（cache-warm）模型/提示词/工具面复盘本会被压缩丢弃的前缀；写完记忆条目（来源戳为被删除会话的 id，而不是派生的 wave 键）后，第二波重新加载 memory、非持久化重建系统提示词，并用仅 `memory` 工具面复盘保留的尾部。两波都在 NUDGE 车道运行，使用派生会话键（`<id>::session-end-salvage:1|2`），无 checkpointer；`nudge_memory` metadata 门禁阻止删除后调用 `knowledge`/plan 工具。所有失败均 fail-open，进程退出可能放弃未完成的一波，侧边会话/子代理不包含在内。上面的 continuity 保存最后一条 AI 回复供下一次对话；本抢救写入持久 memory 行。
 
 ## ♻️ TaskFlow 自动恢复
 

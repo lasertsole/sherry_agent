@@ -189,11 +189,14 @@ def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(st, "_last_failure_time", {})
     monkeypatch.setattr(st, "_recovery_attempts", {})
 
-    # Real MemoryStore, file-backed by a tmp memory dir.
+    # Real MemoryStore, backed by a per-test SQLite database.
+    from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+    repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+    monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
     mem = MemoryStore()
-    monkeypatch.setattr(memory_module, "MEMORY_DIR", tmp_path / "memory")
     monkeypatch.setattr(memory_module, "memory_store", mem)
-    mem.load_from_disk()
+    mem.load_from_store()
 
 
 @pytest.fixture()

@@ -324,7 +324,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
         try:
             from agent.tools.memory import memory_store
 
-            memory_store.load_from_disk()
+            memory_store.load_from_store()
         except Exception:
             # Fail-open: a half-read snapshot must not replace the frozen one,
             # and a broken memory file must never break the turn.
@@ -360,7 +360,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
     async def abefore_model(self, state: Any, runtime: Any = None) -> dict[str, Any] | None:
         """Refresh the frozen memory snapshot when model/thinking switched.
 
-        The refresh is intentionally synchronous: ``load_from_disk`` takes the
+        The refresh is intentionally synchronous: ``load_from_store`` takes the
         memory file lock for a few milliseconds and this runs only on an
         actual switch, never on every model call. The prompt-cache delete must
         complete before ``system_prompt_injection`` runs, and both state

@@ -12,12 +12,12 @@ Two layers, distinguished by *how* they reach the model:
 
 | Layer | Store | Location | In the prompt? |
 | :--- | :--- | :--- | :--- |
-| **L1 — curated memory** | `MEMORY.md` (agent notes) + `USER.md` (user profile) | `workspace/memory/` (`MEMORY_DIR`) | Yes — a frozen snapshot, always injected |
+| **L1 — curated memory** | `memory_entries` rows (targets: `memory` agent notes, `user` profile, `facts` system pitfalls) | MesMemory SQLite (`mes_memory.db`), `memory_entries` table | Yes — a frozen snapshot, always injected |
 | **L2 — raw history** | `mes_memory.db` (SQLite, WAL, FTS5) | `src/store/mes_memory/mes_memory.db` | No — retrieved by `context_engine` / `message_search` |
 
-Files are **plain text entries separated by the delimiter `§` on its own line** — `ENTRY_DELIMITER = "\n§\n"` (`agent/tools/memory.py:53`), no YAML frontmatter and no bullet prefixing. Entries may be multiline.
+An entry is **one SQLite row** in `memory_entries`; the `§` delimiter survives only in the legacy-import and `GET/PUT /memory` compatibility paths. Entries may be multiline, with no YAML frontmatter and no bullet prefixing.
 
-Layer 1 is managed by `MemoryStore` (`memory.py:104`): per-file character limits `2200` (memory) and `1375` (user), an injection scan (`_MEMORY_THREAT_PATTERNS`, `memory.py:68`) that rejects prompt-injection and credential-exfiltration content, cross-platform file locking, atomic writes, and exact-match dedup. The live entries are mutated immediately, while the prompt uses a **frozen snapshot** captured at `load_from_disk()` to keep the prefix cache stable for the session.
+Layer 1 is managed by `MemoryStore` (`agent/tools/memory.py::load_from_store`): per-target character limits `2200` (memory), `1375` (user) and `1375` (facts), the injection scan (`_MEMORY_THREAT_PATTERNS`) that rejects prompt-injection and credential-exfiltration content, exact-match dedup, and SQLite WAL instead of file locks and atomic rewrites. Rows carry `origin_session`, `usage_count` and `last_used`; the rendered block appends `[origin: …, created: …, used: Nx]` only when provenance is known, and `memory(action="read")` increments usage. The live rows mutate immediately, while the prompt uses a **frozen snapshot** captured at `load_from_store()` to keep the prefix cache stable for the session. The legacy `MEMORY.md`/`USER.md`/`FACTS.md` files are imported once at boot (`context_engine/store/memory_migration.py`) and renamed to `*.md.bak`; any existing row makes that import a no-op.
 
 The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
@@ -43,12 +43,10 @@ The block is headed `## Current TaskFlow State (authoritative)` (`summarization/
 # subagent_completion_drain/core.py:93-117
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
-    memory_store.load_from_disk()
-    for target in ("memory", "user"):
-        memory_store.save_to_disk(target)
+    memory_store.load_from_store()
 ```
 
-Parent and children share **one process-wide `MemoryStore`**, so a child's writes are already file-visible. What can drift is the parent's in-memory view — the live entries plus the **frozen snapshot** the system prompt was built from — when a writer outside this process updated `MEMORY.md` / `USER.md`. The **reload-first** order is load-bearing: persisting the stale in-memory list before reloading would clobber a concurrent writer, so the reconcile must load → persist per target.
+Parent and children share **one process-wide `MemoryStore`** over the SQLite store, so a child's writes are already durable. What can drift is the parent's in-memory view — the live rows plus the **frozen snapshot** the system prompt was built from. Reloading is load-bearing and sufficient: SQLite is the source of truth, so there is no save-back and a reload cannot clobber a concurrent writer (the old load → persist reconcile could).
 
 Like the drain, the backflow is **fail-open** — a memory-I/O failure is logged and swallowed, and the completion carrier still reaches the parent turn. The drain keeps the parent honest about completions: when the session has no passing evidence, it appends a mandatory-verification gate message after the carriers, so the parent treats a completion as a `DoneClaim`, not a verified result (verify via `todoread`, check acceptance criteria, and probe for stale state before marking a todo complete).
 
@@ -97,7 +95,7 @@ A session never receives its own state (`last_session_id == session_id → ""`).
 
 ## 🧹 Session-End Memory Salvage
 
-`purge_session` also schedules a detached memory review before destroying a MAIN session (`nudges.salvage_session_memory`). It snapshots the post-compaction checkpoint transcript, model, system prompt and tool face, computes the normal compression cutoff **read-only**, and returns immediately after scheduling; the delete does not wait for the model. Wave 1 reviews the prefix a compression would have discarded with the captured (cache-warm) model/prompt/tool face; after it writes MEMORY.md/USER.md/FACTS.md, wave 2 reloads memory, rebuilds the system prompt non-persistently, and reviews the preserved tail with a `memory`-only face. Both waves use the NUDGE lane, derived session keys (`<id>::session-end-salvage:1|2`), and no checkpointer; the `nudge_memory` metadata gate blocks `knowledge`/plan tools after deletion. Every failure is fail-open, a process exit may abandon an unfinished wave, and side chats/subagent children are not included. Continuity (above) stores the last AI reply for the next conversation; this salvage writes durable memory files.
+`purge_session` also schedules a detached memory review before destroying a MAIN session (`nudges.salvage_session_memory`). It snapshots the post-compaction checkpoint transcript, model, system prompt and tool face, computes the normal compression cutoff **read-only**, and returns immediately after scheduling; the delete does not wait for the model. Wave 1 reviews the prefix a compression would have discarded with the captured (cache-warm) model/prompt/tool face; after it writes memory entries (stamped with the deleted session's id, not the derived wave key), wave 2 reloads memory, rebuilds the system prompt non-persistently, and reviews the preserved tail with a `memory`-only face. Both waves use the NUDGE lane, derived session keys (`<id>::session-end-salvage:1|2`), and no checkpointer; the `nudge_memory` metadata gate blocks `knowledge`/plan tools after deletion. Every failure is fail-open, a process exit may abandon an unfinished wave, and side chats/subagent children are not included. Continuity (above) stores the last AI reply for the next conversation; this salvage writes durable memory rows.
 
 ## ♻️ TaskFlow Auto-Resume
 

@@ -380,6 +380,14 @@
           :header="t('config.tabs.safetyFilter')">
           <SafetyFilterPanel />
         </TabPanel>
+        <!-- Long-term memory limits: stored in the memory DB and applied live.
+             Appended LAST for the same index-keyed reasons as the tabs above;
+             it saves on its own (no footer button). -->
+        <TabPanel
+          value="memorySettings"
+          :header="t('config.tabs.memorySettings')">
+          <MemorySettingsSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -390,9 +398,9 @@
          the persona presets; Token 预算 became a session tab opened from the
          context ring, because the cap is per conversation.)
          Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
-         shortcuts 4, safety filter 5. -->
+         shortcuts 4, safety filter 5, memory settings 6. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -1189,6 +1197,7 @@ onBeforeUnmount(onHide);
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
+        "memorySettings": "记忆设置",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1565,6 +1574,7 @@ onBeforeUnmount(onHide);
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
+        "memorySettings": "Memory settings",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1956,6 +1966,7 @@ onBeforeUnmount(onHide);
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
+        "memorySettings": "記憶設定",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2347,6 +2358,7 @@ onBeforeUnmount(onHide);
         "i18n": "국제화",
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
+        "memorySettings": "기억 설정",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },

@@ -23,15 +23,19 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 | 벡터 의미 검색 | 현재 schema, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow 편성 | `wiki/long-running-tasks/` |
 
-## 메모리 파일
+## 메모리 항목
 
-세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 유일한 전역 파일(`workspace/memory/FACTS.md`)이며 MEMORY.md / USER.md와 함께 로드됩니다. **시스템 수준 / 프로젝트 횡단** 함정 — 어떤 프로젝트에서든 참인 사실 — 만 기록합니다. 프로젝트별 사실은 MEMORY.md 또는 해당 프로젝트의 AGENTS.md에 쓰며, nudge가 이 라우팅을 강제합니다(FACTS에 잘못 들어간 프로젝트 사실은 MEMORY로 이전). per-project FACTS는 없으며, 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. FACTS.md는 memory review / plan extraction nudge가 유지합니다. 스냅샷은 세션 동안 동결되지만, 세션의 모델 또는 사고 제어가 바뀌면 예외입니다: 이런 전환 뒤에는 provider의 prefix 캐시가 이미 차가우므로 다음 턴의 `before_model` 훅이 스냅샷을 다시 로드하고 캐시된 시스템 프롬프트를 무효화하여, 세션 중간의 메모리 쓰기가 그 턴의 첫 모델 호출에서 보이게 합니다.
+세 가지 장기 메모리 대상(`memory`, `user`, `facts`)은 MesMemory `memory_entries` 테이블의 SQLite 행이며 `§` 항목당 한 행으로, `MemoryEntryRepository`(`context_engine/store/memory_entry_repository.py`)를 통해 읽고 씁니다. 이전 `workspace/memory/{MEMORY,USER,FACTS}.md` 파일은 레거시 시드일 뿐입니다: `memory_migration.migrate_legacy_memory_files()`가 `agent_core.init()`에서 단일 트랜잭션으로 한 번 가져온 뒤, 커밋이 성공한 경우에만 각 파일을 `*.md.bak`으로 이름을 바꿉니다. 기존 행이 하나라도 있으면 가져오기를 건너뛰므로 이름 변경이 실패해도 중복되지 않습니다. 트랜잭션이 실패하면 파일을 남겨 두고 다음 부팅에서 재시도합니다.
 
-| 파일 | 용도 | 상한 | 유지보수자 |
+`MemoryStore.load_from_store()`는 `created_at ASC, id ASC`(이전 파일의 위에서 아래 순서)로 활성 행을 읽고 렌더링 결과를 시스템 프롬프트 스냅샷으로 동결합니다. 세션 중 쓰기는 영구 저장되지만 스냅샷을 다시 그리지 않아 provider prefix 캐시를 안정적으로 유지합니다. 스냅샷은 다음 세션 시작, 압축 후 재구성, 모델/사고 전환, 서브에이전트 완료 유입 시 다시 로드됩니다. per-project FACTS는 없으며 레거시 `<project>/.sherry/memory/FACTS.md`는 무시됩니다. FACTS는 계속 시스템 수준 / 프로젝트 횡단 함정만 담고, memory review / plan extraction nudge가 이 라우팅을 강제합니다.
+
+각 행은 `origin_session`, `usage_count`, `last_used`를 기록합니다. 렌더링 블록은 출처를 아는 항목 뒤에 `[origin: <sid>, created: <date>, used: <n>x]`를 덧붙입니다. `memory(action="read")`는 일치하는 항목을 반환하고 사용 횟수를 늘립니다. `facts`가 넘치면 **가장 적게 사용된** 항목을 보관하고(`COALESCE(last_used, created_at)`, 그다음 `usage_count`), 모든 삭제는 복원 가능한 소프트 삭제입니다. 기억 패널은 `/memory/entries*`, `/memory/settings`, `/memory/consolidate`를 사용하며, 이전 `GET/PUT /memory`는 `§` 구분 형식을 유지합니다.
+
+| 대상 | 용도 | 상한 | 유지 |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`) | `memory` 도구(`memory` 대상: memory review nudge) |
-| `workspace/memory/USER.md` | 사용자 프로필: 선호, 소통 스타일, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`) | `memory` 도구(`user` 대상: memory review nudge) |
-| `workspace/memory/FACTS.md` | 시스템 수준 / 프로젝트 횡단 함정과 관례; 매 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`), 상한 초과 시 가장 오래된 항목부터 롤오프 | `memory` 도구(`facts` 대상: memory review / plan extraction nudge) |
+| `memory` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review nudge |
+| `user` | 사용자 프로필: 선호, 소통 방식, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`, 패널에서 재정의 가능) | `memory` 도구 / memory review nudge |
+| `facts` | 시스템 수준 / 프로젝트 횡단 함정. 모든 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`, 패널에서 재정의 가능), 가장 적게 사용된 항목부터 롤오프 | `memory` 도구 / memory review·plan extraction nudge |
 
 ## MesMemory 스키마
 
@@ -41,6 +45,7 @@ SESSION 메모리 플랜의 13개 기능 중 12개(opencode-dev / oh-my-openagen
 | `messages.idempotency_key` + 부분 유니크 인덱스 | 크래시 재시도 중복 제거 |
 | `messages.context_eligible` | 컨텍스트 프로젝션 플래그(기본 1) |
 | `message_embeddings` | 의미 검색 벡터 인덱스 |
+| `memory_entries` / `memory_settings` | 장기 메모리 행(대상, 출처, 사용량, 보관) + UI 편집 가능한 상한 |
 | `messages.parent_message_id` + `session_leafs` | 메시지 트리 |
 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | 압축 복원 지점 |
 | `events` | 추가 전용 로그, 세션별 무결 `seq` |

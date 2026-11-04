@@ -89,7 +89,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
 | 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
 | 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
-| FACTS.md | `workspace/memory/FACTS.md`（唯一全局文件；memory 工具 target `facts`） | — | 系统级 / 跨项目普适的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
+| `facts` target | MesMemory `memory_entries` 行（唯一全局 target） | — | 系统级 / 跨项目普适的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory target（1 375 字符上限；超限先归档最不活跃条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
 ## 🧵 Message 行上的 Turn 身份
 

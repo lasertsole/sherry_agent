@@ -215,7 +215,7 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | Auto-resume prompt block |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | One-line tool summaries |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | Continuity save hook |
-| `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |
+| `append_entries` | `agent/tools/memory.py` | Batch `memory` / `user` target append (usage-aware facts eviction on overflow) |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | Session board read (SQL `session_id` filter) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | failure classification |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:218,273` | wait_all retry planning/persist |

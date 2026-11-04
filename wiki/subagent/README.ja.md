@@ -150,7 +150,7 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 | 暴走ループ防止 | 完了ゲート、判定器予算、drain と announce の再試行挙動 | [暴走ループ防止](../loop-prevention/README.ja.md) |
 | コンテキストエンジン | MesMemory に永続化されるのは完了キャリアのみ；子のトランスクリプトは checkpoint のみ | [Context Engine README](../../context_engine/README.ja.md) |
 | ランタイムレーン | `SUBAGENT` レーンが同時子実行を制限；超過 spawn は `PENDING` で待機 | [暴走ループ防止](../loop-prevention/README.ja.md) |
-| メモリファイル | 非空 drain は `MEMORY.md` と `USER.md` を再調整（読み込み → 永続化、フェイルオープン） | [サブエージェントシステム README](../../agent/tools/subagent/README.ja.md) |
+| メモリストア | 非空 drain は共有 SQLite メモリストアを再読み込み（`load_from_store()`、フェイルオープン）。書き戻しはありません | [サブエージェントシステム README](../../agent/tools/subagent/README.ja.md) |
 
 ### 🧵 合成集約
 

@@ -1684,7 +1684,7 @@ class TestAsyncPathOffloadsBlockingStores:
         monkeypatch.setattr(
             mw, "_record_compression", spy("_record_compression", mw._record_compression)
         )
-        monkeypatch.setattr(memory_module.memory_store, "load_from_disk", spy("load_from_disk"))
+        monkeypatch.setattr(memory_module.memory_store, "load_from_store", spy("load_from_store"))
         monkeypatch.setattr(
             summarization_module,
             "build_system_prompt",
@@ -1714,7 +1714,7 @@ class TestAsyncPathOffloadsBlockingStores:
         expected = {
             "offload_inline_media",
             "_record_compression",
-            "load_from_disk",
+            "load_from_store",
             "build_system_prompt",
             "state_register_db.set_state",
             "get_active_flows_sync",

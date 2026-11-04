@@ -1,13 +1,12 @@
-"""Subagent completion drain reconciles the shared memory files.
+"""Subagent completion drain reconciles the shared memory store.
 
 The drain middleware is the parent-turn ingestion point for completion
 carriers. On a non-empty drain it also performs the memory backflow:
-reload the process-wide ``MemoryStore`` from ``MEMORY.md`` / ``USER.md`` (so a
-child session's persisted writes become visible to the parent), then persist
-the reconciled state.
+reload the process-wide ``MemoryStore`` from the shared SQLite store (so a
+child session's persisted writes become visible to the parent).
 
-Isolation: ``MEMORY_DIR`` is redirected to a per-test tmp directory and the
-shared singleton's in-memory state is restored afterwards, so these tests
+Isolation: the module-wide repository is pointed at a per-test SQLite database
+and the singleton's in-memory state is restored afterwards, so these tests
 never touch the real workspace memory.
 """
 
@@ -58,17 +57,19 @@ def patched_drain(monkeypatch):
 
 
 @pytest.fixture()
-def tmp_memory_dir(tmp_path, monkeypatch):
-    """Point MemoryStore at a tmp dir; restore the singleton's state after."""
+def memory_repo(tmp_path, monkeypatch):
+    """Point the shared store at a temp database; restore its view afterwards."""
+    from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
     store = memory_module.memory_store
     saved_memory = list(store.memory_entries)
     saved_user = list(store.user_entries)
     saved_snapshot = dict(store._system_prompt_snapshot)
 
-    mem_dir = tmp_path / "memory"
-    mem_dir.mkdir()
-    monkeypatch.setattr(memory_module, "MEMORY_DIR", mem_dir)
-    yield mem_dir
+    repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+    monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
+    yield repo
+    repo.close()
 
     # Runs before monkeypatch reverts, so this is a pure in-memory restore.
     store.memory_entries = saved_memory
@@ -76,14 +77,14 @@ def tmp_memory_dir(tmp_path, monkeypatch):
     store._system_prompt_snapshot = saved_snapshot
 
 
-def test_drain_backflows_child_memory_written_to_disk(patched_drain, tmp_memory_dir):
-    # Given: the parent store loaded an empty MEMORY.md at session start ...
+def test_drain_backflows_child_memory_written_to_the_store(patched_drain, memory_repo):
+    # Given: the parent store loaded an empty store at session start ...
     store = memory_module.memory_store
-    store.load_from_disk()
+    store.load_from_store()
     assert store.memory_entries == []
-    # ... and the child session persisted a learned fact to the shared file.
+    # ... and the child session persisted a learned fact.
     child_fact = "child learned: this project uses uv"
-    (tmp_memory_dir / "MEMORY.md").write_text(child_fact, encoding="utf-8")
+    memory_repo.add_entry("memory", child_fact)
     patched_drain["items"] = [SimpleNamespace(message=_carrier())]
 
     # When: the drain middleware ingests the completion carrier.
@@ -95,52 +96,47 @@ def test_drain_backflows_child_memory_written_to_disk(patched_drain, tmp_memory_
     assert result is not None
     assert store.memory_entries == [child_fact]
     assert child_fact in store.format_for_system_prompt("memory")
-    assert (tmp_memory_dir / "MEMORY.md").read_text(encoding="utf-8") == child_fact
 
 
-def test_drain_reconcile_does_not_clobber_newer_disk_state(patched_drain, tmp_memory_dir):
-    # Given: the in-memory view is stale relative to a newer disk write.
+def test_drain_reconcile_does_not_clobber_newer_store_state(patched_drain, memory_repo):
+    # Given: the in-memory view is stale relative to the store.
     store = memory_module.memory_store
-    store.load_from_disk()
+    store.load_from_store()
     store.memory_entries = ["stale parent view"]
     child_fact = "child learned: conftest.py overrides env"
-    (tmp_memory_dir / "MEMORY.md").write_text(child_fact, encoding="utf-8")
+    memory_repo.add_entry("memory", child_fact)
     patched_drain["items"] = [SimpleNamespace(message=_carrier())]
 
     # When: the drain middleware reconciles.
     asyncio.run(SubagentCompletionDrainMiddleware().abefore_model({"session_id": SID}, None))
 
-    # Then: disk (source of truth) wins; the stale view is not persisted over it.
-    written = (tmp_memory_dir / "MEMORY.md").read_text(encoding="utf-8")
-    assert child_fact in written
-    assert "stale parent view" not in written
+    # Then: the store (source of truth) wins; the stale view is not persisted over it.
+    stored = memory_repo.active_entries_ordered("memory")
+    assert [entry["content"] for entry in stored] == [child_fact]
     assert store.memory_entries == [child_fact]
 
 
-def test_drain_backflows_user_profile_target(patched_drain, tmp_memory_dir):
-    # Given: the child persisted a user-profile entry on disk.
+def test_drain_backflows_user_profile_target(patched_drain, memory_repo):
+    # Given: the child persisted a user-profile entry.
     store = memory_module.memory_store
-    store.load_from_disk()
+    store.load_from_store()
     child_pref = "child learned: user prefers Chinese replies"
-    (tmp_memory_dir / "USER.md").write_text(child_pref, encoding="utf-8")
+    memory_repo.add_entry("user", child_pref)
     patched_drain["items"] = [SimpleNamespace(message=_carrier())]
 
     # When: the drain middleware ingests the completion carrier.
     asyncio.run(SubagentCompletionDrainMiddleware().abefore_model({"session_id": SID}, None))
 
-    # Then: the parent's user store and the shared file both carry it.
+    # Then: the parent's user store carries it.
     assert store.user_entries == [child_pref]
-    assert (tmp_memory_dir / "USER.md").read_text(encoding="utf-8") == child_pref
 
 
-def test_backflow_failure_does_not_block_carrier_injection(
-    patched_drain, tmp_memory_dir, monkeypatch
-):
+def test_backflow_failure_does_not_block_carrier_injection(patched_drain, memory_repo, monkeypatch):
     # Given: memory I/O is broken.
     def _boom():
         raise OSError("memory I/O unavailable")
 
-    monkeypatch.setattr(memory_module.memory_store, "load_from_disk", _boom)
+    monkeypatch.setattr(memory_module.memory_store, "load_from_store", _boom)
     patched_drain["items"] = [SimpleNamespace(message=_carrier("must arrive"))]
 
     # When: the drain middleware ingests the completion carrier.
@@ -153,13 +149,10 @@ def test_backflow_failure_does_not_block_carrier_injection(
     assert "must arrive" in result["messages"][0].text
 
 
-def test_empty_queue_does_not_touch_memory(patched_drain, tmp_memory_dir, monkeypatch):
-    # Given: a spy on every shared-memory I/O entry point.
+def test_empty_queue_does_not_touch_memory(patched_drain, memory_repo, monkeypatch):
+    # Given: a spy on the shared-memory reload.
     calls: list[str] = []
-    monkeypatch.setattr(memory_module.memory_store, "load_from_disk", lambda: calls.append("load"))
-    monkeypatch.setattr(
-        memory_module.memory_store, "save_to_disk", lambda target: calls.append(target)
-    )
+    monkeypatch.setattr(memory_module.memory_store, "load_from_store", lambda: calls.append("load"))
 
     # When: the queue is empty.
     result = asyncio.run(

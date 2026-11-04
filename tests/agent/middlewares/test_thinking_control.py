@@ -540,7 +540,7 @@ def refresh_calls(monkeypatch):
             "facts": "FRESH",
         }
 
-    monkeypatch.setattr(memory_store, "load_from_disk", _load)
+    monkeypatch.setattr(memory_store, "load_from_store", _load)
     return calls
 
 
@@ -653,7 +653,7 @@ class TestFrozenSnapshotRefresh:
         def _boom():
             raise OSError("memory file unreadable")
 
-        monkeypatch.setattr(memory_store, "load_from_disk", _boom)
+        monkeypatch.setattr(memory_store, "load_from_store", _boom)
         assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
 
         assert _cached_prompt(sid) == ("OLD", "OLD")
@@ -694,26 +694,25 @@ class TestFrozenSnapshotRefresh:
 
         assert captured["request"].system_message.content == "FRESH"
 
-    def test_the_refresh_reads_mid_session_writes_from_disk(self, sid, tmp_path, monkeypatch):
+    def test_the_refresh_reads_mid_session_writes_from_store(self, sid, tmp_path, monkeypatch):
         from agent.tools import memory as memory_mod
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
 
+        repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+        monkeypatch.setattr(memory_mod, "memory_entry_repo", repo)
         store = memory_mod.MemoryStore()
-        monkeypatch.setattr(memory_mod, "MEMORY_DIR", tmp_path)
         monkeypatch.setattr(memory_mod, "memory_store", store)
-        (tmp_path / "FACTS.md").write_text("old fact", encoding="utf-8")
-        (tmp_path / "MEMORY.md").write_text("", encoding="utf-8")
-        (tmp_path / "USER.md").write_text("", encoding="utf-8")
-        store.load_from_disk()
+        repo.add_entry("facts", "old fact")
+        store.load_from_store()
         assert "old fact" in (store.format_for_system_prompt("facts") or "")
 
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
         _apply_once(ThinkingControlMiddleware(), sid)
         _prime_prompt(sid)
 
-        # A mid-session write only touches the file; the frozen snapshot must
+        # A mid-session write only touches the store; the frozen snapshot must
         # still be stale until the switch-triggered reload runs.
-        with (tmp_path / "FACTS.md").open("a", encoding="utf-8") as handle:
-            handle.write("\n§\nnew fact")
+        repo.add_entry("facts", "new fact")
         assert "new fact" not in (store.format_for_system_prompt("facts") or "")
 
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)

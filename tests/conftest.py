@@ -39,6 +39,43 @@ def unit_test_config():
             yield tmp_path
 
 
+@pytest.fixture(scope="session")
+def _memory_test_repo(tmp_path_factory):
+    """One isolated memory database per test process.
+
+    Building the schema per test (the initial approach) added minutes to the
+    8k-test unit gate; the session-scoped database is wiped between tests
+    instead. Each process (``run_tests_split`` group) gets its own file.
+    """
+    from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+    repo = MemoryEntryRepository(db_path=tmp_path_factory.mktemp("memory") / "memory.db")
+    yield repo
+    repo.close()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_memory_repository(_memory_test_repo, monkeypatch):
+    """No test reads or writes the developer's real long-term memory.
+
+    The process-wide ``MemoryStore`` resolves its repository dynamically, so
+    pointing the module attribute at the session's temp database and reloading
+    the store isolates every test — including the full e2e suite, which calls
+    ``agent_core.init()``. A test that needs seeded rows overrides the module
+    attribute itself (its patch lands after this fixture and wins).
+    """
+    try:
+        import agent.tools.memory as memory_module
+    except Exception:  # noqa: BLE001 - unrelated suites must still run
+        yield None
+        return
+    _memory_test_repo.delete_all()
+    _memory_test_repo.clear_settings()
+    monkeypatch.setattr(memory_module, "memory_entry_repo", _memory_test_repo)
+    memory_module.memory_store.reset_in_memory()
+    yield _memory_test_repo
+
+
 @pytest.fixture(autouse=True)
 def _isolated_prompt_data_provider():
     """No test may leak a registered prompt data provider into the next test."""

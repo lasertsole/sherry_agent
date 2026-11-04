@@ -21,7 +21,7 @@ What this proves, end to end and without a single network byte:
      ``AIMessage(summary, additional_kwargs={"lc_source": "summarization"})``.
   4. Assertion (b) — need_update_system_prompt=True path (summarization.py
      L1141-1146): the model call's system message is the REBUILT system prompt
-     (``memory_store.load_from_disk()`` + ``build_system_prompt(session_id=...)``)
+     (``memory_store.load_from_store()`` + ``build_system_prompt(session_id=...)``)
      and the rebuilt prompt is double-written to ``state_register_mem`` AND
      ``state_register_db``.
 
@@ -408,7 +408,7 @@ class TestE2ESummarizationStaticFallback:
         system_msg = received[0]
         assert isinstance(system_msg, SystemMessage)
 
-        # The rebuilt prompt: memory_store.load_from_disk() + build_system_prompt.
+        # The rebuilt prompt: memory_store.load_from_store() + build_system_prompt.
         expected = build_system_prompt(session_id=sid)
         assert system_msg.content == expected
 

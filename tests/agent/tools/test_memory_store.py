@@ -1,30 +1,27 @@
 """Tests for the category-routing batch append of ``MemoryStore``.
 
-``append_entries`` must route ``User:``-prefixed entries to USER.md and every
-other entry to MEMORY.md, each file obeying its own char limit, dedup and
-oldest-first eviction. The store is pointed at a per-test tmp directory so the
-real ``workspace/MEMORY.md`` / ``workspace/USER.md`` are never touched.
+``append_entries`` must route ``User:``-prefixed entries to the ``user`` target
+and every other entry to ``memory``, each target obeying its own char limit,
+dedup and oldest-first eviction. The store is backed by a per-test SQLite
+database so the real workspace memory is never touched.
 """
 
 import pytest
 
 import agent.tools.memory as memory_module
 from agent.tools.memory import MemoryStore
+from context_engine.store.memory_entry_repository import MemoryEntryRepository
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 
 @pytest.fixture
-def tmp_memory_dir(tmp_path, monkeypatch):
-    """Point the real MemoryStore at an isolated tmp memory directory."""
-    mem_dir = tmp_path / "memory"
-    monkeypatch.setattr(memory_module, "MEMORY_DIR", mem_dir)
-    return mem_dir
-
-
-def _read(mem_dir, name: str) -> str:
-    path = mem_dir / name
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+def memory_repo(tmp_path, monkeypatch):
+    """Point the module-wide repository at an isolated temp database."""
+    repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+    monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
+    yield repo
+    repo.close()
 
 
 # ===========================================================================
@@ -32,7 +29,7 @@ def _read(mem_dir, name: str) -> str:
 # ===========================================================================
 
 
-def test_append_entries_memory_only(tmp_memory_dir):
+def test_append_entries_memory_only(memory_repo):
     store = MemoryStore()
     result = store.append_entries("§ alpha\n§ Environment: Python 3.13")
 
@@ -41,11 +38,13 @@ def test_append_entries_memory_only(tmp_memory_dir):
     assert store.user_entries == []
     assert "MEMORY.md" in result["message"]
     assert "USER.md" not in result["message"]
-    assert _read(tmp_memory_dir, "MEMORY.md") == "alpha\n§\nEnvironment: Python 3.13"
-    assert not (tmp_memory_dir / "USER.md").exists()
+    assert [entry["target"] for entry in memory_repo.list_entries(limit=None)] == [
+        "memory",
+        "memory",
+    ]
 
 
-def test_append_entries_user_only(tmp_memory_dir):
+def test_append_entries_user_only(memory_repo):
     store = MemoryStore()
     result = store.append_entries("§ User: prefers concise answers")
 
@@ -53,11 +52,11 @@ def test_append_entries_user_only(tmp_memory_dir):
     assert store.user_entries == ["User: prefers concise answers"]
     assert store.memory_entries == []
     assert "USER.md" in result["message"]
-    assert _read(tmp_memory_dir, "USER.md") == "User: prefers concise answers"
-    assert not (tmp_memory_dir / "MEMORY.md").exists()
+    assert len(memory_repo.list_entries("user", limit=None)) == 1
+    assert memory_repo.list_entries("memory", limit=None) == []
 
 
-def test_append_entries_user_prefix_case_insensitive_with_spaces(tmp_memory_dir):
+def test_append_entries_user_prefix_case_insensitive_with_spaces(memory_repo):
     store = MemoryStore()
     store.append_entries("§ USER: a\n§ user : b\n§ User: c")
 
@@ -65,7 +64,7 @@ def test_append_entries_user_prefix_case_insensitive_with_spaces(tmp_memory_dir)
     assert store.memory_entries == []
 
 
-def test_append_entries_mixed(tmp_memory_dir):
+def test_append_entries_mixed(memory_repo):
     store = MemoryStore()
     result = store.append_entries(
         "§ Environment: Python 3.13\n§ User: likes tea\n§ Project: uses uv"
@@ -84,7 +83,7 @@ def test_append_entries_mixed(tmp_memory_dir):
 # ===========================================================================
 
 
-def test_append_entries_dedup_per_target(tmp_memory_dir):
+def test_append_entries_dedup_per_target(memory_repo):
     store = MemoryStore()
     store.append_entries("§ User: likes tea\n§ Environment: Python 3.13")
 
@@ -95,7 +94,7 @@ def test_append_entries_dedup_per_target(tmp_memory_dir):
     assert second["entry_count"] == 3
 
 
-def test_append_entries_user_limit_evicts_oldest(tmp_memory_dir):
+def test_append_entries_user_limit_evicts_oldest(memory_repo):
     store = MemoryStore(user_char_limit=100)
     store.append_entries("§ User: " + "a" * 30 + "\n§ User: " + "b" * 30)
     store.append_entries("§ User: " + "c" * 30)
@@ -105,12 +104,12 @@ def test_append_entries_user_limit_evicts_oldest(tmp_memory_dir):
         "User: " + "c" * 30,
         "User: " + "d" * 30,
     ]
-    # MEMORY.md untouched: the user limit never bleeds into memory entries.
+    # The memory target is untouched: the user limit never bleeds into it.
     assert store.memory_entries == []
-    assert not (tmp_memory_dir / "MEMORY.md").exists()
+    assert memory_repo.list_entries("memory", limit=None) == []
 
 
-def test_append_entries_empty(tmp_memory_dir):
+def test_append_entries_empty(memory_repo):
     store = MemoryStore()
     result = store.append_entries("   ")
 
@@ -119,7 +118,7 @@ def test_append_entries_empty(tmp_memory_dir):
     assert store.user_entries == []
 
 
-def test_append_entries_all_existing(tmp_memory_dir):
+def test_append_entries_all_existing(memory_repo):
     store = MemoryStore()
     store.append_entries("§ User: likes tea\n§ Environment: Python 3.13")
 

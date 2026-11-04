@@ -359,7 +359,4 @@ class TestPairingInvariant:
             for message in sanitize_tool_use_result_pairing(list(original))
         ]
         assert structure_clipped == structure_original
-        assert not any(
-            "tool result missing" in str(message.content)
-            for message in sanitized
-        )
+        assert not any("tool result missing" in str(message.content) for message in sanitized)

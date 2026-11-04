@@ -180,7 +180,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     2026-10-22), so `before_model` compares the turn's (thinking key,
   │     profile fingerprint, custom-mapping fingerprint) against the last
   │     applied one — process-level because the graph is rebuilt every turn —
-  │     and, on a change, reloads `MemoryStore.load_from_disk()` and deletes
+  │     and, on a change, reloads `MemoryStore.load_from_store()` and deletes
   │     `StateKey.SYSTEM_PROMPT` from both registers BEFORE
   │     `system_prompt_injection` resolves the prompt. The switched turn's
   │     first model call therefore sees mid-session FACTS/MEMORY/USER writes;
@@ -784,19 +784,42 @@ the sherry checkout injects nothing — the checkout's own AGENTS.md is the
 agent's developer guide, never the user's project rules. No nested traversal
 (git root → cwd) yet, no file creation, no `.gitignore` edits.
 
-**FACTS.md is ONE global, system-level file.** All three memory files live in
-`workspace/memory/` (`MEMORY.md`, `USER.md`, `FACTS.md`) and are loaded by the
-boot-time `MemoryStore.load_from_disk()`; there is no per-project FACTS path and
-`runtime/session/context.py` no longer exists. FACTS holds only SYSTEM-LEVEL /
-CROSS-PROJECT pitfalls — things true in ANY project on this machine (toolchain
-behavior, environment limits, generic command gotchas), not project conventions
-(those go to MEMORY.md or the project's AGENTS.md). The memory review and plan
-extraction prompts state this routing and instruct the model to migrate a
-project-specific entry out of FACTS into MEMORY when it spots one; the 1 375-char
-oldest-first rollover still bounds the single file. Because nothing is
-per-project, a directory switch no longer invalidates the cached system prompt
-for FACTS, and `GET/PUT /memory` reads/writes all three files globally without a
-`session_id`. A legacy `<project>/.sherry/memory/FACTS.md` is ignored (left on
+**Long-term memory is SQLite-backed; FACTS is one global target.** The three
+targets (`memory`, `user`, `facts`) live as rows in the MesMemory
+`memory_entries` table (one row per `§`-entry), written through
+`MemoryEntryRepository` (`context_engine/store/memory_entry_repository.py`).
+The old `workspace/memory/{MEMORY,USER,FACTS}.md` files are LEGACY only:
+`memory_migration.migrate_legacy_memory_files()` runs once from
+`agent_core.init()`, imports them in a single transaction (created_at from the
+file mtime, ids preserve file order, H1 headers stripped), and renames each
+source to `*.md.bak` only after the commit. Any existing row — archived
+included — makes the import a no-op, so a failed rename cannot duplicate data; a
+failed transaction leaves the files untouched for the next boot. There is no
+per-project FACTS path and `runtime/session/context.py` no longer exists.
+FACTS holds only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY
+project on this machine (toolchain behavior, environment limits, generic command
+gotchas), not project conventions (those go to `memory` or the project's
+AGENTS.md). The memory review and plan extraction prompts state this routing and
+instruct the model to migrate a project-specific entry out of FACTS into the
+memory target when it spots one.
+
+`MemoryStore.load_from_store()` reads the active rows ordered
+`created_at ASC, id ASC` (the old top-to-bottom file order) and freezes the
+rendered block as the system-prompt snapshot; mid-session writes are durable but
+do not re-render it, so the provider prefix cache stays stable. The snapshot is
+reloaded on the next session start, after a compression rebuild, on the
+model/thinking-switch path, and when a subagent completion drains. Every row
+carries `origin_session` (provenance) plus `usage_count` / `last_used`; the
+rendered block appends `[origin: <sid>, created: <date>, used: <n>x]` after an
+entry only when its origin is known. `memory(action="read")` returns matching
+entries and increments their usage. `facts` overflow archives the LEAST-ACTIVE
+entries (`COALESCE(last_used, created_at)`, then `usage_count`) instead of the
+oldest; every removal is a soft delete (`archived` + reason), restorable from
+the panel. The panel talks to `/memory/entries*` (CRUD, stats, search,
+restore), `/memory/settings` (the UI-editable caps and `max_unused_days`, with
+the code defaults in `MEMORY_TOOL`), and `/memory/consolidate` (the aging pass);
+legacy `GET/PUT /memory` still renders/parses the old `§`-delimited shape without
+a `session_id`. A legacy `<project>/.sherry/memory/FACTS.md` is ignored (left on
 disk, never rewritten) — it is not migrated automatically.
 
 The external-path HITL gate agrees with that root: `resolve_external_path`'s
@@ -1502,7 +1525,8 @@ false` = under `skills/plugins/`); each tool entry also carries the
   summary/pruning/offload/state write), then schedules a detached two-wave
   memory review and lets the delete proceed immediately. Wave 1 reviews the
   prefix a compression would have discarded with the captured model/prompt/tool
-  face (cache-warm); after it writes MEMORY.md/USER.md/FACTS.md, wave 2 reloads
+  face (cache-warm); after it writes memory entries (stamped with the deleted
+  session's id, not the derived wave key), wave 2 reloads
   memory, rebuilds the system prompt non-persistently, and reviews the preserved
   tail with a `memory`-only face. Both waves run under the NUDGE lane with
   per-wave derived session keys and no checkpointer; `_NudgeLimitTool` admits

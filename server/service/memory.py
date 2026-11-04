@@ -1,43 +1,14 @@
-from pathlib import Path
+"""Compatibility shim: the legacy full-file memory API.
 
-from config.features import SERVER_HTTP
-from config.path import MEMORY_DIR
-from server.service.file_store import FileStore
+Long-term memory lives in SQLite now (``server/service/memory_entries.py``).
+These two functions preserve the old ``GET/PUT /memory`` contract for existing
+clients and scripts: read renders active entries as ``§``-delimited text, write
+replaces a target's entries with the parsed body.
+"""
 
-# Memory directories (workspace/memory/). Only these file names are allowed to be
-# read/written through the UI/API. USER.md overlaps with the workspace-root USER.md
-# naming but lives in a separate directory (the long-term memory store).
-MEMORY_SYSTEM_FILE_NAMES: list[str] = SERVER_HTTP["memory_system_file_names"]
+from server.service.memory_entries import (
+    read_memory_files as read_memory_files,
+    write_memory_files as write_memory_files,
+)
 
-
-class _MemoryFileStore(FileStore):
-    """Long-term memory files at workspace/memory/ (template).
-
-    Writes merge into the current files and write everything back WITHOUT
-    re-validating existing content (the original ``write_memory_files``
-    validated only the provided entries).
-    """
-
-    def __init__(self) -> None:
-        self.file_names = list(MEMORY_SYSTEM_FILE_NAMES)
-        self.max_content_length = 8_000
-        self.error_noun = "memory file"
-
-    def _before_read(self) -> None:
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-
-    def _file_path(self, file_name: str) -> Path:
-        return MEMORY_DIR / file_name
-
-
-_store = _MemoryFileStore()
-
-
-def read_memory_files() -> dict[str, str]:
-    """Read the global memory files."""
-    return _store.read_files()
-
-
-def write_memory_files(file_to_content: dict[str, str]) -> None:
-    """Write memory files (only provided files, leave others unchanged)."""
-    _store.merge_files(file_to_content)
+__all__ = ["read_memory_files", "write_memory_files"]

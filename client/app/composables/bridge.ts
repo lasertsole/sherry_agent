@@ -112,6 +112,29 @@ export {
   setHeartbeatEnabled
 } from './bridge/memory';
 export type { HeartbeatStatus } from './bridge/memory';
+export {
+  archiveMemoryEntry,
+  consolidateMemory,
+  createMemoryEntry,
+  readMemoryEntries,
+  readMemorySettings,
+  readMemoryStats,
+  restoreMemoryEntry,
+  searchMemoryEntries,
+  updateMemoryEntry,
+  writeMemorySettings
+} from './bridge/memory-entries';
+export type {
+  MemoryArchiveReason,
+  MemoryEntry,
+  MemoryEntryPage,
+  MemorySearchResult,
+  MemorySettings,
+  MemoryStats,
+  MemoryTarget,
+  MemoryTargetStats,
+  ReadMemoryEntriesParams
+} from './bridge/memory-entries';
 
 // ── Cron (scheduled tasks) ──────────────────────────────
 export type {

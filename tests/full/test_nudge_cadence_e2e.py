@@ -410,7 +410,10 @@ class _Sandbox:
         self.auto_skills_dir = tmp_path / "skills_auto"
         self.auto_skills_dir.mkdir(parents=True, exist_ok=True)
         self.monkeypatch = monkeypatch
-        monkeypatch.setattr(memory_module, "MEMORY_DIR", self.memory_dir)
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+        self.memory_repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+        monkeypatch.setattr(memory_module, "memory_entry_repo", self.memory_repo)
         monkeypatch.setattr(knowledge_store, "_KNOWLEDGE_ROOT", self.plans_dir)
         monkeypatch.setattr(skill_manage, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         # The post-compression todo reconciliation fork is a separate nudge
@@ -418,6 +421,7 @@ class _Sandbox:
         # here attributable to the cadence / extraction assertions.
         monkeypatch.setitem(SUMMARIZATION, "compression_todo_update_enabled", False)
         agent_core.init()
+        memory_module.memory_store.load_from_store()
 
     def new_session(self, tag: str) -> str:
         sid = _new_sid(tag)
@@ -536,9 +540,10 @@ def _memory_review_problems(
     if not any('"success": true' in item["content"] for item in memory_results):
         problems.append(f"memory tool returned no success: {memory_results[0]['content'][:200]!r}")
         return problems
-    files = [path for path in sandbox.memory_dir.glob("*.md") if path.read_text(encoding="utf-8")]
-    if not files:
-        problems.append("memory tool reported success but no memory file carries content")
+    if not any(
+        sandbox.memory_repo.active_entries_ordered(target) for target in ("memory", "user", "facts")
+    ):
+        problems.append("memory tool reported success but the store carries no entry")
     return problems
 
 
@@ -1043,12 +1048,18 @@ async def test_two_sessions_compress_isolated_reviews_and_taskflow_context(
             session_id=sid_b,
         )
 
-        sandbox.monkeypatch.setattr(memory_module, "MEMORY_DIR", sandbox.memory_dir / "session-a")
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+        repo_a = MemoryEntryRepository(db_path=sandbox.memory_dir / "session-a.db")
+        repo_b = MemoryEntryRepository(db_path=sandbox.memory_dir / "session-b.db")
+        sandbox.monkeypatch.setattr(memory_module, "memory_entry_repo", repo_a)
+        memory_module.memory_store.load_from_store()
         final_a = await harness.compress(sid_a, _conversation(_preference_blob(marker_a)))
         assert _summary_present(final_a)
         await _settle_nudge_tasks()
 
-        sandbox.monkeypatch.setattr(memory_module, "MEMORY_DIR", sandbox.memory_dir / "session-b")
+        sandbox.monkeypatch.setattr(memory_module, "memory_entry_repo", repo_b)
+        memory_module.memory_store.load_from_store()
         final_b = await harness.compress(sid_b, _conversation(_preference_blob(marker_b)))
         assert _summary_present(final_b)
         await _settle_nudge_tasks()
@@ -1064,13 +1075,13 @@ async def test_two_sessions_compress_isolated_reviews_and_taskflow_context(
         assert flow_a in ctx_a and flow_b not in ctx_a, f"A context leaked: {ctx_a!r}"
         assert flow_b in ctx_b and flow_a not in ctx_b, f"B context leaked: {ctx_b!r}"
 
-        for directory, foreign in (
-            (sandbox.memory_dir / "session-a", marker_b),
-            (sandbox.memory_dir / "session-b", marker_a),
-        ):
-            if directory.exists():
-                text = "".join(path.read_text(encoding="utf-8") for path in directory.glob("*.md"))
-                assert foreign not in text, f"cross-session memory pollution in {directory}"
+        for repo, foreign in ((repo_a, marker_b), (repo_b, marker_a)):
+            text = "".join(
+                entry["content"]
+                for target in ("memory", "user", "facts")
+                for entry in repo.active_entries_ordered(target)
+            )
+            assert foreign not in text, f"cross-session memory pollution in {repo}"
     finally:
         await _cancel_pending_nudges()
         await _purge_session(sid_a)

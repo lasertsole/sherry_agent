@@ -76,15 +76,17 @@ RC_NAMES: dict[int, str] = {
     -6: "aborted (SIGABRT stack dump from the runner's stall detection)",
 }
 
-#: A group that prints nothing for this long is hung (the slowest hermetic
-#: single test stays under 120s). Hermetic mode only — llm_e2e mode uses the
-#: larger LLM_E2E_* budgets below.
-GROUP_IDLE_TIMEOUT_SECONDS = 300.0
+#: A group that prints nothing for this long is hung. 600 s (not 300) because
+#: the docs-parity calibration test walks the whole checkout — including
+#: ``client/node_modules`` and ``.venv`` — and one quiet test can legitimately
+#: take minutes on a cold/loaded host. Hermetic mode only; llm_e2e mode uses
+#: the larger LLM_E2E_* budgets below.
+GROUP_IDLE_TIMEOUT_SECONDS = 600.0
 
-#: Hard wall clock per group. Group A (unit) is the slowest at ~2 min; the
+#: Hard wall clock per group. The unit group runs ~10 min on this host and the
 #: budget exists so a pathological group fails the job with a summary instead
 #: of hitting the job's own (much longer) timeout with no diagnostics.
-GROUP_TOTAL_TIMEOUT_SECONDS = 900.0
+GROUP_TOTAL_TIMEOUT_SECONDS = 1800.0
 
 #: llm_e2e mode budgets: a single real-LLM test can stream quietly for many
 #: minutes (per-test pytest-timeout caps reach 1500s in tests/full), and the
@@ -185,9 +187,16 @@ def child_env() -> dict[str, str]:
     PYTHONIOENCODING=utf-8: on Windows the console codepage is often GBK/cp936;
     forcing UTF-8 keeps pytest output intact, and our capture decodes with
     errors="replace" so stray bytes can never crash the runner.
+
+    PYTHONUNBUFFERED=1: pytest's ``-q`` progress goes through a PIPE, so a
+    block-buffered stdout delivered the whole suite's dots in a few large
+    chunks. A legitimate ~7-minute group then tripped the 300 s idle watchdog
+    even though it was making progress. Unbuffered output keeps the watchdog
+    measuring real silence.
     """
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
     # Defense-in-depth: hermetic runs must never spawn the SkillSpector CLI
     # (~120s subprocess) nor its LLM API round-trip. The historical trigger —
     # agent.core import-time build_skills_snapshot -> _scan_builtin_skills ->

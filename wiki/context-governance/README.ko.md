@@ -90,7 +90,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
 | 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
 | 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
-| FACTS.md | `workspace/memory/FACTS.md`(유일한 전역 파일; memory 도구 target `facts`) | — | 시스템 수준 / 프로젝트 횡단 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
+| `facts` target | MesMemory `memory_entries` 행(유일한 전역 대상) | — | 시스템 수준 / 프로젝트 횡단 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 대상(1 375자 상한; 초과 시 가장 적게 사용된 항목부터 보관) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
 ## 🧵 Message 행의 턴 식별자
 

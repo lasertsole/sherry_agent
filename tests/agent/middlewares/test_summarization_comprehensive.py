@@ -211,12 +211,12 @@ class TestNeedUpdateSystemPrompt:
         monkeypatch.setattr(summarization_module, "build_system_prompt", fake_build_system_prompt)
 
         # The middleware does a call-time `from agent.tools import
-        # memory_store; memory_store.load_from_disk()`. memory_store is the
+        # memory_store; memory_store.load_from_store()`. memory_store is the
         # re-exported MemoryStore INSTANCE, so shadowing the bound method on
         # the instance intercepts the reload.
         from agent.tools import memory_store
 
-        monkeypatch.setattr(memory_store, "load_from_disk", lambda: None)
+        monkeypatch.setattr(memory_store, "load_from_store", lambda: None)
 
         # §9.7 call shape: state_register_db.set_state(session_id, key, value)
         monkeypatch.setattr(

@@ -351,7 +351,7 @@ class Summarization(
         """Reload the memory store and rebuild the system prompt."""
         from agent.tools import memory_store
 
-        memory_store.load_from_disk()
+        memory_store.load_from_store()
         return build_system_prompt(session_id=session_id)
 
     def _persist_system_prompt(self, session_id: str, system_prompt: str) -> None:

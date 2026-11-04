@@ -360,7 +360,10 @@ async def test_wave_uses_a_derived_session_key_and_clears_it(
         built.append({"args": args, "kwargs": kwargs})
         return _FakeAgent([], 1)
 
-    async def _invoke(_agent, _session_id, _messages, _prompt):
+    seen: dict[str, Any] = {}
+
+    async def _invoke(_agent, _session_id, _messages, _prompt, *, origin_session=None):
+        seen["origin_session"] = origin_session
         return AIMessage(content="ok")
 
     monkeypatch.setattr(nudge_mod, "_build_memory_review_agent", _build)
@@ -379,6 +382,7 @@ async def test_wave_uses_a_derived_session_key_and_clears_it(
 
     assert ok is True
     assert built[0]["kwargs"]["allowed_metadata_key"] == "nudge_memory"
+    assert seen["origin_session"] == "sess-derived"
     assert register.cleared == ["sess-derived::session-end-salvage:1"]
 
 
@@ -386,11 +390,12 @@ async def test_wave_uses_a_derived_session_key_and_clears_it(
 async def test_run_session_end_salvage_writes_both_waves_to_memory(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
-    mem_dir = tmp_path / "memory"
-    mem_dir.mkdir()
-    monkeypatch.setattr(memory_module, "MEMORY_DIR", mem_dir)
+    from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+    repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+    monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
     store = MemoryStore()
-    store.load_from_disk()
+    store.load_from_store()
     monkeypatch.setattr(memory_module, "memory_store", store)
 
     calls: list[dict[str, Any]] = []
@@ -400,9 +405,9 @@ async def test_run_session_end_salvage_writes_both_waves_to_memory(
         wave_number["value"] += 1
         return _FakeAgent(calls, wave_number["value"])
 
-    async def _invoke(agent, _session_id, messages, _prompt):
+    async def _invoke(agent, _session_id, messages, _prompt, *, origin_session=None):
         wave = wave_number["value"]
-        memory_module.memory_store.add("user", f"wave-{wave}-fact")
+        memory_module.memory_store.add("user", f"wave-{wave}-fact", origin_session=origin_session)
         return await agent.ainvoke({})
 
     monkeypatch.setattr(nudge_mod, "_build_memory_review_agent", _build)
@@ -423,7 +428,9 @@ async def test_run_session_end_salvage_writes_both_waves_to_memory(
         rest_wave=[HumanMessage(content="second")],
     )
 
-    text = (mem_dir / "USER.md").read_text(encoding="utf-8")
+    text = store.format_live_content("user")
     assert "wave-1-fact" in text
     assert "wave-2-fact" in text
+    origins = {entry["origin_session"] for entry in repo.list_entries("user", limit=None)}
+    assert origins == {"sess-memory"}
     assert [call["wave"] for call in calls] == [1, 2]

@@ -215,7 +215,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 自动恢复提示词区块 |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | 工具输出单行摘要 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 连续性保存钩子 |
-| `append_entries` | `agent/tools/memory.py:281` | 批量追加 MEMORY.md |
+| `append_entries` | `agent/tools/memory.py` | 批量追加 `memory` / `user` target（facts 溢出时按使用率淘汰） |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | 会话面板读取（SQL `session_id` 过滤） |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失败分类 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:218,273` | wait_all 重试规划/持久化 |

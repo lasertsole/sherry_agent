@@ -104,7 +104,8 @@ def init() -> None:
     - Rebuilds the skill snapshot at server start to keep the skills prompt
       stable throughout this server run, ensuring reliable model prefix
       caching.
-    - Loads memory markdown files from disk; they stay unchanged until
+    - Imports the legacy memory Markdown files into SQLite once (idempotent)
+      and loads the memory snapshot from the store; it stays unchanged until
       compression is triggered during this server run.
     - Builds the main tool list.
     - Registers the prompt data provider so workspace/context_engine can read
@@ -119,9 +120,11 @@ def init() -> None:
         return
 
     from skills import build_skills_snapshot
+    from context_engine.store.memory_migration import migrate_legacy_memory_files
 
     build_skills_snapshot()
-    memory_store.load_from_disk()
+    migrate_legacy_memory_files()
+    memory_store.load_from_store()
     _tools = build_main_tools()
     register_prompt_data_provider()
     register_skill_write_provider()
