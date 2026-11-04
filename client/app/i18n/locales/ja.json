@@ -610,6 +610,8 @@
     "gitDiff": "コミット差分",
     "contextViewer": "エージェント コンテキスト",
     "subagentActivity": "エージェント実況",
+    "sessionActivity": "セッション実況",
+    "taskFlowBoard": "タスクボード",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
     "sideChat": "補助セッション",
@@ -643,7 +645,8 @@
     "empty": "実行中のタスクはありません",
     "expand": "計画の進捗を表示",
     "notStarted": "未着手",
-    "summary": "計画 {done}/{total}"
+    "summary": "計画 {done}/{total}",
+    "openBoard": "タスクボードを開く"
   },
   "projectFiles": {
     "title": "ファイルツリー",

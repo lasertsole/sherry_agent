@@ -610,6 +610,8 @@
     "gitDiff": "커밋 diff",
     "contextViewer": "에이전트 컨텍스트",
     "subagentActivity": "에이전트 활동",
+    "sessionActivity": "세션 활동",
+    "taskFlowBoard": "작업 보드",
     "browser": "브라우저",
     "terminal": "터미널",
     "sideChat": "보조 세션",
@@ -643,7 +645,8 @@
     "empty": "진행 중인 작업이 없습니다",
     "expand": "계획 진행률 보기",
     "notStarted": "시작 전",
-    "summary": "계획 {done}/{total}"
+    "summary": "계획 {done}/{total}",
+    "openBoard": "작업 보드 열기"
   },
   "projectFiles": {
     "title": "파일 트리",

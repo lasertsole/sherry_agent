@@ -137,6 +137,17 @@
         :killing="backgroundKilling"
         :kill-refusal="backgroundKillRefusal"
         :kill="backgroundKill" />
+
+      <!-- The full overview: TaskFlow progress + sub-agents + foreground tools
+           in one session-scoped panel (this popover is the short version). -->
+      <button
+        type="button"
+        class="flex cursor-pointer items-center gap-1.5 self-start border-t border-solid border-gray-100 pt-2 text-xs text-theme-main hover:underline dark:border-gray-800"
+        data-test="tasks-open-activity"
+        @click="openActivity">
+        <i class="pi pi-bolt text-[10px]" />
+        {{ t('tasksButton.activity') }}
+      </button>
     </div>
   </ToolbarPopover>
 </template>
@@ -195,6 +206,7 @@ const commandsStore = useRunningCommandsStore();
 // Shared run labels: the role / status vocabulary lives in the subagent facade
 // so the activity tab and this list can never disagree.
 const { roleLabel, runLabel, statusLabel } = useSubagentTasks();
+const rightSidebar = useRightSidebarStore();
 
 /** This session's runs that still own a slot (running / interrupted / queued). */
 const activeRuns = computed(() => (store.taskRuns ?? []).filter(isActiveRun));
@@ -337,6 +349,12 @@ const openRun = (runId: string) => {
   popover.value?.close();
 };
 
+/** Open the session's full activity overview tab and close this popover. */
+const openActivity = () => {
+  rightSidebar.openTab('sessionActivity');
+  popover.value?.close();
+};
+
 /**
  * Ask the session page to reveal a running command's tool card (its terminal log).
  * @param messageId TOOL row's message id.
@@ -379,7 +397,8 @@ const openCommand = (messageId: number) => {
       "agoSeconds": "{n} 秒前",
       "agoMinutes": "{n} 分钟前",
       "agoHours": "{n} 小时前",
-      "agoDays": "{n} 天前"
+      "agoDays": "{n} 天前",
+      "activity": "活动总览"
     }
   },
   "en": {
@@ -393,7 +412,8 @@ const openCommand = (messageId: number) => {
       "agoSeconds": "{n}s ago",
       "agoMinutes": "{n}m ago",
       "agoHours": "{n}h ago",
-      "agoDays": "{n}d ago"
+      "agoDays": "{n}d ago",
+      "activity": "Session activity"
     }
   },
   "ja": {
@@ -407,7 +427,8 @@ const openCommand = (messageId: number) => {
       "agoSeconds": "{n} 秒前",
       "agoMinutes": "{n} 分前",
       "agoHours": "{n} 時間前",
-      "agoDays": "{n} 日前"
+      "agoDays": "{n} 日前",
+      "activity": "セッション実況"
     }
   },
   "ko": {
@@ -421,7 +442,8 @@ const openCommand = (messageId: number) => {
       "agoSeconds": "{n}초 전",
       "agoMinutes": "{n}분 전",
       "agoHours": "{n}시간 전",
-      "agoDays": "{n}일 전"
+      "agoDays": "{n}일 전",
+      "activity": "세션 활동"
     }
   }
 }

@@ -54,6 +54,13 @@
           class="pi pi-list text-[11px]"
           aria-hidden="true"></i>
         {{ t('progressFloat.summary', { done: planDone, total: planTotal }) }}
+        <button
+          type="button"
+          class="ml-auto cursor-pointer text-theme-main hover:underline"
+          data-test="progress-float-open-board"
+          @click="openBoard">
+          {{ t('progressFloat.openBoard') }}
+        </button>
       </header>
 
       <!-- Checklist rows that are not part of a tracked flow -->
@@ -138,10 +145,17 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
+import { useRightSidebarStore } from '~/stores/right-sidebar';
 
 const { t } = useI18n();
 /** Flow/step progress (taskflow payloads). */
 const store = useTaskflowStore();
+const rightSidebar = useRightSidebarStore();
+
+/** Open the full swimlane board in a right-sidebar tab. */
+const openBoard = (): void => {
+  rightSidebar.openTab('taskFlowBoard');
+};
 store.subscribe();
 /** The checklist half of the same plan — its own pushed payload. */
 const todoStore = useTodoStore();

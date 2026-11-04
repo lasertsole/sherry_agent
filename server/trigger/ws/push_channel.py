@@ -20,6 +20,7 @@ sub-agent lifecycle hooks) plus their log wording.
 
 import asyncio
 import contextlib
+import inspect
 import json
 import threading
 from collections import deque
@@ -36,21 +37,27 @@ class WSPushChannel:
     max_pending: int = 2000
 
     def __init__(self) -> None:
-        # Shared set of connected websockets + the lock guarding it
+        # Connected websockets → their optional ROUTING KEY (None = a global
+        # channel that receives every frame). The lock guards both maps
         # (producers and the handler run on different threads).
-        self._subscribers: set[Any] = set()
+        self._subscribers: dict[Any, str | None] = {}
         self._subscribers_lock = threading.Lock()
         # Per-websocket bounded deque of serialized JSON frames.
         self._pending: dict[Any, deque[str]] = {}
 
-    def enqueue_frame(self, frame: str) -> None:
-        """Enqueue a pre-serialized frame to every connected websocket.
+    def enqueue_frame(self, frame: str, key: str | None = None) -> None:
+        """Enqueue a pre-serialized frame to the matching websockets.
 
-        Safe to call from any thread/async context: only touches the guarded
-        subscriber set and the per-websocket deque; never awaits asyncio.
+        ``key=None`` (every existing channel) broadcasts to ALL subscribers; a
+        key delivers only to the sockets that subscribed under it (the
+        trajectory channel routes by session id). Safe to call from any
+        thread/async context: only touches the guarded maps and the deques;
+        never awaits asyncio.
         """
         with self._subscribers_lock:
-            for ws in list(self._subscribers):
+            for ws, ws_key in list(self._subscribers.items()):
+                if key is not None and ws_key != key:
+                    continue
                 queue = self._pending.get(ws)
                 if queue is None:
                     continue
@@ -87,6 +94,8 @@ class WSPushChannel:
         ensure_registered: Callable[[], None],
         handler_label: str,
         client_label: str,
+        channel_key: str | None = None,
+        ready_factory: Callable[[], Any] | None = None,
     ) -> None:
         """Handler skeleton: subscribe, start the sender, serve until disconnect.
 
@@ -116,14 +125,23 @@ class WSPushChannel:
 
         queue: deque[str] = deque()
         with self._subscribers_lock:
-            self._subscribers.add(websocket)
+            self._subscribers[websocket] = channel_key
             self._pending[websocket] = queue
 
         sender_task = asyncio.create_task(self._sender(websocket, queue))
 
         try:
-            # Welcome frame.
-            await websocket.send_text(json.dumps({"event": "ready"}, ensure_ascii=False))
+            # Welcome frame. A factory (the trajectory channel) may add a
+            # gap-fill snapshot; it runs AFTER subscribing so no event can slip
+            # between the snapshot and the subscription.
+            ready: dict[str, Any] = {"event": "ready"}
+            if ready_factory is not None:
+                extra = ready_factory()
+                if inspect.isawaitable(extra):
+                    extra = await extra
+                if isinstance(extra, dict):
+                    ready.update(extra)
+            await websocket.send_text(json.dumps(ready, ensure_ascii=False))
 
             # Receive loop: keeps the connection alive and detects disconnect.
             while True:
@@ -140,6 +158,6 @@ class WSPushChannel:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await sender_task
             with self._subscribers_lock:
-                self._subscribers.discard(websocket)
+                self._subscribers.pop(websocket, None)
                 self._pending.pop(websocket, None)
             logger.info(f"{client_label} client {websocket.id} unregistered")

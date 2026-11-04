@@ -610,6 +610,8 @@
     "gitDiff": "Commit diff",
     "contextViewer": "Agent context",
     "subagentActivity": "Agent Activity",
+    "sessionActivity": "Session Activity",
+    "taskFlowBoard": "Task Board",
     "browser": "Browser",
     "terminal": "Terminal",
     "sideChat": "Side session",
@@ -643,7 +645,8 @@
     "empty": "No tasks in progress",
     "expand": "Show plan progress",
     "notStarted": "Not started",
-    "summary": "Plan {done}/{total}"
+    "summary": "Plan {done}/{total}",
+    "openBoard": "Open task board"
   },
   "projectFiles": {
     "title": "Files",

@@ -610,6 +610,8 @@
     "gitDiff": "提交差异",
     "contextViewer": "Agent 上下文",
     "subagentActivity": "智能体实况",
+    "sessionActivity": "活动总览",
+    "taskFlowBoard": "任务看板",
     "browser": "浏览器",
     "terminal": "终端",
     "sideChat": "辅助会话",
@@ -643,7 +645,8 @@
     "empty": "暂无进行中的任务",
     "expand": "展开计划进度",
     "notStarted": "未开始",
-    "summary": "计划 {done}/{total}"
+    "summary": "计划 {done}/{total}",
+    "openBoard": "打开任务看板"
   },
   "projectFiles": {
     "title": "文件树",

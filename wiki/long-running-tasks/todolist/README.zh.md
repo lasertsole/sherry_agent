@@ -394,7 +394,7 @@ WS 事件：`todo_updated`（变更推送）+ `todo_refresh`（重连重发）�
 
 ### UI 组件（ProgressFloat.vue）
 
-- **ProgressFloat.vue**：对话里的计划悬浮框——按 `flow_id` 分组的待办 + TaskFlow 扁平步骤列表，默认收成一个小胶囊。界面里没有第二处计划展示（输入框上方那块 dock 已按设计移除）。
+- **ProgressFloat.vue**：对话里的计划悬浮框——按 `flow_id` 分组的待办 + TaskFlow 扁平步骤列表，默认收成一个小胶囊；展开后的标题可打开**任务看板**（`TaskFlowBoardPanel.vue`，会话级右栏标签页），每个活跃 flow 的步骤按状态分入泳道。这是界面里唯一的第二处计划展示（输入框上方那块 dock 已按设计移除）。
 
 ### WS 消息格式
 

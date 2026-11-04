@@ -10,13 +10,13 @@
     </div>
     <template v-else>
       <p
-        v-if="error"
-        class="m-0 text-xs text-red-500"
-        data-test="subagent-trajectory-error">
-        {{ t('subagentActivity.liveError') }}
+        v-if="!connected && events.length"
+        class="m-0 text-[11px] text-amber-600 dark:text-amber-400"
+        data-test="subagent-trajectory-offline">
+        {{ t('subagentActivity.offline') }}
       </p>
       <p
-        v-if="!turns.length && !error"
+        v-if="!turns.length"
         class="m-auto text-xs text-gray-400 dark:text-gray-500"
         data-test="subagent-trajectory-empty">
         {{ t('subagentActivity.liveEmpty') }}
@@ -86,13 +86,10 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TrajectoryEvent } from '~/composables/bridge/session';
 import { formatToolDuration } from '~/common/utils';
-// Nested bridge modules are not in the Nuxt auto-import set.
-// eslint-disable-next-line @typescript-eslint/no-restricted-imports
-import { fetchTrajectory } from '~/composables/bridge/session';
 
 const props = defineProps<{
   /** The child session whose ledger is shown (null before the child exists). */
@@ -101,69 +98,23 @@ const props = defineProps<{
 
 const { t } = useI18n({ useScope: 'local' });
 
-const events = ref<TrajectoryEvent[]>([]);
-const error = ref(false);
+/** The live stream: ready snapshot + one frame per persisted event. */
+const sessionRef = computed(() => props.sessionId ?? null);
+const { events, connected } = useTrajectoryStream(sessionRef);
+
 const scroller = ref<HTMLElement | null>(null);
-let pollTimer: ReturnType<typeof setInterval> | undefined;
-let loading = false;
 
 /** Turn-grouped rows (the shared trajectory helpers). */
 const turns = computed(() => groupTurns(events.value));
 
-/**
- * Poll one page of the child session's ledger.
- *
- * HTTP polling is the documented bridge until the trajectory WS channel lands:
- * the payload/shape is identical, so switching the source later is a one-line
- * change. A failed read keeps the last good rows and flags the error.
- */
-const load = async (): Promise<void> => {
-  const sessionId = props.sessionId;
-  if (!sessionId || loading) return;
-  loading = true;
-  try {
-    const page = await fetchTrajectory(sessionId, { limit: 100 });
-    if (page === null) {
-      error.value = true;
-      return;
-    }
-    error.value = false;
-    const grew = page.length !== events.value.length;
-    events.value = page;
-    if (grew) {
-      await nextTick();
-      if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
-    }
-  } catch {
-    error.value = true;
-  } finally {
-    loading = false;
-  }
-};
-
-const stopPolling = (): void => {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = undefined;
-};
-
-const startPolling = (): void => {
-  stopPolling();
-  if (!props.sessionId) return;
-  pollTimer = setInterval(() => void load(), 3000);
-};
-
+// Follow the tail as rows arrive (the live view is a log, not a document).
 watch(
-  () => props.sessionId,
-  () => {
-    events.value = [];
-    error.value = false;
-    void load();
-    startPolling();
-  },
-  { immediate: true }
+  () => events.value.length,
+  async () => {
+    await nextTick();
+    if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
+  }
 );
-
-onBeforeUnmount(stopPolling);
 
 /**
  * Short turn label (turn ids are long).
@@ -216,7 +167,7 @@ const rowPreview = (event: TrajectoryEvent): string => {
     "subagentActivity": {
       "noSession": "该子代理尚未建立子会话。",
       "liveEmpty": "暂无实况事件，等待第一个事件…",
-      "liveError": "实况加载失败（将自动重试）。",
+      "offline": "实况连接已断开，正在自动重连…",
       "turn": "回合 {id}",
       "turnTotal": "耗时 {duration}",
       "running": "运行中"
@@ -226,7 +177,7 @@ const rowPreview = (event: TrajectoryEvent): string => {
     "subagentActivity": {
       "noSession": "This sub-agent has no child session yet.",
       "liveEmpty": "No activity yet — waiting for the first event…",
-      "liveError": "Could not load the live activity (retrying automatically).",
+      "offline": "Live connection lost — reconnecting automatically…",
       "turn": "Turn {id}",
       "turnTotal": "took {duration}",
       "running": "running"
@@ -236,7 +187,7 @@ const rowPreview = (event: TrajectoryEvent): string => {
     "subagentActivity": {
       "noSession": "このサブエージェントにはまだ子セッションがありません。",
       "liveEmpty": "まだ実況イベントはありません（最初のイベントを待っています）…",
-      "liveError": "実況を読み込めませんでした（自動で再試行します）。",
+      "offline": "実況の接続が切れました。自動で再接続しています…",
       "turn": "ターン {id}",
       "turnTotal": "所要 {duration}",
       "running": "実行中"
@@ -246,7 +197,7 @@ const rowPreview = (event: TrajectoryEvent): string => {
     "subagentActivity": {
       "noSession": "이 서브에이전트에는 아직 자식 세션이 없습니다.",
       "liveEmpty": "아직 실시간 이벤트가 없습니다 — 첫 이벤트를 기다리는 중…",
-      "liveError": "실시간 활동을 불러오지 못했습니다(자동으로 재시도합니다).",
+      "offline": "실시간 연결이 끊겼습니다 — 자동으로 다시 연결하는 중…",
       "turn": "턴 {id}",
       "turnTotal": "소요 {duration}",
       "running": "실행 중"

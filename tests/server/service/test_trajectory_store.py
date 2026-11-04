@@ -194,3 +194,86 @@ def test_the_shared_loop_write_lock_is_reused():
     """Two appends in one loop must not deadlock (the lock is per-store)."""
     store = ts.TrajectoryStore()
     assert isinstance(store._lock, asyncio.Lock)
+
+
+@pytest.mark.asyncio
+async def test_a_persisted_event_is_pushed_through_the_hook(store):
+    """The WS channel learns about a row only after the upsert succeeded."""
+    from runtime import hooks
+
+    pushed: list[tuple[str, dict]] = []
+    hooks.register(hooks.TRAJECTORY_EVENT_PUSH, lambda sid, event: pushed.append((sid, event)))
+    try:
+        await store.append(
+            "s1",
+            "t1",
+            "tool_start",
+            {
+                "type": "tool_start",
+                "content": "read_file",
+                "tool_id": "c1",
+                "args": {"path": "a.py"},
+            },
+            seq=2,
+        )
+        await store.append(
+            "s1",
+            "t1",
+            "tool_end",
+            {
+                "type": "tool_result",
+                "tool_id": "c1",
+                "tool_name": "read_file",
+                "content": "file body",
+                "duration_ms": 12,
+                "error": False,
+            },
+            seq=3,
+        )
+    finally:
+        hooks.unregister(hooks.TRAJECTORY_EVENT_PUSH)
+
+    assert [sid for sid, _ in pushed] == ["s1", "s1"]
+    start, end = pushed[0][1], pushed[1][1]
+    assert start["event_id"] == end["event_id"], "start/end share the tool call's upsert key"
+    assert start["turn_id"] == "t1" and start["seq"] == 2
+    assert start["kind"] == "tool_start" and start["is_error"] is False
+    assert start["summary"] == "read_file"
+    assert start["payload"]["args"] == {"path": "a.py"}
+    assert start["ts"], "the pushed row carries the stored timestamp"
+    assert end["payload"]["result"] == "file body"
+    assert end["payload"]["duration_ms"] == 12
+
+
+@pytest.mark.asyncio
+async def test_an_unregistered_push_hook_is_a_noop(store):
+    """A bare process (no WS channel) still writes the ledger."""
+    from runtime import hooks
+
+    hooks.unregister(hooks.TRAJECTORY_EVENT_PUSH)
+    await store.append("s1", "t1", "turn_start", {"type": "turn_start", "source": "test"}, seq=0)
+
+    events = await store.read("s1", turn_id="t1")
+    assert [event["kind"] for event in events] == ["turn_start"]
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_payload_pushes_a_truncation_flag(store, monkeypatch):
+    """The clipped payload JSON is not re-parseable → the frame says truncated."""
+    from runtime import hooks
+
+    monkeypatch.setitem(ts.TRAJECTORY, "payload_max_chars", 40)
+    pushed: list[dict] = []
+    hooks.register(hooks.TRAJECTORY_EVENT_PUSH, lambda _sid, event: pushed.append(event))
+    try:
+        await store.append(
+            "s1",
+            "t1",
+            "tool_start",
+            {"type": "tool_start", "content": "t", "tool_id": "c9", "args": {"path": "x" * 200}},
+            seq=1,
+        )
+    finally:
+        hooks.unregister(hooks.TRAJECTORY_EVENT_PUSH)
+
+    assert pushed and pushed[0]["payload"] == {"truncated": True}

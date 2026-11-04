@@ -91,6 +91,8 @@ const KIND_ICONS: Partial<Record<RightSidebarPanelKind, string>> = {
   contextViewer: 'pi pi-list',
   sessionPreset: 'pi pi-id-card',
   subagentActivity: 'pi pi-android',
+  taskFlowBoard: 'pi pi-chart-line',
+  sessionActivity: 'pi pi-bolt',
   browser: 'pi pi-globe',
   terminal: 'pi pi-desktop'
 };

@@ -52,7 +52,7 @@ class TestEnqueueFrame:
         channel = WSPushChannel()
         q1, q2 = deque(), deque()
         s1, s2 = object(), object()
-        channel._subscribers.update({s1, s2})
+        channel._subscribers.update({s1: None, s2: None})
         channel._pending = {s1: q1, s2: q2}
 
         channel.enqueue_frame("frame-1")
@@ -64,7 +64,7 @@ class TestEnqueueFrame:
     def test_subscriber_without_queue_is_skipped(self):
         channel = WSPushChannel()
         s1 = object()
-        channel._subscribers.add(s1)  # registered but deque not yet attached
+        channel._subscribers[s1] = None  # registered but deque not yet attached
 
         channel.enqueue_frame("frame-1")  # must not raise
 
@@ -77,13 +77,51 @@ class TestEnqueueFrame:
         channel = _SmallChannel()
         queue = deque()
         s = object()
-        channel._subscribers.add(s)
+        channel._subscribers[s] = None
         channel._pending[s] = queue
 
         for i in range(5):
             channel.enqueue_frame(f"f{i}")
 
         assert list(queue) == ["f2", "f3", "f4"]
+
+
+class TestKeyedRouting:
+    def test_a_keyed_frame_reaches_only_its_session(self):
+        channel = WSPushChannel()
+        qa, qb = deque(), deque()
+        sa, sb = object(), object()
+        channel._subscribers = {sa: "session-a", sb: "session-b"}
+        channel._pending = {sa: qa, sb: qb}
+
+        channel.enqueue_frame("a-1", key="session-a")
+        channel.enqueue_frame("a-2", key="session-a")
+        channel.enqueue_frame("b-1", key="session-b")
+
+        assert list(qa) == ["a-1", "a-2"]
+        assert list(qb) == ["b-1"]
+
+    def test_an_unkeyed_frame_is_a_global_broadcast(self):
+        channel = WSPushChannel()
+        qa, qb = deque(), deque()
+        sa, sb = object(), object()
+        channel._subscribers = {sa: "session-a", sb: None}
+        channel._pending = {sa: qa, sb: qb}
+
+        channel.enqueue_frame("all")
+
+        assert list(qa) == ["all"] and list(qb) == ["all"]
+
+    def test_an_unknown_key_reaches_nobody(self):
+        channel = WSPushChannel()
+        queue = deque()
+        s = object()
+        channel._subscribers = {s: "session-a"}
+        channel._pending = {s: queue}
+
+        channel.enqueue_frame("x", key="session-z")
+
+        assert list(queue) == []
 
 
 class TestSenderDrain:
@@ -141,6 +179,49 @@ class TestServeSkeleton:
             # Unregistered after disconnect.
             assert len(channel._subscribers) == 0
             assert channel._pending == {}
+
+    def test_the_ready_frame_carries_the_factory_snapshot(self):
+        async def scenario():
+            channel = WSPushChannel()
+            socket = _FakeSocket(receive_side_effect=RuntimeError("end"))
+
+            await channel.serve(
+                socket,
+                ensure_registered=lambda: None,
+                handler_label="Trajectory WS",
+                client_label="Trajectory WS",
+                channel_key="child-session",
+                ready_factory=lambda: {"session_id": "child-session", "events": [{"seq": 1}]},
+            )
+
+            ready = json.loads(socket.sent[0])
+            assert ready["event"] == "ready"
+            assert ready["session_id"] == "child-session"
+            assert ready["events"] == [{"seq": 1}]
+
+        _run(scenario())
+
+    def test_an_async_ready_factory_is_awaited(self):
+        async def scenario():
+            channel = WSPushChannel()
+            socket = _FakeSocket(receive_side_effect=RuntimeError("end"))
+
+            async def _factory():
+                await asyncio.sleep(0)
+                return {"events": []}
+
+            await channel.serve(
+                socket,
+                ensure_registered=lambda: None,
+                handler_label="X",
+                client_label="X",
+                ready_factory=_factory,
+            )
+
+            ready = json.loads(socket.sent[0])
+            assert ready["event"] == "ready" and ready["events"] == []
+
+        _run(scenario())
 
     def test_registration_hook_runs_before_ready_frame(self):
         async def scenario():

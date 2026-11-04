@@ -25,6 +25,10 @@ export type RightSidebarPanelKind =
   | 'sessionPreset'
   /** One sub-agent run's live view (trajectory + summary + steer). */
   | 'subagentActivity'
+  /** The TaskFlow board (swimlanes per active flow). */
+  | 'taskFlowBoard'
+  /** The session's live activity overview (flows + sub-agents + tools). */
+  | 'sessionActivity'
   /** One file's diff from one commit of the session project (opened from the git graph). */
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
@@ -73,6 +77,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   webSearch: 'global',
   // One run's activity belongs to the session that spawned it.
   subagentActivity: 'session',
+  // Both overviews describe the session on screen when they were opened.
+  taskFlowBoard: 'session',
+  sessionActivity: 'session',
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',

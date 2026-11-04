@@ -113,6 +113,7 @@ client/
 │   │   ├── useImagePreview.ts     # 이미지 미리보기 오버레이 상태
 │   │   ├── useSubagentTasks.ts    # 백그라운드 작업 파사드(Pinia 스토어 + fetch/WS/Dexie 동기화)
 │   │   ├── use-subagent-activity.ts # 단일 run의 실시간 상태: 레코드, 자식 세션, steer 호출
+│   │   ├── use-trajectory-stream.ts # 단일 세션 라이브 trajectory WS(ready 스냅샷 + 이벤트 프레임, event_id 병합, 2초 재연결)
 │   │   ├── utils.ts               # max/min + 날짜/시간 유틸리티
 │   │   ├── mitt.ts                # mitt 이벤트 버스 인스턴스
 │   │   ├── ws-ticket.ts           # WebSocket 일회용 티켓 미리 받기(지연 import로 소켓 계층에서 인증 브리지를 분리)
@@ -142,7 +143,7 @@ client/
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
-│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 에이전트 / 실행 중 명령 / 백그라운드 명령(배지는 셋의 합계). 각 행은 상태 글리프·역할·작업 요약을 가지며, 종료된 실행은 「종료됨」에 접히고, 행을 클릭하면 에이전트 활동 탭이 열린다(명령은 도구 카드로 스크롤)
+│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 에이전트 / 실행 중 명령 / 백그라운드 명령(배지는 셋의 합계). 각 행은 상태 글리프·역할·작업 요약을 가지며, 종료된 실행은 「종료됨」에 접히고, 행을 클릭하면 에이전트 활동 탭이 열린다(명령은 도구 카드로 스크롤). 하단에서 세션 활동 요약을 연다
 │   │   ├── SafetyFilterPanel.vue# 시스템 설정 탭: 라이브 안전 마스터 스위치, LLM 심사(모델 없으면 비활성), 키워드 규칙 편집 + 테스트 검사, 최근 필터 기록
 │   │   ├── OnboardingDialog.vue# 최초 실행 안내(환영 → 프리셋 → 핵심 조작 → 완료). 선택한 프리셋으로 세션을 만들고, 영속 플래그 onboarding_completed 로 한 번만 표시
 │   │   ├── ShortcutSettingsSection.vue# 시스템 설정의 단축키 바인딩 탭: 현재 조합, 키 입력으로 다시 지정, 충돌 검사, 기본값 복원
@@ -156,7 +157,9 @@ client/
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
 │   │           ├── TrajectoryPanel.vue       # 현재 세션 tab: 턴별 트래젝토리 원장(GET /sessions/:id/trajectory, turn별로 묶고 클라이언트에서 재정렬·페이지 처리)
 │   │           ├── SubagentActivityPanel.vue # 오른쪽 사이드바 에이전트 활동 탭: 헤더 + 실시간 트래젝토리 / 실행 요약 / 지시 주입
-│   │           ├── SubagentTrajectory.vue    # 활동 탭의 타임라인: 자식 세션 트래젝토리를 3초마다 폴링(trajectory WS 전까지)
+│   │           ├── SubagentTrajectory.vue    # 활동 탭의 타임라인: 자식 세션 트래젝토리를 trajectory WS로 수신
+│   │           ├── TaskFlowBoardPanel.vue     # 오른쪽 사이드바 작업 보드: 전체 진행률 + 활성 흐름별 비어 있지 않은 상태 레인
+│   │           ├── SessionActivityPanel.vue   # 오른쪽 사이드바 세션 요약: 작업 흐름 / 서브에이전트 / 포그라운드 도구 접이식 섹션
 │   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다). 에이전트 브라우저 기능을 켜면 CDP 모드로 전환됩니다: 백엔드가 헤드리스 Chromium을 호스팅하고 패널은 screencast 프레임을 그리며 포인터/키보드/휠 이벤트를 전달합니다(주소창과 내비게이션은 /browser/ws를 거칩니다. '개발자 도구 열기'는 패널에서 볼 수 있는 실제 검사기 페이지를 엽니다). 주소창은 영속 방문 기록(Dexie, 재시작 후에도 유지)을 URL / 제목 퍼지 매칭으로 제안합니다
 │   │           ├── BrowserHistoryDropdown.vue # 주소창의 기록 드롭다운: 최근/추천 방문(favicon, 제목, 상대 시간)과 지우기 동작
 │   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행

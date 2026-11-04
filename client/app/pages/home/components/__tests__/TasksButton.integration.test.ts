@@ -14,7 +14,8 @@ import type { BackgroundTaskItem } from '@/composables/use-background-tasks';
 
 const state = vi.hoisted(() => ({
   loadTaskRuns: vi.fn(async () => {}),
-  initTasks: vi.fn()
+  initTasks: vi.fn(),
+  openTab: vi.fn()
 }));
 
 // The entry owns the initial load (the chat's jump bar is gone), so both seams
@@ -63,6 +64,8 @@ beforeEach(() => {
   state.initTasks.mockClear();
   vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], taskLoading: false }));
   vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([command]) }));
+  state.openTab.mockClear();
+  vi.stubGlobal('useRightSidebarStore', () => ({ openTab: state.openTab }));
 });
 
 const mountButton = () => mount(TasksButton, { props: { sessionId: 'sid-1' } });
@@ -141,6 +144,16 @@ describe('TasksButton.vue (integration)', () => {
 
     await row.trigger('click');
     expect(wrapper.emitted('focus')).toEqual([[{ kind: 'run', id: 'run-done' }]]);
+  });
+
+  it('opens the session activity overview from the popover footer', async () => {
+    const wrapper = mountButton();
+    await openPopover(wrapper);
+
+    await wrapper.get('[data-test="tasks-open-activity"]').trigger('click');
+
+    expect(state.openTab).toHaveBeenCalledWith('sessionActivity');
+    expect(wrapper.find('[data-test="toolbar-popover"]').exists()).toBe(false);
   });
 
   it('asks the session page to reveal a running command\u2019s tool card', async () => {

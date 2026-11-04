@@ -1792,7 +1792,14 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
   a tool). A reconnecting client asks for a snapshot with `taskflow_refresh`
   (handled in `server/trigger/core.py`) and gets the identical payload, so the
   client has one shape to render (`client/app/stores/taskflow.ts`,
-  `pages/home/components/ProgressFloat.vue`).
+  `pages/home/components/ProgressFloat.vue`). The same store feeds the
+  **TaskFlow board** (`TaskFlowBoardPanel.vue`, a SESSION-scoped right-sidebar
+  tab opened from the float's expanded header or the activity overview): one
+  section per active flow, its steps laid into one swimlane per non-empty status
+  in lifecycle order (blocked / ready / dispatched / done / failed / skipped /
+  cancelled, an unknown status appended), a spinner on dispatched steps (a child
+  agent is on them), red tint on failed and a strike-through on terminal rows.
+  The panel recomputes from the store, never polls.
 
 ## Web Search Backends (`agent/tools/web/web_search.py`)
 
@@ -2082,9 +2089,8 @@ The ledger's SECOND consumer is the agent-activity tab
 (`SubagentActivityPanel.vue`, a SESSION-scoped right-sidebar kind opened from a
 `TasksButton` row). It shows ONE sub-agent run: a header (status badge, role,
 depth, agent id, ticking elapsed), a **Live** tab (`SubagentTrajectory.vue` —
-the CHILD session's ledger through `GET /sessions/<child_session_key>/trajectory`,
-polled every 3 s until the trajectory WS channel lands; the payload shape is
-identical, so switching the source is a one-line change), a **Summary** tab (the
+the CHILD session's ledger over the trajectory WS channel, below), a
+**Summary** tab (the
 run record: status / role / depth / timestamps / outcome / reasons / delivery,
 the full task and the result text capped at 4000 chars) and a **Steer** tab
 (`POST /subagents/steer` with `new_instructions`, enabled only while the run
@@ -2094,7 +2100,29 @@ runs open as two tabs (the store's dedupe includes `runId`); `activeActivityRunI
 mirrors the tab currently shown and is cleared on unmount. `TasksButton` renders
 the session's agents ZCode-directory style (status glyph / role / task summary /
 elapsed) plus a collapsed **Ended** slice (outcome + relative time, newest 20);
-both lists hand the jump to the page, which opens this tab.
+both lists hand the jump to the page, which opens this tab. The popover's footer
+also opens the **session activity overview** (`SessionActivityPanel.vue`, the
+same SESSION scope): three collapsible sections — TaskFlow (per-flow progress
+bars + a jump to the board), sub-agents (active runs, a row opens its activity
+tab) and foreground tools — aggregating the taskflow / subagent / commands
+stores.
+
+The **trajectory WS channel** (`server/trigger/ws/trajectory_ws.py`) makes the
+live view event-driven: it registers the `runtime.hooks.TRAJECTORY_EVENT_PUSH`
+hook and `TrajectoryStore.append` resolves it after each successful upsert (the
+clipped payload is re-parsed; an oversized one rides as `{"truncated": true}`),
+fanning the row out to the sockets subscribed under that session id — each
+socket routes by `?session_id=` (Robyn's WS adapter has no path params) through
+the shared `WSPushChannel`, which gained an optional routing key while the
+existing global channels keep `key=None`. The ready frame carries the newest
+100-event snapshot as gap-fill (the factory runs AFTER subscribing, so nothing
+slips between snapshot and subscription), and the client
+(`composables/use-trajectory-stream.ts`) merges by `event_id`: a tool call's
+`tool_start` and `tool_end` share the upsert key, so the end's
+result/duration folds into the start's args while the FIRST seq/ts wins
+(mirroring the ledger's `ON CONFLICT`). A dropped socket reconnects after 2 s
+and the new ready frame gap-fills. The main session's `TrajectoryPanel` is
+still HTTP-on-demand (a deliberate follow-up, not an oversight).
 
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 

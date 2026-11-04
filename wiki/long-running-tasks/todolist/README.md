@@ -400,8 +400,10 @@ WS events: `todo_updated` (push on change) + `todo_refresh` (re-send on reconnec
 ### UI Component (ProgressFloat.vue)
 
 - **ProgressFloat.vue**: the chat's plan float — todos grouped by `flow_id` plus the
-  TaskFlow flat step list, collapsed to a pill by default. There is no other plan surface
-  in the UI (the old input-box dock was removed on purpose).
+  TaskFlow flat step list, collapsed to a pill by default. Its expanded header opens the
+  **task board** (`TaskFlowBoardPanel.vue`, a session-scoped right-sidebar tab) where each
+  active flow's steps are laid into one swimlane per non-empty status; that is the only
+  other plan surface (the old input-box dock was removed on purpose).
 
 ### WS Message Format
 
