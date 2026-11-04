@@ -1,26 +1,16 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <!-- Header: current branch (or the detached HEAD) + the dirty count + refresh.
-         The branch is also the switcher's trigger (VS Code's graph has the same
-         dropdown): clicking it lists the local branches, the current one marked,
-         and picking another checks it out. -->
+         The branch is READ-ONLY here: shadow history is one chain, so there is
+         nothing to switch to. -->
     <div
       class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-100 px-3 py-1.5 text-xs dark:border-gray-800">
       <i class="pi pi-sitemap text-theme-main"></i>
-      <button
-        type="button"
-        class="flex min-w-0 items-center gap-1 rounded px-1 py-0.5 font-mono text-gray-500 hover:bg-gray-100 disabled:cursor-default disabled:hover:bg-transparent dark:text-gray-400 dark:hover:bg-gray-800/70"
-        :disabled="branches.length === 0"
-        :title="branches.length ? t('gitGraph.switchBranch') : branchLabel"
-        :aria-label="t('gitGraph.switchBranch')"
-        data-test="git-branch"
-        @click="openBranchMenu($event)">
+      <span
+        class="flex min-w-0 items-center px-1 py-0.5 font-mono text-gray-500 dark:text-gray-400"
+        data-test="git-branch">
         <span class="truncate">{{ branchLabel }}</span>
-        <span
-          v-if="branches.length"
-          class="pi pi-chevron-down shrink-0 text-[10px]"
-          aria-hidden="true"></span>
-      </button>
+      </span>
       <span
         v-if="page.available && page.dirty > 0"
         class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
@@ -243,7 +233,7 @@ import type { GitCommitEntry, GitCommitFile, GitGraphPage, GitRefEntry } from '~
 // Stable module specifiers so tests can vi.mock the bridge (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
-import { checkoutGitRef, fetchCommitFiles, fetchGitGraph, resetGitBranch } from '~/composables/bridge/git';
+import { fetchCommitFiles, fetchGitGraph } from '~/composables/bridge/git';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 import { logUtil } from '~/utils/log';
 
@@ -301,7 +291,6 @@ const loadFailed = ref(false);
 const listRef = ref<HTMLElement | null>(null);
 const expanded = ref('');
 const menuRef = ref<{ show: (event: Event) => void } | null>(null);
-const confirm = useConfirm();
 
 /** How close to the end of the list (px) the next page starts loading. */
 const LOAD_MORE_THRESHOLD_PX = 160;
@@ -471,13 +460,6 @@ const branchLabel = computed<string>(() => {
   return t('gitGraph.noCommits');
 });
 
-/** The local branches the switcher offers (empty for an unusable repository).
- *  Tolerant of a page without the field: an instance kept across an HMR update,
- *  or any older payload, must not take the whole panel's render down. */
-const branches = computed<string[]>(() =>
-  page.value.available && Array.isArray(page.value.branches) ? page.value.branches : []
-);
-
 /** The explanation shown when the project directory is not a repository. */
 const unavailableText = computed<string>(() =>
   page.value.reason === 'git-unavailable' ? t('gitGraph.gitMissing') : t('gitGraph.notARepository')
@@ -580,65 +562,6 @@ const copyAndToast = async (text: string, label: string): Promise<void> => {
   else toastError(t('gitGraph.copyFailed'));
 };
 
-/**
- * Run a write action (reset / checkout) and repaint from its answer.
- *
- * The action THROWS on a refusal (the bridge turns the server's `reason` into the
- * error message), so the page is never assigned a null — and the toast shows
- * git's own words when it has any (a blocked checkout names the files).
- * @param action The bridge call that performs it.
- * @param failure Toast text for a refusal.
- */
-const runAction = async (action: () => Promise<GitGraphPage>, failure: string): Promise<void> => {
-  loading.value = true;
-  try {
-    page.value = await action();
-    expanded.value = '';
-  } catch (e) {
-    logUtil.e('[GitGraphPanel] git action failed:', e);
-    const reason = e instanceof Error ? e.message : '';
-    toastError(failure, reason && reason !== failure ? reason : undefined);
-  } finally {
-    loading.value = false;
-  }
-};
-
-/**
- * Move the current branch (the Reset actions), behind a confirmation dialog.
- * @param row The right-clicked row.
- * @param mode `soft` keeps the changes staged, `hard` discards them.
- */
-const resetTo = (row: GraphRow, mode: 'soft' | 'hard'): void => {
-  const hard = mode === 'hard';
-  confirm.require({
-    header: hard ? t('gitGraph.confirmHardTitle') : t('gitGraph.confirmSoftTitle'),
-    message: hard
-      ? t('gitGraph.confirmHardMessage', {
-          branch: page.value.branch || 'HEAD',
-          hash: row.commit.short,
-          count: page.value.dirty
-        })
-      : t('gitGraph.confirmSoftMessage', {
-          branch: page.value.branch || 'HEAD',
-          hash: row.commit.short
-        }),
-    acceptProps: {
-      label: t('gitGraph.resetAction', {
-        mode: hard ? t('gitGraph.modeHard') : t('gitGraph.modeSoft')
-      }),
-      severity: hard ? 'danger' : 'primary',
-      icon: 'pi pi-history'
-    },
-    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
-    accept: () => {
-      void runAction(
-        () => resetGitBranch(props.sessionId, row.commit.hash, hard ? 'hard' : 'soft'),
-        t('gitGraph.resetFailed')
-      );
-    }
-  });
-};
-
 /** Items the ContextMenu renders (rebuilt per right-click). */
 const menuItems = ref<Array<Record<string, unknown>>>([]);
 
@@ -658,44 +581,25 @@ const openCommitMenu = (event: Event, row: GraphRow): void => {
       label: t('gitGraph.copySubject'),
       icon: 'pi pi-copy',
       command: () => void copyAndToast(row.commit.subject, t('gitGraph.copySubject'))
-    },
-    { separator: true },
-    {
-      label: t('gitGraph.menuResetSoft'),
-      icon: 'pi pi-history',
-      command: () => resetTo(row, 'soft')
-    },
-    {
-      label: t('gitGraph.menuResetHard'),
-      icon: 'pi pi-exclamation-triangle',
-      command: () => resetTo(row, 'hard')
     }
   ];
   menuRef.value?.show(event);
 };
 
 /**
- * Open the context menu for a ref chip: a branch can be checked out, every chip
- * can be copied.
+ * Open the context menu for a ref chip: every chip can be copied. There is no
+ * checkout entry — shadow history has a single chain.
  * @param event The contextmenu event (anchors the popup).
  * @param ref The right-clicked ref chip.
  */
 const openRefMenu = (event: Event, ref: GitRefEntry): void => {
-  const items: Array<Record<string, unknown>> = [
+  menuItems.value = [
     {
       label: t('gitGraph.copyRef'),
       icon: 'pi pi-copy',
       command: () => void copyAndToast(ref.name, t('gitGraph.copyRef'))
     }
   ];
-  if (ref.kind === 'branch' || ref.kind === 'head') {
-    items.unshift({
-      label: t('gitGraph.checkoutBranch'),
-      icon: 'pi pi-sign-in',
-      command: () => void runAction(() => checkoutGitRef(props.sessionId, ref.name), t('gitGraph.checkoutFailed'))
-    });
-  }
-  menuItems.value = items;
   menuRef.value?.show(event);
 };
 
@@ -723,24 +627,6 @@ const openRowMenuFromDrawer = (row: GraphRow, event: MouseEvent): void => {
       clientY: rect ? rect.top + rect.height / 2 : event.clientY
     })
   );
-};
-
-/**
- * Open the branch switcher: every local branch, the current one ticked and
- * disabled, the rest switching on click (VS Code's graph dropdown switches
- * without a confirmation dialog; ``git`` itself refuses a checkout that would
- * clobber local changes, and that refusal surfaces as the failure toast).
- * @param event The click on the branch label (anchors the popup).
- */
-const openBranchMenu = (event: Event): void => {
-  const current = page.value.detached ? '' : page.value.branch;
-  menuItems.value = branches.value.map(name => ({
-    label: name,
-    icon: name === current ? 'pi pi-check' : 'pi pi-code-branch',
-    disabled: name === current,
-    command: () => void runAction(() => checkoutGitRef(props.sessionId, name), t('gitGraph.checkoutFailed'))
-  }));
-  menuRef.value?.show(event);
 };
 
 /** (Re)load the first page. */
@@ -852,20 +738,7 @@ watch(
       "copyFailed": "复制失败",
       "copyHash": "复制提交哈希",
       "copySubject": "复制提交信息",
-      "copyRef": "复制引用名",
-      "switchBranch": "切换分支",
-      "checkoutBranch": "切换到此分支",
-      "checkoutFailed": "切换分支失败",
-      "menuResetSoft": "软回退到此提交（保留改动）",
-      "menuResetHard": "硬回退到此提交（丢弃改动）",
-      "resetAction": "{mode}回退",
-      "modeSoft": "软",
-      "modeHard": "硬",
-      "resetFailed": "回退失败",
-      "confirmSoftTitle": "软回退分支",
-      "confirmSoftMessage": "把 {branch} 移动到 {hash}？已提交的更改会回到暂存区，工作区内容保留。",
-      "confirmHardTitle": "硬回退分支（危险）",
-      "confirmHardMessage": "把 {branch} 移动到 {hash}？当前 {count} 项未提交改动会被丢弃，无法恢复。"
+      "copyRef": "复制引用名"
     }
   },
   "en": {
@@ -888,20 +761,7 @@ watch(
       "copyFailed": "Copy failed",
       "copyHash": "Copy commit hash",
       "copySubject": "Copy commit message",
-      "copyRef": "Copy ref name",
-      "switchBranch": "Switch branch",
-      "checkoutBranch": "Check out this branch",
-      "checkoutFailed": "Checkout failed",
-      "menuResetSoft": "Reset here — soft (keep changes)",
-      "menuResetHard": "Reset here — hard (discard changes)",
-      "resetAction": "Reset ({mode})",
-      "modeSoft": "soft",
-      "modeHard": "hard",
-      "resetFailed": "Reset failed",
-      "confirmSoftTitle": "Soft-reset the branch",
-      "confirmSoftMessage": "Move {branch} to {hash}? The committed changes return to the index and the working tree keeps its files.",
-      "confirmHardTitle": "Hard-reset the branch (dangerous)",
-      "confirmHardMessage": "Move {branch} to {hash}? {count} uncommitted change(s) will be discarded and cannot be recovered."
+      "copyRef": "Copy ref name"
     }
   },
   "ja": {
@@ -924,20 +784,7 @@ watch(
       "copyFailed": "コピーに失敗しました",
       "copyHash": "コミット ハッシュをコピー",
       "copySubject": "コミット メッセージをコピー",
-      "copyRef": "参照名をコピー",
-      "switchBranch": "ブランチを切り替え",
-      "checkoutBranch": "このブランチに切り替え",
-      "checkoutFailed": "ブランチの切り替えに失敗しました",
-      "menuResetSoft": "ここへソフト リセット（変更を保持）",
-      "menuResetHard": "ここへハード リセット（変更を破棄）",
-      "resetAction": "{mode} リセット",
-      "modeSoft": "ソフト",
-      "modeHard": "ハード",
-      "resetFailed": "リセットに失敗しました",
-      "confirmSoftTitle": "ブランチをソフト リセット",
-      "confirmSoftMessage": "{branch} を {hash} に移動しますか？コミット済みの変更はステージに戻り、作業ツリーは保持されます。",
-      "confirmHardTitle": "ブランチをハード リセット（危険）",
-      "confirmHardMessage": "{branch} を {hash} に移動しますか？未コミットの {count} 件の変更は破棄され、復元できません。"
+      "copyRef": "参照名をコピー"
     }
   },
   "ko": {
@@ -960,20 +807,7 @@ watch(
       "copyFailed": "복사 실패",
       "copyHash": "커밋 해시 복사",
       "copySubject": "커밋 메시지 복사",
-      "copyRef": "참조 이름 복사",
-      "switchBranch": "브랜치 전환",
-      "checkoutBranch": "이 브랜치로 전환",
-      "checkoutFailed": "브랜치 전환 실패",
-      "menuResetSoft": "여기로 소프트 리셋(변경 유지)",
-      "menuResetHard": "여기로 하드 리셋(변경 버림)",
-      "resetAction": "{mode} 리셋",
-      "modeSoft": "소프트",
-      "modeHard": "하드",
-      "resetFailed": "리셋 실패",
-      "confirmSoftTitle": "브랜치 소프트 리셋",
-      "confirmSoftMessage": "{branch}을(를) {hash}로 이동할까요? 커밋된 변경은 스테이지로 돌아가고 작업 트리는 유지됩니다.",
-      "confirmHardTitle": "브랜치 하드 리셋(위험)",
-      "confirmHardMessage": "{branch}을(를) {hash}로 이동할까요? 미커밋 변경 {count}건이 버려지고 복구할 수 없습니다."
+      "copyRef": "참조 이름 복사"
     }
   }
 }

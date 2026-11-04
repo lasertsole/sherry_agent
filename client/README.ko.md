@@ -150,7 +150,7 @@ client/
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터). 오른쪽 가장자리가 드래그 핸들(하한 280px, 상한 뷰포트 절반, 너비 영속)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드. 행 우클릭 메뉴: 열기 / 연결 프로그램 / 내장 브라우저로 열기 / 파일 관리자에서 보기 / 절대·상대 경로 복사 / 채팅에 추가)
-│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
+│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 읽기 전용——브랜치 이름은 텍스트뿐, 행 메뉴는 복사만 제공, 행 클릭 시 커밋 파일 목록 펼침)
 │   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
 │   │           ├── TrajectoryPanel.vue       # 현재 세션 tab: 턴별 트래젝토리 원장(GET /sessions/:id/trajectory, turn별로 묶고 클라이언트에서 재정렬·페이지 처리)

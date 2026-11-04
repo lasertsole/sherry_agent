@@ -691,20 +691,7 @@
     "copyFailed": "Copy failed",
     "copyHash": "Copy commit hash",
     "copySubject": "Copy commit message",
-    "copyRef": "Copy ref name",
-    "switchBranch": "Switch branch",
-    "checkoutBranch": "Check out this branch",
-    "checkoutFailed": "Checkout failed",
-    "menuResetSoft": "Reset here — soft (keep changes)",
-    "menuResetHard": "Reset here — hard (discard changes)",
-    "resetAction": "Reset ({mode})",
-    "modeSoft": "soft",
-    "modeHard": "hard",
-    "resetFailed": "Reset failed",
-    "confirmSoftTitle": "Soft-reset the branch",
-    "confirmSoftMessage": "Move {branch} to {hash}? The committed changes return to the index and the working tree keeps its files.",
-    "confirmHardTitle": "Hard-reset the branch (dangerous)",
-    "confirmHardMessage": "Move {branch} to {hash}? {count} uncommitted change(s) will be discarded and cannot be recovered."
+    "copyRef": "Copy ref name"
   },
   "personaPreset": {
     "unbound": "Not chosen",

@@ -691,20 +691,7 @@
     "copyFailed": "复制失败",
     "copyHash": "复制提交哈希",
     "copySubject": "复制提交信息",
-    "copyRef": "复制引用名",
-    "switchBranch": "切换分支",
-    "checkoutBranch": "切换到此分支",
-    "checkoutFailed": "切换分支失败",
-    "menuResetSoft": "软回退到此提交（保留改动）",
-    "menuResetHard": "硬回退到此提交（丢弃改动）",
-    "resetAction": "{mode}回退",
-    "modeSoft": "软",
-    "modeHard": "硬",
-    "resetFailed": "回退失败",
-    "confirmSoftTitle": "软回退分支",
-    "confirmSoftMessage": "把 {branch} 移动到 {hash}？已提交的更改会回到暂存区，工作区内容保留。",
-    "confirmHardTitle": "硬回退分支（危险）",
-    "confirmHardMessage": "把 {branch} 移动到 {hash}？当前 {count} 项未提交改动会被丢弃，无法恢复。"
+    "copyRef": "复制引用名"
   },
   "personaPreset": {
     "unbound": "未选择",

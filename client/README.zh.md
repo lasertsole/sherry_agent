@@ -150,7 +150,7 @@ client/
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）；右边缘可拖拽（下限 280px、上限视口一半、宽度持久化）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
-│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
+│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；只读——分支名仅文本展示，行右键只提供复制，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
 │   │           ├── TrajectoryPanel.vue       # 当前会话 tab：按回合的轨迹账本（GET /sessions/:id/trajectory，按 turn 分组、客户端重排与分页）

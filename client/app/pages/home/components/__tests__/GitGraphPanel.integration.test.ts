@@ -15,8 +15,7 @@ const menuShots = vi.hoisted(() => [] as MouseEvent[]);
 
 const bridge = vi.hoisted(() => ({
   fetchGitGraph: vi.fn(),
-  fetchCommitFiles: vi.fn(),
-  checkoutGitRef: vi.fn()
+  fetchCommitFiles: vi.fn()
 }));
 vi.mock('~/composables/bridge/git', () => bridge);
 
@@ -366,42 +365,15 @@ describe('GitGraphPanel', () => {
     expect(bridge.fetchGitGraph).toHaveBeenLastCalledWith('sid-2', { limit: 40, skip: 0 });
   });
 
-  it('lists the local branches behind the header and checks one out on click', async () => {
-    const wrapper = await mountPanel([
-      page({ branch: 'main', branches: ['main', 'feature', 'dev'], commits: [commit('aaaa1111')] })
-    ]);
-    const switcher = wrapper.get('[data-test="git-branch"]');
-    expect(switcher.element.tagName).toBe('BUTTON');
-    expect(switcher.text()).toBe('main');
+  it('shows the branch as read-only text (no switcher)', async () => {
+    const wrapper = await mountPanel([page({ branch: 'main', branches: ['main', 'feature'] })]);
 
-    await switcher.trigger('click');
-    const items = wrapper.findComponent({ name: 'ContextMenu' }).props('model') as Array<Record<string, unknown>>;
-
-    // Every local branch is offered, the current one ticked and inert.
-    expect(items.map(item => item.label)).toEqual(['main', 'feature', 'dev']);
-    expect(items[0]!.disabled).toBe(true);
-    expect(items[0]!.icon).toBe('pi pi-check');
-    expect(items[1]!.disabled).toBe(false);
-
-    // Picking another branch checks it out and repaints from the answer.
-    bridge.checkoutGitRef.mockResolvedValueOnce(
-      page({ branch: 'feature', branches: ['main', 'feature', 'dev'], commits: [commit('aaaa1111')] })
-    );
-    (items[1]!.command as () => void)();
-    await flushPromises();
-
-    expect(bridge.checkoutGitRef).toHaveBeenCalledWith('sid-1', 'feature');
-    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('feature');
-  });
-
-  it('leaves the header inert when there is no repository or no branch', async () => {
-    const wrapper = await mountPanel([page({ available: false, reason: 'not-a-repository', branches: [] })]);
-
-    // No branches → no switcher: the label is plain text and clicking is a no-op.
     const label = wrapper.get('[data-test="git-branch"]');
-    expect(label.attributes('disabled')).toBeDefined();
+    expect(label.element.tagName).toBe('SPAN');
+    expect(label.text()).toBe('main');
+    // No click handler / menu: the header is purely informational.
     await label.trigger('click');
-    expect(bridge.checkoutGitRef).not.toHaveBeenCalled();
+    expect(menuShots.length).toBe(0);
   });
 
   it("opens the row's action menu from the drawer's background, not from its files", async () => {
@@ -426,7 +398,7 @@ describe('GitGraphPanel', () => {
     const row = wrapper.get('[data-test="git-commit-aaaa1111"]');
     await row.trigger('contextmenu');
     const rightClickItems = menu().map(item => item.label);
-    expect(rightClickItems.length).toBeGreaterThan(2);
+    expect(rightClickItems.length).toBe(2);
     const afterRightClick = menuShots.length;
 
     // A click on a FILE keeps its own meaning (open the diff) — no menu.
@@ -445,41 +417,5 @@ describe('GitGraphPanel', () => {
     expect(menuShots.at(-1)?.clientY).toBe(111);
     // The click did not toggle the drawer shut either.
     expect(wrapper.find('[data-test="git-detail"]').exists()).toBe(true);
-  });
-
-  it('renders a page payload without the branches field at all', async () => {
-    // A component instance kept across an HMR update can still hold an OLDER page
-    // object: reading `branches.length` off it took the whole panel's render down,
-    // which silently killed row clicks and branch switches until a full reload.
-    const payload = page({ commits: [commit('aaaa1111')] });
-    delete (payload as Record<string, unknown>).branches;
-
-    const wrapper = await mountPanel([payload]);
-
-    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('main');
-    expect(wrapper.get('[data-test="git-branch"]').attributes('disabled')).toBeDefined();
-    expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(1);
-  });
-
-  it("keeps the page and shows git's reason when a checkout is refused", async () => {
-    toasts.toastError.mockClear();
-    const wrapper = await mountPanel([
-      page({ branch: 'main', branches: ['main', 'feature'], commits: [commit('aaaa1111')] })
-    ]);
-    bridge.checkoutGitRef.mockRejectedValueOnce(
-      new Error('error: Your local changes to the following files would be overwritten by checkout: src/app.ts')
-    );
-
-    await wrapper.get('[data-test="git-branch"]').trigger('click');
-    const items = wrapper.findComponent({ name: 'ContextMenu' }).props('model') as Array<Record<string, unknown>>;
-    (items[1]!.command as () => void)();
-    await flushPromises();
-
-    expect(bridge.checkoutGitRef).toHaveBeenCalledWith('sid-1', 'feature');
-    // The refusal names git's own reason as the toast's detail, and the panel
-    // keeps rendering the page it had (a null here used to brick the render).
-    expect(toasts.toastError).toHaveBeenCalledWith('切换分支失败', expect.stringContaining('would be overwritten'));
-    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('main');
-    expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(1);
   });
 });

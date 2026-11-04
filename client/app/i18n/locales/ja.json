@@ -691,20 +691,7 @@
     "copyFailed": "コピーに失敗しました",
     "copyHash": "コミット ハッシュをコピー",
     "copySubject": "コミット メッセージをコピー",
-    "copyRef": "参照名をコピー",
-    "switchBranch": "ブランチを切り替え",
-    "checkoutBranch": "このブランチに切り替え",
-    "checkoutFailed": "ブランチの切り替えに失敗しました",
-    "menuResetSoft": "ここへソフト リセット（変更を保持）",
-    "menuResetHard": "ここへハード リセット（変更を破棄）",
-    "resetAction": "{mode} リセット",
-    "modeSoft": "ソフト",
-    "modeHard": "ハード",
-    "resetFailed": "リセットに失敗しました",
-    "confirmSoftTitle": "ブランチをソフト リセット",
-    "confirmSoftMessage": "{branch} を {hash} に移動しますか？コミット済みの変更はステージに戻り、作業ツリーは保持されます。",
-    "confirmHardTitle": "ブランチをハード リセット（危険）",
-    "confirmHardMessage": "{branch} を {hash} に移動しますか？未コミットの {count} 件の変更は破棄され、復元できません。"
+    "copyRef": "参照名をコピー"
   },
   "personaPreset": {
     "unbound": "未選択",

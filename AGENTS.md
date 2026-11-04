@@ -879,10 +879,11 @@ instead of an error, so the panel renders its own empty state. `GitGraphPanel.vu
 lays the commits into lanes and draws one SVG per row (merges and HEAD get their
 own node shapes), and it is the client's only consumer of that route. The two
 sidebar section headers (File tree / Git Graph) share one row.
-The row's context menu offers Reset / Checkout — `POST /git/reset` (`soft`/`mixed`/
-`hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
-with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
-the files that commit touched directly under that row (an accordion, never a block
+The panel is READ-ONLY: the row's context menu offers Copy hash / Copy subject
+(the reset / checkout routes and the branch switcher were removed — shadow
+checkpoints are an internal write snapshot, not a user-facing rollback surface),
+and clicking a row opens a DRAWER of the files that commit touched directly
+under that row (an accordion, never a block
 parked at the end of the list — a click elsewhere in that drawer replays the row's
 own contextmenu, so the SAME action menu opens anchored at the row's right edge; `GET /git/commit`: metadata plus `--name-status -M -z`,
 NUL-framed so a non-ASCII path is never quoted and the entry lookup behind the
@@ -893,19 +894,15 @@ by `difflib` opcodes, so a change reads as remove-left / add-right (red / green
 tints), an added or deleted file is a SINGLE column, a rename follows its old path,
 and a binary or oversized blob (2 MB / 4000-row caps) is flagged instead of decoded.
 A path that is not part of the commit is a 404, never an empty diff. On the
-client side every git call THROWS on failure (`bridge/git.ts`): the two write
-actions go through the raw transport so a refusal reaches the toast with git's
-own reason (a checkout blocked by a dirty tree names the files), and a failed
-read rejects rather than resolving the shared client's null payload — a null
+client side every git READ THROWS on failure (`bridge/git.ts`): a failed read
+rejects rather than resolving the shared client's null payload — a null
 assigned to the panel's page threw on every later render, which left the panel
-visibly dead (no row expansion, no branch switch) until a reload. The header's
-branch label still renders the switcher dropdown the panel ships with, but
-since user-git writes were replaced by per-project shadow checkpoints
-(commit 99773730) the graph payload pins `branches: []`, so the dropdown stays
-disabled — the panel's own empty-branches state. A checkout made through the
-ref-chip menu (or in a terminal, or a commit/reset outside the session) still
-reaches the AGENT as the git notice described under Project Directory Binding:
-the next turn's transcript gets one `git_head` card before the human message.
+visibly dead (no row expansion) until a reload. The header renders the branch
+label as plain text; the graph payload pins `branches: []` (shadow history is
+one chain). A checkout or commit made OUTSIDE the session (a terminal, another
+tool) still reaches the AGENT as the git notice described under Project
+Directory Binding: the next turn's transcript gets one `git_head` card before
+the human message.
 
 The taskbar's **hammer button opens a three-entry toolbox** (Browser / Terminal /
 Whiteboard) as the same dialog shape the settings menu uses. The browser and the
@@ -2333,8 +2330,9 @@ each suite is the version-controlled reference (threshold + model id).
   restore window to the last step or two once a fan-out ran concurrently;
   `ensure_checkpoint` dedupes per session per turn, and the bare store's delta
   compression keeps 100 snapshots at a few hundred KiB). Restore takes a pre-restore snapshot
-  and supports one file or the whole tree; the `checkpoint` tool exposes
-  list/show/restore. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
+  and supports one file or the whole tree — internal only: the agent-facing
+  `checkpoint` tool and the panel's reset route were removed, so no user- or
+  model-reachable rollback surface remains. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
   moves the store outside the project — the eval harness points it at a
   run-scoped directory so an instance checkout never contains `.sherry` — and
   `freeze()` / `wait_for_idle()` are the write barrier a harness uses to stop

@@ -6,10 +6,9 @@ Boundary: the repository is the SESSION's project directory, the same root
 (`not-a-repository` / `git-unavailable`) for a directory that is not a usable
 repository, so the client renders its own empty state instead of an error.
 
-The two write actions are the panel's context menu: ``POST /git/reset`` moves the
-current branch (soft / mixed / hard) and ``POST /git/checkout`` switches branches.
-Both validate the target with ``git rev-parse --verify`` before git runs, take no
-flags from the caller, and surface git's own stderr as the refusal message.
+The panel is READ-ONLY: there is no reset / checkout route. Shadow checkpoints
+are an internal write-snapshot mechanism, and the only way to move the working
+tree is the agent's own file tools.
 
 ``GET /git/graph``: ``session_id`` (required), ``limit`` (commits per page,
 clamped), ``skip`` (paging offset). Every route answers the same page payload —
@@ -25,14 +24,12 @@ from loguru import logger
 from config.features import GIT_GRAPH
 from server.service.git_graph_service import (
     GitActionError,
-    checkout_ref,
     read_commit_diff,
     read_commit_files,
     read_graph,
-    reset_to,
 )
 from server.trigger.core import app
-from server.trigger.http.helpers import bad_request, ok, query_int, read_body, to_text_response
+from server.trigger.http.helpers import bad_request, ok, query_int, to_text_response
 
 
 def _page_payload(session_id: str, page) -> dict:
@@ -86,53 +83,6 @@ async def git_graph_handler(request):
             page.root,
             page.reason,
         )
-    return ok(_page_payload(session_id, page))
-
-
-@app.post("/git/reset")
-async def git_reset_handler(request):
-    """Move the current branch to a commit (``{"session_id", "hash", "mode"}``).
-
-    ``mode`` is soft / mixed / hard; ``hard`` discards uncommitted changes and the
-    panel confirms it first. Answers the refreshed page on success.
-    """
-    body = read_body(request) or {}
-    session_id = str(body.get("session_id") or "")
-    target = str(body.get("hash") or "")
-    mode = str(body.get("mode") or "soft")
-    if not session_id:
-        return bad_request("session_id is required")
-    try:
-        page = await asyncio.to_thread(reset_to, session_id, target, mode)
-    except GitActionError as exc:
-        logger.info(
-            "git reset refused: session={} target={} reason={}",
-            session_id,
-            target[:12],
-            exc.reason,
-        )
-        return _refusal(exc)
-    return ok(_page_payload(session_id, page))
-
-
-@app.post("/git/checkout")
-async def git_checkout_handler(request):
-    """Check out a branch or ref (``{"session_id", "ref"}``). Answers the refreshed page."""
-    body = read_body(request) or {}
-    session_id = str(body.get("session_id") or "")
-    ref = str(body.get("ref") or "")
-    if not session_id:
-        return bad_request("session_id is required")
-    try:
-        page = await asyncio.to_thread(checkout_ref, session_id, ref)
-    except GitActionError as exc:
-        logger.info(
-            "git checkout refused: session={} ref={} reason={}",
-            session_id,
-            ref[:40],
-            exc.reason,
-        )
-        return _refusal(exc)
     return ok(_page_payload(session_id, page))
 
 

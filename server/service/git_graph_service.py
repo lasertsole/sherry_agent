@@ -38,8 +38,6 @@ __all__ = [
     "read_commit_diff",
     "read_commit_files",
     "read_graph",
-    "reset_to",
-    "checkout_ref",
 ]
 
 #: Field separator inside one commit record (ASCII unit separator) and the
@@ -73,7 +71,8 @@ class GraphPage:
     dirty_capped: bool = False
     commits: list[dict] = field(default_factory=list)
     has_more: bool = False
-    #: Local branches, most recently committed first — the branch switcher's list.
+    #: Reserved: shadow history is one chain, so this is always empty (the old
+    #: branch switcher was removed with the user-visible rollback surface).
     branches: list[str] = field(default_factory=list)
 
 
@@ -229,39 +228,6 @@ def _require_repository(root: Path) -> None:
     """Refuse a write when the project has no shadow checkpoint yet."""
     if shadow_git.shadow_head(root) is None:
         raise GitActionError("the project has no shadow checkpoints yet", 400)
-
-
-#: ``git reset`` modes the panel may ask for (``--hard`` discards the working
-#: tree changes; the UI warns, the backend only validates the mode).
-_RESET_MODES: frozenset[str] = frozenset({"soft", "mixed", "hard"})
-
-
-def reset_to(session_id: str, target: str, mode: str) -> GraphPage:
-    """Move the current branch to *target* (``git reset --<mode> <target>``).
-
-    The panel's 回退 action. The target must resolve to a COMMIT in this
-    repository, and ``mode`` must be one of soft / mixed / hard — anything else
-    is refused before git runs, so a crafted request cannot smuggle flags.
-    Returns the refreshed page so the caller repaints in one round trip.
-    """
-    if mode not in _RESET_MODES:
-        raise GitActionError(f"unknown reset mode: {mode}")
-    clean_target = target.strip()
-    if not clean_target or clean_target.startswith("-"):
-        raise GitActionError("invalid commit")
-    root = current_project_dir(session_id)
-    _require_repository(root)
-    try:
-        shadow_git.restore_checkpoint(session_id, clean_target, project_root=root)
-    except (ValueError, RuntimeError) as exc:
-        raise GitActionError(str(exc), 409) from exc
-    logger.info("git graph: restored shadow checkpoint {} in {}", clean_target[:8], root)
-    return read_graph(session_id)
-
-
-def checkout_ref(session_id: str, ref: str) -> GraphPage:
-    """Shadow history has a single chain — there are no branches to switch."""
-    raise GitActionError("shadow checkpoints do not have branches", 400)
 
 
 @dataclass(frozen=True)

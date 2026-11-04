@@ -149,7 +149,7 @@ client/
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
-│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
+│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; READ-ONLY — the branch label is text and the row menu only copies; a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
 │   │           ├── TrajectoryPanel.vue       # 当前会话 tab: the per-turn trajectory ledger (GET /sessions/:id/trajectory, rows grouped by turn, re-sorted and paged client-side)

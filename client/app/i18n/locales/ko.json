@@ -691,20 +691,7 @@
     "copyFailed": "복사 실패",
     "copyHash": "커밋 해시 복사",
     "copySubject": "커밋 메시지 복사",
-    "copyRef": "참조 이름 복사",
-    "switchBranch": "브랜치 전환",
-    "checkoutBranch": "이 브랜치로 전환",
-    "checkoutFailed": "브랜치 전환 실패",
-    "menuResetSoft": "여기로 소프트 리셋(변경 유지)",
-    "menuResetHard": "여기로 하드 리셋(변경 버림)",
-    "resetAction": "{mode} 리셋",
-    "modeSoft": "소프트",
-    "modeHard": "하드",
-    "resetFailed": "리셋 실패",
-    "confirmSoftTitle": "브랜치 소프트 리셋",
-    "confirmSoftMessage": "{branch}을(를) {hash}로 이동할까요? 커밋된 변경은 스테이지로 돌아가고 작업 트리는 유지됩니다.",
-    "confirmHardTitle": "브랜치 하드 리셋(위험)",
-    "confirmHardMessage": "{branch}을(를) {hash}로 이동할까요? 미커밋 변경 {count}건이 버려지고 복구할 수 없습니다."
+    "copyRef": "참조 이름 복사"
   },
   "personaPreset": {
     "unbound": "선택 안 함",
