@@ -35,7 +35,7 @@
     "mammoth": "^1.13.0",
     "markdown-it": "^15.0.3",
     "mitt": "^3.0.1",
-    "nuxt": "^4.6.2",
+    "nuxt": "^4.6.3",
     "pdfjs-dist": "^6.4.299",
     "pinia": "^4.0.3",
     "pinia-plugin-persistedstate": "^4.7.1",
