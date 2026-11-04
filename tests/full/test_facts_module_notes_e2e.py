@@ -126,7 +126,11 @@ class _Sandbox:
         return memory_store.format_live_content("facts")
 
     def notes_skill_file(self, name: str = "auth-module-notes") -> Path:
-        return self.auto_skills_dir / name / "SKILL.md"
+        # skill_manage may place the skill under a category directory
+        # (skills/auto/<category>/<name>/SKILL.md), so search recursively; the
+        # flat path is only the fallback the assertion turns into False.
+        matches = sorted(self.auto_skills_dir.glob(f"**/{name}/SKILL.md"))
+        return matches[0] if matches else self.auto_skills_dir / name / "SKILL.md"
 
     def reset(self) -> None:
         """Clear every sandboxed root so a retry starts from a clean slate."""
@@ -334,7 +338,7 @@ def test_facts_rolling_eviction_keeps_newest(
 
     assert '"success": true' in first and '"success": true' in second
     assert '"success": true' in overflow
-    assert "evicted 1 oldest entries" in overflow
+    assert "evicted 1 least-used entries" in overflow
     content = sandbox.facts_text()
     assert old not in content
     assert mid in content and new in content
