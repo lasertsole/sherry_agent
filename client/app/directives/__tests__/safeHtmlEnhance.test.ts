@@ -130,9 +130,14 @@ describe('safeHtml enhancement pass（代码块/mermaid/流式门）', () => {
     const el = document.createElement('div');
     document.body.appendChild(el);
     vSafeHtml.mounted!(el, binding('```mermaid\ngraph TD; A-->B;\n```'), vnode, null as never);
-    await vi.waitFor(() => {
-      if (!el.querySelector('.mermaid-figure svg')) throw new Error('pending');
-    });
+    // 8s like waitEnhanced: under the full-suite load the lazy mermaid chunk
+    // import can exceed Vitest's 1s default and flake.
+    await vi.waitFor(
+      () => {
+        if (!el.querySelector('.mermaid-figure svg')) throw new Error('pending');
+      },
+      { timeout: 8000, interval: 100 }
+    );
     expect(el.querySelector('.mermaid-figure [data-act="zoom"]')).not.toBeNull();
     // HTML labels land in <foreignObject>, which the SVG sanitizer strips;
     // text labels keep the node captions visible.

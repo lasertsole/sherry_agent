@@ -382,7 +382,9 @@ async def test_add_remove_reorder_then_dispatch_new_structure(
     # Dispatch over the new list records the NEW structure, in order.
     calls: list[str] = []
 
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str, requester_session_key: str, label: str | None = None, **_kwargs
+    ) -> str:
         calls.append(task)
         return f"child-{len(calls)}"
 
