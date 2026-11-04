@@ -5,7 +5,7 @@
  * `delivery.status`, `execution.outcome.status`). Before this module the same
  * per-status values were spelled out in four places: `badgeClass` and
  * `statusLabel` (composables/useSubagentTasks.ts) plus `statusColorLight` /
- * `statusColorDark` and `statusKey` (SubagentFlowGraph.vue). This table is the
+ * `statusColorDark` and `statusKey`. This table is the
  * single source; the call sites keep their own priority chain (badge vs label
  * vs graph key differ) and only look values up here.
  *

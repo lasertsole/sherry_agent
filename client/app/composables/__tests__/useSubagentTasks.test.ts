@@ -2,16 +2,19 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 
-// `useSubagentTasks.ts` is now a thin facade over `stores/subagent.ts`; the
+// `useSubagentTasks.ts` is a thin facade over `stores/subagent.ts`; the
 // store itself is the singleton. The suite keeps ONE testing pinia + store
 // instance for the whole file because the WS handlers captured below are bound
 // to the store instance created on the first `initTasks` call (the sync
 // module's `subscribed` guard is module-level). Observable state is reset
 // through the facade's store-backed refs in `beforeEach`.
+//
+// The task-detail tab (tree / flow graph / run detail) was removed, so this
+// suite covers what the remaining consumers read: the run lists, the label
+// helpers and the WS/cache sync.
 
 const bridgeMocks = vi.hoisted(() => ({
   fetchSubagentRuns: vi.fn(async () => []),
-  fetchSubagentRunSubtree: vi.fn(async () => []),
   deleteSubagentRunSubtree: vi.fn(async () => 1)
 }));
 
@@ -91,11 +94,6 @@ function resetSingleton(): void {
   api.taskLoading.value = false;
   api.lastTasksFetchedAt.value = 0;
   api.subagentWsReady.value = false;
-  api.expandedRunId.value = undefined;
-  api.selectedRunId.value = undefined;
-  api.focusedRunId.value = undefined;
-  api.deletingRunIds.value = new Set();
-  api.setTasksTabActive(false);
   // Ensure the module-level `resolveSid()` reads a clean path.
   window.history.replaceState({}, '', '/');
 }
@@ -103,7 +101,6 @@ function resetSingleton(): void {
 describe('useSubagentTasks', () => {
   beforeEach(() => {
     bridgeMocks.fetchSubagentRuns.mockReset().mockResolvedValue([]);
-    bridgeMocks.fetchSubagentRunSubtree.mockReset().mockResolvedValue([]);
     bridgeMocks.deleteSubagentRunSubtree.mockReset().mockResolvedValue(1);
     dbMocks.cacheSubagentRuns.mockReset().mockResolvedValue(undefined);
     dbMocks.readCachedSubagentRuns.mockReset().mockResolvedValue([]);
@@ -232,43 +229,6 @@ describe('useSubagentTasks', () => {
     });
   });
 
-  describe('grouping / subtree computed', () => {
-    it('focusedSubtreeRuns without focus returns rootTaskRuns', () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [
-        makeRun({ run_id: 'r1', depth: 1 }),
-        makeRun({ run_id: 'r2', depth: 2, requester_session_key: 'child-sess' })
-      ];
-      expect(api.focusedSubtreeRuns.value.map(r => r.run_id)).toEqual(['r1']);
-    });
-  });
-
-  describe('expanded / focus flow state', () => {
-    it('toggleExpandRun expands and collapses a run id (syncing selection)', () => {
-      const api = useSubagentTasks();
-      api.toggleExpandRun('r1');
-      expect(api.expandedRunId.value).toBe('r1');
-      expect(api.selectedRunId.value).toBe('r1');
-
-      api.toggleExpandRun('r1');
-      expect(api.expandedRunId.value).toBeUndefined();
-      expect(api.selectedRunId.value).toBeUndefined();
-    });
-
-    it('focusRun sets expanded/selected/focused; resetFlowState clears expanded but keeps focused', () => {
-      const api = useSubagentTasks();
-      api.focusRun('r2');
-      expect(api.expandedRunId.value).toBe('r2');
-      expect(api.selectedRunId.value).toBe('r2');
-      expect(api.focusedRunId.value).toBe('r2');
-
-      api.resetFlowState();
-      expect(api.expandedRunId.value).toBeUndefined();
-      expect(api.selectedRunId.value).toBeUndefined();
-      expect(api.focusedRunId.value).toBe('r2');
-    });
-  });
-
   describe('load / refresh', () => {
     it('loadTaskRuns shows local cache first, then fetches server and repopulates', async () => {
       const api = useSubagentTasks();
@@ -300,30 +260,6 @@ describe('useSubagentTasks', () => {
       expect(api.taskRuns.value).toEqual([]);
       expect(api.allTaskRuns.value.map(r => r.run_id)).toEqual(['c1']);
       expect(bridgeMocks.fetchSubagentRuns).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('subtree refresh', () => {
-    it('refreshFocusedSubtree with no focus does not fetch a subtree', async () => {
-      const api = useSubagentTasks();
-      await api.refreshFocusedSubtree();
-      expect(bridgeMocks.fetchSubagentRunSubtree).not.toHaveBeenCalled();
-    });
-
-    it('refreshFocusedSubtree fetches the focused subtree, caches it, and rebuilds', async () => {
-      const api = useSubagentTasks();
-      api.focusRun('root-1');
-      bridgeMocks.fetchSubagentRunSubtree.mockResolvedValue([
-        makeRun({ run_id: 'root-1', depth: 1 }),
-        makeRun({ run_id: 'leaf', depth: 2, requester_session_key: 'child-sess' })
-      ] as never);
-      dbMocks.readCachedSubagentRuns.mockResolvedValue([makeRun({ run_id: 'root-1', depth: 1 })] as never);
-
-      await api.refreshFocusedSubtree();
-      expect(bridgeMocks.fetchSubagentRunSubtree).toHaveBeenCalledWith('root-1');
-      expect(dbMocks.cacheSubagentRuns).toHaveBeenCalled();
-      expect(dbMocks.readCachedSubagentRuns).toHaveBeenCalled();
-      expect(api.allTaskRuns.value.map(r => r.run_id)).toEqual(['root-1']);
     });
   });
 
@@ -394,47 +330,19 @@ describe('useSubagentTasks', () => {
       expect(api.allTaskRuns.value).toEqual([]);
     });
 
-    it('ready handler marks ws ready; fetches only when the tasks tab is active', async () => {
+    it('ready handler marks ws ready and always gap-fills the lists', async () => {
       const api = useSubagentTasks();
       expect(readyHandler).toBeDefined();
 
-      // Not active → ready flag set, no fetch.
-      readyHandler!();
-      expect(api.subagentWsReady.value).toBe(true);
-      expect(bridgeMocks.fetchSubagentRuns).not.toHaveBeenCalled();
-
-      // Active tab → triggers a load that reaches fetchSubagentRuns (pathname sid).
-      api.setTasksTabActive(true);
       window.history.pushState({}, '', '/session-9');
       bridgeMocks.fetchSubagentRuns.mockResolvedValue([] as never);
       dbMocks.readCachedSubagentRuns.mockResolvedValue([] as never);
 
       readyHandler!();
+      expect(api.subagentWsReady.value).toBe(true);
       await vi.waitFor(() => {
         expect(bridgeMocks.fetchSubagentRuns).toHaveBeenCalled();
       });
-    });
-  });
-
-  describe('delete flow', () => {
-    it('deleteSubagentSubtree removes run + descendants from store and Dexie', async () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [
-        makeRun({ run_id: 'root-1', depth: 1, child_session_key: 'cs' }),
-        makeRun({ run_id: 'child-1', depth: 2, requester_session_key: 'cs' }),
-        makeRun({ run_id: 'keep-1', depth: 1 })
-      ];
-      api.taskRuns.value = [...api.allTaskRuns.value];
-      api.focusRun('root-1');
-
-      await api.deleteSubagentSubtree('root-1');
-
-      expect(bridgeMocks.deleteSubagentRunSubtree).toHaveBeenCalledWith('root-1');
-      expect(dbMocks.deleteCachedSubagentRuns).toHaveBeenCalledWith(['root-1', 'child-1']);
-      expect(api.allTaskRuns.value.map(r => r.run_id)).toEqual(['keep-1']);
-      expect(api.taskRuns.value.map(r => r.run_id)).toEqual(['keep-1']);
-      expect(api.focusedRunId.value).toBeUndefined();
-      expect(api.deletingRunIds.value.has('root-1')).toBe(false);
     });
   });
 });

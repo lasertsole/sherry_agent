@@ -91,8 +91,7 @@ const KIND_ICONS: Partial<Record<RightSidebarPanelKind, string>> = {
   contextViewer: 'pi pi-list',
   sessionPreset: 'pi pi-id-card',
   browser: 'pi pi-globe',
-  terminal: 'pi pi-desktop',
-  taskDetail: 'pi pi-tasks'
+  terminal: 'pi pi-desktop'
 };
 
 /** Closed tabs of the group on screen (current session or global). */

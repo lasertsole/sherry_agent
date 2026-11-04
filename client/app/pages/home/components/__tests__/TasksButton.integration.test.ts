@@ -49,7 +49,7 @@ const backgroundRun: BackgroundTaskItem = {
 beforeEach(() => {
   state.loadTaskRuns.mockClear();
   state.initTasks.mockClear();
-  vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], focusedRunId: undefined, taskLoading: false }));
+  vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], taskLoading: false }));
   vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([command]) }));
 });
 
@@ -100,7 +100,7 @@ describe('TasksButton.vue (integration)', () => {
   });
 
   it('shows the empty state when nothing is running', async () => {
-    vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [], focusedRunId: undefined }));
+    vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [] }));
     vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([]) }));
     const wrapper = mountButton();
 

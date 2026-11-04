@@ -184,10 +184,6 @@ client/
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
 │   │           ├── GChart.vue                 # @antv/g2 图表封装
-│   │           ├── SubagentTasksView.vue      # 后台任务视图（运行图 + 选中 run 的详情），由任务详情标签页承载
-│   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
-│   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
-│   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
 │   │           ├── TokenBudgetPanel.vue      # 会话级标签页（从上下文指标弹框打开）：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置：回放门白名单编辑器（GET/PUT /sherry-config/list/<key>，增删可执行文件名）
 │   │           ├── CudaPackCard.vue          # 模型配置：可选 CUDA 加速包卡片（仅 Linux——检测、断点续传下载，然后重启后端）

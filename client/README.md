@@ -183,10 +183,6 @@ client/
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
 │   │           ├── GChart.vue                 # @antv/g2 chart wrapper
-│   │           ├── SubagentTasksView.vue      # Background tasks view (flow graph + selected run detail), hosted by the task-detail tab
-│   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
-│   │           ├── SubagentRunDetail.vue      # Single subagent run detail
-│   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
 │   │           ├── TokenBudgetPanel.vue      # Session-scoped tab (opened from the context ring's popover): the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置: the finish-replay allowlist editor (GET/PUT /sherry-config/list/<key>, add/remove executable names)
 │   │           ├── CudaPackCard.vue          # 模型配置: the optional CUDA pack card (Linux only — detect, download with resume, then restart the backend)

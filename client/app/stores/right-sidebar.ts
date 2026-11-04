@@ -18,7 +18,6 @@ export type RightSidebarPanelKind =
   | 'extend'
   /** The web-search backends (Tavily / SearXNG) and their provider settings. */
   | 'webSearch'
-  | 'taskDetail'
   | 'fileViewer'
   | 'account'
   | 'notification'
@@ -70,7 +69,6 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // settings are global (.env), and the per-session choice reads the open
   // session when there is one.
   webSearch: 'global',
-  taskDetail: 'global',
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',
@@ -113,7 +111,6 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'heartbeat',
   'cron',
   'extend',
-  'taskDetail',
   // A drawing surface needs room; 420px leaves the 16:10 board tiny.
   'whiteboard'
 ]);

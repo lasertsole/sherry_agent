@@ -449,9 +449,8 @@ vi.stubGlobal('useSubagentStore', () =>
     taskRuns: [],
     allTaskRuns: [],
     taskLoading: false,
-    focusedRunId: undefined,
-    selectedRunId: undefined,
-    expandedRunId: undefined,
+    subagentWsReady: false,
+    subagentValidSessionIds: new Set(),
     isRunning: () => false
   })
 );

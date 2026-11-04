@@ -58,10 +58,6 @@ vi.mock('@/composables/db', async importOriginal => {
   };
 });
 
-vi.mock('@/pages/home/components/SubagentTasksView.vue', () => ({
-  default: { name: 'SubagentTasksView', template: '<div class="stv-stub"></div>' }
-}));
-
 const fetchApiMock = vi.hoisted(() => vi.fn());
 vi.mock('@/composables/requestApi', () => ({
   fetchApi: fetchApiMock,

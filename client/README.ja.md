@@ -184,10 +184,6 @@ client/
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
 │   │           ├── GChart.vue                 # @antv/g2 チャートラッパー
-│   │           ├── SubagentTasksView.vue      # バックグラウンドタスクビュー（フローグラフ + 選択中 run の詳細）。タスク詳細タブがホスト
-│   │           ├── SubagentTasksPanel.vue     # 右サイドバー タブ：パネル内の SubagentTasksView（セッションへ戻る操作なし）
-│   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
-│   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
 │   │           ├── TokenBudgetPanel.vue      # セッション単位のタブ（コンテキスト指標のポップオーバーから開く）: 開いているセッションの Token 上限、使用量/コスト、リセット（GET/POST /sessions/budget）
 │   │           ├── ReplayAllowlistEditor.vue # システム設定: フィニッシュ時の再生許可リスト編集（GET/PUT /sherry-config/list/<key>、実行ファイル名の追加/削除）
 │   │           ├── CudaPackCard.vue          # モデル設定: 任意の CUDA パックカード（Linux のみ——検出、レジューム付きダウンロード、その後バックエンド再起動）

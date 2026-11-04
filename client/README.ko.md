@@ -184,10 +184,6 @@ client/
 │   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
 │   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)
 │   │           ├── GChart.vue                 # @antv/g2 차트 래퍼
-│   │           ├── SubagentTasksView.vue      # 백그라운드 작업 뷰(플로우 그래프 + 선택한 run 상세), 작업 상세 탭이 호스트
-│   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
-│   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
-│   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
 │   │           ├── TokenBudgetPanel.vue      # 세션 범위 탭(컨텍스트 지표 팝오버에서 열기): 열린 세션의 Token 상한, 사용량/비용, 초기화(GET/POST /sessions/budget)
 │   │           ├── ReplayAllowlistEditor.vue # 시스템 설정: 피니시 재생 허용 목록 편집기(GET/PUT /sherry-config/list/<key>, 실행 파일 이름 추가/삭제)
 │   │           ├── CudaPackCard.vue          # 모델 설정: 선택적 CUDA 팩 카드(Linux 전용——감지, 이어받기 다운로드, 이후 백엔드 재시작)

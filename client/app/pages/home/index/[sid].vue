@@ -454,7 +454,7 @@
 </template>
 
 <script lang="ts" setup>
-// Page-level error capture: runtime errors for all descendant components (ChatBox/HITL card/SubagentTasksView, etc.)
+// Page-level error capture: runtime errors for all descendant components (ChatBox / HITL card, etc.)
 // → logUtil logs + global toast, return false prevents bubbling up to home/index.vue
 // (03-errorCaptured factory function pattern)
 useErrorCaptured();
@@ -512,7 +512,6 @@ const sessionId = computed(() => String(route.params.sid ?? ''));
  */
 const mySid = String(route.params.sid ?? '');
 
-const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
 /** TaskFlow step progress for the floating panel (same init contract). */
 const taskflowStore = useTaskflowStore();
@@ -522,35 +521,23 @@ const newSession = useNewSessionStore();
 /** Per-session project-directory chip store (hydrated on mount + turn start). */
 const projectDirectory = useProjectDirectoryStore();
 
-/**
- * Show this session's background tasks in the right sidebar: the chat column
- * stays in place (the view used to replace it) and the detail opens as a tab.
- * @param runId Optional run to locate inside the view.
- */
-const openTaskDetail = (runId?: string) => {
-  focusRun(runId);
-  rightSidebarStore.openTab('taskDetail');
-};
-
 /** The chat list, so the toolbar's terminal entry can reveal a command's card. */
 const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void; openFind: () => void }>('chatBoxRef');
 
 /**
  * A row of the toolbar's terminal entry was picked: show where that work lives.
  *
- * A sub-agent opens the background-task view focused on its run (the live
- * context of the child agent, the same destination as the sidebar's task
- * items); a terminal command reveals its own tool card in the chat, because the
- * card is where the command's output streams — no extra panel needed.
+ * A terminal command reveals its own tool card in the chat, because the card is
+ * where the command's output streams — no extra panel needed. A sub-agent row
+ * has NO destination right now: the task-detail tab was removed and its
+ * replacement (the agent activity view) is not built yet, so picking one is a
+ * deliberate no-op instead of opening a dead tab.
  * @param payload Which row was picked (`run` / `command`) and its id.
  * @param payload.kind
  * @param payload.id
  */
 const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number }) => {
-  if (payload.kind === 'run') {
-    openTaskDetail(String(payload.id));
-    return;
-  }
+  if (payload.kind === 'run') return;
   // The command's log is in the chat: reveal its card in place.
   void nextTick(() => chatBoxRef.value?.scrollToMessage(Number(payload.id)));
 };
