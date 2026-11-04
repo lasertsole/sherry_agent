@@ -727,11 +727,18 @@ async def apply_custom_thinking_mapping(session_id: str, mapping: dict | None) -
         )
 
     cleaned = _validate_custom_mapping(mapping)
+    # Stamp at ENQUEUE time too: a parked write is promoted by copying its value
+    # straight into the live key (``promote_pending_settings_sync`` does not call
+    # the live writer), and an unstamped value would be ignored as legacy. The
+    # key is parked-aware, so a model switch parked in the same turn is respected.
+    from models.LLMs.model_identity import main_model_key
+
+    stamped = {**cleaned, "model": main_model_key(_effective_override(session_id))}
     return await _apply_session_choice(
         session_id,
         live_key=StateKey.CUSTOM_THINKING_MAPPING,
         pending_key=StateKey.CUSTOM_THINKING_MAPPING_PENDING,
-        value=cleaned,
+        value=stamped,
         write_live=lambda: set_custom_thinking_mapping(session_id, cleaned),
     )
 

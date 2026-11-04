@@ -760,9 +760,14 @@ def test_custom_mapping_parks_while_a_turn_runs(registers, monkeypatch):
     assert resp.status_code == 200 and '"pending": true' in resp.description
     mem, _db = registers
     assert ("s6", "custom_thinking_mapping") not in mem.data
-    assert (
-        mem.data[("s6", "custom_thinking_mapping_pending")]["value"]["level_map"]["high"] == "full"
-    )
+    pending = mem.data[("s6", "custom_thinking_mapping_pending")]["value"]
+    assert pending["level_map"]["high"] == "full"
+    # The parked value carries its model stamp: promotion copies it straight
+    # into the live key, and an unstamped value would be ignored as legacy.
+    assert pending["model"] == main_model_key()
+
+    service.promote_pending_settings_sync("s6")
+    assert mem.data[("s6", "custom_thinking_mapping")]["model"] == main_model_key()
 
 
 def test_the_middleware_reads_the_custom_mapping(monkeypatch):
