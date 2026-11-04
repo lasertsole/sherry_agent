@@ -90,6 +90,7 @@ const KIND_ICONS: Partial<Record<RightSidebarPanelKind, string>> = {
   gitDiff: 'pi pi-code',
   contextViewer: 'pi pi-list',
   sessionPreset: 'pi pi-id-card',
+  subagentActivity: 'pi pi-android',
   browser: 'pi pi-globe',
   terminal: 'pi pi-desktop'
 };

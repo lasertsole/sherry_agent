@@ -609,6 +609,7 @@
     "sessionPreset": "プリセットと役割",
     "gitDiff": "コミット差分",
     "contextViewer": "エージェント コンテキスト",
+    "subagentActivity": "エージェント実況",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
     "sideChat": "補助セッション",

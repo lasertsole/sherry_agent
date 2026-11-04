@@ -605,17 +605,18 @@ const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void; openF
 /**
  * A row of the toolbar's terminal entry was picked: show where that work lives.
  *
- * A terminal command reveals its own tool card in the chat, because the card is
- * where the command's output streams — no extra panel needed. A sub-agent row
- * has NO destination right now: the task-detail tab was removed and its
- * replacement (the agent activity view) is not built yet, so picking one is a
- * deliberate no-op instead of opening a dead tab.
+ * A sub-agent opens its activity tab (live trajectory + summary + steer); a
+ * terminal command reveals its own tool card in the chat, because the card is
+ * where the command's output streams — no extra panel needed.
  * @param payload Which row was picked (`run` / `command`) and its id.
  * @param payload.kind
  * @param payload.id
  */
 const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number }) => {
-  if (payload.kind === 'run') return;
+  if (payload.kind === 'run') {
+    rightSidebarStore.openTab('subagentActivity', { runId: String(payload.id) });
+    return;
+  }
   // The command's log is in the chat: reveal its card in place.
   void nextTick(() => chatBoxRef.value?.scrollToMessage(Number(payload.id)));
 };

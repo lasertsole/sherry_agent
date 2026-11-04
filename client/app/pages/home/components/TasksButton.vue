@@ -25,7 +25,8 @@
     </template>
 
     <div class="flex w-72 flex-col gap-3">
-      <!-- Running sub-agents -->
+      <!-- Running sub-agents: one ZCode-directory-style row each (status icon,
+           role, task summary, elapsed). Clicking opens the run's activity tab. -->
       <section class="flex flex-col gap-1.5">
         <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
           {{ t('tasksButton.subagents', { count: activeRuns.length }) }}
@@ -39,13 +40,22 @@
             <button
               type="button"
               class="row-button"
+              :title="`${statusLabel(run)} · ${runLabel(run)}`"
               @click="openRun(run.run_id)">
-              <span
-                class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                :class="statusClass(run)">
-                {{ statusLabel(run) }}
+              <i
+                :class="['shrink-0 text-[11px]', statusIcon(run)]"
+                :data-test="`tasks-run-icon-${run.run_id}`" />
+              <span class="flex min-w-0 flex-1 flex-col">
+                <span class="flex min-w-0 items-baseline gap-1.5">
+                  <span class="min-w-0 flex-1 truncate text-left">{{ runLabel(run) }}</span>
+                  <span class="shrink-0 text-[10px] text-gray-400">{{ roleLabel(run) }}</span>
+                </span>
+                <span
+                  v-if="taskSummary(run)"
+                  class="truncate text-left text-[10px] text-gray-400 dark:text-gray-500">
+                  {{ taskSummary(run) }}
+                </span>
               </span>
-              <span class="min-w-0 flex-1 truncate text-left">{{ runName(run) }}</span>
               <span class="shrink-0 font-mono">{{ formatElapsed(run.execution?.started_at, now) }}</span>
             </button>
           </li>
@@ -55,6 +65,40 @@
           class="text-xs text-gray-400 dark:text-gray-500">
           {{ t('tasksButton.none') }}
         </span>
+      </section>
+
+      <!-- Ended sub-agents (collapsed by default): the history of this session's
+           runs. Clicking a row opens the same activity tab (read-only). -->
+      <section
+        v-if="endedRuns.length"
+        class="flex flex-col gap-1.5 border-t border-solid border-gray-100 pt-2 dark:border-gray-800">
+        <button
+          type="button"
+          class="flex cursor-pointer items-center gap-1 self-start text-xs font-medium text-gray-500 hover:text-theme-main dark:text-gray-400"
+          data-test="tasks-ended-toggle"
+          @click="endedOpen = !endedOpen">
+          <i :class="['pi text-[9px]', endedOpen ? 'pi-chevron-down' : 'pi-chevron-right']" />
+          {{ t('tasksButton.ended', { count: endedRuns.length }) }}
+        </button>
+        <ul
+          v-if="endedOpen"
+          class="flex max-h-48 flex-col gap-1 overflow-y-auto">
+          <li
+            v-for="run in endedRuns"
+            :key="run.run_id">
+            <button
+              type="button"
+              class="row-button"
+              :title="statusLabel(run)"
+              :data-test="`tasks-ended-${run.run_id}`"
+              @click="openRun(run.run_id)">
+              <i :class="['shrink-0 text-[11px]', outcomeIcon(run)]" />
+              <span class="min-w-0 flex-1 truncate text-left">{{ runLabel(run) }}</span>
+              <span class="shrink-0 text-[10px] text-gray-400">{{ statusLabel(run) }}</span>
+              <span class="shrink-0 font-mono">{{ ago(run.execution?.ended_at) }}</span>
+            </button>
+          </li>
+        </ul>
       </section>
 
       <!-- Running commands (tool calls executing right now) -->
@@ -148,9 +192,22 @@ const { t } = useI18n({ useScope: 'local' });
 
 const store = useSubagentStore();
 const commandsStore = useRunningCommandsStore();
+// Shared run labels: the role / status vocabulary lives in the subagent facade
+// so the activity tab and this list can never disagree.
+const { roleLabel, runLabel, statusLabel } = useSubagentTasks();
 
 /** This session's runs that still own a slot (running / interrupted / queued). */
 const activeRuns = computed(() => (store.taskRuns ?? []).filter(isActiveRun));
+
+/** Recently finished runs (newest first, bounded): the collapsed history list. */
+const endedRuns = computed(() =>
+  (store.allTaskRuns ?? [])
+    .filter(run => !isActiveRun(run))
+    .sort((a, b) => Number(b.execution?.ended_at ?? 0) - Number(a.execution?.ended_at ?? 0))
+    .slice(0, 20)
+);
+/** Whether the ended list is expanded. */
+const endedOpen = ref(false);
 
 /** Tool calls executing right now (fed by the session page). */
 const commands = computed(() => commandsStore.commands);
@@ -164,7 +221,7 @@ const now = ref(Date.now());
 let ticker: ReturnType<typeof setInterval> | undefined;
 
 const syncTicker = () => {
-  const wanted = activeCount.value > 0;
+  const wanted = activeCount.value > 0 || endedOpen.value;
   if (wanted && !ticker) {
     ticker = setInterval(() => {
       now.value = Date.now();
@@ -175,7 +232,7 @@ const syncTicker = () => {
   }
 };
 
-watch(activeCount, syncTicker, { immediate: true });
+watch([activeCount, endedOpen], syncTicker, { immediate: true });
 
 onMounted(() => {
   // The entry that shows the count owns the initial load now that the chat's
@@ -211,7 +268,7 @@ const togglePopover = (event: Event, toggle: () => void, isOpen: boolean) => {
 const tooltip = computed(() => {
   const header = t('tasksButton.label');
   const lines = [
-    ...activeRuns.value.map(run => `${runName(run)} · ${formatElapsed(run.execution?.started_at, now.value)}`),
+    ...activeRuns.value.map(run => `${runLabel(run)} · ${formatElapsed(run.execution?.started_at, now.value)}`),
     ...commands.value.map(command => `${command.summary} · ${formatElapsed(command.startedAtMs, now.value)}`),
     ...props.backgroundTasks
       .filter(task => task.status === 'running')
@@ -221,34 +278,54 @@ const tooltip = computed(() => {
 });
 
 /**
- * Display name of a run: its label, task name or the first line of the task.
+ * One line of the run's task text, clipped (hidden when it repeats the title).
  * @param run
  */
-const runName = (run: SubagentRun): string =>
-  run.label || run.task_name || (run.task ?? '').split('\n')[0]?.slice(0, 40) || run.run_id;
-
-/**
- * Status chip text (queued / running / interrupted / unknown).
- * @param run
- */
-const statusLabel = (run: SubagentRun): string => {
-  const status = String(run.execution?.status ?? '').toUpperCase();
-  if (status === 'PENDING') return t('tasksButton.queued');
-  if (status === 'RUNNING') return t('tasksButton.running');
-  if (status === 'INTERRUPTED') return t('tasksButton.interrupted');
-  return status || t('tasksButton.unknown');
+const taskSummary = (run: SubagentRun): string => {
+  const line = (run.task ?? '').split('\n')[0]?.trim() ?? '';
+  if (!line) return '';
+  const clipped = line.length > 60 ? `${line.slice(0, 60)}…` : line;
+  return clipped === runLabel(run) ? '' : clipped;
 };
 
 /**
- * Status chip colours: queued is neutral, running is the theme accent,
- * interrupted is amber (recoverable, not finished).
+ * The status GLYPH: a spinner while running, pause for an interrupted run,
+ * clock for a queued one.
  * @param run
  */
-const statusClass = (run: SubagentRun): string => {
+const statusIcon = (run: SubagentRun): string => {
   const status = String(run.execution?.status ?? '').toUpperCase();
-  if (status === 'RUNNING') return 'bg-theme-main/10 text-theme-main';
-  if (status === 'INTERRUPTED') return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
-  return 'bg-gray-500/10 text-gray-500 dark:text-gray-400';
+  if (status === 'RUNNING') return 'pi pi-spin pi-spinner text-theme-main';
+  if (status === 'INTERRUPTED') return 'pi pi-pause-circle text-amber-500 dark:text-amber-400';
+  if (status === 'PENDING') return 'pi pi-clock text-gray-400';
+  return 'pi pi-question-circle text-gray-400';
+};
+
+/**
+ * The outcome glyph of a finished run (success / failure / neutral).
+ * @param run
+ */
+const outcomeIcon = (run: SubagentRun): string => {
+  const outcome = String(run.execution?.outcome?.status ?? '').toUpperCase();
+  if (outcome === 'OK') return 'pi pi-check-circle text-emerald-500';
+  if (outcome === 'ERROR' || outcome === 'KILLED') return 'pi pi-times-circle text-red-500';
+  if (outcome === 'TIMEOUT') return 'pi pi-clock text-amber-500 dark:text-amber-400';
+  return 'pi pi-flag text-gray-400';
+};
+
+/**
+ * Relative "ago" text for a finished run's end timestamp.
+ * @param endedAt Epoch ms, or null/undefined when unknown.
+ */
+const ago = (endedAt: number | null | undefined): string => {
+  if (endedAt == null) return '';
+  const seconds = Math.max(0, Math.floor((now.value - Number(endedAt)) / 1000));
+  if (seconds < 60) return t('tasksButton.agoSeconds', { n: seconds });
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return t('tasksButton.agoMinutes', { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t('tasksButton.agoHours', { n: hours });
+  return t('tasksButton.agoDays', { n: Math.floor(hours / 24) });
 };
 
 /**
@@ -298,10 +375,11 @@ const openCommand = (messageId: number) => {
       "subagents": "正在运行的 Subagent（{count}）",
       "commands": "正在运行的命令（{count}）",
       "none": "暂无",
-      "queued": "排队中",
-      "running": "运行中",
-      "interrupted": "已中断",
-      "unknown": "未知"
+      "ended": "已结束（{count}）",
+      "agoSeconds": "{n} 秒前",
+      "agoMinutes": "{n} 分钟前",
+      "agoHours": "{n} 小时前",
+      "agoDays": "{n} 天前"
     }
   },
   "en": {
@@ -311,10 +389,11 @@ const openCommand = (messageId: number) => {
       "subagents": "Running sub-agents ({count})",
       "commands": "Running commands ({count})",
       "none": "None",
-      "queued": "Queued",
-      "running": "Running",
-      "interrupted": "Interrupted",
-      "unknown": "Unknown"
+      "ended": "Ended ({count})",
+      "agoSeconds": "{n}s ago",
+      "agoMinutes": "{n}m ago",
+      "agoHours": "{n}h ago",
+      "agoDays": "{n}d ago"
     }
   },
   "ja": {
@@ -324,10 +403,11 @@ const openCommand = (messageId: number) => {
       "subagents": "実行中のサブエージェント（{count}）",
       "commands": "実行中のコマンド（{count}）",
       "none": "なし",
-      "queued": "待機中",
-      "running": "実行中",
-      "interrupted": "中断",
-      "unknown": "不明"
+      "ended": "終了済み（{count}）",
+      "agoSeconds": "{n} 秒前",
+      "agoMinutes": "{n} 分前",
+      "agoHours": "{n} 時間前",
+      "agoDays": "{n} 日前"
     }
   },
   "ko": {
@@ -337,10 +417,11 @@ const openCommand = (messageId: number) => {
       "subagents": "실행 중인 서브에이전트({count})",
       "commands": "실행 중인 명령({count})",
       "none": "없음",
-      "queued": "대기 중",
-      "running": "실행 중",
-      "interrupted": "중단됨",
-      "unknown": "알 수 없음"
+      "ended": "종료됨({count})",
+      "agoSeconds": "{n}초 전",
+      "agoMinutes": "{n}분 전",
+      "agoHours": "{n}시간 전",
+      "agoDays": "{n}일 전"
     }
   }
 }

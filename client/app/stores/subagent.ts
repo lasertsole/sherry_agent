@@ -32,6 +32,16 @@ export const useSubagentStore = defineStore('subagent', () => {
    *  Data source: the authoritative server `/sessions` list + local Dexie session placeholders; populated by loadSubagentValidSessions().
    *  Purpose: lets a consumer hide a "back to session" target that no longer exists. */
   const subagentValidSessionIds = ref<Set<string>>(new Set());
+  /** run_id the agent-activity tab currently shows (null when no tab is open). */
+  const activeActivityRunId = ref<string | null>(null);
+
+  /**
+   * Point the activity tab at one run (null clears it when the tab closes).
+   * @param runId Run under watch, or null.
+   */
+  function setActiveActivityRun(runId: string | null): void {
+    activeActivityRunId.value = runId;
+  }
 
   return {
     // State
@@ -41,7 +51,9 @@ export const useSubagentStore = defineStore('subagent', () => {
     lastTasksFetchedAt,
     subagentWsReady,
     subagentValidSessionIds,
+    activeActivityRunId,
     // Behavior
-    isRunning
+    isRunning,
+    setActiveActivityRun
   };
 });

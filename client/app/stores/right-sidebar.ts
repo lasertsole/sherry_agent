@@ -23,6 +23,8 @@ export type RightSidebarPanelKind =
   | 'notification'
   /** The session's own persona preset (read-only). */
   | 'sessionPreset'
+  /** One sub-agent run's live view (trajectory + summary + steer). */
+  | 'subagentActivity'
   /** One file's diff from one commit of the session project (opened from the git graph). */
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
@@ -69,6 +71,8 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // settings are global (.env), and the per-session choice reads the open
   // session when there is one.
   webSearch: 'global',
+  // One run's activity belongs to the session that spawned it.
+  subagentActivity: 'session',
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).
   fileViewer: 'session',
@@ -188,6 +192,8 @@ export interface RightSidebarTabPayload {
    * false, so its retained history is shown without re-inserting the quote.
    */
   prefillQuote?: boolean;
+  /** The sub-agent run the activity panel shows (one tab per run). */
+  runId?: string;
 }
 
 /** One open tab of the right sidebar. */
@@ -386,6 +392,7 @@ export const useRightSidebarStore = defineStore(
       const url = payload?.url ?? null;
       const boardId = payload?.boardId ?? null;
       const sessionId = payload?.sessionId ?? null;
+      const runId = payload?.runId ?? null;
       const scope = SCOPE_BY_KIND[kind];
       // A side-chat tab belongs to its PARENT session; every other session tab
       // belongs to the session on screen when it was opened.
@@ -400,7 +407,8 @@ export const useRightSidebarStore = defineStore(
           (tab.payload?.instance ?? null) === instance &&
           (tab.payload?.url ?? null) === url &&
           (tab.payload?.boardId ?? null) === boardId &&
-          (tab.payload?.sessionId ?? null) === sessionId
+          (tab.payload?.sessionId ?? null) === sessionId &&
+          (tab.payload?.runId ?? null) === runId
       );
       if (existing) {
         activeTabId.value = existing.id;

@@ -609,6 +609,7 @@
     "sessionPreset": "프리셋과 역할",
     "gitDiff": "커밋 diff",
     "contextViewer": "에이전트 컨텍스트",
+    "subagentActivity": "에이전트 활동",
     "browser": "브라우저",
     "terminal": "터미널",
     "sideChat": "보조 세션",

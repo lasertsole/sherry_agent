@@ -609,6 +609,7 @@
     "sessionPreset": "Presets & Role",
     "gitDiff": "Commit diff",
     "contextViewer": "Agent context",
+    "subagentActivity": "Agent Activity",
     "browser": "Browser",
     "terminal": "Terminal",
     "sideChat": "Side session",

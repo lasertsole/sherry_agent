@@ -111,6 +111,7 @@ client/
 │   │   ├── sessionFilter.ts       # Client-side session list filter (keyword + date range)
 │   │   ├── useImagePreview.ts     # Image preview overlay state
 │   │   ├── useSubagentTasks.ts    # Background-task facade (Pinia store + fetch/WS/Dexie sync)
+│   │   ├── use-subagent-activity.ts # One run's activity state: the record, its child session and the steer call
 │   │   ├── utils.ts               # max/min + date/time utilities
 │   │   ├── mitt.ts                # mitt event bus instance
 │   │   ├── ws-ticket.ts           # Single-use WebSocket ticket prefetch (lazy import keeps the socket layer out of the auth bridge)
@@ -140,7 +141,7 @@ client/
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
-│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │           ├── TasksButton.vue            # Toolbar terminal entry: the session's agents / running commands / background commands (the badge counts all three); each agent row carries a status glyph, role and task summary, finished runs sit behind an Ended toggle, and a row opens its agent-activity tab (a command scrolls to its tool card)
 │   │   ├── SafetyFilterPanel.vue# System-config tab: live-stream master switch, LLM review (off without a model), keyword rules editor + test scan, recent filter events
 │   │   ├── OnboardingDialog.vue# First-run tour (welcome → preset → core controls → ready) that creates the session from the chosen preset; shown once via the persisted onboarding_completed flag
 │   │   ├── ShortcutSettingsSection.vue# Shortcut-bindings tab of the system settings: live chords, capture-to-rebind, conflict check, restore defaults
@@ -153,6 +154,8 @@ client/
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
 │   │           ├── TrajectoryPanel.vue       # 当前会话 tab: the per-turn trajectory ledger (GET /sessions/:id/trajectory, rows grouped by turn, re-sorted and paged client-side)
+│   │           ├── SubagentActivityPanel.vue # Right-sidebar agent-activity tab: header + live trajectory / run summary / steer
+│   │           ├── SubagentTrajectory.vue    # The activity tab's live timeline: the child session's trajectory, polled every 3s until the trajectory WS channel lands
 │   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
 │   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory

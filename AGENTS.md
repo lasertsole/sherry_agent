@@ -2078,6 +2078,24 @@ expand/collapse-all, and a turn menu filters one turn. The pure helpers live in
 `client/app/composables/use-trajectory.ts`; `fetchTrajectory` is in
 `bridge/session.ts`. No polling and no virtual scrolling in v1.
 
+The ledger's SECOND consumer is the agent-activity tab
+(`SubagentActivityPanel.vue`, a SESSION-scoped right-sidebar kind opened from a
+`TasksButton` row). It shows ONE sub-agent run: a header (status badge, role,
+depth, agent id, ticking elapsed), a **Live** tab (`SubagentTrajectory.vue` —
+the CHILD session's ledger through `GET /sessions/<child_session_key>/trajectory`,
+polled every 3 s until the trajectory WS channel lands; the payload shape is
+identical, so switching the source is a one-line change), a **Summary** tab (the
+run record: status / role / depth / timestamps / outcome / reasons / delivery,
+the full task and the result text capped at 4000 chars) and a **Steer** tab
+(`POST /subagents/steer` with `new_instructions`, enabled only while the run
+still owns a slot — `isRunning`, i.e. RUNNING or INTERRUPTED — and disabled with
+an explanation otherwise). The run id rides the TAB PAYLOAD (`{runId}`), so two
+runs open as two tabs (the store's dedupe includes `runId`); `activeActivityRunId`
+mirrors the tab currently shown and is cleared on unmount. `TasksButton` renders
+the session's agents ZCode-directory style (status glyph / role / task summary /
+elapsed) plus a collapsed **Ended** slice (outcome + relative time, newest 20);
+both lists hand the jump to the page, which opens this tab.
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to

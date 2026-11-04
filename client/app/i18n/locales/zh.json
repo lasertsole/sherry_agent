@@ -609,6 +609,7 @@
     "sessionPreset": "预设角色",
     "gitDiff": "提交差异",
     "contextViewer": "Agent 上下文",
+    "subagentActivity": "智能体实况",
     "browser": "浏览器",
     "terminal": "终端",
     "sideChat": "辅助会话",
