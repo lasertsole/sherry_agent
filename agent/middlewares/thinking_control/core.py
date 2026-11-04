@@ -254,6 +254,19 @@ class ThinkingControlMiddleware(AgentMiddleware):
         custom_mapping = (
             raw_mapping if isinstance(raw_mapping, dict) and raw_mapping.get("level_map") else None
         )
+        if custom_mapping is not None:
+            # The mapping names ONE provider's wire shape; it is stamped with the
+            # model key at write time and must not ride into a different model.
+            # Switching back re-activates it (the stored stamp is unchanged).
+            from models.LLMs.model_identity import main_model_key
+
+            stored = custom_mapping.get("model")
+            if not isinstance(stored, str) or stored != main_model_key(override):
+                custom_mapping = None
+            else:
+                custom_mapping = {
+                    key: value for key, value in custom_mapping.items() if key != "model"
+                }
         if cache_key is None and override is None and custom_mapping is None:
             return None, None, None
         return cache_key, override, custom_mapping
@@ -324,7 +337,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
         try:
             from agent.tools.memory import memory_store
 
-            memory_store.load_from_disk()
+            memory_store.load_from_store()
         except Exception:
             # Fail-open: a half-read snapshot must not replace the frozen one,
             # and a broken memory file must never break the turn.
@@ -360,7 +373,7 @@ class ThinkingControlMiddleware(AgentMiddleware):
     async def abefore_model(self, state: Any, runtime: Any = None) -> dict[str, Any] | None:
         """Refresh the frozen memory snapshot when model/thinking switched.
 
-        The refresh is intentionally synchronous: ``load_from_disk`` takes the
+        The refresh is intentionally synchronous: ``load_from_store`` takes the
         memory file lock for a few milliseconds and this runs only on an
         actual switch, never on every model call. The prompt-cache delete must
         complete before ``system_prompt_injection`` runs, and both state

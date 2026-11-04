@@ -26,6 +26,11 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 - レポートは `evals/results/swebench/<run_id>/eval_report.json`。インスタンス diff は
   同じディレクトリにある。
 
+- 2026-11-04 以降、タスク prompt はインスタンスの test patch と FAIL_TO_PASS
+  名を（読み取り専用で）含みます。checkout は事前にパッチされず、公式の test
+  patch は従来どおり判定時に適用され、インスタンスレポートは
+  `target_tests_exposed` を記録します。
+
 ## 失敗の履歴（2026-11-01）
 
 | 実行 | Arm | 結果 | 何が起きたか |
@@ -34,6 +39,14 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 | 2026-11-01 002305 | delegate-only | 2/2 クリーン | メインに直接ツールなし；子が実装と検証 |
 | 2026-11-01 143952 | 最初のソフトゲート（10/20） | 1/2 | ゲートが spawn を強制した後、メインが patch を繰り返して P2P を破壊 |
 | 2026-11-01 174750 | ソフトゲート（8/16、累積） | 2/2 クリーン | 16 回の読み取り後にメインの読み書きを停止し、実装を委譲 |
+| 2026-11-03 010944 | 7/14 助言型（累積） | 0/2 | Django は条件だけの変更で一意制約エラーが残り、Sympy は diff なしで 90 回の呼び出し予算を消費 |
+| 2026-11-03 194320 | ネットワーク橋渡し + シグネチャ連続（Sympy のみ） | 0/1 | 非空 diff だが `test_pretty_sqrt` の P2P が回帰。連続警告は WARN のみで 90 回予算を消費 |
+| 2026-11-03 203547 | + 正確なシグネチャ BLOCK（Sympy のみ） | 0/1 | 約 20 回でブロックが効いたが、agent は `probe1.py`…`probe19.py`（出力同一・引数違い）に切り替え、90 回を使い切った |
+| 2026-11-03 205218 | + 結果反復（Sympy のみ） | 0/1 | terminal/python_repl は 6 回の同一結果でブロック。agent は 72/90 で patch し、その後検証できなかった |
+| 2026-11-03 210023 | + patch_file 成功でブロック解除（Sympy のみ） | 0/1 | 28 回のクリーンな実行でガードは不作動。P2P は通過、F2P は NumberSymbol vs Symbol の隠れた意味論を外した（既存の `test_issue_6285` は旧挙動を断言） |
+| 2026-11-04 003521 | + 対象テストを prompt に提示（HARD 2） | 0/2 | テストは見えるが実行できず、両インスタンスが 90 回を使い切った |
+| 2026-11-04 004714 | + 対象テストを checkout に事前適用（HARD 2） | 1/2 | Django は通過。Sympy は `e.is_Symbol`（`1/x_17` には誤り）を使い、repro スクリプトでループ |
+| 2026-11-04 005721 | 失敗後の指示を強化（Sympy のみ） | 0/1 | 同じ誤った条件のまま。F2P は 0 |
 
 ## 露呈した問題
 
@@ -57,8 +70,8 @@ FAIL_TO_PASS / PASS_TO_PASS で判定します。答えるのは「この agent 
 ### 現在の解決
 
 1. **修正済み。** `IterationBudget` はモデル呼び出しごとに 1 単位。ツール結果は無料。
-2. **緩和済み。** `DelegationPressureGate` は 7 回目の読み取りで `<system-reminder>` 警告、14 回目で escalated 版を注入し、`terminal`/読み取りツールは利用可能なままです。`ToolGuardrails` は非冪等 terminal をハッシュせず、読み取り専用コマンド分類は未実装。
-3. **部分的に緩和。** escalated リマインダーは 14 回目で `sessions_spawn` を促しますが、ツールをブロックしなくなりました。対象テスト実行を要求する専用の検証ゲートは未実装。
+2. **修正済み。** `ToolGuardrails` にステータス非依存のシグネチャ連続（ツール + 引数ハッシュ、3 回の同一呼び出し、terminal は自身の metadata で 5）を追加し、1 ターン最大 3 回警告した後、その正確なシグネチャをブロックします。さらに非冪等ツールの結果反復（3 回警告、6 回連続同一結果でツールをブロック）も持ちます。`patch_file` 成功時（metadata `clears_guardrail_blocks`）はブロック・連続・失敗カウンタを消去し、検証を再開できます。読み取り専用コマンド分類器は不要です。
+3. **ツールガードによる緩和であり、ハードな終了ゲートではない。** ブロックされたシグネチャは別の方法を強制し、20261103_210023 の Sympy 実行は 28 回のモデル呼び出しで収束して隣接テストファイルを実行し、prompt もそれを要求します。「終了前にテスト通過必須」の独立ゲートは存在しません。
 4. **未解決。** harness は `changed_paths` を記録するが `tests/` の編集を invalid にしない。ソフトゲートは確率を下げるが公式のガードではない。
 5. **部分的に緩和。** escalated リマインダーは spawn 後の主エージェントの patch ループを止め実装を委譲するよう促すが、「終了前にテスト通過必須」のハードゲートはない。
 6. **部分的に修正。** ターンごとの token 予算はメイン + 全階層の子孫をルートターンに帰属する。eval レポートは依然メイン session のみを数え、子 checkpoint/結果の読み戻しは未解決。
@@ -97,7 +110,7 @@ old_string/new_string、曖昧一致、stale-write CAS で置換し、事前の�
 ## 現在の設計：DelegationPressureGate（7/14 助言型）
 
 2026-11-01 の実行は以前の 8/16 ハードブロック版を測定したもので、以下の
-7/14 助言型動作は 2026-11-02 に競合解消して確定した設計です。
+7/14 助言型動作は 2026-11-02 に競合解消して確定した設計です。2026-11-03 の 0/2 再実行が最初の測定で、HARD スライスは解決できませんでした——`evals/swebench/RESULTS.md` を参照。
 
 `agent/middlewares/delegation_pressure/core.py`：
 
@@ -112,11 +125,28 @@ old_string/new_string、曖昧一致、stale-write CAS で置換し、事前の�
 これはメインエージェントにのみインストールされる。子ミドルウェアビルダーは追加せず、
 `_active` も `:subagent:`/`:swarm:` セッションを拒否する。
 
+## ネットワーク状態ブリッジ
+
+失敗がネットワーク由来の terminal コマンドはツールエラーになります: `curl` /
+`wget` / `http` / `https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup`
+の非ゼロ終了、または `git clone|fetch|pull|push|ls-remote|remote|submodule` の
+非ゼロ終了は `ToolException` を raise します。`handle_tool_error` が
+`ToolMessage(status="error")` に変えるため、exact-failure カウンタが認識します。
+ローカルコマンド（pytest、コンパイラ、スクリプト）の非ゼロ終了は通常のテキスト
+（`status="success"`）のまま返り、agent は失敗を読んで反復できます。`web_fetch`
+の HTTP 4xx/5xx も同様に raise します。
+
+eval harness は実行前に GitHub をプローブし、到達できない場合はシードされた
+`AGENTS.md` に「ネットワークを探り続けない」directive を追加します。これで Sympy
+の curl/GitHub 探査ループは解消しました。残る Sympy の F2P 失敗は
+NumberSymbol vs Symbol の隠れたテスト意味論であり、ネットワーク探査ではありません。
+
 ## 結果
 
 | Arm | Resolved | 時間 | メイン session tokens | 推定コスト |
 | :--- | :--- | :--- | :--- | :--- |
 | `DelegationPressureGate` 8/16（run 20261101_174750） | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| `DelegationPressureGate` 7/14 助言型（run 20261103_010944） | 0/2 | 669.7s | 8,370,656 / 31,119 | $4.232 |
 | Delegate-only（run 20261101_145717） | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
 
 Django は製品コードとリリース文書だけを変更し、Sympy はライブラリ 1 ファイルだけを

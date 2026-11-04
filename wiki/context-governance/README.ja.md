@@ -90,7 +90,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
 | メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
 | 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
-| FACTS.md | `workspace/memory/FACTS.md`（唯一のグローバルファイル；memory ツール target `facts`） | — | システムレベル / プロジェクト横断の落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
+| `facts` target | MesMemory `memory_entries` 行（唯一のグローバルターゲット） | — | システムレベル / プロジェクト横断の落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ターゲット（1 375 文字上限；超過時は最も使われていないエントリをアーカイブ） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
 ## 🧵 Message 行のターン識別子
 

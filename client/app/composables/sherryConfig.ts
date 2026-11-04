@@ -27,10 +27,15 @@ export async function readSherryConfig(): Promise<SherryConfigPayload> {
     opts: { _ts: Date.now() },
     method: 'get'
   });
-  // `res` is never null in practice on success. Guard against an empty body
-  // while preserving the `{ entries }` shape so a non-throw path never yields
-  // an unreadable value.
-  return res || { entries: [] };
+  // `null`/`undefined` means the request failed (fetchApi reports network and
+  // HTTP errors by answering null plus one toast). Turning that into
+  // `{ entries: [] }` made the App Config panel say "no sherry.jsonc file
+  // found" for a 500/503 — an error disguised as an empty file. Throw so the
+  // caller can tell a failed load from a genuinely empty registry.
+  if (res === null || res === undefined) {
+    throw new Error('GET /sherry-config failed');
+  }
+  return res;
 }
 
 /**

@@ -6,42 +6,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from config._home import resolve_app_home
 from config.sherry_settings import get_sherry_setting
 
 ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
 ROOT_DIR = ROOT_DIR.resolve()
-
-
-def _cli_arg(name: str) -> str | None:
-    """The value of ``--name value`` / ``--name=value`` in ``sys.argv``, or None.
-
-    A direct argv scan instead of argparse on purpose: this module computes its
-    constants at IMPORT time, before any entrypoint's parser would run, and the
-    shell (Tauri) passes the flags to either entrypoint (``python -m server``
-    and the frozen ``backend_entry``) without either one needing to know.
-    """
-    argv = sys.argv
-    for index, arg in enumerate(argv):
-        if arg == name and index + 1 < len(argv):
-            return argv[index + 1]
-        if arg.startswith(f"{name}="):
-            return arg.split("=", 1)[1]
-    return None
-
-
-def _resolve_sherry_home_raw() -> str:
-    """The writable-home request: ``--sherry-home`` first, then the env var.
-
-    The environment variable is a TRANSITIONAL fallback (R5 of the packing
-    plan): a packaged shell passes the CLI flag and no longer sets the env, so
-    the env path only serves manual runs against an older shell or a plain
-    `SHERRY_HOME=x python -m server` invocation. A checkout sets neither.
-    """
-    from_cli = _cli_arg("--sherry-home")
-    if from_cli and from_cli.strip():
-        return from_cli.strip()
-    return os.environ.get("SHERRY_HOME", "").strip()
 
 
 #: The WRITABLE app-data root. Unset (a checkout, a server, CI) keeps every
@@ -50,8 +20,9 @@ def _resolve_sherry_home_raw() -> str:
 #: shell passes ``--sherry-home`` pointing at the OS app-data dir) because the
 #: code tree ships read-only: sessions, memory, uploads, logs and the ``.env``
 #: must live somewhere the user can write, and must survive an app update.
-_HOME_RAW = _resolve_sherry_home_raw()
-APP_HOME = Path(_HOME_RAW).expanduser().resolve() if _HOME_RAW else ROOT_DIR
+#: The resolution itself is shared with the settings modules that read
+#: ``sherry.jsonc`` / ``.models`` / ``.network`` (config/_home.py).
+APP_HOME = resolve_app_home(ROOT_DIR)
 
 #: Whether this process serves the packaged desktop app (the shell passes the
 #: bare ``--sherry-desktop`` flag; the environment variable is the transitional

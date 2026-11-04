@@ -1058,7 +1058,7 @@ http = [
 
 [[package]]
 name = "funasr"
-version = "1.4.16"
+version = "1.4.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "huggingface-hub" },
@@ -1081,6 +1081,7 @@ dependencies = [
     { name = "sentencepiece" },
     { name = "soundfile" },
     { name = "tensorboardx" },
+    { name = "threadpoolctl" },
     { name = "tiktoken" },
     { name = "torch-complex" },
     { name = "tqdm" },
@@ -1088,9 +1089,9 @@ dependencies = [
     { name = "umap-learn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/35/9483580e31dd9d77d6bdfc2854e82a48726f4d44a4a11349aef1885cd716/funasr-1.4.16.tar.gz", hash = "sha256:1e2f8e3887fbc4b164cce40f73bf1324907da6ab59d1e8bf2add827f534c69e7", size = 995057, upload-time = "2026-09-18T06:04:10.401Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/46/f978574fc774de22e389c4ac4720d1c405902e077d920059d0413147fdc8/funasr-1.4.17.tar.gz", hash = "sha256:d7868abc85af6c41321a0c6dbd58d00324d18d5e920d2e4d491f8d18c89e2b3f", size = 1042053, upload-time = "2026-10-28T11:19:03.429Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/f7/a834a19e5bdd9e3d09eb323436ac9cbc981a864318a517c1c685ffbe248d/funasr-1.4.16-py3-none-any.whl", hash = "sha256:f95943f6a8111349a1b08907363b048a49e9cb9caa1e3afd8c92970d08bf450d", size = 999588, upload-time = "2026-09-18T06:04:07.719Z" },
+    { url = "https://files.pythonhosted.org/packages/79/f3/967023d3da4f71687476ac3df0ad6f7ec60d36f142548dc99e6f6bd06002/funasr-1.4.17-py3-none-any.whl", hash = "sha256:1eaf11d07b69cc20a41ed3b818a2ae6d5030282d7046296a40e0f330f4cedbb8", size = 1012679, upload-time = "2026-10-28T11:19:00.875Z" },
 ]
 
 [[package]]

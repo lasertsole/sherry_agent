@@ -302,11 +302,6 @@
                   spellcheck="false" />
               </div>
             </template>
-            <p
-              v-else-if="appConfigGroups.length === 0"
-              class="m-0 text-sm text-gray-400">
-              {{ t('config.sherry.noConfigFile') }}
-            </p>
 
             <!-- Replay-gate allowlist: a LIST setting (outside the scalar
                  registry), so it owns its own read/write pair. -->
@@ -380,6 +375,14 @@
           :header="t('config.tabs.safetyFilter')">
           <SafetyFilterPanel />
         </TabPanel>
+        <!-- Long-term memory limits: stored in the memory DB and applied live.
+             Appended LAST for the same index-keyed reasons as the tabs above;
+             it saves on its own (no footer button). -->
+        <TabPanel
+          value="memorySettings"
+          :header="t('config.tabs.memorySettings')">
+          <MemorySettingsSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -390,9 +393,9 @@
          the persona presets; Token 预算 became a session tab opened from the
          context ring, because the cap is per conversation.)
          Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
-         shortcuts 4, safety filter 5. -->
+         shortcuts 4, safety filter 5, memory settings 6. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -1069,8 +1072,6 @@ onBeforeUnmount(onHide);
       },
       "agent": {
         "tabs": {
-          "tools": "工具",
-          "middlewares": "中间件",
           "subagents": "代理模型",
           "skills": "技能"
         },
@@ -1080,74 +1081,12 @@ onBeforeUnmount(onHide);
           "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
           "followEnv": "跟随模型配置"
         },
-        "tools": {
-          "count": "已选 {selected}/{total}",
-          "requiredHint": "必需，不可取消",
-          "scope_builtin": "内置",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
-          "clearAll": "全部禁用",
-          "clearGroup": "清空",
-          "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
-          "selectAll": "全部启用",
-          "selectGroup": "全选"
-        },
         "skills": {
           "count": "已选 {selected}/{total}",
           "scope_builtin": "内置",
           "scope_thirdparty": "第三方",
           "empty": "暂无技能",
           "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。"
-        },
-        "toolGroup": {
-          "files": "文件读写",
-          "terminal": "终端与代码",
-          "tasks": "任务与计划",
-          "memory": "记忆与检索",
-          "skills": "技能",
-          "subagents": "子代理",
-          "interaction": "交互",
-          "web": "网络",
-          "browser": "浏览器",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "lockedTitle": "系统必需（锁定）",
-          "nudgeLabel": "启用 nudge",
-          "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-          "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
-          "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
-          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "计划续跑",
-            "desc": "计划（待办/任务流）未完成时自动继续下一轮"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "动态提醒",
-            "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
-          },
-          "TaskIntentMiddleware": {
-            "name": "任务意图引导",
-            "desc": "识别工作型请求并注入编排提示"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "工作区变更通知",
-            "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
-          },
-          "MultimodalProcessor": {
-            "name": "多模态预处理",
-            "desc": "上传的图片/音频/视频入库与降级处理"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "子代理完成注入",
-            "desc": "子代理完成后把结果注入主会话"
-          },
-          "Summarization": {
-            "name": "摘要压缩",
-            "desc": "上下文压缩、溢出处理与压缩后的 nudge"
-          }
         },
         "subagents": {
           "followTier": "跟随角色默认",
@@ -1164,9 +1103,6 @@ onBeforeUnmount(onHide);
           "librarian": "图书管理员"
         },
         "viewer": {
-          "tools": "工具 {selected}/{total}",
-          "middlewares": "关闭的中间件：{names}",
-          "middlewaresNone": "中间件：全部开启",
           "models": "子代理模型：{names}"
         },
         "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
@@ -1189,6 +1125,7 @@ onBeforeUnmount(onHide);
         "i18n": "国际化",
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
+        "memorySettings": "记忆设置",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1315,8 +1252,7 @@ onBeforeUnmount(onHide);
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-        "movedHint": "以下设置来自 .network / .env。",
-        "noConfigFile": "未找到 sherry.jsonc 文件。"
+        "movedHint": "以下设置来自 .network / .env。"
       },
       "cron": {
         "addJob": "新建任务",
@@ -1445,8 +1381,6 @@ onBeforeUnmount(onHide);
       },
       "agent": {
         "tabs": {
-          "tools": "Tools",
-          "middlewares": "Middlewares",
           "subagents": "Agent models",
           "skills": "Skills"
         },
@@ -1456,74 +1390,12 @@ onBeforeUnmount(onHide);
           "mainHint": "The model the main agent runs on; follows the model config by default.",
           "followEnv": "Follow the model config"
         },
-        "tools": {
-          "count": "{selected}/{total} selected",
-          "requiredHint": "Required — cannot be disabled",
-          "scope_builtin": "Built-in",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
-          "clearAll": "Disable all",
-          "clearGroup": "Clear",
-          "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
-          "selectAll": "Enable all",
-          "selectGroup": "All"
-        },
         "skills": {
           "count": "{selected}/{total} selected",
           "scope_builtin": "Built-in",
           "scope_thirdparty": "Third-party",
           "empty": "No skills yet",
           "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
-        },
-        "toolGroup": {
-          "files": "Files",
-          "terminal": "Terminal & code",
-          "tasks": "Tasks & planning",
-          "memory": "Memory & search",
-          "skills": "Skills",
-          "subagents": "Subagents",
-          "interaction": "Interaction",
-          "web": "Web",
-          "browser": "Browser",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "lockedTitle": "System-required (locked)",
-          "nudgeLabel": "Enable nudge",
-          "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-          "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
-          "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
-          "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "Plan continuation",
-            "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "Live reminders",
-            "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
-          },
-          "TaskIntentMiddleware": {
-            "name": "Task-intent steering",
-            "desc": "Detects work requests and injects the orchestration prompt"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "Workspace-change notice",
-            "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
-          },
-          "MultimodalProcessor": {
-            "name": "Multimodal preprocessing",
-            "desc": "Persists and prepares uploaded images / audio / video"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "Completion injection",
-            "desc": "Injects a finished subagent's result into the main session"
-          },
-          "Summarization": {
-            "name": "Summarization",
-            "desc": "Context compression, overflow handling and the post-compression nudges"
-          }
         },
         "subagents": {
           "followTier": "Follow the role default",
@@ -1540,9 +1412,6 @@ onBeforeUnmount(onHide);
           "librarian": "Librarian"
         },
         "viewer": {
-          "tools": "Tools {selected}/{total}",
-          "middlewares": "Disabled middlewares: {names}",
-          "middlewaresNone": "Middlewares: all on",
           "models": "Subagent models: {names}"
         },
         "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
@@ -1565,6 +1434,7 @@ onBeforeUnmount(onHide);
         "i18n": "Language",
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
+        "memorySettings": "Memory settings",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1706,8 +1576,7 @@ onBeforeUnmount(onHide);
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-        "movedHint": "The settings below come from .network / .env.",
-        "noConfigFile": "No sherry.jsonc file found."
+        "movedHint": "The settings below come from .network / .env."
       },
       "cron": {
         "addJob": "New task",
@@ -1836,8 +1705,6 @@ onBeforeUnmount(onHide);
       },
       "agent": {
         "tabs": {
-          "tools": "ツール",
-          "middlewares": "ミドルウェア",
           "subagents": "エージェントモデル",
           "skills": "スキル"
         },
@@ -1847,74 +1714,12 @@ onBeforeUnmount(onHide);
           "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
           "followEnv": "モデル設定に従う"
         },
-        "tools": {
-          "count": "{selected}/{total} 選択",
-          "requiredHint": "必須（解除できません）",
-          "scope_builtin": "内蔵",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）",
-          "clearAll": "すべて無効",
-          "clearGroup": "クリア",
-          "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
-          "selectAll": "すべて有効",
-          "selectGroup": "全選択"
-        },
         "skills": {
           "count": "{selected}/{total} 選択",
           "scope_builtin": "内蔵",
           "scope_thirdparty": "サードパーティ",
           "empty": "スキルはまだありません",
           "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。"
-        },
-        "toolGroup": {
-          "files": "ファイル",
-          "terminal": "ターミナルとコード",
-          "tasks": "タスクと計画",
-          "memory": "記憶と検索",
-          "skills": "スキル",
-          "subagents": "サブエージェント",
-          "interaction": "対話",
-          "web": "ウェブ",
-          "browser": "ブラウザ",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "lockedTitle": "システム必須（ロック）",
-          "nudgeLabel": "nudge を有効化",
-          "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-          "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
-          "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
-          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "計画の継続",
-            "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "ライブリマインダー",
-            "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
-          },
-          "TaskIntentMiddleware": {
-            "name": "タスク意図の誘導",
-            "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "ワークスペース変更通知",
-            "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
-          },
-          "MultimodalProcessor": {
-            "name": "マルチモーダル前処理",
-            "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "完了結果の注入",
-            "desc": "サブエージェントの完了結果をメイン セッションに注入します"
-          },
-          "Summarization": {
-            "name": "要約圧縮",
-            "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
-          }
         },
         "subagents": {
           "followTier": "ロール既定に従う",
@@ -1931,9 +1736,6 @@ onBeforeUnmount(onHide);
           "librarian": "ライブラリアン"
         },
         "viewer": {
-          "tools": "ツール {selected}/{total}",
-          "middlewares": "無効なミドルウェア: {names}",
-          "middlewaresNone": "ミドルウェア: すべて有効",
           "models": "サブエージェント モデル: {names}"
         },
         "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
@@ -1956,6 +1758,7 @@ onBeforeUnmount(onHide);
         "i18n": "国際化",
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
+        "memorySettings": "記憶設定",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2097,8 +1900,7 @@ onBeforeUnmount(onHide);
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
-        "movedHint": "以下の設定は .network / .env に由来します。",
-        "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+        "movedHint": "以下の設定は .network / .env に由来します。"
       },
       "cron": {
         "addJob": "新規タスク",
@@ -2227,8 +2029,6 @@ onBeforeUnmount(onHide);
       },
       "agent": {
         "tabs": {
-          "tools": "도구",
-          "middlewares": "미들웨어",
           "subagents": "에이전트 모델",
           "skills": "스킬"
         },
@@ -2238,74 +2038,12 @@ onBeforeUnmount(onHide);
           "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 모델 설정을 따릅니다.",
           "followEnv": "모델 설정 따르기"
         },
-        "tools": {
-          "count": "{selected}/{total} 선택",
-          "requiredHint": "필수 — 해제할 수 없음",
-          "scope_builtin": "내장",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "아직 MCP 도구가 없습니다(확장-MCP에서 서버 추가)",
-          "clearAll": "모두 끄기",
-          "clearGroup": "지우기",
-          "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
-          "selectAll": "모두 켜기",
-          "selectGroup": "전체"
-        },
         "skills": {
           "count": "{selected}/{total} 선택",
           "scope_builtin": "내장",
           "scope_thirdparty": "서드파티",
           "empty": "아직 스킬이 없습니다",
           "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다."
-        },
-        "toolGroup": {
-          "files": "파일",
-          "terminal": "터미널과 코드",
-          "tasks": "작업과 계획",
-          "memory": "기억과 검색",
-          "skills": "스킬",
-          "subagents": "서브에이전트",
-          "interaction": "상호작용",
-          "web": "웹",
-          "browser": "브라우저",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "lockedTitle": "시스템 필수(잠금)",
-          "nudgeLabel": "nudge 사용",
-          "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
-          "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
-          "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
-          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "계획 이어가기",
-            "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "실시간 리마인더",
-            "desc": "매 턴 라이브 뷰(todo / TaskFlow 보드 / 작업 디렉터리 등)를 system-reminder로 주입"
-          },
-          "TaskIntentMiddleware": {
-            "name": "작업 의도 유도",
-            "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "워크스페이스 변경 알림",
-            "desc": "작업 디렉터리나 git 브랜치/HEAD가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
-          },
-          "MultimodalProcessor": {
-            "name": "멀티모달 전처리",
-            "desc": "업로드된 이미지 / 오디오 / 비디오를 저장하고 전처리합니다"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "완료 결과 주입",
-            "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
-          },
-          "Summarization": {
-            "name": "요약 압축",
-            "desc": "컨텍스트 압축, 오버플로 처리, 압축 후 nudge"
-          }
         },
         "subagents": {
           "followTier": "역할 기본값 따르기",
@@ -2322,9 +2060,6 @@ onBeforeUnmount(onHide);
           "librarian": "사서"
         },
         "viewer": {
-          "tools": "도구 {selected}/{total}",
-          "middlewares": "꺼진 미들웨어: {names}",
-          "middlewaresNone": "미들웨어: 모두 켜짐",
           "models": "서브에이전트 모델: {names}"
         },
         "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋과 역할」에서 하세요"
@@ -2347,6 +2082,7 @@ onBeforeUnmount(onHide);
         "i18n": "국제화",
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
+        "memorySettings": "기억 설정",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },
@@ -2482,8 +2218,7 @@ onBeforeUnmount(onHide);
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
-        "movedHint": "아래 설정은 .network / .env에서 가져옵니다.",
-        "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+        "movedHint": "아래 설정은 .network / .env에서 가져옵니다."
       },
       "cron": {
         "addJob": "새 작업",

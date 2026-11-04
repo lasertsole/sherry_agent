@@ -22,6 +22,10 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
   2026-11-02 删除；旧结果行只保留为历史。
 - 报告位于 `evals/results/swebench/<run_id>/eval_report.json`；各实例 diff 在同目录。
 
+- 自 2026-11-04 起，任务 prompt 会附带实例的 test patch 和 FAIL_TO_PASS 名称
+  （只读）。checkout 不会预先打补丁；官方 test patch 仍在判题时应用，实例报告
+  记录 `target_tests_exposed`。
+
 ## 失败历史（2026-11-01）
 
 | 运行 | Arm | 结果 | 发生了什么 |
@@ -30,6 +34,14 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 | 2026-11-01 002305 | delegate-only | 2/2 干净 | 主代理无直接工具；子代理实现并验证 |
 | 2026-11-01 143952 | 首版软门（10/20） | 1/2 | 门迫使 spawn，之后主代理反复 patch 并破坏 P2P |
 | 2026-11-01 174750 | 软门（8/16，累计） | 2/2 干净 | 主代理在 16 次读后被禁止读写，转交实现 |
+| 2026-11-03 010944 | 7/14 建议式（累计） | 0/2 | Django 只改条件仍触发唯一约束错误；Sympy 未产出 diff，90 次调用预算耗尽 |
+| 2026-11-03 194320 | 网络桥接 + 签名连击（仅 Sympy） | 0/1 | 有非空 diff，但 `test_pretty_sqrt` P2P 回归；连击仅 WARN，90 次预算耗尽 |
+| 2026-11-03 203547 | + 精确签名 BLOCK（仅 Sympy） | 0/1 | 约 20 次时拦截生效，但 agent 改用 `probe1.py`…`probe19.py`（输出相同、参数不同），仍耗尽 90 次 |
+| 2026-11-03 205218 | + 结果重复（仅 Sympy） | 0/1 | terminal/python_repl 在 6 次相同结果后被拦截；agent 到 72/90 才 patch，之后无法验证 |
+| 2026-11-03 210023 | + patch_file 成功后解除拦截（仅 Sympy） | 0/1 | 28 次调用的干净运行，未触发护栏；P2P 通过，F2P 未命中 NumberSymbol vs Symbol 的隐藏语义（仓库现有 `test_issue_6285` 断言的是旧行为） |
+| 2026-11-04 003521 | + 目标测试写进 prompt（HARD 2） | 0/2 | 测试可见但不可运行；两个实例都耗尽 90 次调用 |
+| 2026-11-04 004714 | + 目标测试预应用到 checkout（HARD 2） | 1/2 | Django 通过；Sympy 用 `e.is_Symbol`（对 `1/x_17` 判断错误）并在 repro 脚本上循环 |
+| 2026-11-04 005721 | 强化失败后提示（仅 Sympy） | 0/1 | 仍是同样的错误条件；F2P 仍为 0 |
 
 ## 暴露的问题
 
@@ -50,8 +62,8 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 ### 当前解决
 
 1. **已修复。** `IterationBudget` 只按模型调用计 1；工具结果免费。
-2. **已缓解。** `DelegationPressureGate` 在第 7 次读时注入 `<system-reminder>` 警告、第 14 次注入 escalated 版本，`terminal`/读工具仍可用；`ToolGuardrails` 仍不对非幂等 terminal 做哈希，只读命令分类器仍待实现。
-3. **部分缓解。** escalated 提醒在第 14 次读时推动 `sessions_spawn`，但不再阻断工具；要求运行目标测试的专门验证门仍未实现。
+2. **已修复。** `ToolGuardrails` 增加了不看状态签名的连击检测（工具 + 参数哈希；3 次相同调用，terminal 用自身 metadata 声明的 5 次），每回合最多警告 3 次，之后封锁该精确签名；另有非幂等工具的结果重复检测（3 次警告、6 次连续相同结果封锁工具）。`patch_file` 成功（metadata `clears_guardrail_blocks`）会清空 block、连击和失败计数，让验证可以继续。不再需要只读命令分类器。
+3. **由工具护栏缓解，不是硬性收尾门。** 被封锁的签名会迫使 agent 换方法；20261103_210023 的 Sympy 运行在 28 次模型调用内收敛，并运行了邻近测试文件，prompt 现在也要求这样做。独立的“收尾前测试必须通过”门仍不存在。
 4. **仍未解决。** harness 记录 `changed_paths`，但不会把 `tests/` 改动判 invalid；软门降低概率，但不是官方守卫。
 5. **部分缓解。** escalated 提醒推动主代理停止 spawn 后的 patch 循环并转交实现；还没有“收尾前测试必须通过”的硬门。
 6. **部分修复。** 每回合 token 预算现在把主代理 + 所有层级子代理归到根回合；eval 报告仍只统计主 session，子代理 checkpoint/结果回读仍未解决。
@@ -83,7 +95,7 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 
 ## 当前设计：DelegationPressureGate（7/14 建议式）
 
-2026-11-01 的运行测量的是早先的 8/16 硬阻断版本；下面的 7/14 行为是 2026-11-02 合并冲突后确定的设计。
+2026-11-01 的运行测量的是早先的 8/16 硬阻断版本；下面的 7/14 行为是 2026-11-02 合并冲突后确定的设计。2026-11-03 的 0/2 重跑是它的首次测量，HARD 切片未通过——详见 `evals/swebench/RESULTS.md`。
 
 `agent/middlewares/delegation_pressure/core.py`：
 
@@ -98,11 +110,26 @@ SWE-Bench 通过仓库自己的 host harness 运行，而不是官方 Docker 评
 它只安装在主 Agent 上；子代理的 middleware builder 不会添加它，`_active` 也会拒绝
 `:subagent:`/`:swarm:` 会话。
 
+## 网络状态桥接
+
+失败形态属于网络的 terminal 命令现在会变成工具错误：`curl` / `wget` / `http` /
+`https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup` 非零退出，或
+`git clone|fetch|pull|push|ls-remote|remote|submodule` 非零退出，都会 raise
+`ToolException`。`handle_tool_error` 把它转成 `ToolMessage(status="error")`，
+exact-failure 计数因此生效。本地命令（pytest、编译器、脚本）的非零退出仍作为
+普通文本返回（`status="success"`），agent 可以读取失败并继续迭代。`web_fetch`
+的 HTTP 4xx/5xx 同样 raise。
+
+eval harness 还会在运行前探测 GitHub；探测不到网络时，它会向种子 `AGENTS.md`
+追加“不要继续探测网络”的 directive。这消除了 Sympy 的 curl/GitHub 探测循环。
+Sympy 剩余的 F2P 失败是 NumberSymbol vs Symbol 的隐藏测试语义，不是网络探测。
+
 ## 结果
 
 | Arm | Resolved | 时间 | 主 session tokens | 估算成本 |
 | :--- | :--- | :--- | :--- | :--- |
 | `DelegationPressureGate` 8/16（run 20261101_174750） | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| `DelegationPressureGate` 7/14 建议式（run 20261103_010944） | 0/2 | 669.7s | 8,370,656 / 31,119 | $4.232 |
 | Delegate-only（run 20261101_145717） | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
 
 Django 只改了产品代码与发布文档；Sympy 只改了一个库文件。两个成功 diff 都不含

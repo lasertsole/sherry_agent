@@ -101,7 +101,12 @@ async function readGroupedConfig(url: string): Promise<EnvConfigPayload> {
     opts: { _ts: Date.now() },
     method: 'get'
   });
-  return res || { groups: [] };
+  // Same rule as readSherryConfig: null means the request failed, so throw
+  // instead of rendering an empty panel ("no entries") for a 500/503.
+  if (res === null || res === undefined) {
+    throw new Error(`GET ${url} failed`);
+  }
+  return res;
 }
 
 /** Read the model configuration file (`.models`, gitignored). */

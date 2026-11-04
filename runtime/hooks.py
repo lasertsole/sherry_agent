@@ -68,6 +68,12 @@ Hook contracts (registration sites must provide these signatures; the
     call it instead of importing the server module. Missing hook -> the event
     is dropped (no ledger in this process, e.g. a bare unit test).
 
+``TRAJECTORY_EVENT_PUSH`` (``"trajectory_event_push"``)
+    ``(session_id: str, event: dict) -> None``: deliver one just-persisted
+    trajectory event to that session's live WS subscribers
+    (``server/trigger/ws/trajectory_ws.py``). Called by the ledger after its
+    upsert, fail-open; missing hook -> the event is only in the database.
+
 ``GET_CURRENT_TURN_ID`` (``"get_current_turn_id"``)
     ``() -> str``: the active conversation turn's uuid (the
     ``current_turn_id`` contextvar set by ``turn_scope``). The message store
@@ -91,6 +97,7 @@ __all__ = [
     "MAYBE_TRIGGER_AUTO_TURN",
     "RECORD_TRAJECTORY_EVENT",
     "SCAN_SKILL",
+    "TRAJECTORY_EVENT_PUSH",
     "WS_ACTIVE_TASKS",
     "clear",
     "register",
@@ -107,6 +114,7 @@ SCAN_SKILL = "scan_skill"
 BUILD_REJECT_MESSAGE = "build_reject_message"
 BUILD_BACKGROUND_AGENT_TOOLS = "build_background_agent_tools"
 BROWSER_MANAGER = "browser_manager"
+TRAJECTORY_EVENT_PUSH = "trajectory_event_push"
 
 _registry: dict[str, Callable[..., Any]] = {}
 

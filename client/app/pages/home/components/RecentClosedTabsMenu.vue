@@ -90,9 +90,11 @@ const KIND_ICONS: Partial<Record<RightSidebarPanelKind, string>> = {
   gitDiff: 'pi pi-code',
   contextViewer: 'pi pi-list',
   sessionPreset: 'pi pi-id-card',
+  subagentActivity: 'pi pi-android',
+  taskFlowBoard: 'pi pi-chart-line',
+  sessionActivity: 'pi pi-bolt',
   browser: 'pi pi-globe',
-  terminal: 'pi pi-desktop',
-  taskDetail: 'pi pi-tasks'
+  terminal: 'pi pi-desktop'
 };
 
 /** Closed tabs of the group on screen (current session or global). */

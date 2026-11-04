@@ -50,7 +50,7 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.user_hooks import UserHooksMiddleware
 from .middlewares.tool_result_enrichment import ToolResultEnrichmentMiddleware
 from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
-from .middlewares.tool_selection import ToolSelectionMiddleware
+from .middlewares.plan_mode_gate import PlanModeToolGate
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.reminder_catalog import DynamicReminderMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
@@ -104,7 +104,8 @@ def init() -> None:
     - Rebuilds the skill snapshot at server start to keep the skills prompt
       stable throughout this server run, ensuring reliable model prefix
       caching.
-    - Loads memory markdown files from disk; they stay unchanged until
+    - Imports the legacy memory Markdown files into SQLite once (idempotent)
+      and loads the memory snapshot from the store; it stays unchanged until
       compression is triggered during this server run.
     - Builds the main tool list.
     - Registers the prompt data provider so workspace/context_engine can read
@@ -119,9 +120,11 @@ def init() -> None:
         return
 
     from skills import build_skills_snapshot
+    from context_engine.store.memory_migration import migrate_legacy_memory_files
 
     build_skills_snapshot()
-    memory_store.load_from_disk()
+    migrate_legacy_memory_files()
+    memory_store.load_from_store()
     _tools = build_main_tools()
     register_prompt_data_provider()
     register_skill_write_provider()
@@ -322,11 +325,10 @@ def _build_middlewares(
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
         WorkspaceNoticeMiddleware(),
-        # Per-session tool set (the preset Tools tab): narrows request.tools before the
-        # model is bound and refuses a disabled tool at execution. Registered as
-        # a real middleware (not gated) because it HAS no switch of its own — it
-        # is what applies the switch, and an unset config is a no-op.
-        ToolSelectionMiddleware(),
+        # Plan mode's read-only tool whitelist (the per-session tool selection
+        # was removed — every built-in tool is always available — but an open
+        # plan must still keep the model away from write tools).
+        PlanModeToolGate(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         # Session-level token cap (optional; absent = pass-through) and usage

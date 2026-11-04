@@ -215,7 +215,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 自動再開プロンプトブロック |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | ツール出力の一行要約 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 継続性保存フック |
-| `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |
+| `append_entries` | `agent/tools/memory.py` | `memory` / `user` ターゲットへの一括追記（facts は超過時に使用状況で淘汰） |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションボード読み取り（SQL `session_id` フィルタ） |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失敗分類 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:218,273` | wait_all 再試行の計画/永続化 |

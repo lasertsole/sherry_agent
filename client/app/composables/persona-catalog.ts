@@ -45,11 +45,10 @@ export interface PresetEntry {
  * bottom:
  *
  * - Pure (`pure`): nobody named, no persona content at all, only the catalogue's
- *   REQUIRED tools and every optional middleware off — the bare floor a session
- *   can run on;
- * - Companion (`companion`): the full role-play persona with the orchestration
- *   surfaces switched off (no Tasks & planning / subagent tools, no optional middleware);
- * - Full (`sherry`): the DEFAULT — the full persona with every tool and switch on.
+ *   REQUIRED skills — the bare floor a session can run on;
+ * - Companion (`companion`): the full role-play persona with the coding
+ *   work-flow skills left out of the index;
+ * - Full (`sherry`): the DEFAULT — the full persona with every skill in the index.
  *
  * The `sherry` ID is kept as-is: sessions already bound to this built-in store
  * it in their current-session preset binding, and only the LABEL became Full (the shipped
@@ -139,14 +138,12 @@ export function composeRoleFile(character: PresetCharacter, t: TranslateFn): str
 
 /**
  * The catalogue facts a built-in preset's agent block is computed from — the
- * same `GET /agent/catalog` response the three tabs render, so the client never
- * hardcodes tool names (a tool added to the backend lands in these presets too).
+ * same `GET /agent/catalog` response the tabs render, so the client never
+ * hardcodes skill names (a skill added to the backend lands in these presets
+ * too). Built-in tools and the middleware chain are not configurable, so they
+ * contribute no facts.
  */
 export interface PresetCatalogFacts {
-  /** Every main-agent tool: name, group id, and the lock flag. */
-  tools: ReadonlyArray<{ name: string; group: string; required?: boolean }>;
-  /** The gateable (switchable) middleware names. */
-  gateableMiddlewares: readonly string[];
   /** Every skill the index can contain, with its lock flag (required first). */
   skills: ReadonlyArray<{ name: string; required?: boolean }>;
 }
@@ -159,9 +156,6 @@ export const COMPANION_EXCLUDED_SKILLS: readonly string[] = [
   'ulw-execute',
   'todolist'
 ];
-
-/** Tool groups Companion keeps OFF entirely: the orchestration surfaces. */
-export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
 
 /**
  * The Operating Instructions sections Companion drops, per UI language: the task-orchestration
@@ -276,38 +270,23 @@ export function stripTaskSections(text: string, locale: string): string {
  * The catalogue facts of a loaded agent-config store.
  * @param store The store (usually `useAgentConfigStore()`).
  * @param store.catalog
- * @param store.catalog.tools
  * @param store.catalog.skills
- * @param store.middlewares
- * @param store.middlewares.gateable
- * @returns The facts (empty lists until the catalogue has loaded).
+ * @returns The facts (an empty list until the catalogue has loaded).
  */
-export function presetCatalogFacts(store: {
-  catalog: { tools: PresetCatalogFacts['tools']; skills: PresetCatalogFacts['skills'] };
-  middlewares: { gateable: ReadonlyArray<{ name: string }> };
-}): PresetCatalogFacts {
-  return {
-    tools: store.catalog.tools,
-    gateableMiddlewares: store.middlewares.gateable.map(entry => entry.name),
-    skills: store.catalog.skills
-  };
+export function presetCatalogFacts(store: { catalog: { skills: PresetCatalogFacts['skills'] } }): PresetCatalogFacts {
+  return { skills: store.catalog.skills };
 }
 
 /**
  * The agent block a built-in pins ({} = every default).
  *
- * - Pure: only the catalogue's required tools and skills — the locked set the
- *   service would refuse to drop anyway, so the preset states the floor
- *   explicitly — and every optional middleware off;
- * - Companion: every tool EXCEPT the Tasks & planning / subagent groups, every
- *   optional middleware off, and every NON-required skill except the coding
- *   work-flow set;
- * - Full: no opinion (every tool, every switch on, every skill in the index, and
- *   the Summarization nudge left ON).
+ * - Pure: only the catalogue's required skills — the locked set the service
+ *   would refuse to drop anyway, so the preset states the floor explicitly;
+ * - Companion: every NON-required skill except the coding work-flow set;
+ * - Full: no opinion (every skill in the index).
  *
- * The compression nudge (`middleware_options.Summarization.nudge`) is pinned OFF
- * by both restricted presets and left at its default by Full — it is the
- * full-setup preset that keeps it.
+ * Built-in tools and the middleware chain are no longer configurable, so the
+ * presets differ by persona + skill index only.
  *
  * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
  * silent fallback to `{}` would apply the opposite of what the preset promises.
@@ -317,21 +296,10 @@ export function presetCatalogFacts(store: {
  */
 export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
   if (id !== 'pure' && id !== 'companion') return {};
-  if (facts.tools.length === 0 || facts.skills.length === 0) {
-    throw new Error('[persona-catalog] the tool catalogue is unavailable; cannot compose the preset');
+  if (facts.skills.length === 0) {
+    throw new Error('[persona-catalog] the skill catalogue is unavailable; cannot compose the preset');
   }
-  const block: AgentConfig = {};
-  block.tools =
-    id === 'pure'
-      ? facts.tools.filter(tool => tool.required === true).map(tool => tool.name)
-      : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
-  block.skills = builtinSkills(id, facts.skills).map(skill => skill.name);
-  if (facts.gateableMiddlewares.length > 0) {
-    block.middlewares_disabled = [...facts.gateableMiddlewares];
-  }
-  // Only Full leaves the compression nudge on (its absence = the default).
-  block.middleware_options = { Summarization: { nudge: false } };
-  return block;
+  return { skills: builtinSkills(id, facts.skills).map(skill => skill.name) };
 }
 
 /**
@@ -358,10 +326,9 @@ export interface PersonaPresetPayload {
   /** Role names + avatars (written to the Dexie global profile). */
   character: PresetCharacter;
   /**
-   * The Tools / Middlewares / Agent models / Skills selection (written to the session's agent
-   * config when the apply path knows its session). `{}` = every default: all
-   * tools, all switches on, every role on its `model_tier`, every skill in the
-   * prompt's index.
+   * The Agent models / Skills selection (written to the session's agent config
+   * when the apply path knows its session). `{}` = every default: every role on
+   * its `model_tier`, every skill in the prompt's index.
    */
   agent?: AgentConfig;
   /**
@@ -377,8 +344,7 @@ export interface PersonaPresetPayload {
  * The payload of a built-in entry, composed from the language template.
  *
  * - Pure: EVERY persona file empty (no operating rules either) and nobody named
- *   — the clean slate — plus an agent block that keeps only the required tools
- *   and turns every optional middleware off;
+ *   — the clean slate — plus an agent block that keeps only the required skills;
  * - Companion: the full template with the task-orchestration content stripped
  *   from the Operating Instructions (a companion is not an orchestrator) and the couple-relationship
  *   line stripped from SOUL, plus the default names;
@@ -438,7 +404,7 @@ export interface CreateSessionOptions {
   locale: string;
   /** Translate function (component `t`). */
   t: TranslateFn;
-  /** The loaded tool/middleware/skill catalogue. */
+  /** The loaded skill catalogue. */
   facts: PresetCatalogFacts;
   /** Router (Nuxt `useRouter()`). */
   router: { push: (to: string) => Promise<unknown> };
@@ -466,7 +432,7 @@ export interface CreateSessionOptions {
 export async function createSessionFromPreset(entry: PresetEntry, options: CreateSessionOptions): Promise<string> {
   const payload = await loadPresetPayload(entry, options.locale, options.t, options.facts);
   // The id is minted first so the apply can also write the preset's agent
-  // config (Tools / Middlewares / Agent models) into THIS session's registers.
+  // config (Agent models / Skills) into THIS session's registers.
   const sessionId = crypto.randomUUID();
   await applyPresetPayload(payload, sessionId);
 
@@ -541,8 +507,8 @@ export async function loadPresetPayload(
 /**
  * Write a preset payload: the persona files through the API (read back and
  * verified), the character into the Dexie global profile new sessions copy, and
- * — when the caller names the session — the agent config (Tools / Middlewares /
- * Agent models) into that session's own registers.
+ * — when the caller names the session — the agent config (Agent models /
+ * Skills) into that session's own registers.
  * @param payload Payload to apply.
  * @param sessionId Session to write the agent config for; omitted = files and
  *   character only (no session exists yet).

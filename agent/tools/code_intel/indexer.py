@@ -15,7 +15,7 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from loguru import logger
@@ -114,6 +114,15 @@ _SCHEMA: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_mixins_host ON mixin_edges(host_id)",
     "CREATE INDEX IF NOT EXISTS idx_mixins_mixin ON mixin_edges(mixin_id)",
     "CREATE INDEX IF NOT EXISTS idx_mixins_name ON mixin_edges(mixin_name)",
+    # One row of index-level metadata (the shadow-git watermark). A separate
+    # table avoids widening index_meta and therefore needs no migration.
+    """
+    CREATE TABLE IF NOT EXISTS index_meta_summary (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        shadow_head TEXT,
+        last_index_at REAL
+    )
+    """,
 )
 
 _KIND_PRIORITY_SQL = (
@@ -130,19 +139,53 @@ class IndexResult:
     deleted_files: int = 0
     error_files: int = 0
     resolved_edges: int = 0
-    total_symbols: int = 0
-    total_calls: int = 0
-    total_imports: int = 0
-    total_inherits: int = 0
-    total_mixins: int = 0
     truncated: bool = False
     elapsed_s: float = 0.0
     errors: list[str] = field(default_factory=list)
+    #: The shadow HEAD this result reconciled against; ``None`` when there is
+    #: no shadow store (or the walk was truncated). CodeQuery reuses it as the
+    #: cache version, avoiding a second ``rev-parse`` on every query.
+    shadow_head: str | None = None
+    #: Counts are diagnostic only: opening a read connection for five
+    #: ``COUNT(*)`` scans on every call was pure overhead. They are fetched
+    #: lazily, the first time a caller reads one of the properties below.
+    _counts_loader: Callable[[], dict[str, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _counts: dict[str, int] | None = field(default=None, repr=False, compare=False)
 
     @property
     def changed(self) -> bool:
         """True when anything was written (new/updated/deleted files)."""
         return bool(self.indexed_files or self.deleted_files)
+
+    def _lazy_counts(self) -> dict[str, int]:
+        if self._counts is None:
+            try:
+                self._counts = self._counts_loader() if self._counts_loader else {}
+            except Exception:  # noqa: BLE001 - diagnostics must never fail a call
+                self._counts = {}
+        return self._counts
+
+    @property
+    def total_symbols(self) -> int:
+        return int(self._lazy_counts().get("symbols", 0))
+
+    @property
+    def total_calls(self) -> int:
+        return int(self._lazy_counts().get("call_edges", 0))
+
+    @property
+    def total_imports(self) -> int:
+        return int(self._lazy_counts().get("import_edges", 0))
+
+    @property
+    def total_inherits(self) -> int:
+        return int(self._lazy_counts().get("inherit_edges", 0))
+
+    @property
+    def total_mixins(self) -> int:
+        return int(self._lazy_counts().get("mixin_edges", 0))
 
 
 def levenshtein(left: str, right: str) -> int:
@@ -170,6 +213,17 @@ class CodeIndexer:
         self._db_path = str(db_path)
         self._config = config or CODE_INTEL
         self._lock = threading.Lock()
+        # The DDL is idempotent; a long-lived indexer only needs it once per DB.
+        self._schema_ensured = False
+        # Moves whenever this indexer writes a changed file. CodeQuery pairs it
+        # with the shadow HEAD to invalidate cached query results, including an
+        # external-editor change that leaves the shadow HEAD untouched.
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """Monotonic index-content version (cache invalidation token)."""
+        return self._generation
 
     def _connect(self) -> sqlite3.Connection:
         """Open a WAL connection with ``busy_timeout`` as its first statement."""
@@ -180,10 +234,13 @@ class CodeIndexer:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
-    @staticmethod
-    def _ensure_schema(conn: sqlite3.Connection) -> None:
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        if self._schema_ensured:
+            return
         for ddl in _SCHEMA:
             conn.execute(ddl)
+        conn.commit()
+        self._schema_ensured = True
 
     def index_directory(self, root: str | Path, force: bool = False) -> IndexResult:
         """Walk *root*, (re)indexing changed files; serialized per indexer instance."""
@@ -207,6 +264,10 @@ class CodeIndexer:
         conn = self._connect()
         try:
             self._ensure_schema(conn)
+            if not force:
+                fast = self._try_shadow_fast_path(root, conn, started)
+                if fast is not None:
+                    return fast
             known = self._load_known(conn)
             seen: set[str] = set()
             pending: list[tuple[Path, str, float, int]] = []
@@ -265,17 +326,22 @@ class CodeIndexer:
                 )
                 conn.commit()
 
-            result.total_symbols = self._count(conn, "symbols")
-            result.total_calls = self._count(conn, "call_edges")
-            result.total_imports = self._count(conn, "import_edges")
-            result.total_inherits = self._count(conn, "inherit_edges")
-            result.total_mixins = self._count(conn, "mixin_edges")
+            result._counts_loader = self._counts_loader
+            # A truncated walk did not see the whole tree: publish no head (the
+            # query cache stays off) and clear the watermark so the next call
+            # walks instead of short-circuiting.
+            result.shadow_head = None if result.truncated else self._shadow_head_or_none(root)
+            if not force:
+                self._record_index_head(conn, result.shadow_head)
+                conn.commit()
         except Exception as exc:  # noqa: BLE001 - index build must never crash a tool call
             logger.warning("code_intel: index_directory failed for {}: {}", root, exc)
             result.errors.append(str(exc))
         finally:
             conn.close()
 
+        if result.changed:
+            self._generation += 1
         result.elapsed_s = time.monotonic() - started
         return result
 
@@ -283,9 +349,193 @@ class CodeIndexer:
         rows = conn.execute("SELECT file_path, mtime, size FROM index_meta").fetchall()
         return {row["file_path"]: (row["mtime"], row["size"]) for row in rows}
 
+    # -- shadow-git fast path ---------------------------------------------
+
     @staticmethod
-    def _count(conn: sqlite3.Connection, table: str) -> int:
-        return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])  # noqa: S608
+    def _shadow_head_or_none(root: Path) -> str | None:
+        try:
+            from pub.git_head import shadow_head
+
+            return shadow_head(root)
+        except Exception:  # noqa: BLE001 - the fast path is strictly optional
+            return None
+
+    def _last_index_head(self, conn: sqlite3.Connection) -> str | None:
+        row = conn.execute("SELECT shadow_head FROM index_meta_summary WHERE id = 1").fetchone()
+        return str(row[0]) if row and row[0] else None
+
+    def _record_index_head(self, conn: sqlite3.Connection, head: str | None) -> None:
+        # An unchanged watermark must not touch the DB: a no-op refresh is
+        # deliberately read-only (the e2e test pins the file mtime).
+        if self._last_index_head(conn) == head:
+            return
+        conn.execute(
+            "INSERT INTO index_meta_summary (id, shadow_head, last_index_at) "
+            "VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+            "shadow_head = excluded.shadow_head, last_index_at = excluded.last_index_at",
+            (head, time.time()),
+        )
+
+    def _external_edit_check(self, root: Path, conn: sqlite3.Connection) -> bool:
+        """Sample the newest indexed files for an edit shadow-git did not see.
+
+        The shadow store only records agent writes; a user editing in an IDE
+        leaves HEAD unchanged. Stat a small, recent sample and fall back to the
+        full walk on any difference. A read/stat failure is treated as a
+        difference (the walk is the safe answer).
+        """
+        try:
+            rows = conn.execute(
+                "SELECT file_path, mtime, size FROM index_meta ORDER BY indexed_at DESC LIMIT 20"
+            ).fetchall()
+        except Exception:  # noqa: BLE001 - fall back to the walk
+            return True
+        for row in rows:
+            path = root / row["file_path"]
+            try:
+                stat = path.stat()
+            except OSError:
+                return True
+            if (stat.st_mtime, stat.st_size) != (row["mtime"], row["size"]):
+                return True
+        return False
+
+    def _try_shadow_fast_path(
+        self, root: Path, conn: sqlite3.Connection, started: float
+    ) -> IndexResult | None:
+        """Reconcile only the files shadow-git reports as changed.
+
+        ``None`` means "cannot prove the index current" — the caller must run
+        the original full walk. The fast path never creates the shadow store.
+        """
+        try:
+            from agent.tools.pub_base.shadow_git import diff_between_commits_with_status
+            from pub.git_head import shadow_head
+
+            current_head = shadow_head(root)
+        except Exception:  # noqa: BLE001 - optional acceleration only
+            return None
+        if current_head is None:
+            return None
+
+        last_head = self._last_index_head(conn)
+        if last_head is None:
+            return None  # first index: no watermark yet
+
+        if current_head == last_head:
+            if self._external_edit_check(root, conn):
+                return None
+            result = IndexResult()
+            result._counts_loader = self._counts_loader
+            result.shadow_head = current_head
+            result.elapsed_s = time.monotonic() - started
+            return result
+
+        entries = diff_between_commits_with_status(root, last_head, current_head, cap=500)
+        if len(entries) >= 500:
+            # The diff is capped; a truncated list could miss files that need
+            # indexing, so the safe answer is the full walk.
+            return None
+        if not entries:
+            # An empty diff is either an empty snapshot or a read failure; both
+            # are safer handled by the walk. (A genuine empty commit costs one
+            # walk, never a stale index.)
+            return None
+
+        cfg = self._config
+        supported = {ext.lower() for ext in cfg["code_intel_supported_extensions"]}
+        to_index: set[str] = set()
+        to_delete: set[str] = set()
+        for status, path, renamed_to in entries:
+            if status == "D":
+                to_delete.add(path)
+            elif status in {"A", "M"}:
+                to_index.add(path)
+            elif status == "R":
+                to_delete.add(path)
+                if renamed_to:
+                    to_index.add(renamed_to)
+            elif status == "C":
+                if renamed_to:
+                    to_index.add(renamed_to)
+
+        indexed_paths = sorted(rel for rel in to_index if Path(rel).suffix.lower() in supported)
+        deleted_paths = sorted(to_delete)
+        # Capture the OLD names before _index_one drops their rows: inbound
+        # edges detached by the drop need these names to re-resolve.
+        old_names = self._names_for_files(conn, [*indexed_paths, *deleted_paths])
+
+        result = self._index_specific_files(root, conn, indexed_paths)
+        result.shadow_head = current_head
+        if deleted_paths:
+            self._drop_many(conn, deleted_paths)
+            result.deleted_files = len(deleted_paths)
+
+        if result.changed:
+            names = old_names | self._names_for_files(conn, indexed_paths)
+            result.resolved_edges = (
+                self._resolve_call_edges(conn, file_paths=indexed_paths, names=names)
+                + self._resolve_import_edges(conn, file_paths=indexed_paths, names=names)
+                + self._resolve_inherit_edges(conn, file_paths=indexed_paths, names=names)
+                + self._resolve_mixin_edges(conn, file_paths=indexed_paths, names=names)
+            )
+            conn.commit()
+
+        self._record_index_head(conn, current_head)
+        conn.commit()
+        result._counts_loader = self._counts_loader
+        if result.changed:
+            self._generation += 1
+        result.elapsed_s = time.monotonic() - started
+        return result
+
+    @staticmethod
+    def _names_for_files(conn: sqlite3.Connection, files: list[str]) -> set[str]:
+        if not files:
+            return set()
+        placeholders = ",".join("?" * len(files))
+        rows = conn.execute(
+            f"SELECT DISTINCT name FROM symbols WHERE file_path IN ({placeholders})",  # noqa: S608 - placeholders only
+            files,
+        ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def _index_specific_files(
+        self, root: Path, conn: sqlite3.Connection, files: list[str]
+    ) -> IndexResult:
+        """Index exactly *files* (project-relative), without walking the tree."""
+        result = IndexResult()
+        if not files:
+            return result
+        try:
+            for rel in files:
+                path = (root / rel).resolve()
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue  # deleted between the diff and this read
+                self._index_one(conn, path, rel, stat.st_mtime, stat.st_size, result)
+            conn.commit()
+        except Exception as exc:  # noqa: BLE001 - fail-open: walk next time
+            conn.rollback()
+            logger.warning("code_intel: incremental batch failed, will walk next time: {}", exc)
+            result.errors.append(str(exc))
+        return result
+
+    def _counts_loader(self) -> dict[str, int]:
+        """Open a short read-only connection and fetch the diagnostic counts.
+
+        Only called when a caller reads ``IndexResult.total_*``; the hot index
+        path no longer pays five ``COUNT(*)`` scans.
+        """
+        counts: dict[str, int] = {}
+        conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True, timeout=5.0)
+        try:
+            for table in ("symbols", "call_edges", "import_edges", "inherit_edges", "mixin_edges"):
+                counts[table] = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])  # noqa: S608
+        finally:
+            conn.close()
+        return counts
 
     def _flush_batch(
         self,
@@ -474,11 +724,34 @@ class CodeIndexer:
                 )
             conn.execute("DELETE FROM index_meta WHERE file_path = ?", (rel,))
 
-    def _resolve_call_edges(self, conn: sqlite3.Connection) -> int:
-        """Second pass: resolve unresolved ``callee_name`` → symbol id."""
-        rows = conn.execute(
-            "SELECT id, callee_name, file_path FROM call_edges WHERE resolved = 0"
-        ).fetchall()
+    def _resolve_call_edges(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        file_paths: list[str] | None = None,
+        names: set[str] | None = None,
+    ) -> int:
+        """Second pass: resolve unresolved ``callee_name`` → symbol id.
+
+        ``file_paths``/``names`` narrow the pass to the files a shadow diff
+        touched and the symbol names that appeared or disappeared there. Both
+        default to ``None`` = the original full-table resolution. If the filter
+        would exceed SQLite's parameter budget, the full pass is used instead
+        (correctness over the optimization).
+        """
+        query = "SELECT id, callee_name, file_path FROM call_edges WHERE resolved = 0"
+        params: list[str] = []
+        clauses: list[str] = []
+        if len(file_paths or ()) + len(names or ()) <= 800:
+            if file_paths:
+                clauses.append(f"file_path IN ({','.join('?' * len(file_paths))})")
+                params.extend(file_paths)
+            if names:
+                clauses.append(f"callee_name IN ({','.join('?' * len(names))})")
+                params.extend(sorted(names))
+        if clauses:
+            query += " AND (" + " OR ".join(clauses) + ")"
+        rows = conn.execute(query, params).fetchall()
         if not rows:
             return 0
         grouped: dict[tuple[str, str], list[int]] = {}
@@ -498,55 +771,81 @@ class CodeIndexer:
             resolved += len(edge_ids)
         return resolved
 
-    def _resolve_import_edges(self, conn: sqlite3.Connection) -> int:
+    def _resolve_import_edges(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        file_paths: list[str] | None = None,
+        names: set[str] | None = None,
+    ) -> int:
         """Second pass: resolve an imported name/module path to a symbol id."""
-        rows = conn.execute(
-            "SELECT id, imported_name, file_path FROM import_edges WHERE resolved = 0"
-        ).fetchall()
         return self._resolve_named_edges(
             conn,
-            rows,
             table="import_edges",
             target_column="imported_id",
             name_column="imported_name",
+            file_paths=file_paths,
+            names=names,
         )
 
-    def _resolve_inherit_edges(self, conn: sqlite3.Connection) -> int:
+    def _resolve_inherit_edges(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        file_paths: list[str] | None = None,
+        names: set[str] | None = None,
+    ) -> int:
         """Second pass: resolve an inheritance parent name to a symbol id."""
-        rows = conn.execute(
-            "SELECT id, parent_name, file_path FROM inherit_edges WHERE resolved = 0"
-        ).fetchall()
         return self._resolve_named_edges(
             conn,
-            rows,
             table="inherit_edges",
             target_column="parent_id",
             name_column="parent_name",
+            file_paths=file_paths,
+            names=names,
         )
 
-    def _resolve_mixin_edges(self, conn: sqlite3.Connection) -> int:
+    def _resolve_mixin_edges(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        file_paths: list[str] | None = None,
+        names: set[str] | None = None,
+    ) -> int:
         """Second pass: resolve a mixin/trait/interface name to a symbol id."""
-        rows = conn.execute(
-            "SELECT id, mixin_name, file_path FROM mixin_edges WHERE resolved = 0"
-        ).fetchall()
         return self._resolve_named_edges(
             conn,
-            rows,
             table="mixin_edges",
             target_column="mixin_id",
             name_column="mixin_name",
+            file_paths=file_paths,
+            names=names,
         )
 
     def _resolve_named_edges(
         self,
         conn: sqlite3.Connection,
-        rows: list[sqlite3.Row],
         *,
         table: str,
         target_column: str,
         name_column: str,
+        file_paths: list[str] | None = None,
+        names: set[str] | None = None,
     ) -> int:
         """Shared resolver for the three named-edge tables (no SQL interpolation of names)."""
+        query = f"SELECT id, {name_column}, file_path FROM {table} WHERE resolved = 0"  # noqa: S608 - fixed identifiers
+        params: list[str] = []
+        clauses: list[str] = []
+        if len(file_paths or ()) + len(names or ()) <= 800:
+            if file_paths:
+                clauses.append(f"file_path IN ({','.join('?' * len(file_paths))})")
+                params.extend(file_paths)
+            if names:
+                clauses.append(f"{name_column} IN ({','.join('?' * len(names))})")
+                params.extend(sorted(names))
+        if clauses:
+            query += " AND (" + " OR ".join(clauses) + ")"
+        rows = conn.execute(query, params).fetchall()
         if not rows:
             return 0
         grouped: dict[tuple[str, str], list[int]] = {}

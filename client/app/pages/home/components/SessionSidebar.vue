@@ -201,9 +201,11 @@
                 v-if="sessionRowAt(vRow.index)"
                 :history-record="sessionRowAt(vRow.index)!.item"
                 :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
+                :pinned="pinnedSessions.has(sessionRowAt(vRow.index)!.item.id)"
                 @choose-session="handleToggleSession"
                 @delete-session="handleDeleteSession"
                 @rename-session="handleRenameSession"
+                @context-menu="openSessionMenu"
                 v-model:selectedList="selectedSessionIds" />
             </div>
           </div>
@@ -226,6 +228,11 @@
         </div>
       </template>
     </div>
+    <!-- One menu for the whole list: rows emit their right-click upward. -->
+    <ContextMenu
+      ref="sessionMenuRef"
+      :model="sessionMenuItems"
+      data-test="session-context-menu" />
   </div>
 </template>
 
@@ -299,6 +306,8 @@ import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
 import { RIGHT_SIDEBAR_MIN_WIDTH, useRightSidebarStore } from '@/stores/right-sidebar';
 import { useSidebarWidthStore } from '@/stores/sidebar-width';
+import { usePinnedSessionsStore } from '@/stores/pinned-sessions';
+import ContextMenu from 'primevue/contextmenu';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { discardSideChatSession } from '~/composables/use-side-chat';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
@@ -455,6 +464,27 @@ const currentSessionId = defineModel<string | undefined>('currentSessionId');
 /** History sessions */
 const historyList = ref<SessionRecord[]>([]);
 
+/** Local pin preference: pinned rows sort to the top of the list. */
+const pinnedSessions = usePinnedSessionsStore();
+const sessionMenuRef = useTemplateRef<{ show: (event: Event) => void }>('sessionMenuRef');
+const sessionMenuItems = ref<Array<{ label: string; icon: string; command: () => void }>>([]);
+
+/**
+ * Open the shared context menu for one session row.
+ * @param event The row's contextmenu event (anchors the popup).
+ * @param id The right-clicked session id.
+ */
+function openSessionMenu(event: MouseEvent, id: string): void {
+  sessionMenuItems.value = [
+    {
+      label: pinnedSessions.has(id) ? t('history.unpin') : t('history.pin'),
+      icon: 'pi pi-thumbtack',
+      command: () => pinnedSessions.toggle(id)
+    }
+  ];
+  sessionMenuRef.value?.show(event);
+}
+
 /** Filter bar expand state: collapsed by default, no search box shown when collapsed */
 const showSessionFilters = ref(false);
 
@@ -467,7 +497,9 @@ const dateRange = ref<Date[] | null>(null);
  * Filtered session list: keyword and creation date range both effective (AND), pure client-side filtering without requests;
  * When both conditions are disabled, return historyList as-is (same reference, avoid unnecessary array reconstruction).
  */
-const filteredHistoryList = computed(() => filterSessions(historyList.value, searchKeyword.value, dateRange.value));
+const filteredHistoryList = computed(() =>
+  sortPinnedFirst(filterSessions(historyList.value, searchKeyword.value, dateRange.value), pinnedSessions.ids)
+);
 
 /* ------------------------------------------------------------------ */
 /* Windowed session list                                                */
@@ -719,6 +751,8 @@ const handleDeleteSession = async (id: string) => {
       }
     }
     rightSidebar.forgetSession(id);
+    pinnedSessions.remove(id);
+    for (const childSid of sideChatChildren) pinnedSessions.remove(childSid);
     historyList.value = historyList.value.filter(s => s.id !== id && !sideChatChildren.has(s.id));
     selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id && !sideChatChildren.has(sid));
     // Synchronously clear this session's character snapshot cache
@@ -805,7 +839,10 @@ const doBatchDeleteSessions = async () => {
     if (deleted.length > 0) {
       // A destroyed session's recent-tabs history dies with it.
       const rightSidebar = useRightSidebarStore();
-      for (const id of deleted) rightSidebar.forgetSession(id);
+      for (const id of deleted) {
+        rightSidebar.forgetSession(id);
+        pinnedSessions.remove(id);
+      }
       historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
       // Synchronously clear deleted sessions' character snapshot cache
       for (const id of deleted) clearCachedCharacter(id);

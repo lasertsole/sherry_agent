@@ -75,7 +75,20 @@
     "voicePermissionDenied": "マイクの権限が拒否されました",
     "voiceTooShort": "録音が短すぎます。もう一度お話しください",
     "voiceWarming": "音声認識モデルを初回ロード中です。しばらくしてから再試行してください",
-    "voiceFailed": "音声認識に失敗しました。もう一度お試しください"
+    "voiceFailed": "音声認識に失敗しました。もう一度お試しください",
+    "insertTrigger": "挿入",
+    "skillShortcut": "スキル",
+    "commandShortcut": "コマンド",
+    "fileShortcut": "ファイル",
+    "skillPickerTitle": "スキル",
+    "commandPickerTitle": "コマンド",
+    "noSkills": "スキルが見つかりません",
+    "noCommands": "コマンドが見つかりません",
+    "loadingTriggers": "読み込み中…",
+    "commandArguments": "コマンド引数",
+    "commandApply": "適用",
+    "customCommand": "カスタム",
+    "builtinCommand": "組み込み"
   },
   "sessionModelPicker": {
     "pending": "次のターンで反映",
@@ -159,6 +172,8 @@
     "continueBusy": "応答中は続行できません",
     "editBusy": "応答中のため編集できません",
     "editCompacted": "このメッセージは編集可能な範囲外です（履歴が圧縮されました）",
+    "editNotLatest": "最新のユーザーメッセージのみ編集できます",
+    "editRollbackSkipped": "ファイルは巻き戻されませんでした：このターンのスナップショットがないか、プロジェクトディレクトリが未設定です",
     "forkFailed": "ブランチの作成に失敗しました。もう一度お試しください"
   },
   "connection": {
@@ -183,7 +198,10 @@
     "filterToggle": "絞り込み",
     "noSearchResults": "一致するセッションがありません",
     "searchPlaceholder": "セッションタイトルを検索…",
-    "selectAll": "すべて選択"
+    "selectAll": "すべて選択",
+    "pin": "トップに固定",
+    "unpin": "固定を解除",
+    "pinnedLabel": "固定済み"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -280,8 +298,6 @@
   "config": {
     "agent": {
       "tabs": {
-        "tools": "ツール",
-        "middlewares": "ミドルウェア",
         "subagents": "エージェントモデル",
         "skills": "スキル"
       },
@@ -291,75 +307,17 @@
         "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
         "followEnv": "モデル設定に従う"
       },
-      "tools": {
-        "count": "{selected}/{total} 選択",
-        "requiredHint": "必須（解除できません）",
-        "scope_builtin": "内蔵",
-        "scope_mcp": "MCP",
-        "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）",
-        "clearAll": "すべて無効",
-        "clearGroup": "クリア",
-        "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
-        "selectAll": "すべて有効",
-        "selectGroup": "全選択"
-      },
       "skills": {
         "count": "{selected}/{total} 選択",
         "scope_builtin": "内蔵",
         "scope_thirdparty": "サードパーティ",
         "empty": "スキルはまだありません",
         "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。",
+        "requiredHint": "必須、無効化できません",
+        "selectAll": "すべて有効",
+        "clearAll": "すべて無効",
         "whenToUse": "使う場面",
         "whenNotToUse": "使わない場面"
-      },
-      "toolGroup": {
-        "files": "ファイル",
-        "terminal": "ターミナルとコード",
-        "tasks": "タスクと計画",
-        "memory": "記憶と検索",
-        "skills": "スキル",
-        "subagents": "サブエージェント",
-        "interaction": "対話",
-        "web": "ウェブ",
-        "browser": "ブラウザ",
-        "mcp": "MCP",
-        "plan_mode": "プランモード"
-      },
-      "middlewares": {
-        "nudgeLabel": "nudge を有効化",
-        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-        "hint": "切り替え可能なミドルウェアのみを表示します。Summarization はオフにできず、代わりに nudge オプションを公開します。",
-        "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
-      },
-      "middleware": {
-        "TaskIntentMiddleware": {
-          "name": "タスク意図の誘導",
-          "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
-        },
-        "WorkspaceNoticeMiddleware": {
-          "name": "ワークスペース変更通知",
-          "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
-        },
-        "MultimodalProcessor": {
-          "name": "マルチモーダル前処理",
-          "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
-        },
-        "SubagentCompletionDrainMiddleware": {
-          "name": "完了結果の注入",
-          "desc": "サブエージェントの完了結果をメイン セッションに注入します"
-        },
-        "Summarization": {
-          "name": "要約圧縮",
-          "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
-        },
-        "PlanContinuationEnforcer": {
-          "name": "プラン継続",
-          "desc": "プラン（todo / TaskFlow）が未完了のとき自動で次のターンを続行"
-        },
-        "DynamicReminderMiddleware": {
-          "name": "ライブリマインダー",
-          "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
-        }
       },
       "subagents": {
         "followTier": "ロール既定に従う",
@@ -378,9 +336,6 @@
         "librarian": "ライブラリアン"
       },
       "viewer": {
-        "tools": "ツール {selected}/{total}",
-        "middlewares": "無効なミドルウェア: {names}",
-        "middlewaresNone": "ミドルウェア: すべて有効",
         "models": "サブエージェント モデル: {names}"
       },
       "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
@@ -480,7 +435,6 @@
       "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
       "saveFailed": "アプリ設定の保存に失敗しました。",
       "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
-      "noConfigFile": "sherry.jsonc ファイルが見つかりません。",
       "allowlist": {
         "title": "リプレイ許可リスト",
         "hint": "finish 時のリプレイで自動実行を許す実行ファイル名を、組み込みの 5 ツールチェーンに追加します（再実行する検証コマンドにのみ影響）。",
@@ -533,7 +487,11 @@
       "everySeconds": "{n} 秒ごと",
       "everyMinutes": "{n} 分ごと",
       "everyHours": "{n} 時間ごと",
-      "everyDays": "{n} 日ごと"
+      "everyDays": "{n} 日ごと",
+      "unitSeconds": "秒",
+      "unitMinutes": "分",
+      "unitHours": "時間",
+      "unitDays": "日"
     },
     "heartbeat": {
       "addTask": "タスクを追加",
@@ -645,7 +603,6 @@
     "heartbeat": "ハートビート",
     "cron": "定期タスク",
     "extend": "拡張",
-    "taskDetail": "タスク詳細",
     "knowledgeGraph": "ナレッジグラフ",
     "resize": "ドラッグで幅を変更",
     "stats": "統計",
@@ -654,6 +611,9 @@
     "sessionPreset": "プリセットと役割",
     "gitDiff": "コミット差分",
     "contextViewer": "エージェント コンテキスト",
+    "subagentActivity": "エージェント実況",
+    "sessionActivity": "セッション実況",
+    "taskFlowBoard": "タスクボード",
     "browser": "ブラウザ",
     "terminal": "ターミナル",
     "sideChat": "補助セッション",
@@ -687,7 +647,8 @@
     "empty": "実行中のタスクはありません",
     "expand": "計画の進捗を表示",
     "notStarted": "未着手",
-    "summary": "計画 {done}/{total}"
+    "summary": "計画 {done}/{total}",
+    "openBoard": "タスクボードを開く"
   },
   "projectFiles": {
     "title": "ファイルツリー",
@@ -736,20 +697,7 @@
     "copyFailed": "コピーに失敗しました",
     "copyHash": "コミット ハッシュをコピー",
     "copySubject": "コミット メッセージをコピー",
-    "copyRef": "参照名をコピー",
-    "switchBranch": "ブランチを切り替え",
-    "checkoutBranch": "このブランチに切り替え",
-    "checkoutFailed": "ブランチの切り替えに失敗しました",
-    "menuResetSoft": "ここへソフト リセット（変更を保持）",
-    "menuResetHard": "ここへハード リセット（変更を破棄）",
-    "resetAction": "{mode} リセット",
-    "modeSoft": "ソフト",
-    "modeHard": "ハード",
-    "resetFailed": "リセットに失敗しました",
-    "confirmSoftTitle": "ブランチをソフト リセット",
-    "confirmSoftMessage": "{branch} を {hash} に移動しますか？コミット済みの変更はステージに戻り、作業ツリーは保持されます。",
-    "confirmHardTitle": "ブランチをハード リセット（危険）",
-    "confirmHardMessage": "{branch} を {hash} に移動しますか？未コミットの {count} 件の変更は破棄され、復元できません。"
+    "copyRef": "参照名をコピー"
   },
   "personaPreset": {
     "unbound": "未選択",

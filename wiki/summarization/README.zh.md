@@ -54,6 +54,24 @@ AIMessage(<summary>, lc_source="summarization")
 
 两者都传入 `main_llm_context_window=main_llm_max_tokens`（来自 `MAIN_LLM_MAX_TOKEN`）。
 
+### 摘要输入过滤
+
+摘要器不会看到 reminder 层的过期快照。`_filter_summary_messages` 会丢弃
+(a) 上一份摘要对（`lc_source="summarization"`），以及 (b) source 声明了
+`compress_exclude` 的目录 reminder（默认：plan mode、todo、TaskFlow、boulder、
+project instructions、目录通知、knowledge index）。这些内容只是注入当轮的
+快照，下一轮会从 live state 重新派生，留在摘要里纯属噪音；`continuity_context`
+声明 `compress_exclude=False` 并保留。标签出现之前注入的旧 reminder 没有该键，
+继续走旧行为。
+
+序列化器只有在 `pub.func.message.classify.is_user_message` 为真时才把
+HumanMessage 标为 `[User]`——这是对 `metadata.origin == "user"` 的正向、
+fail-closed 检查。保留下来的 `compress_exclude=False` reminder 标为
+`[Continuity]`；其他所有注入 HumanMessage（workspace notice、continuation
+指令、子代理完成通知、task-intent steering、cron 结果）标为 `[System notice]`。
+静态 fallback 和 `_latest_human_eviction_ref` 使用同一个检查，所以注入载体
+永远不会成为摘要的 Goal 或最新用户请求。
+
 ## 🪙 Token 估算（无分词器）
 
 `pub/func/estimate_tokens.py`（230 行）刻意不依赖分词器、完全确定，并提供三层降级：

@@ -392,7 +392,7 @@ WS イベント：`todo_updated`（変更時プッシュ）+ `todo_refresh`（�
 
 ### UI コンポーネント（ProgressFloat.vue）
 
-- **ProgressFloat.vue**：チャット内の計画フロート——`flow_id` ごとにグループ化した TODO と TaskFlow のフラットなステップ一覧、既定ではピルに折りたたみ。UI に他の計画表示はない（入力欄上部の dock は設計どおり削除）。
+- **ProgressFloat.vue**：チャット内の計画フロート——`flow_id` ごとにグループ化した TODO と TaskFlow のフラットなステップ一覧、既定ではピルに折りたたみ。展開ヘッダーから**タスクボード**（`TaskFlowBoardPanel.vue`、セッション単位の右サイドバータブ）を開くと、各フローのステップが状態ごとのレーンに並びます。計画を表示するもう一つの面はこれだけです（入力欄上部の dock は設計どおり削除）。
 
 ### WS メッセージ形式
 

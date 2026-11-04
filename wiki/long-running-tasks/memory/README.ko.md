@@ -12,12 +12,12 @@
 
 | 계층 | 저장소 | 위치 | 프롬프트 포함? |
 | :--- | :--- | :--- | :--- |
-| **L1 —— 정제 메모리** | `MEMORY.md`(에이전트 노트) + `USER.md`(사용자 프로필) | `workspace/memory/`(`MEMORY_DIR`) | 예——동결 스냅샷으로 항상 주입 |
+| **L1 —— 정제 메모리** | `memory_entries` 행(`memory` 에이전트 노트, `user` 프로필, `facts` 시스템 함정) | MesMemory SQLite(`mes_memory.db`)의 `memory_entries` 테이블 | 예——동결 스냅샷으로 항상 주입 |
 | **L2 —— 원시 이력** | `mes_memory.db`(SQLite, WAL, FTS5) | `src/store/mes_memory/mes_memory.db` | 아니오——`context_engine` / `message_search`가 검색 |
 
-파일은 **한 줄짜리 구분자 `§`로 나뉜 일반 텍스트 항목**입니다 — `ENTRY_DELIMITER = "\n§\n"`(`agent/tools/memory.py:53`). YAML frontmatter도, 불릿 접두사도 없습니다. 항목은 여러 줄일 수 있습니다.
+항목은 `memory_entries`의 **SQLite 행 하나**입니다. `§` 구분자는 레거시 가져오기와 `GET/PUT /memory` 호환 경로에만 남습니다. 항목은 여러 줄일 수 있고 YAML frontmatter나 불릿 접두사는 없습니다.
 
-계층 1은 `MemoryStore`가 관리합니다(`memory.py:104`): 파일당 문자 한도 `2200`(memory)과 `1375`(user), 주입 스캔(`_MEMORY_THREAT_PATTERNS`, `memory.py:68`)이 프롬프트 주입과 자격 증명 유출을 거부하고, 크로스 플랫폼 파일 잠금, 원자적 쓰기, 정확 일치 중복 제거를 갖춥니다. 라이브 항목은 즉시 변경되는 반면, 프롬프트는 `load_from_disk()`에서 캡처한 **동결 스냅샷**을 사용해 세션 동안 프리픽스 캐시를 안정적으로 유지합니다.
+계층 1은 `MemoryStore`(`agent/tools/memory.py::load_from_store`)가 관리합니다: 대상별 문자 한도 `2200`(memory), `1375`(user), `1375`(facts), 프롬프트 주입과 자격 증명 유출을 거부하는 주입 스캔(`_MEMORY_THREAT_PATTERNS`), 정확 일치 중복 제거를 갖추고, 동시성 안전은 파일 잠금이나 원자적 재작성이 아니라 SQLite WAL이 담당합니다. 행은 `origin_session`, `usage_count`, `last_used`를 기록하며 렌더링 블록은 출처를 아는 경우에만 `[origin: …, created: …, used: Nx]`를 덧붙입니다. `memory(action="read")`는 사용 횟수를 늘립니다. 라이브 행은 즉시 변경되는 반면, 프롬프트는 `load_from_store()`에서 캡처한 **동결 스냅샷**을 사용해 세션 동안 프리픽스 캐시를 안정적으로 유지합니다. 이전 `MEMORY.md`/`USER.md`/`FACTS.md`는 부팅 시 한 번 가져오고(`context_engine/store/memory_migration.py`) `*.md.bak`으로 이름이 바뀝니다. 기존 행이 하나라도 있으면 가져오기는 건너뜁니다.
 
 `memory` 도구는 `scope="main_only"`로 태그되어 서브에이전트는 절대 볼 수 없습니다.
 
@@ -43,12 +43,10 @@ if taskflow_ctx:
 # subagent_completion_drain/core.py:93-117
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
-    memory_store.load_from_disk()
-    for target in ("memory", "user"):
-        memory_store.save_to_disk(target)
+    memory_store.load_from_store()
 ```
 
-부모와 자식은 **하나의 프로세스 전역 `MemoryStore`** 를 공유하므로 자식의 쓰기는 이미 파일 수준에서 보입니다. 표류할 수 있는 것은 부모의 인메모리 뷰 — 라이브 항목과 시스템 프롬프트 구성에 쓴 **동결 스냅샷** — 이며, 이는 프로세스 밖 작성자가 `MEMORY.md` / `USER.md`를 갱신했을 때 일어납니다. **먼저 재로드**하는 순서가 핵심입니다: 오래된 인메모리 목록을 재로드 전에 영속화하면 동시 작성자를 덮어쓰므로, 조정은 대상마다 load → persist여야 합니다.
+부모와 자식은 SQLite 위의 **하나의 프로세스 전역 `MemoryStore`** 를 공유하므로 자식의 쓰기는 이미 영구 저장됩니다. 표류할 수 있는 것은 부모의 인메모리 뷰 — 라이브 행과 시스템 프롬프트 구성에 쓴 **동결 스냅샷** — 입니다. 재로드는 필수이자 충분합니다: SQLite가 유일한 진실이고 쓰기 되돌림이 없으며, 재로드가 동시 작성자를 덮어쓸 수도 없습니다(이전 load → persist 조정은 덮어쓸 수 있었습니다).
 
 배출과 마찬가지로 역류도 **페일오픈**입니다 — 메모리 I/O 실패는 로그로 남기고 삼키며, 완료 캐리어는 부모 턴에 도달합니다. 배출은 부모가 완료를 엄격히 다루게 합니다: 세션에 통과 evidence가 없으면 캐리어 뒤에 필수 검증 게이트 메시지를 덧붙여, 완료가 검증된 결과가 아니라 `DoneClaim`임을 부모에게 상기시킵니다(todo를 완료로 표시하기 전에 `todoread`로 검증하고, 수용 기준에 비추고, 오래된 상태를 조사하십시오).
 
@@ -97,7 +95,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 세션 삭제 시 메모리 구제
 
-메인 세션을 파기하기 전에 `purge_session`은 독립 memory review(`nudges.salvage_session_memory`)도 예약합니다. 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 예약 직후 반환합니다. 삭제는 모델을 기다리지 않습니다. 1파는 압축이 버렸을 프리픽스를 캡처한(cache-warm) 모델/프롬프트/도구 면으로 review합니다. 기록 후 2파는 memory를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며 `memory` 전용 도구 면으로 보존 꼬리를 review합니다. 두 파 모두 NUDGE 레인, 파생 세션 키(`<id>::session-end-salvage:1|2`), checkpointer 없이 실행됩니다. `nudge_memory` metadata 게이트가 삭제 후 `knowledge`/plan 도구를 거부합니다. 모든 실패는 fail-open이며 프로세스 종료는 미완료 파를 포기할 수 있습니다. 사이드 채팅/서브에이전트 자식은 포함되지 않습니다. 위 continuity는 다음 대화를 위해 마지막 AI 응답을 저장하고, 이 구제는 영속 memory 파일을 씁니다.
+메인 세션을 파기하기 전에 `purge_session`은 독립 memory review(`nudges.salvage_session_memory`)도 예약합니다. 압축 후 checkpoint transcript, 모델, 시스템 프롬프트, 도구 면을 스냅샷하고 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 예약 직후 반환합니다. 삭제는 모델을 기다리지 않습니다. 1파는 압축이 버렸을 프리픽스를 캡처한(cache-warm) 모델/프롬프트/도구 면으로 review합니다. 메모리 항목(출처는 파생 wave 키가 아니라 삭제 대상 세션 id)을 기록한 뒤 2파는 memory를 다시 읽고 시스템 프롬프트를 비영속적으로 재구축하며 `memory` 전용 도구 면으로 보존 꼬리를 review합니다. 두 파 모두 NUDGE 레인, 파생 세션 키(`<id>::session-end-salvage:1|2`), checkpointer 없이 실행됩니다. `nudge_memory` metadata 게이트가 삭제 후 `knowledge`/plan 도구를 거부합니다. 모든 실패는 fail-open이며 프로세스 종료는 미완료 파를 포기할 수 있습니다. 사이드 채팅/서브에이전트 자식은 포함되지 않습니다. 위 continuity는 다음 대화를 위해 마지막 AI 응답을 저장하고, 이 구제는 영속 memory 행을 씁니다.
 
 ## ♻️ TaskFlow 자동 재개
 

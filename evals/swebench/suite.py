@@ -60,8 +60,70 @@ issue in the library source.
 
 - The project's environment interpreter is the `python` on PATH (`python -m
   pytest <path>` runs a test file). Use it if you want to run tests.
+- Before you stop: run the tests that cover every source file you changed —
+  the neighboring test module, plus your reproduction of the reported issue.
+  A patch that fixes the reported case but breaks a neighboring test is not
+  complete; investigate every failure you introduced.
+- Do not repeat an identical command after its output has told you what you
+  need. Once a candidate patch exists, spend the remaining budget verifying
+  and refining it, not re-probing the environment.
+- The target tests are in the checkout. Run them after every source edit. If
+  one fails, the next change must be in the library source (or a read of the
+  failing test); do not keep rewriting a reproduction script.
+{target_tests}
 - Do not modify anything under a test directory, and do not run `git commit`.
 """
+
+#: The test patch is exposed in the PROMPT (not applied to the checkout before
+#: the run): the agent sees the exact expectations the grader will use, but it
+#: still has to implement the fix in the library source. The official test patch
+#: is applied at judging time exactly as before. A very large patch is clipped;
+#: the F2P names stay visible even when the diff does not.
+_TEST_EXPOSURE_MAX_CHARS = 12000
+
+
+def _target_tests_block(
+    instance: Instance, fail_to_pass: list[str], *, preapplied: bool = False
+) -> str:
+    """Render the read-only evaluation-tests block for the task prompt."""
+    patch = instance.test_patch.strip()
+    if not patch:
+        return ""
+    if len(patch) > _TEST_EXPOSURE_MAX_CHARS:
+        patch = (
+            patch[:_TEST_EXPOSURE_MAX_CHARS]
+            + "\n...[test patch truncated; read the test files in the checkout]"
+        )
+    names = "\n".join(f"- {name}" for name in fail_to_pass[:20]) or "- (none listed)"
+    if preapplied:
+        intro = (
+            "The evaluation test patch is ALREADY APPLIED to this checkout. "
+            "Run the FAIL_TO_PASS tests below. Do not modify the test files; "
+            "make the library source satisfy them."
+        )
+    else:
+        intro = (
+            "The grader will apply this test patch and run the FAIL_TO_PASS tests "
+            "below. Do not modify the tests; make the library source satisfy them."
+        )
+    return f"""
+## Evaluation tests (read-only)
+
+{intro}
+
+FAIL_TO_PASS:
+{names}
+
+```diff
+{patch}
+```
+"""
+
+
+def _looks_like_test(path: str) -> bool:
+    """Heuristic for the dirty-diff gate: a test path or a ``test_*.py`` file."""
+    return "tests" in path.split("/") or Path(path).name.startswith("test_")
+
 
 #: Appended to the neutral working rules for the swebench arm ONLY (the
 #: coding-capability baseline keeps the untouched neutral rules so its pinned
@@ -74,8 +136,8 @@ _SWEBENCH_AGENTS_APPENDIX = """
 
 ## Environment and workflow notes (this evaluation arm)
 
-- Network: the `terminal` tool reaches the public internet directly (a
-  `curl -m 5` is a safe probe). `web_search` has no backend configured here.
+- Network: probe with a short `curl` only when it can change the fix; `web_search`
+  has no backend configured here.
 - The checkout is a shallow clone at a single commit: `git log` shows no
   future commits; an upstream fix can only be found over the network.
 - Bug-fix tasks: synthesize the behavior contract before patching — see the
@@ -83,12 +145,27 @@ _SWEBENCH_AGENTS_APPENDIX = """
   issue tracker / upstream history for an existing fix before inventing one.
 """
 
+_NETWORK_UNAVAILABLE_NOTE = (
+    "\n- **Network unavailable this run** (terminal probe: HTTP {code}). "
+    "Do NOT keep retrying curl / git / GitHub: inspect the local code and tests, "
+    "make the smallest verifiable change, and run the target test.\n"
+)
 
-def _append_agents_appendix(workspace: Path) -> None:
-    """Append the swebench arm's environment notes to the seeded rules file."""
+
+def _append_agents_appendix(workspace: Path, web: dict[str, Any] | None = None) -> None:
+    """Append the swebench arm's environment notes to the seeded rules file.
+
+    The network line is dynamic: a run whose probe cannot reach GitHub gets an
+    explicit "stop probing" directive, which removes the exact loop that
+    exhausted the Sympy instance's call budget.
+    """
     rules = workspace / "AGENTS.md"
+    appendix = _SWEBENCH_AGENTS_APPENDIX
+    if web is not None and not web.get("terminal_egress"):
+        code = web.get("http_code") or "unreachable"
+        appendix += _NETWORK_UNAVAILABLE_NOTE.format(code=code)
     rules.write_text(
-        rules.read_text(encoding="utf-8") + _SWEBENCH_AGENTS_APPENDIX,
+        rules.read_text(encoding="utf-8") + appendix,
         encoding="utf-8",
     )
 
@@ -229,8 +306,9 @@ def _run(
         )
         return 3
 
+    web_probe = _probe_web()
     harness._seed_persona(eval_workspace, persona=persona)
-    _append_agents_appendix(eval_workspace)
+    _append_agents_appendix(eval_workspace, web_probe)
     harness.init_agent()
     main_tools = harness._main_tool_names()
     missing = sorted(
@@ -322,7 +400,7 @@ def _run(
         # This run's probed network reality (default-off philosophy: the record
         # says what was reachable; nothing was switched on for it).
         "environment": {
-            "web": _probe_web(),
+            "web": web_probe,
             "sandbox_backend": _sandbox_backend(),
         },
         "persona_mode": persona,
@@ -613,6 +691,7 @@ def _harness_error_result(instance: Instance, exc: Exception) -> dict[str, Any]:
         "fail_to_pass_ok": False,
         "pass_to_pass_ok": False,
         "test_patch_applied": False,
+        "target_tests_exposed": bool(instance.test_patch.strip()),
         "judge_detail": "",
         "judge_tests": None,
         "duration_s": 0.0,
@@ -665,7 +744,16 @@ async def _run_instance(
     instance: Instance, results_dir: Path, *, hard: bool = False
 ) -> dict[str, Any]:
     fail_to_pass, pass_to_pass = instance.node_ids()
-    prompt = _TASK_TEMPLATE.format(problem=instance.problem_statement.strip(), repo=instance.repo)
+    test_paths = instances.test_files_of(instance.test_patch)
+    tests_preapplied = bool(instance.test_patch.strip()) and instances.apply_patch(
+        instance, instance.test_patch
+    )
+    target_tests = _target_tests_block(instance, fail_to_pass, preapplied=tests_preapplied)
+    prompt = _TASK_TEMPLATE.format(
+        problem=instance.problem_statement.strip(),
+        repo=instance.repo,
+        target_tests=target_tests,
+    )
     session_id = f"evals-swe-{instance.instance_id}-{uuid.uuid4().hex[:6]}"
     await harness._bind_session(session_id, instance.repo_dir)
 
@@ -730,8 +818,8 @@ async def _run_instance(
         quiesce = await teardown.quiesce_session(session_id, instance.repo_dir)
 
     try:
-        agent_diff = instances.diff(instance)
-        changed = instances.changed_paths(instance)
+        agent_diff = instances.diff(instance, exclude_paths=test_paths)
+        changed = instances.changed_paths(instance, exclude_paths=test_paths)
         (results_dir / f"diff-{instance.instance_id}.patch").write_text(
             agent_diff, encoding="utf-8"
         )
@@ -748,6 +836,7 @@ async def _run_instance(
                 "fail_to_pass_ok": False,
                 "pass_to_pass_ok": False,
                 "test_patch_applied": False,
+                "target_tests_exposed": bool(instance.test_patch.strip()),
                 "judge_detail": "",
                 "judge_tests": None,
                 "duration_s": round(time.monotonic() - started, 1),
@@ -772,7 +861,10 @@ async def _run_instance(
         ok_f2p = ok_p2p = False
         f2p_tests: list[dict[str, Any]] = []
         p2p_tests: list[dict[str, Any]] = []
-        test_patch_applied = instances.apply_patch(instance, instance.test_patch)
+        if tests_preapplied:
+            test_patch_applied = instances.reset_test_files(instance)
+        else:
+            test_patch_applied = instances.apply_patch(instance, instance.test_patch)
         if test_patch_applied:
             ok_f2p, out_f2p, f2p_tests = instances.run_tests(instance, fail_to_pass)
             ok_p2p, out_p2p, p2p_tests = instances.run_tests(instance, pass_to_pass)
@@ -782,8 +874,14 @@ async def _run_instance(
             resolved = False
             detail = "the test patch does not apply — the agent changed test files"
 
+        dirty_test_edits = [
+            path for path in changed if path not in set(test_paths) and _looks_like_test(path)
+        ]
+        if dirty_test_edits:
+            resolved = False
+            detail += f"\nDIRTY TEST EDITS: {', '.join(dirty_test_edits)}"
         passed = bool(resolved)
-        failure_kind = harness._failure_kind(passed, drive)
+        failure_kind = "dirty_diff" if dirty_test_edits else harness._failure_kind(passed, drive)
         evidence = await _session_evidence(session_id)
         return {
             "id": instance.instance_id,
@@ -795,6 +893,9 @@ async def _run_instance(
             "fail_to_pass_ok": bool(test_patch_applied and ok_f2p),
             "pass_to_pass_ok": bool(test_patch_applied and ok_p2p),
             "test_patch_applied": test_patch_applied,
+            "target_tests_exposed": bool(instance.test_patch.strip()),
+            "tests_preapplied": tests_preapplied,
+            "dirty_test_edits": dirty_test_edits,
             "judge_detail": detail[-3000:],
             "judge_tests": (
                 {"fail_to_pass": f2p_tests, "pass_to_pass": p2p_tests}

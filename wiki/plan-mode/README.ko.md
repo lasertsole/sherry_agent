@@ -27,7 +27,7 @@
 
 ## 읽기 전용 보장
 
-상태가 `planning` / `needs_replan`인 동안 `ToolSelectionMiddleware`는 기존의 세션별 도구 선택과 똑같은 두 단계로 허용 목록을 적용합니다: 모델에는 허용 목록만 **제시**되고, 그래도 도착한 호출(오래된 checkpoint, 환각된 이름)은 실행 단계에서 **거부**되어 "Plan mode is active"를 돌려받습니다. 기본 허용 목록은 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`입니다. 세션 자체의 선택에도 묶이지만, 두 플랜 도구만은 항상 도달 가능합니다 — 나갈 수 없는 모드는 함정입니다.
+상태가 `planning` / `needs_replan`인 동안 `PlanModeToolGate`는 두 단계로 허용 목록을 적용합니다: 모델에는 허용 목록만 **제시**되고, 그래도 도착한 호출(오래된 checkpoint, 환각된 이름)은 실행 단계에서 **거부**되어 "Plan mode is active"를 돌려받습니다. 이것이 현재 유일한 도구 면 필터입니다 — 그 밖에서는 모든 내장 도구가 항상 사용 가능합니다(세션별 도구 선택은 제거됨). 기본 허용 목록은 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`입니다. 두 플랜 도구만은 항상 도달 가능합니다 — 나갈 수 없는 모드는 함정입니다.
 
 서브에이전트라는 유일한 구멍은 의도적으로 막았습니다: `sessions_spawn`은 허용 목록에 **없습니다**. 자식은 자기 세션 상태로 동작하므로 승인 전에 쓸 수 있기 때문입니다.
 

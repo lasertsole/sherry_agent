@@ -432,21 +432,28 @@ async def _handle_resume_stream(
 async def _handle_edit_message(
     websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
 ) -> None:
-    """``edit_message``: truncate at a user message, then re-run it.
+    """``edit_message``: rewind the edited turn, then re-run it.
 
-    Three steps, in this order:
+    Four steps, in this order:
 
     1. locate the edited user row (``row_id`` when the client has it) and count
        the user turns before it — that ordinal is how the checkpoint counts
-       turns, while ``turn_num`` is the persisted batch number;
-    2. truncate the live checkpoint (``RemoveMessage``) and hard-delete the
-       persisted rows from that turn on, so the re-run reuses its turn number;
-    3. re-submit the edited text through the ordinary queue path (a FRESH
+       turns, while ``turn_num`` is the persisted batch number; only the NEWEST
+       user row is editable (an older edit has no rollback boundary for the
+       turns it would discard);
+    2. truncate the live checkpoint (``RemoveMessage``) — the only step that can
+       still refuse (compacted history), so it runs before any file is touched;
+    3. roll the WORKSPACE back to the edited turn's floor (shadow-git) and
+       hard-delete the persisted rows from that turn on, so the re-run reuses
+       its turn number;
+    4. re-submit the edited text through the ordinary queue path (a FRESH
        ``msg_id``: the old one is tombstoned by the dedupe) — the normal
        ``turn_started`` / ``chunk`` / ``done`` frames follow.
 
-    Only failures ack (``edit_message_ack``): success is visible as the new
-    turn's frames, and the client has already updated its rows optimistically.
+    Failures ack (``edit_message_ack``); so does a skipped file rollback
+    (``ok: true`` with ``rollback_skipped: true``) so the client can say the
+    conversation moved but the files did not. A clean success is visible as the
+    new turn's frames.
     """
     turn_num_raw = obj.get("turn_num")
     row_id_raw = obj.get("row_id")
@@ -483,7 +490,11 @@ async def _handle_edit_message(
         await _reject("busy")
         return
 
-    from context_engine.store.core import delete_messages_from_turn, find_user_turn_cut
+    from context_engine.store.core import (
+        delete_messages_from_turn,
+        find_user_turn_cut,
+        get_max_user_turn_num,
+    )
 
     try:
         cut = await asyncio.to_thread(find_user_turn_cut, session_id, turn_num, row_id)
@@ -496,6 +507,24 @@ async def _handle_edit_message(
         return
     ordinal, cut_turn_num = cut
 
+    # Latest-only: an older edit would discard later turns' work with no
+    # rollback boundary for them. The client hides the pencil everywhere but
+    # the newest user row; this is the server-side net a stale client cannot
+    # bypass.
+    try:
+        latest_user_turn = await asyncio.to_thread(get_max_user_turn_num, session_id)
+    except Exception as exc:  # noqa: BLE001 - never edit without the validation
+        logger.warning(f"edit_message: latest-turn lookup failed for {session_id}: {exc}")
+        await _reject("failed")
+        return
+    if latest_user_turn and cut_turn_num != latest_user_turn:
+        await _reject("not_latest")
+        return
+
+    # The checkpoint truncation is the ONE step that can still refuse (the turn
+    # was compacted away), so it runs BEFORE any file is touched: reverting the
+    # workspace for an edit that then gets rejected would leave the transcript
+    # describing files that are gone.
     from agent.state_port import truncate_messages_after_turn
 
     removed = await truncate_messages_after_turn(session_id, ordinal)
@@ -503,6 +532,20 @@ async def _handle_edit_message(
         # The turn is no longer in the live checkpoint: its history was compacted.
         await _reject("compacted")
         return
+
+    # Files next (the rewind half). A turn that wrote nothing has no floor, so
+    # skipping is the normal pure-conversation case; the edit proceeds either
+    # way and the ack below tells the client when the files stayed put.
+    from agent.tools.pub_base import shadow_git
+
+    rollback = await asyncio.to_thread(shadow_git.restore_to_turn, session_id, cut_turn_num)
+    rollback_skipped = not rollback.get("restored")
+    if rollback_skipped:
+        logger.info(
+            f"edit_message: file rollback skipped for {session_id}: "
+            f"{rollback.get('reason', 'unknown')}"
+        )
+
     try:
         await asyncio.to_thread(delete_messages_from_turn, session_id, cut_turn_num)
     except Exception as exc:  # noqa: BLE001 - history truncation is best-effort
@@ -514,8 +557,23 @@ async def _handle_edit_message(
 
     clear_breakpoint(session_id)
 
+    if rollback_skipped:
+        await _send_ws(
+            websocket,
+            {
+                "event": "edit_message_ack",
+                "session_id": session_id,
+                "content": {
+                    "ok": True,
+                    "rollback_skipped": True,
+                    "rollback_reason": rollback.get("reason"),
+                },
+            },
+        )
+
     logger.info(
-        f"Agent edit re-run: session_id={session_id}, turn={cut_turn_num}, ordinal={ordinal}"
+        f"Agent edit re-run: session_id={session_id}, turn={cut_turn_num}, "
+        f"ordinal={ordinal}, rollback={'skipped' if rollback_skipped else 'restored'}"
     )
     try:
         result = await iqs.submit_user_input(session_id, new_text, "user", client_msg_id=msg_id)

@@ -19,15 +19,19 @@ default so the application always boots.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import json5
 
+from config._home import resolve_app_home
+
 _CODE_ROOT = Path(__file__).resolve().parents[1]
-_APP_HOME_RAW = os.environ.get("SHERRY_HOME", "").strip()
-APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _CODE_ROOT
+# APP_HOME honours the shell's ``--sherry-home`` CLI flag (and the transitional
+# SHERRY_HOME env): the packaged shell passes the flag only, so reading the
+# environment alone sent this file to the READ-ONLY bundle. Shared resolver —
+# see config/_home.py.
+APP_HOME = resolve_app_home(_CODE_ROOT)
 
 SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
 if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
@@ -88,6 +92,19 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # sherry.jsonc stays complete; the per-event hook LISTS are read by
     # ``load_sherry_hooks`` (they are lists of objects, not scalars).
     "hooks.enabled": False,
+    # Restart-recovery effect queue (runtime/effects/). OFF by default: an
+    # untouched install keeps the existing boot sweepers. ``shadow_mode``
+    # records intents while the original path still runs (observation only);
+    # execution requires effects.enabled + worker_enabled and is disabled
+    # while shadow mode is on.
+    "effects.enabled": False,
+    "effects.shadow_mode": False,
+    "effects.worker_enabled": False,
+    "effects.restart_replay": False,
+    "effects.poll_interval_s": 2,
+    "effects.retry_initial_s": 5,
+    "effects.retry_max_s": 300,
+    "effects.max_attempts": 10,
 }
 
 SHERRY_SETTING_KEYS: tuple[str, ...] = tuple(SHERRY_SETTING_DEFAULTS)
@@ -100,6 +117,10 @@ _INT_KEYS = frozenset(
         "curator.interval_hours",
         "curator.stale_after_days",
         "curator.archive_after_days",
+        "effects.poll_interval_s",
+        "effects.retry_initial_s",
+        "effects.retry_max_s",
+        "effects.max_attempts",
     }
 )
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
@@ -111,6 +132,10 @@ _BOOL_KEYS = frozenset(
         "curator.enabled",
         "curator.consolidate",
         "curator.prune_builtins",
+        "effects.enabled",
+        "effects.shadow_mode",
+        "effects.worker_enabled",
+        "effects.restart_replay",
     }
 )
 

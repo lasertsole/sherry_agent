@@ -25,8 +25,7 @@ import type { CachedMessage } from '@/composables/db';
  * get_history_by_turn_page -> fetchApi, so the backend is seeded at the fetchApi transport
  * level. Dexie has no IndexedDB in happy-dom (every operation rejects with MissingAPIError),
  * so the persistence wrappers are neutralized via vi.mock. vue-router is explicitly imported
- * by [sid].vue and mocked here; SubagentTasksView (which drags in @antv/g6) is replaced by a
- * dummy module to keep the graph light.
+ * by [sid].vue and mocked here.
  */
 
 vi.mock('vue-router', () => {
@@ -63,10 +62,6 @@ vi.mock('@/composables/db', async importOriginal => {
     clearDraftSession: async () => {}
   };
 });
-
-vi.mock('@/pages/home/components/SubagentTasksView.vue', () => ({
-  default: { name: 'SubagentTasksView', template: '<div class="stv-stub"></div>' }
-}));
 
 // Backend seeded at the fetchApi transport level; the transport is mocked at
 // the `@/composables/requestApi` module because consumers bind it through the

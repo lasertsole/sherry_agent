@@ -75,7 +75,20 @@
     "voicePermissionDenied": "麦克风权限被拒绝",
     "voiceTooShort": "录音太短，请按住再说",
     "voiceWarming": "语音识别模型首次加载中，请稍候重试",
-    "voiceFailed": "语音识别失败，请重试"
+    "voiceFailed": "语音识别失败，请重试",
+    "insertTrigger": "插入",
+    "skillShortcut": "技能",
+    "commandShortcut": "命令",
+    "fileShortcut": "文件",
+    "skillPickerTitle": "技能",
+    "commandPickerTitle": "命令",
+    "noSkills": "未找到技能",
+    "noCommands": "未找到命令",
+    "loadingTriggers": "加载中…",
+    "commandArguments": "命令参数",
+    "commandApply": "应用",
+    "customCommand": "自定义",
+    "builtinCommand": "内置"
   },
   "sessionModelPicker": {
     "pending": "下一轮生效",
@@ -159,6 +172,8 @@
     "continueBusy": "当前对话进行中，无法继续生成",
     "editBusy": "对话进行中，暂时无法编辑",
     "editCompacted": "该消息已超出可编辑范围（历史已被压缩）",
+    "editNotLatest": "只能编辑最新一条用户消息",
+    "editRollbackSkipped": "文件未回滚：该轮没有文件快照或未绑定项目目录",
     "forkFailed": "创建分支失败，请重试"
   },
   "connection": {
@@ -183,7 +198,10 @@
     "filterToggle": "筛选",
     "noSearchResults": "没有匹配的会话",
     "searchPlaceholder": "搜索会话标题…",
-    "selectAll": "全选"
+    "selectAll": "全选",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "pinnedLabel": "已置顶"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -280,8 +298,6 @@
   "config": {
     "agent": {
       "tabs": {
-        "tools": "工具",
-        "middlewares": "中间件",
         "subagents": "代理模型",
         "skills": "技能"
       },
@@ -291,75 +307,17 @@
         "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
         "followEnv": "跟随模型配置"
       },
-      "tools": {
-        "count": "已选 {selected}/{total}",
-        "requiredHint": "必需，不可取消",
-        "scope_builtin": "内置",
-        "scope_mcp": "MCP",
-        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
-        "clearAll": "全部禁用",
-        "clearGroup": "清空",
-        "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
-        "selectAll": "全部启用",
-        "selectGroup": "全选"
-      },
       "skills": {
         "count": "已选 {selected}/{total}",
         "scope_builtin": "内置",
         "scope_thirdparty": "第三方",
         "empty": "暂无技能",
         "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。",
+        "requiredHint": "必需，不可取消",
+        "selectAll": "全部启用",
+        "clearAll": "全部禁用",
         "whenToUse": "何时使用",
         "whenNotToUse": "不适用"
-      },
-      "toolGroup": {
-        "files": "文件读写",
-        "terminal": "终端与代码",
-        "tasks": "任务与计划",
-        "memory": "记忆与检索",
-        "skills": "技能",
-        "subagents": "子代理",
-        "interaction": "交互",
-        "web": "网络",
-        "browser": "浏览器",
-        "mcp": "MCP",
-        "plan_mode": "计划模式"
-      },
-      "middlewares": {
-        "nudgeLabel": "启用 nudge",
-        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-        "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
-        "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
-      },
-      "middleware": {
-        "TaskIntentMiddleware": {
-          "name": "任务意图引导",
-          "desc": "识别工作型请求并注入编排提示"
-        },
-        "WorkspaceNoticeMiddleware": {
-          "name": "工作区变更通知",
-          "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
-        },
-        "MultimodalProcessor": {
-          "name": "多模态预处理",
-          "desc": "上传的图片/音频/视频入库与降级处理"
-        },
-        "SubagentCompletionDrainMiddleware": {
-          "name": "子代理完成注入",
-          "desc": "子代理完成后把结果注入主会话"
-        },
-        "Summarization": {
-          "name": "摘要压缩",
-          "desc": "上下文压缩、溢出处理与压缩后的 nudge"
-        },
-        "PlanContinuationEnforcer": {
-          "name": "计划续跑",
-          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
-        },
-        "DynamicReminderMiddleware": {
-          "name": "动态提醒",
-          "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
-        }
       },
       "subagents": {
         "followTier": "跟随角色默认",
@@ -378,9 +336,6 @@
         "librarian": "图书管理员"
       },
       "viewer": {
-        "tools": "工具 {selected}/{total}",
-        "middlewares": "关闭的中间件：{names}",
-        "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
       },
       "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
@@ -480,7 +435,6 @@
       "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
       "saveFailed": "应用配置保存失败，请检查值是否合法。",
       "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-      "noConfigFile": "未找到 sherry.jsonc 文件。",
       "allowlist": {
         "title": "回放门白名单",
         "hint": "在代码内置的五种工具链之外，追加 finish 回放时允许自动执行的可执行文件名（只影响回放哪些验证命令）。",
@@ -533,7 +487,11 @@
       "everySeconds": "每 {n} 秒",
       "everyMinutes": "每 {n} 分钟",
       "everyHours": "每 {n} 小时",
-      "everyDays": "每 {n} 天"
+      "everyDays": "每 {n} 天",
+      "unitSeconds": "秒",
+      "unitMinutes": "分",
+      "unitHours": "小时",
+      "unitDays": "天"
     },
     "heartbeat": {
       "addTask": "添加任务",
@@ -645,7 +603,6 @@
     "heartbeat": "心跳",
     "cron": "定时任务",
     "extend": "扩展",
-    "taskDetail": "任务详情",
     "knowledgeGraph": "知识图谱",
     "resize": "拖动调整宽度",
     "stats": "统计",
@@ -654,6 +611,9 @@
     "sessionPreset": "预设角色",
     "gitDiff": "提交差异",
     "contextViewer": "Agent 上下文",
+    "subagentActivity": "智能体实况",
+    "sessionActivity": "活动总览",
+    "taskFlowBoard": "任务看板",
     "browser": "浏览器",
     "terminal": "终端",
     "sideChat": "辅助会话",
@@ -687,7 +647,8 @@
     "empty": "暂无进行中的任务",
     "expand": "展开计划进度",
     "notStarted": "未开始",
-    "summary": "计划 {done}/{total}"
+    "summary": "计划 {done}/{total}",
+    "openBoard": "打开任务看板"
   },
   "projectFiles": {
     "title": "文件树",
@@ -736,20 +697,7 @@
     "copyFailed": "复制失败",
     "copyHash": "复制提交哈希",
     "copySubject": "复制提交信息",
-    "copyRef": "复制引用名",
-    "switchBranch": "切换分支",
-    "checkoutBranch": "切换到此分支",
-    "checkoutFailed": "切换分支失败",
-    "menuResetSoft": "软回退到此提交（保留改动）",
-    "menuResetHard": "硬回退到此提交（丢弃改动）",
-    "resetAction": "{mode}回退",
-    "modeSoft": "软",
-    "modeHard": "硬",
-    "resetFailed": "回退失败",
-    "confirmSoftTitle": "软回退分支",
-    "confirmSoftMessage": "把 {branch} 移动到 {hash}？已提交的更改会回到暂存区，工作区内容保留。",
-    "confirmHardTitle": "硬回退分支（危险）",
-    "confirmHardMessage": "把 {branch} 移动到 {hash}？当前 {count} 项未提交改动会被丢弃，无法恢复。"
+    "copyRef": "复制引用名"
   },
   "personaPreset": {
     "unbound": "未选择",

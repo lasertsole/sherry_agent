@@ -24,7 +24,7 @@ EXPECTED_ORDER = [
     "PlanContinuationEnforcer",
     "system_prompt_injection",
     "WorkspaceNoticeMiddleware",
-    "ToolSelectionMiddleware",
+    "PlanModeToolGate",
     "MultimodalProcessor",
     "IterationBudget",
     "TokenBudget",

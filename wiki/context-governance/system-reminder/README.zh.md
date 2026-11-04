@@ -8,7 +8,7 @@
 
 系统提示词只承载**稳定**内容：persona 文件、memory 块与技能索引。所有**实时**视图——计划模式、工作目录、项目指令（`AGENTS.md`，回退 `CLAUDE.md`）、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引——改为在每轮首个模型调用时以 `<system-reminder source="…">` HumanMessage 注入（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 目录）。两个原因：首个 token 每轮都变的提示词会让提供方的前缀缓存从那里起全部失效（persona 也被连累）；而只在缓存未命中时重建的提示词，在下一次重建之前展示的是**过期**的 todo 列表。
 
-冻结的记忆快照有一个刻意的例外。切换会话模型会进入新的提供方缓存命名空间；切换思考模式经实测在同一前缀上把 `cache_read` 打到 0——两种情况下缓存本来就要冷。`ThinkingControlMiddleware` 的 `before_model` 钩子比较本轮 `(thinking key, profile fingerprint, mapping fingerprint)` 与上次实际应用值（进程级保存，因为图每轮重建），变化时在 `system_prompt_injection` 之前重载 `MemoryStore` 快照并从两个寄存器删除 `StateKey.SYSTEM_PROMPT`。切换后的首轮首个模型调用因此能看到会话中途写入的 `FACTS.md` / `MEMORY.md` / `USER.md`。首轮、控制未变、重载失败都保留原缓存；没有发送就不会触发。
+冻结的记忆快照有一个刻意的例外。切换会话模型会进入新的提供方缓存命名空间；切换思考模式经实测在同一前缀上把 `cache_read` 打到 0——两种情况下缓存本来就要冷。`ThinkingControlMiddleware` 的 `before_model` 钩子比较本轮 `(thinking key, profile fingerprint, mapping fingerprint)` 与上次实际应用值（进程级保存，因为图每轮重建），变化时在 `system_prompt_injection` 之前重载 `MemoryStore` 快照并从两个寄存器删除 `StateKey.SYSTEM_PROMPT`。切换后的首轮首个模型调用因此能看到会话中途写入的记忆条目（底层是 SQLite；遗留 Markdown 文件只在启动时导入一次）。首轮、控制未变、重载失败都保留原缓存；没有发送就不会触发。
 
 FACTS.md 是全局文件，目录切换不再使缓存提示词失效。同一轮的 `project_instructions` 提醒仍会重新读取新项目的 `AGENTS.md`（回退 `CLAUDE.md`），并靠 `only_if_changed` 每份不同内容只注入一次。
 
@@ -39,6 +39,8 @@ todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuati
 | `knowledge_index` | 50 | 1 000 | 0 —— 每轮 | No | 知识索引 |
 
 **如何理解频率。** `cooldown_turns = 0` 表示*每轮都符合条件*——只要内容自上次注入后发生了变化就重新注入；内容很少变化的来源（如 `project_instructions`）尽管每轮都符合条件，实际注入很少；而内容经常变化的来源（如 `todo_block`）多数轮次都会注入。`cooldown_turns = 5`（TaskFlow 看板、boulder）表示*至多每 5 轮一次*，且仅在内容也确有变化时；未变化的看板即便本可注入，也会静默 5 轮。节流状态只为**真正注入过**的来源推进，被抑制的来源不会"白白消耗"冷却。
+
+**压缩过滤。** 每个 source 声明 `compress_exclude`（默认 `True`）；`DynamicReminderMiddleware` 把它写入消息 metadata，`_filter_summary_messages` 在构建摘要 prompt 前丢弃这些 reminder。live view 每轮都会重新派生，压缩前的快照就是噪音；`continuity_context` 是唯一设置 `compress_exclude=False` 的 source，序列化为 `[Continuity]`。标签出现前注入的旧 reminder 没有该键，继续走旧行为。真实用户轮次由 `pub.func.message.classify.is_user_message`（`metadata.origin == "user"`，fail-closed）识别，因此注入的 HumanMessage 在摘要里永远不会被标成 `[User]`。
 
 **跨轮持久化。** 非 transient 的提醒是转录中的 `HumanMessage`；中间件每轮做 whole-list rewrite 时通过 `messages[:-1]` 原样重发，所以它会留在上下文窗口里直到压缩把它丢弃（压缩后 `reset_session` 清除变化检测 hash，下一轮从 live state 重新注入）。**Transient 来源**（`transient=True`）是例外：在它未被重新解析的轮次，rewrite 会从 `messages[:-1]` 中剥掉旧提醒，因此 `project_instructions` 只在内容变化的那一轮（以及压缩后的第一轮）出现。模型读一次即可，不会占据后续每一轮。
 

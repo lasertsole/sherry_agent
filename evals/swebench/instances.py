@@ -642,16 +642,55 @@ def run_tests(
     return completed.returncode == 0, tail, outcomes
 
 
-def changed_paths(instance: Instance) -> list[str]:
-    """Paths the agent changed (tracked, staged and untracked), against the base."""
+def _exclude_pathspecs(paths: list[str] | None) -> list[str]:
+    return [f":(exclude){path}" for path in paths or () if path]
+
+
+def changed_paths(instance: Instance, *, exclude_paths: list[str] | None = None) -> list[str]:
+    """Paths the agent changed (tracked, staged and untracked), against the base.
+
+    ``exclude_paths`` drops harness-owned files (the test patch) from the
+    report; the agent's own extra test files stay visible and are flagged by
+    the suite's dirty-diff gate.
+    """
     untracked = _untracked_for_diff(instance.repo_dir)
     if untracked:
         _run(["git", "add", "-N", "--", *untracked], cwd=instance.repo_dir)
     try:
-        out = _run(["git", "diff", "HEAD", "--name-only"], cwd=instance.repo_dir)
+        out = _run(
+            ["git", "diff", "HEAD", "--name-only", "--", ".", *_exclude_pathspecs(exclude_paths)],
+            cwd=instance.repo_dir,
+        )
     finally:
         _run(["git", "reset", "-q"], cwd=instance.repo_dir)
     return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def reset_test_files(instance: Instance) -> bool:
+    """Restore the test patch to an exact, agent-edit-free state.
+
+    The harness applies the test patch BEFORE the agent runs; afterwards this
+    reverts every file the patch names (tracked files to the base commit, added
+    files removed) and applies the patch again. The agent's library changes are
+    untouched, and the judge always runs the patch as published.
+    """
+    patch = instance.test_patch
+    if not patch.strip():
+        return False
+    repo = instance.repo_dir
+    for rel in test_files_of(patch):
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if tracked.returncode == 0:
+            _run(["git", "checkout", "--", rel], cwd=repo)
+        else:
+            (repo / rel).unlink(missing_ok=True)
+    return apply_patch(instance, patch)
 
 
 def _untracked_for_diff(repo: Path) -> list[str]:
@@ -660,19 +699,23 @@ def _untracked_for_diff(repo: Path) -> list[str]:
     return [path for path in out.split("\0") if path and not path.startswith(".sherry/")]
 
 
-def diff(instance: Instance) -> str:
+def diff(instance: Instance, *, exclude_paths: list[str] | None = None) -> str:
     """The agent's full diff against the pinned base commit.
 
     ``git diff`` alone ignores untracked files, so a fix that ADDS a file would
     vanish from the saved patch. Intent-to-add makes them visible; ``git reset``
     then restores the index so the judge's test patch still applies. ``.sherry``
-    is agent-private state and never belongs in the submission.
+    is agent-private state and never belongs in the submission. ``exclude_paths``
+    removes the harness-applied test patch from the saved agent diff.
     """
     untracked = _untracked_for_diff(instance.repo_dir)
     if untracked:
         _run(["git", "add", "-N", "--", *untracked], cwd=instance.repo_dir)
     try:
-        return _run(["git", "diff", "--binary", "HEAD"], cwd=instance.repo_dir)
+        return _run(
+            ["git", "diff", "--binary", "HEAD", "--", ".", *_exclude_pathspecs(exclude_paths)],
+            cwd=instance.repo_dir,
+        )
     finally:
         _run(["git", "reset", "-q"], cwd=instance.repo_dir)
 

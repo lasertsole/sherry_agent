@@ -41,9 +41,9 @@ export function normalizeSessionKey(key: string | null | undefined): string | nu
 
 /**
  * Fetch and cache the set of sessions that "still exist".
- * Used by SubagentTasksView for "back to session" existence checks: for an orphaned run
- * whose normalized requester_session_key is not in this set, the task box is still shown
- * as usual, but the "back to session" button is hidden.
+ * Lets a consumer hide a "back to session" target that no longer exists: for an
+ * orphaned run whose normalized requester_session_key is not in this set, the
+ * run is still listed, but its navigation button is hidden.
  * Idempotent: it only actually fetches once (unless cross-window state was cleared;
  * can be explicitly called again).
  */
@@ -179,8 +179,9 @@ export function setupSubagentWs(): void {
   on('ws:subagents:ready', () => {
     const store = useSubagentStore();
     store.subagentWsReady = true;
-    // Only trigger the full gap-fill while the "background tasks" view is being shown (fetch on actual viewing, avoids pointless requests)
-    if (store.tasksTabActive) void loadTaskRuns();
+    // One gap-fill per (re)connect: frames sent while the socket was down are
+    // lost, and the tasks button's badge reads these lists.
+    void loadTaskRuns();
   });
 }
 
@@ -216,49 +217,5 @@ export function refresh(sid?: string): void {
   if (target) {
     lastLoadedSessionId = target;
     void loadTaskRuns(target);
-  }
-}
-
-/**
- * Refresh only the graph data of the currently focused task box (the focused run's subtree).
- *
- * 1) If a run is currently focused: fetch that run + its entire subtree (GET /subagents/runs?run_id=…,
- *    the backend returns root + descendants), then write these records back to the Dexie cache and
- *    rebuild the lists; focusedSubtreeRuns recomputes automatically, so only the currently focused
- *    subtree is redrawn instead of the whole session.
- * 2) If nothing is focused (graph shows the whole tree): fall back to a full refresh for the
- *    current session.
- */
-export async function refreshFocusedSubtree(): Promise<void> {
-  const store = useSubagentStore();
-  const rootId = store.focusedRunId;
-  // When not focused, fall back to a session-level full refresh
-  if (!rootId) {
-    refresh(resolveSid());
-    return;
-  }
-  store.taskLoading = true;
-  try {
-    const runs = await fetchRunSubtree(rootId);
-    if (!runs.length) {
-      // The run no longer exists (cleaned up / deleted / expired): exit focus and fall back to the session-level full view, avoiding getting stuck on an empty graph
-      store.focusedRunId = undefined;
-      store.selectedRunId = undefined;
-      refresh(resolveSid());
-      return;
-    }
-    // Write the subtree records back to Dexie (later WS events / other session views then get the latest state too)
-    await cacheRuns(runs);
-    // Rebuild the lists (read the full cache → sync allTaskRuns; focusedSubtreeRuns recomputes from it)
-    await refreshFromCache();
-    store.lastTasksFetchedAt = Date.now();
-  } catch (e) {
-    logUtil.e('[useSubagentTasks] Failed to refresh focused task box subtree:', e);
-    // Backend failure (including run-not-found / network-layer failures): likewise exit focus and fall back to the full view, avoiding the UI getting stuck on a dead run
-    store.focusedRunId = undefined;
-    store.selectedRunId = undefined;
-    refresh(resolveSid());
-  } finally {
-    store.taskLoading = false;
   }
 }

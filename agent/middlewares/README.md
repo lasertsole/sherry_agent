@@ -18,8 +18,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 - [Middleware Reference](#middleware-reference)
   - [system_prompt_injection](#system_prompt_injection)
   - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
-  - [ToolSelectionMiddleware](#toolselectionmiddleware)
-  - [The per-session middleware switches](#the-per-session-middleware-switches)
+  - [PlanModeToolGate](#planmodetoolgate)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -98,7 +97,7 @@ middleware = [
     # in front of the human message when the project directory moved since the
     # agent was last told (one notice, naming the final root)
     WorkspaceNoticeMiddleware(),
-    ToolSelectionMiddleware(),
+    PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -242,33 +241,14 @@ Because a notice is a human message by role but was never written by the user, e
 
 The real `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notices instead. Fail-open: any error is logged and the hook returns `None`.
 
-### ToolSelectionMiddleware
+### PlanModeToolGate
 
-**Module:** `agent/middlewares/tool_selection/core.py` · **Class:** `ToolSelectionMiddleware(AgentMiddleware)`
-**Hooks:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (always on — it applies the session's switch rather than having one)
+**Module:** `agent/middlewares/plan_mode_gate/core.py` · **Class:** `PlanModeToolGate(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`
 
-Runs the session's own tool set (预设角色-工具 tab → `AGENT_CONFIG["tools"]`, written by `PUT /sessions/agent_config`). The compiled graph is shared by every session and its `ToolNode` holds the full process-wide tool list, so the selection is applied **at call time**:
+Enforces plan mode's read-only tool face. While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), `wrap_model_call` narrows `request.tools` to `PLAN_MODE["allowed_tools"]` (plus `enter_plan_mode` / `exit_plan_mode`, which must stay reachable) and `wrap_tool_call` refuses any write tool that still gets called (a stale checkpoint or a hallucinated name) with "Plan mode is active".
 
-1. `wrap_model_call`: when the session has a selection, `request.override(tools=<the enabled subset>)` — langchain re-binds the tool schema from `request.tools` per call, so a disabled tool is never offered to the model.
-2. `wrap_tool_call`: a call to a DISABLED tool is refused with an error `ToolMessage` instead of being executed — a stale checkpoint can hold a call that predates the switch, and a model can hallucinate a name; the `ToolNode` would run either happily.
-
-`agent/tools/catalog.py::REQUIRED_TOOLS` is unioned back into the enabled set (the 工具 tab shows those rows locked): the service already refuses a payload that omits one, this is the second guard so a register value written before a tool became required cannot strip it either.
-
-**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `wiki/plan-mode/`.
-
-Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
-
-### The per-session middleware switches
-
-`GET /agent/catalog` lists the chain; the 预设角色-中间件 tab may turn **three optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
-
-| Gateable                            | Effect of turning it off                                |
-| ----------------------------------- | ------------------------------------------------------- |
-| `PlanContinuationEnforcer`          | the plan (todos / flows) no longer keeps the turn alive |
-| `TaskIntentMiddleware`              | no task-intent steering message                         |
-| `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected            |
-
-Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_REQUIRED` safety entries — the original twelve plus `WorkspaceNoticeMiddleware` (the prompt renders the current root, so without the notice the agent keeps answering from the old tree) and `MultimodalProcessor` (a turn without it loses the attachments) — plus `system_prompt_injection` (a turn without it has no instructions), `ThinkingControlMiddleware` (it IS the model/thinking control) and `ToolSelectionMiddleware` (it applies the tool selection). A stale payload naming a required entry is ignored: `middleware_enabled()` answers `True` for it. Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
+The gate applies only while a plan is open; a session outside plan mode sees the full process-wide tool list. The **tool set and the middleware chain are not user-configurable**: every built-in tool is always available (the preset panel's tool tab was removed) and every registered entry always runs (the middleware tab was removed), so there is no per-session switch to consult. Fail-open: an unreadable plan status or a missing feature config means "idle / no gating".
 
 ### MultimodalProcessor
 
@@ -407,7 +387,7 @@ Registered immediately AFTER `TaskIntentMiddleware` (whose per-turn dedup needs 
 - **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the TaskFlow board / boulder: at most once per 5 turns) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
 - **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer's labels.
 - **After a compaction** the catalogue is reset, so the next turn re-derives every source from live state — the layer never depends on the older reminders surviving the compression.
-- **Gated** like the other optional entries (`middleware_enabled`), and fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn.
+- Fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn (the chain has no per-session switches).
 
 ### HeartbeatStaleness
 
@@ -708,7 +688,7 @@ closest to the raw model call — so the graph state, the checkpointer and
 - **Never bypasses a gate**: repaired calls go through the full `wrap_tool_call`
   chain (ToolGuardrails / PathGuard / HITL / sandbox) like any other call.
 - **Always-on, in both chains**: a member of `scaffolding._MAIN_REQUIRED` (the
-  per-session middleware tab shows it locked) and of
+  required middleware set in `scaffolding`) and of
   `scaffolding._SUBAGENT_REQUIRED` (children carry it as the innermost wrap layer
   too). Unrepairable entries are logged (WARNING, the raw-args preview capped by
   `INVALID_TOOL_CALL["log_args_chars"]`) and recorded as an `invalid_tool_call`

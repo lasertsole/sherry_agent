@@ -27,7 +27,7 @@
 
 ## 只读保证
 
-状态为 `planning` / `needs_replan` 时，`ToolSelectionMiddleware` 会用白名单做两道拦截，和它原有的按会话工具选择完全一致：模型只会被**提供**白名单内的工具；而仍然到达的调用（旧 checkpoint、幻觉出的名字）会在执行处被**拒绝**，回执为 "Plan mode is active"。默认白名单在 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`；它依旧受会话自身工具选择的约束，唯独两个计划工具永远可达——一个无法离开的模式等于陷阱。
+状态为 `planning` / `needs_replan` 时，`PlanModeToolGate` 会用白名单做两道拦截：模型只会被**提供**白名单内的工具；而仍然到达的调用（旧 checkpoint、幻觉出的名字）会在执行处被**拒绝**，回执为 "Plan mode is active"。这是如今唯一的工具面过滤——其余情况下所有内置工具始终可用（按会话的工具选择已移除）。默认白名单在 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`；唯独两个计划工具永远可达——一个无法离开的模式等于陷阱。
 
 子代理这唯一的漏洞被刻意堵上：白名单里**没有** `sessions_spawn`——子代理以自己的会话状态运行，被派出的执行者可能在计划批准前就写文件。
 

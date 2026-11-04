@@ -48,6 +48,44 @@ describe('ChatBox.vue: edit + continue entry points', () => {
     expect(busy.find('[data-test="chat-edit-message"]').exists()).toBe(false);
   });
 
+  it('offers editing only on the NEWEST user message', () => {
+    const older = base({ id: 41, role: CHAT_ROLE.USER, content: 'older', turn_num: 1 });
+    const answer = base({ id: 43, role: CHAT_ROLE.AI, content: 'done', turn_num: 2 });
+    const newer = base({ id: 42, role: CHAT_ROLE.USER, content: 'newer', turn_num: 2 });
+    const wrapper = mount(ChatBox, { props: { messages: [older, answer, newer] } });
+
+    const buttons = wrapper.findAll('[data-test="chat-edit-message"]');
+    expect(buttons).toHaveLength(1);
+    // The single pencil belongs to the newer row.
+    expect(
+      wrapper.find('[data-message-id="42"] [data-test="chat-edit-message"]').exists()
+    ).toBe(true);
+    expect(
+      wrapper.find('[data-message-id="41"] [data-test="chat-edit-message"]').exists()
+    ).toBe(false);
+  });
+
+  it('lets an internal carrier be newer without stealing the edit slot', () => {
+    // A workspace notice is a USER-role human row with a non-user origin: it is
+    // not editable and must not hide the newest REAL user message's pencil.
+    const user = base({ id: 41, role: CHAT_ROLE.USER, content: 'q', turn_num: 1 });
+    const notice = base({
+      id: 44,
+      role: CHAT_ROLE.USER,
+      content: 'dir moved',
+      turn_num: 2,
+      origin: 'project_dir'
+    });
+    const wrapper = mount(ChatBox, { props: { messages: [user, notice] } });
+
+    expect(
+      wrapper.find('[data-message-id="44"] [data-test="chat-edit-message"]').exists()
+    ).toBe(false);
+    expect(
+      wrapper.find('[data-message-id="41"] [data-test="chat-edit-message"]').exists()
+    ).toBe(true);
+  });
+
   it('offers 继续生成 on an interrupted tail answer and emits the turn', async () => {
     const interrupted = base({
       id: 9,

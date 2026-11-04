@@ -120,6 +120,7 @@ import {
   type ThinkingLevel
 } from '~/composables/bridge/session';
 import { THINKING_LEVELS } from '~/stores/thinking';
+import { useSessionModelStore } from '~/stores/session-model';
 
 const props = defineProps<{ sessionId: string }>();
 const { t } = useI18n();
@@ -187,6 +188,17 @@ watch(
   { immediate: true }
 );
 
+// The mapping belongs to the CURRENT model (its wire shape is provider-specific
+// and the backend ignores it after a model switch). Re-read it when the session
+// model changes so the form shows that model's own mapping / the defaults.
+const sessionModel = useSessionModelStore();
+watch(
+  () => (props.sessionId ? sessionModel.currentId(props.sessionId) : ''),
+  () => {
+    if (props.sessionId) hydrate(props.sessionId);
+  }
+);
+
 /**
  * Set one level's wire value (an empty string clears the row).
  * @param level
@@ -249,7 +261,7 @@ async function reset(): Promise<void> {
     "thinkingCustom": {
       "title": "思考等级高级配置",
       "active": "自定义生效中",
-      "hint": "为内置格式未覆盖的 provider 手写 wire 字段与各等级取值；保存后下一轮生效。",
+      "hint": "为内置格式未覆盖的 provider 手写 wire 字段与各等级取值；保存后下一轮生效。该配置只对当前选中的模型生效（切换模型后自动失效，切回则恢复）。",
       "wireField": "wire 字段路径",
       "wireFieldPlaceholder": "如 extra_body.thinking.type",
       "wireFormat": "wire 格式",
@@ -266,7 +278,7 @@ async function reset(): Promise<void> {
     "thinkingCustom": {
       "title": "Advanced thinking config",
       "active": "Custom mapping active",
-      "hint": "Hand-write the wire field and per-level values for a provider the built-in formats do not cover; saves apply from the next turn.",
+      "hint": "Hand-write the wire field and per-level values for a provider the built-in formats do not cover; saves apply from the next turn and only to the model selected now (a model switch ignores it; switching back restores it).",
       "wireField": "Wire field path",
       "wireFieldPlaceholder": "e.g. extra_body.thinking.type",
       "wireFormat": "Wire format",
@@ -283,7 +295,7 @@ async function reset(): Promise<void> {
     "thinkingCustom": {
       "title": "思考レベルの詳細設定",
       "active": "カスタム適用中",
-      "hint": "組み込みフォーマットが対応しないプロバイダ向けに wire フィールドと各レベルの値を直接指定します（次ターンから有効）。",
+      "hint": "組み込みフォーマットが対応しないプロバイダ向けに wire フィールドと各レベルの値を直接指定します（次ターンから有効）。この設定は現在選択中のモデルにのみ適用されます（モデルを切り替えると無効、戻すと復元）。",
       "wireField": "wire フィールドパス",
       "wireFieldPlaceholder": "例: extra_body.thinking.type",
       "wireFormat": "wire フォーマット",
@@ -300,7 +312,7 @@ async function reset(): Promise<void> {
     "thinkingCustom": {
       "title": "사고 레벨 고급 설정",
       "active": "사용자 지정 적용 중",
-      "hint": "내장 형식이 지원하지 않는 제공자용으로 wire 필드와 레벨별 값을 직접 지정합니다(다음 턴부터 적용).",
+      "hint": "내장 형식이 지원하지 않는 제공자용으로 wire 필드와 레벨별 값을 직접 지정합니다(다음 턴부터 적용). 이 설정은 현재 선택된 모델에만 적용됩니다(모델을 바꾸면 무시되고, 되돌리면 복원됩니다).",
       "wireField": "wire 필드 경로",
       "wireFieldPlaceholder": "예: extra_body.thinking.type",
       "wireFormat": "wire 형식",

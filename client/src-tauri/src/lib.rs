@@ -12,10 +12,16 @@ use utils::logger::setup_logger;
 
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
-    tray::TrayIconBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+/// Set when the user asked for a REAL quit (the tray menu's Quit). The window's
+/// close button otherwise hides to the tray, so this flag is what separates
+/// "the operator pressed X" from "the operator chose Quit".
+static EXPLICIT_QUIT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -93,6 +99,21 @@ pub fn run() {
             let _tray = TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .tooltip("EMA AI Agent")
+                // Left-click restores the window — the standard habit for a
+                // window the X button only hid.
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
                 .on_menu_event(|app: &tauri::AppHandle, event: tauri::menu::MenuEvent| {
                     match event.id().as_ref() {
                         "show" => {
@@ -108,6 +129,9 @@ pub fn run() {
                         }
                         "quit" => {
                             tracing::info!("Quit requested via tray menu");
+                            // A real quit: the close interception below must
+                            // let the window go instead of hiding it again.
+                            EXPLICIT_QUIT.store(true, std::sync::atomic::Ordering::SeqCst);
                             app.exit(0);
                         }
                         _ => {}
@@ -237,6 +261,41 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // Close-to-tray: the X button HIDES the main window instead of ending
+        // the app, so the backend (and any running turn) keeps living; the
+        // tray's Show / left click restores it, and its Quit sets
+        // EXPLICIT_QUIT so this branch lets the close through. Without this
+        // interception a distro's "click X" killed the shell and left the
+        // backend to the (unreliable) Drop path.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() != "main" {
+                    return;
+                }
+                if EXPLICIT_QUIT.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Explicit teardown: `App::run` with a callback is what makes the
+            // process exit OBSERVABLE. Relying on `Drop` left an orphaned
+            // backend after a forced/quit path that skipped graceful
+            // destruction; stopping here is idempotent (stop() takes the
+            // child), so both ExitRequested and Exit may call it.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                EXPLICIT_QUIT.store(true, std::sync::atomic::Ordering::SeqCst);
+                if let Some(manager) = app_handle.try_state::<PythonProcessManager>() {
+                    tracing::info!("Application exiting — stopping the Python backend");
+                    manager.stop();
+                }
+            }
+        });
 }

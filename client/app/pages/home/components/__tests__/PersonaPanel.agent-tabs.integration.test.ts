@@ -1,10 +1,11 @@
 /**
- * The preset panel's three agent-config tabs (Tools / Middlewares / Agent models).
+ * The preset panel's two agent-config tabs (Agent models / Skills).
  *
  * Contract under test: the tabs render from the BACKEND catalogue (no
  * hardcoded names), the drafts map to the `agent` block (all-on / no-opinion
  * collapses to `{}`), and Save Preset stores the block while Apply writes it to the
- * open session through the store.
+ * open session through the store. The built-in tool set and the middleware chain
+ * are NOT configurable, so those tabs are gone.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -141,50 +142,15 @@ const stubs = {
   AvatarCropDialog: { name: 'AvatarCropDialog', template: '<div class="acd" />' }
 };
 
-/** The default catalogue: two optional tools in an optional group + terminal. */
-const DEFAULT_TOOLS = [
-  { name: 'read_file', group: 'files' },
-  { name: 'write_file', group: 'files' },
-  { name: 'terminal', group: 'terminal' }
-];
-
-const DEFAULT_GROUPS = [
-  {
-    group: 'files',
-    tools: [
-      { name: 'read_file', group: 'files', description: 'Read a file with pagination.' },
-      { name: 'write_file', group: 'files', description: 'Write file to disk.' }
-    ]
-  },
-  {
-    group: 'terminal',
-    tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-  }
-];
-
 /**
  * A functional store double: a real catalogue + the drafts a save receives.
- * @param overrides Per-test overrides (hydrated config, a custom catalogue).
+ * @param overrides Per-test overrides (hydrated config).
  * @param overrides.config
- * @param overrides.tools
- * @param overrides.groups
  */
-function makeAgentStore(
-  overrides: {
-    config?: Record<string, unknown>;
-    tools?: Array<Record<string, unknown>>;
-    groups?: Array<{ group: string; tools: Array<Record<string, unknown>> }>;
-  } = {}
-) {
+function makeAgentStore(overrides: { config?: Record<string, unknown> } = {}) {
   const saved: Array<Record<string, unknown>> = [];
-  const tools = overrides.tools ?? DEFAULT_TOOLS;
   const store = reactive({
     catalog: {
-      tools,
-      middlewares: [
-        { name: 'HumanInTheLoop', required: true, gateable: false },
-        { name: 'TaskIntentMiddleware', required: false, gateable: true }
-      ],
       subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
       skills: [
         { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
@@ -193,11 +159,6 @@ function makeAgentStore(
       ]
     },
     catalogLoaded: true,
-    toolGroups: overrides.groups ?? DEFAULT_GROUPS,
-    middlewares: {
-      gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
-      locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
-    },
     subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
     skills: {
       builtin: [
@@ -209,9 +170,7 @@ function makeAgentStore(
     loadCatalog: vi.fn(async () => undefined),
     hydrate: vi.fn(async () => undefined),
     configOf: () => (overrides.config ?? {}) as never,
-    enabledTools: () => tools.map(tool => tool.name) as never,
     selectedSkills: () => (Array.isArray(overrides.config?.skills) ? overrides.config?.skills : null) as never,
-    nudgeEnabled: () => true,
     isPending: () => false,
     save: vi.fn(async (_sid: string, config: Record<string, unknown>) => {
       saved.push(config);
@@ -244,32 +203,21 @@ describe('PersonaPanel agent-config tabs', () => {
     agentStore.state = makeAgentStore().store;
   });
 
-  it('renders the three tabs from the backend catalogue without hardcoding names', async () => {
+  it('renders the two remaining tabs and drops the tool / middleware ones', async () => {
     const panel = await mountPanel();
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers.slice(-4)).toEqual(['工具', '中间件', '代理模型', '技能']);
-    // The Skills tab belongs to the same agent-config group and carries its own
-    // two sub-tabs; the Tools tab splits the built-in groups from MCP.
+    expect(headers.slice(-2)).toEqual(['代理模型', '技能']);
+    expect(headers).not.toContain('工具');
+    expect(headers).not.toContain('中间件');
+    expect(panel.find('[data-test="agent-tools-tab"]').exists()).toBe(false);
+    expect(panel.find('[data-test="agent-middlewares-tab"]').exists()).toBe(false);
+
+    // The Skills tab carries its own two sub-tabs and the catalogue's rows.
     expect(panel.find('[data-test="agent-skills-tab"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-skills-scope-builtin"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-skills-scope-thirdparty"]').exists()).toBe(true);
-    expect(panel.find('[data-test="agent-tools-scope-builtin"]').exists()).toBe(true);
-    expect(panel.find('[data-test="agent-tools-scope-mcp"]').exists()).toBe(true);
 
-    // Tools grouped, every catalogue tool present with a checkbox…
-    expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(true);
-    expect(panel.find('[data-test="agent-tool-terminal"]').exists()).toBe(true);
-    // …and each row carries the backend description as its hover tooltip.
-    const row = panel.get('[data-test="agent-tool-read_file"]').element.closest('label');
-    expect(row?.getAttribute('title')).toBe('Read a file with pagination.');
-    // …the gateable middleware has a switch, and a system-required one is not
-    // rendered at ALL (nothing there is switchable — the compression row above
-    // is the one required entry that has an option of its own).
-    expect(panel.find('[data-test="agent-middleware-TaskIntentMiddleware"]').exists()).toBe(true);
-    expect(panel.find('[data-test="agent-middleware-HumanInTheLoop"]').exists()).toBe(false);
-    expect(panel.text()).not.toContain('HumanInTheLoop');
-    expect(panel.find('[data-test="agent-middleware-option-Summarization"]').exists()).toBe(true);
     // The Agent models tab leads with Main agent and keeps the per-role pickers under Subagent.
     expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(false);
@@ -314,12 +262,11 @@ describe('PersonaPanel agent-config tabs', () => {
     });
   });
 
-  it('stores the draft in a saved preset and collapses "all on" to an empty block', async () => {
+  it('stores the skill draft in a saved preset and collapses "all on" to an empty block', async () => {
     const panel = await mountPanel();
 
-    // Uncheck one tool and turn the gateable middleware off.
-    await panel.get('[data-test="agent-tool-terminal"]').trigger('click');
-    await panel.get('[data-test="agent-middleware-TaskIntentMiddleware"]').trigger('click');
+    // Uncheck one optional skill (the required media skill has no switch).
+    await panel.get('[data-test="agent-skill-alpha"]').trigger('click');
     await flushPromises();
 
     // Save Preset (no preset being edited → the name dialog opens) → confirm.
@@ -337,10 +284,20 @@ describe('PersonaPanel agent-config tabs', () => {
 
     const created = db.createPersonaPreset.mock.calls[0]!;
     expect(created[0]).toBe('我的预设');
-    expect(created[3]).toEqual({
-      tools: ['read_file', 'write_file'],
-      middlewares_disabled: ['TaskIntentMiddleware']
-    });
+    expect(created[3]).toEqual({ skills: ['image_to_text', 'uploaded'] });
+
+    // With every skill on the block collapses back to "no opinion".
+    vi.clearAllMocks();
+    db.rows.length = 0;
+    const fresh = await mountPanel();
+    const save2 = fresh.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存预设');
+    await save2!.trigger('click');
+    await flushPromises();
+    await fresh.find('.dlg .it').setValue('全开预设');
+    const confirm2 = fresh.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存');
+    await confirm2!.trigger('click');
+    await flushPromises();
+    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({});
   });
 
   it('loads a preset’s agent block back into the drafts', async () => {
@@ -349,11 +306,7 @@ describe('PersonaPanel agent-config tabs', () => {
       name: '瘦身预设',
       content: { 'AGENTS.md': 'A', 'SOUL.md': 'S', 'USER.md': 'U' },
       character: { aiName: '艾拉', aiAvatar: '', userName: '诺亚', userAvatar: '' },
-      agent: {
-        tools: ['terminal'],
-        middlewares_disabled: ['TaskIntentMiddleware'],
-        skills: ['uploaded']
-      },
+      agent: { skills: ['uploaded'] },
       createdAt: 0,
       updatedAt: 0
     });
@@ -366,11 +319,7 @@ describe('PersonaPanel agent-config tabs', () => {
     await row!.trigger('click');
     await flushPromises();
 
-    // Only `terminal` stays checked among the tools; the middleware switch sits OFF.
-    const toolBoxes = panel.get('[data-test="agent-tools-tab"]').findAllComponents({ name: 'Checkbox' });
-    expect(toolBoxes.length).toBe(3);
-    expect(toolBoxes.filter(c => c.props('modelValue') === true).length).toBe(1);
-    // The skills draft followed the same block: only `uploaded` stays in the index
+    // The skills draft is the stored block: only `uploaded` stays in the index
     // — and the required media skill is a locked chip, so it has NO checkbox.
     expect(panel.find('[data-test="agent-skill-image_to_text"]').exists()).toBe(false);
     expect(panel.get('[data-test="agent-skill-locked-image_to_text"]').text()).toBe('image_to_text');
@@ -384,82 +333,12 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(thirdParty[0]!.props('modelValue')).toBe(true);
   });
 
-  it('locks required tools on and moves a bulk-only group as a whole', async () => {
-    agentStore.state = makeAgentStore({
-      tools: [
-        { name: 'read_file', group: 'files', required: true },
-        { name: 'terminal', group: 'terminal' },
-        { name: 'taskflow_flow', group: 'tasks' },
-        { name: 'todowrite', group: 'tasks' }
-      ],
-      groups: [
-        {
-          group: 'files',
-          tools: [{ name: 'read_file', group: 'files', description: 'Read a file.', required: true }]
-        },
-        {
-          group: 'terminal',
-          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-        },
-        {
-          group: 'tasks',
-          tools: [
-            { name: 'taskflow_flow', group: 'tasks', description: 'Create a flow.' },
-            { name: 'todowrite', group: 'tasks', description: 'Write todos.' }
-          ]
-        }
-      ]
-    }).store;
-    const panel = await mountPanel();
-
-    // Required row: a locked chip with NO checkbox at all, plus the hint.
-    expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(false);
-    const requiredRow = panel.get('[data-test="agent-tool-locked-read_file"]');
-    expect(requiredRow.text()).toBe('read_file');
-    expect(requiredRow.element.closest('label')?.querySelector('.pi-lock')).not.toBeNull();
-    expect(requiredRow.element.closest('label')?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
-    // A fully required group has no select-all toggle — a locked hint instead.
-    expect(panel.find('[data-test="agent-tool-group-files"]').exists()).toBe(false);
-    expect(panel.find('[data-test="agent-tool-group-locked-files"]').exists()).toBe(true);
-    // A bulk-only group carries NO per-tool switch, only chips + the group toggle.
-    expect(panel.find('[data-test="agent-tool-taskflow_flow"]').exists()).toBe(false);
-    expect(panel.find('[data-test="agent-tool-bulk-taskflow_flow"]').exists()).toBe(true);
-    expect(panel.find('[data-test="agent-tool-group-tasks"]').exists()).toBe(true);
-
-    // Disable all keeps the required tool on and leaves the rest off.
-    await panel.get('[data-test="agent-tools-none"]').trigger('click');
-    await flushPromises();
-    expect(panel.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');
-    expect(panel.get('[data-test="agent-tool-terminal"]').attributes('data-checked')).toBe('false');
-    const chip = () => panel.get('[data-test="agent-tool-bulk-taskflow_flow"]').classes();
-    expect(chip()).toContain('line-through');
-
-    // The group toggle selects / clears the whole membership (chips mirror it).
-    await panel.get('[data-test="agent-tool-group-tasks"]').trigger('click');
-    await flushPromises();
-    expect(chip()).not.toContain('line-through');
-    await panel.get('[data-test="agent-tool-group-tasks"]').trigger('click');
-    await flushPromises();
-    expect(chip()).toContain('line-through');
-
-    // A draft can never be saved with a required tool missing (the backend would
-    // refuse the payload): clearing everything still stores the required set.
-    const saveButton = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存预设');
-    await saveButton!.trigger('click');
-    await flushPromises();
-    await panel.find('.dlg .it').setValue('仅必需');
-    const confirm = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存');
-    await confirm!.trigger('click');
-    await flushPromises();
-    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({ tools: ['read_file'] });
-  });
-
   it('keeps the side-by-side layout and lets the editor column scroll sideways', async () => {
     // A narrow sidebar must NOT reflow the panel (that crushed the editor) nor push
     // its rows outside: the row layout stays, the editor column is the horizontal
     // scroll container, and its children keep a readable floor.
     const panel = await mountPanel();
-    const body = panel.get('[data-test="agent-tools-tab"]').element as HTMLElement;
+    const body = panel.get('[data-test="agent-skills-tab"]').element as HTMLElement;
     const root = body.closest('div[class*="md:flex-row"]') as HTMLElement | null;
 
     expect(root, 'the panel keeps the two-column row').not.toBeNull();
@@ -473,7 +352,7 @@ describe('PersonaPanel agent-config tabs', () => {
 
     // Every agent tab body can still shrink with the column, so its truncating rows
     // do not push the column wider on their own.
-    for (const tab of ['tools', 'middlewares', 'models', 'skills']) {
+    for (const tab of ['models', 'skills']) {
       const tabBody = panel.find(`[data-test="agent-${tab}-tab"]`);
       expect(tabBody.exists(), tab).toBe(true);
       expect(tabBody.classes(), tab).toContain('min-w-0');

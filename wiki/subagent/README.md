@@ -150,7 +150,7 @@ A parsed negative verdict always blocks: fail-open covers model errors, unparsea
 | Loop prevention | completion gates, judge budgets, drain and announce retry behavior | [Loop Prevention](../loop-prevention/README.md) |
 | Context engine | only the completion carrier is persisted to MesMemory; child transcripts stay checkpoint-only | [Context Engine README](../../context_engine/README.md) |
 | Runtime lanes | the `SUBAGENT` lane bounds concurrent child runs; over-limit spawns queue as `PENDING` | [Loop Prevention](../loop-prevention/README.md) |
-| Memory files | a non-empty drain reconciles `MEMORY.md` and `USER.md` (load → persist, fail-open) | [Subagent System README](../../agent/tools/subagent/README.md) |
+| Memory store | a non-empty drain reloads the shared SQLite memory store (`load_from_store()`, fail-open); there is no save-back | [Subagent System README](../../agent/tools/subagent/README.md) |
 
 ### 🧵 Synthesis Aggregation
 

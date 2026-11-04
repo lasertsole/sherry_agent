@@ -25,7 +25,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
 - **コンテキスト統治**：過大なツール結果と人間メッセージは回収可能なディスクコピーを残してプロンプトから退避され、`read_file` 結果はスライスされ、あらゆる圧縮の前に LLM なしのテールクリップが走り、チェーン要約は会話ペイロードから除外されます
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
-- **経験抽出（Experience Extraction）**：3 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
+- **経験抽出（Experience Extraction）**：3 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（圧縮のたびに）、圧縮時に todo が全完了したときの plan 抽出、圧縮後の todo fork です。それぞれメモリストア（SQLite `memory_entries` テーブルの `memory` / `user` ターゲット）、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
 - ▶️ _3 本の抽出経路とスキルキュレーションは [Experience README](wiki/experience/README.ja.md) を参照_
 
@@ -138,7 +138,7 @@ sherry_agent/
 │       ├── python_repl.py  # Python コード実行
 │       ├── terminal/       # ターミナル + バックグラウンドツール
 │       ├── memory.py       # メモリ閲覧ツール
-│       ├── question.py     # HITL 多肢選択の質問ツール
+│       ├── question.py     # HITL 構造化質問ツール（1〜4 問、プレビュー + 注記）
 │       └── message_search.py # 会話 FTS5 検索ツール
 │
 ├── bus/                    # メッセージバス（非同期キュー）

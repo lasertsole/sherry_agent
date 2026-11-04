@@ -145,6 +145,23 @@ def _payload(kind: str, frame: dict[str, Any]) -> tuple[str, bool, dict[str, Any
     return (kind, False, dict(frame))
 
 
+def _push_trajectory_event(session_id: str, event: dict[str, Any]) -> None:
+    """Deliver one persisted event to the session's live WS subscribers.
+
+    Resolved through ``runtime.hooks`` so this module keeps no import of the
+    transport layer; fail-open — pushing is observability, never a write
+    dependency (a bare unit test has no hook registered).
+    """
+    try:
+        from runtime import hooks
+
+        push = hooks.resolve(hooks.TRAJECTORY_EVENT_PUSH)
+        if push is not None:
+            push(session_id, event)
+    except Exception:
+        logger.debug("trajectory push failed (fail-open)", exc_info=True)
+
+
 class TrajectoryStore:
     """SQLite-backed event timeline (one shared DB file, per-session pruning)."""
 
@@ -200,6 +217,8 @@ class TrajectoryStore:
             int(TRAJECTORY["payload_max_chars"]),
         )
         event_id = _event_id(session_id, turn_id, kind, frame)
+        summary_text = _clip(summary, int(TRAJECTORY["result_clip_chars"]))
+        ts = datetime.now().isoformat(timespec="milliseconds")
         try:
             await self._ensure()
             import aiosqlite
@@ -226,10 +245,10 @@ class TrajectoryStore:
                         session_id,
                         turn_id,
                         seq,
-                        datetime.now().isoformat(timespec="milliseconds"),
+                        ts,
                         kind,
                         1 if is_error else 0,
-                        _clip(summary, int(TRAJECTORY["result_clip_chars"])),
+                        summary_text,
                         payload_json,
                     ),
                 )
@@ -237,6 +256,26 @@ class TrajectoryStore:
         except Exception:
             logger.debug("trajectory projection failed (fail-open)", exc_info=True)
             return
+        # Push the row just written to this session's live subscribers. The
+        # payload is re-parsed from the CLIPPED json: an oversized result rides
+        # as an empty dict flagged truncated instead of breaking the frame.
+        try:
+            wire_payload = json.loads(payload_json) if payload_json else {}
+        except ValueError:
+            wire_payload = {"truncated": True}
+        _push_trajectory_event(
+            session_id,
+            {
+                "event_id": event_id,
+                "turn_id": turn_id,
+                "seq": seq,
+                "ts": ts,
+                "kind": kind,
+                "is_error": is_error,
+                "summary": summary_text,
+                "payload": wire_payload,
+            },
+        )
         await self._prune_if_due(session_id)
 
     async def _prune_if_due(self, session_id: str) -> None:

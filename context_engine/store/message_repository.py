@@ -34,6 +34,24 @@ class MessageRepository:
         )
         return row[0] if row and row[0] is not None else 0
 
+    def max_user_turn_num(self, session_id: str) -> int:
+        """Maximum ``turn_num`` among persisted USER rows; ``0`` when none.
+
+        Internal carriers (workspace notices, subagent completions, steering
+        directives) are ``role='human'`` with an explicit non-``user`` origin
+        and are NOT user messages: an edit can only target a real user turn.
+        """
+        row = (
+            self._db_provider()
+            .execute(
+                "SELECT MAX(turn_num) FROM messages WHERE session_id = ? AND role = 'human' "
+                "AND (origin IS NULL OR origin = 'user')",
+                (session_id,),
+            )
+            .fetchone()
+        )
+        return int(row[0]) if row and row[0] is not None else 0
+
     def fetch_turn_range(
         self,
         session_id: str,

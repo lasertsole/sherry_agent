@@ -108,11 +108,11 @@ describe('readModelsConfig / readNetworkConfig', () => {
     expect(call).toMatchObject({ url: '/network-config', method: 'get' });
   });
 
-  it('coerces an empty body into the { groups: [] } shape', async () => {
+  it('throws on a failed grouped-config request instead of reporting an empty file', async () => {
     fetchApiMock.mockResolvedValue(null);
 
-    await expect(readModelsConfig()).resolves.toEqual({ groups: [] });
-    await expect(readNetworkConfig()).resolves.toEqual({ groups: [] });
+    await expect(readModelsConfig()).rejects.toThrow('GET /models-config failed');
+    await expect(readNetworkConfig()).rejects.toThrow('GET /network-config failed');
   });
 });
 

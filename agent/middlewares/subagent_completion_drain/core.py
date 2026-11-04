@@ -87,14 +87,14 @@ def _is_internal_completion(msg: Any) -> bool:
 
 
 def _backflow_shared_memory() -> None:
-    """Reconcile the shared memory files around a subagent completion.
+    """Reconcile the shared memory store around a subagent completion.
 
-    Parent and children share one process-wide ``MemoryStore`` and the same
-    ``memory/`` directory, so a child's writes are already file-visible. What can
-    drift is the parent's in-memory view (live entries + frozen snapshot) when a
-    writer outside this process updated ``MEMORY.md``/``USER.md``. Reloading
-    first is load-bearing: persisting a stale in-memory list would clobber a
-    concurrent writer, so this reconciles load → persist per target.
+    Parent and children share one process-wide ``MemoryStore`` over the SQLite
+    store, so a child's writes are already durable. What can drift is the
+    parent's in-memory view (live entries + frozen snapshot); reloading it makes
+    the child's writes visible to the parent turn. There is nothing to persist:
+    SQLite is the source of truth, so a reload cannot clobber a concurrent
+    writer (the old save-back could).
 
     Never raises: a completion carrier must still reach the parent turn even
     when memory I/O fails.
@@ -102,9 +102,7 @@ def _backflow_shared_memory() -> None:
     try:
         from agent.tools.memory import memory_store
 
-        memory_store.load_from_disk()
-        for target in ("memory", "user"):
-            memory_store.save_to_disk(target)
+        memory_store.load_from_store()
         logger.debug(
             "completion drain: memory backflow reconciled (memory={} entries, user={} entries)",
             len(memory_store.memory_entries),
@@ -128,10 +126,6 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
         ``item.message`` is the rebuilt task-4 carrier ``HumanMessage`` carrying
         proper completion metadata — injected directly, never reconstructed.
         """
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             # Lazy: agent.tools.subagent imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.

@@ -4,6 +4,8 @@
 
 本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩；只收到即将被丢弃的消息，并以"缓存命中"方式跑在本轮自己的模型与前缀上）、计划在轮次边界完成时的 plan extraction、压缩后 todo fork，以及主会话删除时的 session-end salvage（对捕获的压缩切口运行后台两波 memory review）。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
 
+> **存储更新（2026-11-04）：** 下文的 MEMORY.md / USER.md / FACTS.md 三个记忆产出，现已改为 MesMemory `memory_entries` 表中的行，每个 target（`memory` / `user` / `facts`）各占若干行。遗留 Markdown 文件由 `memory_migration.py` 在启动时导入一次并改名为 `*.md.bak`。加载入口是 `MemoryStore.load_from_store()`；每行携带 `origin_session`（来源）与 `usage_count` / `last_used`（用量反馈）。
+
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
 ## 设计原则
@@ -123,9 +125,9 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 | 存储 | 路径（常量） | 上限 |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`（唯一全局文件；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
+| `memory` target | MesMemory `memory_entries` 行（`target='memory'`） | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`，可在 `/memory/settings` 覆盖） |
+| `user` target | MesMemory `memory_entries` 行（`target='user'`） | 1375 字符（`MEMORY_TOOL["user_char_limit"]`，可覆盖） |
+| `facts` target | MesMemory `memory_entries` 行（`target='facts'`，唯一全局 target） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`，可覆盖）；`add` 超限时归档最不活跃条目 |
 | plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——按身份为键） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件 |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |

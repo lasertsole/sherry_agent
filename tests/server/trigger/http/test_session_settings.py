@@ -678,11 +678,15 @@ def _wire_custom_http(monkeypatch):
     )
 
 
+from models.LLMs.model_identity import main_model_key  # noqa: E402
+
 _MAPPING = {
     "wire_field": "extra_body.custom.think",
     "wire_format": "custom",
     "level_map": {"off": "none", "low": "lite", "high": "full"},
 }
+#: The model stamp the write path adds (a mapping only applies to its own model).
+_MODEL_STAMP = {"model": main_model_key()}
 
 
 def test_custom_mapping_roundtrip_and_clear(registers, monkeypatch):
@@ -756,9 +760,14 @@ def test_custom_mapping_parks_while_a_turn_runs(registers, monkeypatch):
     assert resp.status_code == 200 and '"pending": true' in resp.description
     mem, _db = registers
     assert ("s6", "custom_thinking_mapping") not in mem.data
-    assert (
-        mem.data[("s6", "custom_thinking_mapping_pending")]["value"]["level_map"]["high"] == "full"
-    )
+    pending = mem.data[("s6", "custom_thinking_mapping_pending")]["value"]
+    assert pending["level_map"]["high"] == "full"
+    # The parked value carries its model stamp: promotion copies it straight
+    # into the live key, and an unstamped value would be ignored as legacy.
+    assert pending["model"] == main_model_key()
+
+    service.promote_pending_settings_sync("s6")
+    assert mem.data[("s6", "custom_thinking_mapping")]["model"] == main_model_key()
 
 
 def test_the_middleware_reads_the_custom_mapping(monkeypatch):
@@ -769,7 +778,7 @@ def test_the_middleware_reads_the_custom_mapping(monkeypatch):
 
     # The middleware reads the RUNTIME register (the fake above is the
     # service's own seam), so drive that one and clean up after.
-    state_register_mem.set_state("s7", "custom_thinking_mapping", _MAPPING)
+    state_register_mem.set_state("s7", "custom_thinking_mapping", {**_MAPPING, **_MODEL_STAMP})
     seen: dict = {}
 
     def _fake_build(**kwargs):

@@ -12,12 +12,12 @@
 
 | 層 | ストア | 場所 | プロンプトに入るか？ |
 | :--- | :--- | :--- | :--- |
-| **L1 —— 精錬メモリ** | `MEMORY.md`（エージェントのノート）+ `USER.md`（ユーザープロファイル） | `workspace/memory/`（`MEMORY_DIR`） | はい——凍結スナップショットとして常に注入 |
+| **L1 —— 精錬メモリ** | `memory_entries` 行（`memory` エージェントノート、`user` プロファイル、`facts` システムの落とし穴） | MesMemory SQLite（`mes_memory.db`）の `memory_entries` テーブル | はい——凍結スナップショットとして常に注入 |
 | **L2 —— 生の履歴** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | いいえ——`context_engine` / `message_search` が取得 |
 
-ファイルは**単独行の区切り文字 `§` で区切られたプレーンテキストのエントリ**です——`ENTRY_DELIMITER = "\n§\n"`（`agent/tools/memory.py:53`）。YAML frontmatter も箇条書きプレフィックスもありません。エントリは複数行にわたれます。
+エントリは `memory_entries` の**1 行の SQLite レコード**です。`§` 区切りはレガシーインポートと `GET/PUT /memory` 互換パスにのみ残ります。エントリは複数行にわたれ、YAML frontmatter も箇条書きプレフィックスもありません。
 
-層 1 は `MemoryStore` が管理します（`memory.py:104`）：ファイルごとの文字数上限は `2200`（memory）と `1375`（user）、注入スキャン（`_MEMORY_THREAT_PATTERNS`、`memory.py:68`）がプロンプトインジェクションと認証情報漏洩を拒否し、クロスプラットフォームのファイルロック、アトミック書き込み、完全一致の重複排除を備えます。ライブのエントリは即座に変更される一方、プロンプトは `load_from_disk()` で取得された**凍結スナップショット**を使い、セッション中のプレフィックスキャッシュを安定させます。
+層 1 は `MemoryStore`（`agent/tools/memory.py::load_from_store`）が管理します：ターゲットごとの文字数上限は `2200`（memory）、`1375`（user）、`1375`（facts）、プロンプトインジェクションと認証情報漏洩を拒否する注入スキャン（`_MEMORY_THREAT_PATTERNS`）、完全一致の重複排除を備え、同時実行の安全はファイルロックやアトミック書き換えではなく SQLite WAL が担います。行は `origin_session`、`usage_count`、`last_used` を持ち、レンダリングブロックは由来が分かる場合のみ `[origin: …, created: …, used: Nx]` を追加します。`memory(action="read")` は使用回数を増やします。ライブ行は即座に変更される一方、プロンプトは `load_from_store()` で取得された**凍結スナップショット**を使い、セッション中のプレフィックスキャッシュを安定させます。旧 `MEMORY.md`/`USER.md`/`FACTS.md` は起動時に一度インポートされ（`context_engine/store/memory_migration.py`）、`*.md.bak` に改名されます。既存行が 1 つでもあればインポートはスキップされます。
 
 `memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 
@@ -43,12 +43,10 @@ if taskflow_ctx:
 # subagent_completion_drain/core.py:93-117
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
-    memory_store.load_from_disk()
-    for target in ("memory", "user"):
-        memory_store.save_to_disk(target)
+    memory_store.load_from_store()
 ```
 
-親と子は**単一のプロセス全体 `MemoryStore`** を共有するため、子の書き込みはすでにファイル可視です。ドリフトしうるのは親のインメモリビュー——ライブエントリと、システムプロンプトの構築に使った**凍結スナップショット**——であり、これはプロセス外の書き手が `MEMORY.md` / `USER.md` を更新したときに起こります。**先に再読込**する順序が要です：古いインメモリ一覧を再読込前に永続化すると並行書き手を上書きしてしまうため、照合はターゲットごとに load → persist でなければなりません。
+親と子は SQLite 上の**単一のプロセス全体 `MemoryStore`** を共有するため、子の書き込みはすでに永続化されています。ドリフトしうるのは親のインメモリビュー——ライブ行と、システムプロンプトの構築に使った**凍結スナップショット**——です。再読込は必須かつ十分です：SQLite が唯一の真実であり、書き戻しはなく、再読込が並行書き手を上書きすることもありません（以前の load → persist 照合は上書きしえました）。
 
 排出と同様、還流も**フェイルオープン**です——メモリ I/O の失敗はログに記録されて握りつぶされ、完了キャリアは親ターンへ届きます。排出は親に完了の扱いを厳格に保たせます：セッションに合格した証跡がないとき、キャリアの後ろに必須検証のゲートメッセージを追記し、完了は `DoneClaim` であって検証済み結果ではないことを親に思い出させます（todo を完了にする前に `todoread` で検証し、受け入れ基準に照らし、古い状態を調査します）。
 
@@ -97,7 +95,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## 🧹 セッション削除時のメモリサルベージ
 
-メインセッションを破棄する前に、`purge_session` は独立した memory review（`nudges.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。書き込み後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は NUDGE レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`nudge_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory ファイルを書く。
+メインセッションを破棄する前に、`purge_session` は独立した memory review（`nudges.salvage_session_memory`）もスケジュールする。圧縮後の checkpoint transcript、モデル、システムプロンプト、ツール面をスナップショットし、通常の圧縮カットを**読み取り専用**で計算して、スケジュール後すぐに戻る——削除はモデルを待たない。第 1 波は圧縮が破棄したはずのプレフィックスを、キャプチャした（cache-warm の）モデル/プロンプト/ツール面で review する。メモリエントリ（由来は派生 wave キーではなく削除対象セッションの id）を書いた後、第 2 波は memory を再読み込みし、システムプロンプトを非永続的に再構築して、`memory` のみのツール面で保持尾部を review する。両波は NUDGE レーン、派生セッションキー（`<id>::session-end-salvage:1|2`）、checkpointer なしで走る。`nudge_memory` metadata ゲートが削除後の `knowledge`/plan ツールを拒否する。すべての失敗は fail-open で、プロセス終了は未完了の波を放棄しうる。サイドチャット/サブエージェントの子は対象外。上の continuity は次の会話のために最後の AI 返信を保存し、このサルベージは永続 memory 行を書く。
 
 ## ♻️ TaskFlow 自動再開
 

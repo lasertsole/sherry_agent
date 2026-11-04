@@ -75,7 +75,8 @@ const primevueStubs = {
   Slider: { name: 'Slider', props: ['modelValue'], template: '<div class="sl"></div>' },
   ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' },
   TokenBudgetPanel: { name: 'TokenBudgetPanel', props: ['sessionId'], template: '<div class="tbp"></div>' },
-  ShortcutSettingsSection: { name: 'ShortcutSettingsSection', template: '<div class="shortcut-section"></div>' }
+  ShortcutSettingsSection: { name: 'ShortcutSettingsSection', template: '<div class="shortcut-section"></div>' },
+  MemorySettingsSection: { name: 'MemorySettingsSection', template: '<div class="memory-settings-section"></div>' }
 };
 
 interface ConfigPanelVm {
@@ -177,16 +178,17 @@ describe('ConfigPanel shortcut-bindings tab', () => {
     });
     const vm = wrapper.vm as unknown as ConfigPanelVm;
 
-    // The token budget left the settings for a session tab; the live-stream
-    // safety tab is appended last: background / env / app / language /
-    // shortcuts / live safety.
+    // The token budget left the settings for a session tab; the memory
+    // settings tab is appended last: background / env / app / language /
+    // shortcuts / live safety / memory settings.
     expect(wrapper.findAll('.tp-header').map(node => node.text())).toEqual([
       '背景图片',
       '模型配置',
       '应用配置',
       '国际化',
       '快捷键',
-      '直播安全'
+      '直播安全',
+      '记忆设置'
     ]);
 
     // The tab body is the (stubbed) section; it saves on its own, so the

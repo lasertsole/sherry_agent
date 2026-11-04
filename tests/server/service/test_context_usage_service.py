@@ -340,21 +340,16 @@ def test_inspect_serves_prompt_tools_and_the_live_transcript(_inspect_env, monke
                 return {"type": "object", "properties": {"path": {"type": "string"}}}
 
     monkeypatch.setattr("agent.tools.build_main_tools", lambda: [_Tool()])
-    monkeypatch.setattr(
-        "agent.middlewares.tool_selection.core.enabled_tool_names",
-        lambda sid: frozenset({"read_file"}),
-    )
 
     payload = asyncio.run(service.get_context_content("s1"))
 
     assert payload["window"] == 128_000
     assert payload["system_prompt"] == "系统提示词"
     assert payload["system_tokens"] > 0
-    # The tool set is the session's (selection applied) and carries its schema.
+    # Every built-in tool is always available; the definition carries its schema.
     assert [tool["name"] for tool in payload["tools"]] == ["read_file"]
     assert payload["tools"][0]["parameters"]["properties"]["path"]["type"] == "string"
     assert payload["tool_tokens"] > 0
-    assert payload["tool_selection"] is True
     # The transcript keeps roles, tool calls and the injected-carrier markers.
     roles = [row["role"] for row in payload["messages"]]
     assert roles == ["human", "human", "ai", "tool"]
@@ -382,9 +377,6 @@ def test_inspect_serves_each_row_reasoning(_inspect_env, monkeypatch):
 
     monkeypatch.setattr(service, "read_state_messages", thinking_state)
     monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
-    monkeypatch.setattr(
-        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
-    )
 
     payload = asyncio.run(service.get_context_content("s1"))
 
@@ -403,9 +395,6 @@ def test_inspect_clips_a_giant_message_and_counts_it(_inspect_env, monkeypatch):
 
     monkeypatch.setattr(service, "read_state_messages", huge_state)
     monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
-    monkeypatch.setattr(
-        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
-    )
 
     payload = asyncio.run(service.get_context_content("s1"))
 
@@ -423,9 +412,6 @@ def test_inspect_survives_a_failed_state_read(monkeypatch):
     monkeypatch.setattr(service, "main_llm_context_window", 128_000)
     monkeypatch.setattr(service.state_register_mem, "get_state", lambda sid, key, default=None: "P")
     monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
-    monkeypatch.setattr(
-        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
-    )
 
     payload = asyncio.run(service.get_context_content("s1"))
 

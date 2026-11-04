@@ -25,7 +25,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Context Governance**: oversized tool results and human messages are evicted off the prompt with a recoverable on-disk copy, `read_file` results are sliced, a no-LLM tail clip runs before any compression, and chained summaries are filtered out of the conversation payload
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
-- **Experience Extraction**: three lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
+- **Experience Extraction**: three lifecycle paths turn conversation history into durable experience: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, and the post-compression todo fork. They write to the memory store (`memory` / `user` targets in the SQLite `memory_entries` table), the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 - ▶️ _See the [Experience README](wiki/experience/README.md) for the extraction paths and the skill Curator_
 
@@ -139,7 +139,7 @@ sherry_agent/
 │       ├── python_repl.py  # Python code execution
 │       ├── terminal/       # Terminal + background-task tools
 │       ├── memory.py       # Memory inspection tool
-│       ├── question.py     # HITL multi-choice question prompt
+│       ├── question.py     # HITL structured question prompt (1-4 questions, previews + annotations)
 │       └── message_search.py # Conversation FTS5 search tool
 │
 ├── bus/                    # Message bus (async queues)

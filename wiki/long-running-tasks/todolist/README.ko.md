@@ -392,7 +392,7 @@ WS 이벤트: `todo_updated` (변경 시 푸시) + `todo_refresh` (재연결 시
 
 ### UI 컴포넌트 (ProgressFloat.vue)
 
-- **ProgressFloat.vue**: 채팅의 계획 플로트 — `flow_id`별로 그룹화한 TODO와 TaskFlow 플랫 단계 목록, 기본값은 알약 형태로 접힘. UI에 다른 계획 표시는 없다(입력창 위 dock은 설계에 따라 제거됨).
+- **ProgressFloat.vue**: 채팅의 계획 플로트 — `flow_id`별로 그룹화한 TODO와 TaskFlow 플랫 단계 목록, 기본값은 알약 형태로 접힘. 펼친 헤더에서 **작업 보드**(`TaskFlowBoardPanel.vue`, 세션 단위 오른쪽 사이드바 탭)를 열면 각 흐름의 단계가 상태별 레인으로 배치됩니다. UI에서 계획을 보여 주는 두 번째 면은 이것뿐입니다(입력창 위 dock은 설계에 따라 제거됨).
 
 ### WS 메시지 형식
 

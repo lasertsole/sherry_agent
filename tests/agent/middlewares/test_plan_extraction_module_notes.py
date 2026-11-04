@@ -114,7 +114,7 @@ class TestFactsRendering:
 
         rendered = nudge_mod._render_prompt_facts("{facts_block}")
 
-        assert "(FACTS.md is empty)" in rendered
+        assert "(the facts target is empty)" in rendered
 
     @pytest.mark.asyncio
     async def test_nudge_memory_prompt_carries_facts_context(self, monkeypatch):
@@ -136,7 +136,7 @@ class TestFactsRendering:
         assert len(prompts) == 1
         assert "KNOWN-FACT: test_auth_17 needs network" in prompts[0]
         assert "1,375" in prompts[0]
-        assert "(FACTS.md is empty)" not in prompts[0]
+        assert "(the facts target is empty)" not in prompts[0]
 
     @pytest.mark.asyncio
     async def test_plan_extraction_prompt_carries_facts_context(self, monkeypatch):
@@ -319,14 +319,14 @@ class TestFactsSystemLevelRouting:
         prompt = nudge_mod._MEMORY_REVIEW_PROMPT
 
         assert "SYSTEM-LEVEL or CROSS-PROJECT" in prompt
-        assert "FACTS.md is for SYSTEM-LEVEL facts only" in prompt
+        assert "the 'facts' target is for SYSTEM-LEVEL facts only" in prompt
         assert "Project-specific facts" in prompt
-        assert "remove it from FACTS.md and add it to MEMORY.md" in prompt
+        assert "remove it from 'facts' and add it to 'memory'" in prompt
 
     def test_the_plan_extraction_prompt_requires_system_level_facts(self):
         prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
 
         assert "SYSTEM-LEVEL/CROSS-PROJECT pitfall" in prompt
-        assert "Project-specific pitfall or convention → MEMORY" in prompt
+        assert "Project-specific pitfall or convention → 'memory'" in prompt
         assert "ONLY\nwrite system-level/cross-project facts here" in prompt
-        assert "remove it from FACTS.md" in prompt
+        assert "remove it from 'facts'" in prompt

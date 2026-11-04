@@ -87,7 +87,6 @@ function makeHarness() {
     t: ((key: string) => key) as unknown as Composer['t'],
     getPendingMedia: () => ({ images: [], audios: [], videos: [] }),
     clearMediaSelection: vi.fn(),
-    setTasksTabActive: vi.fn(),
     loadSessionHistory: vi.fn(async () => null),
     drafts: {
       allocateTempId: () => -1,

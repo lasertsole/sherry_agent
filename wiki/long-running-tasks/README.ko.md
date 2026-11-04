@@ -215,7 +215,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 자동 재개 프롬프트 블록 |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | 도구 출력 한 줄 요약 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 연속성 저장 훅 |
-| `append_entries` | `agent/tools/memory.py:281` | MEMORY.md 일괄 추가 |
+| `append_entries` | `agent/tools/memory.py` | `memory` / `user` 대상 일괄 추가(facts는 초과 시 사용량 기준 축출) |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | 세션 보드 읽기(SQL `session_id` 필터) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 실패 분류 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:218,273` | wait_all 재시도 계획/영속화 |

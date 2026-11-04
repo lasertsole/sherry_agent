@@ -4,6 +4,8 @@
 
 이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 해당 턴 자신의 모델과 프리픽스에서 캐시 온존으로 실행), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage(캡처한 압축 컷에 대해 백그라운드 2파 memory review를 실행). 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
+> **저장소 업데이트(2026-11-04):** 아래에서 MEMORY.md / USER.md / FACTS.md라고 부르는 세 메모리 출력은 이제 MesMemory `memory_entries` 테이블의 행(대상 `memory` / `user` / `facts`)입니다. 이전 Markdown 파일은 부팅 시 `memory_migration.py`가 한 번 가져와 `*.md.bak`으로 이름을 바꿉니다. 로더는 `MemoryStore.load_from_store()`이며, 각 행은 `origin_session`(출처)과 `usage_count` / `last_used`(사용 피드백)를 가집니다.
+
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 
 ## 설계 원칙
@@ -123,9 +125,9 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 
 | 저장소 | 경로(상수) | 상한 |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`(`workspace/memory/MEMORY.md`) | 2200자(`MEMORY_TOOL["memory_char_limit"]`) |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"`(`workspace/memory/USER.md`) | 1375자(`MEMORY_TOOL["user_char_limit"]`) |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`(유일한 전역 파일; 4개 언어 템플릿은 `workspace/template/<lang>/FACTS.md`) | 1375자(`MEMORY_TOOL["facts_char_limit"]`); `add`가 상한을 넘으면 가장 오래된 항목부터 제거 |
+| `memory` target | MesMemory `memory_entries` 행(`target='memory'`) | 2200자(`MEMORY_TOOL["memory_char_limit"]`, `/memory/settings`에서 재정의 가능) |
+| `user` target | MesMemory `memory_entries` 행(`target='user'`) | 1375자(`MEMORY_TOOL["user_char_limit"]`, 재정의 가능) |
+| `facts` target | MesMemory `memory_entries` 행(`target='facts'`, 유일한 전역 대상) | 1375자(`MEMORY_TOOL["facts_char_limit"]`, 재정의 가능); `add`가 상한을 넘으면 가장 적게 사용된 항목부터 보관 |
 | plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/` — 아이덴티티 키) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
 | todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |

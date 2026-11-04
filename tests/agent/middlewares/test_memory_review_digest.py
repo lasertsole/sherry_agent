@@ -233,7 +233,7 @@ async def test_the_review_agent_without_a_descriptor_builds_the_env_default(monk
 
 
 @pytest.mark.asyncio
-async def test_the_review_agent_binds_the_sessions_own_tool_face(monkeypatch):
+async def test_the_review_agent_binds_the_process_wide_tool_face(monkeypatch):
     """The tool block is part of the cached prefix: same tools, same order."""
     import models
 
@@ -247,15 +247,11 @@ async def test_the_review_agent_binds_the_sessions_own_tool_face(monkeypatch):
         "agent.get_agent_tools",
         lambda: [_Tool("a"), _Tool("b"), _Tool("c")],
     )
-    monkeypatch.setattr(
-        "agent.middlewares.tool_selection.core.enabled_tool_names",
-        lambda session_id: frozenset({"a", "c"}),
-    )
 
     await nudge_mod._create_memory_review_agent("sess-t", "sys")
 
     names = [tool.name for tool in calls["agent_kwargs"]["tools"]]
-    assert names == ["a", "c"], "the session's face, in the same order"
+    assert names == ["a", "b", "c"], "the process-wide face, in the same order"
 
 
 @pytest.mark.asyncio
@@ -287,9 +283,6 @@ async def test_the_scheduler_passes_the_discarded_slice_through(monkeypatch):
         recorded.append((session_id, list(messages)))
 
     monkeypatch.setattr(nudge_mod, "_run_memory_review", _runner)
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option", lambda *args, **kwargs: True
-    )
     session_id = "mr-" + uuid.uuid4().hex[:8]
     discarded = [HumanMessage(content="bye")]
 
@@ -299,24 +292,6 @@ async def test_the_scheduler_passes_the_discarded_slice_through(monkeypatch):
 
     assert scheduled is True
     assert recorded == [(session_id, discarded)]
-
-
-@pytest.mark.asyncio
-async def test_the_session_switch_off_schedules_nothing(monkeypatch):
-    recorded: list = []
-
-    async def _runner(session_id: str, messages: list) -> None:  # pragma: no cover
-        recorded.append(session_id)
-
-    monkeypatch.setattr(nudge_mod, "_run_memory_review", _runner)
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option", lambda *args, **kwargs: False
-    )
-
-    scheduled = nudge_mod.schedule_memory_review("mr-off", [HumanMessage(content="x")])
-
-    assert scheduled is False
-    assert recorded == []
 
 
 def test_the_cache_read_reads_every_provider_shape():

@@ -88,15 +88,15 @@ class StateKey(StrEnum):
     # Model choice made mid-turn: parked (same semantics as the thinking twin).
     LLM_MAIN_MODEL_PENDING = "llm_main_model_pending"
 
-    # Per-session AGENT CONFIG (the preset Tools/Middlewares/Subagent-models tabs → PUT
+    # Per-session AGENT CONFIG (the preset Agent-models/Skills tabs → PUT
     # /sessions/agent_config): one JSON payload
-    # ``{"tools": [...]|null, "middlewares_disabled": [...],
-    #    "subagent_models": {"<role>": {profile}|null}}``.
-    # ``tools: null`` = every tool enabled, an empty ``middlewares_disabled`` =
-    # every middleware on, a role without a profile = its role ``model_tier``.
+    # ``{"subagent_models": {"<role>": {profile}|null}, "skills": [...]|null}``.
+    # A role without a profile follows its ``model_tier``; ``skills: null`` = every
+    # skill in the prompt index. The built-in tool set and the middleware chain are
+    # not configurable, so the payload carries neither (older values are dropped).
     AGENT_CONFIG = "agent_config"
-    # Choice made mid-turn: parked so the running turn keeps its tool set and
-    # middleware switches; promoted at the turn boundary (same twin pattern).
+    # Choice made mid-turn: parked so the running turn keeps the config it
+    # started with; promoted at the turn boundary (same twin pattern).
     AGENT_CONFIG_PENDING = "agent_config_pending"
 
     # Per-session web-search backend (client UI → /sessions/search_backend):

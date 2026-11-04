@@ -1,7 +1,7 @@
 """Plan-mode session state helpers (shared by the tools + the read sides).
 
 Writes go into BOTH register tiers: the in-memory register so the hot-path
-readers (``ToolSelectionMiddleware``) see a status change immediately, and the
+readers (``PlanModeToolGate``) see a status change immediately, and the
 SQLite register so plan mode survives a restart. Reads prefer the memory tier
 and fall back to the DB (a cold memory tier right after a restart). Every
 accessor is fail-open — a broken register must never break a turn.

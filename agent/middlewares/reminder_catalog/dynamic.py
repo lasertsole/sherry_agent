@@ -28,7 +28,12 @@ from pub.func.message.system_reminder import (
     wrap_reminder,
 )
 
-from .core import clear_session, resolve_injections, transient_source_ids
+from .core import (
+    clear_session,
+    registered_sources,
+    resolve_injections,
+    transient_source_ids,
+)
 
 __all__ = ["DynamicReminderMiddleware"]
 
@@ -75,10 +80,6 @@ class DynamicReminderMiddleware(AgentMiddleware):
     """Inject the live ``<system-reminder>`` layer once per turn."""
 
     async def abefore_model(self, state, runtime=None) -> dict[str, Any] | None:
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the preset Middlewares tab disables this middleware.
         try:
             messages = state.get("messages") if isinstance(state, dict) else None
             if not messages:
@@ -106,12 +107,18 @@ class DynamicReminderMiddleware(AgentMiddleware):
             _TURN_COUNTS[session_id] = turn
 
             transient_ids = transient_source_ids()
+            sources = registered_sources()
             injections = resolve_injections(session_id, state, current_turn=turn)
 
             reminders = [
                 HumanMessage(
                     content=wrap_reminder(source_id, content),
-                    metadata=system_reminder_metadata(source_id),
+                    metadata=system_reminder_metadata(
+                        source_id,
+                        compress_exclude=(
+                            sources[source_id].compress_exclude if source_id in sources else True
+                        ),
+                    ),
                 )
                 # resolve_injections returns high→low (its descending sort is
                 # for budget allocation). Reverse for delivery so the highest

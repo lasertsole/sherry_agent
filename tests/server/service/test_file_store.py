@@ -136,21 +136,21 @@ class TestUpdateVariants:
 class TestServiceWiring:
     def test_memory_write_merges_into_existing(self, tmp_path, monkeypatch):
         from server.service import memory as memory_service
+        import agent.tools.memory as memory_module
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
 
-        fake_dir = tmp_path / "memory"
-        monkeypatch.setattr(memory_service, "MEMORY_DIR", fake_dir)
+        repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+        monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
+        memory_module.memory_store.load_from_store()
 
         memory_service.write_memory_files({"MEMORY.md": "m1"})
         memory_service.write_memory_files({"USER.md": "u1"})  # does not clobber MEMORY.md
 
-        assert (fake_dir / "MEMORY.md").read_text(encoding="utf-8") == "m1"
-        assert (fake_dir / "USER.md").read_text(encoding="utf-8") == "u1"
         assert memory_service.read_memory_files() == {"MEMORY.md": "m1", "USER.md": "u1"}
 
     def test_memory_error_wording(self, tmp_path, monkeypatch):
         from server.service import memory as memory_service
 
-        monkeypatch.setattr(memory_service, "MEMORY_DIR", tmp_path)
         with pytest.raises(ValueError, match="Invalid memory file name: BAD.md"):
             memory_service.write_memory_files({"BAD.md": "x"})
 
@@ -224,7 +224,6 @@ class TestServiceWiring:
         """The allow_empty relaxation is workspace-only: blank memory writes stay refused."""
         from server.service import memory as memory_service
 
-        monkeypatch.setattr(memory_service, "MEMORY_DIR", tmp_path)
         with pytest.raises(ValueError, match="Content is empty for memory file: MEMORY.md"):
             memory_service.write_memory_files({"MEMORY.md": "  "})
 

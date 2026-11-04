@@ -150,7 +150,7 @@
 | 失控循环防护 | 完成门禁、判官预算、drain 与 announce 重试行为 | [失控循环防护](../loop-prevention/README.zh.md) |
 | 上下文引擎 | 只有完成载体写入 MesMemory；子对话仅存在 checkpoint | [Context Engine README](../../context_engine/README.zh.md) |
 | 运行时车道 | `SUBAGENT` 车道限制并发的子运行；超限 spawn 以 `PENDING` 排队 | [失控循环防护](../loop-prevention/README.zh.md) |
-| 记忆文件 | 非空 drain 会重同步 `MEMORY.md` 与 `USER.md`（先读盘再落盘，失败开放） | [子代理系统 README](../../agent/tools/subagent/README.zh.md) |
+| 记忆存储 | 非空 drain 会重载共享 SQLite 记忆存储（`load_from_store()`，失败开放）；没有回写步骤 | [子代理系统 README](../../agent/tools/subagent/README.zh.md) |
 
 ### 🧵 合成聚合
 

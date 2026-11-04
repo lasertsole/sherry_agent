@@ -42,18 +42,18 @@ _MEMORY_REVIEW_PROMPT = (
     "project)? Examples: toolchain behavior ('uv run pytest needs --no-sync'), "
     "environment constraints ('python_repl hits 30s timeout'), generic command "
     "gotchas. (target: 'facts')\n\n"
-    "IMPORTANT: FACTS.md is for SYSTEM-LEVEL facts only — things true in ANY "
-    "project. Project-specific facts (e.g. 'this project uses pnpm') do NOT "
-    "belong in FACTS.md — they go to MEMORY.md or AGENTS.md.\n\n"
+    "IMPORTANT: the 'facts' target is for SYSTEM-LEVEL facts only — things true "
+    "in ANY project. Project-specific facts (e.g. 'this project uses pnpm') do "
+    "NOT belong in 'facts' — they go to 'memory' or the project's AGENTS.md.\n\n"
     "Routing: user preferences and traits go to 'user'; project-specific notes "
     "and conventions go to 'memory'; SYSTEM-LEVEL/CROSS-PROJECT pitfalls go to "
     "'facts' (only if true in ANY project, not just the current one).\n\n"
-    "Current FACTS.md content (target 'facts', limit {facts_limit} chars):\n"
+    "Current 'facts' target content (limit {facts_limit} chars):\n"
     "<facts>\n{facts_block}\n</facts>\n\n"
-    "Maintain FACTS.md like an editor, not an appender: merge entries describing the "
-    "same pitfall, replace outdated ones, and prefer saving nothing over bloating the "
-    "file (prefer nothing over noise). If a fact is project-specific, remove it from "
-    "FACTS.md and add it to MEMORY.md instead.\n\n"
+    "Maintain the 'facts' target like an editor, not an appender: merge entries "
+    "describing the same pitfall, replace outdated ones, and prefer saving nothing "
+    "over bloating the store (prefer nothing over noise). If a fact is "
+    "project-specific, remove it from 'facts' and add it to 'memory' instead.\n\n"
     "If something stands out, save it using the memory tool. "
     "If nothing is worth saving, just say 'Nothing to save.' and stop."
 )
@@ -74,7 +74,7 @@ _SESSION_END_REVIEW_REST_PROMPT = (
 
 
 def _render_facts_context() -> tuple[str, str]:
-    """Return ``(current FACTS.md content, formatted char limit)`` for nudge prompts.
+    """Return ``(current facts-target content, formatted char limit)`` for nudge prompts.
 
     Reads the live content (not the frozen system-prompt snapshot) so a
     compression-time nudge hands the model what the file holds right now.
@@ -82,7 +82,7 @@ def _render_facts_context() -> tuple[str, str]:
     from agent.tools.memory import memory_store
 
     content = memory_store.format_live_content("facts")
-    return content or "(FACTS.md is empty)", f"{memory_store.facts_char_limit:,}"
+    return content or "(the facts target is empty)", f"{memory_store.facts_char_limit:,}"
 
 
 def _render_prompt_facts(template: str) -> str:
@@ -130,7 +130,7 @@ def _render_discarded_text(discarded_messages: Sequence[Any]) -> str:
 # guidance (the former standalone skill-review prompt, merged here and removed
 # as a separate constant) including the module-bound `<module>-notes`
 # carry-forward; Part 3 routes system-level / cross-project pitfalls to the
-# FACTS.md memory target.
+# the facts memory target.
 _PLAN_EXTRACTION_PROMPT = """You are a knowledge extraction and skill maintenance specialist.
 A plan has just been completed. Do THREE things:
 
@@ -327,37 +327,36 @@ Use the skill_manage tool to update or create skills as described above.
 Act on Part 2 only if there is real signal from the plan execution. If
 genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
 
-## Part 3: System-Level Pitfalls → FACTS.md
+## Part 3: System-Level Pitfalls → the 'facts' target
 
 Not every durable lesson is bound to a module or belongs to a skill class.
 SYSTEM-LEVEL pitfalls — toolchain behavior, environment constraints,
 generic command gotchas that ANY project on this machine could hit — are
-kept in FACTS.md, the third memory file, which is injected into every system
-prompt.
+kept in the 'facts' memory target, which is injected into every system prompt.
 
 Judge each candidate against the routing rules:
 - Bound to a specific file / module / test → Part 2 `<module>-notes` skill.
 - About the user (preferences, traits, expectations) → USER.
 - A reusable class of work or technique → Part 2 skill.
-- SYSTEM-LEVEL/CROSS-PROJECT pitfall (true in ANY project) → FACTS.md.
-- Project-specific pitfall or convention → MEMORY (not FACTS.md).
+- SYSTEM-LEVEL/CROSS-PROJECT pitfall (true in ANY project) → 'facts'.
+- Project-specific pitfall or convention → 'memory' (not 'facts').
 
 To write: call the memory tool with target="facts" (actions: add / replace /
 remove). Keep each entry to one short line — symptom plus avoidance. ONLY
 write system-level/cross-project facts here. If a fact is specific to the
-current project, write it to MEMORY.md (target="memory") instead.
+current project, write it to the 'memory' target instead.
 A transient setup failure the user can fix is not durable (see the Do-NOT
 list); a recurring constraint of this environment is.
 
-Current FACTS.md content (target 'facts', limit {facts_limit} chars):
+Current 'facts' target content (limit {facts_limit} chars):
 <facts>
 {facts_block}
 </facts>
 
 Maintain it like an editor: merge entries describing the same pitfall, replace
-outdated ones, and prefer saving nothing over bloating the file (prefer
-nothing over noise). If a fact is project-specific, remove it from FACTS.md
-and add it to MEMORY.md instead.
+outdated ones, and prefer saving nothing over bloating the store (prefer
+nothing over noise). If a fact is project-specific, remove it from 'facts'
+and add it to 'memory' instead.
 
 ## Important
 
@@ -582,15 +581,7 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
     sync compression path outside an async caller) scheduling is skipped
     entirely.
 
-    A session may turn the review OFF (预设-中间件 → Summarization → nudge, the
-    one option a REQUIRED middleware exposes; the service only accepts it beside
-    an enabled ``memory`` tool, which is what the review writes with).
     """
-    from agent.middlewares.agent_switch import middleware_option
-
-    if not middleware_option(session_id, "Summarization", "nudge"):
-        logger.debug("memory review: disabled by the session config ({})", session_id)
-        return False
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -713,18 +704,13 @@ def _session_tool_face(session_id: str) -> list[BaseTool]:
 
     The provider's prefix cache is keyed on the request prefix, and the tool
     block is part of it — a review that binds a different tool list (or a
-    different order) misses the cache at the very first token. The selection
-    middleware narrows the face per session (预设-工具), so the review mirrors it
-    instead of assuming the full list.
+    different order) misses the cache at the very first token. Every main tool
+    is always available now (the per-session tool selection was removed), so the
+    review mirrors the process-wide list verbatim.
     """
     from agent import get_agent_tools
-    from agent.middlewares.tool_selection.core import enabled_tool_names
 
-    enabled = enabled_tool_names(session_id)
-    tools = list(get_agent_tools())
-    if enabled is None:
-        return tools
-    return [tool for tool in tools if getattr(tool, "name", "") in enabled]
+    return list(get_agent_tools())
 
 
 def _build_session_model(session_id: str) -> Any:
@@ -951,19 +937,26 @@ async def _invoke_memory_review(
     session_id: str,
     messages: Sequence[BaseMessage],
     prompt_template: str,
+    *,
+    origin_session: str | None = None,
 ) -> Any:
     """Invoke one memory-review fork under the NUDGE lane.
 
     ``session_id`` is the state identity for the fork (compression uses the main
     session; session-end salvage uses a per-wave derived key so the deleted
-    session's state is never recreated). ``prompt_template`` may contain the
+    session's state is never recreated). ``origin_session`` is the session a
+    written memory entry is stamped with — the salvage passes the REAL session
+    id while its state key stays derived. ``prompt_template`` may contain the
     FACTS placeholders rendered by :func:`_render_prompt_facts`.
     """
     sanitized = sanitize_tool_use_result_pairing(list(messages))
+    review_state: dict[str, Any] = {"session_id": session_id}
+    if origin_session:
+        review_state["memory_origin_session"] = origin_session
     async with lane_slot(LaneType.NUDGE):
         res = await agent.ainvoke(
             input={
-                "session_id": session_id,
+                **review_state,
                 "messages": [
                     *sanitized,
                     HumanMessage(content=_render_prompt_facts(prompt_template)),
@@ -1066,7 +1059,7 @@ def _rebuild_session_end_prompt(session_id: str, fallback: str) -> str:
         from agent.tools.memory import memory_store
         from workspace.prompt_builder import build_system_prompt
 
-        memory_store.load_from_disk()
+        memory_store.load_from_store()
         rebuilt = build_system_prompt(session_id=session_id)
         return rebuilt or fallback
     except Exception:  # noqa: BLE001 - the second wave must still run
@@ -1099,7 +1092,13 @@ async def _run_session_end_wave(
         )
         timeout = max(1.0, float(NUDGE["session_end_review_timeout_s"]))
         await asyncio.wait_for(
-            _invoke_memory_review(agent, derived_session_id, messages, prompt_template),
+            _invoke_memory_review(
+                agent,
+                derived_session_id,
+                messages,
+                prompt_template,
+                origin_session=session_id,
+            ),
             timeout=timeout,
         )
         return True
@@ -1171,18 +1170,6 @@ async def salvage_session_memory(session_id: str) -> bool:
     checkpointer, and never resurrects the deleted session's state.
     """
     if not bool(NUDGE.get("session_end_review_enabled", True)):
-        return False
-    try:
-        from agent.middlewares.agent_switch import middleware_option
-
-        if not middleware_option(session_id, "Summarization", "nudge"):
-            return False
-    except Exception:  # noqa: BLE001 - config resolution must not block deletion
-        logger.debug(
-            "session-end memory review: nudge option unresolved for {}; skipping",
-            session_id,
-            exc_info=True,
-        )
         return False
     try:
         loop = asyncio.get_running_loop()
@@ -1265,7 +1252,7 @@ async def _create_plan_extraction_agent(system_prompt: str):
     The system prompt is kept: the skills index in it decides patch-vs-create.
 
     The tool face is bound to exactly the tools the extraction prompt drives
-    (knowledge write, the skills trio, and ``memory`` for the FACTS.md target) —
+    (knowledge write, the skills trio, and ``memory`` for the facts target) —
     the bound list IS the barrier, so nothing else is even callable. The skills
     toolset deliberately carries NO ``nudge`` marker: the memory review
     (``_NudgeLimitTool()``, the tag-based gate) must not extract skills — the
@@ -1289,7 +1276,7 @@ async def _create_plan_extraction_agent(system_prompt: str):
 
 #: The tools the extraction prompt drives, by name — knowledge write, the
 #: skills-index read / skill read / skill write trio, and ``memory`` (its Part 3
-#: routes system-level pitfalls to the FACTS.md target through that tool).
+#: routes system-level pitfalls to the facts target through that tool).
 _EXTRACTION_TOOL_NAMES = ("knowledge", "skill_list", "skill_view", "skill_manage", "memory")
 
 
@@ -1366,11 +1353,6 @@ async def maybe_trigger_plan_extraction(session_id: str) -> None:
     once-per-cycle flag) so a bail-out never marks a plan as extracted.
     """
     if not session_id or not _PLAN_EXTRACTION_ENABLED:
-        return
-    from agent.middlewares.agent_switch import middleware_option
-
-    if not middleware_option(session_id, "Summarization", "nudge"):
-        logger.debug("plan extraction: disabled by the session config ({})", session_id)
         return
     if state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False):
         return

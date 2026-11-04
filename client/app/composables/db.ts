@@ -4,7 +4,7 @@ import type { MessageItem } from '@/pages/home/type';
 import type { AgentConfig } from './bridge/agent-config';
 import type { SessionModelProfile } from './bridge/session';
 
-/** The preset's agent block (Tools / Middlewares / Agent models) — re-exported for consumers. */
+/** The preset's agent block (Agent models / Skills) — re-exported for consumers. */
 export type { AgentConfig };
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
@@ -247,11 +247,11 @@ export interface PersonaPreset {
    */
   character?: PresetCharacter;
   /**
-   * Agent config captured with the preset (its Tools / Middlewares / Agent models tabs):
-   * the enabled tool list, the disabled middleware names and the per-role model
-   * profiles. Optional — presets saved before those tabs existed carry none, and
-   * applying one writes "every default" (all tools, all switches on, role tiers).
-   * It rides along without a Dexie version bump: it is not an indexed field.
+   * Agent config captured with the preset (its Agent models / Skills tabs): the
+   * per-role model profiles and the skill index selection. Optional — presets
+   * saved before those tabs existed carry none, and applying one writes "every
+   * default" (role tiers, every skill). It rides along without a Dexie version
+   * bump: it is not an indexed field.
    */
   agent?: AgentConfig;
   /**

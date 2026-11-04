@@ -32,9 +32,9 @@ from pub.func.estimate_tokens import estimate_text_tokens
 from pub.func.message.token_truncation import truncate_by_tokens
 
 from config.features import SUMMARIZATION
+from pub.func.message.classify import is_user_message
 from pub.func.message.eviction import EVICTED_TO_KEY
 from pub.func.message.system_reminder import is_system_reminder
-from pub.func.message.workspace_notice import is_workspace_notice
 
 from .state_aliases import _SUMMARY_LC_SOURCE
 from .summary_doc import SummaryDoc, cap_summary_doc, render_summary_markdown
@@ -214,14 +214,23 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     lines: list[str] = []
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if is_workspace_notice(msg) or is_system_reminder(msg):
-            # A workspace notice is a HumanMessage by role but was never written
-            # by the user: labelling it ``[User]`` would put "the branch moved"
-            # into the summary as something the user said.
-            lines.append(f"[System notice]: {content[:500]}")
-        elif isinstance(msg, HumanMessage):
-            text = content[:2000] if len(content) > 2000 else content
-            lines.append(f"[User]: {text}")
+        if isinstance(msg, HumanMessage):
+            # Only a real user turn is labelled ``[User]``. Injected carriers
+            # (reminders, workspace notices, continuation directives, completion
+            # notifications, steering) are all HumanMessages by role but were
+            # never typed by the user; labelling them ``[User]`` puts system
+            # instructions into the summary as things the user said. The one
+            # exception is a reminder that explicitly opts into compression
+            # (continuity_context): it is cross-turn context, not a snapshot.
+            if is_user_message(msg):
+                text = content[:2000] if len(content) > 2000 else content
+                lines.append(f"[User]: {text}")
+            else:
+                meta = getattr(msg, "metadata", None) or {}
+                if is_system_reminder(msg) and meta.get("compress_exclude") is False:
+                    lines.append(f"[Continuity]: {content[:2000]}")
+                else:
+                    lines.append(f"[System notice]: {content[:500]}")
         elif isinstance(msg, AIMessage):
             if content.strip():
                 lines.append(f"[Assistant]: {content[:2000]}")
@@ -249,8 +258,21 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     return "\n\n".join(lines)
 
 
+def _is_compress_excluded_reminder(msg: AnyMessage) -> bool:
+    """True for a reminder whose source declared ``compress_exclude``.
+
+    Old reminders injected before the tag existed carry no ``compress_exclude``
+    key; ``None is True`` is false, so they keep the legacy behavior and are
+    not dropped — one compaction cycle replaces them naturally.
+    """
+    if not is_system_reminder(msg):
+        return False
+    meta = getattr(msg, "metadata", None) or {}
+    return isinstance(meta, dict) and meta.get("compress_exclude") is True
+
+
 def _filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
-    """Filter out previous summary messages to avoid chain summary redundancy.
+    """Filter out previous summary messages and stale reminders.
 
     Removes messages tagged with ``lc_source='summarization'`` — the
     HumanMessage ("What did we do so far?") + AIMessage (summary content)
@@ -259,6 +281,13 @@ def _filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
     ``<prior-summary>`` separately; keeping it in the serialized
     ``<conversation>`` causes token waste and summarizer confusion.
 
+    Also drops catalog reminders whose source declares ``compress_exclude``
+    (the live views re-derived every turn: todo, TaskFlow, boulder, plan mode,
+    project instructions, directory notice, knowledge index). Their content was
+    a snapshot of the turn that injected it and the next turn rebuilds it from
+    live state, so it is pure noise in a summary. ``continuity_context`` opts
+    out and stays.
+
     Mirrors opencode-dev's ``hidden`` set filtering and deepagents'
     ``_filter_summary_messages``.
     """
@@ -266,6 +295,7 @@ def _filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
         m
         for m in messages
         if getattr(m, "additional_kwargs", {}).get("lc_source") != _SUMMARY_LC_SOURCE
+        and not _is_compress_excluded_reminder(m)
     ]
 
 
@@ -289,21 +319,17 @@ def _latest_human_eviction_ref(messages: Sequence[AnyMessage]) -> str:
 
     The field that describes the latest user request carries the request's own
     eviction pointer, so the summary chain never loses the way back to the
-    verbatim text on disk. Summary artifacts (``lc_source="summarization"``)
-    and internal injections (``metadata.internal`` — task-intent steering,
-    subagent completion carriers) are skipped; the first real user message is
-    the latest request — when it is untagged, older evictions do not belong to
-    this field.
+    verbatim text on disk. Summary artifacts, reminders, notices and every
+    other injected carrier are not user requests — ``is_user_message`` is the
+    one positive test for that. The first real user message is the latest
+    request; when it is untagged, older evictions do not belong to this field.
     """
     for msg in reversed(messages):
         if not isinstance(msg, HumanMessage):
             continue
+        if not is_user_message(msg):
+            continue
         kwargs = getattr(msg, "additional_kwargs", {}) or {}
-        if kwargs.get("lc_source") == _SUMMARY_LC_SOURCE:
-            continue
-        meta = getattr(msg, "metadata", {}) or {}
-        if kwargs.get("internal") or meta.get("internal"):
-            continue
         tagged = kwargs.get(EVICTED_TO_KEY)
         if isinstance(tagged, str) and tagged.strip():
             return tagged.strip()
@@ -321,9 +347,11 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
         if isinstance(msg, HumanMessage) and content.strip():
-            # A workspace notice is not a request the user made — it must not
-            # become the summary's Goal (or a "user request" bullet).
-            if not is_workspace_notice(msg):
+            # Only real user turns become the summary's Goal / user-request
+            # bullets. Reminders, notices, continuation directives and every
+            # other injected carrier are HumanMessages by role but were never
+            # typed by the user.
+            if is_user_message(msg):
                 user_requests.append(content[:500])
         elif isinstance(msg, AIMessage):
             if content.strip():

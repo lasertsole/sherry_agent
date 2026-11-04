@@ -43,9 +43,12 @@ from typing import Any
 
 import json5
 
+from config._home import resolve_app_home
+
 _CODE_ROOT = Path(__file__).resolve().parents[1]
-_APP_HOME_RAW = os.environ.get("SHERRY_HOME", "").strip()
-APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _CODE_ROOT
+# Honours ``--sherry-home`` (the packaged shell's only home channel) — see
+# config/_home.py. Reading the env alone pointed this file into the bundle.
+APP_HOME = resolve_app_home(_CODE_ROOT)
 
 MODELS_CONFIG_PATH = APP_HOME / ".models"
 MODELS_CONFIG_TEMPLATE = _CODE_ROOT / ".models.example"

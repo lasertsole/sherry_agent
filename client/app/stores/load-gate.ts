@@ -40,7 +40,7 @@ export interface LoadWarning {
 export function loadWarningText(cpu: number, ram: number): string {
   const t = resolveRuntimeT();
   const key = 'loadGate.warning';
-  if (!t) return `主机负载过高，子代理派发已暂缓（CPU ${cpu}% / 内存 ${ram}%）`;
+  if (!t) return `Host load is too high (CPU ${cpu}% / RAM ${ram}%)`;
   const text = t(key, { cpu, ram });
   return text === key ? `CPU ${cpu}% / RAM ${ram}%` : text;
 }

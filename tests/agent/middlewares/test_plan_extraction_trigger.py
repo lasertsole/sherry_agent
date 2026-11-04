@@ -80,10 +80,6 @@ def base(monkeypatch: pytest.MonkeyPatch, fake_db: _FakeStateDB):
         state["todos"] = todos
         monkeypatch.setattr(todo_store, "get_todos_sync", lambda session_id: list(state["todos"]))
 
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option",
-        lambda *args, **kwargs: True,
-    )
     monkeypatch.setattr(nudge_mod, "_PLAN_EXTRACTION_ENABLED", True)
     state["set_todos"] = _set_todos
     return state
@@ -197,20 +193,6 @@ async def test_an_in_flight_extraction_blocks_a_second_fork(patched, sid):
         await _settle()
     finally:
         state_register_mem.clear_session(sid)
-
-    assert patched["forked"] == []
-
-
-@pytest.mark.asyncio
-async def test_the_session_nudge_switch_off_stops_the_fork(patched, sid, monkeypatch):
-    patched["set_todos"]([_todo("a")])
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option",
-        lambda *args, **kwargs: False,
-    )
-
-    await nudge_mod.maybe_trigger_plan_extraction(sid)
-    await _settle()
 
     assert patched["forked"] == []
 

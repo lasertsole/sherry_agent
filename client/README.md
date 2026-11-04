@@ -111,6 +111,8 @@ client/
 │   │   ├── sessionFilter.ts       # Client-side session list filter (keyword + date range)
 │   │   ├── useImagePreview.ts     # Image preview overlay state
 │   │   ├── useSubagentTasks.ts    # Background-task facade (Pinia store + fetch/WS/Dexie sync)
+│   │   ├── use-subagent-activity.ts # One run's activity state: the record, its child session and the steer call
+│   │   ├── use-trajectory-stream.ts # One session's live trajectory WS (ready snapshot + per-event frames, event-id merge, 2s reconnect)
 │   │   ├── utils.ts               # max/min + date/time utilities
 │   │   ├── mitt.ts                # mitt event bus instance
 │   │   ├── ws-ticket.ts           # Single-use WebSocket ticket prefetch (lazy import keeps the socket layer out of the auth bridge)
@@ -140,7 +142,7 @@ client/
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
-│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands / background commands of the session (the badge counts all three); a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │           ├── TasksButton.vue            # Toolbar terminal entry: the session's agents / running commands / background commands (the badge counts all three); each agent row carries a status glyph, role and task summary, finished runs sit behind an Ended toggle, a row opens its agent-activity tab (a command scrolls to its tool card), and the footer opens the session activity overview
 │   │   ├── SafetyFilterPanel.vue# System-config tab: live-stream master switch, LLM review (off without a model), keyword rules editor + test scan, recent filter events
 │   │   ├── OnboardingDialog.vue# First-run tour (welcome → preset → core controls → ready) that creates the session from the chosen preset; shown once via the persisted onboarding_completed flag
 │   │   ├── ShortcutSettingsSection.vue# Shortcut-bindings tab of the system settings: live chords, capture-to-rebind, conflict check, restore defaults
@@ -149,10 +151,14 @@ client/
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions); its right edge is a drag handle (280px floor, half the viewport, persisted)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels; the row context menu offers open / open with / open in browser / reveal / copy absolute+relative path / add to chat)
-│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
+│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; READ-ONLY — the branch label is text and the row menu only copies; a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
 │   │           ├── TrajectoryPanel.vue       # 当前会话 tab: the per-turn trajectory ledger (GET /sessions/:id/trajectory, rows grouped by turn, re-sorted and paged client-side)
+│   │           ├── SubagentActivityPanel.vue # Right-sidebar agent-activity tab: header + live trajectory / run summary / steer
+│   │           ├── SubagentTrajectory.vue    # The activity tab's live timeline: the child session's trajectory over the trajectory WS channel
+│   │           ├── TaskFlowBoardPanel.vue     # Right-sidebar task board: overall progress + one swimlane per non-empty status per active flow
+│   │           ├── SessionActivityPanel.vue   # Right-sidebar session overview: collapsible TaskFlow / sub-agents / foreground tools sections
 │   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch). The address bar suggests the persistent visit history (Dexie, survives a restart) with fuzzy URL/title matching
 │   │           ├── BrowserHistoryDropdown.vue # The address bar's history dropdown: recent/suggested visits with favicon, title, relative age and a clear action
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
@@ -162,7 +168,7 @@ client/
 │   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, 国际化, 快捷键)
 │   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
-│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
+│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / agent models / skills + presets)
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
 │   │           ├── SessionPresetPanel.vue     # 当前会话 tab: the session's own preset, read-only (代理模型 leads its tab strip)
 │   │           ├── NewSessionPresetDialog.vue # Mandatory preset-choice dialog behind every 新建对话 (applies the preset, then creates the session)
@@ -183,10 +189,6 @@ client/
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
 │   │           ├── GChart.vue                 # @antv/g2 chart wrapper
-│   │           ├── SubagentTasksView.vue      # Background tasks view (flow graph + selected run detail), hosted by the task-detail tab
-│   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
-│   │           ├── SubagentRunDetail.vue      # Single subagent run detail
-│   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
 │   │           ├── TokenBudgetPanel.vue      # Session-scoped tab (opened from the context ring's popover): the open session's token cap, usage/cost readout and reset (GET/POST /sessions/budget)
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置: the finish-replay allowlist editor (GET/PUT /sherry-config/list/<key>, add/remove executable names)
 │   │           ├── CudaPackCard.vue          # 模型配置: the optional CUDA pack card (Linux only — detect, download with resume, then restart the backend)
@@ -212,7 +214,7 @@ client/
 │   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
-│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
+│   │   ├── agent-config.ts     # Preset agent config (agent models / skills) per session; required skills stay locked. Tools and the middleware chain are not configurable
 │   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + flat steps, refreshed by taskflow_updated)
 │   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)

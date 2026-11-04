@@ -129,7 +129,14 @@ class PatchFileTool(BaseTool):
         "Uses fuzzy matching to handle minor whitespace/indentation differences. "
         "Prefer this over write_file for targeted edits."
     )
-    metadata: dict = {"idempotent": False, "side_effect_scope": "workspace"}
+    metadata: dict = {
+        "idempotent": False,
+        "side_effect_scope": "workspace",
+        # A successful source edit is real progress: ToolGuardrails releases
+        # every block it accumulated from the stale pre-edit probing so the
+        # agent can verify the new candidate instead of being locked out.
+        "clears_guardrail_blocks": True,
+    }
 
     # ── shared core ────────────────────────────────────────────────────────
 

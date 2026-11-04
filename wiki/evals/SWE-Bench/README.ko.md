@@ -25,6 +25,11 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 - 리포트는 `evals/results/swebench/<run_id>/eval_report.json`; 인스턴스 diff는 같은
   디렉터리에 있습니다.
 
+- 2026-11-04부터 작업 prompt에는 인스턴스의 test patch와 FAIL_TO_PASS 이름이
+  (읽기 전용으로) 포함됩니다. checkout은 미리 패치되지 않으며, 공식 test patch는
+  기존처럼 판정 시 적용되고 인스턴스 리포트는 `target_tests_exposed`를
+  기록합니다.
+
 ## 실패 이력(2026-11-01)
 
 | 실행 | Arm | 결과 | 무슨 일이 있었나 |
@@ -33,6 +38,14 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 | 2026-11-01 002305 | delegate-only | 2/2 깨끗 | 메인에 직접 도구 없음; 자식이 구현·검증 |
 | 2026-11-01 143952 | 첫 소프트 게이트(10/20) | 1/2 | 게이트가 spawn을 강제한 뒤 메인이 patch를 반복해 P2P 파괴 |
 | 2026-11-01 174750 | 소프트 게이트(8/16, 누적) | 2/2 깨끗 | 16회 읽기 후 메인의 읽기/쓰기 차단, 구현 위임 |
+| 2026-11-03 010944 | 7/14 조언형(누적) | 0/2 | Django는 조건만 바꿔 고유 제약 오류가 남았고, Sympy는 diff 없이 90회 호출 예산을 소진 |
+| 2026-11-03 194320 | 네트워크 브리지 + 시그니처 연속(Sympy만) | 0/1 | 비어 있지 않은 diff지만 `test_pretty_sqrt` P2P 회귀. 연속 경고는 WARN뿐이며 90회 예산 소진 |
+| 2026-11-03 203547 | + 정확한 시그니처 BLOCK(Sympy만) | 0/1 | 약 20회에서 차단이 작동했지만 agent는 `probe1.py`…`probe19.py`(출력 동일·인자 상이)로 전환해 90회를 모두 소진 |
+| 2026-11-03 205218 | + 결과 반복(Sympy만) | 0/1 | terminal/python_repl이 6회 동일 결과에서 차단됨. agent는 72/90에서 patch했고 이후 검증할 수 없었음 |
+| 2026-11-03 210023 | + patch_file 성공 시 차단 해제(Sympy만) | 0/1 | 28회의 깨끗한 실행으로 가드 미작동. P2P 통과, F2P는 NumberSymbol vs Symbol의 숨은 의미론을 놓침(기존 `test_issue_6285`는 이전 동작을 단언) |
+| 2026-11-04 003521 | + 대상 테스트를 prompt에 제시(HARD 2) | 0/2 | 테스트는 보이지만 실행할 수 없어 두 인스턴스 모두 90회를 소진 |
+| 2026-11-04 004714 | + 대상 테스트를 checkout에 사전 적용(HARD 2) | 1/2 | Django 통과. Sympy는 `e.is_Symbol`(`1/x_17`에는 오류)을 사용해 repro 스크립트에서 루프 |
+| 2026-11-04 005721 | 실패 후 지시 강화(Sympy만) | 0/1 | 같은 잘못된 조건. F2P는 0 |
 
 ## 드러난 문제
 
@@ -56,8 +69,8 @@ FAIL_TO_PASS / PASS_TO_PASS로 판정합니다. 답하는 질문은 "이 agent�
 ### 현재 해결
 
 1. **수정됨.** `IterationBudget`은 모델 호출당 1단위; 도구 결과는 무료.
-2. **완화됨.** `DelegationPressureGate`는 7회 읽기에서 `<system-reminder>` 경고, 14회에서 escalated 버전을 주입하며 `terminal`/읽기 도구는 계속 사용 가능합니다. `ToolGuardrails`는 비멱등 terminal을 해시하지 않으며 읽기 전용 명령 분류기는 미구현.
-3. **부분 완화.** escalated 리마인더는 14회에서 `sessions_spawn`을 권하지만 더 이상 도구를 차단하지 않습니다. 대상 테스트 실행을 요구하는 전용 검증 게이트는 미구현.
+2. **수정됨.** `ToolGuardrails`에 상태 무관 시그니처 연속(도구 + 인자 해시, 3회 동일 호출, terminal은 자체 metadata의 5회)을 추가해 턴당 최대 3회 경고한 뒤 그 정확한 시그니처를 차단합니다. 비멱등 도구의 결과 반복(3회 경고, 6회 연속 동일 결과 시 도구 차단)도 있습니다. `patch_file` 성공 시(metadata `clears_guardrail_blocks`) 차단·연속·실패 카운터를 지워 검증을 재개할 수 있습니다. 읽기 전용 명령 분류기는 필요 없습니다.
+3. **도구 가드에 의한 완화이며 하드 종료 게이트는 아님.** 차단된 시그니처는 다른 접근을 강제하고, 20261103_210023 Sympy 실행은 28회 모델 호출로 수렴해 인접 테스트 파일을 실행했으며 prompt도 이를 요구합니다. 독립적인 '종료 전 테스트 통과 필수' 게이트는 없습니다.
 4. **미해결.** harness는 `changed_paths`를 기록하지만 `tests/` 편집을 invalid로 만들지 않음. 소프트 게이트는 확률을 낮출 뿐 공식 가드가 아님.
 5. **부분 완화.** escalated 리마인더는 spawn 후 메인의 patch 루프를 멈추고 구현을 위임하도록 권하지만 "종료 전 테스트 통과 필수" 하드 게이트는 없음.
 6. **부분 수정.** 턴당 token 예산은 메인 + 모든 깊이의 자손을 루트 턴에 귀속. eval 리포트는 여전히 메인 session만 세고, 자식 checkpoint/결과 읽기는 미해결.
@@ -93,7 +106,7 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 ## 현재 설계: DelegationPressureGate(7/14 조언형)
 
 2026-11-01 실행은 이전 8/16 하드 차단 버전을 측정한 것이며, 아래의 7/14
-조언형 동작은 2026-11-02에 충돌을 해소해 확정한 설계입니다.
+조언형 동작은 2026-11-02에 충돌을 해소해 확정한 설계입니다. 2026-11-03의 0/2 재실행이 첫 측정이며 HARD 슬라이스를 해결하지 못했습니다 — `evals/swebench/RESULTS.md` 참조.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
@@ -108,11 +121,28 @@ old_string/new_string, 느슨한 매칭, stale-write CAS로 교체하며 사전 
 메인 에이전트에만 설치되며, 자식 미들웨어 빌더는 추가하지 않고 `_active`도
 `:subagent:`/`:swarm:` 세션을 거부합니다.
 
+## 네트워크 상태 브리지
+
+실패가 네트워크 성격인 terminal 명령은 이제 도구 오류가 됩니다: `curl` / `wget` /
+`http` / `https` / `ssh` / `scp` / `sftp` / `ping` / `dig` / `nslookup`의 비영
+종료, 또는 `git clone|fetch|pull|push|ls-remote|remote|submodule`의 비영 종료는
+`ToolException`을 발생시킵니다. `handle_tool_error`가 이를
+`ToolMessage(status="error")`로 바꾸므로 exact-failure 카운터가 인식합니다. 로컬
+명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로
+반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도
+동일하게 raise합니다.
+
+eval harness는 실행 전에 GitHub를 프로브하고, 도달할 수 없으면 시드된
+`AGENTS.md`에 "네트워크를 계속 탐색하지 말라"는 directive를 추가합니다. 이것이
+Sympy의 curl/GitHub 탐색 루프를 제거했습니다. 남은 Sympy F2P 실패는
+NumberSymbol vs Symbol의 숨은 테스트 의미론이며 네트워크 탐색이 아닙니다.
+
 ## 결과
 
 | Arm | Resolved | 시간 | 메인 session tokens | 추정 비용 |
 | :--- | :--- | :--- | :--- | :--- |
 | `DelegationPressureGate` 8/16(run 20261101_174750) | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| `DelegationPressureGate` 7/14 조언형(run 20261103_010944) | 0/2 | 669.7s | 8,370,656 / 31,119 | $4.232 |
 | Delegate-only(run 20261101_145717) | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
 
 Django는 제품 코드와 릴리스 문서만 바꿨고, Sympy는 라이브러리 파일 하나만 바꿨습니다.

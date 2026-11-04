@@ -86,17 +86,17 @@ def _tool_call_result(args: dict, call_id: str) -> ChatResult:
 
 @pytest.fixture
 def isolated_facts(tmp_path, monkeypatch):
-    """Point a fresh store at a tmp memory dir seeded with three facts entries."""
-    mem_dir = tmp_path / "memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
-    (mem_dir / "FACTS.md").write_text(
-        "\n§\n".join(["pitfall A (old)", "pitfall B", "outdated C"]), encoding="utf-8"
-    )
-    monkeypatch.setattr(memory_module, "MEMORY_DIR", mem_dir)
+    """Point a fresh store at a temp database seeded with three facts entries."""
+    from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+    repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+    for content in ("pitfall A (old)", "pitfall B", "outdated C"):
+        repo.add_entry("facts", content)
+    monkeypatch.setattr(memory_module, "memory_entry_repo", repo)
     store = MemoryStore()
-    store.load_from_disk()
+    store.load_from_store()
     monkeypatch.setattr(memory_module, "memory_store", store)
-    return mem_dir
+    return repo
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_memory_review_merges_and_prunes_facts(isolated_facts, monkeypatch
 
     await nudge_mod._nudge_memory("sess-facts-editor", "sys", [HumanMessage("hi")])
 
-    text = (isolated_facts / "FACTS.md").read_text(encoding="utf-8")
+    text = memory_module.memory_store.format_live_content("facts")
     assert "pitfall A and B merged" in text
     assert "pitfall B" not in text
     assert "outdated C" not in text

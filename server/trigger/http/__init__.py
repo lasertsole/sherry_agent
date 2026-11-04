@@ -7,6 +7,7 @@ import server.trigger.http.image
 import server.trigger.http.audio
 import server.trigger.http.video
 import server.trigger.http.skills
+import server.trigger.http.custom_commands
 import server.trigger.http.logs
 import server.trigger.http.curator
 import server.trigger.http.channels
@@ -22,6 +23,7 @@ import server.trigger.http.code_embedder  # noqa: F401  (side-effect route regis
 import server.trigger.http.model_downloads  # noqa: F401  (side-effect route registration)
 import server.trigger.http.network_config
 import server.trigger.http.memory
+import server.trigger.http.memory_entries  # noqa: F401  (side-effect route registration)
 import server.trigger.http.heartbeat
 import server.trigger.http.cron
 import server.trigger.http.subagent  # noqa: F401  (side-effect route registration)

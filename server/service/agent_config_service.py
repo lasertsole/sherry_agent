@@ -1,22 +1,26 @@
-"""Per-session agent configuration — 预设 的四栏（工具 / 中间件 / 子代理模型 / 技能）。
+"""Per-session agent configuration — 预设 的两栏（子代理模型 / 技能）。
 
 One JSON payload under ``StateKey.AGENT_CONFIG`` (parked twin
 ``AGENT_CONFIG_PENDING`` for a mid-turn write, promoted by the same
 ``turn_runner.on_turn_finished`` hook as the model/thinking controls)::
 
     {
-      "tools": ["read_file", ...] | null,        # null = every tool enabled
-      "middlewares_disabled": ["TaskIntentMiddleware"],   # [] = every switch on
       "subagent_models": {"researcher": {<profile>} | null},
       "skills": ["skill-a", ...] | null          # null = every skill in the index
     }
 
-Validation is the whole point of this module: a payload naming an unknown tool,
-skill or role, or a REQUIRED middleware, is rejected loudly (400), so a typo can
-never silently widen what a session may do. ``subagent_models`` descriptors go
-through the same sanitizer the main-model override uses (``model`` required,
-optional fields whitelisted), which means a role can point at another provider /
-key, not merely at another model name.
+The built-in TOOL set and the middleware chain are build-time contracts now:
+every main tool is always available and every registered middleware always runs,
+so the payload no longer carries ``tools`` / ``middlewares_disabled`` /
+``middleware_options`` (old presets may still hold them; unknown keys are
+dropped).
+
+Validation is the whole point of this module: a payload naming an unknown skill
+or role is rejected loudly (400), so a typo can never silently widen what a
+session may do. ``subagent_models`` descriptors go through the same sanitizer
+the main-model override uses (``model`` required, optional fields whitelisted),
+which means a role can point at another provider / key, not merely at another
+model name.
 
 ``skills`` is the one field that changes the SYSTEM PROMPT (the
 ``<available_skills>`` index), which ``system_prompt_injection`` caches per
@@ -45,45 +49,16 @@ __all__ = [
 
 #: Top-level payload keys (unknown keys are rejected).
 _CONFIG_FIELDS = (
-    "tools",
-    "middlewares_disabled",
     "subagent_models",
     "skills",
-    "middleware_options",
 )
 
-#: Per-middleware options a REQUIRED entry exposes (middleware -> option -> default).
-#: Required entries cannot be switched off, so their tuning rides here instead;
-#: ``Summarization``'s nudge is the first (a second option means a new row here).
-_MIDDLEWARE_OPTIONS: dict[str, dict[str, bool]] = {
-    "Summarization": {"nudge": True},
-}
+#: Keys an older preset/client may still send; accepted and DROPPED.
+_LEGACY_FIELDS = frozenset({"tools", "middlewares_disabled", "middleware_options"})
 
 
 class AgentConfigError(ValueError):
     """A rejected payload — the HTTP layer turns it into a 400."""
-
-
-def _tool_names() -> set[str]:
-    """Every main-agent tool name (the catalogue's own list)."""
-    from agent.tools.catalog import tool_catalog
-
-    names = {entry["name"] for entry in tool_catalog()}
-    if names:
-        return names
-    # A stubbed ``agent.tools`` (a test process that installs sys.modules stubs)
-    # would whitelist NOTHING and reject every payload; fall back to the static
-    # group map, which is the catalogue's own name source.
-    from agent.tools.catalog import TOOL_GROUPS
-
-    return {name for names_in_group in TOOL_GROUPS.values() for name in names_in_group}
-
-
-def _required_tool_names() -> set[str]:
-    """Tools every payload must keep (the catalogue's own required set)."""
-    from agent.tools.catalog import REQUIRED_TOOLS
-
-    return set(REQUIRED_TOOLS)
 
 
 def _skill_names() -> set[str]:
@@ -119,18 +94,6 @@ def invalidate_session_prompt(session_id: str) -> None:
             logger.exception("agent_config: failed to clear the cached system prompt")
 
 
-def _gateable_middleware_names() -> set[str]:
-    from agent.middlewares.catalog import GATEABLE_MIDDLEWARES
-
-    return set(GATEABLE_MIDDLEWARES)
-
-
-def _middleware_names() -> set[str]:
-    from agent.middlewares.catalog import MIDDLEWARE_ORDER
-
-    return set(MIDDLEWARE_ORDER)
-
-
 def _role_names() -> set[str]:
     from agent.tools.subagent.types.functional_role import FunctionalRole
 
@@ -152,56 +115,20 @@ def _clean_profile(role: str, profile: object) -> dict[str, str] | None:
 def sanitize_agent_config(payload: object) -> dict[str, Any]:
     """Validate + normalize one payload (raises :class:`AgentConfigError`).
 
-    Only the fields present are kept: an absent field means "no opinion" (every
-    tool on / every switch on / role tiers), so a partial payload can be sent.
+    Only the fields present are kept: an absent field means "no opinion" (role
+    tiers / every skill in the index), so a partial payload can be sent.
     """
     if not isinstance(payload, dict):
         raise AgentConfigError("agent config must be an object")
+    # The removed per-session knobs (every tool is always available now and the
+    # middleware chain cannot be switched) are DROPPED, not rejected: a preset
+    # saved by an older client still carries them, and a re-apply must not 400.
+    payload = {key: value for key, value in payload.items() if key not in _LEGACY_FIELDS}
     unknown = sorted(set(payload) - set(_CONFIG_FIELDS))
     if unknown:
         raise AgentConfigError(f"unknown field(s): {', '.join(unknown)}")
 
     cleaned: dict[str, Any] = {}
-
-    if "tools" in payload:
-        tools = payload["tools"]
-        if tools is None:
-            cleaned["tools"] = None
-        else:
-            if not isinstance(tools, list) or any(not isinstance(t, str) for t in tools):
-                raise AgentConfigError("'tools' must be a list of names or null")
-            known = _tool_names()
-            from agent.tools.catalog import canonical_tool_name
-
-            wanted = [canonical_tool_name(t.strip()) for t in tools if t.strip()]
-            missing = sorted(set(wanted) - known)
-            if missing:
-                raise AgentConfigError(f"unknown tool(s): {', '.join(missing)}")
-            # REQUIRED tools can never be left out (the Tools tab shows them locked).
-            dropped_required = sorted(_required_tool_names() - set(wanted))
-            if dropped_required:
-                raise AgentConfigError(
-                    f"required tool(s) cannot be disabled: {', '.join(dropped_required)}"
-                )
-            # Dedup, keep the caller's order (the UI sends catalogue order).
-            cleaned["tools"] = list(dict.fromkeys(wanted))
-
-    if "middlewares_disabled" in payload:
-        disabled = payload["middlewares_disabled"]
-        if not isinstance(disabled, list) or any(not isinstance(m, str) for m in disabled):
-            raise AgentConfigError("'middlewares_disabled' must be a list of names")
-        known = _middleware_names()
-        gateable = _gateable_middleware_names()
-        wanted = [m.strip() for m in disabled if m.strip()]
-        unknown_mw = sorted(set(wanted) - known)
-        if unknown_mw:
-            raise AgentConfigError(f"unknown middleware(s): {', '.join(unknown_mw)}")
-        locked = sorted(set(wanted) - gateable)
-        if locked:
-            raise AgentConfigError(
-                f"middleware(s) cannot be disabled (system-required): {', '.join(locked)}"
-            )
-        cleaned["middlewares_disabled"] = list(dict.fromkeys(wanted))
 
     if "skills" in payload:
         skills = payload["skills"]
@@ -217,7 +144,7 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
                 raise AgentConfigError(f"unknown skill(s): {', '.join(unknown_skills)}")
             # The multimedia chain is REQUIRED (locked in the UI). The union in
             # workspace.prompt_builder covers older register values; a NEW payload
-            # that omits one is refused outright, mirroring the required tools.
+            # that omits one is refused outright.
             dropped_skills = sorted(_required_skill_names() - set(wanted_skills))
             if dropped_skills:
                 raise AgentConfigError(
@@ -225,37 +152,6 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
                 )
             # An EMPTY list is a legal, explicit choice: no skill in the index.
             cleaned["skills"] = list(dict.fromkeys(wanted_skills))
-
-    if "middleware_options" in payload:
-        options = payload["middleware_options"]
-        if not isinstance(options, dict):
-            raise AgentConfigError("'middleware_options' must be an object")
-        unknown_mw = sorted(set(options) - set(_MIDDLEWARE_OPTIONS))
-        if unknown_mw:
-            raise AgentConfigError(f"unknown middleware option section(s): {', '.join(unknown_mw)}")
-        cleaned_options: dict[str, dict[str, bool]] = {}
-        for middleware, section in options.items():
-            if not isinstance(section, dict):
-                raise AgentConfigError(f"middleware_options.{middleware} must be an object")
-            known = _MIDDLEWARE_OPTIONS[middleware]
-            unknown = sorted(set(section) - set(known))
-            if unknown:
-                raise AgentConfigError(f"unknown option(s) for {middleware}: {', '.join(unknown)}")
-            entry: dict[str, bool] = {}
-            for option, value in section.items():
-                if not isinstance(value, bool):
-                    raise AgentConfigError(
-                        f"middleware_options.{middleware}.{option} must be a boolean"
-                    )
-                entry[option] = value
-            cleaned_options[middleware] = entry
-        # The nudge writes to memory with the `memory` tool: enabling it while the
-        # payload switches that tool off is a contradiction, not a preference.
-        nudge = cleaned_options.get("Summarization", {}).get("nudge")
-        tools_list = cleaned.get("tools")
-        if nudge is True and isinstance(tools_list, list) and "memory" not in tools_list:
-            raise AgentConfigError("Summarization.nudge requires the 'memory' tool to be enabled")
-        cleaned["middleware_options"] = cleaned_options
 
     if "subagent_models" in payload:
         models = payload["subagent_models"]
@@ -286,18 +182,11 @@ def get_agent_config_state(session_id: str) -> dict[str, Any]:
     parked, parked_value = _pending_value(session_id, StateKey.AGENT_CONFIG_PENDING)
     value = parked_value if parked else _read_value(session_id, StateKey.AGENT_CONFIG)
     config = dict(value) if isinstance(value, dict) else {}
-    tools = config.get("tools")
-    if isinstance(tools, list):
-        from agent.tools.catalog import canonical_tool_name
-
-        # A config stored before a tool merge still names the old tools; the
-        # UI catalogue only knows the current names, so read through the same
-        # alias map the hot path uses.
-        config["tools"] = list(
-            dict.fromkeys(
-                canonical_tool_name(name) for name in tools if isinstance(name, str) and name
-            )
-        )
+    # An older preset may still carry the removed ``tools`` /
+    # ``middlewares_disabled`` / ``middleware_options`` keys; the effective
+    # config drops them so a reader never mistakes them for live switches.
+    for removed in ("tools", "middlewares_disabled", "middleware_options"):
+        config.pop(removed, None)
     return {"config": config, "pending": parked}
 
 
@@ -306,7 +195,7 @@ async def apply_agent_config_choice(session_id: str, payload: object) -> tuple[d
 
     Validated up front (a rejected payload never touches the registers), then
     applied under the shared session lock: while a turn is in flight the choice
-    is PARKED so the running turn keeps the tool set it started with, and the
+    is PARKED so the running turn keeps the config it started with, and the
     turn boundary promotes it (the same contract as the model/thinking twins).
     """
     from server.service.session_settings_service import (
@@ -338,12 +227,9 @@ async def apply_agent_config_choice(session_id: str, payload: object) -> tuple[d
     if not pending:
         invalidate_session_prompt(session_id)
     logger.info(
-        "Agent config {} for session {}: tools={} middlewares_disabled={} "
-        "subagent_models={} skills={}",
+        "Agent config {} for session {}: subagent_models={} skills={}",
         "parked" if pending else "applied",
         session_id,
-        None if cleaned.get("tools") is None else len(cleaned["tools"]),
-        len(cleaned.get("middlewares_disabled") or []),
         len(cleaned.get("subagent_models") or {}),
         None if cleaned.get("skills") is None else len(cleaned["skills"]),
     )

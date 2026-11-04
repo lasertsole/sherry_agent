@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { parseSessionCreateTime, matchesSessionFilter, filterSessions } from '../sessionFilter';
+import { parseSessionCreateTime, matchesSessionFilter, filterSessions, sortPinnedFirst } from '../sessionFilter';
 
 /** Local placeholder session format (the format written by SessionSidebar.handleCreateSession) */
 const LOCAL_FORMAT = 'YYYY-MM-DD HH:mm';
 
-/** Constructs a minimal session record (fields relevant to SessionRecord filtering) */
+/**
+ * Constructs a minimal session record (fields relevant to SessionRecord filtering)
+ * @param title
+ * @param createTime
+ */
 function makeSession(title: string, createTime: string) {
   return { id: `${title}-${createTime}`, title, createTime };
 }
@@ -117,5 +121,24 @@ describe('filterSessions', () => {
     const range = [new Date(2026, 5, 21), new Date(2026, 5, 21)];
     expect(filterSessions(list, 'detective', range)).toEqual([list[0]]);
     expect(filterSessions(list, 'old', range)).toEqual([]);
+  });
+});
+
+describe('sortPinnedFirst', () => {
+  const rows = [
+    makeSession('a', '2026-06-21 00:01'),
+    makeSession('b', '2026-06-21 00:02'),
+    makeSession('c', '2026-06-21 00:03')
+  ];
+
+  it('moves pinned rows first and keeps the order inside each group', () => {
+    const sorted = sortPinnedFirst(rows, [rows[2]!.id, rows[0]!.id]);
+
+    expect(sorted.map(row => row.title)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('returns the same array reference when nothing is pinned', () => {
+    expect(sortPinnedFirst(rows, [])).toBe(rows);
+    expect(sortPinnedFirst(rows, ['missing'])).toBe(rows);
   });
 });

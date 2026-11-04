@@ -308,7 +308,9 @@ async def _maybe_route_third_path(run: SubagentRunRecord, result: AnnounceDelive
         logger.warning("Third-path injection skipped for run {}: {}", run.run_id, exc)
 
 
-async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliveryResult:
+async def _deliver_subagent_announcement_impl(
+    run: SubagentRunRecord,
+) -> AnnounceDeliveryResult:
     """Deliver a sub-agent's completion announcement with idempotency, suspension, and retry logic."""
     config = get_config()
 
@@ -394,6 +396,65 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
             set_run_durable(updated)
             result.suspended = True
 
+    return result
+
+
+async def deliver_subagent_announcement(
+    run: SubagentRunRecord, *, _from_effects: bool = False
+) -> AnnounceDeliveryResult:
+    """Public entry point; optionally hands delivery to the effect worker.
+
+    With the execution flags on, a call is ENQUEUED and answered as accepted;
+    the worker later calls this function again with ``_from_effects=True`` so
+    the existing delivery body runs (its registry idempotency still guarantees
+    exactly-once visible delivery). Shadow mode records the intent and runs the
+    original body unchanged.
+    """
+    shadow_id: int | None = None
+    shadow_generation: int | None = None
+    if not _from_effects:
+        from runtime.effects import intent_log
+        from runtime.effects.config import (
+            effects_execution_enabled,
+            effects_shadow_enabled,
+        )
+
+        payload = {
+            "run_id": run.run_id,
+            "session_key": run.requester_session_key,
+            "result_text": (run.completion.result_text or "")[:24000],
+        }
+        if effects_execution_enabled():
+            intent_log.enqueue(
+                kind="completion_notice",
+                key=f"run:{run.run_id}",
+                payload=payload,
+            )
+            return AnnounceDeliveryResult(success=True)
+        if effects_shadow_enabled():
+            shadow_id, shadow_generation = intent_log.enqueue(
+                kind="completion_notice",
+                key=f"run:{run.run_id}",
+                payload=payload,
+            )
+
+    try:
+        result = await _deliver_subagent_announcement_impl(run)
+    except Exception:
+        if shadow_id is not None and shadow_generation is not None:
+            try:
+                intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
+            except Exception:  # noqa: BLE001 - observation must never break delivery
+                logger.exception("completion delivery: shadow retry mark failed")
+        raise
+
+    if shadow_id is not None and shadow_generation is not None:
+        if result.success:
+            intent_log.mark_done(shadow_id, shadow_generation)
+        elif getattr(result, "terminal", False):
+            intent_log.mark_abandoned(shadow_id, shadow_generation)
+        else:
+            intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
     return result
 
 

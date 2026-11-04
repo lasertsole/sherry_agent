@@ -179,222 +179,6 @@
               </div>
             </TabPanel>
 
-            <!-- Tools tab: which main-agent tools this preset/session enables.
-                 The catalogue comes from the backend (GET /agent/catalog) — the
-                 client never hardcodes tool names. All checked = the default. -->
-            <TabPanel
-              value="agentTools"
-              :header="t('config.agent.tabs.tools')"
-              data-test="persona-agent-tools-tab">
-              <div
-                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
-                data-test="agent-tools-tab">
-                <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                  <span class="min-w-0 flex-1 text-sm text-gray-500 dark:text-gray-400">
-                    {{ t('config.agent.tools.hint') }}
-                  </span>
-                  <div class="flex shrink-0 items-center gap-2">
-                    <span class="text-xs text-gray-400">
-                      {{
-                        t('config.agent.tools.count', {
-                          selected: agentEnabledTools.length,
-                          total: agentStore.catalog.tools.length
-                        })
-                      }}
-                    </span>
-                    <Button
-                      :label="t('config.agent.tools.selectAll')"
-                      severity="secondary"
-                      text
-                      size="small"
-                      data-test="agent-tools-all"
-                      @click="selectAllTools" />
-                    <Button
-                      :label="t('config.agent.tools.clearAll')"
-                      severity="secondary"
-                      text
-                      size="small"
-                      data-test="agent-tools-none"
-                      @click="clearAllTools" />
-                  </div>
-                </div>
-                <!-- Two sub-tabs: the built-in groups and the MCP servers' tools. -->
-                <div class="flex items-center gap-1">
-                  <button
-                    v-for="scope in AGENT_TOOL_SCOPES"
-                    :key="scope"
-                    type="button"
-                    class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
-                    :class="
-                      toolScope === scope
-                        ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
-                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
-                    "
-                    :data-test="`agent-tools-scope-${scope}`"
-                    @click="toolScope = scope">
-                    {{ t(`config.agent.tools.scope_${scope}`) }}
-                  </button>
-                </div>
-                <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
-                  <div
-                    v-if="agentVisibleToolGroups.length === 0"
-                    class="px-3 py-1 text-xs text-gray-400"
-                    data-test="agent-tools-empty">
-                    {{ t('config.agent.tools.mcpEmpty') }}
-                  </div>
-                  <div
-                    v-for="group in agentVisibleToolGroups"
-                    :key="group.group"
-                    class="mb-3 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
-                    <div class="mb-1 flex items-center justify-between gap-2">
-                      <span class="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                        {{ t(`config.agent.toolGroup.${group.group}`) }}
-                      </span>
-                      <span
-                        v-if="agentGroupFullyRequired(group)"
-                        class="inline-flex items-center gap-1 text-[11px] text-gray-400"
-                        :data-test="`agent-tool-group-locked-${group.group}`">
-                        <i class="pi pi-lock text-[9px]" />
-                        {{ t('config.agent.tools.requiredHint') }}
-                      </span>
-                      <Button
-                        v-else
-                        :label="
-                          agentGroupFullySelected(group)
-                            ? t('config.agent.tools.clearGroup')
-                            : t('config.agent.tools.selectGroup')
-                        "
-                        severity="secondary"
-                        text
-                        size="small"
-                        :data-test="`agent-tool-group-${group.group}`"
-                        @click="toggleToolGroup(group)" />
-                    </div>
-                    <!-- Two row shapes: a switch (checkbox) for anything the preset may
-                         narrow, and a plain chip for what it may not — a REQUIRED tool
-                         (no checkbox at all, just the lock) or a bulk-only group's
-                         membership (the header owns its only toggle). -->
-                    <div class="flex flex-wrap gap-x-4 gap-y-1">
-                      <label
-                        v-for="tool in group.tools"
-                        :key="tool.name"
-                        class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
-                        :class="agentToolSwitchVisible(group, tool) ? 'cursor-pointer' : 'cursor-default'"
-                        :title="toolTooltip(tool)">
-                        <Checkbox
-                          v-if="agentToolSwitchVisible(group, tool)"
-                          :model-value="agentToolSelected(tool.name)"
-                          binary
-                          :data-test="`agent-tool-${tool.name}`"
-                          @update:model-value="toggleTool(tool.name)" />
-                        <i
-                          v-if="tool.required"
-                          class="pi pi-lock text-[9px] text-gray-400" />
-                        <span
-                          class="font-mono"
-                          :class="{
-                            'text-gray-400 line-through': !tool.required && !agentToolSelected(tool.name)
-                          }"
-                          :data-test="agentToolChipTestId(group, tool)">
-                          {{ tool.name }}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </TabPanel>
-
-            <!-- Middlewares tab: only the optional chain entries are listed, plus the
-                Summarization option row. The system-required baseline is NOT
-                 rendered at all (nothing there is switchable); the backend still
-                 refuses to store a required name as disabled. -->
-            <TabPanel
-              value="agentMiddlewares"
-              :header="t('config.agent.tabs.middlewares')"
-              data-test="persona-agent-middlewares-tab">
-              <div
-                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
-                data-test="agent-middlewares-tab">
-                <span class="text-sm text-gray-500 dark:text-gray-400">
-                  {{ t('config.agent.middlewares.hint') }}
-                </span>
-                <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
-                  <div
-                    v-for="entry in agentStore.middlewares.gateable"
-                    :key="entry.name"
-                    class="mb-1 flex items-center justify-between gap-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
-                    <div class="min-w-0">
-                      <div class="truncate text-sm text-theme-main">
-                        {{ t(`config.agent.middleware.${entry.name}.name`) }}
-                      </div>
-                      <div class="truncate text-xs text-gray-400">
-                        {{ t(`config.agent.middleware.${entry.name}.desc`) }}
-                      </div>
-                    </div>
-                    <span class="flex shrink-0 items-center">
-                      <ToggleSwitch
-                        :model-value="agentMiddlewareEnabled(entry.name)"
-                        :data-test="`agent-middleware-${entry.name}`"
-                        @update:model-value="toggleMiddleware(entry.name)" />
-                    </span>
-                  </div>
-                  <!-- Required, yet configurable: a REQUIRED middleware cannot be
-                       switched off, so it exposes its own options here instead. -->
-                  <div
-                    class="mb-1 mt-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]"
-                    data-test="agent-middleware-option-Summarization">
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-1 truncate text-sm text-theme-main">
-                          <i class="pi pi-lock text-[9px] text-gray-400" />
-                          {{ t('config.agent.middleware.Summarization.name') }}
-                        </div>
-                        <div class="truncate text-xs text-gray-400">
-                          {{ t('config.agent.middlewares.nudgeDesc') }}
-                        </div>
-                      </div>
-                      <label class="flex shrink-0 items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
-                        {{ t('config.agent.middlewares.nudgeLabel') }}
-                        <!-- A click-to-read explanation: hover tooltips are
-                             unreachable for this settings row, so the mark is a
-                             real button that toggles the hint below. It sits
-                             INSIDE the label but is interactive content, which
-                             browsers never label-activate — the switch does not
-                             move when it is clicked. -->
-                        <button
-                          type="button"
-                          class="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border border-solid border-gray-300 !p-0 text-[10px] leading-none text-gray-400 transition-colors hover:border-theme-main hover:text-theme-main dark:border-gray-600"
-                          data-test="agent-nudge-help"
-                          :aria-label="t('config.agent.middlewares.nudgeHelpLabel')"
-                          :aria-expanded="nudgeHelpOpen"
-                          @click.stop="nudgeHelpOpen = !nudgeHelpOpen">
-                          ?
-                        </button>
-                        <ToggleSwitch
-                          :model-value="agentNudgeActive"
-                          :disabled="!agentMemoryToolOn"
-                          data-test="agent-middleware-nudge"
-                          @update:model-value="agentNudge = $event" />
-                      </label>
-                    </div>
-                    <div
-                      v-if="nudgeHelpOpen"
-                      class="mt-1 whitespace-pre-line text-[11px] leading-relaxed text-gray-500 dark:text-gray-400"
-                      data-test="agent-nudge-help-text">
-                      {{ t('config.agent.middlewares.nudgeHint') }}
-                    </div>
-                    <div
-                      v-if="!agentMemoryToolOn"
-                      class="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
-                      data-test="agent-nudge-blocked">
-                      {{ t('config.agent.middlewares.nudgeNeedMemory') }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </TabPanel>
-
             <!-- Agent models tab: the main agent's model and one picker per functional
                  subagent role. Both lists are the environment-config model
                  profiles (the same list the session-model picker uses). -->
@@ -511,14 +295,14 @@
                       }}
                     </span>
                     <Button
-                      :label="t('config.agent.tools.selectAll')"
+                      :label="t('config.agent.skills.selectAll')"
                       severity="secondary"
                       text
                       size="small"
                       data-test="agent-skills-all"
                       @click="selectAllSkills" />
                     <Button
-                      :label="t('config.agent.tools.clearAll')"
+                      :label="t('config.agent.skills.clearAll')"
                       severity="secondary"
                       text
                       size="small"
@@ -716,7 +500,7 @@ import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import type { SessionModelProfile } from '~/composables/bridge/session';
-import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
+import { FOLLOW_TIER_ID } from '~/stores/agent-config';
 import { ENV_MODEL_ID } from '~/stores/session-model';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
@@ -778,15 +562,9 @@ const originalContent = ref<Record<string, string>>({});
 // The names are display info (Dexie global profile, locked per session on first
 // open) AND prompt content: Apply composes ROLE.md from them in the active UI
 // language, so the agent reads who it plays and who the user plays.
-/** One catalogue tool-group row the Tools tab renders. */
-interface AgentToolGroupEntry {
-  group: string;
-  tools: Array<{ name: string; description?: string; required?: boolean }>;
-}
-
-// ── Tools / Middlewares / Agent models drafts (the preset's `agent` block) ──────
-// The catalog (tool groups, middleware lock flags, roles) comes from the backend
-// once; the drafts below are what Save Preset stores and Apply writes to the session.
+// ── Agent models / Skills drafts (the preset's `agent` block) ──────
+// The catalog (roles + skills) comes from the backend once; the drafts below are
+// what Save Preset stores and Apply writes to the session.
 const agentStore = useAgentConfigStore();
 const llmProfiles = useLlmProfilesStore();
 /** The session's main-model control (its own store: the toolbar picker's key). */
@@ -795,10 +573,6 @@ const route = useRoute();
 /** The session an Apply targets (the open chat's sid; empty on the bare shell). */
 const panelSessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
 
-/** Enabled tool names (catalog order); the draft starts all-selected. */
-const agentTools = ref<string[]>([]);
-/** Gateable middleware names turned OFF. */
-const agentDisabledMiddlewares = ref<string[]>([]);
 /** role → chosen env-config profile id (`''` = follow the role tier). */
 const agentRoleModels = ref<Record<string, string>>({});
 /** role → the role profile's own output cap (decimal string, min 8192). */
@@ -807,25 +581,6 @@ const agentRoleMaxOutputs = ref<Record<string, string>>({});
 const agentSkills = ref<string[] | null>(null);
 /** Main-agent model for this preset (`ENV_MODEL_ID` = follow the env config). */
 const agentMainModel = ref<string>(ENV_MODEL_ID);
-const nudgeHelpOpen = ref(false);
-
-/** Whether the summarization nudges run (the Summarization middleware option). */
-const agentNudge = ref(true);
-
-/** Required tool names from the catalogue, in catalogue order. */
-const agentRequiredToolNames = computed<string[]>(() =>
-  agentStore.catalog.tools.filter(tool => tool.required === true).map(tool => tool.name)
-);
-
-/** Tool names currently enabled, in catalogue order (required tools always on). */
-const agentEnabledTools = computed<string[]>(() => {
-  const all = agentStore.catalog.tools.map(tool => tool.name);
-  const required = new Set(agentRequiredToolNames.value);
-  if (agentTools.value.length === 0) return all;
-  const selected = new Set(agentTools.value);
-  return all.filter(name => selected.has(name) || required.has(name));
-});
-
 /** Select-options: "follow the role tier" + every env-config profile. */
 const agentRoleModelOptions = computed<Array<{ label: string; value: string }>>(() => [
   { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
@@ -842,12 +597,6 @@ const agentMainModelOptions = computed<Array<{ label: string; value: string }>>(
 const agentMainModelId = computed<string>(() =>
   llmProfiles.byId('MAIN_LLM', agentMainModel.value) ? agentMainModel.value : ENV_MODEL_ID
 );
-
-/** Whether the memory tool is on in this draft (the nudge's precondition). */
-const agentMemoryToolOn = computed<boolean>(() => agentToolSelected(MEMORY_TOOL_NAME));
-
-/** The nudge switch's effective state: off without the memory tool. */
-const agentNudgeActive = computed<boolean>(() => agentNudge.value && agentMemoryToolOn.value);
 
 /**
  * The skill's profile descriptor for the main-model payload (null = env).
@@ -879,35 +628,9 @@ const skillTooltip = (skill: {
   const parts = [skill.description || skill.name];
   if (skill.when_to_use) parts.push(`${t('config.agent.skills.whenToUse')}: ${skill.when_to_use}`);
   if (skill.when_not_to_use) parts.push(`${t('config.agent.skills.whenNotToUse')}: ${skill.when_not_to_use}`);
-  if (skill.required === true) parts.push(t('config.agent.tools.requiredHint'));
+  if (skill.required === true) parts.push(t('config.agent.skills.requiredHint'));
   return parts.join('\n');
 };
-
-/**
- * Whether one tool is checked.
- * @param name
- */
-const agentToolSelected = (name: string): boolean => agentEnabledTools.value.includes(name);
-
-/**
- * Whether every tool of a group is checked.
- * @param group
- * @param group.tools
- */
-const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boolean =>
-  group.tools.every(tool => agentToolSelected(tool.name));
-
-/**
- * Whether a group is entirely required (its select-all toggle is pointless: the
- * membership can never change, so the header shows the locked hint instead).
- * @param group Catalogue group entry.
- * @param group.tools
- */
-const agentGroupFullyRequired = (group: AgentToolGroupEntry): boolean =>
-  group.tools.length > 0 && group.tools.every(tool => tool.required === true);
-
-/** The two Tools sub-tabs: the built-in groups and the MCP servers' tools. */
-const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
 
 /** The two Skills sub-tabs: shipped skills and uploaded third-party ones. */
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
@@ -918,58 +641,13 @@ const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
 /** Which Agent models sub-tab is on screen. */
 const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
 
-/** Group id the catalogue gives tools that arrive from an MCP server. */
-const MCP_TOOL_GROUP = 'mcp';
-
-/** Tool the nudge option depends on (it writes memory through it). */
-const MEMORY_TOOL_NAME = 'memory';
-
-/** Which Tools sub-tab is on screen (a view filter — the draft stays whole). */
-const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
-
 /** Which Skills sub-tab is on screen. */
 const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
-
-/** The tool groups of the active sub-tab. */
-const agentVisibleToolGroups = computed<AgentToolGroupEntry[]>(() =>
-  agentStore.toolGroups.filter(group =>
-    toolScope.value === MCP_TOOL_GROUP ? group.group === MCP_TOOL_GROUP : group.group !== MCP_TOOL_GROUP
-  )
-);
 
 /** The skills of the active sub-tab. */
 const agentVisibleSkills = computed(() =>
   skillsScope.value === 'builtin' ? agentStore.skills.builtin : agentStore.skills.thirdParty
 );
-
-/**
- * Whether a row carries its own switch: a required tool is locked on (no
- * checkbox at all) and a bulk-only group moves as a whole through its header
- * toggle only.
- * @param group Catalogue group entry.
- * @param group.tools
- * @param tool Catalogue tool entry.
- * @param tool.required
- */
-const agentToolSwitchVisible = (group: AgentToolGroupEntry, tool: { required?: boolean }): boolean =>
-  tool.required !== true && !isBulkOnlyToolGroup(group.group);
-
-/**
- * The ``data-test`` of a tool row's chip (switch rows carry it on the checkbox).
- * @param group Catalogue group entry.
- * @param group.tools
- * @param tool Catalogue tool entry.
- * @param tool.name
- * @param tool.required
- * @returns The chip's test id, or ``undefined`` for a switch row.
- */
-const agentToolChipTestId = (
-  group: AgentToolGroupEntry,
-  tool: { name: string; required?: boolean }
-): string | undefined => {
-  if (tool.required === true) return `agent-tool-locked-${tool.name}`;
-  return isBulkOnlyToolGroup(group.group) ? `agent-tool-bulk-${tool.name}` : undefined;
-};
 
 /** Skill names the draft keeps (required always in; every skill with no opinion). */
 const agentEnabledSkills = computed<string[]>(() => {
@@ -1003,69 +681,6 @@ const selectAllSkills = (): void => {
 /** Drop every skill's index entry (an explicit, legal empty selection). */
 const clearAllSkills = (): void => {
   agentSkills.value = [];
-};
-
-/**
- * The hover text of one tool row: the backend description, plus the locked
- * explanation for a required tool.
- * @param tool Catalogue tool entry.
- * @param tool.name
- * @param tool.description
- * @param tool.required
- */
-const toolTooltip = (tool: { name: string; description?: string; required?: boolean }): string => {
-  const description = tool.description || tool.name;
-  return tool.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
-};
-
-/**
- * Whether a gateable middleware runs for this draft.
- * @param name
- */
-const agentMiddlewareEnabled = (name: string): boolean => !agentDisabledMiddlewares.value.includes(name);
-
-/**
- * Toggle one tool (a required tool is locked on and ignores the click).
- * @param name Tool name.
- */
-const toggleTool = (name: string): void => {
-  if (agentRequiredToolNames.value.includes(name)) return;
-  const current = agentEnabledTools.value;
-  agentTools.value = current.includes(name) ? current.filter(candidate => candidate !== name) : [...current, name];
-};
-
-/**
- * Select / clear a whole group (clearing never drops a required tool).
- * @param groupEntry Catalogue group entry.
- */
-const toggleToolGroup = (groupEntry: AgentToolGroupEntry): void => {
-  const names = groupEntry.tools.map(tool => tool.name);
-  if (agentGroupFullySelected(groupEntry)) {
-    const required = new Set(agentRequiredToolNames.value);
-    agentTools.value = agentEnabledTools.value.filter(name => !names.includes(name) || required.has(name));
-    return;
-  }
-  agentTools.value = [...new Set([...agentEnabledTools.value, ...names])];
-};
-
-/** Check every catalogue tool. */
-const selectAllTools = (): void => {
-  agentTools.value = agentStore.catalog.tools.map(tool => tool.name);
-};
-
-/** Uncheck every optional tool (the required set stays on). */
-const clearAllTools = (): void => {
-  agentTools.value = [...agentRequiredToolNames.value];
-};
-
-/**
- * Toggle one gateable middleware.
- * @param name Middleware name.
- */
-const toggleMiddleware = (name: string): void => {
-  agentDisabledMiddlewares.value = agentDisabledMiddlewares.value.includes(name)
-    ? agentDisabledMiddlewares.value.filter(candidate => candidate !== name)
-    : [...agentDisabledMiddlewares.value, name];
 };
 
 /** The 8K business floor for a role profile's output cap. */
@@ -1128,8 +743,6 @@ const setRoleModelMaxOutput = (role: string, event: Event): void => {
  * @returns The `agent` block ({} when everything is at its default).
  */
 const buildAgentDraft = (): AgentConfig => {
-  const allTools = agentStore.catalog.tools.map(tool => tool.name);
-  const everyToolOn = agentEnabledTools.value.length === allTools.length;
   const models: Record<string, SessionModelProfile | null> = {};
   for (const role of agentStore.subagentRoles) {
     const profileId = agentRoleModels.value[role.role] ?? '';
@@ -1143,23 +756,11 @@ const buildAgentDraft = (): AgentConfig => {
   }
   const anyModel = Object.values(models).some(value => value !== null);
   const block: AgentConfig = {};
-  if (!everyToolOn) block.tools = agentEnabledTools.value;
-  if (agentDisabledMiddlewares.value.length > 0) {
-    block.middlewares_disabled = [...agentDisabledMiddlewares.value];
-  }
   if (anyModel) block.subagent_models = models;
   // `null` = no opinion (every skill stays in the index) and collapses away; an
   // explicit list — including the empty "only the required chain" choice — is
   // stored as-is.
   if (agentSkills.value !== null) block.skills = [...agentSkills.value];
-  // Required middlewares have no on/off switch, so the nudge rides its own
-  // options section — and only when the user turned it OFF (absent = the
-  // default: on). The memory-tool gate is a DISPLAY/run-time condition: a draft
-  // without the memory tool stores nothing extra, so re-enabling the tool brings
-  // the nudge back instead of silently pinning it off.
-  if (!agentNudge.value) {
-    block.middleware_options = { Summarization: { nudge: false } };
-  }
   return block;
 };
 
@@ -1168,10 +769,6 @@ const buildAgentDraft = (): AgentConfig => {
  * @param block Stored / effective config ({} = every default).
  */
 const fillAgentDraft = (block: AgentConfig | undefined): void => {
-  const allTools = agentStore.catalog.tools.map(tool => tool.name);
-  const configured = Array.isArray(block?.tools) ? block?.tools : null;
-  agentTools.value = configured ? allTools.filter(name => configured.includes(name)) : [...allTools];
-  agentDisabledMiddlewares.value = [...(block?.middlewares_disabled ?? [])];
   const models: Record<string, string> = {};
   const outputs: Record<string, string> = {};
   for (const [role, profile] of Object.entries(block?.subagent_models ?? {})) {
@@ -1181,7 +778,6 @@ const fillAgentDraft = (block: AgentConfig | undefined): void => {
   agentRoleModels.value = models;
   agentRoleMaxOutputs.value = outputs;
   agentSkills.value = Array.isArray(block?.skills) ? [...block.skills] : null;
-  agentNudge.value = block?.middleware_options?.Summarization?.nudge !== false;
 };
 
 const charAssistant = ref({ name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar });
@@ -1647,9 +1243,9 @@ const handleApply = async () => {
       throw new Error('[PersonaPanel] applied content verification failed');
     }
     await persistCharacter();
-    // The agent config lands on the SESSION (this preset's Tools / Middlewares /
-    // Agent models go live for the open chat; the backend parks it until the turn
-    // boundary when one is in flight). A session-less panel skips it.
+    // The agent config lands on the SESSION (this preset's Agent models / Skills
+    // go live for the open chat; the backend parks it until the turn boundary
+    // when one is in flight). A session-less panel skips it.
     if (panelSessionId.value) {
       await agentStore.save(panelSessionId.value, buildAgentDraft());
       // The main model rides its own endpoint (the session-model control owns
@@ -1673,8 +1269,6 @@ const handleApply = async () => {
     "config": {
       "agent": {
         "tabs": {
-          "tools": "工具",
-          "middlewares": "中间件",
           "subagents": "代理模型",
           "skills": "技能"
         },
@@ -1684,74 +1278,15 @@ const handleApply = async () => {
           "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
           "followEnv": "跟随模型配置"
         },
-        "tools": {
-          "count": "已选 {selected}/{total}",
-          "requiredHint": "必需，不可取消",
-          "scope_builtin": "内置",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
-          "clearAll": "全部禁用",
-          "clearGroup": "清空",
-          "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
-          "selectAll": "全部启用",
-          "selectGroup": "全选"
-        },
         "skills": {
           "count": "已选 {selected}/{total}",
           "scope_builtin": "内置",
           "scope_thirdparty": "第三方",
           "empty": "暂无技能",
-          "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。"
-        },
-        "toolGroup": {
-          "files": "文件读写",
-          "terminal": "终端与代码",
-          "tasks": "任务与计划",
-          "memory": "记忆与检索",
-          "skills": "技能",
-          "subagents": "子代理",
-          "interaction": "交互",
-          "web": "网络",
-          "browser": "浏览器",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "nudgeLabel": "启用 nudge",
-          "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-          "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
-          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具",
-          "nudgeHelpLabel": "说明 nudge 的作用",
-          "nudgeHint": "Nudge（轻推）：每次压缩会话时，额外让模型回顾刚被压缩掉的对话，把值得长期记住的内容抽取出来写进记忆与技能库——例如用户的偏好、习惯、重要事实与决定；对话中反复出现的做法也会沉淀成技能。关闭后压缩不再做这次回顾（更省 token）。"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "计划续跑",
-            "desc": "计划（待办/任务流）未完成时自动继续下一轮"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "动态提醒",
-            "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
-          },
-          "TaskIntentMiddleware": {
-            "name": "任务意图引导",
-            "desc": "识别工作型请求并注入编排提示"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "工作区变更通知",
-            "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
-          },
-          "MultimodalProcessor": {
-            "name": "多模态预处理",
-            "desc": "上传的图片/音频/视频入库与降级处理"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "子代理完成注入",
-            "desc": "子代理完成后把结果注入主会话"
-          },
-          "Summarization": {
-            "name": "摘要压缩",
-            "desc": "上下文压缩、溢出处理与压缩后的 nudge"
-          }
+          "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。",
+          "requiredHint": "必需，不可取消",
+          "selectAll": "全部启用",
+          "clearAll": "全部禁用"
         },
         "subagents": {
           "followTier": "跟随角色默认",
@@ -1770,9 +1305,6 @@ const handleApply = async () => {
           "librarian": "图书管理员"
         },
         "viewer": {
-          "tools": "工具 {selected}/{total}",
-          "middlewares": "关闭的中间件：{names}",
-          "middlewaresNone": "中间件：全部开启",
           "models": "子代理模型：{names}"
         },
         "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
@@ -1871,8 +1403,7 @@ const handleApply = async () => {
       "sherry": {
         "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
         "saveFailed": "应用配置保存失败，请检查值是否合法。",
-        "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-        "noConfigFile": "未找到 sherry.jsonc 文件。"
+        "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。"
       },
       "cron": {
         "addJob": "新建任务",
@@ -1970,8 +1501,6 @@ const handleApply = async () => {
     "config": {
       "agent": {
         "tabs": {
-          "tools": "Tools",
-          "middlewares": "Middlewares",
           "subagents": "Agent models",
           "skills": "Skills"
         },
@@ -1981,74 +1510,15 @@ const handleApply = async () => {
           "mainHint": "The model the main agent runs on; follows the model config by default.",
           "followEnv": "Follow the model config"
         },
-        "tools": {
-          "count": "{selected}/{total} selected",
-          "requiredHint": "Required — cannot be disabled",
-          "scope_builtin": "Built-in",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
-          "clearAll": "Disable all",
-          "clearGroup": "Clear",
-          "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
-          "selectAll": "Enable all",
-          "selectGroup": "All"
-        },
         "skills": {
           "count": "{selected}/{total} selected",
           "scope_builtin": "Built-in",
           "scope_thirdparty": "Third-party",
           "empty": "No skills yet",
-          "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
-        },
-        "toolGroup": {
-          "files": "Files",
-          "terminal": "Terminal & code",
-          "tasks": "Tasks & planning",
-          "memory": "Memory & search",
-          "skills": "Skills",
-          "subagents": "Subagents",
-          "interaction": "Interaction",
-          "web": "Web",
-          "browser": "Browser",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "nudgeLabel": "Enable nudge",
-          "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-          "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
-          "nudgeNeedMemory": "Check the memory tool on the Tools tab first",
-          "nudgeHelpLabel": "What does the nudge do?",
-          "nudgeHint": "Nudge: on every compression the model also reviews the turns that were just compacted away and extracts what is worth keeping long-term into memory and the skill library — user preferences, habits, important facts and decisions; a procedure that keeps recurring can become a skill. Turning it off skips that review (cheaper)."
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "Plan continuation",
-            "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "Live reminders",
-            "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
-          },
-          "TaskIntentMiddleware": {
-            "name": "Task-intent steering",
-            "desc": "Detects work requests and injects the orchestration prompt"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "Workspace-change notice",
-            "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
-          },
-          "MultimodalProcessor": {
-            "name": "Multimodal preprocessing",
-            "desc": "Persists and prepares uploaded images / audio / video"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "Completion injection",
-            "desc": "Injects a finished subagent's result into the main session"
-          },
-          "Summarization": {
-            "name": "Summarization",
-            "desc": "Context compression, overflow handling and the post-compression nudges"
-          }
+          "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
+          "requiredHint": "Required, cannot be disabled",
+          "selectAll": "Enable all",
+          "clearAll": "Disable all"
         },
         "subagents": {
           "followTier": "Follow the role default",
@@ -2067,9 +1537,6 @@ const handleApply = async () => {
           "librarian": "Librarian"
         },
         "viewer": {
-          "tools": "Tools {selected}/{total}",
-          "middlewares": "Disabled middlewares: {names}",
-          "middlewaresNone": "Middlewares: all on",
           "models": "Subagent models: {names}"
         },
         "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
@@ -2168,8 +1635,7 @@ const handleApply = async () => {
       "sherry": {
         "loadError": "Failed to load app config. Please check the backend service.",
         "saveFailed": "Failed to save app config.",
-        "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-        "noConfigFile": "No sherry.jsonc file found."
+        "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root."
       },
       "cron": {
         "addJob": "New task",
@@ -2267,8 +1733,6 @@ const handleApply = async () => {
     "config": {
       "agent": {
         "tabs": {
-          "tools": "ツール",
-          "middlewares": "ミドルウェア",
           "subagents": "エージェントモデル",
           "skills": "スキル"
         },
@@ -2278,74 +1742,15 @@ const handleApply = async () => {
           "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
           "followEnv": "モデル設定に従う"
         },
-        "tools": {
-          "count": "{selected}/{total} 選択",
-          "requiredHint": "必須（解除できません）",
-          "scope_builtin": "内蔵",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）",
-          "clearAll": "すべて無効",
-          "clearGroup": "クリア",
-          "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
-          "selectAll": "すべて有効",
-          "selectGroup": "全選択"
-        },
         "skills": {
           "count": "{selected}/{total} 選択",
           "scope_builtin": "内蔵",
           "scope_thirdparty": "サードパーティ",
           "empty": "スキルはまだありません",
-          "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。"
-        },
-        "toolGroup": {
-          "files": "ファイル",
-          "terminal": "ターミナルとコード",
-          "tasks": "タスクと計画",
-          "memory": "記憶と検索",
-          "skills": "スキル",
-          "subagents": "サブエージェント",
-          "interaction": "対話",
-          "web": "ウェブ",
-          "browser": "ブラウザ",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "nudgeLabel": "nudge を有効化",
-          "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-          "hint": "切り替え可能なミドルウェアのみを表示します。Summarization はオフにできず、代わりに nudge オプションを公開します。",
-          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください",
-          "nudgeHelpLabel": "nudge の役割を説明",
-          "nudgeHint": "Nudge（ナッジ）: 圧縮のたびに、圧縮で消えた会話をもう一度モデルに確認させ、長く残す価値のある内容——ユーザーの好み、習慣、重要な事実や決定——を記憶とスキルライブラリへ抽出します。繰り返し現れる手順はスキルとして蓄積されることもあります。オフにするとこの確認を行いません（トークン節約）。"
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "計画の継続",
-            "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "ライブリマインダー",
-            "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
-          },
-          "TaskIntentMiddleware": {
-            "name": "タスク意図の誘導",
-            "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "ワークスペース変更通知",
-            "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
-          },
-          "MultimodalProcessor": {
-            "name": "マルチモーダル前処理",
-            "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "完了結果の注入",
-            "desc": "サブエージェントの完了結果をメイン セッションに注入します"
-          },
-          "Summarization": {
-            "name": "要約圧縮",
-            "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
-          }
+          "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。",
+          "requiredHint": "必須、無効化できません",
+          "selectAll": "すべて有効",
+          "clearAll": "すべて無効"
         },
         "subagents": {
           "followTier": "ロール既定に従う",
@@ -2364,9 +1769,6 @@ const handleApply = async () => {
           "librarian": "ライブラリアン"
         },
         "viewer": {
-          "tools": "ツール {selected}/{total}",
-          "middlewares": "無効なミドルウェア: {names}",
-          "middlewaresNone": "ミドルウェア: すべて有効",
           "models": "サブエージェント モデル: {names}"
         },
         "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
@@ -2465,8 +1867,7 @@ const handleApply = async () => {
       "sherry": {
         "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
         "saveFailed": "アプリ設定の保存に失敗しました。",
-        "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
-        "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+        "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。"
       },
       "cron": {
         "addJob": "新規タスク",
@@ -2564,8 +1965,6 @@ const handleApply = async () => {
     "config": {
       "agent": {
         "tabs": {
-          "tools": "도구",
-          "middlewares": "미들웨어",
           "subagents": "에이전트 모델",
           "skills": "스킬"
         },
@@ -2575,74 +1974,15 @@ const handleApply = async () => {
           "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 모델 설정을 따릅니다.",
           "followEnv": "모델 설정 따르기"
         },
-        "tools": {
-          "count": "{selected}/{total} 선택",
-          "requiredHint": "필수 — 해제할 수 없음",
-          "scope_builtin": "내장",
-          "scope_mcp": "MCP",
-          "mcpEmpty": "아직 MCP 도구가 없습니다(확장-MCP에서 서버 추가)",
-          "clearAll": "모두 끄기",
-          "clearGroup": "지우기",
-          "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
-          "selectAll": "모두 켜기",
-          "selectGroup": "전체"
-        },
         "skills": {
           "count": "{selected}/{total} 선택",
           "scope_builtin": "내장",
           "scope_thirdparty": "서드파티",
           "empty": "아직 스킬이 없습니다",
-          "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다."
-        },
-        "toolGroup": {
-          "files": "파일",
-          "terminal": "터미널과 코드",
-          "tasks": "작업과 계획",
-          "memory": "기억과 검색",
-          "skills": "스킬",
-          "subagents": "서브에이전트",
-          "interaction": "상호작용",
-          "web": "웹",
-          "browser": "브라우저",
-          "mcp": "MCP"
-        },
-        "middlewares": {
-          "nudgeLabel": "nudge 사용",
-          "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
-          "hint": "전환 가능한 미들웨어만 표시합니다. Summarization은 끌 수 없으며 대신 nudge 옵션을 노출합니다.",
-          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요",
-          "nudgeHelpLabel": "nudge의 역할 설명",
-          "nudgeHint": "Nudge(넛지): 압축할 때마다 압축으로 사라진 대화를 모델이 다시 훑어, 오래 남길 가치가 있는 내용—사용자 선호, 습관, 중요한 사실과 결정—을 기억과 스킬 라이브러리에 추출합니다. 반복되는 절차는 스킬로 축적될 수 있습니다. 끄면 이 점검을 건너뜁니다(토큰 절약)."
-        },
-        "middleware": {
-          "PlanContinuationEnforcer": {
-            "name": "계획 이어가기",
-            "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
-          },
-          "DynamicReminderMiddleware": {
-            "name": "실시간 리마인더",
-            "desc": "매 턴 라이브 뷰(todo / TaskFlow 보드 / 작업 디렉터리 등)를 system-reminder로 주입"
-          },
-          "TaskIntentMiddleware": {
-            "name": "작업 의도 유도",
-            "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
-          },
-          "WorkspaceNoticeMiddleware": {
-            "name": "워크스페이스 변경 알림",
-            "desc": "작업 디렉터리나 git 브랜치/HEAD가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
-          },
-          "MultimodalProcessor": {
-            "name": "멀티모달 전처리",
-            "desc": "업로드된 이미지 / 오디오 / 비디오를 저장하고 전처리합니다"
-          },
-          "SubagentCompletionDrainMiddleware": {
-            "name": "완료 결과 주입",
-            "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
-          },
-          "Summarization": {
-            "name": "요약 압축",
-            "desc": "컨텍스트 압축, 오버플로 처리, 압축 후 nudge"
-          }
+          "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다.",
+          "requiredHint": "필수, 비활성화할 수 없습니다",
+          "selectAll": "모두 켜기",
+          "clearAll": "모두 끄기"
         },
         "subagents": {
           "followTier": "역할 기본값 따르기",
@@ -2661,9 +2001,6 @@ const handleApply = async () => {
           "librarian": "사서"
         },
         "viewer": {
-          "tools": "도구 {selected}/{total}",
-          "middlewares": "꺼진 미들웨어: {names}",
-          "middlewaresNone": "미들웨어: 모두 켜짐",
           "models": "서브에이전트 모델: {names}"
         },
         "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋과 역할」에서 하세요"
@@ -2762,8 +2099,7 @@ const handleApply = async () => {
       "sherry": {
         "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
         "saveFailed": "앱 설정을 저장하지 못했습니다.",
-        "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
-        "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+        "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다."
       },
       "cron": {
         "addJob": "새 작업",

@@ -138,6 +138,69 @@ def _resolve_timeout(requested: int | None) -> int:
     return min(int(requested), TERMINAL_MAX_TIMEOUT)
 
 
+#: Commands whose non-zero exit is a NETWORK/tool failure, not an ordinary
+#: local iteration signal. They raise ToolException so ToolGuardrails sees
+#: ``ToolMessage(status="error")``; local commands keep returning their output
+#: so the agent can read a failing test/compiler and fix it.
+_NETWORK_COMMAND_HEADS = frozenset(
+    {"curl", "wget", "http", "https", "ssh", "scp", "sftp", "ping", "dig", "nslookup"}
+)
+_GIT_NETWORK_SUBCOMMANDS = frozenset(
+    {"clone", "fetch", "pull", "push", "ls-remote", "remote", "submodule"}
+)
+_SHELL_SEGMENT_RE = re.compile(r"&&|\|\||[;|\n]")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_GIT_GLOBAL_ARG_RE = re.compile(r"^(?:-C|-c|--git-dir|--work-tree)$")
+
+
+def _command_text(command: str | list[str]) -> str:
+    if isinstance(command, str):
+        return command
+    return " ".join(str(part) for part in command)
+
+
+def _is_network_failure(command: str | list[str], exit_code: int) -> bool:
+    """True when a non-zero command is a network probe worth counting as an error.
+
+    A failing compiler/test is normal iteration and must return its output
+    (status="success" from LangChain's perspective), while a failing
+    curl/wget/git-remote is a dead probe that should feed ToolGuardrails'
+    exact-failure counter. Shell operators split the line so ``cd x && curl ...``
+    is recognized.
+    """
+    if exit_code == 0:
+        return False
+    for segment in _SHELL_SEGMENT_RE.split(_command_text(command)):
+        tokens = segment.strip().split()
+        while tokens:
+            head = tokens[0]
+            if _ENV_ASSIGN_RE.match(head):
+                tokens = tokens[1:]
+                continue
+            if head in {"sudo", "command", "env", "nohup"}:
+                tokens = tokens[1:]
+                continue
+            if head == "timeout":
+                tokens = tokens[2:]
+                continue
+            break
+        if not tokens:
+            continue
+        head = tokens[0].lower()
+        if head in _NETWORK_COMMAND_HEADS:
+            return True
+        if head == "git":
+            index = 1
+            while index < len(tokens) and tokens[index].startswith("-"):
+                if _GIT_GLOBAL_ARG_RE.match(tokens[index]):
+                    index += 2
+                else:
+                    index += 1
+            if index < len(tokens) and tokens[index].lower() in _GIT_NETWORK_SUBCOMMANDS:
+                return True
+    return False
+
+
 # Raised as a ToolException instead of returned, so handle_tool_error=True
 # routes it through the error ToolMessage channel.
 _BLOCKED_MESSAGE = "Blocked: unsafe command."
@@ -289,7 +352,14 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         self.root_dir = root_dir
         # Detect system encoding (Windows typically uses GBK/codepage 936)
         self._encoding = locale.getpreferredencoding() or "utf-8"
-        self.metadata = {"idempotent": False, "side_effect_scope": "system"}
+        #: ``streak_warn_after`` is tool-owned, not a ToolGuardrails special
+        #: case: rerunning the same test command can be a legitimate edit/verify
+        #: iteration, so terminal declares its own higher repeat threshold.
+        self.metadata = {
+            "idempotent": False,
+            "side_effect_scope": "system",
+            "streak_warn_after": 5,
+        }
 
     # ── Guards & helpers ────────────────────────────────────────────────────
 
@@ -408,6 +478,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         cwd: str | None = None,
         session_id: str = "",
         timeout: int = TERMINAL_TIMEOUT,
+        command_text: str = "",
     ) -> str:
         """Single sync spawn point: Popen with explicit encoding + timeout.
 
@@ -478,7 +549,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             if not output:
                 output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
-                return f"Exit code {proc.returncode}\n{output}"
+                output = f"Exit code {proc.returncode}\n{output}"
+                if _is_network_failure(command_text or argv, proc.returncode):
+                    raise ToolException(output)
+                return output
             return output
         except subprocess.TimeoutExpired:
             # Bounded cleanup: kill, then wait with a deadline.
@@ -494,6 +568,12 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 f"Terminal command timed out after {timeout} seconds. "
                 "The command was forcibly terminated. Please try a simpler command."
             )
+        except ToolException:
+            # The network-status bridge: let the error surface to
+            # ``handle_tool_error`` (ToolMessage(status="error")), not the
+            # generic text-returning Exception branch below.
+            discard_stdout_tmp(tmp_handle, tmp_path)
+            raise
         except Exception as e:
             discard_stdout_tmp(tmp_handle, tmp_path)
             logger.debug("terminal command failed: {!r}", argv[:1], exc_info=True)
@@ -523,6 +603,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             cwd=cwd,
             session_id=session_id,
             timeout=timeout,
+            command_text=cmd_str,
         )
 
     def _run_wrapped(
@@ -532,6 +613,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
         cwd: str,
         session_id: str = "",
         timeout: int = TERMINAL_TIMEOUT,
+        command_text: str = "",
     ) -> str:
         """Sandboxed sync path: list-exec of the backend-wrapped argv."""
         return self._execute_sync(
@@ -542,6 +624,7 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             cwd=cwd,
             session_id=session_id,
             timeout=timeout,
+            command_text=command_text,
         )
 
     # ── Tool entry points ───────────────────────────────────────────────────
@@ -575,7 +658,12 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
                 return self._record_verification(
                     cmd_str,
                     self._run_wrapped(
-                        argv, wrapped_env, cwd, session_id=bound_session, timeout=effective_timeout
+                        argv,
+                        wrapped_env,
+                        cwd,
+                        session_id=bound_session,
+                        timeout=effective_timeout,
+                        command_text=cmd_str,
                     ),
                     run_manager,
                     sandboxed=True,
@@ -827,9 +915,12 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             if not output:
                 output = EMPTY_TOOL_RESULT
             if proc.returncode != 0:
+                output = f"Exit code {proc.returncode}\n{output}"
+                if _is_network_failure(cmd_str, proc.returncode):
+                    raise ToolException(output)
                 return self._record_verification(
                     cmd_str,
-                    f"Exit code {proc.returncode}\n{output}",
+                    output,
                     run_manager,
                     sandboxed=ran_sandboxed,
                 )
@@ -859,6 +950,10 @@ class SafeShellTool(SandboxGuardMixin, BaseTool):
             return self._record_verification(
                 cmd_str, "Terminal command was cancelled (process tree killed).", run_manager
             )
+        except ToolException:
+            # Preserve the network-status bridge through the tool wrapper.
+            discard_stdout_tmp(tmp_handle, tmp_path)
+            raise
         except Exception as e:
             discard_stdout_tmp(tmp_handle, tmp_path)
             logger.debug("terminal: command dispatch failed", exc_info=True)

@@ -24,19 +24,8 @@ import type { SubagentRun } from './bridge';
 export function useSubagentTasks() {
   const { t } = useI18n();
   const store = useSubagentStore();
-  const {
-    taskRuns,
-    allTaskRuns,
-    taskLoading,
-    lastTasksFetchedAt,
-    subagentWsReady,
-    expandedRunId,
-    selectedRunId,
-    focusedRunId,
-    deletingRunIds,
-    subagentValidSessionIds,
-    focusedSubtreeRuns
-  } = storeToRefs(store);
+  const { taskRuns, allTaskRuns, taskLoading, lastTasksFetchedAt, subagentWsReady, subagentValidSessionIds } =
+    storeToRefs(store);
 
   /**
    * Status badge styling for a run record (colored by ExecutionStatus / RunOutcomeStatus)
@@ -101,18 +90,10 @@ export function useSubagentTasks() {
     // Reactive state
     taskRuns,
     allTaskRuns,
-    focusedSubtreeRuns,
     taskLoading,
     lastTasksFetchedAt,
     subagentWsReady,
     lastUpdatedText,
-    // Task view expand/flow-graph state (kept alive across tab switches)
-    expandedRunId,
-    selectedRunId,
-    focusedRunId,
-    toggleExpandRun: store.toggleExpandRun,
-    focusRun: store.focusRun,
-    resetFlowState: store.resetFlowState,
     // Behavior methods
     isRunning,
     badgeClass,
@@ -122,16 +103,11 @@ export function useSubagentTasks() {
     parentSessionLabel,
     initTasks,
     refresh,
-    refreshFocusedSubtree,
-    setTasksTabActive: store.setTasksTabActive,
-    // Single-run deletion (the detail pane's delete action; guards a double delete)
-    deletingRunIds,
-    deleteSubagentSubtree: store.deleteSubagentSubtree,
-    // Lower-level reuse (for SubagentTasksView etc. to do their own internal handling)
+    // Lower-level reuse (for the activity view to do its own internal handling)
     loadTaskRuns,
     refreshFromCache,
     toSubagentRun,
-    // Session key normalization + valid-session set (for "back to session" button checks + orphaned-run filtering reuse)
+    // Session key normalization + valid-session set (orphaned-run filtering reuse)
     normalizeSessionKey,
     loadSubagentValidSessions,
     validSessionIds: subagentValidSessionIds

@@ -165,10 +165,42 @@ max_tokens 续写路径：模型看到自己未完成的回答加一条续写提
 用户气泡。任何新的 turn（用户消息、HITL 恢复、自动 turn）都会清除断点，而续写
 自身被中断时会写入新的断点。
 
-同一套 turn 边界机制也支撑**编辑已发送的用户消息**：被编辑的轮次及其之后的内容
+同一套 turn 边界机制也支撑**编辑已发送的用户消息**：只有最新一条用户消息可编辑
+（客户端在其它行不显示铅笔，服务端回 `not_latest`）。被编辑的轮次及其之后的内容
 会从实时 checkpoint 中删除（`RemoveMessage`，因为只保留最新一个 checkpoint），
-并从 MesMemory 硬删，然后用新的一轮重跑编辑后的文本，复用原来的 turn 编号。
-客户端同时清掉 Dexie 缓存里的对应行，否则下一次历史合并会把它们复活。
+并从 MesMemory 硬删；随后把工作区回滚到该轮的 shadow-git floor（删除该轮新建的
+文件；该轮没有快照就没有 floor，编辑照常进行、文件不动），再用新的一轮重跑编辑
+后的文本，复用原来的 turn 编号。客户端同时清掉 Dexie 缓存里的对应行，否则下一次
+历史合并会把它们复活。
+
+## 可选 Effect 队列（重启意图）
+
+`runtime/effects/` 为三条对重启敏感的投递路径（计划续作、子代理完成通知、auto-turn）
+增加一个持久化意图日志。默认关闭且是 additive 的：现有 boot sweeper 和同步路径
+全部保留。
+
+| 开关 | 默认 | 含义 |
+|---|---|---|
+| `effects.enabled` | false | 总开关；关闭时该包内任何东西都不运行 |
+| `effects.shadow_mode` | false | 只记录意图，原路径照常执行（纯观察） |
+| `effects.worker_enabled` | false | 启动 worker；执行需要总开关 + 本项 + 非 shadow |
+| `effects.restart_replay` | false | 重启时执行终态声明表并重放 in-flight 意图 |
+
+- 队列是独立的 SQLite 文件（`src/data/effects/effects.db`），不改任何现有 store。
+  `(kind, key)` 唯一；重复入队会递增 `generation` 并重置 attempts。
+- 所有终态转换都是对 `(id, generation, status='in_flight')` 的 CAS。持有旧
+  generation 的慢 worker 因此不可能把新的 pending 行标成 done。
+- `due_at` 使用墙钟时间：队列要跨重启存活，而上一进程的 monotonic 读数在新进程中
+  没有意义。重启重放把 `in_flight` 重置为 pending（立即到期）；未来的 pending
+  行保留原延迟。
+- 重启终态声明表登记两个现有状态机：`subagent_runs`（委托给
+  `restore_runs_from_disk`）和 `user_input_queue`（委托给 boot recovery 的
+  requeue）。两个 helper 都是幂等的；声明表不重新实现它们。
+- 执行开关打开时，三个调用点只入队并返回 accepted；worker 通过
+  `_from_effects=True` 接缝调用原实现，因此不会递归。shadow 模式记录后仍走原
+  路径。开关关闭（默认）时，原路径逐字节不变。
+- `scripts/verify_effects_shadow.py` 打印按 kind/status 的计数，并把完成通知与
+  registry 的 DELIVERED 行对比。
 
 ## 代码地图
 

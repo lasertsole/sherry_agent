@@ -93,7 +93,7 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 | Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers in the structured summary doc |
 | Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), native history stripping, or compression-time offload (`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/` (durable copies; compression-time offload names by `sha256[:16]` and dedups); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
 | Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
-| FACTS.md | `workspace/memory/FACTS.md` (one global file; memory tool target `facts`) | — | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions: compression-time memory review + completed-plan extraction | memory file (1 375-char limit; overflow drops the oldest entries first) | injected into every system prompt as a resident FACTS memory block |
+| `facts` target | MesMemory `memory_entries` rows (one global target) | — | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions: compression-time memory review + completed-plan extraction | memory target (1 375-char limit; overflow archives the LEAST-ACTIVE entries) | injected into every system prompt as a resident FACTS memory block |
 
 ## 🧵 Turn Identity on Message Rows
 

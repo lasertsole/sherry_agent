@@ -1,24 +1,18 @@
 /**
  * Git-graph bridge (the left sidebar's history panel).
  *
- * One call: {@link fetchGitGraph} mirrors `GET /git/graph` — one page of the
- * session project's history plus the header facts (branch, dirty count, the
- * local branches). The backend answers `available: false` with a reason
- * (`not-a-repository` / `git-unavailable`) instead of an error, so the panel can
- * show its own empty state without a toast.
+ * READ-ONLY: {@link fetchGitGraph} mirrors `GET /git/graph` — one page of the
+ * session project's history plus the header facts (branch, dirty count). The
+ * backend answers `available: false` with a reason (`not-a-repository` /
+ * `git-unavailable`) instead of an error, so the panel can show its own empty
+ * state without a toast. The reset / checkout actions were removed: shadow
+ * checkpoints are internal write snapshots, not a user-facing rollback surface.
  *
- * EVERY failure THROWS — the two write actions (`reset` / `checkout`) go through
- * the raw transport so a refusal's server-side `reason` (git's own stderr, e.g.
- * "Your local changes would be overwritten by checkout") reaches the caller's
- * toast, and the reads reject instead of handing back a null payload: a null
- * assigned to the panel's `page` used to brick its render entirely.
+ * EVERY failure THROWS: the reads reject instead of handing back a null payload
+ * (a null assigned to the panel's `page` used to brick its render entirely).
  *
  * @module bridge/git
  */
-// ``fetchApiPayload`` is auto-imported from ~/composables/requestApi (the bridge
-// convention: no explicit import of an auto-imported symbol); the raw transport
-// is imported explicitly, as in bridge/auth.ts.
-import { fetchApiRaw } from '../requestApi';
 
 /** One ref chip on a commit row (head / branch / tag / remote). */
 export interface GitRefEntry {
@@ -60,7 +54,7 @@ export interface GitGraphPage {
   commits: GitCommitEntry[];
   /** True when another page exists. */
   hasMore: boolean;
-  /** Local branches, most recently committed first (the branch switcher's list). */
+  /** Reserved: shadow history is one chain, so the backend always answers []. */
   branches: string[];
 }
 
@@ -90,34 +84,6 @@ function toPage(res: Record<string, unknown> & { success?: boolean }): GitGraphP
     hasMore: res.has_more === true,
     branches: Array.isArray(res.branches) ? (res.branches as string[]) : []
   };
-}
-
-/**
- * A raw git response → the page, or a thrown refusal carrying the server's reason.
- *
- * The write actions answer the refreshed page on success and `{success: false,
- * reason}` (git's stderr for a 409) on a refusal; the reason is the only useful
- * thing to show the user, and the raw transport is what keeps it readable.
- * @param response The untouched response of the write action.
- * @param action Action name, used when the body carries no reason at all.
- */
-async function readPage(response: globalThis.Response, action: string): Promise<GitGraphPage> {
-  interface RefusalBody {
-    success?: boolean;
-    reason?: string;
-    message?: string;
-    [key: string]: unknown;
-  }
-  let body: RefusalBody | null = null;
-  try {
-    body = (await response.json()) as RefusalBody;
-  } catch {
-    // A body that is not JSON (an empty error page) leaves `body` null.
-  }
-  if (!response.ok || body?.success === false) {
-    throw new Error(String(body?.reason || body?.message || `git ${action} failed (HTTP ${response.status})`));
-  }
-  return toPage(body ?? {});
 }
 
 /**
@@ -155,44 +121,6 @@ export async function fetchGitGraph(
     method: 'get'
   });
   return toPage(requirePayload(res, 'graph'));
-}
-
-/**
- * Move the current branch to a commit (the panel's Reset action).
- * @param sessionId Session whose project directory is written.
- * @param hash Target commit (any revision git can resolve to a commit).
- * @param mode `soft` keeps the changes staged, `mixed` unstages them, `hard` discards them.
- * @throws Error carrying git's own refusal (e.g. an unknown commit or a 409).
- */
-export async function resetGitBranch(
-  sessionId: string,
-  hash: string,
-  mode: 'soft' | 'mixed' | 'hard'
-): Promise<GitGraphPage> {
-  const resp = await fetchApiRaw({
-    url: '/git/reset',
-    method: 'post',
-    body: JSON.stringify({ session_id: sessionId, hash, mode }),
-    contentType: 'application/json'
-  });
-  return readPage(resp, 'reset');
-}
-
-/**
- * Check out a branch (or any ref git can resolve).
- * @param sessionId Session whose project directory is written.
- * @param ref Branch / tag / revision to check out.
- * @throws Error carrying git's own refusal — a dirty tree that a checkout would
- *   clobber comes back verbatim, so the toast can say which files block it.
- */
-export async function checkoutGitRef(sessionId: string, ref: string): Promise<GitGraphPage> {
-  const resp = await fetchApiRaw({
-    url: '/git/checkout',
-    method: 'post',
-    body: JSON.stringify({ session_id: sessionId, ref }),
-    contentType: 'application/json'
-  });
-  return readPage(resp, 'checkout');
 }
 
 /** One file a commit touched (the status is git's own letter). */

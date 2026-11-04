@@ -12,7 +12,7 @@ import OnboardingDialog from '../OnboardingDialog.vue';
 
 const catalogApi = vi.hoisted(() => ({
   createSessionFromPreset: vi.fn(async () => 'new-sid'),
-  presetCatalogFacts: vi.fn(() => ({ tools: [], gateableMiddlewares: [], skills: [] })),
+  presetCatalogFacts: vi.fn(() => ({ skills: [] })),
   catalogEntries: vi.fn(() => [
     { id: 'pure', nameKey: 'personaPreset.pure', builtin: true },
     { id: 'companion', nameKey: 'personaPreset.companion', builtin: true },
@@ -67,7 +67,7 @@ beforeEach(() => {
   flags.setAppFlag.mockClear();
   router.push.mockClear();
   vi.stubGlobal('useAgentConfigStore', () =>
-    reactive({ catalog: { tools: [], middlewares: [], subagent_roles: [], skills: [] }, loadCatalog: async () => {} })
+    reactive({ catalog: { subagent_roles: [], skills: [] }, loadCatalog: async () => {} })
   );
 });
 

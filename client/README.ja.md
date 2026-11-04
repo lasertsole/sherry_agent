@@ -112,6 +112,8 @@ client/
 │   │   ├── sessionFilter.ts       # クライアント側セッションリストフィルタ（キーワード + 日付範囲）
 │   │   ├── useImagePreview.ts     # 画像プレビューオーバーレイ状態
 │   │   ├── useSubagentTasks.ts    # バックグラウンドタスク薄いファサード（Pinia ストア + fetch/WS/Dexie 同期）
+│   │   ├── use-subagent-activity.ts # 単一 run の実況状態：レコード、子セッション、steer 呼び出し
+│   │   ├── use-trajectory-stream.ts # 単一セッションのライブ trajectory WS（ready スナップショット + イベント単位フレーム、event_id マージ、2秒再接続）
 │   │   ├── utils.ts               # max/min + 日時ユーティリティ
 │   │   ├── mitt.ts                # mitt イベントバスインスタンス
 │   │   ├── ws-ticket.ts           # WebSocket 単回チケットの先読み（遅延 import で socket 層から認証ブリッジを排除）
@@ -141,7 +143,7 @@ client/
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：トリガー（プランモード / 変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
-│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド / バックグラウンド コマンド（バッジは三者の合計）——ポップオーバーの行はページにジャンプを委ねる（実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
+│   │           ├── TasksButton.vue            # ツールバーのターミナル入口：このセッションのエージェント / 実行中コマンド / バックグラウンド コマンド（バッジは三者の合計）。各行は状態グリフ・ロール・タスク要約を持ち、終了済みは「終了済み」に折りたたまれ、行をクリックするとエージェント実況タブが開く（コマンドはツール カードへスクロール）。フッターからセッション実況を開ける
 │   │   ├── SafetyFilterPanel.vue# システム設定タブ: ライブ安全のマスター スイッチ、LLM 審査（モデル未設定なら無効）、キーワード ルール編集 + テスト走査、最近のフィルター記録
 │   │   ├── OnboardingDialog.vue# 初回ガイド（ようこそ → プリセット → 基本操作 → 完了）。選んだプリセットでセッションを作成し、永続フラグ onboarding_completed で一度だけ表示
 │   │   ├── ShortcutSettingsSection.vue# システム設定のショートカット バインド タブ：現在のキー、押下による再割り当て、競合検出、既定に戻す
@@ -150,10 +152,14 @@ client/
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）。右端はドラッグハンドル（下限 280px、上限はビューポートの半分、幅は永続化）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み。行の右クリックメニュー：開く / 別のアプリで開く / 内蔵ブラウザーで開く / ファイルマネージャーで表示 / 絶対・相対パスをコピー / チャットに追加）
-│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。ヘッダーのブランチ名でブランチ切替、行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
+│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。読み取り専用——ブランチ名はテキスト表示のみ、行メニューはコピーのみ、行クリックでコミットのファイル一覧を展開）
 │   │           ├── GitDiffPanel.vue          # 右サイドバーのコミット差分（左右 2 カラム、赤=削除 / 緑=追加。追加・削除されたファイルは 1 カラム）
 │   │           ├── ContextViewerPanel.vue    # 右サイドバーのエージェント コンテキスト（GET /context/inspect: システム プロンプト / ツール定義 / ライブ メッセージ一覧、開いている間は自動更新）
 │   │           ├── TrajectoryPanel.vue       # 現在のセッション tab: ターン単位のトラジェクトリ台帳（GET /sessions/:id/trajectory、turn ごとにグループ化しクライアント側で再ソート・ページング）
+│   │           ├── SubagentActivityPanel.vue # 右サイドバーのエージェント実況タブ：ヘッダー + ライブ軌跡 / 実行概要 / 指示注入
+│   │           ├── SubagentTrajectory.vue    # 実況タブのタイムライン：子セッションの軌跡を trajectory WS で受信
+│   │           ├── TaskFlowBoardPanel.vue     # 右サイドバーのタスクボード：全体進捗 + 各フローを非空ステータスごとのレーンに表示
+│   │           ├── SessionActivityPanel.vue   # 右サイドバーのセッション概要：タスクフロー / サブエージェント / フォアグラウンドツールの折りたたみ
 │   │           ├── BrowserPanel.vue          # ツールボックスのブラウザ：アドレスバー + 埋め込みページ（セッションごとの履歴、戻る / 進む / 再読み込み。フリーサイズはリサイズ可能な仮想デバイス枠を描画し、境界は ZCode と同じ。開発者ツールは新しいウィンドウで開きます — iframe は開発者ツールを内蔵できません）。エージェントのブラウザ機能を有効にすると CDP モードに切り替わります：バックエンドがヘッドレス Chromium をホストし、パネルは screencast のフレームを描画してポインタ / キーボード / ホイールを転送します（アドレスバーとナビは /browser/ws 経由。「開発者ツールを開く」はパネルで視聴できる本物のインスペクタページを開きます）。アドレスバーは永続化された閲覧履歴（Dexie、再起動後も保持）を URL / タイトルのあいまい一致でサジェストします
 │   │           ├── BrowserHistoryDropdown.vue # アドレスバーの履歴ドロップダウン：最近/候補の訪問（favicon、タイトル、相対時間）とクリア操作
 │   │           ├── TerminalPanel.vue         # ツールボックスのターミナル：ユーザーが入力するコマンドをセッションのプロジェクト ディレクトリで実行
@@ -163,7 +169,7 @@ client/
 │   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、模型設定、アプリ設定、Token 予算、国際化）
 │   │           ├── LlmModelManager.vue        # モデル設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
-│   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
+│   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / エージェント モデル / スキル + プリセット管理）
 │   │           ├── SessionPresetButton.vue    # トップバーの閲覧専用入口：現在のセッションのプリセットタブを開く
 │   │           ├── SessionPresetPanel.vue     # 「現在のセッション」タブ：そのセッション自身のプリセット（閲覧専用、エージェント モデルが最初のタブ）
 │   │           ├── NewSessionPresetDialog.vue # 「新規チャット」ごとに必須のプリセット選択ダイアログ（適用後にセッション作成）
@@ -184,10 +190,6 @@ client/
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
 │   │           ├── GChart.vue                 # @antv/g2 チャートラッパー
-│   │           ├── SubagentTasksView.vue      # バックグラウンドタスクビュー（フローグラフ + 選択中 run の詳細）。タスク詳細タブがホスト
-│   │           ├── SubagentTasksPanel.vue     # 右サイドバー タブ：パネル内の SubagentTasksView（セッションへ戻る操作なし）
-│   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
-│   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
 │   │           ├── TokenBudgetPanel.vue      # セッション単位のタブ（コンテキスト指標のポップオーバーから開く）: 開いているセッションの Token 上限、使用量/コスト、リセット（GET/POST /sessions/budget）
 │   │           ├── ReplayAllowlistEditor.vue # システム設定: フィニッシュ時の再生許可リスト編集（GET/PUT /sherry-config/list/<key>、実行ファイル名の追加/削除）
 │   │           ├── CudaPackCard.vue          # モデル設定: 任意の CUDA パックカード（Linux のみ——検出、レジューム付きダウンロード、その後バックエンド再起動）
@@ -213,7 +215,7 @@ client/
 │   │   ├── file-viewer.ts      # ファイルビューアタブ（開いたパス + 内容キャッシュ）
 │   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
 │   │   ├── notification.ts     # 通知リスト + 未読バッジ（タブを閉じてもカウント継続）
-│   │   ├── agent-config.ts     # プリセットの agent 設定（ツール / ミドルウェア / エージェント モデル / スキル）をセッション単位で保持；必須ツールと必須スキルはロック解除不可、タスクと計画 / サブエージェントの 2 グループは一括選択のみ
+│   │   ├── agent-config.ts     # プリセットの agent 設定（エージェント モデル / スキル）をセッション単位で保持；必須スキルはロック解除不可。ツールとミドルウェアチェーンは設定できません
 │   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + フラットなステップ、taskflow_updated で更新）
 │   │   ├── web-search.ts       # セッションごとの検索バックエンド + Tavily→SearXNG の降格通知
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）

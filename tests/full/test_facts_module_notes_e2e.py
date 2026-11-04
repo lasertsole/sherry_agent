@@ -103,7 +103,10 @@ class _Sandbox:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(memory_module, "MEMORY_DIR", self.memory_dir)
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
+
+        self.memory_repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+        monkeypatch.setattr(memory_module, "memory_entry_repo", self.memory_repo)
         monkeypatch.setattr(knowledge_store, "_KNOWLEDGE_ROOT", self.plans_dir)
         monkeypatch.setattr(skill_manage_module, "AUTO_SKILLS_DIR", self.auto_skills_dir)
         monkeypatch.setattr(agent_skill_usage, "AUTO_SKILLS_DIR", self.auto_skills_dir)
@@ -117,29 +120,23 @@ class _Sandbox:
         # ``init()`` is idempotent, so the real provider must be re-registered
         # here for the system-prompt build to see the memory blocks.
         register_prompt_data_provider()
-        memory_store.load_from_disk()
-
-    def facts_path(self) -> Path:
-        return self.memory_dir / "FACTS.md"
+        memory_store.load_from_store()
 
     def facts_text(self) -> str:
-        path = self.facts_path()
-        return path.read_text(encoding="utf-8") if path.exists() else ""
+        return memory_store.format_live_content("facts")
 
     def notes_skill_file(self, name: str = "auth-module-notes") -> Path:
         return self.auto_skills_dir / name / "SKILL.md"
 
     def reset(self) -> None:
         """Clear every sandboxed root so a retry starts from a clean slate."""
-        for name in ("FACTS.md", "MEMORY.md", "USER.md"):
-            with contextlib.suppress(FileNotFoundError):
-                (self.memory_dir / name).unlink()
+        self.memory_repo.delete_all()
         for directory in (self.auto_skills_dir, self.usage_dir, self.archive_dir):
             shutil.rmtree(directory, ignore_errors=True)
             directory.mkdir(parents=True, exist_ok=True)
         shutil.rmtree(self.plans_dir, ignore_errors=True)
         self.plans_dir.mkdir(parents=True, exist_ok=True)
-        memory_store.load_from_disk()
+        memory_store.load_from_store()
 
 
 @pytest.fixture
@@ -301,7 +298,7 @@ async def test_broad_pitfall_lands_in_facts_and_next_prompt(sandbox: _Sandbox) -
                 continue
 
             # Next session start: reload the snapshot, then rebuild the prompt.
-            memory_store.load_from_disk()
+            memory_store.load_from_store()
             prompt = build_system_prompt(session_id=sid)
             assert _facts_has_broad_pitfall(content)
             assert _facts_has_broad_pitfall(prompt), (

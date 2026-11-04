@@ -4,6 +4,8 @@ English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](RE
 
 This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression, handed the messages about to be discarded and run cache-warm on the turn's own model + prefix), plan extraction when the plan completes at a turn boundary, the post-compression todo fork, and the MAIN-session deletion salvage (a detached two-wave memory review over the captured compression cut). The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
 
+> **Storage update (2026-11-04):** the three memory outputs named below as MEMORY.md / USER.md / FACTS.md are now rows in the MesMemory `memory_entries` table, one row per target (`memory` / `user` / `facts`). The legacy Markdown files are imported once at boot by `memory_migration.py` and renamed to `*.md.bak`. `MemoryStore.load_from_store()` is the loader; each row carries `origin_session` (provenance) and `usage_count` / `last_used` (usage feedback).
+
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
 ## Design Principles
@@ -123,9 +125,9 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 
 | Store | Path (constant) | Limit |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"` (`workspace/memory/MEMORY.md`) | 2200 chars (`MEMORY_TOOL["memory_char_limit"]`) |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"` (`workspace/memory/USER.md`) | 1375 chars (`MEMORY_TOOL["user_char_limit"]`) |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md` (one global file; template per language under `workspace/template/<lang>/FACTS.md`) | 1375 chars (`MEMORY_TOOL["facts_char_limit"]`); an over-limit `add` rolls the oldest entries off |
+| `memory` target | MesMemory `memory_entries` row (`target='memory'`) | 2200 chars (`MEMORY_TOOL["memory_char_limit"]`, overridable via `/memory/settings`) |
+| `user` target | MesMemory `memory_entries` row (`target='user'`) | 1375 chars (`MEMORY_TOOL["user_char_limit"]`, overridable) |
+| `facts` target | MesMemory `memory_entries` rows (`target='facts'`, one global target) | 1375 chars (`MEMORY_TOOL["facts_char_limit"]`, overridable); an over-limit `add` archives the LEAST-ACTIVE entries |
 | plan knowledge | `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/` — identity-keyed) | `task-<n>.json`, `wave-<n>.json`, `plan-summary.json` per plan; prompt-guided field caps (150 / 100 chars) |
 | skills | `config.path.AUTO_SKILLS_DIR` (`skills/auto/`) | `SKILL.md` plus `references/`, `templates/`, `scripts/` support files |
 | todos | `agent/tools/todolist/data/todos.db` (`store_sqlite._DB_PATH`) | session-scoped list, full-replacement writes |

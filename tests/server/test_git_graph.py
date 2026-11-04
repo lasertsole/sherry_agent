@@ -1,8 +1,9 @@
 """The git-graph service now serves the project's shadow checkpoint chain.
 
 The user's own ``.git`` is never read or written: the fixture creates shadow
-snapshots with the same helper every write uses, then asserts the page, paging,
-commit detail, restore action and the branchless checkout refusal.
+snapshots with the same helper every write uses, then asserts the page, paging
+and commit detail. The panel is read-only — there is no reset / checkout
+surface.
 """
 
 from __future__ import annotations
@@ -71,23 +72,6 @@ def test_commit_files_and_diff_come_from_the_shadow_tree(project):
         for row in diff.rows
     )
     assert "one" in texts and "two" in texts
-
-
-def test_reset_restores_the_checkpoint_without_touching_user_git(project):
-    page = service.read_graph("sess", limit=10)
-    oldest = page.commits[-1]["hash"]
-
-    refreshed = service.reset_to("sess", oldest, "hard")
-
-    assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
-    assert (project / ".git").exists() is False, "shadow restore must not create .git"
-    assert refreshed.commits[0]["subject"] == "pre-restore (undo point)"
-
-
-def test_checkout_is_refused_because_there_are_no_branches(project):
-    with pytest.raises(service.GitActionError) as exc:
-        service.checkout_ref("sess", "main")
-    assert "branches" in str(exc.value)
 
 
 def test_an_empty_project_is_available_with_an_empty_chain(tmp_path, monkeypatch):

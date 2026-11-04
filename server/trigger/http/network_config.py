@@ -4,7 +4,7 @@ from server.service import read_network_config, write_network_config
 
 
 @app.get("/network-config")
-async def read_network_config_handler(request) -> dict:
+async def read_network_config_handler(request):
     """
     Read the project network.jsonc (network service configuration: the search
     backends' file view, the browser agent's switches, LangSmith tracing),
@@ -12,7 +12,13 @@ async def read_network_config_handler(request) -> dict:
     Returns: {"groups": [{"name": str, "kind": str, "entries": [{"key", "value"}, ...]}]}
     """
     logger.debug("Reading network config")
-    return read_network_config()
+    try:
+        return read_network_config()
+    except (FileNotFoundError, OSError) as e:
+        # Missing/unreadable file = install problem → structured 503, never a
+        # bare 500 (the panel can then tell "load failed" from "no config").
+        logger.error(f".network is unavailable: {e}")
+        return {"success": False, "message": str(e)}, 503
 
 
 @app.put("/network-config")

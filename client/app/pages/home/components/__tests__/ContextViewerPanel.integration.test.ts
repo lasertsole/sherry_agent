@@ -27,7 +27,6 @@ const payload = () => ({
     { name: 'terminal', description: 'Run a command' }
   ],
   tool_tokens: 3400,
-  tool_selection: true,
   messages: [
     { role: 'human', content: '你好', origin: 'user' },
     {
@@ -81,8 +80,9 @@ describe('ContextViewerPanel', () => {
     const tools = wrapper.get('[data-test="context-section-tools"]');
     expect(tools.text()).toContain('工具');
     expect(tools.text()).toContain('2 项');
-    // The session's own tool selection is reported.
-    expect(tools.text()).toContain('已按会话选择裁剪工具');
+    // Every built-in tool is always available now: the row carries no
+    // selection note (the per-session tool selection was removed).
+    expect(tools.text()).not.toContain('已按会话选择裁剪工具');
 
     const messages = wrapper.get('[data-test="context-section-messages"]');
     expect(messages.text()).toContain('消息队列');

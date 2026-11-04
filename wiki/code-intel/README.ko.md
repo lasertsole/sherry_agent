@@ -102,6 +102,20 @@ child agent assembly (spawn/core.py)
 | `impact` | 심볼 이름 | 전이적 호출자(폭발 반경), 깊이와 경유한 이름 포함 | 깊이 3, `truncated` 플래그 |
 | `path` | 두 심볼 이름 | calls/imports/inherits/mixins를 가로지르는 최단 방향 홉 시퀀스(각 홉에 간선 유형과 confidence) | 깊이 3, `truncated` 플래그 |
 
+### 증분 리프레시: shadow 고속 경로와 쿼리 캐시
+
+인덱스는 가능한 경우 전체 순회 대신 프로젝트의 shadow-git 스냅샷에서 갱신됩니다:
+
+| 계층 | 메커니즘 | 폴백 |
+|---|---|---|
+| 워터마크 | `index_meta_summary`(1행)가 마지막으로 인덱싱한 shadow HEAD를 저장합니다. HEAD가 같으면 빈 `IndexResult`로 단락합니다. | 최초 인덱싱, shadow store 없음, 또는 순회가 잘린 경우 |
+| Diff | `diff_between_commits_with_status`(읽기 전용)가 워터마크와 현재 HEAD 사이의 A/M/D/R/C 파일을 나열합니다. 해당 파일만 다시 파싱하고 삭제/이름 변경된 이전 경로는 drop합니다. | 500개 상한 diff, 빈 diff, 또는 git 실패 |
+| 외부 편집 | `index_meta`의 최근 20개 파일을 stat으로 샘플링하고 mtime/size 차이가 있으면 전체 순회로 돌아갑니다(shadow-git은 agent 쓰기만 봅니다). | stat 실패도 순회로 돌아갑니다 |
+| 간선 해석 | 변경 파일에서 나가는 미해결 간선, 또는 변경/삭제된 심볼 이름을 가리키는 미해결 간선만 해석합니다. | 필터 인자가 800개를 넘으면 전체 해석 |
+| 쿼리 캐시 | `CodeQuery`별로 `(shadow HEAD, index generation)`을 버전으로 결과를 캐시합니다. 외부 편집은 HEAD가 같아도 generation을 진행시킵니다. 최대 256개. | shadow store가 없으면 캐시하지 않음 |
+
+원래의 전체 순회는 변경되지 않았으며, 고속 경로가 증명할 수 없는 모든 경우의 폴백입니다. `IndexResult.total_*`는 지연 조회가 되었고(속성을 읽을 때만 5개의 `COUNT(*)` 실행), schema DDL은 indexer 인스턴스마다 한 번만 실행됩니다. 읽기 연결은 호출마다 열고 닫습니다: 쿼리 캐시가 반복 쿼리의 DB 비용을 없애고, 공유 연결에는 명확한 수명 주기 소유자가 없으며(agent 도구 세트는 재구성됨) 따라서 상시 열어 두지 않습니다.
+
 ## 🕸️ 그래프 간선과 경로 쿼리
 
 인덱스는 이제 호출 간선만이 아닙니다. `call_edges`(전혀 수정하지 않음) 옆에 세
@@ -264,6 +278,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | 영역 | 테스트 |
 |------|--------|
 | 심볼 인덱스, 호출 그래프, 종단 간 질의 | `tests/agent/tools/code_intel/test_indexer.py`, `tests/agent/tools/code_intel/test_query.py`, `tests/agent/tools/code_intel/test_e2e.py`, `tests/agent/tools/code_intel/test_integration.py` |
+| shadow 고속 경로, 지연 카운트, 쿼리 캐시 | `tests/agent/tools/code_intel/test_shadow_fast_path.py` |
 | 인덱스 도구와 역할 격리 | `tests/agent/tools/code_intel/test_tools.py`, `tests/agent/tools/code_intel/test_integration.py` |
 | ast-grep 발견, 프로비저닝, 도구 | `tests/agent/tools/code_intel/ast_grep/test_resolver.py`, `tests/agent/tools/code_intel/ast_grep/test_provisioner.py`, `tests/agent/tools/code_intel/ast_grep/test_runner.py`, `tests/agent/tools/code_intel/ast_grep/test_install_hints.py`, `tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py` |
 | LSP 프로토콜, 리졸버, 설치기, 폴백, 클라이언트, 관리자, 도구 | `tests/agent/tools/code_intel/lsp/test_protocol.py`, `tests/agent/tools/code_intel/lsp/test_resolver.py`, `tests/agent/tools/code_intel/lsp/test_installer.py`, `tests/agent/tools/code_intel/lsp/test_fallback.py`, `tests/agent/tools/code_intel/lsp/test_client.py`, `tests/agent/tools/code_intel/lsp/test_manager.py`, `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`, `tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |

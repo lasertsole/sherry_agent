@@ -133,7 +133,8 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     compacted, compaction_checkpoint_id, turn_id), all named indexes, both FTS5
     tables with their six sync triggers, and the auxiliary tables
     (message_embeddings, compression_locks, events, context_epoch, session_leafs,
-    compaction_checkpoints, persisted_message_ids).
+    compaction_checkpoints, persisted_message_ids) plus the long-term memory
+    tables (memory_entries, memory_settings) created by :func:`build_memory_schema`.
     """
     db.executescript("""
     CREATE TABLE IF NOT EXISTS messages (
@@ -300,6 +301,57 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
         message_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         PRIMARY KEY (session_id, message_id)
+    );
+    """)
+    build_memory_schema(db)
+    db.commit()
+
+
+def build_memory_schema(db: sqlite3.Connection) -> None:
+    """Create only the long-term memory tables (repository-private test DBs).
+
+    ``build_schema_v1`` calls this after the MesMemory schema so a production
+    database is complete in one session; the memory repository's isolated test
+    databases call it alone and skip the FTS/trigger work they never use.
+    """
+    db.executescript("""
+    -- Long-term memory entries (MEMORY / USER / FACTS). One row per §-entry;
+    -- the three targets keep their own char budgets. Archived rows are soft-
+    -- deleted: eviction, manual removal and consolidation all keep the text
+    -- recoverable from the memory panel. ``created_at``/``last_used`` are epoch
+    -- milliseconds so a SQL comparison needs no date parsing.
+    CREATE TABLE IF NOT EXISTS memory_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        target TEXT NOT NULL,
+        content TEXT NOT NULL,
+        entry_type TEXT,
+        origin_session TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER,
+        last_used INTEGER,
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        char_count INTEGER NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        archived_at INTEGER,
+        archived_reason TEXT,
+        compaction_epoch INTEGER DEFAULT 0,
+        embedding BLOB,
+        embedding_model TEXT,
+        embedding_dim INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_target
+        ON memory_entries(target) WHERE archived = 0;
+    CREATE INDEX IF NOT EXISTS idx_memory_usage
+        ON memory_entries(last_used) WHERE archived = 0;
+    CREATE INDEX IF NOT EXISTS idx_memory_origin
+        ON memory_entries(origin_session);
+    
+    -- UI-editable memory limits (capacity caps, aging window). Absent rows
+    -- fall back to config.features.agent_side.memory_tool defaults, so an
+    -- untouched install behaves exactly like the code defaults.
+    CREATE TABLE IF NOT EXISTS memory_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     );
     """)
     db.commit()

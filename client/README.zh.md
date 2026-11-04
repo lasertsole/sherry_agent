@@ -112,6 +112,8 @@ client/
 │   │   ├── sessionFilter.ts       # 客户端会话列表过滤（关键词 + 日期范围）
 │   │   ├── useImagePreview.ts     # 图片预览浮层状态
 │   │   ├── useSubagentTasks.ts    # 后台任务薄封装（Pinia store + fetch/WS/Dexie 同步）
+│   │   ├── use-subagent-activity.ts # 单个 run 的实况状态：记录、子会话与 steer 调用
+│   │   ├── use-trajectory-stream.ts # 单个会话的实时 trajectory WS（ready 快照 + 逐事件帧、按 event_id 合并、2 秒重连）
 │   │   ├── utils.ts               # max/min + 日期时间工具
 │   │   ├── mitt.ts                # mitt 事件总线实例
 │   │   ├── ws-ticket.ts           # WebSocket 单次票据预取（惰性 import，避免 socket 层引入认证桥）
@@ -141,7 +143,7 @@ client/
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
-│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令 / 后台命令（徽标三者合计）；弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │           ├── TasksButton.vue            # 工具栏终端入口：本会话的智能体 / 运行中命令 / 后台命令（徽标三者合计）；每个智能体行带状态图标、角色与任务摘要，已结束的收在「已结束」折叠里，点击打开其智能体实况标签页（命令则滚到它的工具卡），底部可打开会话活动总览
 │   │   ├── SafetyFilterPanel.vue# 系统配置页：直播安全总开关、LLM 审核（未配模型不启用）、关键词规则编辑 + 试扫、最近过滤记录
 │   │   ├── OnboardingDialog.vue# 首次启动引导（欢迎 → 选预设 → 核心操作 → 完成），用选中预设创建会话；由持久化的 onboarding_completed 标记保证只出现一次
 │   │   ├── ShortcutSettingsSection.vue# 系统设置里的快捷键绑定页：当前组合键、按键捕获重绑、冲突检测、恢复默认
@@ -150,10 +152,14 @@ client/
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）；右边缘可拖拽（下限 280px、上限视口一半、宽度持久化）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载；行右键菜单：打开 / 打开方式 / 用内置浏览器打开 / 在文件管理器中显示 / 复制绝对+相对路径 / 添加到聊天）
-│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
+│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；只读——分支名仅文本展示，行右键只提供复制，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
 │   │           ├── TrajectoryPanel.vue       # 当前会话 tab：按回合的轨迹账本（GET /sessions/:id/trajectory，按 turn 分组、客户端重排与分页）
+│   │           ├── SubagentActivityPanel.vue # 右侧栏智能体实况 tab：头部 + 实况轨迹 / 运行摘要 / 指令注入
+│   │           ├── SubagentTrajectory.vue    # 实况 tab 的时间线：子会话轨迹，走 trajectory WS 通道
+│   │           ├── TaskFlowBoardPanel.vue     # 右侧栏任务看板：总进度 + 每个活跃 flow 按非空状态分泳道
+│   │           ├── SessionActivityPanel.vue   # 右侧栏会话活动总览：任务流 / 子代理 / 前台工具三个可折叠区块
 │   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新；「自由尺寸」渲染可拖拽的设备框，边界与 ZCode 相同；「打开调试工具」在新窗口打开该页——iframe 无法内嵌开发者工具）。开启 agent 浏览器功能后切换为 CDP 模式：后端托管无头 Chromium，面板显示 screencast 帧并转发指针 / 键盘 / 滚轮事件（地址栏与导航按钮走 /browser/ws；「打开调试工具」打开真正的检查器页面，面板可直接观看）。地址栏还会联想持久化的访问历史（Dexie，跨重启保留），按 URL / 标题模糊匹配
 │   │           ├── BrowserHistoryDropdown.vue # 地址栏的历史下拉：最近/匹配的访问记录（favicon、标题、相对时间）与清空操作
 │   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
@@ -163,7 +169,7 @@ client/
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、国际化、快捷键）
 │   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
-│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
+│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 代理模型 / 技能 + 预设管理）
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
 │   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读（代理模型排在第一页）
 │   │           ├── NewSessionPresetDialog.vue # 每次「新建对话」必选的预设选择对话框（先应用预设，再创建会话）
@@ -184,10 +190,6 @@ client/
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
 │   │           ├── GChart.vue                 # @antv/g2 图表封装
-│   │           ├── SubagentTasksView.vue      # 后台任务视图（运行图 + 选中 run 的详情），由任务详情标签页承载
-│   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
-│   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
-│   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
 │   │           ├── TokenBudgetPanel.vue      # 会话级标签页（从上下文指标弹框打开）：当前会话的 Token 上限、用量/成本与重置（GET/POST /sessions/budget）
 │   │           ├── ReplayAllowlistEditor.vue # 系统配置：回放门白名单编辑器（GET/PUT /sherry-config/list/<key>，增删可执行文件名）
 │   │           ├── CudaPackCard.vue          # 模型配置：可选 CUDA 加速包卡片（仅 Linux——检测、断点续传下载，然后重启后端）
@@ -213,7 +215,7 @@ client/
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
-│   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 代理模型 / 技能）按会话镜像；必需工具与必需技能锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
+│   │   ├── agent-config.ts     # 预设的 agent 配置（代理模型 / 技能）按会话镜像；必需技能锁定不可取消。工具与中间件链不可配置
 │   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + 扁平步骤，由 taskflow_updated 刷新）
 │   │   ├── web-search.ts       # 每会话的搜索后端 + Tavily→SearXNG 降级通知
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）

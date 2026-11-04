@@ -18,8 +18,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [中间件参考](#中间件参考)
   - [system_prompt_injection](#system_prompt_injection)
   - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
-  - [ToolSelectionMiddleware](#toolselectionmiddleware)
-  - [The per-session middleware switches](#the-per-session-middleware-switches)
+  - [PlanModeToolGate](#planmodetoolgate)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -97,7 +96,7 @@ middleware = [
     # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
     # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
     WorkspaceNoticeMiddleware(),
-    ToolSelectionMiddleware(),
+    PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -237,33 +236,14 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 真正的人类消息始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
 
-### ToolSelectionMiddleware
+### PlanModeToolGate
 
-**模块：** `agent/middlewares/tool_selection/core.py` · **类：** `ToolSelectionMiddleware(AgentMiddleware)`
-**钩子：** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常驻——它是"应用开关"的那一层，自身没有开关）
+**模块：** `agent/middlewares/plan_mode_gate/core.py` · **类：** `PlanModeToolGate(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`
 
-执行本会话自己的工具集（预设角色-工具栏 → `AGENT_CONFIG["tools"]`，由 `PUT /sessions/agent_config` 写入）。编译好的图被所有会话共享、`ToolNode` 持有进程级全量工具，因此选择在**调用期**生效：
+执行计划模式的只读工具面。当 `StateKey.PLAN_STATUS` 为 `planning`/`needs_replan` 时（Plan-Then-Execute，`agent/tools/plan_mode/`），`wrap_model_call` 把 `request.tools` 收窄到 `PLAN_MODE["allowed_tools"]`（外加必须永远可达的 `enter_plan_mode` / `exit_plan_mode`）；`wrap_tool_call` 对仍然被调用的写工具（旧 checkpoint 残留或模型编造的名字）以 “Plan mode is active” 拒绝执行。
 
-1. `wrap_model_call`：会话有选择时 `request.override(tools=<启用的子集>)`——langchain 每次调用都按 `request.tools` 重新绑定工具 schema，被关掉的工具根本不会出现在模型面前。
-2. `wrap_tool_call`：对**已关闭工具**的调用直接返回 error `ToolMessage` 拒绝执行——旧 checkpoint 可能残留切换前的调用、模型也可能编造工具名，两种情况 `ToolNode` 都会照跑。
-
-`agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设角色-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
-
-**计划模式复用同两个钩子。** 当 `StateKey.PLAN_STATUS` 为 `planning`/`needs_replan` 时（Plan-Then-Execute，`agent/tools/plan_mode/`），工具面收窄到 `PLAN_MODE["allowed_tools"]` —— 只读白名单，仍受会话自身选择约束，唯独 `enter_plan_mode`/`exit_plan_mode` 永远可达 —— 仍被调用的写工具会以 “Plan mode is active” 被拒绝。计划模式优先于会话选择；见 `wiki/plan-mode/`。
-
-未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
-
-### The per-session middleware switches
-
-`GET /agent/catalog` 返回整条链；预设角色-中间件栏可关闭其中的**三个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
-
-| 可关闭项                            | 关闭后的效果                              |
-| ----------------------------------- | ----------------------------------------- |
-| `PlanContinuationEnforcer`          | 计划（待办 / 任务流）未完成也不再自动续跑 |
-| `TaskIntentMiddleware`              | 不再注入任务意图引导                      |
-| `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话              |
-
-其余全部锁定（前端只读展示）：**14** 个 `_MAIN_REQUIRED` 安全项——原 12 项加上 `WorkspaceNoticeMiddleware`（提示词渲染的是当前根，没有这条通知 agent 会继续按旧目录作答）与 `MultimodalProcessor`（缺它即丢附件）——外加 `system_prompt_injection`（关掉即无系统提示词）、`ThinkingControlMiddleware`（它就是模型/思考开关）与 `ToolSelectionMiddleware`（它负责应用工具选择）。历史载荷里若点名了必需项会被忽略：`middleware_enabled()` 对必需项一律返回 `True`。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
+该门只在计划打开时生效；非计划模式的会话看到进程级全量工具。**工具集与中间件链不再由用户配置**：所有内置工具始终可用（预设面板的工具栏已移除），链上每一项始终运行（中间件栏已移除），因此没有会话级开关可供查询。失败开放：计划状态读不到或特性配置缺失即视为“空闲 / 不拦截”。
 
 ### MultimodalProcessor
 
@@ -402,7 +382,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（TaskFlow 看板 / boulder：每 5 轮最多一次）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
 - **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要标签。
 - **压缩之后**目录被重置，因此下一轮会从 live state 重新推导每个来源——这一层从不依赖旧提醒是否幸存。
-- 与其他可选项一样**受开关门控**（`middleware_enabled`），且全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合。
+- 全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合（链上没有会话级开关）。
 
 ### HeartbeatStaleness
 
@@ -690,7 +670,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   恢复出的 token 不会向客户端二次推流。
 - **不绕过任何门**：修复后的调用照常走完整 `wrap_tool_call` 链
   （ToolGuardrails / PathGuard / HITL / sandbox）。
-- **常开，两条链**：属于 `scaffolding._MAIN_REQUIRED`（预设-中间件页显示为锁定）与
+- **常开，两条链**：属于 `scaffolding._MAIN_REQUIRED` 与
   `scaffolding._SUBAGENT_REQUIRED`（子代理同样把它放在最内层）。无法修复的条目打
   WARNING 日志（原始 args 预览上限 `INVALID_TOOL_CALL["log_args_chars"]`）并记一条
   `invalid_tool_call` trajectory 事件。

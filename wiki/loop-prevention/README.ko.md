@@ -49,11 +49,19 @@
 | 멱등 무진전 | 동일한 멱등 도구(또는 그룹 도구의 멱등 action)가 그 턴에서 이미 반환한 결과 해시를 반환 | 2 | 5 | 5에서 HALT |
 | 핑퐁 | 끊김 없는 A → B → A → B 왕복으로, 연속된 두 호출이 모두 무진전 | 4 | 6 | 6에서 HALT |
 | 인자 갱신 | 같은 멱등 도구가 결과가 변하지 않는 인자 변형을 순환 | 3개 변형 | 5개 변형 | 5에서 HALT |
+| 시그니처 연속(상태 무관) | 같은 도구 + 같은 인자 해시의 연속 호출. 결과 상태와 무관(terminal은 5) | 3(terminal: 5) | 경고 예산 소진 후 해당 정확한 시그니처 | 턴당 최대 3회 WARN, 이후 그 정확한 호출을 턴이 끝날 때까지 차단. 시그니처가 바뀌면 리셋 |
+| 결과 반복(비멱등 도구) | 인자는 계속 바뀌는데 같은 도구가 바이트 단위로 동일한 결과를 연속 반환(`probe1.py`, `probe2.py`…) | 3 | 6 | 6에서 HALT |
+
+네트워크 명령 실패는 이제 도구 오류로 연결됩니다: `curl`/`wget`/`git fetch`/`git clone` 등의 비영 종료는 `ToolException`을 발생시켜 `handle_tool_error`가 `ToolMessage(status="error")`를 만들고 exact-failure 카운터가 인식합니다. 로컬 명령(pytest, 컴파일러, 스크립트)의 비영 종료는 일반 텍스트(`status="success"`)로 반환되어 agent가 실패를 읽고 반복할 수 있습니다. `web_fetch`의 HTTP 4xx/5xx도 동일하게 raise합니다. 시그니처 연속은 또 다른 사각지대(인자가 같고 성공처럼 보이는 반복)를 잡습니다. `streak_max_warnings_per_turn`회까지 경고하고, 예산을 다 쓰면 그 정확한 도구 + 인자 시그니처를 턴이 끝날 때까지 차단합니다. 따라서 같은 명령을 계속 재실행하는 퇴화 루프가 전체 반복 예산을 소진할 수 없습니다. 차단은 해당 시그니처에만 적용되며(다른 인자와 도구는 계속 사용 가능), 복구 모드를 우회합니다(반복 차단을 일회성 재시도로 풀어서는 안 됩니다).
+
+**결과 반복**은 시그니처 탐지가 아직 놓치는 루프를 보완합니다: 호출마다 인자는 바뀌지만 출력은 바이트 단위로 동일한 경우입니다. SWE 20261103_203547의 Sympy 실행이 대표적입니다 — agent는 `probe1.py`부터 `probe19.py`까지 작성해 매번 같은 `prettyForm`을 출력하면서 90회 예산을 모두 쓰고 라이브러리 코드는 건드리지 않았습니다. 탐지기는 비멱등 도구에 대해 '도구별 연속 동일 결과'를 세고(멱등 도구는 기존 no-progress 체인이 담당), `result_repetition_warn_after`에서 도구별로 한 번 경고하며, `result_repetition_block_after`에서 도구 전체를 차단합니다. 시그니처 차단과 마찬가지로 복구 모드를 우회하고 턴이 끝날 때까지 유지됩니다. 다른 도구(쓰기 도구 포함)는 계속 사용할 수 있으므로 agent는 맴돌던 변경을 적용할 수 있습니다.
+
+**성공한 소스 편집은 차단을 해제합니다**: `patch_file`은 자체 metadata에 `clears_guardrail_blocks`를 선언하고, ToolGuardrails는 그 호출이 성공하면 누적된 모든 차단·시그니처·결과 연속 기록과 실패/무진전 카운터 및 호출 기록을 지웁니다. 가드를 작동시킨 프로브는 편집 전 파일이 답한 것이므로, 검증 도구를 계속 차단하면 agent가 새 후보를 테스트할 수 없습니다. 반면 새 `probeN.py`를 만드는 `write_file`은 이 플래그가 없어 자신이 속한 루프를 다시 열 수 없습니다.
 
 중요한 세부 사항:
 
 - **복구 모드** (`recovery_mode_enabled=True` 기본값): 첫 BLOCK은 턴을 벽돌로 만들지 않습니다. 턴은 복구 상태로 들어가고, *precheck* 경로가 차단된 도구를 풀어주어 재시도가 새로 평가됩니다. 이후 BLOCK마다 위반 카운터가 증가하고, 카운터가 `recovery_max_violations`(기본 1)를 초과하면 HALT로 격상됩니다. 요컨대 즉석 벽이 아니라 관리되는 재시도 창입니다. 엄격한 비복구 동작을 원하면 `recovery_mode_enabled=False`로, 모든 BLOCK 임계값을 HALT로 바꾸려면 `hard_stop_enabled=True`로 설정하세요(표 참조).
-- **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. 그룹 도구는 전체 플래그 대신 `idempotent_actions`를 선언할 수 있습니다. `action` 인자가 그 허용 목록에 있는 호출만 해시됩니다(TaskFlow는 `create`/`plan`/`update_steps`/`resume`, `checkpoint`는 `list`/`show`, `knowledge`는 `read`/`list`). 허용 목록은 스칼라 플래그보다 우선하며, 목록에 없거나 누락된 action은 재실행 가능으로 취급되지 않습니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
+- **무진행이란 곧 정체(stagnation, `is_stagnant`)**입니다: 성공한 멱등 호출은 **동일 도구**가 그 턴에서 이미 같은 `result_hash`를 반환한 경우에만 무진행으로 판정됩니다. 결과가 바뀌면 진전입니다. 그룹 도구는 전체 플래그 대신 `idempotent_actions`를 선언할 수 있습니다. `action` 인자가 그 허용 목록에 있는 호출만 해시됩니다(TaskFlow는 `create`/`plan`/`update_steps`/`resume`, `knowledge`는 `read`/`list`). 허용 목록은 스칼라 플래그보다 우선하며, 목록에 없거나 누락된 action은 재실행 가능으로 취급되지 않습니다. **핑퐁 쌍**은 인접 호출의 두 도구 이름을 해시하고, *연속된 두* 호출이 모두 정체일 때만 누적됩니다. 에러가 하나라도 있거나, 결과가 변화(비정체)하거나, 성공한 비멱등(변이) 호출이 하나라도 있으면 누적된 모든 쌍 연속 기록이 0으로 돌아갑니다. 멱등 도구의 결과 변화 역시 인자 갱신으로 세지 않으며, 비멱등 도구의 성공은 인자 갱신 상태를 완전히 비웁니다.
 - 가드 상태는 엄격히 **턴 범위**입니다: `before_agent`가 리셋하므로 새 턴은 깨끗하게 시작합니다.
 
 ### 턴 수준: `IterationBudget`
@@ -265,7 +273,7 @@
 - `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
-- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1).
+- `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1), `streak_warn_after` (3), `streak_max_warnings_per_turn` (3). 도구는 자체 metadata로 시그니처 임계값을 덮어쓸 수 있습니다(terminal은 5 선언). 경고 예산을 다 쓰면 그 정확한 반복 도구 + 인자 시그니처가 턴이 끝날 때까지 BLOCK됩니다(다른 인자 변형은 계속 허용). `result_repetition_warn_after`(3)와 `result_repetition_block_after`(6)가 결과 반복을 제어합니다.
 - Announce 전달 노브 (서브에이전트 announce 설정): `announce_retry_max=3`에 5s / 10s / 20s 일시적 지연, 그리고 `max_announce_retry_count=10`과 24시간 run 만료.
 
 수동 복구 치트시트:

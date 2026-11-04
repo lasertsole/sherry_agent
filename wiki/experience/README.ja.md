@@ -4,6 +4,8 @@
 
 本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに、破棄されるメッセージだけを受け取り、そのターン自身のモデルとプレフィックスでキャッシュ温存のまま走る）、プランがターン境界で完了したときの plan extraction、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage（捕捉した圧縮カットに対してバックグラウンドで 2 波の memory review を走らせる）。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
+> **ストレージ更新（2026-11-04）：** 以下で MEMORY.md / USER.md / FACTS.md と呼んでいる 3 つのメモリ出力は、MesMemory の `memory_entries` テーブルの行（ターゲット `memory` / `user` / `facts` ごと）になりました。旧 Markdown ファイルは起動時に `memory_migration.py` が一度だけインポートし、`*.md.bak` に改名します。読み込みは `MemoryStore.load_from_store()` で、各行は `origin_session`（由来）と `usage_count` / `last_used`（使用状況）を持ちます。
+
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 
 ## 設計原則
@@ -123,9 +125,9 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 
 | ストア | パス（定数） | 上限 |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） |
-| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` = `workspace/memory/FACTS.md`（唯一のグローバルファイル、4 言語テンプレートは `workspace/template/<lang>/FACTS.md`） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）；`add` が上限超過時は最古の項目から破棄 |
+| `memory` target | MesMemory `memory_entries` 行（`target='memory'`） | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`、`/memory/settings` で上書き可） |
+| `user` target | MesMemory `memory_entries` 行（`target='user'`） | 1375 文字（`MEMORY_TOOL["user_char_limit"]`、上書き可） |
+| `facts` target | MesMemory `memory_entries` 行（`target='facts'`、唯一のグローバルターゲット） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`、上書き可）；`add` が上限超過時は最も使われていない項目をアーカイブ |
 | plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——アイデンティティ・キー） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |

@@ -121,6 +121,21 @@ describe('ProgressFloat', () => {
     expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(1);
   });
 
+  it('opens the full task board tab from the expanded header', async () => {
+    const { useRightSidebarStore } = await import('@/stores/right-sidebar');
+    const sidebar = useRightSidebarStore();
+    const openTab = vi.spyOn(sidebar, 'openTab');
+    const wrapper = await mountFloat();
+    handlers().taskflow!(taskflowFrame([makeFlow()]));
+    await flushPromises();
+
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="progress-float-open-board"]').trigger('click');
+
+    expect(openTab).toHaveBeenCalledWith('taskFlowBoard');
+  });
+
   it('is translucent while collapsed, opaque when expanded, over a 0.3s transition', async () => {
     // Class contract (happy-dom computes no stylesheet): the pill carries the
     // alpha variant + the transition, and swaps to the solid background on expand;

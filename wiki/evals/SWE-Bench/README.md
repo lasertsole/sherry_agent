@@ -26,6 +26,11 @@ HARD instances?” — not “what is the leaderboard position?”.
 - The report is `evals/results/swebench/<run_id>/eval_report.json`; the
   per-instance diffs are next to it.
 
+- Since 2026-11-04 the task prompt includes the instance's test patch and
+  FAIL_TO_PASS names (read-only). The checkout is NOT pre-patched; the official
+  test patch is still applied at judging time, and the per-instance report
+  records `target_tests_exposed`.
+
 ## The failure history (2026-11-01)
 
 | Run | Arm | Result | What happened |
@@ -34,6 +39,14 @@ HARD instances?” — not “what is the leaderboard position?”.
 | 2026-11-01 002305 | delegate-only | 2/2 clean | Main agent had no direct tools; children implemented and verified |
 | 2026-11-01 143952 | first soft gate (10/20) | 1/2 | Gate forced a spawn, then the main agent patched repeatedly and broke P2P |
 | 2026-11-01 174750 | soft gate (8/16, cumulative) | 2/2 clean | Main was read/write-blocked after 16 reads and delegated the implementation |
+| 2026-11-03 010944 | 7/14 advisory (cumulative) | 0/2 | Django's condition-only change still failed the unique constraint; Sympy produced no diff and exhausted the 90-call budget |
+| 2026-11-03 194320 | network bridge + signature streak (Sympy only) | 0/1 | Non-empty diff, but `test_pretty_sqrt` P2P regressed; streak stayed WARN-only and the 90-call budget was exhausted |
+| 2026-11-03 203547 | + exact-signature block (Sympy only) | 0/1 | The repeat blocked at ~20 calls, but the agent switched to `probe1.py`…`probe19.py` (same output, different args) and still exhausted 90 calls |
+| 2026-11-03 205218 | + result repetition (Sympy only) | 0/1 | terminal/python_repl blocked at 6 identical results; the agent patched at 72/90 and could no longer run verification |
+| 2026-11-03 210023 | + blocks released by a successful `patch_file` (Sympy only) | 0/1 | Clean 28-call run, no guardrail trip; P2P passed, F2P missed the hidden NumberSymbol-vs-Symbol semantics (the repo's existing `test_issue_6285` asserts the OLD behavior) |
+| 2026-11-04 003521 | + target tests in the prompt (HARD 2) | 0/2 | Tests were visible but not runnable; both instances exhausted 90 calls |
+| 2026-11-04 004714 | + target tests pre-applied to the checkout (HARD 2) | 1/2 | Django resolved; Sympy used `e.is_Symbol` (wrong for `1/x_17`) and looped on a repro script |
+| 2026-11-04 005721 | stronger post-failure prompt (Sympy only) | 0/1 | Same wrong condition; still 0 F2P |
 
 ## Problems exposed
 
@@ -60,8 +73,8 @@ HARD instances?” — not “what is the leaderboard position?”.
 ### Current resolutions
 
 1. **Fixed.** `IterationBudget` now charges one unit per model call; tool results are free.
-2. **Mitigated.** `DelegationPressureGate` injects a `<system-reminder>` warning at 7 reads and the escalated one at 14; `terminal`/read tools remain available. `ToolGuardrails` still does not hash non-idempotent terminal commands; a read-only command classifier remains open.
-3. **Partially mitigated.** The escalated reminder urges `sessions_spawn` at 14 but no longer blocks tools. A dedicated verification gate that requires running the target tests is still open.
+2. **Fixed.** `ToolGuardrails` now carries a status-blind signature streak (tool + args hash; 3 identical calls, terminal 5 in its own metadata) that warns up to 3 times per turn and then blocks that exact signature, plus a result-repetition detector for non-idempotent tools (3 warnings, 6 consecutive identical results block the tool). A successful `patch_file` (metadata `clears_guardrail_blocks`) clears the blocks, streaks and failure counters so verification can resume. No read-only command classifier is needed.
+3. **Mitigated by the tool guards, not a hard finish gate.** Blocked signatures force a different approach, the 20261103_210023 Sympy run converged in 28 model calls and ran the neighboring test file, and the prompt now requires it. A separate "tests must pass before finish" gate does not exist.
 4. **Still open.** The harness records `changed_paths` but does not invalidate a `tests/` edit. The soft gate reduces the chance but is not the official guard.
 5. **Partially mitigated.** The escalated reminder pushes the main agent to stop its post-spawn patch loop and delegate; there is no hard "tests must pass before finish" gate yet.
 6. **Partially fixed.** The per-turn token budget now attributes the main agent + all descendant levels to the root turn; eval reports still count only the main session, and child checkpoint/result readback remains open.
@@ -102,7 +115,7 @@ blocked `patch_file` too, which is how the 2026-11-01 run ended; the current
 ## The current design: DelegationPressureGate (7/14 advisory)
 
 The 2026-11-01 run measured the earlier 8/16 hard-block variant; the 7/14
-behavior below is the design reconciled on 2026-11-02.
+behavior below is the design reconciled on 2026-11-02. The 2026-11-03 rerun (0/2) is its first measurement; it did not resolve the HARD slice — see `evals/swebench/RESULTS.md`.
 
 `agent/middlewares/delegation_pressure/core.py`:
 
@@ -118,11 +131,29 @@ behavior below is the design reconciled on 2026-11-02.
 It is installed on the main agent only; the child middleware builder never adds
 it, and `_active` also rejects `:subagent:`/`:swarm:` sessions.
 
+## Network status bridge
+
+Terminal commands whose failure is network-shaped are tool errors now: a non-zero
+exit from `curl` / `wget` / `http` / `https` / `ssh` / `scp` / `sftp` / `ping` /
+`dig` / `nslookup`, or from `git clone|fetch|pull|push|ls-remote|remote|submodule`,
+raises `ToolException`. `handle_tool_error` turns that into
+`ToolMessage(status="error")`, so the exact-failure counter sees it. Local
+commands (pytest, compilers, scripts) keep their non-zero exit as normal text
+(`status="success"`) so the agent can read the failure and iterate. `web_fetch`
+HTTP 4xx/5xx likewise raises.
+
+The eval harness also probes GitHub before a run; when the probe cannot reach
+the network it appends a "do not keep probing the network" directive to the
+seeded `AGENTS.md`. This removed the Sympy curl/GitHub probe loop. The remaining
+Sympy F2P failure is the hidden NumberSymbol-vs-Symbol test semantics, not
+network probing.
+
 ## Results
 
 | Arm | Resolved | Duration | Main-session tokens | Estimated cost |
 | :--- | :--- | :--- | :--- | :--- |
 | `DelegationPressureGate` 8/16 (run 20261101_174750) | 2/2 | 1693.4s | 1,962,778 / 12,673 | $1.000 |
+| `DelegationPressureGate` 7/14 advisory (run 20261103_010944) | 0/2 | 669.7s | 8,370,656 / 31,119 | $4.232 |
 | Delegate-only (run 20261101_145717) | 2/2 | 3469.0s | 2,561,580 / 20,925 | $1.312 |
 
 Django changed product code and release docs only; Sympy changed one library

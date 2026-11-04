@@ -14,7 +14,8 @@ import type { BackgroundTaskItem } from '@/composables/use-background-tasks';
 
 const state = vi.hoisted(() => ({
   loadTaskRuns: vi.fn(async () => {}),
-  initTasks: vi.fn()
+  initTasks: vi.fn(),
+  openTab: vi.fn()
 }));
 
 // The entry owns the initial load (the chat's jump bar is gone), so both seams
@@ -22,6 +23,18 @@ const state = vi.hoisted(() => ({
 vi.mock('@/composables/subagent-sync', () => ({
   loadTaskRuns: state.loadTaskRuns,
   initTasks: state.initTasks
+}));
+
+// The label helpers are auto-imported (module-injected), so they are mocked by
+// module — deterministic text keeps the row assertions about STRUCTURE.
+vi.mock('@/composables/useSubagentTasks', () => ({
+  useSubagentTasks: () => ({
+    roleLabel: (run: { depth?: number }) => (run.depth === 1 ? 'researcher' : 'root'),
+    runLabel: (run: { label?: string; task_name?: string; task?: string; run_id: string }) =>
+      run.label || run.task_name || (run.task ?? '').split('\n')[0] || run.run_id,
+    statusLabel: (run: { execution?: { status?: string; outcome?: { status?: string } | null } }) =>
+      run.execution?.outcome?.status ?? String(run.execution?.status ?? '')
+  })
 }));
 
 const command = {
@@ -49,8 +62,10 @@ const backgroundRun: BackgroundTaskItem = {
 beforeEach(() => {
   state.loadTaskRuns.mockClear();
   state.initTasks.mockClear();
-  vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], focusedRunId: undefined, taskLoading: false }));
+  vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], taskLoading: false }));
   vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([command]) }));
+  state.openTab.mockClear();
+  vi.stubGlobal('useRightSidebarStore', () => ({ openTab: state.openTab }));
 });
 
 const mountButton = () => mount(TasksButton, { props: { sessionId: 'sid-1' } });
@@ -90,6 +105,57 @@ describe('TasksButton.vue (integration)', () => {
     expect(wrapper.find('[data-test="toolbar-popover"]').exists()).toBe(false);
   });
 
+  it('shows the run role, task summary and a spinner status glyph', async () => {
+    const wrapper = mountButton();
+    await openPopover(wrapper);
+
+    const row = wrapper.findAll('button.row-button')[0]!;
+    expect(row.text()).toContain('root');
+    expect(row.text()).toContain('check the logs');
+    const icon = wrapper.get('[data-test="tasks-run-icon-run-1"]');
+    expect(icon.classes().join(' ')).toContain('pi-spin');
+  });
+
+  it('lists finished runs behind a collapsed Ended toggle and opens them', async () => {
+    const finished = {
+      run_id: 'run-done',
+      task: 'old job',
+      execution: {
+        status: 'DONE',
+        started_at: Date.now() - 120_000,
+        ended_at: Date.now() - 60_000,
+        outcome: { status: 'OK', error: null }
+      }
+    };
+    vi.stubGlobal('useSubagentStore', () =>
+      reactive({ taskRuns: [run], allTaskRuns: [run, finished], taskLoading: false })
+    );
+    const wrapper = mountButton();
+    await openPopover(wrapper);
+
+    const toggle = wrapper.get('[data-test="tasks-ended-toggle"]');
+    expect(toggle.text()).toContain('1');
+    expect(wrapper.find('[data-test="tasks-ended-run-done"]').exists()).toBe(false);
+
+    await toggle.trigger('click');
+    const row = wrapper.get('[data-test="tasks-ended-run-done"]');
+    expect(row.text()).toContain('old job');
+    expect(row.text()).toContain('OK');
+
+    await row.trigger('click');
+    expect(wrapper.emitted('focus')).toEqual([[{ kind: 'run', id: 'run-done' }]]);
+  });
+
+  it('opens the session activity overview from the popover footer', async () => {
+    const wrapper = mountButton();
+    await openPopover(wrapper);
+
+    await wrapper.get('[data-test="tasks-open-activity"]').trigger('click');
+
+    expect(state.openTab).toHaveBeenCalledWith('sessionActivity');
+    expect(wrapper.find('[data-test="toolbar-popover"]').exists()).toBe(false);
+  });
+
   it('asks the session page to reveal a running command\u2019s tool card', async () => {
     const wrapper = mountButton();
     await openPopover(wrapper);
@@ -100,7 +166,7 @@ describe('TasksButton.vue (integration)', () => {
   });
 
   it('shows the empty state when nothing is running', async () => {
-    vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [], focusedRunId: undefined }));
+    vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [] }));
     vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([]) }));
     const wrapper = mountButton();
 

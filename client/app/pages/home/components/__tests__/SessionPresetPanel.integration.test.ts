@@ -59,42 +59,13 @@ vi.stubGlobal('useLlmProfilesStore', () => profilesState.current);
  * save spy that records what the tab wrote.
  * @param config The session's stored config ({} = every default).
  * @param pending Whether the backend reported a parked choice.
- * @param catalogue Optional catalogue override (tools + their rendered groups).
- * @param catalogue.tools
- * @param catalogue.groups
  */
-function makeAgentStore(
-  config: Record<string, unknown> = {},
-  pending = false,
-  catalogue?: {
-    tools?: Array<Record<string, unknown>>;
-    groups?: Array<{ group: string; tools: Array<Record<string, unknown>> }>;
-  }
-) {
+function makeAgentStore(config: Record<string, unknown> = {}, pending = false) {
   const saved: Array<Record<string, unknown>> = [];
-  const tools = catalogue?.tools ?? [
-    { name: 'read_file', group: 'files' },
-    { name: 'terminal', group: 'terminal' }
-  ];
-  const groups = catalogue?.groups ?? [
-    {
-      group: 'files',
-      tools: [{ name: 'read_file', group: 'files', description: 'Read a file with pagination.' }]
-    },
-    {
-      group: 'terminal',
-      tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-    }
-  ];
   return {
     saved,
     store: reactive({
       catalog: {
-        tools,
-        middlewares: [
-          { name: 'HumanInTheLoop', required: true, gateable: false },
-          { name: 'TaskIntentMiddleware', required: false, gateable: true }
-        ],
         subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
         skills: [
           { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
@@ -103,11 +74,6 @@ function makeAgentStore(
         ]
       },
       catalogLoaded: true,
-      toolGroups: groups,
-      middlewares: {
-        gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
-        locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
-      },
       subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
       skills: {
         builtin: [
@@ -119,18 +85,7 @@ function makeAgentStore(
       loadCatalog: vi.fn(async () => undefined),
       hydrate: vi.fn(async () => undefined),
       configOf: () => config as never,
-      // Mirrors the real store: a configured subset plus the required tools.
-      enabledTools: () => {
-        const selected = Array.isArray(config.tools)
-          ? new Set(config.tools as string[])
-          : new Set(tools.map(tool => tool.name as string));
-        return tools
-          .filter(tool => selected.has(tool.name as string) || tool.required === true)
-          .map(tool => tool.name as string) as never;
-      },
       selectedSkills: () => (Array.isArray(config.skills) ? config.skills : null) as never,
-      nudgeEnabled: () => config.middleware_options?.Summarization?.nudge !== false,
-      disabledMiddlewares: () => (config.middlewares_disabled ?? []) as never,
       isPending: () => pending,
       save: vi.fn(async (_sid: string, next: Record<string, unknown>) => {
         saved.push(next);
@@ -276,79 +231,9 @@ describe('SessionPresetButton', () => {
     expect(panel.get('[data-test="session-preset-unavailable"]').text()).toBe('该预设已被删除');
   });
 
-  it('shows the session tools and middlewares READ-ONLY, in the preset panel’s shape', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
-    agentStoreState.current = makeAgentStore({
-      tools: ['terminal'],
-      middlewares_disabled: ['TaskIntentMiddleware']
-    }).store;
-
-    const wrapper = await mountPanel();
-
-    const panel = wrapper.get('[data-test="session-preset-panel"]');
-    // Tools: one disabled checkbox per catalogue tool, checked per the SESSION.
-    const terminal = panel.get('[data-test="session-preset-tool-terminal"]');
-    const readFile = panel.get('[data-test="session-preset-tool-read_file"]');
-    expect(terminal.attributes('disabled')).toBeDefined();
-    expect(readFile.attributes('disabled')).toBeDefined();
-    expect((terminal.element as HTMLInputElement).checked).toBe(true);
-    expect((readFile.element as HTMLInputElement).checked).toBe(false);
-    // Hovering a row shows the backend's tool description.
-    expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file with pagination.');
-    // Middlewares: a disabled switch mirroring the disabled set; a
-    // system-required one is not rendered at all (only its option row exists).
-    const switchEl = panel.get('[data-test="session-preset-middleware-TaskIntentMiddleware"]');
-    expect(switchEl.attributes('disabled')).toBeDefined();
-    expect((switchEl.element as HTMLInputElement).checked).toBe(false);
-    expect(panel.text()).not.toContain('HumanInTheLoop');
-    expect(panel.find('[data-test="session-preset-middleware-option-Summarization"]').exists()).toBe(true);
-    // Neither write path was touched (read-only).
-    expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
-  });
-
-  it('marks required tools locked-on and renders a bulk-only group as chips', async () => {
-    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
-    agentStoreState.current = makeAgentStore({ tools: ['terminal'] }, false, {
-      tools: [
-        { name: 'read_file', group: 'files', required: true },
-        { name: 'terminal', group: 'terminal' },
-        { name: 'taskflow_flow', group: 'tasks' }
-      ],
-      groups: [
-        {
-          group: 'files',
-          tools: [{ name: 'read_file', group: 'files', description: 'Read a file.', required: true }]
-        },
-        {
-          group: 'terminal',
-          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-        },
-        {
-          group: 'tasks',
-          tools: [{ name: 'taskflow_flow', group: 'tasks', description: 'Create a flow.' }]
-        }
-      ]
-    }).store;
-
-    const wrapper = await mountPanel();
-    const panel = wrapper.get('[data-test="session-preset-panel"]');
-
-    // The required tool is a locked chip with NO checkbox (it can never be off).
-    expect(panel.find('[data-test="session-preset-tool-read_file"]').exists()).toBe(false);
-    const readFile = panel.get('[data-test="session-preset-tool-locked-read_file"]');
-    expect(readFile.text()).toBe('read_file');
-    expect(readFile.element.closest('label')?.querySelector('.pi-lock')).not.toBeNull();
-    expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
-    // A fully required group says so instead of offering any control.
-    expect(panel.find('[data-test="session-preset-tool-group-locked-files"]').exists()).toBe(true);
-    // A bulk-only group has no per-tool switch: a chip, struck through when off.
-    expect(panel.find('[data-test="session-preset-tool-taskflow_flow"]').exists()).toBe(false);
-    expect(panel.get('[data-test="session-preset-tool-bulk-taskflow_flow"]').classes()).toContain('line-through');
-  });
-
   it('shows the session skills READ-ONLY with the two sub-tabs', async () => {
     db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
-    agentStoreState.current = makeAgentStore({ tools: ['terminal'], skills: ['alpha'] }).store;
+    agentStoreState.current = makeAgentStore({ skills: ['alpha'] }).store;
 
     const wrapper = await mountPanel();
     const panel = wrapper.get('[data-test="session-preset-panel"]');
@@ -357,7 +242,7 @@ describe('SessionPresetButton', () => {
     const alpha = panel.get('[data-test="session-preset-skill-alpha"]');
     expect(alpha.attributes('disabled')).toBeDefined();
     expect((alpha.element as HTMLInputElement).checked).toBe(true);
-    expect(panel.text()).toContain('已选 1/2');
+    expect(panel.text()).toContain('已选 1/3');
     // The third-party sub-tab carries its own list (and its own state).
     await panel.get('[data-test="session-preset-skills-scope-thirdparty"]').trigger('click');
     await flushPromises();
@@ -369,12 +254,9 @@ describe('SessionPresetButton', () => {
     expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
   });
 
-  it('leads with the 代理模型 tab, mirrors 主代理 read-only and shows the nudge row', async () => {
+  it('leads with the 代理模型 tab and mirrors 主代理 read-only', async () => {
     db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
-    agentStoreState.current = makeAgentStore({
-      tools: ['terminal'],
-      middleware_options: { Summarization: { nudge: false } }
-    }).store;
+    agentStoreState.current = makeAgentStore({}).store;
 
     const wrapper = await mountPanel();
     const panel = wrapper.get('[data-test="session-preset-panel"]');
@@ -382,7 +264,7 @@ describe('SessionPresetButton', () => {
     // Agent models leads the whole strip (the session's own model pair is what the
     // viewer is opened for), ahead of the persona tabs too.
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers).toEqual(['代理模型', '角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '技能']);
+    expect(headers).toEqual(['代理模型', '角色配置', '运行守则', '人格灵魂', '用户信息', '技能']);
 
     // Main agent is the SAME control as the toolbar's model switch: a picker bound to
     // the session-model store (the stub reports "env" with no model configured).
@@ -394,14 +276,6 @@ describe('SessionPresetButton', () => {
     await panel.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
     await flushPromises();
     expect(panel.find('[data-test="session-preset-role-model-researcher"]').exists()).toBe(true);
-
-    // The nudge row mirrors the session's option, read-only.
-    // (PrimeVue is unresolved in this suite, so the bound value lands as the
-    // kebab attribute — the same convention the middleware switch uses.)
-    // (This suite's switch stub renders an input, so the state reads as `.checked`.)
-    const nudge = panel.get('[data-test="session-preset-middleware-nudge"]');
-    expect(nudge.attributes('disabled')).toBeDefined();
-    expect((nudge.element as HTMLInputElement).checked).toBe(false);
   });
 
   it('switches the session main model from the 主代理 picker, through the same store', async () => {
@@ -446,7 +320,7 @@ describe('SessionPresetButton', () => {
 
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {
     db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'sherry', preset_name: '全量' });
-    agentStoreState.current = makeAgentStore({ tools: ['terminal'] }).store;
+    agentStoreState.current = makeAgentStore({}).store;
 
     const store = agentStoreState.current as { save: ReturnType<typeof vi.fn> };
     const wrapper = await mountPanel();
@@ -460,8 +334,6 @@ describe('SessionPresetButton', () => {
     expect(store.save).toHaveBeenCalledTimes(1);
     const [sid, payload] = store.save.mock.calls[0] as [string, Record<string, unknown>];
     expect(sid).toBe('sid-1');
-    // The tool selection survives (the payload is merged, not replaced).
-    expect(payload.tools).toEqual(['terminal']);
     expect(payload.subagent_models).toEqual({
       researcher: {
         id: 'p1',

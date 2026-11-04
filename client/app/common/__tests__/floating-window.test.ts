@@ -10,6 +10,7 @@ import {
   FLOATING_WIDTH_MAX_PX,
   clampCollapsedHeight,
   clampFloatingPosition,
+  clampFloatingSize,
   distributeSideExtra,
   isFloatingAvailable,
   parseFloatingAnchor,
@@ -61,6 +62,30 @@ describe('resolveFloatingSize', () => {
     expect(resolveFloatingSize(SLOT, { width: 5000, height: 5000 })).toEqual({
       width: FLOATING_RESIZE_WIDTH_MAX_PX,
       height: SLOT.height - FLOATING_MARGIN_PX * 2
+    });
+  });
+});
+
+describe('clampFloatingSize', () => {
+  it('never shrinks below the drag band (360 × 260)', () => {
+    expect(clampFloatingSize({ width: 100, height: 80 }, SLOT)).toEqual({
+      width: FLOATING_RESIZE_WIDTH_MIN_PX,
+      height: FLOATING_RESIZE_HEIGHT_MIN_PX
+    });
+  });
+
+  it('never grows past the drag band (1200 × 900)', () => {
+    expect(clampFloatingSize({ width: 5000, height: 5000 }, { left: 0, top: 0, width: 3000, height: 2000 })).toEqual({
+      width: FLOATING_RESIZE_WIDTH_MAX_PX,
+      height: 900
+    });
+  });
+
+  it('stays inside the slot minus the 16px margin', () => {
+    // The slot is the final cap: a 700×600 slot cannot host a 1200px window.
+    expect(clampFloatingSize({ width: 1200, height: 900 }, { left: 0, top: 0, width: 700, height: 600 })).toEqual({
+      width: 700 - FLOATING_MARGIN_PX * 2,
+      height: 600 - FLOATING_MARGIN_PX * 2
     });
   });
 });

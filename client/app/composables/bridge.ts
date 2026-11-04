@@ -50,13 +50,7 @@ export { acquireAgentSocket, releaseAgentSocket, closeAllAgentSockets } from './
 
 // ── Session & subagents ─────────────────────────────────
 export type { SubagentRun } from './bridge/session';
-export type {
-  AgentCatalog,
-  AgentConfigState,
-  AgentMiddlewareEntry,
-  AgentRoleEntry,
-  AgentToolEntry
-} from './bridge/agent-config';
+export type { AgentCatalog, AgentConfigState, AgentRoleEntry } from './bridge/agent-config';
 export { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 export {
   clearSession,
@@ -112,6 +106,29 @@ export {
   setHeartbeatEnabled
 } from './bridge/memory';
 export type { HeartbeatStatus } from './bridge/memory';
+export {
+  archiveMemoryEntry,
+  consolidateMemory,
+  createMemoryEntry,
+  readMemoryEntries,
+  readMemorySettings,
+  readMemoryStats,
+  restoreMemoryEntry,
+  searchMemoryEntries,
+  updateMemoryEntry,
+  writeMemorySettings
+} from './bridge/memory-entries';
+export type {
+  MemoryArchiveReason,
+  MemoryEntry,
+  MemoryEntryPage,
+  MemorySearchResult,
+  MemorySettings,
+  MemoryStats,
+  MemoryTarget,
+  MemoryTargetStats,
+  ReadMemoryEntriesParams
+} from './bridge/memory-entries';
 
 // ── Cron (scheduled tasks) ──────────────────────────────
 export type {

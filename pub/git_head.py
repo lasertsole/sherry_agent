@@ -1,7 +1,7 @@
 """Read-only access to a project's shadow-git HEAD.
 
 This is the dependency-free seam shared by ``runtime`` (workspace notices) and
-``agent`` (checkpoint tools): both may import it, while it only depends on
+``agent`` (shadow-git tooling): both may import it, while it only depends on
 ``config``. It deliberately does NOT initialize or mutate the shadow store.
 """
 

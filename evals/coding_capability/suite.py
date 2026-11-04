@@ -16,10 +16,10 @@ Reporting discipline, enforced here:
   points ``SHERRY_WORKSPACE_DIR`` at a throwaway directory, writes its own
   neutral ``AGENTS.md`` plus empty ``SOUL.md`` / ``USER.md`` / ``ROLE.md``, and
   scans the ASSEMBLED system prompt for persona markers;
-- the agent configuration is the built-in 编码助手 preset, derived from the live
-  tool / skill catalogues at run time (all tools except the memory store, the
-  required skills plus the coding skill set, and the compression nudge off) —
-  the persona files of that preset are NOT reused, because its shipped
+- the agent configuration is the built-in 编码助手 preset's skill set, derived
+  from the live skill catalogue at run time (the required skills plus the coding
+  skill set; tools and the middleware chain are build-time contracts now) — the
+  persona files of that preset are NOT reused, because its shipped
   ``AGENTS.md`` carries the preset's task-management guidance and the neutral
   arm must supply its own rules;
 - the module is a task whose tests do not pass with the intended fix are
@@ -106,8 +106,8 @@ _PERSONA_TEMPLATE_LANG = "zh"
 _FORBIDDEN_MARKERS = ("Tachibana Sherry", "橘雪莉", "sessions_spawn", "subagent_id")
 
 _PROCEED_DIRECTIVE = (
-    "Do not ask questions and do not delegate. Implement the change yourself in the "
-    "repository and make `python -m pytest -q` pass."
+    "Do not ask questions. Implement the change in the repository and make "
+    "`python -m pytest -q` pass."
 )
 
 
@@ -449,9 +449,8 @@ async def _bind_session(session_id: str, repo: Path) -> None:
     # The payload is written straight to the state register rather than through
     # ``agent_config_service.apply_agent_config_choice``: that service validates
     # names against the LIVE catalogue, while this suite writes the preset
-    # payload directly. The runtime readers (agent_switch,
-    # ToolSelectionMiddleware, the skill selection) read this state directly, so
-    # the session behaves exactly as if the preset had been applied.
+    # payload directly. The skill selection reads this state directly, so the
+    # session behaves exactly as if the preset had been applied.
     payload = _coding_preset_payload()
     from server.service.session_settings_service import _delete_value, _write_value
 
@@ -466,23 +465,15 @@ async def _bind_session(session_id: str, repo: Path) -> None:
 
 
 def _coding_preset_payload() -> dict[str, Any]:
-    """The 编码助手 preset's agent block, derived from the live catalogues.
+    """The coding assistant's session agent block: the coding skill set only.
 
     Mirrors ``client/app/composables/persona-catalog.ts::builtinAgentConfig`` for
-    the ``coding`` preset: every catalogue tool EXCEPT the memory store, the
-    required skills plus the coding skill set, all middlewares on, and the
-    compression nudge off.
+    the ``coding`` preset. Tools and the middleware chain are build-time
+    contracts since the preset tool/middleware config was dropped (every main
+    tool always runs), so ``skills`` is the only field left to shape.
     """
-    from agent.tools.catalog import REQUIRED_TOOLS, TOOL_GROUPS
     from skills.loader import REQUIRED_SKILLS, skills_catalog
 
-    # The catalogue's own static name source (``tool_catalog()`` reads the live
-    # tool list, which the eval sandbox has already narrowed for children).
-    # Every Tasks & planning / subagent tool stays available; only the memory store is off.
-    tools = sorted({name for names in TOOL_GROUPS.values() for name in names} - {"memory"})
-    dropped = set(REQUIRED_TOOLS) - set(tools)
-    if dropped:  # the service's own rule: a required tool cannot be disabled
-        raise RuntimeError(f"the coding preset would drop required tools: {sorted(dropped)}")
     available = {entry["name"] for entry in skills_catalog()}
     wanted = set(REQUIRED_SKILLS) | {
         "bugfix-contract",
@@ -491,12 +482,7 @@ def _coding_preset_payload() -> dict[str, Any]:
         "ulw-execute",
         "todolist",
     }
-    return {
-        "tools": tools,
-        "middlewares_disabled": [],
-        "skills": sorted(wanted & available),
-        "middleware_options": {"Summarization": {"nudge": False}},
-    }
+    return {"skills": sorted(wanted & available)}
 
 
 async def _drive(session_id: str, prompt: str) -> dict[str, Any]:

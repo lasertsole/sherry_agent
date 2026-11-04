@@ -75,7 +75,20 @@
     "voicePermissionDenied": "Microphone permission was denied",
     "voiceTooShort": "Recording too short — hold and speak",
     "voiceWarming": "The speech model is loading for the first time — try again shortly",
-    "voiceFailed": "Speech recognition failed — please retry"
+    "voiceFailed": "Speech recognition failed — please retry",
+    "insertTrigger": "Insert",
+    "skillShortcut": "Skills",
+    "commandShortcut": "Commands",
+    "fileShortcut": "Files",
+    "skillPickerTitle": "Skills",
+    "commandPickerTitle": "Commands",
+    "noSkills": "No skills found",
+    "noCommands": "No commands found",
+    "loadingTriggers": "Loading…",
+    "commandArguments": "Command arguments",
+    "commandApply": "Apply",
+    "customCommand": "Custom",
+    "builtinCommand": "Built-in"
   },
   "sessionModelPicker": {
     "pending": "Applies next turn",
@@ -159,6 +172,8 @@
     "continueBusy": "A turn is running; try again once it finishes",
     "editBusy": "A turn is running; editing is unavailable",
     "editCompacted": "This message is outside the editable range (its history was compacted)",
+    "editNotLatest": "Only the latest user message can be edited",
+    "editRollbackSkipped": "Files were not rolled back: no snapshot for this turn or no project directory",
     "forkFailed": "Could not create the branch — try again"
   },
   "connection": {
@@ -183,7 +198,10 @@
     "filterToggle": "Filter",
     "noSearchResults": "No matching sessions",
     "searchPlaceholder": "Search sessions by title…",
-    "selectAll": "Select All"
+    "selectAll": "Select All",
+    "pin": "Pin to top",
+    "unpin": "Unpin",
+    "pinnedLabel": "Pinned"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec}s ago",
@@ -280,8 +298,6 @@
   "config": {
     "agent": {
       "tabs": {
-        "tools": "Tools",
-        "middlewares": "Middlewares",
         "subagents": "Agent models",
         "skills": "Skills"
       },
@@ -291,75 +307,17 @@
         "mainHint": "The model the main agent runs on; follows the model config by default.",
         "followEnv": "Follow the model config"
       },
-      "tools": {
-        "count": "{selected}/{total} selected",
-        "requiredHint": "Required — cannot be disabled",
-        "scope_builtin": "Built-in",
-        "scope_mcp": "MCP",
-        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
-        "clearAll": "Disable all",
-        "clearGroup": "Clear",
-        "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
-        "selectAll": "Enable all",
-        "selectGroup": "All"
-      },
       "skills": {
         "count": "{selected}/{total} selected",
         "scope_builtin": "Built-in",
         "scope_thirdparty": "Third-party",
         "empty": "No skills yet",
         "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
+        "requiredHint": "Required, cannot be disabled",
+        "selectAll": "Enable all",
+        "clearAll": "Disable all",
         "whenToUse": "When to use",
         "whenNotToUse": "Not for"
-      },
-      "toolGroup": {
-        "files": "Files",
-        "terminal": "Terminal & code",
-        "tasks": "Tasks & planning",
-        "memory": "Memory & search",
-        "skills": "Skills",
-        "subagents": "Subagents",
-        "interaction": "Interaction",
-        "web": "Web",
-        "browser": "Browser",
-        "mcp": "MCP",
-        "plan_mode": "Plan mode"
-      },
-      "middlewares": {
-        "nudgeLabel": "Enable nudge",
-        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-        "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
-        "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
-      },
-      "middleware": {
-        "TaskIntentMiddleware": {
-          "name": "Task-intent steering",
-          "desc": "Detects work requests and injects the orchestration prompt"
-        },
-        "WorkspaceNoticeMiddleware": {
-          "name": "Workspace-change notice",
-          "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
-        },
-        "MultimodalProcessor": {
-          "name": "Multimodal preprocessing",
-          "desc": "Persists and prepares uploaded images / audio / video"
-        },
-        "SubagentCompletionDrainMiddleware": {
-          "name": "Completion injection",
-          "desc": "Injects a finished subagent's result into the main session"
-        },
-        "Summarization": {
-          "name": "Summarization",
-          "desc": "Context compression, overflow handling and the post-compression nudges"
-        },
-        "PlanContinuationEnforcer": {
-          "name": "Plan continuation",
-          "desc": "Continues the plan (todos / TaskFlow flows) while it is incomplete"
-        },
-        "DynamicReminderMiddleware": {
-          "name": "Live reminders",
-          "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
-        }
       },
       "subagents": {
         "followTier": "Follow the role default",
@@ -378,9 +336,6 @@
         "librarian": "Librarian"
       },
       "viewer": {
-        "tools": "Tools {selected}/{total}",
-        "middlewares": "Disabled middlewares: {names}",
-        "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
       },
       "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
@@ -480,7 +435,6 @@
       "loadError": "Failed to load app config. Please check the backend service.",
       "saveFailed": "Failed to save app config.",
       "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-      "noConfigFile": "No sherry.jsonc file found.",
       "allowlist": {
         "title": "Replay-gate allowlist",
         "hint": "Add executable names the finish-time replay may re-run, on top of the five built-in toolchains (affects only which verification commands are replayed).",
@@ -533,7 +487,11 @@
       "everySeconds": "Every {n} seconds",
       "everyMinutes": "Every {n} minutes",
       "everyHours": "Every {n} hours",
-      "everyDays": "Every {n} days"
+      "everyDays": "Every {n} days",
+      "unitSeconds": "Seconds",
+      "unitMinutes": "Minutes",
+      "unitHours": "Hours",
+      "unitDays": "Days"
     },
     "heartbeat": {
       "addTask": "Add task",
@@ -645,7 +603,6 @@
     "heartbeat": "Heartbeat",
     "cron": "Scheduled Tasks",
     "extend": "Extend",
-    "taskDetail": "Task details",
     "knowledgeGraph": "Knowledge Graph",
     "resize": "Drag to resize",
     "stats": "Statistics",
@@ -654,6 +611,9 @@
     "sessionPreset": "Presets & Role",
     "gitDiff": "Commit diff",
     "contextViewer": "Agent context",
+    "subagentActivity": "Agent Activity",
+    "sessionActivity": "Session Activity",
+    "taskFlowBoard": "Task Board",
     "browser": "Browser",
     "terminal": "Terminal",
     "sideChat": "Side session",
@@ -687,7 +647,8 @@
     "empty": "No tasks in progress",
     "expand": "Show plan progress",
     "notStarted": "Not started",
-    "summary": "Plan {done}/{total}"
+    "summary": "Plan {done}/{total}",
+    "openBoard": "Open task board"
   },
   "projectFiles": {
     "title": "Files",
@@ -736,20 +697,7 @@
     "copyFailed": "Copy failed",
     "copyHash": "Copy commit hash",
     "copySubject": "Copy commit message",
-    "copyRef": "Copy ref name",
-    "switchBranch": "Switch branch",
-    "checkoutBranch": "Check out this branch",
-    "checkoutFailed": "Checkout failed",
-    "menuResetSoft": "Reset here — soft (keep changes)",
-    "menuResetHard": "Reset here — hard (discard changes)",
-    "resetAction": "Reset ({mode})",
-    "modeSoft": "soft",
-    "modeHard": "hard",
-    "resetFailed": "Reset failed",
-    "confirmSoftTitle": "Soft-reset the branch",
-    "confirmSoftMessage": "Move {branch} to {hash}? The committed changes return to the index and the working tree keeps its files.",
-    "confirmHardTitle": "Hard-reset the branch (dangerous)",
-    "confirmHardMessage": "Move {branch} to {hash}? {count} uncommitted change(s) will be discarded and cannot be recovered."
+    "copyRef": "Copy ref name"
   },
   "personaPreset": {
     "unbound": "Not chosen",

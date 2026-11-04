@@ -206,7 +206,7 @@ def test_push_channel_rejects_a_token_less_handshake():
 
     assert ws.closed is True
     assert ws.sent == [], "a refused socket must not even receive the ready frame"
-    assert channel._subscribers == set()
+    assert channel._subscribers == {}
     assert channel._pending == {}
 
 

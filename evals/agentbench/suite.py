@@ -389,16 +389,12 @@ async def _bind_session(session_id: str, task_dir: Path) -> None:
 
 
 def _agent_payload() -> dict[str, Any]:
-    """Required tools + the two DBBench tools; everything else disabled."""
-    from agent.tools.catalog import REQUIRED_TOOLS
+    """A session with no skills; the benchmark's own tools are MCP tools.
 
-    tools = sorted(set(REQUIRED_TOOLS) | {"execute_sql", "commit_final_answer"})
-    return {
-        "tools": tools,
-        "middlewares_disabled": [],
-        "skills": [],
-        "middleware_options": {"Summarization": {"nudge": False}},
-    }
+    The tool/middleware knobs were removed from the session payload (every main
+    tool always runs), so only the skill list is configurable here.
+    """
+    return {"skills": []}
 
 
 def _is_provider_error(text: str) -> bool:

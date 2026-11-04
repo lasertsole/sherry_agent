@@ -1,43 +1,24 @@
 /**
- * Per-session agent configuration bridge (the preset's Tools / Middlewares / Agent models / Skills tabs).
+ * Per-session agent configuration bridge (the preset's Agent models / Skills tabs).
  *
  * Three calls, mirroring `GET /agent/catalog` and `GET|PUT /sessions/agent_config`:
  *
- * - {@link fetchAgentCatalog} — the tool / middleware / subagent-role / skill
- *   lists the panel renders. The client never hardcodes backend names.
+ * - {@link fetchAgentCatalog} — the subagent-role / skill lists the panel
+ *   renders. The client never hardcodes backend names.
  * - {@link fetchAgentConfig} / {@link setAgentConfig} — the session's own
  *   selection. A write while a turn is in flight is PARKED by the backend and
  *   applies from the next turn (`pending: true`), exactly like the model and
  *   thinking controls.
+ *
+ * The built-in tool set and the middleware chain are NOT configurable: every
+ * main tool is always available and every registered middleware always runs,
+ * so neither appears in the catalogue or the payload.
  *
  * @module bridge/agent-config
  */
 // ``fetchApiPayload`` is auto-imported from ~/composables/requestApi (the bridge
 // convention: no explicit import of an auto-imported symbol).
 import type { SessionModelProfile } from './session';
-
-/** One selectable main-agent tool. */
-export interface AgentToolEntry {
-  name: string;
-  /** Group id (`files`, `terminal`, `tasks`, ...) — the UI's section key. */
-  group: string;
-  /**
-   * The tool's own first description line (english, served by the backend) —
-   * shown as a hover tooltip so a long catalogue stays readable.
-   */
-  description?: string;
-  /** Locked on: a session config may not drop it (the backend refuses one that does). */
-  required?: boolean;
-}
-
-/** One middleware of the main chain. */
-export interface AgentMiddlewareEntry {
-  name: string;
-  /** Locked on: the safety baseline or a logical necessity (prompt injector). */
-  required: boolean;
-  /** Whether a session may turn it off. */
-  gateable: boolean;
-}
 
 /** One skill the Skills tab offers (the ``<available_skills>`` index's members). */
 export interface AgentSkillEntry {
@@ -63,21 +44,15 @@ export interface AgentRoleEntry {
 }
 
 export interface AgentCatalog {
-  tools: AgentToolEntry[];
-  middlewares: AgentMiddlewareEntry[];
   subagent_roles: AgentRoleEntry[];
   skills: AgentSkillEntry[];
 }
 
 /**
- * The per-session payload. Absent fields mean "no opinion": every tool on,
- * every middleware on, every role on its tier.
+ * The per-session payload. Absent fields mean "no opinion": every role on its
+ * tier, every skill in the index.
  */
 export interface AgentConfig {
-  /** Enabled tool names, or null/absent for every tool. */
-  tools?: string[] | null;
-  /** Middleware names turned OFF (gateable entries only). */
-  middlewares_disabled?: string[];
   /** Per-role model profiles; null = follow the role's tier. */
   subagent_models?: Record<string, SessionModelProfile | null>;
   /**
@@ -86,11 +61,6 @@ export interface AgentConfig {
    * required multimedia chain enters the index.
    */
   skills?: string[] | null;
-  /**
-   * Per-middleware options of REQUIRED entries (they cannot be switched off, so
-   * their tuning lives here). Today: `Summarization.nudge`.
-   */
-  middleware_options?: { Summarization?: { nudge?: boolean } };
 }
 
 export interface AgentConfigState {
@@ -99,15 +69,13 @@ export interface AgentConfigState {
   pending: boolean;
 }
 
-/** Fetch the tool / middleware / role / skill catalogue (one call, four lists). */
+/** Fetch the role / skill catalogue (one call, two lists). */
 export async function fetchAgentCatalog(): Promise<AgentCatalog> {
   const res = await fetchApiPayload<AgentCatalog & { success?: boolean }>({
     url: '/agent/catalog',
     method: 'get'
   });
   return {
-    tools: res.tools ?? [],
-    middlewares: res.middlewares ?? [],
     subagent_roles: res.subagent_roles ?? [],
     skills: res.skills ?? []
   };

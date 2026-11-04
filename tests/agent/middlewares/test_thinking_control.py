@@ -15,6 +15,7 @@ from langchain.agents.middleware import ModelRequest
 import models
 import agent.middlewares.thinking_control.core as tc_core
 from agent.middlewares.thinking_control import ThinkingControlMiddleware
+from agent.middlewares.thinking_control.core import current_session_model_config
 from runtime import StateKey, state_register_db, state_register_mem
 
 pytestmark = [pytest.mark.unit]
@@ -495,16 +496,23 @@ class TestAppliedConfigPublication:
 # frozen memory snapshot refresh on a model / thinking switch
 # ----------------------------------------------------------------------
 
+from models.LLMs.model_identity import main_model_key  # noqa: E402
+
 _MAPPING_KEY = StateKey.CUSTOM_THINKING_MAPPING
+#: The write path stamps a mapping with the model it was authored for; these raw
+#: register writes carry the same stamp so the middleware applies them.
+_MODEL_STAMP = {"model": main_model_key()}
 _MAPPING_A = {
     "wire_format": "custom",
     "wire_field": "thinking.type",
     "level_map": {"off": "off", "high": "on"},
+    **_MODEL_STAMP,
 }
 _MAPPING_B = {
     "wire_format": "custom",
     "wire_field": "thinking.type",
     "level_map": {"off": "off", "high": "full"},
+    **_MODEL_STAMP,
 }
 
 
@@ -540,7 +548,7 @@ def refresh_calls(monkeypatch):
             "facts": "FRESH",
         }
 
-    monkeypatch.setattr(memory_store, "load_from_disk", _load)
+    monkeypatch.setattr(memory_store, "load_from_store", _load)
     return calls
 
 
@@ -599,6 +607,34 @@ class TestFrozenSnapshotRefresh:
         assert refresh_calls == [True]
         assert _cached_prompt(sid) == (None, None)
 
+    def test_a_mapping_authored_for_another_model_is_ignored(self, sid):
+        """A provider-specific wire shape must not ride into a different model."""
+        state_register_mem.set_state(
+            sid, _MAPPING_KEY, {**_MAPPING_A, "model": "some-other-provider/other-model"}
+        )
+        request = _make_request(session_id=sid)
+        seen: dict = {}
+
+        def _capture(r):
+            seen["model"] = r.model
+            return "ok"
+
+        ThinkingControlMiddleware().wrap_model_call(request, _capture)
+
+        config = current_session_model_config(sid) or {}
+        assert config.get("custom_mapping") is None, "the stale mapping must not be applied"
+
+    def test_a_mapping_without_a_model_stamp_is_ignored(self, sid):
+        state_register_mem.set_state(
+            sid,
+            _MAPPING_KEY,
+            {"wire_format": "custom", "wire_field": "thinking.type", "level_map": {"high": "on"}},
+        )
+        ThinkingControlMiddleware().wrap_model_call(_make_request(session_id=sid), lambda r: "ok")
+
+        config = current_session_model_config(sid) or {}
+        assert config.get("custom_mapping") is None, "legacy unstamped mappings are not trusted"
+
     def test_clearing_the_model_control_refreshes(self, sid, refresh_calls):
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
         _apply_once(ThinkingControlMiddleware(), sid)
@@ -653,7 +689,7 @@ class TestFrozenSnapshotRefresh:
         def _boom():
             raise OSError("memory file unreadable")
 
-        monkeypatch.setattr(memory_store, "load_from_disk", _boom)
+        monkeypatch.setattr(memory_store, "load_from_store", _boom)
         assert ThinkingControlMiddleware().before_model({"session_id": sid}) is None
 
         assert _cached_prompt(sid) == ("OLD", "OLD")
@@ -694,26 +730,25 @@ class TestFrozenSnapshotRefresh:
 
         assert captured["request"].system_message.content == "FRESH"
 
-    def test_the_refresh_reads_mid_session_writes_from_disk(self, sid, tmp_path, monkeypatch):
+    def test_the_refresh_reads_mid_session_writes_from_store(self, sid, tmp_path, monkeypatch):
         from agent.tools import memory as memory_mod
+        from context_engine.store.memory_entry_repository import MemoryEntryRepository
 
+        repo = MemoryEntryRepository(db_path=tmp_path / "memory.db")
+        monkeypatch.setattr(memory_mod, "memory_entry_repo", repo)
         store = memory_mod.MemoryStore()
-        monkeypatch.setattr(memory_mod, "MEMORY_DIR", tmp_path)
         monkeypatch.setattr(memory_mod, "memory_store", store)
-        (tmp_path / "FACTS.md").write_text("old fact", encoding="utf-8")
-        (tmp_path / "MEMORY.md").write_text("", encoding="utf-8")
-        (tmp_path / "USER.md").write_text("", encoding="utf-8")
-        store.load_from_disk()
+        repo.add_entry("facts", "old fact")
+        store.load_from_store()
         assert "old fact" in (store.format_for_system_prompt("facts") or "")
 
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
         _apply_once(ThinkingControlMiddleware(), sid)
         _prime_prompt(sid)
 
-        # A mid-session write only touches the file; the frozen snapshot must
+        # A mid-session write only touches the store; the frozen snapshot must
         # still be stale until the switch-triggered reload runs.
-        with (tmp_path / "FACTS.md").open("a", encoding="utf-8") as handle:
-            handle.write("\n§\nnew fact")
+        repo.add_entry("facts", "new fact")
         assert "new fact" not in (store.format_for_system_prompt("facts") or "")
 
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE_B)

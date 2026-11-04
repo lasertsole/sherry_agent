@@ -596,8 +596,6 @@ export interface ContextInspect {
   system_tokens: number;
   tools: ContextToolDefinition[];
   tool_tokens: number;
-  /** True when the session narrows the tool set (the preset Tools tab). */
-  tool_selection: boolean;
   messages: ContextMessage[];
   message_tokens: number;
   /** Rows clipped by the per-message bound. */
@@ -624,7 +622,6 @@ export async function fetchContextInspect(sessionId: string): Promise<ContextIns
     system_tokens: Number(res.system_tokens ?? 0),
     tools: Array.isArray(res.tools) ? (res.tools as ContextToolDefinition[]) : [],
     tool_tokens: Number(res.tool_tokens ?? 0),
-    tool_selection: res.tool_selection === true,
     messages: Array.isArray(res.messages) ? (res.messages as ContextMessage[]) : [],
     message_tokens: Number(res.message_tokens ?? 0),
     truncated: Number(res.truncated ?? 0),

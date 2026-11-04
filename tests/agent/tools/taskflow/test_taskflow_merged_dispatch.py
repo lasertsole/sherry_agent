@@ -18,7 +18,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-from agent.tools.catalog import TOOL_GROUPS
 from agent.tools.parallel_safety import READ_ONLY_TOOLS
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.tools import (
@@ -333,9 +332,7 @@ async def test_unknown_action_lists_the_group_actions():
     assert "summary" in out and "progress" in out and "list" in out
 
 
-def test_catalog_and_metadata_are_the_three_surfaces():
-    assert TOOL_GROUPS["tasks"][:3] == ("taskflow_flow", "taskflow_step", "taskflow_inspect")
-    assert "taskflow_summary" not in TOOL_GROUPS["tasks"]
+def test_metadata_is_the_contract_surface():
     assert "taskflow_inspect" in READ_ONLY_TOOLS
 
     tools = _tools_by_name()

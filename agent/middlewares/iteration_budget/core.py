@@ -96,7 +96,6 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         state_register_mem.set_state(session_id, self._BUDGET_KEY, self.max_iterations)
         state_register_mem.set_state(session_id, self._USED_KEY, 0)
 
-    @override
     def _wrap_model_call_impl(
         self,
         request: ModelRequest[ContextT],

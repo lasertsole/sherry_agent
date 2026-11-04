@@ -48,6 +48,8 @@ enforcer can never break a turn.
 
 from __future__ import annotations
 
+import hashlib
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -377,10 +379,6 @@ class PlanContinuationEnforcer(AgentMiddleware):
 
     async def aafter_agent(self, state, runtime=None) -> None:
         """Inspect the finished turn; fire-and-forget a continuation if needed."""
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             # Lazy: agent.tools.todolist imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.
@@ -550,6 +548,8 @@ class PlanContinuationEnforcer(AgentMiddleware):
         ``count_turn=False`` keeps the final-verification reminder out of the
         continuation ceiling (it is not plan work and has its own plan throttle).
         """
+        shadow_id: int | None = None
+        shadow_generation: int | None = None
         try:
             from agent.tools.todolist import stagnation_tracker as st
 
@@ -557,6 +557,51 @@ class PlanContinuationEnforcer(AgentMiddleware):
             if trigger is None:
                 return False
             session_key = f"agent:main:session:{session_id}"
+
+            from runtime.effects import intent_log
+            from runtime.effects.config import (
+                effects_execution_enabled,
+                effects_shadow_enabled,
+            )
+
+            prompt_digest = hashlib.sha256(prompt.encode("utf-8", "surrogateescape")).hexdigest()[
+                :16
+            ]
+            intent_key = f"{session_id}:{st.continuation_turns(session_id)}:{prompt_digest}"
+
+            if effects_execution_enabled():
+                # Enqueue-only path: the worker performs the trigger. Marking
+                # the turn here (optimistically) keeps the continuation ceiling
+                # and the stop latch identical to the synchronous path; the
+                # worker's delivery is independently retried.
+                intent_log.enqueue(
+                    kind="continuation",
+                    key=intent_key,
+                    payload={
+                        "session_id": session_id,
+                        "session_key": session_key,
+                        "prompt": prompt,
+                        "count_turn": count_turn,
+                    },
+                )
+                if count_turn:
+                    st.mark_injected(session_id)
+                return True
+
+            if effects_shadow_enabled():
+                # Observation only: run the original path and record its
+                # outcome, never changing what the user sees.
+                shadow_id, shadow_generation = intent_log.enqueue(
+                    kind="continuation",
+                    key=intent_key,
+                    payload={
+                        "session_id": session_id,
+                        "session_key": session_key,
+                        "prompt": prompt,
+                        "count_turn": count_turn,
+                    },
+                )
+
             # Injector provenance (persisted as the human row's ``origin``): these
             # directives must not read as messages the user sent.
             result = await trigger(
@@ -573,11 +618,20 @@ class PlanContinuationEnforcer(AgentMiddleware):
                     session_id,
                     getattr(result, "outcome", "unknown"),
                 )
+                if shadow_id is not None and shadow_generation is not None:
+                    intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
                 return False
             if count_turn:
                 st.mark_injected(session_id)
+            if shadow_id is not None and shadow_generation is not None:
+                intent_log.mark_done(shadow_id, shadow_generation)
             return True
         except Exception:
+            if shadow_id is not None and shadow_generation is not None:
+                try:
+                    intent_log.mark_retry(shadow_id, shadow_generation, time.time() + 5.0)
+                except Exception:  # noqa: BLE001 - observation must never break the path
+                    logger.exception("plan continuation: shadow retry mark failed")
             logger.exception(
                 "plan continuation: auto_turn injection failed for session {}; "
                 "leaving the session retryable",
@@ -587,10 +641,7 @@ class PlanContinuationEnforcer(AgentMiddleware):
 
 
 #: Backwards-compatible alias: the class was ``TodoContinuationEnforcer`` before
-#: the rename, and the name is part of two published contracts — preset payloads
-#: store it in ``AGENT_CONFIG["middlewares_disabled"]`` (matched against
-#: ``type(self).__name__``) and ``message.metadata["origin"]`` keeps the string
+#: the rename. ``message.metadata["origin"]`` keeps the string
 #: "todo_continuation", which is deliberately UNCHANGED so historical rows keep
-#: resolving. A payload that disables the old name stays effective through
-#: ``agent_switch``'s alias map; this alias keeps direct imports working.
+#: resolving; this alias keeps direct imports working.
 TodoContinuationEnforcer = PlanContinuationEnforcer

@@ -23,15 +23,19 @@ Twelve of the SESSION memory plan's 13 capabilities (borrowed from opencode-dev,
 | Vector semantic search | current schema, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow orchestration | `wiki/long-running-tasks/` |
 
-## Memory Files
+## Memory Entries
 
-The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is one global file (`workspace/memory/FACTS.md`), loaded with MEMORY.md and USER.md; it records only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY project. Project-specific facts go to MEMORY.md or the project's AGENTS.md, and the nudges enforce that routing (including migrating a misplaced project fact out of FACTS into MEMORY). There is no per-project FACTS file; a legacy `<project>/.sherry/memory/FACTS.md` is ignored. FACTS.md is maintained by the memory-review and plan-extraction nudges. The snapshot stays frozen for the session except when the session's model or thinking control changes: the provider's prefix cache is already cold after such a switch, so the next turn's `before_model` hook reloads the snapshot and invalidates the cached system prompt, making mid-session memory writes visible on that turn's first model call.
+The three long-term memory targets (`memory`, `user`, `facts`) are SQLite rows in the MesMemory `memory_entries` table, one row per `§`-entry, written through `MemoryEntryRepository` (`context_engine/store/memory_entry_repository.py`). The old `workspace/memory/{MEMORY,USER,FACTS}.md` files are legacy seeds: `memory_migration.migrate_legacy_memory_files()` imports them once at `agent_core.init()` in one transaction, then renames each to `*.md.bak` only after the commit. Any existing row makes the import a no-op, so a failed rename cannot duplicate data; a failed transaction leaves the files for the next boot.
 
-| File | Purpose | Limit | Maintainer |
+`MemoryStore.load_from_store()` reads active rows ordered `created_at ASC, id ASC` (the old top-to-bottom file order) and freezes the rendered block as the system-prompt snapshot. Mid-session writes are durable but do not re-render it, keeping the provider prefix cache stable; the snapshot reloads on the next session start, after compression, on a model/thinking switch, and on a subagent-completion drain. No per-project FACTS exists; a legacy `<project>/.sherry/memory/FACTS.md` is ignored. FACTS still holds only SYSTEM-LEVEL / CROSS-PROJECT pitfalls, and the memory-review / plan-extraction nudges enforce that routing.
+
+Every row records `origin_session`, `usage_count` and `last_used`. The rendered block appends `[origin: <sid>, created: <date>, used: <n>x]` after an entry when its origin is known. `memory(action="read")` returns matching entries and increments usage; a `facts` overflow archives the LEAST-ACTIVE entries (`COALESCE(last_used, created_at)`, then `usage_count`) and every removal is a restorable soft delete. The memory panel uses `/memory/entries*`, `/memory/settings` and `/memory/consolidate`; legacy `GET/PUT /memory` keeps the `§`-delimited shape.
+
+| Target | Purpose | Limit | Maintainer |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`) | `memory` tool (`memory` target: memory review nudge) |
-| `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge) |
-| `workspace/memory/FACTS.md` | SYSTEM-LEVEL / CROSS-PROJECT pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
+| `memory` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`, overridable) | `memory` tool / memory-review nudge |
+| `user` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`, overridable) | `memory` tool / memory-review nudge |
+| `facts` | SYSTEM-LEVEL / CROSS-PROJECT pitfalls injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`, overridable), least-active rollover | `memory` tool / memory-review and plan-extraction nudges |
 
 ## MesMemory Schema
 
@@ -41,6 +45,7 @@ The three single-file memory stores are loaded by `MemoryStore.load_from_disk()`
 | `messages.idempotency_key` + partial unique index | crash-retry dedup |
 | `messages.context_eligible` | context projection flag (default 1) |
 | `message_embeddings` | vector index for semantic search |
+| `memory_entries` / `memory_settings` | long-term memory rows (target, provenance, usage, archive) + UI-editable limits |
 | `messages.parent_message_id` + `session_leafs` | message tree |
 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | compaction restore points |
 | `events` | append-only log, gapless per-session `seq` |

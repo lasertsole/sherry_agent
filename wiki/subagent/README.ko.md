@@ -150,7 +150,7 @@ goal loop는 예산이 한 턴을 초과하는 모든 spawn에서 실행되고, 
 | 런어웨이 루프 방지 | 완료 게이트, 판정기 예산, drain과 announce 재시도 동작 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
 | 컨텍스트 엔진 | MesMemory에 영속되는 것은 완료 캐리어뿐; 자식 트랜스크립트는 checkpoint에만 존재 | [Context Engine README](../../context_engine/README.ko.md) |
 | 런타임 레인 | `SUBAGENT` 레인이 동시 자식 실행을 제한; 초과 spawn은 `PENDING`으로 대기 | [런어웨이 루프 방지](../loop-prevention/README.ko.md) |
-| 메모리 파일 | 비어 있지 않은 drain은 `MEMORY.md`와 `USER.md`를 재조정(읽기 → 영속화, 페일오픈) | [서브에이전트 시스템 README](../../agent/tools/subagent/README.ko.md) |
+| 메모리 저장소 | 비어 있지 않은 drain은 공유 SQLite 메모리 저장소를 다시 로드(`load_from_store()`, 페일오픈)합니다. 쓰기 되돌림은 없습니다 | [서브에이전트 시스템 README](../../agent/tools/subagent/README.ko.md) |
 
 ### 🧵 합성 집계
 

@@ -23,15 +23,19 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 | ベクトル意味検索 | 現在の schema、`context_engine/embeddings/`、`message_search --semantic` |
 | TaskFlow 編成 | `wiki/long-running-tasks/` |
 
-## メモリファイル
+## メモリエントリ
 
-3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は唯一のグローバルファイル（`workspace/memory/FACTS.md`）で、MEMORY.md / USER.md と一緒に読み込まれます。記録するのは **システムレベル / プロジェクト横断** の落とし穴 — どのプロジェクトでも当てはまる事実だけです。プロジェクト固有の事実は MEMORY.md またはそのプロジェクトの AGENTS.md に書き、nudge がそのルーティングを徹底します（FACTS に誤って入ったプロジェクト事実は MEMORY へ移行）。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。FACTS.md は memory review / plan extraction nudge が維持します。スナップショットはセッション中凍結されるが、セッションのモデルまたは思考制御が変わったときは例外である: その切替後は provider の prefix キャッシュが既に冷えているため、次ターンの `before_model` フックがスナップショットを再読み込みしてキャッシュ済みシステムプロンプトを無効化し、セッション途中のメモリ書き込みがそのターンの最初のモデル呼び出しで見えるようになる。
+3 つの長期メモリターゲット（`memory`、`user`、`facts`）は MesMemory の `memory_entries` テーブルに 1 行 1 `§` エントリとして保存され、`MemoryEntryRepository`（`context_engine/store/memory_entry_repository.py`）経由で読み書きされます。旧 `workspace/memory/{MEMORY,USER,FACTS}.md` はレガシーなシードに過ぎません: `memory_migration.migrate_legacy_memory_files()` が `agent_core.init()` で 1 トランザクションとして 1 回だけインポートし、コミット後にのみ各ファイルを `*.md.bak` に改名します。既存行が 1 つでもあればインポートはスキップされるため、改名失敗でも重複しません。トランザクション失敗時はファイルを残し、次回起動で再試行します。
 
-| ファイル | 用途 | 上限 | メンテナ |
+`MemoryStore.load_from_store()` は `created_at ASC, id ASC`（旧ファイルの上から下の順）でアクティブ行を読み、レンダリング結果をシステムプロンプトスナップショットとして凍結します。セッション中の書き込みは永続化されますがスナップショットは再描画せず、provider の prefix キャッシュを安定させます。スナップショットは次回セッション開始時、圧縮後の再構築時、モデル/思考切替時、サブエージェント完了の取り込み時に再読み込みされます。per-project FACTS は存在せず、旧 `<project>/.sherry/memory/FACTS.md` は無視されます。FACTS は引き続きシステムレベル / プロジェクト横断の落とし穴のみを保持し、memory review / plan extraction nudge がそのルーティングを徹底します。
+
+各行は `origin_session`、`usage_count`、`last_used` を記録します。レンダリングブロックは由来が分かるエントリの後ろに `[origin: <sid>, created: <date>, used: <n>x]` を付けます。`memory(action="read")` は一致するエントリを返し使用回数を増やします。`facts` が溢れると**最も使われていない**エントリをアーカイブし（`COALESCE(last_used, created_at)`、次に `usage_count`）、削除はすべて復元可能なソフト削除です。記憶パネルは `/memory/entries*`、`/memory/settings`、`/memory/consolidate` を使い、旧 `GET/PUT /memory` は `§` 区切り形式を維持します。
+
+| ターゲット | 用途 | 上限 | 保守 |
 |---|---|---|---|
-| `workspace/memory/MEMORY.md` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） | `memory` ツール（`memory` ターゲット：memory review nudge） |
-| `workspace/memory/USER.md` | ユーザープロファイル：好み、コミュニケーションスタイル、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） | `memory` ツール（`user` ターゲット：memory review nudge） |
-| `workspace/memory/FACTS.md` | システムレベル / プロジェクト横断の落とし穴と規約；毎回のシステムプロンプトへ注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）、上限超過時は最古の項目からロールオフ | `memory` ツール（`facts` ターゲット：memory review / plan extraction nudge） |
+| `memory` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review nudge |
+| `user` | ユーザープロファイル：好み、コミュニケーション様式、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`、パネルで上書き可） | `memory` ツール / memory review nudge |
+| `facts` | システムレベル / プロジェクト横断の落とし穴。毎回のシステムプロンプトに注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`、パネルで上書き可）、最も使われていないものからロールオフ | `memory` ツール / memory review・plan extraction nudge |
 
 ## MesMemory スキーマ
 
@@ -41,6 +45,7 @@ SESSION メモリプランの 13 機能のうち 12 機能（opencode-dev / oh-m
 | `messages.idempotency_key` + 部分一意インデックス | クラッシュリトライ重複排除 |
 | `messages.context_eligible` | コンテキスト投影フラグ（既定 1） |
 | `message_embeddings` | 意味検索ベクトルインデックス |
+| `memory_entries` / `memory_settings` | 長期メモリ行（ターゲット、由来、使用量、アーカイブ）と UI 編集可能な上限 |
 | `messages.parent_message_id` + `session_leafs` | メッセージツリー |
 | `compaction_checkpoints` + `messages.compacted` / `compaction_checkpoint_id` | 圧縮復元ポイント |
 | `events` | 追記型ログ、セッション単位の無欠番 `seq` |

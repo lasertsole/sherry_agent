@@ -170,11 +170,47 @@ invalid_tool_call)가 `seq=0`이기 때문에, 다시 정렬하지 않으면 모
 않습니다. 새 턴(사용자 메시지, HITL 재개, 자동 턴)은 브레이크포인트를 지우고,
 이어쓰기 자체가 중단되면 새 브레이크포인트를 기록합니다.
 
-같은 턴 경계 메커니즘이 **보낸 사용자 메시지 편집**도 떠받칩니다. 편집한 턴과
-그 이후를 라이브 체크포인트에서 제거하고(`RemoveMessage` — 최신 체크포인트만
-남기 때문), MesMemory에서도 물리 삭제한 뒤, 편집한 텍스트를 원래 턴 번호를
-재사용하는 새 턴으로 다시 실행합니다. 클라이언트도 Dexie 캐시의 해당 행을
-지웁니다. 그렇지 않으면 다음 기록 병합에서 되살아납니다.
+같은 턴 경계 메커니즘이 **보낸 사용자 메시지 편집**도 떠받칩니다. 편집할 수
+있는 것은 **최신 사용자 메시지**뿐입니다(클라이언트는 다른 행에서 연필을 숨기고,
+서버는 `not_latest`로 응답합니다). 편집한 턴과 그 이후를 라이브 체크포인트에서
+제거하고(`RemoveMessage` — 최신 체크포인트만 남기 때문), MesMemory에서도 물리
+삭제합니다. 이어서 작업 공간을 그 턴의 shadow-git floor까지 되돌리고(그 턴이
+만든 파일을 삭제합니다. 스냅샷이 없는 턴에는 floor가 없어 파일을 건드리지 않은
+채 편집만 진행됩니다), 편집한 텍스트를 원래 턴 번호를 재사용하는 새 턴으로
+다시 실행합니다. 클라이언트도 Dexie 캐시의 해당 행을 지웁니다. 그렇지 않으면
+다음 기록 병합에서 되살아납니다.
+
+## 선택형 Effect 큐(재시작 인텐트)
+
+`runtime/effects/`는 재시작에 민감한 세 가지 전달 경로(계획 계속, 서브에이전트
+완료 알림, auto-turn)에 영속 인텐트 로그를 추가합니다. 기본값은 OFF이며
+additive입니다: 기존 boot sweeper와 동기 경로는 모두 그대로 남습니다.
+
+| 플래그 | 기본값 | 의미 |
+|---|---|---|
+| `effects.enabled` | false | 마스터 스위치. OFF이면 이 패키지의 어떤 것도 실행되지 않음 |
+| `effects.shadow_mode` | false | 인텐트를 기록하고 원래 경로를 실행(관찰 전용) |
+| `effects.worker_enabled` | false | worker 시작. 실행에는 마스터 + 이 항목 + 비-shadow 필요 |
+| `effects.restart_replay` | false | 부팅 시 종단 선언 표를 적용하고 in-flight 인텐트를 재생 |
+
+- 큐는 별도 SQLite 파일(`src/data/effects/effects.db`)이며 기존 store를 변경하지
+  않습니다. `(kind, key)`는 유일하고, 재등록은 `generation`을 올리고 attempts를
+  초기화합니다.
+- 모든 종단 전이는 `(id, generation, status='in_flight')`에 대한 CAS입니다.
+  따라서 오래된 generation을 가진 느린 worker가 새 pending 행을 done으로 만들 수
+  없습니다.
+- `due_at`은 벽시계 시간입니다: 큐는 재시작을 넘어 살아남아야 하고 이전 프로세스의
+  monotonic 값은 다음 프로세스에서 의미가 없습니다. 부팅 replay는 `in_flight`를
+  pending(즉시)으로 되돌리고, 미래의 pending 행은 지연을 유지합니다.
+- 재시작 종단 선언 표는 기존 두 상태 머신을 등록합니다: `subagent_runs`
+  (`restore_runs_from_disk`에 위임)와 `user_input_queue`(boot recovery의 requeue에
+  위임). 둘 다 멱등이며 표는 이를 재구현하지 않습니다.
+- 실행 플래그가 ON이면 세 호출 지점은 인큐하고 accepted를 반환하며, worker는
+  `_from_effects=True` 이음새로 원래 구현을 호출하므로 재귀하지 않습니다. shadow
+  모드는 기록 후 원래 경로를 그대로 실행합니다. 플래그 OFF(기본)에서는 원래 경로가
+  바이트 단위로 동일합니다.
+- `scripts/verify_effects_shadow.py`는 kind/status별 건수를 출력하고 완료 알림을
+  registry의 DELIVERED 행과 비교합니다.
 
 ## 코드 맵
 
