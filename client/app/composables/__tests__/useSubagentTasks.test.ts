@@ -13,15 +13,11 @@ import { createTestingPinia } from '@pinia/testing';
 // suite covers what the remaining consumers read: the run lists, the label
 // helpers and the WS/cache sync.
 
-const bridgeMocks = vi.hoisted(() => ({
-  fetchSubagentRuns: vi.fn(async () => []),
-  deleteSubagentRunSubtree: vi.fn(async () => 1)
-}));
+const bridgeMocks = vi.hoisted(() => ({ fetchSubagentRuns: vi.fn(async () => []) }));
 
 const dbMocks = vi.hoisted(() => ({
   cacheSubagentRuns: vi.fn(async () => undefined),
   readCachedSubagentRuns: vi.fn(async () => []),
-  deleteCachedSubagentRuns: vi.fn(async () => undefined),
   // Used via dynamic import in loadSubagentValidSessions(); an empty list is fine by default (each case covers session existence itself)
   readCachedSessionMetaList: vi.fn(async () => [])
 }));
@@ -101,10 +97,8 @@ function resetSingleton(): void {
 describe('useSubagentTasks', () => {
   beforeEach(() => {
     bridgeMocks.fetchSubagentRuns.mockReset().mockResolvedValue([]);
-    bridgeMocks.deleteSubagentRunSubtree.mockReset().mockResolvedValue(1);
     dbMocks.cacheSubagentRuns.mockReset().mockResolvedValue(undefined);
     dbMocks.readCachedSubagentRuns.mockReset().mockResolvedValue([]);
-    dbMocks.deleteCachedSubagentRuns.mockReset().mockResolvedValue(undefined);
     mittMocks.on.mockReset();
     mittMocks.off.mockReset();
     wsMocks.useSubagentWs.mockReset().mockReturnValue({ onReconnect: undefined });

@@ -120,37 +120,12 @@ export function readCachedRuns(): Promise<CachedSubagentRun[]> {
 }
 
 /**
- * Delete the cached run records with the given `run_id`s.
- * @param runIds
- */
-export function deleteCachedRuns(runIds: string[]): Promise<void> {
-  return deleteCachedSubagentRuns(runIds);
-}
-
-/**
  * Fetch the descendant run tree spawned under a session (gap filling after
  * first load / session switch / WS reconnection).
  * @param sessionId
  */
 export function fetchSessionRuns(sessionId: string): Promise<SubagentRun[]> {
   return fetchSubagentRuns(sessionId, 'descendants');
-}
-
-/**
- * Fetch a single run plus its entire descendant subtree (scoped refresh of the
- * focused task box).
- * @param runId
- */
-export function fetchRunSubtree(runId: string): Promise<SubagentRun[]> {
-  return fetchSubagentRunSubtree(runId);
-}
-
-/**
- * Delete a root run and its entire descendant subtree on the backend.
- * @param runId
- */
-export function deleteRunSubtree(runId: string): Promise<number> {
-  return deleteSubagentRunSubtree(runId);
 }
 
 /**
