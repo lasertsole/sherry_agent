@@ -138,7 +138,7 @@ sherry_agent/
 │       ├── python_repl.py  # Python 代码执行
 │       ├── terminal/       # 终端 + 后台任务工具
 │       ├── memory.py       # 记忆查看工具
-│       ├── question.py     # HITL 多选提问工具
+│       ├── question.py     # HITL 结构化提问工具（1-4 个问题、选项预览 + 备注）
 │       └── message_search.py # 会话 FTS5 搜索工具
 │
 ├── bus/                    # 消息总线（异步队列）

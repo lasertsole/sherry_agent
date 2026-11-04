@@ -139,7 +139,7 @@ sherry_agent/
 │       ├── python_repl.py  # Python code execution
 │       ├── terminal/       # Terminal + background-task tools
 │       ├── memory.py       # Memory inspection tool
-│       ├── question.py     # HITL multi-choice question prompt
+│       ├── question.py     # HITL structured question prompt (1-4 questions, previews + annotations)
 │       └── message_search.py # Conversation FTS5 search tool
 │
 ├── bus/                    # Message bus (async queues)

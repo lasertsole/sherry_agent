@@ -138,7 +138,7 @@ sherry_agent/
 │       ├── python_repl.py  # Python 코드 실행
 │       ├── terminal/       # 터미널 + 백그라운드 도구
 │       ├── memory.py       # 메모리 확인 도구
-│       ├── question.py     # HITL 다지선다 질문 도구
+│       ├── question.py     # HITL 구조화 질문 도구(1~4개 질문, 미리보기 + 메모)
 │       └── message_search.py # 대화 FTS5 검색 도구
 │
 ├── bus/                    # 메시지 버스(비동기 큐)
