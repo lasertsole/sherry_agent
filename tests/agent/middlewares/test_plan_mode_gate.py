@@ -127,6 +127,21 @@ def test_an_approved_plan_frees_the_write_tools_again():
     )
 
 
+def test_an_unreadable_whitelist_config_is_fail_open(monkeypatch):
+    """An empty whitelist must pass the request through, not strip every tool."""
+    import agent.middlewares.plan_mode_gate.core as gate_core
+
+    monkeypatch.setattr(gate_core, "_plan_allowed_tools", lambda: None)
+    _enter_plan_mode()
+    request = _Request({"session_id": SESSION}, [_Tool(n) for n in ("read_file", "write_file")])
+
+    assert _model_call_names(request) == ["read_file", "write_file"]
+    assert (
+        PlanModeToolGate().wrap_tool_call(_ToolCallRequest(SESSION, "write_file"), lambda _r: "ran")
+        == "ran"
+    )
+
+
 def test_a_broken_plan_read_is_fail_open(monkeypatch):
     """A register failure must never leave a session stuck in a narrow face."""
     import agent.tools.plan_mode.state as plan_state

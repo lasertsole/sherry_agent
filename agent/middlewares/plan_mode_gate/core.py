@@ -66,14 +66,19 @@ def _plan_status_of(session_id: str | None) -> str:
         return ""
 
 
-def _plan_allowed_tools() -> frozenset[str]:
-    """The plan-mode face: the read-only whitelist plus both plan tools."""
+def _plan_allowed_tools() -> frozenset[str] | None:
+    """The plan-mode face: the read-only whitelist plus both plan tools.
+
+    ``None`` = the feature config is unreadable. Filtering to an EMPTY set would
+    leave the model with no tools at all — the opposite of fail-open — so the
+    caller passes the request through untouched instead.
+    """
     try:
         from config.features import PLAN_MODE
 
         allowed = {str(name) for name in PLAN_MODE["allowed_tools"]}
     except Exception:  # noqa: BLE001 - fail-open
-        return frozenset()
+        return None
     allowed |= {"enter_plan_mode", "exit_plan_mode"}
     return frozenset(allowed)
 
@@ -90,7 +95,7 @@ class PlanModeToolGate(AgentMiddleware):
         """The request with only the plan-mode tools (or the request itself)."""
         allowed = _plan_allowed_tools()
         tools = getattr(request, "tools", None)
-        if not isinstance(tools, list):
+        if allowed is None or not isinstance(tools, list):
             return request
         kept = [
             tool
@@ -131,7 +136,8 @@ class PlanModeToolGate(AgentMiddleware):
         name = str(request.tool_call.get("name") or "")
         if not name or not _plan_active(session_id):
             return None
-        if name in _plan_allowed_tools():
+        allowed = _plan_allowed_tools()
+        if allowed is None or name in allowed:
             return None
         logger.warning(
             "PlanModeToolGate: refused '{}' during plan mode for session {}",
