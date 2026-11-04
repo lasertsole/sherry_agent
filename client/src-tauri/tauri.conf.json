@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "EMA AI Agent",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "identifier": "com.ema-ai.agent",
   "build": {
     "frontendDist": "../.output/public",
