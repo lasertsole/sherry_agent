@@ -172,6 +172,8 @@
     "continueBusy": "当前对话进行中，无法继续生成",
     "editBusy": "对话进行中，暂时无法编辑",
     "editCompacted": "该消息已超出可编辑范围（历史已被压缩）",
+    "editNotLatest": "只能编辑最新一条用户消息",
+    "editRollbackSkipped": "文件未回滚：该轮没有文件快照或未绑定项目目录",
     "forkFailed": "创建分支失败，请重试"
   },
   "connection": {

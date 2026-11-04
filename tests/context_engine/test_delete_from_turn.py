@@ -105,3 +105,29 @@ async def test_delete_from_the_first_turn_clears_the_tree(store_db) -> None:
     assert deleted == 6
     assert store_core.get_max_turn_num(SESSION) == 0
     assert store_core.get_session_leaf(SESSION) is None
+
+
+async def test_max_user_turn_num_ignores_internal_human_carriers(store_db) -> None:
+    await _seed_three_turns()
+    assert store_core.get_max_user_turn_num(SESSION) == 3
+
+    await store_core.add_messages(
+        SESSION,
+        [HumanMessage("workspace moved", metadata={"origin": "project_dir", "internal": True})],
+    )
+
+    # The notice is a human row at a NEWER turn, but not a user turn: an edit
+    # must still target turn 3.
+    assert store_core.get_max_turn_num(SESSION) == 4
+    assert store_core.get_max_user_turn_num(SESSION) == 3
+
+
+async def test_max_user_turn_num_is_zero_without_user_rows(store_db) -> None:
+    assert store_core.get_max_user_turn_num(SESSION) == 0
+
+    await store_core.add_messages(
+        SESSION,
+        [HumanMessage("completion", metadata={"origin": "subagent_completion", "internal": True})],
+    )
+
+    assert store_core.get_max_user_turn_num(SESSION) == 0

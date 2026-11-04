@@ -947,4 +947,30 @@ describe('message edit', () => {
     expect(harness.streamingTurn.value).toBeNull();
     expect(harness.deps.loadSessionHistory).toHaveBeenCalledTimes(1);
   });
+
+  it('a not_latest refusal settles the page and reloads history', () => {
+    const harness = makeHarness();
+    harness.chatMessages.value = [userRow(1, 'q1'), interruptedAi(1, 'a1')];
+    harness.isSending.value = true;
+    harness.streamingTurn.value = 1;
+
+    lastHandler('ws:edit_ack')!({ sessionId: 's1', ok: false, reason: 'not_latest' });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+    expect(harness.deps.loadSessionHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it('a skipped-rollback success ack leaves the re-run turn streaming', () => {
+    const harness = makeHarness();
+    harness.isSending.value = true;
+    harness.streamingTurn.value = 2;
+
+    lastHandler('ws:edit_ack')!({ sessionId: 's1', ok: true, rollbackSkipped: true });
+
+    // The ack is a warning, not a refusal: the re-run's frames still follow.
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(2);
+    expect(harness.deps.loadSessionHistory).not.toHaveBeenCalled();
+  });
 });

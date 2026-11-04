@@ -220,11 +220,16 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       });
     },
     edit_message_ack: data => {
-      const content = (data.content ?? {}) as { ok?: unknown; reason?: unknown };
+      const content = (data.content ?? {}) as {
+        ok?: unknown;
+        reason?: unknown;
+        rollback_skipped?: unknown;
+      };
       emit('ws:edit_ack', {
         sessionId: data.session_id ?? ctx.sessionId,
         ok: content.ok === true,
-        reason: typeof content.reason === 'string' ? content.reason : null
+        reason: typeof content.reason === 'string' ? content.reason : null,
+        rollbackSkipped: content.rollback_skipped === true
       });
     },
     stream_resume: data => {

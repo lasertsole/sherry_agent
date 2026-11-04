@@ -649,9 +649,11 @@ export function useChatStream(deps: ChatStreamDeps) {
   on('ws:continue_ack', onContinueAck);
 
   /**
-   * `ws:edit_ack`: the backend refused a message edit. The page already truncated
+   * `ws:edit_ack`: the backend refused a message edit, or accepted it while
+   * SKIPPING the workspace rollback. A refusal means the page already truncated
    * its rows and appended the optimistic pair, so the repair is a history reload
-   * (the server's rows are authoritative); the toast names the reason.
+   * (the server's rows are authoritative); the toast names the reason. A skipped
+   * rollback is a warning only: the re-run's frames still follow.
    * @param event Raw mitt payload.
    */
   const onEditAck = (event: unknown) => {
@@ -659,12 +661,18 @@ export function useChatStream(deps: ChatStreamDeps) {
       sessionId?: string;
       ok?: boolean;
       reason?: string | null;
+      rollbackSkipped?: boolean;
     };
     if (payload.sessionId && payload.sessionId !== mySid) return;
-    if (payload.ok === true) return;
+    if (payload.ok === true) {
+      if (payload.rollbackSkipped === true) toastWarn(t('errors.editRollbackSkipped'));
+      return;
+    }
     settleNoActiveTurn();
     if (payload.reason === 'busy') {
       toastWarn(t('errors.editBusy'));
+    } else if (payload.reason === 'not_latest') {
+      toastWarn(t('errors.editNotLatest'));
     } else if (payload.reason === 'compacted' || payload.reason === 'not_found') {
       toastWarn(t('errors.editCompacted'));
     } else {

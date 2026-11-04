@@ -487,16 +487,43 @@ const emit = defineEmits<{
 }>();
 
 /**
+ * Whether `message` is the NEWEST user row in the loaded transcript.
+ *
+ * Edit rewinds the workspace to the edited turn, and only the newest turn has
+ * a rollback boundary (every older turn's files are already part of later
+ * work). Internal carriers (workspace notices, subagent completions) are human
+ * rows but not user turns, so they neither qualify nor end the search. The
+ * virtualized list may hold only a window: when the newest user row is not
+ * loaded the pencil shows nowhere — the same conservative direction.
+ * @param message Candidate row.
+ */
+const isLatestUserMessage = (message: MessageItem): boolean => {
+  for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+    const row = props.messages[i]!;
+    if (row.role !== CHAT_ROLE.USER) continue;
+    if (row.origin && row.origin !== 'user') continue;
+    return row.id === message.id;
+  }
+  return false;
+};
+
+/**
  * Whether this row offers "edit and re-run".
  *
  * Only PERSISTED user messages (a positive row id): the streaming pair carries
  * temporary negative ids, and its turn is not written yet. The composer is
  * disabled while an approval card owns it, and editing under a pending approval
- * would interleave two transcripts.
+ * would interleave two transcripts. Latest-only: see `isLatestUserMessage`.
  * @param message Candidate row.
  */
 const canEditMessage = (message: MessageItem): boolean =>
-  props.canEdit && props.selectionEnabled && message.role === CHAT_ROLE.USER && message.id > 0 && message.turn_num > 0;
+  props.canEdit
+  && props.selectionEnabled
+  && message.role === CHAT_ROLE.USER
+  && message.id > 0
+  && message.turn_num > 0
+  && (!message.origin || message.origin === 'user')
+  && isLatestUserMessage(message);
 
 /**
  * Whether this AI row offers "branch from here".

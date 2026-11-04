@@ -189,3 +189,169 @@ class TestSnapshotCap:
             shadow_git.take_snapshot(project, f"manual:s{i}")
 
         assert _snapshot_count(project) == 100
+
+
+class TestTurnFloors:
+    """A turn's floor is the tip that preceded its first snapshot.
+
+    It is both the rollback boundary for editing that turn's message and the
+    prune's protection: the cap is a soft cap on HISTORY, and a single turn may
+    legitimately own more than ``max_snapshots`` commits (a fan-out child adds
+    one each, an edit adds the pre/post-restore pair).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolated_floor_state(self, monkeypatch):
+        # The module keeps process-level state; every test starts from a clean
+        # slate so session ids may be reused.
+        monkeypatch.setattr(shadow_git, "_dedup", set())
+        monkeypatch.setattr(shadow_git, "_turn_counts", {})
+        monkeypatch.setattr(shadow_git, "_floors", {})
+        monkeypatch.setattr(shadow_git, "_floors_loaded", set())
+
+    def test_the_first_snapshot_of_a_turn_records_the_previous_tip(self, project):
+        base = shadow_git.take_snapshot(project, "manual:base")
+        assert base
+        shadow_git.new_turn("s")
+        assert shadow_git.floor_for("s", project_root=project) is None
+
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        assert shadow_git.floor_for("s", project_root=project) == base
+        state = project / ".sherry" / "shadow-git" / "state.json"
+        assert state.is_file()
+
+        # A later snapshot in the SAME turn must not move the boundary.
+        (project / "a.txt").write_text("two\n", encoding="utf-8")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        assert shadow_git.floor_for("s", project_root=project) == base
+
+    def test_a_turn_without_snapshots_has_no_floor(self, project):
+        shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        assert shadow_git.floor_for("s", project_root=project) is None
+
+    def test_a_new_turn_invalidates_the_old_floor_until_its_first_snapshot(self, project):
+        shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        old_floor = shadow_git.floor_for("s", project_root=project)
+        assert old_floor is not None
+
+        shadow_git.new_turn("s")
+        assert shadow_git.floor_for("s", project_root=project) is None
+        previous_tip = shadow_git.run_shadow(
+            project, ["rev-parse", shadow_git.SHADOW_REF]
+        ).stdout.strip()
+        tip = shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        # The new turn's floor is the tip that preceded ITS first snapshot.
+        assert shadow_git.floor_for("s", project_root=project) == previous_tip
+        assert shadow_git.floor_for("s", project_root=project) != tip
+        assert shadow_git.floor_for("s", project_root=project) != old_floor
+
+    def test_pruning_never_crosses_an_active_turn_floor(self, project, monkeypatch):
+        from config.features import SHADOW_GIT
+
+        monkeypatch.setitem(SHADOW_GIT, "max_snapshots", 3)
+        pre = shadow_git.take_snapshot(project, "manual:pre")
+        base = shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        for i in range(6):
+            shadow_git.take_snapshot(project, f"manual:turn1-{i}", session_id="s")
+
+        # The cap alone would leave 3; the active floor keeps the whole turn
+        # (base + 6) and drops only the commit before the floor.
+        assert _snapshot_count(project) == 7
+        kept = shadow_git.run_shadow(project, ["rev-list", shadow_git.SHADOW_REF]).stdout.split()
+        assert pre not in kept
+        assert base in kept
+        assert shadow_git.floor_for("s", project_root=project) == base
+
+    def test_pruning_releases_the_overshoot_when_the_turn_ends(self, project, monkeypatch):
+        from config.features import SHADOW_GIT
+
+        monkeypatch.setitem(SHADOW_GIT, "max_snapshots", 3)
+        shadow_git.take_snapshot(project, "manual:pre")
+        shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        for i in range(5):
+            shadow_git.take_snapshot(project, f"manual:turn1-{i}", session_id="s")
+        # The floor keeps the turn (6 commits); the commit BEFORE it was
+        # already dropped by the first prune.
+        assert _snapshot_count(project) == 6
+
+        shadow_git.new_turn("s")  # the previous floor stops protecting
+        shadow_git.take_snapshot(project, "manual:turn2", session_id="s")
+        assert _snapshot_count(project) == 3
+
+
+class TestRestoreToTurn:
+    """Edit-message rewind: files first, then the caller truncates the chat."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_floor_state(self, monkeypatch):
+        monkeypatch.setattr(shadow_git, "_dedup", set())
+        monkeypatch.setattr(shadow_git, "_turn_counts", {})
+        monkeypatch.setattr(shadow_git, "_floors", {})
+        monkeypatch.setattr(shadow_git, "_floors_loaded", set())
+
+    def test_reverts_the_turn_and_deletes_files_created_in_it(self, project):
+        assert shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+
+        (project / "a.txt").write_text("two\n", encoding="utf-8")
+        (project / "new.txt").write_text("new\n", encoding="utf-8")
+        (project / "sub").mkdir()
+        (project / "sub" / "nested.txt").write_text("nested\n", encoding="utf-8")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+
+        result = shadow_git.restore_to_turn("s", 1, project_root=project)
+
+        assert result["restored"] is True
+        assert sorted(result["removed"]) == ["new.txt", "sub/nested.txt"]
+        assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
+        assert not (project / "new.txt").exists()
+        assert not (project / "sub").exists()
+
+        # The chain tip now describes the RESTORED tree, so the re-run turn's
+        # own floor is the rolled-back state (editing the re-run cannot
+        # resurrect the files this rollback removed).
+        shadow_git.new_turn("s")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        followup = shadow_git.floor_for("s", project_root=project)
+        assert followup
+        tree = shadow_git.run_shadow(
+            project, ["ls-tree", "-r", "--name-only", followup]
+        ).stdout.split()
+        assert tree == ["a.txt"]
+
+    def test_without_a_floor_nothing_is_restored(self, project):
+        shadow_git.take_snapshot(project, "manual:base")
+
+        result = shadow_git.restore_to_turn("never-snapshotted", 1, project_root=project)
+
+        assert result == {"restored": False, "reason": "no_checkpoint"}
+        assert (project / "a.txt").read_text(encoding="utf-8") == "one\n"
+
+    def test_without_a_project_root_it_is_skipped(self):
+        assert shadow_git.restore_to_turn("s", 1) == {"restored": False, "reason": "no_root"}
+
+    def test_a_floor_from_a_previous_process_is_discarded(self, project, monkeypatch):
+        shadow_git.take_snapshot(project, "manual:base")
+        shadow_git.new_turn("s")
+        shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
+        assert shadow_git.floor_for("s", project_root=project) is not None
+
+        # A restart: new boot id, empty in-memory counters. Turn numbers are
+        # process-relative, so a collision (both processes at turn 1) must NOT
+        # hand back the old boundary — that would roll back an older turn.
+        monkeypatch.setattr(shadow_git, "_BOOT_ID", "another-boot")
+        monkeypatch.setattr(shadow_git, "_floors", {})
+        monkeypatch.setattr(shadow_git, "_floors_loaded", set())
+        monkeypatch.setattr(shadow_git, "_turn_counts", {})
+
+        assert shadow_git.floor_for("s", project_root=project) is None
+        assert shadow_git.restore_to_turn("s", 1, project_root=project) == {
+            "restored": False,
+            "reason": "no_checkpoint",
+        }

@@ -449,30 +449,55 @@ rows (accepted; MesMemory is append-only).
 
 **Edit.** `edit_message {turn_num, new_text, msg_id, row_id?}` is refused while
 `detect_state(session_id).busy` (a live turn or a pending approval owns the
-transcript). `context_engine.store.core.find_user_turn_cut` maps the clicked
-row to `(ordinal, cut_turn_num)`: `origin = 'user'` human rows only, so the
-ordinal matches the checkpoint's human count while `cut_turn_num` is the
-persisted BATCH number — they are NOT the same thing (`add_messages` starts a
-new `turn_num` per persistence batch, so one user turn spans several numbers).
+transcript). Only the NEWEST user message is editable: the client's pencil
+(`canEditMessage`) requires the row to be the last USER-role row in the loaded
+transcript (internal carriers such as workspace notices / subagent completions
+are `role=human` with a non-`user` origin and neither qualify nor end the
+search), and the server refuses anything else with `not_latest`
+(`context_engine.store.core.get_max_user_turn_num` = `MAX(turn_num)` over
+user-origin human rows). An older edit has no rollback boundary for the turns it
+would discard, so the limitation is semantic, not cosmetic.
+`context_engine.store.core.find_user_turn_cut` maps the clicked row to
+`(ordinal, cut_turn_num)`: `origin = 'user'` human rows only, so the ordinal
+matches the checkpoint's human count while `cut_turn_num` is the persisted BATCH
+number — they are NOT the same thing (`add_messages` starts a new `turn_num` per
+persistence batch, so one user turn spans several numbers).
 `agent/state_port.py::truncate_messages_after_turn` then removes that ordinal's
 human message and everything after it from the live checkpoint through
 `RemoveMessage` (the checkpoint is pruned to latest-only, so history rewind is
 not available), counting turns over non-`metadata.internal` humans (reminder
 blocks / notices belong to the turn that follows them); `-1` = the turn was
-compacted away (`compacted`, never a silent partial truncation).
+compacted away (`compacted`, never a silent partial truncation). That truncation
+runs BEFORE any file is touched: it is the only step that can still refuse, and
+a refused edit must not leave the workspace reverted.
 `store.core.delete_messages_from_turn` hard-deletes `turn_num >= cut` and
 re-points `session_leafs` at the previous turn (first turn → leaf cleared), so
 the re-run's batch reuses the edited turn's number. The edited text is then
 re-submitted through `submit_user_input` with a FRESH `msg_id` (the old one is
 tombstoned by the dedupe) — the normal `turn_started`/`chunk`/`done` flow
-follows, and only failures ack (`edit_message_ack`). The client truncates
+follows.
+
+The workspace half is `shadow_git.restore_to_turn` (ZCode-style rewind), run in
+that window: the edited turn's FLOOR — the chain tip that preceded its first
+snapshot, recorded by `_take_snapshot_locked` and persisted per root in
+`state.json` — is checked out wholesale, files CREATED during the turn are
+deleted (index-vs-target-tree plus untracked, git's own excludes doing the
+filtering), and a `post_restore` snapshot re-anchors the chain to the restored
+tree (otherwise the re-run's floor would describe the pre-rollback state and a
+later edit could resurrect the removed files). No snapshot this turn → no floor
+→ `no_checkpoint`, and the edit proceeds unchanged (`rollback_skipped`). Floors
+are process-scoped (a boot id guards against turn-number collisions), so an
+edit after a restart never rolls back to an older turn. The client truncates
 `chatMessages` at that turn, appends an optimistic user/AI pair with the SAME
 turn number, and purges the Dexie cache from that turn on
 (`clearCachedMessagesFromTurn`) — without that purge the local cache merge
 resurrects the deleted rows on the next history load. Edit mode is entered from
-the bubble's pencil (persisted user rows only), prefills the composer
+the bubble's pencil (the newest persisted user row only), prefills the composer
 (`setDraftText`), shows a banner and routes the composer's send to `handleEdit`;
-Esc cancels.
+Esc cancels. Ack contract: failures (`busy` / `not_latest` / `compacted` /
+`not_found` / `failed`) settle the page and reload history; a skipped rollback
+sends `ok: true, rollback_skipped: true` as a WARNING only — the re-run's
+frames still follow.
 
 ## Chat Selection Quote & Side Session (`ChatBox.vue` / `SideChatPanel.vue`)
 
@@ -2370,12 +2395,22 @@ each suite is the version-controlled reference (threshold + model id).
   NEVER initialized, staged, committed, reset, checked out or worktree'd; the
   shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation and a
   single `refs/heads/main` chain. `info/exclude` carries the deny patterns
-  (secrets, bulk dirs and the shadow store) before `git add -A`; snapshots are
-  pruned to `SHADOW_GIT["max_snapshots"]` (100 — the store is PER PROJECT ROOT and
-  shared by every session including subagents, so a small budget collapsed the
-  restore window to the last step or two once a fan-out ran concurrently;
-  `ensure_checkpoint` dedupes per session per turn, and the bare store's delta
-  compression keeps 100 snapshots at a few hundred KiB). Restore takes a pre-restore snapshot
+  (secrets, bulk dirs and the shadow store) before `git add -A`; the chain keeps
+  the NEWEST `SHADOW_GIT["max_snapshots"]` (100) commits — the store is PER
+  PROJECT ROOT and shared by every session including subagents, so a small
+  budget collapsed the restore window to the last step or two once a fan-out ran
+  concurrently; `ensure_checkpoint` dedupes per session per turn, and the bare
+  store's delta compression keeps the window small. The cap is a SOFT cap on
+  HISTORY: the first snapshot of a turn records that turn's FLOOR (the tip it
+  replaced) in `state.json`, the prune never cuts past an ACTIVE floor (one turn
+  may legitimately own more than 100 commits — one per fan-out child, plus the
+  edit-message restore pair) and the excess is released when the turn ends and
+  its floor stops matching; pruning drops the OLD end with `git replace --graft`
+  on the oldest kept commit (moving the ref backwards would discard the NEWEST
+  snapshots instead), so every surviving hash — the tip included — stays stable.
+  A floor persisted by a previous process is discarded on load (turn numbers are
+  process-relative, and a collision must not roll back an older turn).
+  Restore takes a pre-restore snapshot
   and supports one file or the whole tree — internal only: the agent-facing
   `checkpoint` tool and the panel's reset route were removed, so no user- or
   model-reachable rollback surface remains. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)

@@ -172,6 +172,8 @@
     "continueBusy": "A turn is running; try again once it finishes",
     "editBusy": "A turn is running; editing is unavailable",
     "editCompacted": "This message is outside the editable range (its history was compacted)",
+    "editNotLatest": "Only the latest user message can be edited",
+    "editRollbackSkipped": "Files were not rolled back: no snapshot for this turn or no project directory",
     "forkFailed": "Could not create the branch — try again"
   },
   "connection": {

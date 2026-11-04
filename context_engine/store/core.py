@@ -103,6 +103,15 @@ def get_max_turn_num(session_id: str) -> int:
     return _message_repository.max_turn_num(session_id)
 
 
+def get_max_user_turn_num(session_id: str) -> int:
+    """The highest ``turn_num`` among persisted USER messages (0 when none).
+
+    Message edit is latest-only, and this is the row it may rewrite: internal
+    human carriers (workspace notices, subagent completions) do not count.
+    """
+    return _message_repository.max_user_turn_num(session_id)
+
+
 def _row_origin(msg: BaseMessage) -> str | None:
     """The explicit ``metadata.origin`` of an injected message, else ``None``.
 

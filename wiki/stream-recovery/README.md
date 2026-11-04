@@ -172,12 +172,16 @@ prompt is tagged `provenance: continuation` so message persistence never
 renders it as a user row. A new turn (user message, HITL resume, auto turn)
 clears the breakpoint, and a cancelled continuation records its own.
 
-The same turn-boundary machinery powers **editing a sent user message**: the
-edited turn and everything after it are removed from the live checkpoint
-(`RemoveMessage`, since only the newest checkpoint is retained) and hard-deleted
-from MesMemory, then the edited text is re-run as a new turn that reuses the
-old turn number. The client drops the corresponding Dexie cache rows too, or
-the next history merge would resurrect them.
+The same turn-boundary machinery powers **editing a sent user message**: only
+the NEWEST user message is editable (the client hides the pencil elsewhere and
+the server answers `not_latest`). The edited turn and everything after it are
+removed from the live checkpoint (`RemoveMessage`, since only the newest
+checkpoint is retained) and hard-deleted from MesMemory, the workspace is
+rewound to that turn's shadow-git floor (files the turn created are deleted;
+a turn that wrote nothing has no floor and the edit proceeds with the files
+untouched), then the edited text is re-run as a new turn that reuses the old
+turn number. The client drops the corresponding Dexie cache rows too, or the
+next history merge would resurrect them.
 
 ## Opt-in Effect Queue (restart intents)
 

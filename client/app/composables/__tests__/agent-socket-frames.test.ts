@@ -94,7 +94,24 @@ describe('routeAgentFrame: resumable + ack frames', () => {
     fire(ctx, { event: 'edit_message_ack', session_id: 'sess', content: { ok: false, reason: 'compacted' } });
     seen.stop();
 
-    expect(seen.events).toEqual([{ sessionId: 'sess', ok: false, reason: 'compacted' }]);
+    expect(seen.events).toEqual([
+      { sessionId: 'sess', ok: false, reason: 'compacted', rollbackSkipped: false }
+    ]);
+  });
+
+  it('edit_message_ack carries the skipped-rollback flag of a success warning', () => {
+    const { ctx } = makeCtx();
+    const seen = capture('ws:edit_ack');
+    fire(ctx, {
+      event: 'edit_message_ack',
+      session_id: 'sess',
+      content: { ok: true, rollback_skipped: true }
+    });
+    seen.stop();
+
+    expect(seen.events).toEqual([
+      { sessionId: 'sess', ok: true, reason: null, rollbackSkipped: true }
+    ]);
   });
 });
 
