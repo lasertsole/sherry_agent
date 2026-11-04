@@ -27,7 +27,7 @@
 
 ## 読み取り専用の保証
 
-状態が `planning` / `needs_replan` の間、`ToolSelectionMiddleware` は既存のセッション別ツール選択とまったく同じ二段構えでホワイトリストを適用します：モデルにはホワイトリストだけが**提示**され、それでも届いた呼び出し（古い checkpoint、幻覚の名前）は実行時に**拒否**され、"Plan mode is active" が返ります。既定のホワイトリストは `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]` です。セッション自身の選択にも縛られますが、2 つの計画ツールだけは常に到達可能です——出られないモードは罠になります。
+状態が `planning` / `needs_replan` の間、`PlanModeToolGate` は二段構えでホワイトリストを適用します：モデルにはホワイトリストだけが**提示**され、それでも届いた呼び出し（古い checkpoint、幻覚の名前）は実行時に**拒否**され、"Plan mode is active" が返ります。これが現在唯一のツール面フィルタです——それ以外ではすべての組み込みツールが常に利用可能です（セッション別のツール選択は削除されました）。既定のホワイトリストは `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]` です。2 つの計画ツールだけは常に到達可能です——出られないモードは罠になります。
 
 サブエージェントという唯一の穴は意図的に塞いでいます：`sessions_spawn` はホワイトリストに**ありません**。子は自分のセッション状態で動くため、承認前に書き込めてしまうからです。
 

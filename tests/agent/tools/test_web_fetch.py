@@ -394,15 +394,13 @@ class TestLocalFetchTransport:
 
 
 class TestRegistration:
-    def test_the_tool_is_in_the_main_builders_and_the_web_group(self):
+    def test_the_tool_is_in_the_main_builders(self):
         from agent.tools import _MAIN_TOOLS_BUILDERS
-        from agent.tools.catalog import TOOL_GROUPS
         from agent.tools.web.web_fetch import build_web_fetch_tool
 
         # The registry LIST, not ``build_main_tools()``: the subagent test
         # conftest replaces that function with ``lambda: []`` process-wide.
         assert build_web_fetch_tool in _MAIN_TOOLS_BUILDERS
-        assert "web_fetch" in TOOL_GROUPS["web"]
         assert build_web_fetch_tool().name == "web_fetch"
 
     def test_the_tool_declares_its_guardrail_metadata(self):

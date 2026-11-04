@@ -6,7 +6,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   BUILTIN_PRESETS,
-  COMPANION_DISABLED_TOOL_GROUPS,
   COMPANION_DROPPED_RELATIONSHIP_MARKERS,
   DEFAULT_PRESET_ID,
   applyPresetPayload,
@@ -98,22 +97,6 @@ const TEMPLATE_WITH_TASKS = {
 
 /** The catalogue facts the built-in agent blocks derive from (a real subset). */
 const FACTS = {
-  tools: [
-    { name: 'read_file', group: 'files', required: true },
-    { name: 'terminal', group: 'terminal', required: true },
-    { name: 'message_search', group: 'memory', required: true },
-    { name: 'memory', group: 'memory' },
-    { name: 'web_search', group: 'web' },
-    { name: 'taskflow_flow', group: 'tasks' },
-    { name: 'todoread', group: 'tasks' },
-    { name: 'sessions_spawn', group: 'subagents' }
-  ],
-  gateableMiddlewares: [
-    'PlanContinuationEnforcer',
-    'TaskIntentMiddleware',
-    'DynamicReminderMiddleware',
-    'SubagentCompletionDrainMiddleware'
-  ],
   // The required multimedia chain first (the backend serves it that way), then
   // the work-flow skills and two it does not.
   skills: [
@@ -132,7 +115,7 @@ const FACTS = {
 };
 
 /** Facts without a catalogue (Full still composes; the rest throw). */
-const NO_AGENT: PresetCatalogFacts = { tools: [], gateableMiddlewares: [], skills: [] };
+const NO_AGENT: PresetCatalogFacts = { skills: [] };
 
 /** The required skill names of {@link FACTS} (kept by every preset). */
 const REQUIRED_SKILLS = ['image_to_text', 'speech_to_text', 'text_to_image', 'video_text_to_text'];
@@ -198,41 +181,29 @@ describe('persona catalogue', () => {
     expect(payload.content['ROLE.md']).toBe('# ROLE.md\n\n你将扮演橘雪莉。\n用户将扮演远野汉娜。\n');
     expect(payload.character.aiName).toBe('橘雪莉');
     expect(payload.character.userName).toBe('远野汉娜');
-    // Full pins nothing: every tool, every switch on.
+    // Full pins nothing: every skill in the index.
     expect(payload.agent).toEqual({});
   });
 
-  it('builds the 纯净 payload with no persona, the required tools and no switches', () => {
+  it('builds the 纯净 payload with no persona and only the required skills', () => {
     const payload = builtinPayload('pure', TEMPLATE, t, FACTS, 'zh');
 
     // Every file empty — including the operating rules — and nobody named.
     expect(payload.content).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
     expect(payload.character).toEqual({ aiName: '', aiAvatar: '', userName: '', userAvatar: '' });
-    // The catalogue's locked sets are the whole tool / skill list this preset
-    // enables…
-    expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search']);
-    expect(payload.agent!.skills).toEqual(REQUIRED_SKILLS);
-    // …and every optional middleware is off too.
-    expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
+    // The catalogue's locked skill set is the whole index this preset enables.
+    expect(payload.agent).toEqual({ skills: REQUIRED_SKILLS });
   });
 
-  it('builds the 情感陪伴 payload on the full persona with the orchestration off', () => {
+  it('builds the 情感陪伴 payload on the full persona with the coding work-flow skills left out', () => {
     const payload = builtinPayload('companion', TEMPLATE, t, FACTS, 'zh');
 
     expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
     expect(payload.character.aiName).toBe('橘雪莉');
-    // Every tool EXCEPT the Tasks & planning / Subagent groups keeps moving together.
-    expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search', 'memory', 'web_search']);
-    expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
-    for (const name of ['taskflow_flow', 'todoread', 'sessions_spawn']) {
-      expect(payload.agent!.tools).not.toContain(name);
-    }
-    // The disabled groups are the orchestration surfaces, and its nudge is off.
-    expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
-    expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
     // The skills are the complementary set: the required chain plus every
-    // skill outside the work-flow set (clawhub / cron here).
-    expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'clawhub', 'cron']);
+    // skill outside the work-flow set (clawhub / cron here). The tool set is no
+    // longer configurable, so the agent block carries skills only.
+    expect(payload.agent).toEqual({ skills: [...REQUIRED_SKILLS, 'clawhub', 'cron'] });
   });
 
   it('strips the task-orchestration content out of 情感陪伴\u2019s 运行守则', () => {
@@ -315,20 +286,16 @@ describe('persona catalogue', () => {
   it('refuses to compose a preset whose restriction needs the catalogue', () => {
     // A silent `{}` would apply the OPPOSITE of what these presets promise.
     for (const id of ['pure', 'companion'] as const) {
-      expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
+      expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('skill catalogue is unavailable');
     }
     // Full has no opinion at all, so it never needs the catalogue.
     expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
   });
 
   it('reads the facts off an agent-config store', () => {
-    const facts = presetCatalogFacts({
-      catalog: { tools: FACTS.tools },
-      middlewares: { gateable: [{ name: 'TaskIntentMiddleware' }] }
-    });
+    const facts = presetCatalogFacts({ catalog: { skills: FACTS.skills } });
 
-    expect(facts.tools).toBe(FACTS.tools);
-    expect(facts.gateableMiddlewares).toEqual(['TaskIntentMiddleware']);
+    expect(facts.skills).toBe(FACTS.skills);
   });
 
   it('loads a built-in payload from the language template and a saved preset from its row', async () => {
@@ -369,14 +336,10 @@ describe('persona catalogue', () => {
     });
   });
 
-  it('pins an agent block on every preset except 全量', () => {
+  it('pins a skill list on every restricted preset and nothing on 全量', () => {
     for (const id of ['pure', 'companion'] as const) {
       const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
-      expect(payload.agent).not.toEqual({});
-      // …and the nudge is the one option only Full leaves alone (absent = on).
-      expect(payload.agent!.middleware_options).toEqual(
-        id === 'sherry' ? undefined : { Summarization: { nudge: false } }
-      );
+      expect(payload.agent!.skills).toBeTruthy();
     }
     expect(builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh').agent).toEqual({});
   });
@@ -398,15 +361,12 @@ describe('persona catalogue', () => {
           userName: '',
           userAvatar: ''
         },
-        agent: { tools: ['read_file'], middlewares_disabled: ['TaskIntentMiddleware'] }
+        agent: { skills: ['clawhub'] }
       },
       'sess-new'
     );
 
-    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith('sess-new', {
-      tools: ['read_file'],
-      middlewares_disabled: ['TaskIntentMiddleware']
-    });
+    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith('sess-new', { skills: ['clawhub'] });
 
     // Without a session the call is skipped (no session exists yet).
     agentBridge.setAgentConfig.mockClear();

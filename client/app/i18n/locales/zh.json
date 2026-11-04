@@ -296,8 +296,6 @@
   "config": {
     "agent": {
       "tabs": {
-        "tools": "工具",
-        "middlewares": "中间件",
         "subagents": "代理模型",
         "skills": "技能"
       },
@@ -307,75 +305,17 @@
         "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
         "followEnv": "跟随模型配置"
       },
-      "tools": {
-        "count": "已选 {selected}/{total}",
-        "requiredHint": "必需，不可取消",
-        "scope_builtin": "内置",
-        "scope_mcp": "MCP",
-        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
-        "clearAll": "全部禁用",
-        "clearGroup": "清空",
-        "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
-        "selectAll": "全部启用",
-        "selectGroup": "全选"
-      },
       "skills": {
         "count": "已选 {selected}/{total}",
         "scope_builtin": "内置",
         "scope_thirdparty": "第三方",
         "empty": "暂无技能",
         "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。",
+        "requiredHint": "必需，不可取消",
+        "selectAll": "全部启用",
+        "clearAll": "全部禁用",
         "whenToUse": "何时使用",
         "whenNotToUse": "不适用"
-      },
-      "toolGroup": {
-        "files": "文件读写",
-        "terminal": "终端与代码",
-        "tasks": "任务与计划",
-        "memory": "记忆与检索",
-        "skills": "技能",
-        "subagents": "子代理",
-        "interaction": "交互",
-        "web": "网络",
-        "browser": "浏览器",
-        "mcp": "MCP",
-        "plan_mode": "计划模式"
-      },
-      "middlewares": {
-        "nudgeLabel": "启用 nudge",
-        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-        "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
-        "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
-      },
-      "middleware": {
-        "TaskIntentMiddleware": {
-          "name": "任务意图引导",
-          "desc": "识别工作型请求并注入编排提示"
-        },
-        "WorkspaceNoticeMiddleware": {
-          "name": "工作区变更通知",
-          "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
-        },
-        "MultimodalProcessor": {
-          "name": "多模态预处理",
-          "desc": "上传的图片/音频/视频入库与降级处理"
-        },
-        "SubagentCompletionDrainMiddleware": {
-          "name": "子代理完成注入",
-          "desc": "子代理完成后把结果注入主会话"
-        },
-        "Summarization": {
-          "name": "摘要压缩",
-          "desc": "上下文压缩、溢出处理与压缩后的 nudge"
-        },
-        "PlanContinuationEnforcer": {
-          "name": "计划续跑",
-          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
-        },
-        "DynamicReminderMiddleware": {
-          "name": "动态提醒",
-          "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
-        }
       },
       "subagents": {
         "followTier": "跟随角色默认",
@@ -394,9 +334,6 @@
         "librarian": "图书管理员"
       },
       "viewer": {
-        "tools": "工具 {selected}/{total}",
-        "middlewares": "关闭的中间件：{names}",
-        "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
       },
       "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
@@ -496,7 +433,6 @@
       "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
       "saveFailed": "应用配置保存失败，请检查值是否合法。",
       "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
-      "noConfigFile": "未找到 sherry.jsonc 文件。",
       "allowlist": {
         "title": "回放门白名单",
         "hint": "在代码内置的五种工具链之外，追加 finish 回放时允许自动执行的可执行文件名（只影响回放哪些验证命令）。",

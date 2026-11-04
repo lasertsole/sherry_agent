@@ -324,22 +324,17 @@ async def read_state_messages(session_id: str) -> list[Any]:
     return await read_messages(session_id)
 
 
-def _tool_definitions(session_id: str) -> tuple[list[dict[str, Any]], int, bool]:
-    """``(definitions, token estimate, selection_active)`` for this session.
+def _tool_definitions() -> tuple[list[dict[str, Any]], int]:
+    """``(definitions, token estimate)`` for the process-wide main tool set.
 
-    The definitions are the ones the session's model can actually call: the
-    process-wide set minus the tools its 预设-工具 tab switched off (REQUIRED
-    tools are unioned back in by ``enabled_tool_names``).
+    Every built-in tool is always available (the per-session tool selection was
+    removed), so the definitions are exactly what ``build_main_tools()`` binds.
     """
-    from agent.middlewares.tool_selection.core import enabled_tool_names
     from agent.tools import build_main_tools
 
-    enabled = enabled_tool_names(session_id)
     items: list[dict[str, Any]] = []
     tokens = 0
     for tool in build_main_tools():
-        if enabled is not None and tool.name not in enabled:
-            continue
         schema: dict[str, Any] = {
             "name": tool.name,
             "description": _clip(str(getattr(tool, "description", "") or ""))[0],
@@ -351,7 +346,7 @@ def _tool_definitions(session_id: str) -> tuple[list[dict[str, Any]], int, bool]
         # The same JSON wire ratio the accounting uses, so the two agree.
         tokens += estimate_json_tokens(json.dumps(schema, ensure_ascii=False))
     items.sort(key=lambda entry: str(entry["name"]))
-    return items, tokens, enabled is not None
+    return items, tokens
 
 
 async def get_context_content(session_id: str) -> dict[str, Any]:
@@ -364,7 +359,6 @@ async def get_context_content(session_id: str) -> dict[str, Any]:
             "system_tokens":  int,
             "tools":          [ {name, description, parameters} ],
             "tool_tokens":    int,
-            "tool_selection": bool,  # the session narrows the tool set
             "messages":       [ {role, content, origin?, internal?, tool_calls?} ],
             "message_tokens": int,
             "truncated":      int,   # rows clipped by the per-message bound
@@ -376,10 +370,10 @@ async def get_context_content(session_id: str) -> dict[str, Any]:
     session = str(session_id)
     prompt = _system_prompt_text(session)
     try:
-        tools, tool_tokens, selection = _tool_definitions(session)
+        tools, tool_tokens = _tool_definitions()
     except Exception as error:  # a tool-set failure must not break the viewer
         logger.warning("context inspect: tool definitions failed: {}", error)
-        tools, tool_tokens, selection = [], 0, False
+        tools, tool_tokens = [], 0
 
     messages: list[dict[str, Any]] = []
     state_error = ""
@@ -396,7 +390,6 @@ async def get_context_content(session_id: str) -> dict[str, Any]:
         "system_tokens": estimate_text_tokens(prompt) if prompt else 0,
         "tools": tools,
         "tool_tokens": tool_tokens,
-        "tool_selection": selection,
         "messages": messages,
         "message_tokens": sum(estimate_text_tokens(row["content"]) for row in messages),
         "truncated": sum(1 for row in messages if row["truncated"]),

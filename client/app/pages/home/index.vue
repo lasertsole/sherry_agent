@@ -1070,11 +1070,26 @@ const { measure: measureAutoCollapse } = useAutoCollapse({
 });
 
 /**
+ * What the shell looked like when the right panel maximized (see the watcher
+ * below). Declared here because dockChatFloat consumes it to suppress the
+ * watcher's own restore branch.
+ */
+const preMaximizeSnapshot = ref<{ leftExpanded: boolean; middleFloating: boolean } | null>(null);
+
+/**
  * Put the conversation column back into the flow. The drag leftovers are
  * cleared and the auto-collapse net re-measures once the restored layout is on
  * screen (its resize path was paused while the window floated).
  */
 function dockChatFloat(): void {
+  // A maximized right panel is what pushed the conversation out into the float;
+  // docking must restore it, or the docked column stays hidden under the
+  // full-screen overlay. Clear the snapshot FIRST: the maximize watcher's
+  // restore branch would otherwise call dockChatFloat again (double dock).
+  if (rightSidebarStore.maximized) {
+    preMaximizeSnapshot.value = null;
+    rightSidebarStore.maximized = false;
+  }
   chatFloat.dock();
   // Docking resets the input-only state: the next open is the normal window.
   chatFloat.setCollapsed(false);
@@ -1138,9 +1153,8 @@ watch(openSessionId, () => {
  *  - on restore: keep floating only when the left was expanded AND the chat was
  *    already floating; every other combination docks.
  * `immediate` covers a boot with a persisted `maximized`: the boot state is the
- * snapshot.
+ * snapshot. (The ref itself is declared above dockChatFloat, which consumes it.)
  */
-const preMaximizeSnapshot = ref<{ leftExpanded: boolean; middleFloating: boolean } | null>(null);
 watch(
   () => rightSidebarStore.maximized,
   maximized => {

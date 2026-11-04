@@ -162,7 +162,7 @@ client/
 │   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, 模型配置, 应用配置, 国际化, 快捷键)
 │   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
-│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
+│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / agent models / skills + presets)
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
 │   │           ├── SessionPresetPanel.vue     # 当前会话 tab: the session's own preset, read-only (代理模型 leads its tab strip)
 │   │           ├── NewSessionPresetDialog.vue # Mandatory preset-choice dialog behind every 新建对话 (applies the preset, then creates the session)
@@ -212,7 +212,7 @@ client/
 │   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
-│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
+│   │   ├── agent-config.ts     # Preset agent config (agent models / skills) per session; required skills stay locked. Tools and the middleware chain are not configurable
 │   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + flat steps, refreshed by taskflow_updated)
 │   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)

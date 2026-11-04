@@ -46,11 +46,12 @@ helpers), `agent/middlewares/tool_selection/core.py` (the whitelist),
 
 ## The read-only guarantee
 
-While the status is `planning` / `needs_replan`, `ToolSelectionMiddleware`
-applies the whitelist twice, exactly like the per-session tool selection it
-already did: the model is only OFFERED the whitelist, and a call that still
-arrives (a stale checkpoint, a hallucinated name) is REFUSED at execution with
-"Plan mode is active". The default whitelist is
+While the status is `planning` / `needs_replan`, `PlanModeToolGate`
+applies the whitelist twice: the model is only OFFERED the whitelist, and a call
+that still arrives (a stale checkpoint, a hallucinated name) is REFUSED at
+execution with "Plan mode is active". The gate is the only tool-face filter left
+— every built-in tool is always available otherwise (the per-session tool
+selection was removed). The default whitelist is
 `config/features/agent_side/plan_mode.py::PLAN_MODE["allowed_tools"]`; it is
 still bounded by the session's own tool selection, except that the two plan
 tools always stay reachable — a mode the model cannot leave would be a trap.

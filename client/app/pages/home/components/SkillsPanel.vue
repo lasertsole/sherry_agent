@@ -28,7 +28,6 @@
         "autoMaintenanceIntervalUnit": "days",
         "autoMaintenanceSaved": "Saved",
         "autoMaintenanceSaveFailed": "Save failed",
-        "autoMaintenanceResetDone": "Restored to default interval",
         "autoMaintenanceLoadFailed": "Failed to load settings",
         "lastMaintenance": "Last maintenance",
         "lastMaintenanceNone": "No maintenance performed yet",
@@ -74,7 +73,6 @@
         "autoMaintenanceIntervalUnit": "日",
         "autoMaintenanceSaved": "保存しました",
         "autoMaintenanceSaveFailed": "保存に失敗しました",
-        "autoMaintenanceResetDone": "既定の間隔に戻しました",
         "autoMaintenanceLoadFailed": "設定の読み込みに失敗しました",
         "lastMaintenance": "最終メンテナンス時刻",
         "lastMaintenanceNone": "まだスキルメンテナンスを実行していません",
@@ -120,7 +118,6 @@
         "autoMaintenanceIntervalUnit": "일",
         "autoMaintenanceSaved": "저장되었습니다",
         "autoMaintenanceSaveFailed": "저장 실패",
-        "autoMaintenanceResetDone": "기본 간격으로 복원되었습니다",
         "autoMaintenanceLoadFailed": "설정을 불러오지 못했습니다",
         "lastMaintenance": "마지막 유지보수 시간",
         "lastMaintenanceNone": "아직 스킬 유지보수를 실행하지 않았습니다",
@@ -166,7 +163,6 @@
         "autoMaintenanceIntervalUnit": "天",
         "autoMaintenanceSaved": "已保存",
         "autoMaintenanceSaveFailed": "保存失败",
-        "autoMaintenanceResetDone": "已恢复为默认间隔",
         "autoMaintenanceLoadFailed": "读取设置失败",
         "lastMaintenance": "最后一次维护时间",
         "lastMaintenanceNone": "尚未执行过技能维护",
@@ -258,7 +254,7 @@
                   :options="autoIntervalOptions"
                   optionLabel="label"
                   optionValue="value"
-                  :allowEmpty="true"
+                  :allowEmpty="false"
                   :disabled="intervalSaving"
                   size="small"
                   class="self-center w-fit [&>button]:px-1.5 [&>button]:py-0 [&>button]:text-xs [&>button]:min-w-8 [&>button]:mr-1 last:[&>button]:mr-0 [&>button]:rounded-md"
@@ -514,7 +510,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
@@ -647,6 +643,17 @@ interface TreeRow {
 const expandedDirs = ref<Set<string>>(new Set<string>());
 const selectedFile = ref<SkillFileNode | null>(null);
 
+// A tab switch changes WHICH kind of skill the list shows; the previous tab's
+// selection must not keep the detail pane occupied (the right side used to keep
+// rendering the old builtin skill after switching to 自动/第三方). The field set
+// mirrors selectSkill's own reset.
+watch(activeCategory, () => {
+  selectedSkill.value = null;
+  skillDetail.value = null;
+  selectedFile.value = null;
+  expandedDirs.value = new Set<string>();
+});
+
 const skillTree = computed<TreeRow[]>(() => {
   if (!skillDetail.value?.files?.length) return [];
   const rows: TreeRow[] = [];
@@ -720,21 +727,20 @@ const loadCuratorSettings = async () => {
   }
 };
 
-const onAutoIntervalChange = async (event: { value: number | null; originalEvent: Event }) => {
+const onAutoIntervalChange = async (event: { value: number; originalEvent: Event }) => {
   if (intervalSaving.value) return;
-  const value = event.value ?? null;
+  // allowEmpty=false: re-clicking the ACTIVE day keeps it selected and emits the
+  // same number again — it can no longer deselect into a null "restore default".
+  const value = event.value;
   intervalSaving.value = true;
   intervalMessage.value = '';
   intervalError.value = false;
   try {
-    // Selection is limited to 1-5 by the button group; null (deselect) clears
-    // the override, falling back to the sherry.jsonc curator default.
     const resp = await setCuratorSettings(value);
     if (resp.success) {
       // Reload to reflect backend-normalized state (e.g. server-clamped value).
       await loadCuratorSettings();
-      intervalMessage.value =
-        value === null ? t('skills.tabs.autoMaintenanceResetDone') : t('skills.tabs.autoMaintenanceSaved');
+      intervalMessage.value = t('skills.tabs.autoMaintenanceSaved');
       intervalError.value = false;
     } else {
       intervalMessage.value = resp.error || t('skills.tabs.autoMaintenanceSaveFailed');

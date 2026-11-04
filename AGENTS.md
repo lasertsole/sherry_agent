@@ -76,7 +76,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     whose graph is still suspended lives in `server/service/boot_recovery.py`,
   │     together with the dangling-tool-call heal and the CLAIMED-row requeue.)
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
+  │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → PlanModeToolGate → MultimodalProcessor → IterationBudget
   │    → ToolResultEnrichment → ToolGuardrails → ToolResourceLock → UserHooks → ContextEviction(P0-2/P2-4)
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
@@ -1406,15 +1406,16 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
 `PLAN_FILE_PATH`. The tunables live in
 `config/features/agent_side/plan_mode.py` (`PLAN_MODE`).
 
-- **The read-only guarantee** is `ToolSelectionMiddleware`, doubled exactly like
-  its per-session selection: `wrap_model_call` narrows `request.tools` to
-  `PLAN_MODE["allowed_tools"]` while the status is `planning`/`needs_replan`
-  (still bounded by the session's own set, except that `enter_plan_mode` /
-  `exit_plan_mode` always stay reachable — a mode the model cannot leave would
-  be a trap), and `wrap_tool_call` REFUSES a write tool that still gets called
-  (“Plan mode is active…”). `sessions_spawn` is deliberately NOT on the
-  whitelist: a child runs with its own session's state, so a spawned executor
-  could write before approval.
+- **The read-only guarantee** is `PlanModeToolGate`
+  (`agent/middlewares/plan_mode_gate/`): `wrap_model_call` narrows
+  `request.tools` to `PLAN_MODE["allowed_tools"]` while the status is
+  `planning`/`needs_replan` (with `enter_plan_mode` / `exit_plan_mode` always
+  reachable — a mode the model cannot leave would be a trap), and
+  `wrap_tool_call` REFUSES a write tool that still gets called (“Plan mode is
+  active…”). `sessions_spawn` is deliberately NOT on the whitelist: a child runs
+  with its own session's state, so a spawned executor could write before
+  approval. This is the only tool-face filter left: the per-session tool
+  selection was removed, so `PlanModeToolGate` needs no session set to consult.
 - **The human can pin it too**: the toolbar's Access mode control gained a Plan mode
   entry (`PUT /sessions/access_mode` `mode=plan`) which sets the same
   `PLAN_STATUS`; the mode it reports is DERIVED from the plan status, so a plan
@@ -1440,46 +1441,36 @@ tiers (mem for the hot path, DB so a restart keeps the mode) under
   else changes. The client renders the plan as an approval card in the input
   slot ([sid].vue, `isPlanHitl`) with the plan text, a feedback field, **Request changes**
   and **Approve** (the reject+message path is the “request changes” decision).
-- Chain membership and order are unchanged (no new middleware); the tools join
-  `_MAIN_TOOLS_BUILDERS` and the `plan_mode` catalogue group, so the **Preset - Tools**
-  tab can switch them per session. Tests:
-  `tests/agent/tools/plan_mode/` + the plan-mode cases in
-  `tests/agent/middlewares/test_tool_selection.py`.
+- The read-only face is enforced by `PlanModeToolGate` (the tool-selection
+  middleware's successor); the tools join `_MAIN_TOOLS_BUILDERS`. Tests:
+  `tests/agent/tools/plan_mode/`.
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
 The Preset Character panel (the Menu entry renamed from Preset; it sits immediately after the System Config entry, which leads the nine-grid, and the right
 sidebar's tab label — global and **Current session** alike — carries the same name) covers one JSON payload
-per session in its last four tabs (Tools / Middleware / Agent model / Skills), stored under
+per session in its last two tabs (Agent model / Skills), stored under
 `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
 the model/thinking controls)::
 
-    {"tools": [...]|null, "middlewares_disabled": [...],
-     "subagent_models": {"<role>": {profile}|null}, "skills": [...]|null,
-     "middleware_options": {"Summarization": {"nudge": bool}}}
+    {"subagent_models": {"<role>": {profile}|null}, "skills": [...]|null}
 
-- `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
-  (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
-  - `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
-    the skill list carries the ACTIVE skills visible to main plus the Built-in / Third-party split (`builtin:
-false` = under `skills/plugins/`); each tool entry also carries the
-    tool's own first description line (bounded) — the Tools tabs show it as a hover tooltip, so
-    it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
-    reads/writes the payload; the service rejects an unknown tool / skill / role, and any
-    system-required middleware name, with a 400 that names it.
-- **Tools** are applied per call by `ToolSelectionMiddleware`
-  (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
-  what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
-  checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
-  list). Unset config = every tool. `agent/tools/catalog.py` carries the three rules the
-  payload obeys: `TOOL_ORDER` (group render order — Skills / Terminal & Code / File I/O / Interaction first,
-  memory fifth, then the task and delegation surfaces), `REQUIRED_TOOLS` (the file tools, code
-  execution, the three skill tools, `question` and `message_search` — the Tools tab shows those
-  rows as locked chips with NO checkbox, the service 400s on a payload that omits one, and
-  `enabled_tool_names()` unions
-  them back in so an older register value cannot strip them either), and `BULK_ONLY_GROUPS`
-  (`tasks` and `subagents` move as a whole in the UI — select-all / clear-all only, never a
-  per-tool switch).
+The built-in TOOL set and the middleware chain are build-time contracts now — every main tool
+is always available and every registered middleware always runs — so the payload carries
+neither `tools`, `middlewares_disabled` nor `middleware_options`. A preset saved by an older
+client still holding them re-applies: the sanitizer DROPS those keys instead of 400ing, and
+`get_agent_config_state` strips them from a stored value so a reader never mistakes them for
+live switches.
+
+- `GET /agent/catalog` is the client's only source of role / skill names
+  (`roles/loader.py`, `skills/loader.py::skills_catalog`; the `tools` and `middlewares` lists
+  were removed with the configuration surface); the skill list carries the ACTIVE skills
+  visible to main plus the Built-in / Third-party split (`builtin: false` = under
+  `skills/plugins/`). `GET|PUT /sessions/agent_config` reads/writes the payload; the service
+  rejects an unknown skill / role with a 400 that names it.
+- **Tools** are not configurable: `ToolSelectionMiddleware` and `agent/tools/catalog.py` were
+  deleted, so `build_main_tools()`' full list is what every session's model sees. The only
+  remaining narrowing is plan mode's `PlanModeToolGate`.
 - **Skills** (`AGENT_CONFIG["skills"]`): the names whose `<available_skills>` index entries enter
   the system prompt — `null`/absent = every skill (today's behaviour), an explicit list is EXACT
   (an empty list means only the required chain). `skills/loader.py::REQUIRED_SKILLS` is the
@@ -1494,30 +1485,6 @@ false` = under `skills/plugins/`); each tool entry also carries the
   lands — at the live write and at the turn-boundary promotion for a parked one
   (`session_settings_service.promote_pending_settings_sync`) — and it deletes only
   `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
-- **Middleware options** (`AGENT_CONFIG["middleware_options"]`): a REQUIRED entry cannot be
-  switched off, so its tuning rides here — today exactly one pair, `Summarization.nudge` (the
-  Middleware tab renders it as its own section with a switch). The service rejects an unknown section /
-  option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
-  `memory` (the nudge writes memory THROUGH that tool). At runtime
-  `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
-  both nudge entries — the compression-time memory review
-  (`schedule_memory_review`, handed the messages about to be discarded and run
-  CACHE-WARM: the slice goes back VERBATIM on the model configuration the turn
-  used — `nudges._build_session_model` rebuilds it from the descriptor
-  `thinking_control.current_session_model_config` publishes every main-chain
-  call — with the session's system prompt and tool face, so the compaction's
-  prefix cut makes the request a prefix-cache hit on the main model and only
-  the review instruction is fresh input; `NUDGE["memory_review_mode"] =
-"digest"` falls back to the folded view, `summarization/digest.py`) and the
-  plan-completion extraction fork
-  (`maybe_trigger_plan_extraction`, which replaced plan extraction's old home
-  on the compaction path: it fires from `PlanContinuationEnforcer.aafter_agent`
-  on the AUXILIARY model with no conversation history, and dedupes on a plan
-  snapshot fingerprint under `StateKey.NUDGE_PLAN_SNAPSHOT_HASH`);
-  the panel's switch is DISABLED while the draft has memory off —
-  a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
-  nudge back. Of the built-ins only Full leaves it alone (absent = on): Pure /
-  Emotional companion pin `nudge: false`.
 - **Session-end memory salvage**: MAIN-session deletion (`purge_session` →
   `nudges.salvage_session_memory`) snapshots the post-compaction checkpoint
   transcript, the session model, the system prompt and the tool face BEFORE any
@@ -1534,17 +1501,6 @@ false` = under `skills/plugins/`); each tool entry also carries the
   every step is fail-open; side chats/subagent children do not run this path, and
   a process exit may abandon an unfinished background wave. Config:
   `NUDGE["session_end_review_enabled"]` / `session_end_review_timeout_s`.
-- **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
-  — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
-  `agent_switch._RENAMED_MIDDLEWARES` — `TaskIntentMiddleware`,
-  `DynamicReminderMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
-  `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
-  every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
-  `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
-  build now fails without them (`scaffolding._MAIN_REQUIRED`, 16 entries) and the service
-  rejects a payload naming one. Together with `system_prompt_injection`,
-  `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
-  membership and order never change.
 - **Subagent models**: `subagent_models[role]` is a profile descriptor (the same shape as the
   session main-model override); at spawn `resolve_role_model_profile` reads it for the
   requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
@@ -1845,8 +1801,8 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
 `web_search` is ONE tool over two interchangeable providers — the Tavily branch
 pins `name = "web_search"` (TavilySearch's own default would ship the swap as a
-second tool name), so the model, the per-session tool selection and the Tools tab
-all see the same tool whatever serves a call. Which one serves a call is resolved per call
+second tool name), so the model always sees the same tool whatever serves a
+call. Which one serves a call is resolved per call
 (`resolve_preferred_backend`): the session's explicit choice
 (`StateKey.SEARCH_BACKEND`, written by the Model Network panel through
 `PUT /sessions/search_backend` and parked/promoted at the turn boundary like the
@@ -2496,10 +2452,9 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   build paths from `config.path` constants and never call those resolvers.
 - An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped; the diff ALSO reports `changed:` entries for a surviving name whose parameter/return shape moved, and surfaces module-level `variable` symbols — both are opt-in to this diff, so the code index still lists only functions/methods/classes), the section then names `affected importers` from a READ-ONLY reverse lookup over the code index's `import_edges` (`code_intel/indexer.py::importers_of_names`; a missing index answers empty and the merge NEVER builds one) and those files are marked stale in the parent's evidence ledger alongside the merged paths (a pure import user has no write to match otherwise), with an optional `EVIDENCE_REGRESSION_GATE["merge_reverify_enabled"]` (default OFF, `merge_reverify_max_commands` 5) replaying the parent's passed commands that cover them; it is ONE LEVEL: the runtime `sessions_spawn` tool carries `isolation`, and a spawn whose cwd already sits inside an isolated worktree reuses that tree (`isolation=True` is ignored there, info-logged, never refused — a child of the isolated ORCHESTRATOR works in the same tree, and its changes ride that one merge back; the check is a path test against `isolated_workspaces_dir()`, not a git probe); the docs page is `wiki/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
-- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears. A completed plan (no incomplete todo, no open flow) earns ONE `[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]` auto-turn before the gate treats it as done: the paranoid prompt asks the agent to re-read the diff, actually run the tests/typecheck/lint and launch user-facing changes. It is a PROMPT, not a gate (no evidence query, no HITL, no schema); a process-local fingerprint throttles it to once per completed plan, a changed plan re-arms it, a refused delivery is retried, and a TaskFlow session skips it (its finish gates own verification).
+- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving). Preset payloads no longer switch a middleware off, so the old `agent_switch._RENAMED_MIDDLEWARES` alias map is gone with the switch itself. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch. The same blind spot (a plan edited just enough to keep the snapshot moving) is bounded by the continuation budget: `TODOLIST_INFRA["max_continuation_turns"]` (15) confirmed deliveries → one stop directive + a session latch that only a turn the gate did NOT inject clears. A completed plan (no incomplete todo, no open flow) earns ONE `[SYSTEM DIRECTIVE: FINAL VERIFICATION CHECK]` auto-turn before the gate treats it as done: the paranoid prompt asks the agent to re-read the diff, actually run the tests/typecheck/lint and launch user-facing changes. It is a PROMPT, not a gate (no evidence query, no HITL, no schema); a process-local fingerprint throttles it to once per completed plan, a changed plan re-arms it, a refused delivery is retried, and a TaskFlow session skips it (its finish gates own verification).
 - todo identity is `todo_id`, not `position`: each row gets a per-session monotonic id, the system reminder renders it as `#N`, and `todowrite` actions `patch` / `add(after_todo_id=…)` / `remove` / `reattach` / `list_orphans` address it. `replace` is still the default full-list rewrite and reissues every id (it reads `MAX(todo_id)` before DELETE, so an old id can never silently point at a new row); local actions preserve `flow_id` / `step_id` / `plan_ref`. A missing id raises `TodoIdNotFoundError` and the tool answers with the current valid list. The store creates only the current schema (`todo_id INTEGER NOT NULL`, unique `(session_id, todo_id)` index), with no old-table backfill; `position` is display order only and insertion shifts it via `TODOLIST_INFRA["position_shift_offset"]`.
 - Todo↔TaskFlow reference integrity is enforced at four points: (1) a full `todowrite` replacement that drops a flow's GC-root todo runs `compensate_orphaned_flows` immediately (`TODOLIST_INFRA["orphan_flow_on_drop"]`: `cancel` default, `refuse` rejects the rewrite, `sweep_only` leaves it to the sweep), kills the flow's live detached children (fail-open) and the tool result carries a `[REFERENCE INTEGRITY]` warning; (2) one session-scoped sweep follows the replacement with the CONFIGURED grace window (a just-completed root on its way to `taskflow_flow(action="finish")` is not collected; the targeted compensation already handled the dropped flows); (3) `taskflow_flow(action="create")` / `taskflow_flow(action="plan")` answer a similar active same-session flow with a reuse-or-`ack_dup=True` warning (normalized substring or Jaccard > 0.7; `resumed_from` skips it; a terminal flow never counts); (4) a terminal flow notifies its root at once — `completed` on finish, `cancelled` on fail/cancel — while the sweeper's delayed cancel remains the backstop. All four are fail-open; both notification helpers update only non-terminal rows (idempotent).
-- a middleware row in Preset Character - Middleware must never let its label squeeze the switch: PrimeVue's `ToggleSwitch` cannot take a fall-through class from a fragment root, so each row wraps it in a `span.shrink-0` (the label column keeps `min-w-0 truncate`) and the row's help affordance is a real `?` button that toggles the explanation inline (hover tooltips are unreachable in an embedded webview).
 - the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer's serializer (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced. Each source also declares `compress_exclude` (default True; `continuity_context` opts out with False): the injector stamps it into the message metadata and `_filter_summary_messages` drops those reminders before the summary prompt, so a stale live-view snapshot never reaches the summarizer. `is_user_message` (`pub/func/message/classify.py`, a positive fail-closed `metadata.origin == "user"` test) is the one user-content check used by the summarizer's serializer, static fallback and latest-eviction-pointer paths.
 - user-configurable lifecycle hooks (`agent/middlewares/user_hooks/`, registered
   after `ToolResourceLockMiddleware`, which itself sits right after
@@ -2520,9 +2475,8 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   logged (capped) and never shown to the model, and every failure is a log line
   — the tool result rides through untouched. `hooks.enabled` defaults OFF
   (`USER_HOOKS["enabled"]`): the config file is git-tracked, so executing its
-  commands must be a deliberate act. Added to `MIDDLEWARE_ORDER` +
-  `GATEABLE_MIDDLEWARES` (the Preset - Middleware switch calls `middleware_enabled`), and
-  the config is read once at construction (change = restart).
+  commands must be a deliberate act. Listed in `MIDDLEWARE_ORDER`, and the config is read once at construction
+  (change = restart).
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
   finds the owning flow by scanning active flows' steps for the child key), and

@@ -120,37 +120,21 @@ const stubs = {
 let written: Record<string, string> | null = null;
 
 /**
- * An agent-config store double whose catalogue carries one REQUIRED tool, one
- * plain optional tool and one bulk-only group (subagents) — enough for the two new
- * built-in presets to derive their agent blocks from.
+ * An agent-config store double whose catalogue carries the skill sets the two
+ * restricted built-in presets derive their agent blocks from.
  * @param catalogue
- * @param catalogue.tools
  * @param catalogue.skills
  */
 function makeCatalogStore(catalogue?: {
-  tools?: Array<{ name: string; group: string; required?: boolean }>;
   skills?: Array<{ name: string; builtin: boolean; description?: string; required?: boolean }>;
 }) {
-  const tools = catalogue?.tools ?? [
-    { name: 'read_file', group: 'files', required: true },
-    { name: 'web_search', group: 'web' },
-    { name: 'sessions_spawn', group: 'subagents' }
-  ];
   const skills = catalogue?.skills ?? [
     { name: 'alpha', builtin: true, description: 'Built-in skill.' },
     { name: 'uploaded', builtin: false, description: 'Third-party skill.' }
   ];
-  const groups: Array<{ group: string; tools: typeof tools }> = [];
-  for (const tool of tools) {
-    const bucket = groups.find(entry => entry.group === tool.group);
-    if (bucket) bucket.tools.push(tool);
-    else groups.push({ group: tool.group, tools: [tool] });
-  }
   return reactive({
-    catalog: { tools, middlewares: [], subagent_roles: [], skills },
+    catalog: { subagent_roles: [], skills },
     catalogLoaded: true,
-    toolGroups: groups,
-    middlewares: { gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }], locked: [] },
     subagentRoles: [],
     skills: {
       builtin: skills.filter(skill => skill.builtin),
@@ -159,28 +143,19 @@ function makeCatalogStore(catalogue?: {
     loadCatalog: async () => {},
     hydrate: async () => {},
     configOf: () => ({}),
-    enabledTools: () => tools.map(tool => tool.name),
     selectedSkills: () => null,
-    nudgeEnabled: () => true,
     isPending: () => false,
     save: async () => {}
   });
 }
 
 /**
- * A catalogue wide enough for EVERY built-in's derivation (tools + skills +
- * the work-flow skills), installed for the whole suite: a preset
- * click throws without one, and these tests are not about the derivation.
+ * A catalogue wide enough for EVERY built-in's derivation (the work-flow
+ * skills), installed for the whole suite: a preset click throws without one,
+ * and these tests are not about the derivation.
  */
 function makeWideCatalogStore() {
   return makeCatalogStore({
-    tools: [
-      { name: 'read_file', group: 'files', required: true },
-      { name: 'terminal', group: 'terminal', required: true },
-      { name: 'message_search', group: 'memory', required: true },
-      { name: 'memory', group: 'memory' },
-      { name: 'web_search', group: 'web' }
-    ],
     skills: [
       { name: 'image_to_text', builtin: true, required: true },
       { name: 'speech_to_text', builtin: true, required: true },
@@ -238,8 +213,8 @@ describe('PersonaPanel role tab', () => {
 
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     // Role first, the three persona files, then the agent-config tabs
-    // (Tools / Middlewares / Agent models) the preset also carries.
-    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '代理模型', '技能']);
+    // (Agent models / Skills) the preset also carries.
+    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '代理模型', '技能']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {
@@ -321,7 +296,7 @@ describe('PersonaPanel role tab', () => {
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
   });
 
-  it('loads 纯净 as an empty persona with the required tools only', async () => {
+  it('loads 纯净 as an empty persona', async () => {
     vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
     const wrapper = await mountPanel();
 
@@ -333,15 +308,9 @@ describe('PersonaPanel role tab', () => {
     expect(textareas).toEqual(['', '', '']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
-    // The tools draft is the catalogue's locked set — nothing else stays on…
-    const toolsTab = wrapper.get('[data-test="agent-tools-tab"]');
-    expect(toolsTab.text()).toContain('已选 1/3');
-    // A required tool carries NO checkbox — a locked chip instead.
-    expect(wrapper.find('[data-test="agent-tool-read_file"]').exists()).toBe(false);
-    expect(wrapper.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');
-    expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
-    // …and every optional middleware switch is off as well.
-    expect(wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]').attributes('model-value')).toBe('false');
+    // The tool / middleware tabs are gone: neither is configurable.
+    expect(wrapper.find('[data-test="agent-tools-tab"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="agent-middlewares-tab"]').exists()).toBe(false);
   });
 
   it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {
@@ -378,102 +347,6 @@ describe('PersonaPanel role tab', () => {
     expect(textareas[0]).not.toContain('ORCHESTRATOR');
     expect(textareas.slice(1)).toEqual(['TPL-SOUL', 'TPL-USER']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
-    // …while the Subagent / Tasks & planning groups stay out and every optional middleware is off.
-    expect(wrapper.get('[data-test="agent-tools-tab"]').text()).toContain('已选 2/3');
-    expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
-    // This suite does not register PrimeVue globally, so the switch's bound
-    // value lands as the kebab attribute (the real component reads the same prop).
-    const middleware = wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]');
-    expect(middleware.attributes('model-value')).toBe('false');
-  });
-
-  it('keeps every middleware switch at full width and explains the nudge on click', async () => {
-    // The switch must never be squeezed by a long label: PrimeVue ToggleSwitch
-    // cannot take a fall-through class here (fragment root), so the row wraps it
-    // in a shrink-0 container — assert the container, which is the fix.
-    const wrapper = mount(PersonaPanel, { global: { stubs } });
-    await flushPromises();
-
-    const rows = wrapper.findAll('[data-test="agent-middlewares-tab"] .shrink-0');
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of wrapper.findAll('.mb-1.flex.items-center.justify-between')) {
-      const switchBox = row.find('span.shrink-0');
-      if (switchBox.exists()) expect(switchBox.classes()).toContain('shrink-0');
-    }
-
-    // The nudge explanation is a CLICK affordance (a hover tooltip is
-    // unreachable for a settings row): closed by default, toggled by the mark,
-    // and the mark sits right of the Enable nudge label.
-    expect(wrapper.find('[data-test="agent-nudge-help-text"]').exists()).toBe(false);
-    const help = wrapper.get('[data-test="agent-nudge-help"]');
-    expect(help.text()).toBe('?');
-    expect(help.attributes('aria-expanded')).toBe('false');
-
-    await help.trigger('click');
-    await flushPromises();
-    const text = wrapper.get('[data-test="agent-nudge-help-text"]');
-    expect(text.text()).toContain('Nudge');
-    expect(text.text()).toContain('偏好');
-    expect(wrapper.get('[data-test="agent-nudge-help"]').attributes('aria-expanded')).toBe('true');
-
-    await help.trigger('click');
-    await flushPromises();
-    expect(wrapper.find('[data-test="agent-nudge-help-text"]').exists()).toBe(false);
-  });
-
-  it('gates the Summarization nudge on the memory tool and stores it when off', async () => {
-    // A catalogue whose memory tool can be toggled (and is on by default), with a
-    // real switch stub: this suite renders PrimeVue components unresolved, so the
-    // toggle needs one to be drivable.
-    vi.stubGlobal('useAgentConfigStore', () =>
-      makeCatalogStore({
-        tools: [
-          { name: 'read_file', group: 'files', required: true },
-          { name: 'memory', group: 'memory' }
-        ],
-        skills: [{ name: 'image_to_text', builtin: true, required: true }]
-      })
-    );
-    const wrapper = mount(PersonaPanel, {
-      global: {
-        stubs: {
-          ...stubs,
-          ToggleSwitch: {
-            name: 'ToggleSwitch',
-            props: ['modelValue', 'disabled'],
-            emits: ['update:modelValue'],
-            template: `<button class="ts" :disabled="disabled" @click="$emit('update:modelValue', !modelValue)">T</button>`
-          }
-        }
-      }
-    });
-    await flushPromises();
-
-    // With memory ON the switch is live and on (the default)…
-    expect(wrapper.get('[data-test="agent-middleware-nudge"]').attributes('disabled')).toBeUndefined();
-    expect(wrapper.find('[data-test="agent-nudge-blocked"]').exists()).toBe(false);
-
-    // …turning the memory tool off disables it and explains why.
-    await wrapper.get('[data-test="agent-tool-memory"]').trigger('click');
-    await flushPromises();
-    expect(wrapper.get('[data-test="agent-middleware-nudge"]').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('[data-test="agent-nudge-blocked"]').text()).toContain('memory');
-
-    // Back on, then switch the nudge itself off: THAT is what the draft stores
-    // (the memory gate is a display/run-time condition, not a silent write).
-    await wrapper.get('[data-test="agent-tool-memory"]').trigger('click');
-    await flushPromises();
-    await wrapper.get('[data-test="agent-middleware-nudge"]').trigger('click');
-    await flushPromises();
-    await buttonByText(wrapper, '保存预设').trigger('click');
-    await flushPromises();
-    await wrapper.get('.dlg input').setValue('静默预设');
-    await buttonByText(wrapper, '保存').trigger('click');
-    await flushPromises();
-
-    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({
-      middleware_options: { Summarization: { nudge: false } }
-    });
   });
 
   it('carries the main-agent model through save, select and apply', async () => {

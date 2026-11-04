@@ -18,8 +18,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 - [ミドルウェアリファレンス](#ミドルウェアリファレンス)
   - [system_prompt_injection](#system_prompt_injection)
   - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
-  - [ToolSelectionMiddleware](#toolselectionmiddleware)
-  - [The per-session middleware switches](#the-per-session-middleware-switches)
+  - [PlanModeToolGate](#planmodetoolgate)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -98,7 +97,7 @@ middleware = [
     # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
     # （通知は 1 つだけ、最終ルートを記載）
     WorkspaceNoticeMiddleware(),
-    ToolSelectionMiddleware(),
+    PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -242,33 +241,14 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 本来の `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
-### ToolSelectionMiddleware
+### PlanModeToolGate
 
-**モジュール:** `agent/middlewares/tool_selection/core.py` · **クラス:** `ToolSelectionMiddleware(AgentMiddleware)`
-**フック:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常時有効 — スイッチを持つ側ではなく、スイッチを適用する側）
+**モジュール:** `agent/middlewares/plan_mode_gate/core.py` · **クラス:** `PlanModeToolGate(AgentMiddleware)`
+**フック:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`
 
-セッション自身のツール セットを適用します（プリセットと役割-ツール タブ → `AGENT_CONFIG["tools"]`、`PUT /sessions/agent_config` が書き込み）。コンパイル済みグラフは全セッションで共有され、`ToolNode` はプロセス全体のツール一覧を保持するため、選択は**呼び出し時**に効きます:
+計画モードの読み取り専用ツール面を適用します。`StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、`wrap_model_call` は `request.tools` を `PLAN_MODE["allowed_tools"]`（常に到達可能でなければならない `enter_plan_mode` / `exit_plan_mode` を含む）へ絞り込み、`wrap_tool_call` はそれでも呼ばれた書き込みツール（古いチェックポイントの残留やモデルの捏造した名前）を "Plan mode is active" で拒否します。
 
-1. `wrap_model_call`: セッションに選択があるとき `request.override(tools=<有効なサブセット>)` — langchain は呼び出しごとに `request.tools` からツール スキーマを再バインドするので、無効なツールはモデルに提示されません。
-2. `wrap_tool_call`: **無効なツール**への呼び出しは実行せずエラー `ToolMessage` で拒否します — チェックポイントに切替前の呼び出しが残っていたり、モデルが名前を捏造したりしても、`ToolNode` はそのまま実行してしまうからです。
-
-`agent/tools/catalog.py::REQUIRED_TOOLS` は有効集合に合流されます（ツール タブでは該当行がロック表示）: 必須項目を欠いた新しいペイロードはすでにサービスが拒否しますが、ツールが必須になる前に書かれたレジスタ値でも外せないようにする第二のガードです。
-
-**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`wiki/plan-mode/` を参照。
-
-未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
-
-### The per-session middleware switches
-
-`GET /agent/catalog` がチェーンを返し、プリセットと役割-ミドルウェア タブは**任意の 3 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
-
-| 無効化可能                          | オフにしたときの効果                                |
-| ----------------------------------- | --------------------------------------------------- |
-| `PlanContinuationEnforcer`          | 計画（todo / フロー）が未完了でもターンを継続しない |
-| `TaskIntentMiddleware`              | タスク意図の誘導メッセージを注入しない              |
-| `SubagentCompletionDrainMiddleware` | サブエージェントの完了結果を注入しない              |
-
-それ以外はすべてロック（UI は読み取り専用で表示）: **14 個**の `_MAIN_REQUIRED` 安全項目 — 従来の 12 個に `WorkspaceNoticeMiddleware`（プロンプトは現在のルートを描画するため、通知が無いと古いツリーのまま回答し続ける）と `MultimodalProcessor`（無いと添付が失われる）を追加 — に加え、`system_prompt_injection`（無ければ指示が無いターン）、`ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）、`ToolSelectionMiddleware`（ツール選択の適用側）。必須項目を名指しした古いペイロードは無視されます（`middleware_enabled()` は必須項目に常に `True` を返します）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
+このゲートは計画が開いている間だけ働き、それ以外のセッションはプロセス全体のツール一覧を見ます。**ツールセットとミドルウェアチェーンはユーザー設定ではありません**：すべての組み込みツールは常に利用可能で（プリセットパネルのツールタブは削除）、登録された各項目は常に実行されます（ミドルウェアタブは削除）。参照するセッション単位のスイッチは存在しません。フェイルオープン：計画状態が読めない、または機能設定が無い場合は「アイドル / ゲートなし」とみなします。
 
 ### MultimodalProcessor
 
@@ -407,7 +387,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
 - **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約のラベル。
 - **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
-- 他のオプション項目と同様に**スイッチで門控**され（`middleware_enabled`）、全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません。
+- 全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません（チェーンにセッション単位のスイッチはありません）。
 
 ### HeartbeatStaleness
 

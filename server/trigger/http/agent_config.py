@@ -1,27 +1,26 @@
-"""Agent catalogue + per-session agent config (预设 的工具 / 中间件 / 子代理模型 三栏).
+"""Agent catalogue + per-session agent config (预设 的子代理模型 / 技能 两栏).
 
 GET /agent/catalog
     -> {"success": true,
-        "tools": [{"name": ..., "group": ..., "description": ..., "required": bool}, ...],
-        "middlewares": [{"name": ..., "required": bool, "gateable": bool}, ...],
         "subagent_roles": [{"role": ..., "model_tier": ..., "description": ...}, ...],
         "skills": [{"name": ..., "description": ..., "builtin": bool}, ...]}
-       The four lists the preset panel renders. The client NEVER hardcodes
-       tool / middleware / role / skill names: this endpoint is the single
-       source. ``skills`` carries the ACTIVE skills the index can contain (an
-       inactive uploaded skill is toggled in 菜单-技能).
+       The two lists the preset panel renders. The client NEVER hardcodes role
+       or skill names: this endpoint is the single source. ``skills`` carries
+       the ACTIVE skills the index can contain (an inactive uploaded skill is
+       toggled in 菜单-技能). The built-in tool set and the middleware chain are
+       NOT configurable — every tool is always available and every middleware
+       always runs — so there is no tools / middlewares list.
 
 GET /sessions/agent_config?session_id=<sid>
     -> {"success": true, "session_id": ..., "config": {...}, "pending": bool}
        ``config`` is the EFFECTIVE next-turn payload (a parked mid-turn
-       choice wins); ``{}`` means "everything on / role tiers".
+       choice wins); ``{}`` means "role tiers / every skill in the index".
 
 PUT /sessions/agent_config  {"session_id": <sid>, "config": {...}}
     -> {"success": true, "session_id": ..., "config": {...}, "pending": bool}
-       400 with the offending name for an unknown tool / role, or for a
-       middleware that is system-required and cannot be disabled. While a
-       turn is in flight the choice is parked (``pending: true``) and lands
-       on the next turn — the running turn keeps its tool set.
+       400 with the offending name for an unknown role or skill. While a turn
+       is in flight the choice is parked (``pending: true``) and lands on the
+       next turn — the running turn keeps its config.
 """
 
 from __future__ import annotations
@@ -40,9 +39,7 @@ from server.trigger.http.helpers import bad_request, ok, read_body
 
 
 def _agent_catalog() -> dict:
-    """Build the four lists (imported lazily: agent modules are heavy)."""
-    from agent.middlewares.catalog import middleware_catalog
-    from agent.tools.catalog import tool_catalog
+    """Build the two lists (imported lazily: agent modules are heavy)."""
     from agent.tools.subagent.roles import load_all_role_definitions
     from agent.tools.subagent.types.functional_role import FunctionalRole
     from skills.loader import skills_catalog
@@ -61,8 +58,6 @@ def _agent_catalog() -> dict:
             }
         )
     return {
-        "tools": tool_catalog(),
-        "middlewares": middleware_catalog(),
         "subagent_roles": roles,
         "skills": skills_catalog(),
     }
@@ -70,7 +65,7 @@ def _agent_catalog() -> dict:
 
 @app.get("/agent/catalog")
 async def get_agent_catalog_handler(request):  # noqa: ARG001 - no query params
-    """Return the tool / middleware / role / skill lists the preset panel renders."""
+    """Return the role / skill lists the preset panel renders."""
     catalog = await asyncio.to_thread(_agent_catalog)
     return ok({"success": True, **catalog})
 
@@ -105,10 +100,8 @@ async def put_agent_config_handler(request):
     except ValueError:
         return bad_request("invalid session_id")
     logger.info(
-        "Agent config PUT: session={} tools={} disabled={} roles={} pending={}",
+        "Agent config PUT: session={} roles={} pending={}",
         session_id,
-        len(config.get("tools") or []),
-        len(config.get("middlewares_disabled") or []),
         len(config.get("subagent_models") or {}),
         pending,
     )

@@ -50,7 +50,7 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.user_hooks import UserHooksMiddleware
 from .middlewares.tool_result_enrichment import ToolResultEnrichmentMiddleware
 from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
-from .middlewares.tool_selection import ToolSelectionMiddleware
+from .middlewares.plan_mode_gate import PlanModeToolGate
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.reminder_catalog import DynamicReminderMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
@@ -325,11 +325,10 @@ def _build_middlewares(
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
         WorkspaceNoticeMiddleware(),
-        # Per-session tool set (the preset Tools tab): narrows request.tools before the
-        # model is bound and refuses a disabled tool at execution. Registered as
-        # a real middleware (not gated) because it HAS no switch of its own — it
-        # is what applies the switch, and an unset config is a no-op.
-        ToolSelectionMiddleware(),
+        # Plan mode's read-only tool whitelist (the per-session tool selection
+        # was removed — every built-in tool is always available — but an open
+        # plan must still keep the model away from write tools).
+        PlanModeToolGate(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         # Session-level token cap (optional; absent = pass-through) and usage

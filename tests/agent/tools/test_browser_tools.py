@@ -20,7 +20,6 @@ from langgraph.prebuilt import ToolNode
 from agent.security.untrusted_wrapper import is_untrusted_tool
 from agent.tools import _MAIN_TOOLS_BUILDERS
 from agent.tools.browser import build_browser_tools, build_legacy_browser_tools
-from agent.tools.catalog import TOOL_GROUPS, tool_catalog
 from config.features import BROWSER_AGENT
 from config.features.agent_side.redaction import REDACTION
 from runtime import hooks
@@ -167,20 +166,11 @@ def test_every_browser_tool_is_main_agent_only(enabled):
         assert tool.metadata.get("idempotent") is False, tool.name
 
 
-def test_the_catalogue_groups_the_merged_surface_under_browser(enabled):
-    assert set(TOOL_GROUPS["browser"]) == {"browser", "browser_evaluate"}
-
-    entries = tool_catalog(build_browser_tools())
-    assert {entry["name"] for entry in entries} == {"browser"}
-    assert {entry["group"] for entry in entries} == {"browser"}
+def test_the_merged_surface_keeps_the_approved_names(enabled):
+    assert {tool.name for tool in build_browser_tools()} == {"browser"}
 
     enabled["allow_evaluate"] = 1
-    entries = tool_catalog(build_browser_tools())
-    assert {entry["name"] for entry in entries} == {"browser", "browser_evaluate"}
-    # The group stays switchable per tool — never in the bulk-only set.
-    from agent.tools.catalog import BULK_ONLY_GROUPS
-
-    assert "browser" not in BULK_ONLY_GROUPS
+    assert {tool.name for tool in build_browser_tools()} == {"browser", "browser_evaluate"}
 
 
 def test_the_legacy_builder_keeps_the_verb_tools_for_tests(enabled):

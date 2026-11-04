@@ -15,7 +15,6 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from agent.tools import _MAIN_TOOLS_BUILDERS
-from agent.tools.catalog import TOOL_GROUPS, tool_catalog, tool_required
 from agent.tools.parallel_safety import READ_ONLY_TOOLS
 from agent.tools.terminal.bg_tools import (
     build_legacy_terminal_bg_tools,
@@ -92,12 +91,7 @@ def test_the_merged_builder_is_registered_and_main_only():
     assert tool.metadata == {"scope": "main_only"}
 
 
-def test_catalog_and_parallel_safety_use_the_merged_name():
-    assert TOOL_GROUPS["terminal"] == ("terminal", "python_repl", "terminal_bg")
-    entries = tool_catalog([build_terminal_bg_tool()])
-    assert {entry["name"] for entry in entries} == {"terminal_bg"}
-    assert {entry["group"] for entry in entries} == {"terminal"}
-    assert tool_required("terminal_bg") is False
+def test_parallel_safety_uses_the_merged_name():
     assert "terminal_bg" in READ_ONLY_TOOLS
     assert "terminal_bg_list" not in READ_ONLY_TOOLS
     assert "terminal_bg_output" not in READ_ONLY_TOOLS

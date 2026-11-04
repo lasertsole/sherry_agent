@@ -34,10 +34,12 @@ describe('readSherryConfig', () => {
     expect((call as { opts: Record<string, unknown> }).opts._ts).toBeTypeOf('number');
   });
 
-  it('falls back to an empty entry list on an empty body without throwing', async () => {
-    fetchApiMock.mockResolvedValue(undefined);
+  it('throws on a failed request instead of reporting an empty config', async () => {
+    // fetchApi answers null for a network/HTTP failure; that must not render as
+    // "no sherry.jsonc file found" (the packaged app's 500/503 case).
+    fetchApiMock.mockResolvedValue(null);
 
-    await expect(readSherryConfig()).resolves.toEqual({ entries: [] });
+    await expect(readSherryConfig()).rejects.toThrow('GET /sherry-config failed');
   });
 });
 

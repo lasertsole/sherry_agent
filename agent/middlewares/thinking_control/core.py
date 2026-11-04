@@ -254,6 +254,19 @@ class ThinkingControlMiddleware(AgentMiddleware):
         custom_mapping = (
             raw_mapping if isinstance(raw_mapping, dict) and raw_mapping.get("level_map") else None
         )
+        if custom_mapping is not None:
+            # The mapping names ONE provider's wire shape; it is stamped with the
+            # model key at write time and must not ride into a different model.
+            # Switching back re-activates it (the stored stamp is unchanged).
+            from models.LLMs.model_identity import main_model_key
+
+            stored = custom_mapping.get("model")
+            if not isinstance(stored, str) or stored != main_model_key(override):
+                custom_mapping = None
+            else:
+                custom_mapping = {
+                    key: value for key, value in custom_mapping.items() if key != "model"
+                }
         if cache_key is None and override is None and custom_mapping is None:
             return None, None, None
         return cache_key, override, custom_mapping

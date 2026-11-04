@@ -177,22 +177,15 @@ describe('NewSessionPresetDialog', () => {
     expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false]);
   });
 
-  it('applies 纯净 as an empty persona with the required tools only', async () => {
+  it('applies 纯净 as an empty persona with the required skills only', async () => {
     // Its agent block is derived from the backend catalogue, so the dialog needs
-    // one: the store stub carries the tool list a real response would.
+    // one: the store stub carries the skill list a real response would.
     vi.stubGlobal('useAgentConfigStore', () =>
       reactive({
         catalog: {
-          tools: [
-            { name: 'read_file', group: 'files', required: true },
-            { name: 'web_search', group: 'web' },
-            { name: 'sessions_spawn', group: 'subagents' }
-          ],
-          middlewares: [],
           subagent_roles: [],
           skills: [{ name: 'image_to_text', builtin: true, required: true }]
         },
-        middlewares: { gateable: [], locked: [] },
         loadCatalog: async () => {}
       })
     );
@@ -213,12 +206,10 @@ describe('NewSessionPresetDialog', () => {
       userName: '',
       userAvatar: ''
     });
-    // …and the session is left with the catalogue's locked tools and nothing else.
+    // …and the session is left with the catalogue's locked skill set and nothing else.
     const sessionId = (db.cacheSessionPreset.mock.calls[0]![0] as { session_id: string }).session_id;
     expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, {
-      tools: ['read_file'],
-      skills: ['image_to_text'],
-      middleware_options: { Summarization: { nudge: false } }
+      skills: ['image_to_text']
     });
     // No built-in pins a main model: the apply writes "follow the env config".
     expect(sessionBridge.setSessionModel).toHaveBeenCalledWith(sessionId, null);

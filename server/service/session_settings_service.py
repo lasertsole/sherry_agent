@@ -658,16 +658,32 @@ def _validate_custom_mapping(mapping: dict) -> dict:
 
 
 def get_custom_thinking_mapping(session_id: str) -> dict | None:
-    """The session's custom thinking mapping (parked value wins), or None."""
+    """The session's custom thinking mapping (parked value wins), or None.
+
+    A mapping is authored for ONE model (its ``wire_format`` names a provider
+    shape). It is stamped with the model key at write time and IGNORED while the
+    session's effective model differs — switching models cannot carry an old
+    provider's wire shape onto the new one. Switching back re-activates it.
+    """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
     if not _session_turn_active(session_id):
         promote_pending_settings_sync(session_id)
     parked, parked_value = _pending_value(session_id, StateKey.CUSTOM_THINKING_MAPPING_PENDING)
     value = parked_value if parked else _read_value(session_id, StateKey.CUSTOM_THINKING_MAPPING)
-    if isinstance(value, dict) and value.get("level_map"):
-        return {"pending": parked, **value}
-    return None
+    if not isinstance(value, dict) or not value.get("level_map"):
+        return None
+    from models.LLMs.model_identity import main_model_key
+
+    stored_model = value.get("model")
+    if not isinstance(stored_model, str) or stored_model != main_model_key(
+        _effective_override(session_id)
+    ):
+        # Legacy (unstamped) or authored for a different model: not this model's
+        # mapping. The UI then shows the declarative defaults.
+        return None
+    payload = {key: item for key, item in value.items() if key != "model"}
+    return {"pending": parked, **payload}
 
 
 def clear_custom_thinking_mapping(session_id: str) -> None:
@@ -677,11 +693,18 @@ def clear_custom_thinking_mapping(session_id: str) -> None:
 
 
 def set_custom_thinking_mapping(session_id: str, mapping: dict) -> None:
-    """Write the custom mapping to the LIVE keys (idle/tests callers)."""
+    """Write the custom mapping to the LIVE keys (idle/tests callers).
+
+    The value is stamped with the model key it was authored for; the read path
+    (service + middleware) only applies it while that key still matches.
+    """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
-    state_register_mem.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, mapping)
-    state_register_db.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, mapping)
+    from models.LLMs.model_identity import main_model_key
+
+    stamped = {**mapping, "model": main_model_key(_effective_override(session_id))}
+    state_register_mem.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, stamped)
+    state_register_db.set_state(session_id, StateKey.CUSTOM_THINKING_MAPPING, stamped)
 
 
 async def apply_custom_thinking_mapping(session_id: str, mapping: dict | None) -> bool:

@@ -80,10 +80,6 @@ class DynamicReminderMiddleware(AgentMiddleware):
     """Inject the live ``<system-reminder>`` layer once per turn."""
 
     async def abefore_model(self, state, runtime=None) -> dict[str, Any] | None:
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the preset Middlewares tab disables this middleware.
         try:
             messages = state.get("messages") if isinstance(state, dict) else None
             if not messages:

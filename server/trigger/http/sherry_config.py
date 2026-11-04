@@ -9,13 +9,20 @@ from server.service import (
 
 
 @app.get("/sherry-config")
-async def read_sherry_config_handler(request) -> dict:
+async def read_sherry_config_handler(request):
     """
     Read the project sherry.jsonc application settings (flat entry list).
     Returns: {"entries": [{"key": str, "value": str, "value_edited": bool}, ...]}
     """
     logger.debug("Reading sherry config")
-    return read_sherry_config()
+    try:
+        return read_sherry_config()
+    except (FileNotFoundError, OSError) as e:
+        # A missing/unreadable file is an INSTALL problem, not a server bug:
+        # answer a structured 503 instead of letting the exception become a
+        # bare HTTP 500 (the packaged app's first run used to surface one).
+        logger.error(f"sherry.jsonc is unavailable: {e}")
+        return {"success": False, "message": str(e)}, 503
 
 
 @app.put("/sherry-config")

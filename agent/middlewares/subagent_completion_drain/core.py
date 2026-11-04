@@ -126,10 +126,6 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
         ``item.message`` is the rebuilt task-4 carrier ``HumanMessage`` carrying
         proper completion metadata — injected directly, never reconstructed.
         """
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             # Lazy: agent.tools.subagent imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.

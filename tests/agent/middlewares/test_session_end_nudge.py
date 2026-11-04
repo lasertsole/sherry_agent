@@ -64,10 +64,6 @@ def test_the_cutoff_is_clamped_to_the_snapshot(monkeypatch: pytest.MonkeyPatch):
 def _reset(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(NUDGE, "session_end_review_enabled", True)
     monkeypatch.setitem(NUDGE, "session_end_review_timeout_s", 5)
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option",
-        lambda *args, **kwargs: True,
-    )
     nudge_mod._SESSION_END_REVIEW_TASKS.clear()
     nudge_mod._SESSION_END_REVIEW_INFLIGHT.clear()
     yield
@@ -241,24 +237,6 @@ async def test_master_switch_off_skips_snapshot(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
 
     assert await nudge_mod.salvage_session_memory("sess-off") is False
-    assert called == []
-
-
-@pytest.mark.asyncio
-async def test_session_nudge_option_off_skips_snapshot(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        "agent.middlewares.agent_switch.middleware_option",
-        lambda *args, **kwargs: False,
-    )
-    called: list[str] = []
-
-    async def _snapshot(session_id: str):
-        called.append(session_id)
-        return None
-
-    monkeypatch.setattr(nudge_mod, "_snapshot_session_for_salvage", _snapshot)
-
-    assert await nudge_mod.salvage_session_memory("sess-option-off") is False
     assert called == []
 
 

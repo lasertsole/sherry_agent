@@ -326,22 +326,6 @@ class TestDispatch:
 
         assert log.read_text(encoding="utf-8").splitlines() == ["first", "second"]
 
-    @pytest.mark.asyncio
-    async def test_the_session_switch_turns_dispatch_off(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        captured = tmp_path / "payload.json"
-        middleware = _middleware(PostToolUse=[{"command": f"{_CAPTURE} {captured}"}])
-
-        monkeypatch.setattr(
-            "agent.middlewares.user_hooks.core.middleware_enabled",
-            lambda *_args, **_kwargs: False,
-        )
-
-        await middleware.awrap_tool_call(_request("write_file"), _ok_handler)
-
-        assert not captured.exists(), "预设-中间件 turned it off for this session"
-
 
 class TestStopEvent:
     @pytest.mark.asyncio

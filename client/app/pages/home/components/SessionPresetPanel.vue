@@ -175,146 +175,12 @@
             :data-test="`session-preset-content-${item.file}`"
             >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
-        <!-- The SESSION's own agent config, in the same four tabs the Presets & Role
-             panel edits: 工具 / 中间件 / 技能 are read-only here (change them in
-             菜单-预设角色), while the 子代理 model pickers are EDITABLE — a choice
-             lands on the main agent's next turn through the same park/promote
-             path as the main-model switch. -->
-        <TabPanel
-          value="agentTools"
-          :header="t('config.agent.tabs.tools')">
-          <div
-            class="min-h-0 min-w-0 overflow-y-auto text-xs"
-            data-test="session-preset-tools-tab">
-            <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-              <span class="min-w-0 flex-1 text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
-              <span class="shrink-0 text-gray-400">
-                {{
-                  t('config.agent.tools.count', {
-                    selected: sessionEnabledTools.length,
-                    total: agentStore.catalog.tools.length
-                  })
-                }}
-              </span>
-            </div>
-            <!-- Two sub-tabs, mirroring the editor: built-in groups and MCP tools. -->
-            <div class="mb-2 flex items-center gap-1">
-              <button
-                v-for="scope in AGENT_TOOL_SCOPES"
-                :key="scope"
-                type="button"
-                class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
-                :class="
-                  toolScope === scope
-                    ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
-                "
-                :data-test="`session-preset-tools-scope-${scope}`"
-                @click="toolScope = scope">
-                {{ t(`config.agent.tools.scope_${scope}`) }}
-              </button>
-            </div>
-            <div
-              v-if="visibleToolGroups.length === 0"
-              class="px-3 py-1 text-gray-400"
-              data-test="session-preset-tools-empty">
-              {{ t('config.agent.tools.mcpEmpty') }}
-            </div>
-            <div
-              v-for="group in visibleToolGroups"
-              :key="group.group"
-              class="mb-2 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
-              <div class="mb-1 flex items-center justify-between gap-2">
-                <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                  {{ t(`config.agent.toolGroup.${group.group}`) }}
-                </span>
-                <span
-                  v-if="agentGroupFullyRequired(group)"
-                  class="inline-flex items-center gap-1 text-[11px] text-gray-400"
-                  :data-test="`session-preset-tool-group-locked-${group.group}`">
-                  <i class="pi pi-lock text-[9px]" />
-                  {{ t('config.agent.tools.requiredHint') }}
-                </span>
-              </div>
-              <!-- Same two row shapes as the editor: a required tool is a locked
-                   chip with NO checkbox, a bulk-only group's membership is plain
-                   chips; everything else is a disabled checkbox (read-only tab). -->
-              <div class="flex flex-wrap gap-x-4 gap-y-1">
-                <label
-                  v-for="tool in group.tools"
-                  :key="tool.name"
-                  class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300"
-                  :title="toolTooltip(tool)">
-                  <Checkbox
-                    v-if="agentToolSwitchVisible(group, tool)"
-                    :model-value="sessionEnabledTools.includes(tool.name)"
-                    binary
-                    disabled
-                    :data-test="`session-preset-tool-${tool.name}`" />
-                  <i
-                    v-if="tool.required"
-                    class="pi pi-lock text-[9px] text-gray-400" />
-                  <span
-                    class="font-mono"
-                    :class="{
-                      'text-gray-400 line-through': !tool.required && !sessionEnabledTools.includes(tool.name)
-                    }"
-                    :data-test="viewerToolChipTestId(group, tool)">
-                    {{ tool.name }}
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </TabPanel>
-
-        <TabPanel
-          value="agentMiddlewares"
-          :header="t('config.agent.tabs.middlewares')">
-          <div
-            class="min-h-0 min-w-0 overflow-y-auto text-xs"
-            data-test="session-preset-middlewares-tab">
-            <div class="mb-2 text-gray-400">{{ t('config.agent.readonlyHint') }}</div>
-            <!-- The Summarization middleware cannot be switched off; its nudge
-                 option is the row the session config can pin. -->
-            <div
-              class="mb-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]"
-              data-test="session-preset-middleware-option-Summarization">
-              <div class="flex items-center justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-1 truncate text-theme-main">
-                    <i class="pi pi-lock text-[9px] text-gray-400" />
-                    {{ t('config.agent.middleware.Summarization.name') }}
-                  </div>
-                  <div class="truncate text-gray-400">
-                    {{ t('config.agent.middlewares.nudgeDesc') }}
-                  </div>
-                </div>
-                <label class="flex shrink-0 items-center gap-1.5 text-gray-600 dark:text-gray-300">
-                  {{ t('config.agent.middlewares.nudgeLabel') }}
-                  <ToggleSwitch
-                    :model-value="sessionNudgeEnabled"
-                    disabled
-                    data-test="session-preset-middleware-nudge" />
-                </label>
-              </div>
-            </div>
-            <div
-              v-for="entry in agentStore.middlewares.gateable"
-              :key="entry.name"
-              class="mb-1 flex items-center justify-between gap-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
-              <div class="min-w-0">
-                <div class="truncate text-theme-main">{{ t(`config.agent.middleware.${entry.name}.name`) }}</div>
-                <div class="truncate text-gray-400">{{ t(`config.agent.middleware.${entry.name}.desc`) }}</div>
-              </div>
-              <ToggleSwitch
-                :model-value="!sessionDisabledMiddlewares.includes(entry.name)"
-                disabled
-                :data-test="`session-preset-middleware-${entry.name}`" />
-            </div>
-          </div>
-        </TabPanel>
-
+        <!-- The SESSION's own agent config, in the same tabs the Presets & Role
+             panel edits: skills are read-only here (change them in 菜单-预设角色),
+             while the model pickers are EDITABLE — a choice lands on the main
+             agent's next turn through the same park/promote path as the
+             main-model switch. Built-in tools and the middleware chain are not
+             configurable at all. -->
         <!-- Skills tab: which skill index entries the SESSION keeps in its system
              prompt (read-only here — the 预设 panel edits it). -->
         <TabPanel
@@ -382,7 +248,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import type { SessionPresetBinding } from '@/composables/db';
 import type { PersonaPresetPayload } from '@/composables/persona-catalog';
-import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
+import { FOLLOW_TIER_ID } from '~/stores/agent-config';
 import { ENV_MODEL_ID } from '~/stores/session-model';
 import { logUtil } from '~/utils/log';
 
@@ -404,9 +270,6 @@ const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
 const { presets } = usePersonaPresets();
 
 const llmProfiles = useLlmProfilesStore();
-
-/** The session's EFFECTIVE agent config (the session is the live truth here). */
-const sessionEnabledTools = computed<string[]>(() => (sessionId.value ? agentStore.enabledTools(sessionId.value) : []));
 
 /** The two Agent models sub-tabs (mirroring the editor). */
 const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
@@ -448,11 +311,6 @@ const mainModelLabel = computed<string>(() => {
   return llmProfiles.listFor('MAIN_LLM').find(profile => profile.id === current)?.label ?? current;
 });
 
-/** Whether the session's summarization nudges run (default on). */
-const sessionNudgeEnabled = computed<boolean>(() =>
-  sessionId.value ? agentStore.nudgeEnabled(sessionId.value) : true
-);
-
 /** The session's EFFECTIVE skill selection (null = no opinion = every skill). */
 const sessionEnabledSkills = computed<string[]>(() => {
   if (!sessionId.value) return [];
@@ -460,57 +318,13 @@ const sessionEnabledSkills = computed<string[]>(() => {
   return configured ?? agentStore.catalog.skills.map(skill => skill.name);
 });
 
-/** The two Tools / Skills sub-tabs, mirroring the editor. */
-const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
+/** The two Skills sub-tabs, mirroring the editor. */
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
-const MCP_TOOL_GROUP = 'mcp';
-const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
 const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
-
-/** The tool groups of the active sub-tab. */
-const visibleToolGroups = computed(() =>
-  agentStore.toolGroups.filter(group =>
-    toolScope.value === MCP_TOOL_GROUP ? group.group === MCP_TOOL_GROUP : group.group !== MCP_TOOL_GROUP
-  )
-);
 
 /** The skills of the active sub-tab. */
 const visibleSkills = computed(() =>
   skillsScope.value === 'builtin' ? agentStore.skills.builtin : agentStore.skills.thirdParty
-);
-
-/**
- * Whether a row carries a checkbox (a required tool and a bulk-only group's
- * membership never do — the editor renders the same two shapes).
- * @param group Catalogue group entry.
- * @param group.group
- * @param group.tools
- * @param tool Catalogue tool entry.
- * @param tool.required
- */
-const agentToolSwitchVisible = (
-  group: { group: string; tools: Array<{ required?: boolean }> },
-  tool: { required?: boolean }
-): boolean => tool.required !== true && !isBulkOnlyToolGroup(group.group);
-
-/**
- * The chip's ``data-test`` (switch rows carry the id on their checkbox).
- * @param group Catalogue group entry.
- * @param group.group
- * @param group.tools
- * @param tool Catalogue tool entry.
- * @param tool.name
- * @param tool.required
- */
-const viewerToolChipTestId = (
-  group: { group: string; tools: Array<{ required?: boolean }> },
-  tool: { name: string; required?: boolean }
-): string | undefined => {
-  if (tool.required === true) return `session-preset-tool-locked-${tool.name}`;
-  return isBulkOnlyToolGroup(group.group) ? `session-preset-tool-bulk-${tool.name}` : undefined;
-};
-const sessionDisabledMiddlewares = computed<string[]>(() =>
-  sessionId.value ? agentStore.disabledMiddlewares(sessionId.value) : []
 );
 
 /** Select options: "follow the role tier" + every env-config profile. */
@@ -518,28 +332,6 @@ const roleModelOptions = computed<Array<{ label: string; value: string }>>(() =>
   { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
-
-/**
- * Whether a group's membership is entirely required (nothing to switch anywhere,
- * so the header says so instead of showing a count).
- * @param group Catalogue group entry.
- * @param group.tools
- */
-const agentGroupFullyRequired = (group: { tools: Array<{ required?: boolean }> }): boolean =>
-  group.tools.length > 0 && group.tools.every(tool => tool.required === true);
-
-/**
- * The hover text of one tool row: the backend description, plus the locked
- * explanation for a required tool.
- * @param tool Catalogue tool entry.
- * @param tool.name
- * @param tool.description
- * @param tool.required
- */
-const toolTooltip = (tool: { name: string; description?: string; required?: boolean }): string => {
-  const description = tool.description || tool.name;
-  return tool.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
-};
 
 /**
  * The profile id a role currently points at ('' = follow the role tier).

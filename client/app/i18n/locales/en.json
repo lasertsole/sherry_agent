@@ -296,8 +296,6 @@
   "config": {
     "agent": {
       "tabs": {
-        "tools": "Tools",
-        "middlewares": "Middlewares",
         "subagents": "Agent models",
         "skills": "Skills"
       },
@@ -307,75 +305,17 @@
         "mainHint": "The model the main agent runs on; follows the model config by default.",
         "followEnv": "Follow the model config"
       },
-      "tools": {
-        "count": "{selected}/{total} selected",
-        "requiredHint": "Required — cannot be disabled",
-        "scope_builtin": "Built-in",
-        "scope_mcp": "MCP",
-        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
-        "clearAll": "Disable all",
-        "clearGroup": "Clear",
-        "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
-        "selectAll": "Enable all",
-        "selectGroup": "All"
-      },
       "skills": {
         "count": "{selected}/{total} selected",
         "scope_builtin": "Built-in",
         "scope_thirdparty": "Third-party",
         "empty": "No skills yet",
         "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
+        "requiredHint": "Required, cannot be disabled",
+        "selectAll": "Enable all",
+        "clearAll": "Disable all",
         "whenToUse": "When to use",
         "whenNotToUse": "Not for"
-      },
-      "toolGroup": {
-        "files": "Files",
-        "terminal": "Terminal & code",
-        "tasks": "Tasks & planning",
-        "memory": "Memory & search",
-        "skills": "Skills",
-        "subagents": "Subagents",
-        "interaction": "Interaction",
-        "web": "Web",
-        "browser": "Browser",
-        "mcp": "MCP",
-        "plan_mode": "Plan mode"
-      },
-      "middlewares": {
-        "nudgeLabel": "Enable nudge",
-        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-        "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
-        "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
-      },
-      "middleware": {
-        "TaskIntentMiddleware": {
-          "name": "Task-intent steering",
-          "desc": "Detects work requests and injects the orchestration prompt"
-        },
-        "WorkspaceNoticeMiddleware": {
-          "name": "Workspace-change notice",
-          "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
-        },
-        "MultimodalProcessor": {
-          "name": "Multimodal preprocessing",
-          "desc": "Persists and prepares uploaded images / audio / video"
-        },
-        "SubagentCompletionDrainMiddleware": {
-          "name": "Completion injection",
-          "desc": "Injects a finished subagent's result into the main session"
-        },
-        "Summarization": {
-          "name": "Summarization",
-          "desc": "Context compression, overflow handling and the post-compression nudges"
-        },
-        "PlanContinuationEnforcer": {
-          "name": "Plan continuation",
-          "desc": "Continues the plan (todos / TaskFlow flows) while it is incomplete"
-        },
-        "DynamicReminderMiddleware": {
-          "name": "Live reminders",
-          "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
-        }
       },
       "subagents": {
         "followTier": "Follow the role default",
@@ -394,9 +334,6 @@
         "librarian": "Librarian"
       },
       "viewer": {
-        "tools": "Tools {selected}/{total}",
-        "middlewares": "Disabled middlewares: {names}",
-        "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
       },
       "readonlyHint": "Read-only — change it in the Menu → Presets & Role panel"
@@ -496,7 +433,6 @@
       "loadError": "Failed to load app config. Please check the backend service.",
       "saveFailed": "Failed to save app config.",
       "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
-      "noConfigFile": "No sherry.jsonc file found.",
       "allowlist": {
         "title": "Replay-gate allowlist",
         "hint": "Add executable names the finish-time replay may re-run, on top of the five built-in toolchains (affects only which verification commands are replayed).",

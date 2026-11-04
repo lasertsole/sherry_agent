@@ -1,7 +1,7 @@
 """``enter_plan_mode`` — switch the session into Plan-Then-Execute plan mode.
 
 In plan mode the tool face is narrowed to the read-only whitelist
-(``PLAN_MODE["allowed_tools"]``, applied by ``ToolSelectionMiddleware``), the
+(``PLAN_MODE["allowed_tools"]``, applied by ``PlanModeToolGate``), the
 system prompt carries the four-phase workflow, and a turn may only end with a
 ``question`` or an ``exit_plan_mode`` call. ``exit_plan_mode`` submits the plan
 for the user's approval; on approval the mode exits and the write tools return.

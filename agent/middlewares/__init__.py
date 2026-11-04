@@ -26,7 +26,7 @@ from .path_guard import PathGuard as PathGuard
 from .heartbeat_staleness import HeartbeatStaleness as HeartbeatStaleness
 from .media_pipeline import MultimodalProcessor as MultimodalProcessor
 from .workspace_notice import WorkspaceNoticeMiddleware as WorkspaceNoticeMiddleware
-from .tool_selection import ToolSelectionMiddleware as ToolSelectionMiddleware
+from .plan_mode_gate import PlanModeToolGate as PlanModeToolGate
 from .humanInTheLoop import HumanInTheLoop as HumanInTheLoop, HITLConfig as HITLConfig
 from .tool_resource_lock import (
     ToolResourceLockMiddleware as ToolResourceLockMiddleware,

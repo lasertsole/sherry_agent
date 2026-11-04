@@ -279,27 +279,23 @@ vi.mock('@tanstack/vue-virtual', async () => {
 // auto-imported store; bare Vitest mounts have no Nuxt store auto-import, so a
 // no-op default keeps those mounts working. Suites that assert profile
 // behaviour override this with their own `vi.stubGlobal` in `beforeEach`.
-// `useAgentConfigStore` backs the Presets & Role panel's Tools / Middlewares / Subagent models tabs:
+// `useAgentConfigStore` backs the Presets & Role panel's Subagent models / Skills tabs:
 // catalog lists come from the backend, the per-session config is mirrored from
 // `GET/PUT /sessions/agent_config`. The default stub is an empty, all-default
 // state; suites that exercise the tabs override it per file.
 vi.stubGlobal('useAgentConfigStore', () =>
   Vue.reactive({
-    catalog: { tools: [], middlewares: [], subagent_roles: [], skills: [] },
+    catalog: { subagent_roles: [], skills: [] },
     catalogLoaded: false,
     bySession: {},
     pendingBySession: {},
     hydrated: {},
-    toolGroups: [],
-    middlewares: { gateable: [], locked: [] },
     subagentRoles: [],
     skills: { builtin: [], thirdParty: [] },
     loadCatalog: async () => {},
     hydrate: async () => {},
     configOf: () => ({}),
-    enabledTools: () => [],
     selectedSkills: () => null,
-    nudgeEnabled: () => true,
     isPending: () => false,
     save: async () => {}
   })

@@ -50,13 +50,7 @@ export { acquireAgentSocket, releaseAgentSocket, closeAllAgentSockets } from './
 
 // ── Session & subagents ─────────────────────────────────
 export type { SubagentRun } from './bridge/session';
-export type {
-  AgentCatalog,
-  AgentConfigState,
-  AgentMiddlewareEntry,
-  AgentRoleEntry,
-  AgentToolEntry
-} from './bridge/agent-config';
+export type { AgentCatalog, AgentConfigState, AgentRoleEntry } from './bridge/agent-config';
 export { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from './bridge/agent-config';
 export {
   clearSession,

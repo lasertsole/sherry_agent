@@ -1,18 +1,15 @@
 """Read-only views over the session agent config (``StateKey.AGENT_CONFIG``).
 
 The payload itself is written by ``PUT /sessions/agent_config`` (服务端
-``server/service/agent_config_service.py``) and read on hot paths by callers in
-different packages: :mod:`agent.middlewares.tool_selection` (the model-visible
-tool set), :mod:`agent.middlewares.agent_switch` (the middleware switches) and
-:mod:`workspace.prompt_builder` (the ``<available_skills>`` index). The last one
+``server/service/agent_config_service.py``) and read on hot paths by
+:mod:`workspace.prompt_builder` (the ``<available_skills>`` index). That caller
 lives in ``workspace/**``, which import-linter keeps away from ``agent/**`` — so
 this module is the shared leaf, depending only on ``runtime`` (mirroring how
-:mod:`runtime.session.project_dir` serves the same three packages).
+:mod:`runtime.session.project_dir` serves the same packages).
 
-Mem-register only and fail-open, for the same two reasons as the tool
-selection: it runs inside a tool call / prompt build (no blocking I/O), and a
-broken register must never change behaviour — every failure degrades to
-``None``, which reads as "no opinion" at every call site.
+Mem-register only and fail-open: it runs inside a prompt build (no blocking
+I/O), and a broken register must never change behaviour — every failure
+degrades to ``None``, which reads as "no opinion" at every call site.
 """
 
 from __future__ import annotations

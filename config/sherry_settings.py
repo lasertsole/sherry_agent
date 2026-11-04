@@ -19,15 +19,19 @@ default so the application always boots.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 import json5
 
+from config._home import resolve_app_home
+
 _CODE_ROOT = Path(__file__).resolve().parents[1]
-_APP_HOME_RAW = os.environ.get("SHERRY_HOME", "").strip()
-APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _CODE_ROOT
+# APP_HOME honours the shell's ``--sherry-home`` CLI flag (and the transitional
+# SHERRY_HOME env): the packaged shell passes the flag only, so reading the
+# environment alone sent this file to the READ-ONLY bundle. Shared resolver —
+# see config/_home.py.
+APP_HOME = resolve_app_home(_CODE_ROOT)
 
 SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
 if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():

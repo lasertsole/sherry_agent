@@ -15,6 +15,7 @@ from langchain.agents.middleware import ModelRequest
 import models
 import agent.middlewares.thinking_control.core as tc_core
 from agent.middlewares.thinking_control import ThinkingControlMiddleware
+from agent.middlewares.thinking_control.core import current_session_model_config
 from runtime import StateKey, state_register_db, state_register_mem
 
 pytestmark = [pytest.mark.unit]
@@ -495,16 +496,23 @@ class TestAppliedConfigPublication:
 # frozen memory snapshot refresh on a model / thinking switch
 # ----------------------------------------------------------------------
 
+from models.LLMs.model_identity import main_model_key  # noqa: E402
+
 _MAPPING_KEY = StateKey.CUSTOM_THINKING_MAPPING
+#: The write path stamps a mapping with the model it was authored for; these raw
+#: register writes carry the same stamp so the middleware applies them.
+_MODEL_STAMP = {"model": main_model_key()}
 _MAPPING_A = {
     "wire_format": "custom",
     "wire_field": "thinking.type",
     "level_map": {"off": "off", "high": "on"},
+    **_MODEL_STAMP,
 }
 _MAPPING_B = {
     "wire_format": "custom",
     "wire_field": "thinking.type",
     "level_map": {"off": "off", "high": "full"},
+    **_MODEL_STAMP,
 }
 
 
@@ -598,6 +606,34 @@ class TestFrozenSnapshotRefresh:
 
         assert refresh_calls == [True]
         assert _cached_prompt(sid) == (None, None)
+
+    def test_a_mapping_authored_for_another_model_is_ignored(self, sid):
+        """A provider-specific wire shape must not ride into a different model."""
+        state_register_mem.set_state(
+            sid, _MAPPING_KEY, {**_MAPPING_A, "model": "some-other-provider/other-model"}
+        )
+        request = _make_request(session_id=sid)
+        seen: dict = {}
+
+        def _capture(r):
+            seen["model"] = r.model
+            return "ok"
+
+        ThinkingControlMiddleware().wrap_model_call(request, _capture)
+
+        config = current_session_model_config(sid) or {}
+        assert config.get("custom_mapping") is None, "the stale mapping must not be applied"
+
+    def test_a_mapping_without_a_model_stamp_is_ignored(self, sid):
+        state_register_mem.set_state(
+            sid,
+            _MAPPING_KEY,
+            {"wire_format": "custom", "wire_field": "thinking.type", "level_map": {"high": "on"}},
+        )
+        ThinkingControlMiddleware().wrap_model_call(_make_request(session_id=sid), lambda r: "ok")
+
+        config = current_session_model_config(sid) or {}
+        assert config.get("custom_mapping") is None, "legacy unstamped mappings are not trusted"
 
     def test_clearing_the_model_control_refreshes(self, sid, refresh_calls):
         state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)

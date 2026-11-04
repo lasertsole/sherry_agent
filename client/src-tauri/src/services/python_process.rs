@@ -214,6 +214,18 @@ impl PythonProcessManager {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
 
+        // Windows: the frozen backend is a PyInstaller CONSOLE-subsystem
+        // executable, so a GUI parent spawning it allocates a fresh console —
+        // a black window popping up beside the app. `Stdio::null()` only
+        // silences its output; CREATE_NO_WINDOW (0x08000000) is what stops the
+        // console from being created at all.
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let child = command
             .spawn()
             .map_err(|e| format!("Failed to spawn Python backend: {e}"))?;

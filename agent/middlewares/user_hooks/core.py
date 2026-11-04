@@ -56,7 +56,6 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 
 from config.features import USER_HOOKS
 from config.sherry_settings import load_sherry_hooks
-from agent.middlewares.agent_switch import middleware_enabled
 from agent.tools.pub_base.env_scrub import scrub_env
 
 __all__ = ["STEP1_EVENTS", "HookOutcome", "UserHooksMiddleware", "hook_matcher_matches"]
@@ -296,9 +295,6 @@ class UserHooksMiddleware(AgentMiddleware):
             return await handler(request)
 
         session_id = self._session_of_request(request)
-        if not middleware_enabled(session_id, type(self).__name__):
-            return await handler(request)
-
         call = request.tool_call or {}
         tool_name = str(call.get("name") or getattr(request.tool, "name", "") or "")
         tool_call_id = str(call.get("id") or "")
@@ -345,8 +341,6 @@ class UserHooksMiddleware(AgentMiddleware):
         session_id = ""
         if isinstance(state, dict):
             session_id = str(state.get("session_id") or "")
-        if not middleware_enabled(session_id, type(self).__name__):
-            return None
         messages = list((state or {}).get("messages") or []) if isinstance(state, dict) else []
         await self._dispatch(
             "Stop",

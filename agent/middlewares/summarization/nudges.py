@@ -581,15 +581,7 @@ def schedule_memory_review(session_id: str, messages_to_summarize: Sequence[Base
     sync compression path outside an async caller) scheduling is skipped
     entirely.
 
-    A session may turn the review OFF (预设-中间件 → Summarization → nudge, the
-    one option a REQUIRED middleware exposes; the service only accepts it beside
-    an enabled ``memory`` tool, which is what the review writes with).
     """
-    from agent.middlewares.agent_switch import middleware_option
-
-    if not middleware_option(session_id, "Summarization", "nudge"):
-        logger.debug("memory review: disabled by the session config ({})", session_id)
-        return False
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -712,18 +704,13 @@ def _session_tool_face(session_id: str) -> list[BaseTool]:
 
     The provider's prefix cache is keyed on the request prefix, and the tool
     block is part of it — a review that binds a different tool list (or a
-    different order) misses the cache at the very first token. The selection
-    middleware narrows the face per session (预设-工具), so the review mirrors it
-    instead of assuming the full list.
+    different order) misses the cache at the very first token. Every main tool
+    is always available now (the per-session tool selection was removed), so the
+    review mirrors the process-wide list verbatim.
     """
     from agent import get_agent_tools
-    from agent.middlewares.tool_selection.core import enabled_tool_names
 
-    enabled = enabled_tool_names(session_id)
-    tools = list(get_agent_tools())
-    if enabled is None:
-        return tools
-    return [tool for tool in tools if getattr(tool, "name", "") in enabled]
+    return list(get_agent_tools())
 
 
 def _build_session_model(session_id: str) -> Any:
@@ -1185,18 +1172,6 @@ async def salvage_session_memory(session_id: str) -> bool:
     if not bool(NUDGE.get("session_end_review_enabled", True)):
         return False
     try:
-        from agent.middlewares.agent_switch import middleware_option
-
-        if not middleware_option(session_id, "Summarization", "nudge"):
-            return False
-    except Exception:  # noqa: BLE001 - config resolution must not block deletion
-        logger.debug(
-            "session-end memory review: nudge option unresolved for {}; skipping",
-            session_id,
-            exc_info=True,
-        )
-        return False
-    try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         logger.debug("session-end memory review: no running loop for {}", session_id)
@@ -1378,11 +1353,6 @@ async def maybe_trigger_plan_extraction(session_id: str) -> None:
     once-per-cycle flag) so a bail-out never marks a plan as extracted.
     """
     if not session_id or not _PLAN_EXTRACTION_ENABLED:
-        return
-    from agent.middlewares.agent_switch import middleware_option
-
-    if not middleware_option(session_id, "Summarization", "nudge"):
-        logger.debug("plan extraction: disabled by the session config ({})", session_id)
         return
     if state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False):
         return

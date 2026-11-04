@@ -4,13 +4,19 @@ from server.service import read_models_config, write_models_config
 
 
 @app.get("/models-config")
-async def read_models_config_handler(request) -> dict:
+async def read_models_config_handler(request):
     """
     Read the project .models (the model configuration file), grouped by prefix.
     Returns: {"groups": [{"name": str, "kind": str, "entries": [{"key", "value"}, ...]}]}
     """
     logger.debug("Reading models config")
-    return read_models_config()
+    try:
+        return read_models_config()
+    except (FileNotFoundError, OSError) as e:
+        # Missing/unreadable file = install problem → structured 503, never a
+        # bare 500 (the panel can then tell "load failed" from "no config").
+        logger.error(f".models is unavailable: {e}")
+        return {"success": False, "message": str(e)}, 503
 
 
 @app.put("/models-config")

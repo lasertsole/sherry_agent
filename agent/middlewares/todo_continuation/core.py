@@ -379,10 +379,6 @@ class PlanContinuationEnforcer(AgentMiddleware):
 
     async def aafter_agent(self, state, runtime=None) -> None:
         """Inspect the finished turn; fire-and-forget a continuation if needed."""
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
-            return None  # No-op hook while the session config (preset Middlewares tab) disables this middleware.
         try:
             # Lazy: agent.tools.todolist imports agent.middlewares at import time,
             # so a top-level import here would close the middlewares/tools cycle.
@@ -645,10 +641,7 @@ class PlanContinuationEnforcer(AgentMiddleware):
 
 
 #: Backwards-compatible alias: the class was ``TodoContinuationEnforcer`` before
-#: the rename, and the name is part of two published contracts — preset payloads
-#: store it in ``AGENT_CONFIG["middlewares_disabled"]`` (matched against
-#: ``type(self).__name__``) and ``message.metadata["origin"]`` keeps the string
+#: the rename. ``message.metadata["origin"]`` keeps the string
 #: "todo_continuation", which is deliberately UNCHANGED so historical rows keep
-#: resolving. A payload that disables the old name stays effective through
-#: ``agent_switch``'s alias map; this alias keeps direct imports working.
+#: resolving; this alias keeps direct imports working.
 TodoContinuationEnforcer = PlanContinuationEnforcer

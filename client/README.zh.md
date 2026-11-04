@@ -163,7 +163,7 @@ client/
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景图片、模型配置、应用配置、国际化、快捷键）
 │   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
-│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
+│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 代理模型 / 技能 + 预设管理）
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
 │   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读（代理模型排在第一页）
 │   │           ├── NewSessionPresetDialog.vue # 每次「新建对话」必选的预设选择对话框（先应用预设，再创建会话）
@@ -213,7 +213,7 @@ client/
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
-│   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 代理模型 / 技能）按会话镜像；必需工具与必需技能锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
+│   │   ├── agent-config.ts     # 预设的 agent 配置（代理模型 / 技能）按会话镜像；必需技能锁定不可取消。工具与中间件链不可配置
 │   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + 扁平步骤，由 taskflow_updated 刷新）
 │   │   ├── web-search.ts       # 每会话的搜索后端 + Tavily→SearXNG 降级通知
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）

@@ -18,8 +18,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
   - [system_prompt_injection](#system_prompt_injection)
   - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
-  - [ToolSelectionMiddleware](#toolselectionmiddleware)
-  - [The per-session middleware switches](#the-per-session-middleware-switches)
+  - [PlanModeToolGate](#planmodetoolgate)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -97,7 +96,7 @@ middleware = [
     # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
     # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
     WorkspaceNoticeMiddleware(),
-    ToolSelectionMiddleware(),
+    PlanModeToolGate(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -241,33 +240,14 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 실제 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
-### ToolSelectionMiddleware
+### PlanModeToolGate
 
-**모듈:** `agent/middlewares/tool_selection/core.py` · **클래스:** `ToolSelectionMiddleware(AgentMiddleware)`
-**훅:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (항상 켜짐 — 스위치를 가진 쪽이 아니라 스위치를 적용하는 쪽)
+**모듈:** `agent/middlewares/plan_mode_gate/core.py` · **클래스:** `PlanModeToolGate(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`
 
-세션 자체의 도구 집합을 적용합니다(프리셋과 역할-도구 탭 → `AGENT_CONFIG["tools"]`, `PUT /sessions/agent_config`가 기록). 컴파일된 그래프는 모든 세션이 공유하고 `ToolNode`는 프로세스 전역 도구 목록을 보유하므로, 선택은 **호출 시점**에 적용됩니다:
+계획 모드의 읽기 전용 도구 면을 적용합니다. `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`) `wrap_model_call`은 `request.tools`를 `PLAN_MODE["allowed_tools"]`(항상 도달 가능해야 하는 `enter_plan_mode` / `exit_plan_mode` 포함)로 좁히고, `wrap_tool_call`은 그래도 호출되는 쓰기 도구(오래된 체크포인트의 잔여 호출이나 모델이 지어낸 이름)를 "Plan mode is active"로 거부합니다.
 
-1. `wrap_model_call`: 세션에 선택이 있으면 `request.override(tools=<활성 부분집합>)` — langchain은 호출마다 `request.tools`로 도구 스키마를 다시 바인딩하므로 꺼진 도구는 모델에 아예 제시되지 않습니다.
-2. `wrap_tool_call`: **꺼진 도구** 호출은 실행하지 않고 error `ToolMessage`로 거부합니다 — 체크포인트에 전환 이전 호출이 남아 있을 수 있고 모델이 이름을 지어낼 수도 있는데, `ToolNode`는 둘 다 그대로 실행합니다.
-
-`agent/tools/catalog.py::REQUIRED_TOOLS`는 활성 집합에 다시 합쳐집니다(도구 탭은 해당 행을 잠금 표시): 필수 항목을 빠뜨린 새 페이로드는 이미 서비스가 거부하지만, 도구가 필수가 되기 전에 기록된 레지스터 값으로도 벗겨낼 수 없게 하는 두 번째 가드입니다.
-
-**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `wiki/plan-mode/` 참조.
-
-미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
-
-### The per-session middleware switches
-
-`GET /agent/catalog`가 체인을 반환하고, 프리셋과 역할-미들웨어 탭은 **선택 항목 3개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
-
-| 끌 수 있음                          | 끄면                                                |
-| ----------------------------------- | --------------------------------------------------- |
-| `PlanContinuationEnforcer`          | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
-| `TaskIntentMiddleware`              | 작업 의도 유도 메시지를 주입하지 않음               |
-| `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음              |
-
-나머지는 모두 잠금(UI는 읽기 전용 표시): **14개** `_MAIN_REQUIRED` 안전 항목 — 기존 12개에 `WorkspaceNoticeMiddleware`(프롬프트가 현재 루트를 렌더링하므로 알림이 없으면 옛 트리 기준으로 계속 답한다)와 `MultimodalProcessor`(없으면 첨부가 사라진다) 추가 — 에 더해 `system_prompt_injection`(없으면 지시 없는 턴), `ThinkingControlMiddleware`(그 자체가 모델/사고 제어), `ToolSelectionMiddleware`(도구 선택을 적용하는 쪽). 필수 항목을 지정한 오래된 페이로드는 무시됩니다(`middleware_enabled()`는 필수 항목에 항상 `True`). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
+이 게이트는 계획이 열려 있는 동안에만 작동하며, 그 밖의 세션은 프로세스 전체 도구 목록을 봅니다. **도구 세트와 미들웨어 체인은 사용자 설정이 아닙니다**: 모든 내장 도구는 항상 사용 가능하고(프리셋 패널의 도구 탭 제거) 등록된 모든 항목은 항상 실행됩니다(미들웨어 탭 제거). 참조할 세션별 스위치가 없습니다. 실패 개방: 계획 상태를 읽을 수 없거나 기능 설정이 없으면 "유휴 / 게이트 없음"으로 간주합니다.
 
 ### MultimodalProcessor
 
@@ -406,7 +386,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
 - **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 라벨.
 - **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
-- 다른 선택 항목과 같이 **스위치로 게이트**되며(`middleware_enabled`), 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다.
+- 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다(체인에 세션별 스위치가 없습니다).
 
 ### HeartbeatStaleness
 
