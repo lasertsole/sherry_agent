@@ -172,7 +172,10 @@ class TestTokenWindow:
         target = project / "min.js"
         target.write_text("x" * 500_000, "utf-8")
 
-        out = _read(SESSION, "min.js")
+        # A range read: the 500 KB file exceeds the whole-read limit, so the
+        # default first-page read is refused by design (the clip path is what
+        # this test pins).
+        out = _read(SESSION, "min.js", limit=_READ_MAX_LIMIT)
 
         assert out["truncated"] is True, "a clipped line is NOT a complete read"
         assert "chars clipped" in out["content"]
@@ -187,7 +190,7 @@ class TestTokenWindow:
         target = project / "data.json"
         target.write_text("header line\n" + "x" * 500_000 + "\nfooter line\n", "utf-8")
 
-        out = _read(SESSION, "data.json")
+        out = _read(SESSION, "data.json", limit=_READ_MAX_LIMIT)
 
         assert out["truncated"] is True
         assert "chars clipped" in out["content"], "line 2 was clipped"
@@ -205,7 +208,7 @@ class TestTokenWindow:
         target = project / "min.js"
         target.write_text("x" * 500_000, "utf-8")
 
-        hint = _read(SESSION, "min.js")["hint"]
+        hint = _read(SESSION, "min.js", limit=_READ_MAX_LIMIT)["hint"]
 
         assert "search_files" in hint
         assert "terminal" in hint and "python_repl" in hint
@@ -219,7 +222,7 @@ class TestTokenWindow:
         target.write_text("x" * 500_000, "utf-8")
         monkeypatch.setattr("agent.tools.file_tools.read_file._TOKEN_BUDGET", 0)
 
-        out = _read(SESSION, "min.js")
+        out = _read(SESSION, "min.js", limit=_READ_MAX_LIMIT)
 
         assert out["truncated"] is True
         assert "chars clipped" in out["content"]

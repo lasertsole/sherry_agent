@@ -172,6 +172,32 @@ The specialized roles can use the board too: all four functional role definition
 
 **Directory `fsync` after the rename** is not enabled. Measured on this device (f2fs): a write costs 1.34 ms with the directory `fsync` and 0.52 ms without — 2.6× the write path, about 0.8 ms absolute per file. What it buys is narrow: the file's data is already `fsync`ed, so a power loss can never leave a torn file — only an edit that silently reverts to its previous content, which is also what every mainstream editor does. A process crash needs nothing at all: the page cache survives. It is one line behind a flag if a deployment ever promises power-loss durability for an acknowledged write.
 
+## 📏 Oversized files
+
+A whole-file `read_file` used to load every byte (then decode, then split into
+lines) before windowing 500 of them out — a 200 MB log rode the heap in full and
+only the FINISHED response met the token guards. Three gates now bound that, in
+the order a call reaches them:
+
+- **Schema gate** — the `file_path` validator refuses binary extensions
+  (`.zip` / `.exe` / `.db` / …) and blocking device paths (`/dev/zero` …) before
+  any `open`/`stat`; the refusal text reaches the model (a field-level error, so
+  the agent's tool node keeps it rather than replacing it with a blank "fix the
+  error" message).
+- **Whole-read refusal** — a file at or above
+  `TOOLS_TIMEOUTS["read_file_max_whole_read_bytes"]` (256 KiB) is refused when
+  the caller did not ask for a range (`offset=1` + the default limit), with the
+  size and an offset/limit hint. A RANGE read of the same file is never refused.
+- **Streaming** — at or above `read_file_fast_path_threshold_bytes` (10 MiB) the
+  reader scans `read_file_stream_chunk_bytes` (64 KiB) chunks with an incremental
+  decoder, counts every newline for an exact `total_lines` and retains only the
+  requested window (plus one clipped line head), so peak memory is
+  O(chunk + window), not O(file size). The page is still token-budgeted by the
+  same `_window` walk; the result carries `oversized: true` / `truncated: true`
+  and grants NO write license (a paged view is not proof the whole file was
+  seen). `truncated_by_token_cap` says whether the token budget or the line
+  window ended the page.
+
 ## 🗂️ Resource files & encodings
 
 The tools edit TEXT, and the license made that load-bearing: a read used to hand

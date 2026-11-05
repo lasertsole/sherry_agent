@@ -149,6 +149,26 @@ store 是一条 `refs/heads/main` 的 `commit-tree` 快照链；`info/exclude` �
 
 **rename 之后的目录 `fsync`** 没有启用。本机实测（f2fs）：一次写入带目录 `fsync` 为 1.34 ms，不带为 0.52 ms——写路径的 2.6 倍，绝对值约每个文件 0.8 ms。它买到的东西很窄：文件数据本就已 `fsync`，掉电绝不会留下撕裂文件——只可能让一次编辑静默退回先前内容，而主流编辑器同样如此。进程崩溃则完全不需要它：页缓存还在。如果某个部署将来承诺"已确认的写入必须挺过掉电"，它就是开关后的一行代码。
 
+## 📏 超大文件
+
+`read_file` 过去会把整个文件读进堆（再解码、再切行），最后才从中挑出 500 行——
+200 MB 的日志会全程驻留内存，token 预算只在**结果生成之后**才生效。现在有三道
+闸门，按调用顺序拦截：
+
+- **schema 闸门**：`file_path` 校验器在任何 `open`/`stat` 之前拒绝二进制扩展名
+  （`.zip` / `.exe` / `.db` / …）和会阻塞的设备路径（`/dev/zero` …）；拒绝文案会
+  传给模型（字段级错误，agent 的 tool node 不会把它过滤成空白提示）。
+- **整读拒绝**：文件达到 `TOOLS_TIMEOUTS["read_file_max_whole_read_bytes"]`
+  （256 KiB）且调用方没有要求范围读（`offset=1` + 默认 limit）时直接拒绝，返回
+  文件大小和 offset/limit 提示；同一文件的范围读永远不被拒绝。
+- **流式读取**：达到 `read_file_fast_path_threshold_bytes`（10 MiB）时，读取器按
+  `read_file_stream_chunk_bytes`（64 KiB）分块扫描，用增量解码器处理跨块的
+  多字节字符，数完每一行以保证精确的 `total_lines`，只保留请求窗口（外加一行
+  被裁断的行首），峰值内存是 O(块 + 窗口) 而不是 O(文件大小)。页面仍走同一个
+  `_window` token 预算；结果带 `oversized: true` / `truncated: true`，且
+  **不授予写许可**（分页视图不等于看过整个文件）。`truncated_by_token_cap`
+  区分“token 预算到顶”与“行窗口/文件尾到顶”。
+
 ## 🗂️ 资源文件与编码
 
 工具编辑的是**文本**，而许可证让这件事变成了承重结构：过去读一张 PNG 会给模型一屏
