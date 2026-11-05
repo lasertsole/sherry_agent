@@ -157,17 +157,47 @@ BAD:  "We initially tried using synchronous bcrypt but it caused test failures b
        the hash function was blocking the event loop, so we switched to passlib"
 GOOD: "Synchronous bcrypt blocks event loop — use passlib CryptContext for async"
 
+### Structured handoff (PREFER it over result_text)
+
+The plan context now carries machine-readable experience:
+
+- `aggregated_handoff` — the per-layer handoffs already merged DEPTH-FIRST by
+  code: `failed_paths` [{path, failure_reason, source}], `hard_constraints`
+  [str], `locked_decisions` [{decision, reason, source}], plus totals and the
+  original `handoff_forest`. Each entry's `source` names the layer
+  (e.g. "depth-1:researcher-a2b3 > depth-2:executor-c7d8").
+- each `subagent_runs` entry — its OWN `handoff` (4 fields, this layer only),
+  `spawn_depth`, `label`, `outcome`, `step_id`, `flow_id`, `relevance` and
+  `resolved_position` (the run's step re-resolved against the CURRENT plan;
+  null when its todo was deleted/reordered away). Runs from
+  cancelled/superseded branches are already filtered out.
+
 ### For EACH task, extract:
 
-1. **failure_set**: What went wrong? Root cause + what failed, one sentence each.
-   - Include file paths, command names, error strings (stripped to essential signal)
-   - If no failures, use empty array []
+1. **failure_set**: Take `aggregated_handoff.failed_paths` entries as
+   "<path>: <failure_reason>" (deduplicate semantically similar entries).
+   When a run has no handoff, fall back to reading its result_text for
+   failure signals. If there are no failures, use an empty array [].
 
-2. **success_path**: Final successful approach. Ordered one-liner steps.
-   - Verb + library/function name + why it works
-   - If trivial, use ["straightforward implementation"]
+2. **success_path**: Derive it from `aggregated_handoff.locked_decisions` — a
+   locked decision means that path worked: "<decision>: <reason>", ordered by
+   depth (parent decisions first). Supplement from result_text only when the
+   decisions are sparse. If trivial, use ["straightforward implementation"].
 
-3. **method**: 3-5 word kebab-case identifier (e.g., "async-password-hashing-with-passlib")
+3. **hard_constraints**: Copy `aggregated_handoff.hard_constraints` into the
+   task-level knowledge as `hard_constraints` (deduplicated). These are
+   inviolable — future plans must respect them.
+
+4. **failed_paths_tree**: Keep the traceable form `"<path>: <reason>
+   (source: <source>)"` for entries whose origin matters (a child tried a
+   variation of its parent's approach). Do not invent relationships.
+
+5. **position mapping**: When writing task-level knowledge, use the run's
+   `resolved_position`. When it is null (todo deleted/reordered), fall back to
+   matching the run's task text against the todos array. NEVER compute
+   position as step_id - 1 — todos may have shifted.
+
+6. **method**: 3-5 word kebab-case identifier (e.g., "async-password-hashing-with-passlib")
 
 ### For EACH WAVE, summarize (one-liner each):
 - Common failure patterns across tasks
@@ -816,13 +846,28 @@ def _resolve_plan_ref(session_id: str, todos: list[dict]) -> str:
     return ""
 
 
+_PLAN_CONTEXT_LIST_CAP = 10
+
+#: Run relevance values used by the snapshot filter.
+_RELEVANCE_ACTIVE = "active"
+_RELEVANCE_UNKNOWN = "unknown"
+_RELEVANCE_CANCELLED = "cancelled"
+_RELEVANCE_SUPERSEDED = "superseded"
+
+
 def _read_subagent_runs(session_id: str) -> list[dict]:
-    """Collect the trimmed subagent run records for this session (fail-open)."""
+    """Collect every descendant run for this session, handoff included (fail-open).
+
+    Descendants (not just direct children) so a grandchild's experience reaches
+    the tree: ``_assemble_handoff_tree`` re-parents by ``requester_session_key``.
+    ``handoff`` is the dict captured at completion; ``None`` means the child
+    did not emit the block and the plan extractor falls back to ``result_text``.
+    """
     runs_out: list[dict] = []
     try:
-        from agent.tools.subagent.registry import list_runs_for_requester
+        from agent.tools.subagent.registry import list_descendant_runs
 
-        runs = list_runs_for_requester(f"agent:main:session:{session_id}")
+        runs = list_descendant_runs(f"agent:main:session:{session_id}")
     except Exception:
         logger.exception("plan extraction: failed to list subagent runs for {}", session_id)
         return runs_out
@@ -830,6 +875,7 @@ def _read_subagent_runs(session_id: str) -> list[dict]:
     for run in runs:
         outcome = run.execution.outcome
         result_text = run.completion.result_text or ""
+        role = getattr(run.functional_role, "value", str(run.functional_role))
         runs_out.append(
             {
                 "task_name": run.task_name,
@@ -837,9 +883,256 @@ def _read_subagent_runs(session_id: str) -> list[dict]:
                 "result_text": result_text[:_MAX_SUBAGENT_RESULT_CHARS],
                 "outcome": outcome.status.value if outcome else "unknown",
                 "error": outcome.error if outcome else None,
+                "handoff": run.completion.handoff,
+                "step_id": run.step_id,
+                "flow_id": run.flow_id,
+                "spawn_depth": run.depth,
+                "label": run.label,
+                "functional_role": role,
+                "requester_session_key": run.requester_session_key,
+                "child_session_key": run.child_session_key,
             }
         )
     return runs_out
+
+
+def _read_flow_status(session_id: str, flow_id: str) -> dict:
+    """One flow's status + its steps' statuses, or {} (fail-open)."""
+    try:
+        from agent.tools.taskflow.registry.store_sqlite import get_flow_sync
+
+        flow = get_flow_sync(flow_id, session_id)
+    except Exception:
+        logger.debug("plan extraction: failed to read taskflow {}", flow_id, exc_info=True)
+        return {}
+    if not flow:
+        return {}
+    steps: dict[str, str] = {}
+    for step in (flow.get("state") or {}).get("steps") or []:
+        step_id = str(step.get("step_id") or "")
+        if step_id:
+            steps[step_id] = str(step.get("status") or "")
+    return {
+        "status": str(flow.get("status") or ""),
+        "superseded_by": flow.get("superseded_by"),
+        "steps": steps,
+    }
+
+
+def _read_plan_snapshot(session_id: str) -> dict | None:
+    """The CURRENT todos + flows, used to filter/re-map runs (None = fail-open).
+
+    Pure read, no writes: the same runs + the same snapshot produce the same
+    aggregate, so a retried extraction overwrites idempotently.
+    """
+    try:
+        from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
+        todos = get_todos_sync(session_id)
+    except Exception:
+        logger.exception("plan extraction: failed to read the plan snapshot for {}", session_id)
+        return None
+
+    todo_by_step: dict[str, dict] = {}
+    flows: dict[str, dict] = {}
+    for todo in todos:
+        step_id = str(todo.get("step_id") or "").strip()
+        if step_id:
+            todo_by_step[step_id] = todo
+        flow_id = str(todo.get("flow_id") or "").strip()
+        if flow_id and flow_id not in flows:
+            flows[flow_id] = _read_flow_status(session_id, flow_id)
+    return {"todos": todos, "todo_by_step": todo_by_step, "flows": flows}
+
+
+def _classify_run_relevance(run: dict, snapshot: dict | None) -> str:
+    """Why a run is (or is not) part of the CURRENT plan, for the filter.
+
+    ``cancelled`` / ``superseded`` runs are dropped: the branch they belong to
+    is gone, so including them would over-extract. A run whose coordinates are
+    absent from the snapshot (a free-form spawn, or a todo deleted by a
+    replan) stays ``unknown`` — its experience is still world fact.
+    """
+    if not snapshot:
+        return _RELEVANCE_UNKNOWN
+    flow = snapshot["flows"].get(str(run.get("flow_id") or ""))
+    if flow:
+        status = str(flow.get("status") or "").lower()
+        if flow.get("superseded_by") or status in (_RELEVANCE_SUPERSEDED, _RELEVANCE_CANCELLED):
+            return _RELEVANCE_SUPERSEDED
+    step_id = str(run.get("step_id") or "")
+    if step_id:
+        todo = snapshot["todo_by_step"].get(step_id)
+        if todo is None:
+            return _RELEVANCE_UNKNOWN
+        if str(todo.get("status") or "").lower() == _RELEVANCE_CANCELLED:
+            return _RELEVANCE_CANCELLED
+        return _RELEVANCE_ACTIVE
+    return _RELEVANCE_UNKNOWN
+
+
+def _resolve_position(run: dict, snapshot: dict | None) -> int | None:
+    """The run's step_id → the todo's CURRENT position (None when unresolvable).
+
+    Re-resolved against the live snapshot, so a replan that shifted the list
+    cannot silently write the spawn-time position. The extraction prompt is
+    told to fall back to task-text matching when this is None.
+    """
+    if not snapshot:
+        return None
+    step_id = str(run.get("step_id") or "")
+    if not step_id:
+        return None
+    todo = snapshot["todo_by_step"].get(step_id)
+    if todo is None:
+        return None
+    try:
+        return int(todo.get("position"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_runs_by_snapshot(runs: list[dict], snapshot: dict | None = None) -> list[dict]:
+    """Drop cancelled/superseded runs and attach relevance + resolved_position.
+
+    Runs with no snapshot (None) pass through unchanged (fail-open). The plan
+    context's ``subagent_runs`` IS this filtered list, so the extraction LLM
+    never re-adds a discarded branch.
+    """
+    if snapshot is None:
+        return list(runs)
+    kept: list[dict] = []
+    for run in runs:
+        relevance = _classify_run_relevance(run, snapshot)
+        if relevance in (_RELEVANCE_CANCELLED, _RELEVANCE_SUPERSEDED):
+            continue
+        enriched = dict(run)
+        enriched["relevance"] = relevance
+        enriched["resolved_position"] = _resolve_position(run, snapshot)
+        kept.append(enriched)
+    return kept
+
+
+def _handoff_label(run: dict) -> str:
+    """A readable node label; falls back to the role plus a run-id prefix."""
+    label = str(run.get("label") or "").strip()
+    if label:
+        return label
+    role = str(run.get("functional_role") or "subagent")
+    run_id = str(run.get("child_session_key") or "")
+    return f"{role}-{run_id[-8:]}" if run_id else role
+
+
+def _assemble_handoff_tree(runs: list[dict]) -> list[dict]:
+    """Code-assemble the per-layer handoffs into a parent→child tree.
+
+    Each node's four experience fields stay exactly what ITS layer produced;
+    depth/label/outcome/children are injected here (never by the LLM). Orphans
+    (a parent was filtered out by the snapshot) are promoted to roots so their
+    experience survives.
+    """
+    children_map: dict[str, list[dict]] = {}
+    for run in runs:
+        children_map.setdefault(str(run.get("requester_session_key") or ""), []).append(run)
+    run_by_child_session = {
+        str(run.get("child_session_key")): run for run in runs if run.get("child_session_key")
+    }
+
+    def _build_node(run: dict) -> dict | None:
+        handoff = run.get("handoff")
+        if not isinstance(handoff, dict) or not handoff:
+            return None
+        node = dict(handoff)
+        node["depth"] = run.get("spawn_depth")
+        node["agent_label"] = _handoff_label(run)
+        node["outcome"] = run.get("outcome")
+        node["children"] = [
+            child_node
+            for child_node in (
+                _build_node(child)
+                for child in children_map.get(str(run.get("child_session_key") or ""), [])
+            )
+            if child_node
+        ]
+        return node
+
+    def _is_root(run: dict) -> bool:
+        requester = str(run.get("requester_session_key") or "")
+        if requester.startswith("agent:main:session:"):
+            return True
+        # Orphan (parent filtered away) → promote so its experience survives.
+        return requester not in run_by_child_session
+
+    roots = [_build_node(run) for run in runs if _is_root(run)]
+    return [node for node in roots if node]
+
+
+def _walk_handoff(node: dict, aggregate: dict, seen: set[str], source_prefix: str) -> None:
+    """Depth-first walk of one handoff node, flattening into ``aggregate``."""
+    depth = node.get("depth", "?")
+    label = node.get("agent_label", "?")
+    source = f"{source_prefix}depth-{depth}:{label}" if source_prefix else f"depth-{depth}:{label}"
+    for failed in node.get("failed_paths", []) or []:
+        if not isinstance(failed, dict):
+            continue
+        aggregate["failed_paths"].append(
+            {
+                "path": str(failed.get("path") or ""),
+                "failure_reason": str(failed.get("failure_reason") or ""),
+                "source": source,
+            }
+        )
+    for constraint in node.get("discovered_hard_constraints", []) or []:
+        text = str(constraint)
+        if text and text not in seen:
+            seen.add(text)
+            aggregate["hard_constraints"].append(text)
+    for decision in node.get("locked_decisions", []) or []:
+        if not isinstance(decision, dict):
+            continue
+        aggregate["locked_decisions"].append(
+            {
+                "decision": str(decision.get("decision") or ""),
+                "reason": str(decision.get("reason") or ""),
+                "source": source,
+            }
+        )
+    for child in node.get("children", []) or []:
+        _walk_handoff(child, aggregate, seen, source_prefix=f"{source} > ")
+
+
+def _aggregate_handoffs(tree_roots: list[dict]) -> dict[str, Any]:
+    """Flatten the assembled forest (pure; same input → same output)."""
+    aggregate: dict[str, Any] = {
+        "failed_paths": [],
+        "hard_constraints": [],
+        "locked_decisions": [],
+        "handoff_forest": tree_roots,
+    }
+    seen: set[str] = set()
+    for root in tree_roots:
+        _walk_handoff(root, aggregate, seen, source_prefix="")
+    return aggregate
+
+
+def _compact_aggregate(aggregate: dict[str, Any]) -> dict[str, Any]:
+    """The plan-context view: capped flat lists + totals, NO forest.
+
+    Keeps the prompt increment fixed (~500-800 tokens) regardless of how many
+    subagents ran; the full tree lives in ``handoff-tree.json`` and is fetched
+    on demand with ``knowledge(action="read", layer="handoff")``.
+    """
+    failed_paths = aggregate.get("failed_paths") or []
+    hard_constraints = aggregate.get("hard_constraints") or []
+    locked_decisions = aggregate.get("locked_decisions") or []
+    return {
+        "failed_paths": failed_paths[:_PLAN_CONTEXT_LIST_CAP],
+        "hard_constraints": hard_constraints[:_PLAN_CONTEXT_LIST_CAP],
+        "locked_decisions": locked_decisions[:_PLAN_CONTEXT_LIST_CAP],
+        "total_failed_paths": len(failed_paths),
+        "total_hard_constraints": len(hard_constraints),
+        "total_locked_decisions": len(locked_decisions),
+    }
 
 
 def _build_plan_context(session_id: str) -> dict[str, Any]:
@@ -883,12 +1176,19 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
         plan_name = fallback_plan_name(session_id)
     plan_path = str(resolved) if resolved is not None else plan_ref
 
+    runs = _read_subagent_runs(session_id)
+    snapshot = _read_plan_snapshot(session_id)
+    filtered = _filter_runs_by_snapshot(runs, snapshot)
+    aggregated = _aggregate_handoffs(_assemble_handoff_tree(filtered))
+
     return {
         "plan_name": plan_name,
         "plan_path": plan_path,
         "plan_content": plan_content,
         "todos": todos,
-        "subagent_runs": _read_subagent_runs(session_id),
+        "subagent_runs": filtered,
+        "aggregated_handoff": aggregated,
+        "plan_snapshot": snapshot,
     }
 
 
@@ -1289,6 +1589,31 @@ def _extraction_tool_face() -> list[BaseTool]:
     ]
 
 
+async def _write_handoff_tree_safely(session_id: str, context: dict[str, Any]) -> None:
+    """Persist the code-merged handoff tree BEFORE the extraction LLM runs.
+
+    An interrupted synthesis must not lose the raw merged data: the file is
+    written first (atomic replace), and the LLM's `plan-summary.json` is a
+    second, lossy layer on top. Fail-open.
+    """
+    aggregated = context.get("aggregated_handoff") or {}
+    if not aggregated.get("handoff_forest"):
+        return
+    try:
+        from agent.tools.todolist.knowledge.identity import resolve_plan_identity
+        from agent.tools.todolist.knowledge.knowledge_store import KnowledgeStore
+
+        identity = resolve_plan_identity(session_id, str(context.get("plan_name") or ""))
+        if identity is None:
+            return
+        await KnowledgeStore.write_handoff_tree(identity, aggregated)
+    except Exception:
+        logger.exception(
+            "plan extraction: failed to write handoff-tree.json for {} (fail-open)",
+            session_id,
+        )
+
+
 async def _run_plan_extraction(session_id: str) -> None:
     """One independent extraction pass: instruction + plan context, no history.
 
@@ -1314,8 +1639,16 @@ async def _run_plan_extraction(session_id: str) -> None:
             logger.debug("plan extraction: no plan context for session {}", session_id)
             return
 
+        # Raw merged tree first (code), then the compact view for the LLM.
+        await _write_handoff_tree_safely(session_id, context)
+        render_context = dict(context)
+        render_context.pop("plan_snapshot", None)
+        render_context["aggregated_handoff"] = _compact_aggregate(
+            context.get("aggregated_handoff") or {}
+        )
+
         system_prompt = _get_and_reload_system_prompt(session_id)
-        context_str = json.dumps(context, ensure_ascii=False, indent=2)
+        context_str = json.dumps(render_context, ensure_ascii=False, indent=2)
         prompt = _render_prompt_facts(
             _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
         )

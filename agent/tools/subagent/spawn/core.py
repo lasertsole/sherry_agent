@@ -14,6 +14,7 @@ Pipeline overview:
 """
 
 import os
+import json
 import re
 import time
 import uuid
@@ -96,6 +97,40 @@ _ISOLATION_PROMPT_NOTE = (
     "overwritten. Work as if this directory were the project; do not try to reach "
     "the original tree."
 )
+
+
+#: The four EXPERIENCE fields a child reports about ITS OWN layer. Metadata
+#: (depth/label/children/outcome) is code-assembled later — a model that echoes
+#: them back is stripped here so layers cannot smuggle each other's data.
+_HANDOFF_FIELDS = (
+    "task_understanding",
+    "discovered_hard_constraints",
+    "locked_decisions",
+    "failed_paths",
+)
+_HANDOFF_JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+
+def _extract_handoff_json(result_text: str | None) -> dict | None:
+    """The child's handoff JSON block, or None (fail-open).
+
+    Phase 1 is prompt-bound: the child appends a ```json block with four
+    experience fields to its Task Result. The LAST parseable block carrying at
+    least one of them wins; depth/agent_label/outcome/children are dropped here
+    (program-injected later). A missing/malformed block returns None, and the
+    plan extractor falls back to the free-text result.
+    """
+    if not result_text:
+        return None
+    for raw in reversed(_HANDOFF_JSON_BLOCK.findall(result_text)):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict) or not any(key in data for key in _HANDOFF_FIELDS):
+            continue
+        return {key: data[key] for key in _HANDOFF_FIELDS if key in data}
+    return None
 
 
 def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
@@ -749,6 +784,8 @@ async def spawn_subagent_direct(
         inherited_tool_deny=tool_deny,
         scopes=child_scopes,
         output_schema=output_schema,
+        step_id=step_id,
+        flow_id=flow_id,
         attachments_dir=attachments_dir,
         attachments_root_dir=attachments_root_dir,
         controller_session_key=ownership.controller_session_key,
@@ -1369,7 +1406,10 @@ async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> 
 
 
 async def _finalize_child_run(
-    run: SubagentRunRecord, outcome: RunOutcome, result_text: str | None
+    run: SubagentRunRecord,
+    outcome: RunOutcome,
+    result_text: str | None,
+    handoff: dict | None = None,
 ) -> None:
     """Grace period (failures only), then complete the run and fire the hooks."""
     if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
@@ -1403,7 +1443,11 @@ async def _finalize_child_run(
     from ..registry.lifecycle import complete_subagent_run
 
     await complete_subagent_run(
-        run.run_id, outcome, result_text, expected_generation=run.generation
+        run.run_id,
+        outcome,
+        result_text,
+        expected_generation=run.generation,
+        handoff=handoff,
     )
 
     try:
@@ -1497,6 +1541,7 @@ async def _execute_subagent_scoped(
 
     # Optimistic default — overridden by the appropriate exception handler below
     result_text: str | None = None
+    handoff: dict | None = None
     outcome = RunOutcome(status=RunOutcomeStatus.OK)
     # Bound before the try so the cleanup below can always see it, even when
     # _build_child_agent itself raised (e.g. a missing required middleware).
@@ -1541,6 +1586,7 @@ async def _execute_subagent_scoped(
                 session_id=run.child_session_key,
                 output_schema=output_schema,
                 strategy_level=strategy_level,
+                spawn_depth=run.depth,
             )
 
             messages = [HumanMessage(content=user_message)]
@@ -1639,6 +1685,11 @@ async def _execute_subagent_scoped(
                         "Structured output validation failed for run {}: {}", run.run_id, err
                     )
 
+        # The layer's own handoff block, extracted ONCE here and stored with the
+        # run: plan extraction reads the parsed dict instead of re-parsing
+        # free text 24 KB at a time.
+        handoff = _extract_handoff_json(result_text)
+
     # --- Exception handling: map failures to RunOutcome statuses ---
     except TimeoutError:
         outcome = RunOutcome(
@@ -1652,7 +1703,14 @@ async def _execute_subagent_scoped(
     # --- Lifecycle cleanup (always runs, even on cancellation) ---
     finally:
         await _release_child_resources(run, child_agent)
-        await _finalize_child_run(run, outcome, result_text)
+        await _finalize_child_run(run, outcome, result_text, handoff)
+
+
+def _effective_child_summary_tokens(spawn_depth: int) -> int:
+    """The depth-scaled SummaryDoc budget for a subagent (main is unaffected)."""
+    from config.features.agent_side.summarization import effective_summary_max_tokens
+
+    return effective_summary_max_tokens(spawn_depth, get_config().max_spawn_depth)
 
 
 def _compression_threshold_for_children(context_window: int) -> int:
@@ -1674,6 +1732,7 @@ def _build_child_middlewares(
     auxiliary_llm: Any,
     main_llm_context_window: int,
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
+    spawn_depth: int = 1,
 ) -> list[Any]:
     """Assemble the child-agent middleware pipeline.
 
@@ -1712,6 +1771,9 @@ def _build_child_middlewares(
         Summarization(
             model=auxiliary_llm,
             main_llm_context_window=main_llm_context_window,
+            # A subagent's summary is consumed by every ancestor: shallow
+            # layers carry more history and get a larger depth-scaled budget.
+            summary_total_max_tokens=_effective_child_summary_tokens(spawn_depth),
             trigger=[
                 ("messages", 40),
                 (
@@ -1983,6 +2045,7 @@ async def _build_child_agent(
     session_id: str = "",
     output_schema: dict | None = None,
     strategy_level: int = 0,
+    spawn_depth: int = 1,
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
@@ -2086,6 +2149,7 @@ async def _build_child_agent(
         auxiliary_llm=child_llm,
         main_llm_context_window=main_llm_max_tokens,
         functional_role=functional_role,
+        spawn_depth=spawn_depth,
     )
     # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
     # middleware must abort the spawn, not ship a weakened child.

@@ -48,6 +48,7 @@ COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
 KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
 CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
 ACTIVE_PLAN_NOTES_MAX_ITEMS = SUMMARIZATION["active_plan_notes_max_items"]
+FAILED_PATHS_MAX_ITEMS = SUMMARIZATION["failed_paths_max_items"]
 EVICTED_REFS_MAX_ITEMS = SUMMARIZATION["evicted_refs_max_items"]
 
 _STRING_FIELDS = ("latest_user_request", "goal")
@@ -57,6 +58,7 @@ _LIST_FIELDS = (
     "in_progress",
     "blocked",
     "key_decisions",
+    "failed_paths",
     "next_steps",
     "critical_context",
     "relevant_files",
@@ -69,6 +71,7 @@ _LIST_FIELDS = (
 _FIELD_CAPS: dict[str, int] = {
     "completed": COMPLETED_MAX_ITEMS,
     "key_decisions": KEY_DECISIONS_MAX_ITEMS,
+    "failed_paths": FAILED_PATHS_MAX_ITEMS,
     "critical_context": CRITICAL_CONTEXT_MAX_ITEMS,
     "active_plan_notes": ACTIVE_PLAN_NOTES_MAX_ITEMS,
     "evicted_refs": EVICTED_REFS_MAX_ITEMS,
@@ -106,6 +109,14 @@ class SummaryDoc(BaseModel):
     blocked: list[str] = Field(default_factory=list, description="Blockers preventing progress.")
     key_decisions: list[str] = Field(
         default_factory=list, description='Decisions as "<decision>: <reason>", oldest first.'
+    )
+    failed_paths: list[str] = Field(
+        default_factory=list,
+        description=(
+            'Paths tried and failed, each as "<path>: <failure_reason>". '
+            "Carry existing entries forward verbatim; append newly discovered. "
+            "Empty list when none."
+        ),
     )
     next_steps: list[str] = Field(
         default_factory=list, description="Immediate next actions, in order."
@@ -173,6 +184,7 @@ def cap_items(items: list[str], max_items: int) -> tuple[list[str], int]:
 _ITEM_TOKEN_BUDGETS: dict[str, int] = {
     "completed": SUMMARIZATION["summary_item_tokens"],
     "key_decisions": SUMMARIZATION["summary_item_tokens"],
+    "failed_paths": SUMMARIZATION["summary_item_tokens"],
     "critical_context": SUMMARIZATION["summary_item_tokens"],
     "constraints": SUMMARIZATION["summary_item_tokens_short"],
     "in_progress": SUMMARIZATION["summary_item_tokens_short"],
@@ -284,6 +296,14 @@ def render_summary_markdown(doc: SummaryDoc) -> str:
         f"## Key Decisions (most recent {KEY_DECISIONS_MAX_ITEMS})",
         doc.key_decisions,
         cap=KEY_DECISIONS_MAX_ITEMS,
+    )
+    lines.append("")
+
+    _render_list_section(
+        lines,
+        f"## Failed Paths (most recent {FAILED_PATHS_MAX_ITEMS}; do not retry)",
+        doc.failed_paths,
+        cap=FAILED_PATHS_MAX_ITEMS,
     )
     lines.append("")
 

@@ -107,6 +107,7 @@ async def complete_subagent_run(
     outcome: RunOutcome,
     result_text: str | None = None,
     expected_generation: int | None = None,
+    handoff: dict | None = None,
 ) -> SubagentRunRecord | None:
     """Complete a sub-agent run with the given outcome, guarded by generation and kill reconciliation."""
     lock = _get_terminal_lock(run_id)
@@ -152,7 +153,7 @@ async def complete_subagent_run(
         if run.kill_reconciliation is not None and run.kill_reconciliation.reconciled:
             set_run(run)
 
-        updated = _complete_run(run_id, outcome, result_text)
+        updated = _complete_run(run_id, outcome, result_text, handoff)
         if updated is None:
             return None
 

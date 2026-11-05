@@ -151,11 +151,16 @@ _SUMMARY_JSON_RULES = (
     '  "latest_user_request": string — the user\'s most recent unanswered request,\n'
     '    quoted VERBATIM (no paraphrase, no truncation); "" when none;\n'
     '  "goal": string — one or two sentences;\n'
-    '  "constraints": string[] — constraints / preferences / decisions that limit the work;\n'
+    '  "constraints": string[] — HARD constraints (environment / API / business\n'
+    "    rules that must not be violated) followed by preferences; carry existing\n"
+    "    entries forward VERBATIM and append newly discovered ones;\n"
     '  "completed": string[] — finished work, oldest first (the most recent items are kept);\n'
     '  "in_progress": string[] — work currently underway;\n'
     '  "blocked": string[] — blockers;\n'
     '  "key_decisions": string[] — "<decision>: <reason>", oldest first;\n'
+    '  "failed_paths": string[] — "<path>: <failure_reason>" for paths that were\n'
+    "    tried and did NOT work; carry existing entries forward VERBATIM and\n"
+    "    append newly discovered; [] when none;\n"
     '  "next_steps": string[] — immediate actions, in order;\n'
     '  "critical_context": string[] — exact values, error strings, configs that must survive;\n'
     '  "relevant_files": string[] — "<path>: why it matters";\n'
@@ -179,8 +184,9 @@ _SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED = (
     "that happened before the <conversation>. Construct a new JSON document that\n"
     "combines both. Anything you do not carry into the new document is lost.\n\n"
     "When combining:\n"
-    "- Carry forward goal, constraints and key_decisions even when the <conversation>\n"
-    "  does not mention them.\n"
+    "- Carry forward goal, constraints, key_decisions AND failed_paths even when\n"
+    "  the <conversation> does not mention them. A failed path that is dropped is\n"
+    "  retried by the next layer; keep every recorded failure.\n"
     "- The <conversation> is more recent. Where they conflict, the conversation wins.\n"
     '- Move completed work from "in_progress" into "completed".\n'
     f"- Keep completed / key_decisions to the most recent {COMPLETED_MAX_ITEMS} / "
@@ -870,10 +876,13 @@ class SummaryGenerationMixin:
         else:
             markdown = summary
 
-        if estimate_text_tokens(markdown) > SUMMARY_TOTAL_MAX_TOKENS:
+        # A subagent gets a depth-scaled budget (see
+        # ``effective_summary_max_tokens``); the main agent uses the config.
+        budget_tokens = getattr(self, "_summary_total_max_tokens", None) or SUMMARY_TOTAL_MAX_TOKENS
+        if estimate_text_tokens(markdown) > budget_tokens:
             markdown = truncate_by_tokens(
                 markdown,
-                SUMMARY_TOTAL_MAX_TOKENS,
+                budget_tokens,
                 head_ratio=CONTENT_HEAD_RATIO,
                 tail_ratio=CONTENT_TAIL_RATIO,
                 omission_template="...[summary truncated, omitted {omitted} chars]...",

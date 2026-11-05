@@ -150,7 +150,9 @@ class TestMultiStrategyPipeline:
 
     def test_summary_item_token_budgets(self):
         assert SUMMARY_ITEM_TOKENS == 100
-        assert SUMMARY_ITEM_TOKENS_SHORT == 50
+        # 75 (was 50): a handoff field (failed_paths) is worth a longer line.
+        assert SUMMARY_ITEM_TOKENS_SHORT == 75
+        assert SUMMARY_ITEM_TOKENS_SHORT <= SUMMARY_ITEM_TOKENS
 
 
 class TestLLMSummaryImprovement:
@@ -327,3 +329,17 @@ class TestUploadLimits:
     def test_max_video_upload_bytes(self):
         assert HTTP_UPLOAD["max_video_bytes"] == 500 * 1024 * 1024
         assert isinstance(HTTP_UPLOAD["max_video_bytes"], int)
+
+
+def test_depth_scaled_subagent_summary_budget():
+    """A subagent's summary budget grows toward the shallower layers."""
+    from config.features.agent_side.summarization import effective_summary_max_tokens
+
+    assert SUMMARIZATION["summary_total_max_tokens_base"] == 5_000
+    assert SUMMARIZATION["summary_total_max_tokens_depth_step"] == 1_000
+    assert effective_summary_max_tokens(2, 2) == 5_000
+    assert effective_summary_max_tokens(1, 2) == 6_000
+    assert effective_summary_max_tokens(0, 2) == 7_000
+    assert effective_summary_max_tokens(9, 2) == 5_000  # clamped
+    # The main agent keeps the flat config value.
+    assert SUMMARIZATION["summary_total_max_tokens"] == 4_000

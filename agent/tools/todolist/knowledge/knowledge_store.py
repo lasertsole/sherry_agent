@@ -3,8 +3,10 @@
 Sidecar JSON documents live under ``config.path.PLAN_KNOWLEDGE_DIR`` in one
 directory per **plan identity** (``<plan_key>/`` — see ``identity.py``): one
 ``task-<position>.json`` per todo, one ``wave-<index>.json`` per wave, one
-``plan-summary.json`` per plan, plus a ``meta.json`` recording the
-human-readable plan name and canonical reference for diagnostics. The internal
+``plan-summary.json`` per plan, one ``handoff-tree.json`` per plan (the
+code-merged subagent handoff tree, written BEFORE the extraction LLM), plus a
+``meta.json`` recording the human-readable plan name and canonical reference
+for diagnostics. The internal
 file layout is unchanged; only the directory name derives from the canonical
 plan path instead of the bare plan name.
 
@@ -35,8 +37,9 @@ _KNOWLEDGE_ROOT: Path = PLAN_KNOWLEDGE_DIR
 
 _SCHEMA_VERSION = 1
 _META_FILENAME = "meta.json"
+_HANDOFF_FILENAME = "handoff-tree.json"
 
-Layer = Literal["task", "wave", "plan"]
+Layer = Literal["task", "wave", "plan", "handoff"]
 
 
 def _parse_index(suffix: str) -> int | None:
@@ -126,6 +129,14 @@ def _format_plan(plan_name: str, all_data: dict, *, full: bool) -> str:
     if patterns:
         lines.append("\n## Reusable Patterns")
         lines.extend(f"  - {pattern}" for pattern in patterns)
+    handoff = all_data.get("handoff") or {}
+    if handoff:
+        lines.append(
+            "\nHandoff tree: "
+            f"{len(handoff.get('failed_paths', []))} failed paths, "
+            f"{len(handoff.get('hard_constraints', []))} hard constraints "
+            "(knowledge(action='read', layer='handoff') for the full tree)"
+        )
     if full:
         return "\n".join(lines)
     tasks = all_data.get("tasks", {})
@@ -145,6 +156,18 @@ def _format_plan(plan_name: str, all_data: dict, *, full: bool) -> str:
     return "\n".join(lines)
 
 
+def _format_handoff(plan_name: str, all_data: dict) -> str:
+    """Render the raw, code-assembled handoff tree (full JSON for on-demand reads)."""
+    handoff = all_data.get("handoff")
+    if not handoff:
+        return f"No handoff tree found for: {plan_name}"
+    return (
+        f"# Handoff Tree: {plan_name}\n"
+        "Raw per-layer handoff data merged by code (not by the extraction LLM):\n"
+        + json.dumps(handoff, ensure_ascii=False, indent=2)
+    )
+
+
 def _format_task(plan_name: str, all_data: dict, position: int | None) -> str:
     if position is None:
         return "Error: layer='task' requires position"
@@ -159,6 +182,12 @@ def _format_task(plan_name: str, all_data: dict, position: int | None) -> str:
     lines += _numbered("Failure Set", failures) if failures else ["\n## Failure Set: (none)"]
     steps = task.get("success_path", [])
     lines += _numbered("Success Path", steps) if steps else ["\n## Success Path: (none)"]
+    hard_constraints = task.get("hard_constraints", [])
+    if hard_constraints:
+        lines += _numbered("Hard Constraints", hard_constraints)
+    failed_paths_tree = task.get("failed_paths_tree", [])
+    if failed_paths_tree:
+        lines += _numbered("Failed Paths (traceable)", failed_paths_tree)
     runs = task.get("subagent_runs", [])
     if runs:
         lines.append("\n## Subagent Runs")
@@ -218,6 +247,29 @@ class KnowledgeStore:
         return str(file_path)
 
     @staticmethod
+    async def write_handoff_tree(identity: PlanIdentity, aggregated: dict) -> str:
+        """Atomically persist the code-merged handoff tree for one plan.
+
+        Written BEFORE the extraction LLM runs, so an interrupted synthesis
+        never loses the raw merged data. The payload is the aggregate itself
+        (``handoff_forest`` + capped flat lists), not the LLM summary.
+        """
+        dir_path = _KNOWLEDGE_ROOT / identity.key
+        dir_path.mkdir(parents=True, exist_ok=True)
+        payload = {
+            **aggregated,
+            "schema_version": _SCHEMA_VERSION,
+            "plan_name": identity.plan_name,
+            "written_at": datetime.now().strftime("%Y%m%d%H%M%S"),
+        }
+        file_path = dir_path / _HANDOFF_FILENAME
+        tmp = file_path.with_name(file_path.name + ".tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(file_path)
+        _write_meta(dir_path, identity)
+        return str(file_path)
+
+    @staticmethod
     def read_all(identity: PlanIdentity) -> dict:
         """Read every knowledge document for a plan into task/wave/plan buckets."""
         dir_path = _existing_dir(identity)
@@ -241,6 +293,8 @@ class KnowledgeStore:
                     result["waves"][wave_index] = data
             elif stem == "plan-summary":
                 result["plan"] = data
+            elif stem == "handoff-tree":
+                result["handoff"] = data
         return result
 
     @staticmethod
@@ -274,6 +328,8 @@ class KnowledgeStore:
             return _format_task(plan_name, all_data, position)
         if layer == "wave":
             return _format_wave(plan_name, all_data, wave_index)
+        if layer == "handoff":
+            return _format_handoff(plan_name, all_data)
         if layer in (None, "plan"):
             return _format_plan(plan_name, all_data, full=layer == "plan")
         return f"Unknown layer: {layer}"

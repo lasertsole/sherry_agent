@@ -381,6 +381,23 @@ User message → Robyn WS → agent.core.built_agent() graph
       and a run that ended TIMEOUT/KILLED auto-resumes its step with
       `step_outcome="failure"`, so the step fails instead of being marked done
       with an empty result and unlocking its dependents
+    · Child handoff (Phase 1, prompt-bound) — every child puts a ```json block
+      with four EXPERIENCE fields about ITS OWN layer (task_understanding /
+      discovered_hard_constraints / locked_decisions / failed_paths) FIRST in
+      its answer (both the stored-result and delivery caps truncate the tail).
+      At completion `_extract_handoff_json` parses the LAST block (fail-open
+      → None, then the free-text result) into `run.completion.handoff`; the run
+      also carries its spawn-time `step_id`/`flow_id`. Plan extraction reads the
+      DESCENDANT runs' handoffs, filters them against the LIVE plan snapshot
+      (a cancelled todo / superseded flow drops its run; `resolved_position`
+      re-maps step_id → the todo's CURRENT position, never step_id-1), assembles
+      the per-layer tree (an orphan whose parent was filtered is promoted to a
+      root), flattens it depth-first with `source` labels, and writes
+      `handoff-tree.json` BEFORE the extraction LLM (atomic, idempotent). The
+      child's `SummaryDoc` carries `failed_paths` through compression
+      (`failed_paths_max_items`) and a subagent's summary budget scales with
+      depth (`summary_total_max_tokens_base` + a step per level above the
+      deepest; the main agent keeps the flat value)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence; a
       `[stale]` or `[broken]` row counts as "lacks" (the same marks the finish

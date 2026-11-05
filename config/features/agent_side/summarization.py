@@ -49,6 +49,15 @@ class SummarizationConfig(TypedDict):
     completed_max_items: int
     key_decisions_max_items: int
     critical_context_max_items: int
+    #: The handoff's failed-path entries kept per SummaryDoc; the tail wins.
+    failed_paths_max_items: int
+    #: Per-run summary budget for a SUBAGENT: the DEEPEST layer gets the base,
+    #: each level above it adds the step. A layer deeper in the chain summarizes
+    #: less conversation but its summary is consumed by every ancestor, so the
+    #: shallow layers (more history) get more room. The main agent keeps
+    #: ``summary_total_max_tokens`` and is not scaled.
+    summary_total_max_tokens_base: int
+    summary_total_max_tokens_depth_step: int
     active_plan_notes_max_items: int
     evicted_refs_max_items: int
     file_ops_list_max_chars: int
@@ -95,7 +104,7 @@ SUMMARIZATION: SummarizationConfig = {
     "summary_total_max_tokens": 4_000,
     "aggressive_truncate_tokens": 250,
     "summary_item_tokens": 100,
-    "summary_item_tokens_short": 50,
+    "summary_item_tokens_short": 75,
     "min_args_chars_to_truncate": 500,
     "max_tool_args_chars": 2_000,
     "aggressive_truncate_chars": 1_000,
@@ -114,6 +123,9 @@ SUMMARIZATION: SummarizationConfig = {
     "completed_max_items": 5,
     "key_decisions_max_items": 5,
     "critical_context_max_items": 3,
+    "failed_paths_max_items": 5,
+    "summary_total_max_tokens_base": 5_000,
+    "summary_total_max_tokens_depth_step": 1_000,
     "active_plan_notes_max_items": 20,
     "evicted_refs_max_items": 20,
     "file_ops_list_max_chars": 900,
@@ -157,3 +169,18 @@ SUMMARIZATION: SummarizationConfig = {
         }
     ),
 }
+
+
+def effective_summary_max_tokens(depth: int, max_spawn_depth: int) -> int:
+    """The summary budget for a subagent at ``depth``.
+
+    ``base + (max_spawn_depth - depth) * step`` — the deepest layer gets the
+    base, every level above adds the step (it carries more history and every
+    descendant summary is merged into it). ``depth`` is clamped into
+    ``[0, max_spawn_depth]``; the MAIN agent never calls this (it keeps
+    ``summary_total_max_tokens``).
+    """
+    base = int(SUMMARIZATION["summary_total_max_tokens_base"])
+    step = int(SUMMARIZATION["summary_total_max_tokens_depth_step"])
+    clamped = max(0, min(int(depth), int(max_spawn_depth)))
+    return base + (int(max_spawn_depth) - clamped) * step

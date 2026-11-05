@@ -7,6 +7,7 @@ from agent.middlewares.summarization.summary_doc import (
     COMPLETED_MAX_ITEMS,
     CRITICAL_CONTEXT_MAX_ITEMS,
     EVICTED_REFS_MAX_ITEMS,
+    FAILED_PATHS_MAX_ITEMS,
     KEY_DECISIONS_MAX_ITEMS,
     SummaryDoc,
     cap_items,
@@ -245,3 +246,29 @@ class TestCapSummaryDoc:
     def test_capped_doc_renders_without_annotation(self):
         doc = SummaryDoc(completed=[f"c{i}" for i in range(8)])
         assert "omitted" not in render_summary_markdown(cap_summary_doc(doc))
+
+
+class TestFailedPaths:
+    """The handoff's failed paths survive compression as their own section."""
+
+    def test_defaults_to_empty(self):
+        assert SummaryDoc().failed_paths == []
+
+    def test_renders_the_section(self):
+        doc = SummaryDoc(failed_paths=["sessions: needs a store"])
+
+        markdown = render_summary_markdown(doc)
+
+        assert "## Failed Paths" in markdown
+        assert "- sessions: needs a store" in markdown
+
+    def test_renders_none_when_empty(self):
+        assert "- (none)" in render_summary_markdown(SummaryDoc())
+
+    def test_cap_keeps_the_most_recent(self):
+        doc = SummaryDoc(failed_paths=[f"p{i}: r{i}" for i in range(8)])
+
+        capped = cap_summary_doc(doc)
+
+        assert len(capped.failed_paths) == FAILED_PATHS_MAX_ITEMS
+        assert capped.failed_paths[-1] == "p7: r7"

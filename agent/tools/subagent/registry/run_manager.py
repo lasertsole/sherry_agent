@@ -47,6 +47,8 @@ def register_run(
     inherited_tool_deny: list[str] | None = None,
     scopes: list[str] | None = None,
     output_schema: dict | None = None,
+    step_id: str | None = None,
+    flow_id: str | None = None,
     attachments_dir: str | None = None,
     attachments_root_dir: str | None = None,
     controller_session_key: str | None = None,
@@ -103,6 +105,8 @@ def register_run(
         inherited_tool_deny=inherited_tool_deny or [],
         scopes=scopes or [],
         output_schema=output_schema,
+        step_id=step_id,
+        flow_id=flow_id,
         attachments_dir=attachments_dir,
         attachments_root_dir=attachments_root_dir,
     )
@@ -183,6 +187,7 @@ def complete_run(
     run_id: str,
     outcome: RunOutcome,
     result_text: str | None = None,
+    handoff: dict | None = None,
 ) -> SubagentRunRecord | None:
     """Mark a run as TERMINAL (memory + SQLite) with the given outcome and optional result text.
 
@@ -218,6 +223,7 @@ def complete_run(
             "completion": run.completion.model_copy(
                 update={
                     "result_text": cap_frozen_result_text(result_text, caps.stored_bytes),
+                    "handoff": handoff,
                     "captured_at": time.monotonic(),
                 }
             ),
@@ -256,6 +262,7 @@ def replace_run_after_steer(
             "completion": run.completion.model_copy(
                 update={
                     "result_text": None,
+                    "handoff": None,
                     "captured_at": None,
                 }
             ),

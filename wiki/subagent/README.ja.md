@@ -16,6 +16,7 @@
   - [ロールが駆動するもの](#-ロールが駆動するもの)
 - [spawn 権限ガード](#-spawn-権限ガード)
 - [完了判定器と goal loop](#-完了判定器と-goal-loop)
+- [子エージェント・ハンドオフ](#-子エージェントハンドオフphase-1)
 - [階層化された完了ゲート](#-階層化された完了ゲート)
 - [他サブシステムとの関係](#-他サブシステムとの関係)
   - [合成集約](#-合成集約)
@@ -120,6 +121,39 @@ goal loop は予算が 1 ターンを超えるすべての spawn で実行され
 ```
 
 予算を使い切っても実行は `OK` として確定し、`error="goal_loop_budget_exhausted"` が記録されます——このループは枯渇を失敗に変えることはありません。継続プロンプトが空の場合もループは終わります。予算 `1` では子は単一ターンのまま、つまり判定器は一切呼ばれません。
+
+## 🤝 子エージェント・ハンドオフ（Phase 1）
+
+各子エージェントは回答の末尾に、**その層自身**の 4 つの経験フィールドを持つ json ブロックを出力します — `task_understanding`、
+`discovered_hard_constraints`、`locked_decisions`（{decision, reason}）、
+`failed_paths`（{path, failure_reason}）。ブロックは**先頭**に置きます。保存
+結果の上限も配送の上限も末尾から切り詰めるためです。これは **prompt 契約**
+（`response_format` は使わない）なので、thinking はオンのままです。
+
+完了時に `_extract_handoff_json` が最後のブロックを解析し（失敗時 None）、4
+フィールドを `run.completion.handoff` に保存します。メタデータ
+（`depth`/`agent_label`/`outcome`/`children`）はモデルからは受け取らず、コードが
+注入します。run レコードは spawn 時の TaskFlow 座標（`step_id`/`flow_id`）も
+持ちます。
+
+plan 抽出は子孫 run のハンドオフを読み、**現在の** plan スナップショットで
+フィルタします（cancelled の todo / superseded の flow はその run を除外。
+`resolved_position` は `step_id` を todo の**現在**位置へ再マップし、
+`step_id - 1` は使いません）。層ごとの木に組み立て（親が除外された孤立ノードは
+ルートに昇格）、深さ優先で `failed_paths` / `hard_constraints` /
+`locked_decisions` に平坦化し、各項目に `source` ラベル
+（`depth-1:label > depth-2:label`）を付けます。生のマージ済みツリーは抽出 LLM の
+**前**に `handoff-tree.json` へ書き込まれ（原子的・冪等上書き）、中断しても
+失われません。LLM の `plan-summary.json` はその上の第二層（非可逆）です。
+`knowledge(action="read", layer="handoff")` が生ツリーを返し、システムプロンプト
+の知識ブロックには 1 行のカウント（失敗パス / ハード制約）が追加されます。
+
+子エージェントの要約器はハンドオフを圧縮越しに保持します。`SummaryDoc` に
+`failed_paths` を追加（`failed_paths_max_items` で上限）、`constraints` の
+ルールは HARD 制約を先に書くよう指示し、各サブエージェントの要約は**深さ連動**
+予算を使います — `summary_total_max_tokens_base`（5000）に、最深層より上の
+各層ごとに `summary_total_max_tokens_depth_step`（1000）を加算 — メイン
+エージェントは従来の 4000 のままです。
 
 ## 🚦 階層化された完了ゲート
 

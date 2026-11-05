@@ -80,6 +80,8 @@ async def knowledge(
         -> Returns wave-level failure/success patterns
       knowledge(action="read", plan_name="implement-auth", layer="plan")
         -> Returns full plan summary
+      knowledge(action="read", plan_name="implement-auth", layer="handoff")
+        -> Returns the RAW code-merged handoff tree (per-layer experience data)
 
     Write examples:
       knowledge(action="write", plan_name="...", layer="task", position=0, data={...})

@@ -16,6 +16,7 @@
   - [角色驱动什么](#-角色驱动什么)
 - [spawn 权限守卫](#-spawn-权限守卫)
 - [完成判别器与 goal loop](#-完成判别器与-goal-loop)
+- [子代理交接](#-子代理交接phase-1)
 - [分层完成门禁](#-分层完成门禁)
 - [与其它子系统的关系](#-与其它子系统的关系)
   - [合成聚合](#-合成聚合)
@@ -120,6 +121,36 @@
 ```
 
 预算耗尽后，运行仍以 `OK` 终结，并记录 `error="goal_loop_budget_exhausted"`——该循环从不把预算耗尽转成失败。续轮提示为空同样结束循环。预算为 `1` 时子代理保持单轮：根本不会调用判官。
+
+## 🤝 子代理交接（Phase 1）
+
+每个子代理在回答末尾输出一个 ```json 块，携带**本层**的四项经验字段——
+`task_understanding`、`discovered_hard_constraints`、`locked_decisions`
+（{decision, reason}）与 `failed_paths`（{path, failure_reason}）。该块放在
+**最前面**：结果存储上限与投递上限都从尾部截断。它是 **prompt 契约**
+（不走 `response_format`），因此思考模式保持开启。
+
+完成时 `_extract_handoff_json` 解析最后一个块（失败返回 None），把四个字段
+存进 `run.completion.handoff`；元数据（`depth`/`agent_label`/`outcome`/
+`children`）绝不由模型提供——由代码注入。运行记录同时携带 spawn 时的
+TaskFlow 坐标（`step_id`/`flow_id`）。
+
+plan 抽取随后读取所有后代 run 的 handoff，按**当前** plan 快照过滤（cancelled
+的 todo / superseded 的 flow 会丢弃其 run；`resolved_position` 把 `step_id`
+重映射到 todo 的**当前**位置，绝不用 `step_id - 1`），装配成按层级的树
+（父被过滤的孤儿提升为根），再深度优先扁平化为 `failed_paths` /
+`hard_constraints` / `locked_decisions`，每条带 `source` 标签
+（`depth-1:label > depth-2:label`）。原始合并树在抽取 LLM 运行**之前**写入
+`handoff-tree.json`（原子、幂等覆盖），所以中断的 LLM 综合不会丢数据；LLM 写的
+`plan-summary.json` 是叠加其上的第二层（有损）。`knowledge(action="read",
+layer="handoff")` 返回原始树；系统提示词里的知识块增加一行计数（失败路径 /
+硬约束）。
+
+子代理的压缩器负责把 handoff 带过压缩：`SummaryDoc` 新增 `failed_paths`
+（受 `failed_paths_max_items` 限制），其 `constraints` 规则要求优先写 HARD
+约束，且每个子代理摘要使用**按深度递增**的预算——`summary_total_max_tokens_base`
+（5000）加上比最深层每高一层 `summary_total_max_tokens_depth_step`（1000）——
+主 agent 仍用扁平的 4000。
 
 ## 🚦 分层完成门禁
 

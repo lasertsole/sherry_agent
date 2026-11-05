@@ -62,6 +62,11 @@ class CompletionState(BaseModel):
 
     required: bool = True
     result_text: str | None = None
+    #: The layer's OWN structured handoff (4 experience fields), extracted from
+    #: the result text by ``spawn.core._extract_handoff_json`` at completion.
+    #: None when the child did not emit the block (the plan extractor then
+    #: falls back to the free-text ``result_text``).
+    handoff: dict | None = None
     captured_at: float | None = None
 
 
@@ -131,6 +136,12 @@ class SubagentRunRecord(BaseModel):
 
     aborted_last_run: bool = False
     recovery_attempts_persisted: int = 0
+
+    #: TaskFlow coordinates this run executes (spawn-time context). They let
+    #: plan extraction map a run to its todo DETERMINISTICALLY instead of
+    #: guessing from task text; None for a free-form spawn.
+    step_id: str | None = None
+    flow_id: str | None = None
 
     swarm_group_id: str | None = None
     swarm_run_state: str | None = None
