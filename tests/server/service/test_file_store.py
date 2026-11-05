@@ -259,3 +259,23 @@ class TestServiceWiring:
         # raw length ≤ 2000 but task text > 2000: budget trips
         with pytest.raises(ValueError, match="Content too long for heartbeat file"):
             heartbeat_service.write_heartbeat_file({"HEARTBEAT.md": "- " + ("y" * 2100)})
+
+
+class TestFirstRunWrite:
+    def test_write_files_runs_the_pre_read_hook(self, tmp_path):
+        store = _TmpStore(tmp_path)
+
+        store.write_files({"A.md": "hello"})
+
+        assert store.before_read_calls == 1
+
+    def test_a_write_creates_a_missing_parent_directory(self, tmp_path):
+        """The packaged app's workspace root may not exist yet; the write must
+        create it instead of raising FileNotFoundError."""
+        base = tmp_path / "app-data" / "workspace"
+        store = _TmpStore(base)
+        store.allow_empty = True
+
+        store.write_files({"A.md": "hello"})
+
+        assert (base / "A.md").read_text(encoding="utf-8") == "hello"

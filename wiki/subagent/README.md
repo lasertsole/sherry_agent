@@ -16,6 +16,7 @@ Source of truth: `agent/tools/subagent/**` (`types/`, `capabilities/`, `roles/`,
   - [What a Role Drives](#-what-a-role-drives)
 - [Spawn Privilege Guards](#-spawn-privilege-guards)
 - [Completion Judge & Goal Loop](#-completion-judge--goal-loop)
+- [Child Handoff](#-child-handoff-phase-1)
 - [Layered Completion Gates](#-layered-completion-gates)
 - [Relationships to Other Subsystems](#-relationships-to-other-subsystems)
   - [Synthesis Aggregation](#-synthesis-aggregation)
@@ -120,6 +121,41 @@ turn 1 ─► judge DONE ──────────────────�
 ```
 
 When the budget is spent the run still finalizes as `OK`, with `error="goal_loop_budget_exhausted"` recorded — the loop never converts exhaustion into a failure. An empty continuation prompt also ends the loop. A budget of `1` keeps the child single-turn: the judge is not called at all.
+
+## 🤝 Child Handoff (Phase 1)
+
+Every child ends its answer with a ```json block carrying four EXPERIENCE
+fields about ITS OWN layer — `task_understanding`,
+`discovered_hard_constraints`, `locked_decisions` ({decision, reason}) and
+`failed_paths` ({path, failure_reason}). The block goes FIRST because both the
+stored-result cap and the delivery cap truncate from the tail. It is a PROMPT
+contract (no `response_format`), so thinking stays on.
+
+At completion `_extract_handoff_json` parses the last block (fail-open → None)
+and stores the four fields on `run.completion.handoff`; metadata
+(`depth`/`agent_label`/`outcome`/`children`) is never accepted from the model —
+code injects it. The run record also carries the TaskFlow coordinates
+(`step_id`/`flow_id`) captured at spawn.
+
+Plan extraction then reads the descendant runs' handoffs, filters them against
+the CURRENT plan snapshot (a cancelled todo or a superseded flow drops its
+runs; `resolved_position` re-maps `step_id` to the todo's CURRENT position,
+never `step_id - 1`), assembles the per-layer tree (orphans whose parent was
+filtered are promoted to roots), and flattens it depth-first into
+`failed_paths` / `hard_constraints` / `locked_decisions` with a `source` label
+(`depth-1:label > depth-2:label`). The raw merged tree is written to
+`handoff-tree.json` BEFORE the extraction LLM runs (atomic, idempotent
+overwrite), so an interrupted synthesis never loses it; the LLM's
+`plan-summary.json` is a second, lossy layer on top. `knowledge(action="read",
+layer="handoff")` returns the raw tree, and the system-prompt knowledge block
+adds a one-line count (failed paths / hard constraints).
+
+The child's summarizer carries the handoff through compression: `SummaryDoc`
+gained `failed_paths` (capped by `failed_paths_max_items`), its `constraints`
+rule asks for HARD constraints first, and every subagent summary uses a
+depth-scaled budget — `summary_total_max_tokens_base` (5000) plus
+`summary_total_max_tokens_depth_step` (1000) per level above the deepest —
+while the main agent keeps its flat 4000.
 
 ## 🚦 Layered Completion Gates
 

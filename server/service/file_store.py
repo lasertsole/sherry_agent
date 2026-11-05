@@ -68,6 +68,10 @@ class FileStore:
 
     def _write_one(self, file_name: str, content: str) -> None:
         file_path = self._file_path(file_name)
+        # A first run can reach a write before any read: the workspace root may
+        # not exist yet (the packaged app's %APPDATA% home starts empty). Never
+        # let the parent's absence turn a persona write into a 500.
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(content)
 
@@ -76,7 +80,13 @@ class FileStore:
             self._write_one(file_name, content)
 
     def write_files(self, file_to_content: dict[str, str]) -> None:
-        """Validate and write the provided entries (only them), interleaved."""
+        """Validate and write the provided entries (only them), interleaved.
+
+        Runs the store's pre-read hook first: it creates the workspace roots
+        and copies any missing template files (never overwriting existing
+        content), so a FIRST-RUN write works exactly like a read-then-write.
+        """
+        self._before_read()
         for file_name, content in file_to_content.items():
             self._validate(file_name, content)
             self._write_one(file_name, content)

@@ -701,7 +701,7 @@
   },
   "personaPreset": {
     "unbound": "Not chosen",
-    "applyFailed": "Applying the preset failed — check the backend connection and retry",
+    "applyFailed": "Applying the preset failed — check the logs and retry",
     "create": "Create session",
     "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
     "selectTitle": "Choose a preset",

@@ -15,9 +15,11 @@ chunk, which produced an O(n²)-duplicated reasoning blob on the final
 message and broke post-turn persistence of the thinking bubble.
 """
 
+import asyncio
+
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from typing import Any
 from collections.abc import Iterator
@@ -166,3 +168,88 @@ class TestAsyncStreamParity:
         async for gen in model._astream(messages=[], config={"callbacks": None}):  # type: ignore[arg-type]
             out.append(gen.message.additional_kwargs.get("reasoning_content"))
         assert out == ["x", "y"]
+
+
+class _RecordingModel(BaseChatModel):
+    """Records the kwargs each inner call receives."""
+
+    generate_kwargs: list[dict[str, Any]] = []
+    tool_bind_kwargs: list[dict[str, Any]] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake-recording"
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        type(self).generate_kwargs.append(dict(kwargs))
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="ok"))])
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        type(self).generate_kwargs.append(dict(kwargs))
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="ok"))])
+
+    def bind_tools(self, tools: Any, *, tool_choice: Any = None, **kwargs: Any) -> Any:
+        type(self).tool_bind_kwargs.append(dict(kwargs))
+        return self.bind(**kwargs)
+
+
+class TestRequestOptions:
+    """Forced request options must survive ``bind_tools`` (which drops the wrapper).
+
+    JSON mode is the motivating case: the parameter must ride on every actual
+    provider request, including the model calls the agent graph makes through a
+    tool-bound Runnable.
+    """
+
+    def setup_method(self) -> None:
+        _RecordingModel.generate_kwargs = []
+        _RecordingModel.tool_bind_kwargs = []
+
+    def test_a_copy_carries_the_options_and_the_original_stays_clean(self):
+        original = NormalizingChatModel(inner=_RecordingModel())
+
+        opted = original.with_request_options({"response_format": {"type": "json_object"}})
+
+        assert original.request_options == {}
+        assert opted.request_options == {"response_format": {"type": "json_object"}}
+
+    def test_generate_forwards_the_options_to_the_inner_model(self):
+        model = NormalizingChatModel(inner=_RecordingModel()).with_request_options(
+            {"response_format": {"type": "json_object"}}
+        )
+
+        asyncio.run(model._agenerate([HumanMessage("hi")]))
+
+        assert _RecordingModel.generate_kwargs[-1]["response_format"] == {"type": "json_object"}
+
+    def test_bind_tools_marks_tools_strict_and_keeps_the_options_on_the_binding(self):
+        model = NormalizingChatModel(inner=_RecordingModel()).with_request_options(
+            {"response_format": {"type": "json_object"}}
+        )
+
+        bound = model.bind_tools([], tool_choice=None)
+
+        # OpenAI's auto-parse path (taken when a response_format rides the
+        # request) rejects non-strict tools.
+        assert _RecordingModel.tool_bind_kwargs[-1] == {"strict": True}
+        assert bound.kwargs["response_format"] == {"type": "json_object"}
+
+    def test_a_plain_model_binds_tools_exactly_as_before(self):
+        model = NormalizingChatModel(inner=_RecordingModel())
+
+        bound = model.bind_tools([], tool_choice="auto")
+
+        assert _RecordingModel.tool_bind_kwargs[-1] == {}
+        assert bound.kwargs == {}

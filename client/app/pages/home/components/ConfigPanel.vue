@@ -383,6 +383,13 @@
           :header="t('config.tabs.memorySettings')">
           <MemorySettingsSection />
         </TabPanel>
+        <!-- Desktop-only window behaviour (close-to-tray). Appended LAST for the
+             same index-keyed reasons as the tabs above; it saves on its own. -->
+        <TabPanel
+          value="desktop"
+          :header="t('config.tabs.desktop')">
+          <DesktopSettingsSection />
+        </TabPanel>
       </TabView>
     </template>
 
@@ -393,9 +400,9 @@
          the persona presets; Token 预算 became a session tab opened from the
          context ring, because the cap is per conversation.)
          Index-keyed like the rest of this panel's tab logic: env 1, i18n 3,
-         shortcuts 4, safety filter 5, memory settings 6. -->
+         shortcuts 4, safety filter 5, memory settings 6, desktop 7. -->
     <div
-      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6"
+      v-if="activeTab !== 1 && activeTab !== 3 && activeTab !== 4 && activeTab !== 5 && activeTab !== 6 && activeTab !== 7"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -435,6 +442,7 @@ import CudaPackCard from './CudaPackCard.vue';
 import ReplayAllowlistEditor from './ReplayAllowlistEditor.vue';
 import I18nPanel from './I18nPanel.vue';
 import ShortcutSettingsSection from './ShortcutSettingsSection.vue';
+import DesktopSettingsSection from './DesktopSettingsSection.vue';
 import SafetyFilterPanel from './SafetyFilterPanel.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
@@ -1126,6 +1134,7 @@ onBeforeUnmount(onHide);
         "shortcuts": "快捷键",
         "safetyFilter": "直播安全",
         "memorySettings": "记忆设置",
+        "desktop": "桌面",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
       },
@@ -1435,6 +1444,7 @@ onBeforeUnmount(onHide);
         "shortcuts": "Shortcuts",
         "safetyFilter": "Live safety",
         "memorySettings": "Memory settings",
+        "desktop": "Desktop",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
       },
@@ -1759,6 +1769,7 @@ onBeforeUnmount(onHide);
         "shortcuts": "ショートカット",
         "safetyFilter": "ライブ安全",
         "memorySettings": "記憶設定",
+        "desktop": "デスクトップ",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
       },
@@ -2083,6 +2094,7 @@ onBeforeUnmount(onHide);
         "shortcuts": "단축키",
         "safetyFilter": "라이브 안전",
         "memorySettings": "기억 설정",
+        "desktop": "데스크톱",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
       },

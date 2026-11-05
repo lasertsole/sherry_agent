@@ -97,9 +97,28 @@ def build_subagent_system_prompt(
     sections.append("## Rules\n" + "\n".join(f"{i + 1}. {r}" for i, r in enumerate(rules)))
 
     # Section 3: Output Format
+    #
+    # The handoff block goes FIRST: both the stored-result cap and the delivery
+    # cap truncate from the TAIL, so a block after long Details can be cut off.
     output_format = (
         "## Output Format\n"
-        "When you have completed your task, provide a clear summary:\n"
+        "When you have completed your task, output a handoff JSON block FIRST, "
+        "then the summary.\n"
+        "```json\n"
+        "{\n"
+        '  "task_understanding": "<your own restatement of the task>",\n'
+        '  "discovered_hard_constraints": ["<hard constraint YOU found>"],\n'
+        '  "locked_decisions": [{"decision": "<what you locked in>", '
+        '"reason": "<why>"}],\n'
+        '  "failed_paths": [{"path": "<what you tried>", '
+        '"failure_reason": "<why it failed>"}]\n'
+        "}\n"
+        "```\n"
+        "Rules for the handoff: fill only what YOU encountered in THIS layer — "
+        "do NOT include child subagents' data. Empty lists stay empty "
+        '(``[]``). Do NOT add depth/agent_label/children/outcome: the system '
+        "injects those.\n\n"
+        "Then provide the summary:\n"
         "```\n"
         "## Task Result\n"
         "**Status**: [completed | failed | partial]\n"

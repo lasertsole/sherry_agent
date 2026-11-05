@@ -12,6 +12,9 @@
   </NuxtLayout>
   <ImagePreviewOverlay />
   <FormulaPreviewOverlay />
+  <!-- Desktop close-to-tray prompt: the Rust shell prevents the default close
+       and emits close-requested; this component decides (or asks). -->
+  <CloseToTrayDialog />
   <Toast position="bottom-right" />
   <!-- Global confirm dialog (ConfirmationService is auto-registered along with components by
        @primevue/nuxt-module): destructive operations such as deleting a session/background task

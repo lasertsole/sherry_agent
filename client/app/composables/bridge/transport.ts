@@ -41,7 +41,15 @@ export type NativeInvokeResult<T> = { kind: 'native'; value: T } | null;
 export async function invokeNative<T>(command: string, args?: Record<string, unknown>): Promise<NativeInvokeResult<T>> {
   if (!isTauri()) return null;
   const invoke = await getInvoke();
-  return { kind: 'native', value: await invoke<T>(command, args) };
+  try {
+    return { kind: 'native', value: await invoke<T>(command, args) };
+  } catch (e) {
+    // "Native unavailable" must fall back to HTTP, not throw: an UNREGISTERED
+    // command (or a bridge failure) used to propagate here and skip the
+    // caller's HTTP path entirely (the memory panel showed a blank screen).
+    console.warn(`[bridge] native command ${command} failed; falling back to HTTP:`, e);
+    return null;
+  }
 }
 
 /**

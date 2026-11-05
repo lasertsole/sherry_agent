@@ -256,7 +256,9 @@ async def test_goal_loop_smoke(monkeypatch: pytest.MonkeyPatch):
     async def _fake_build(**_: object) -> _FakeChildAgent:
         return child
 
-    async def _fake_complete(run_id, outcome, result_text, expected_generation=None) -> None:
+    async def _fake_complete(
+        run_id, outcome, result_text, expected_generation=None, handoff=None
+    ) -> None:
         completed.append((run_id, outcome, result_text))
 
     async def _noop(*_: object, **__: object) -> None:

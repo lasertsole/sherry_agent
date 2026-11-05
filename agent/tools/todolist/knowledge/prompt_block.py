@@ -35,30 +35,41 @@ def build_knowledge_block(session_id: str) -> str:
         if identity is None:
             return ""
         summary = KnowledgeStore.read_summary(identity)
-        if summary is None:
+        handoff = KnowledgeStore.read_all(identity).get("handoff") or {}
+        if summary is None and not handoff:
             return ""
         plan_name = identity.plan_name
-        lines = [
-            f"## Knowledge Summary: {plan_name}",
-            f"Method: {_trunc(str(summary.get('method') or 'unknown'), 200)}",
-        ]
-        failures = summary.get("key_failures") or []
-        if failures:
-            lines.append("Key Failures (avoid repeating):")
-            lines.extend(
-                f"  {index}. {_trunc(str(item), 200)}" for index, item in enumerate(failures[:5], 1)
+        lines = [f"## Knowledge Summary: {plan_name}"]
+        if summary is not None:
+            lines.append(f"Method: {_trunc(str(summary.get('method') or 'unknown'), 200)}")
+            failures = summary.get("key_failures") or []
+            if failures:
+                lines.append("Key Failures (avoid repeating):")
+                lines.extend(
+                    f"  {index}. {_trunc(str(item), 200)}"
+                    for index, item in enumerate(failures[:5], 1)
+                )
+            successes = summary.get("key_successes") or []
+            if successes:
+                lines.append("Key Successes:")
+                lines.extend(
+                    f"  {index}. {_trunc(str(item), 200)}"
+                    for index, item in enumerate(successes[:5], 1)
+                )
+            patterns = summary.get("reusable_patterns") or []
+            if patterns:
+                lines.append("Reusable Patterns:")
+                lines.extend(f"  - {_trunc(str(item), 150)}" for item in patterns[:8])
+        # The code-merged tree survives an extraction-LLM failure: keep a tiny
+        # count line so the main agent knows raw experience data exists.
+        failed_paths = handoff.get("failed_paths") or []
+        hard_constraints = handoff.get("hard_constraints") or []
+        if failed_paths or hard_constraints:
+            lines.append(
+                f"Handoff: {len(failed_paths)} failed paths, "
+                f"{len(hard_constraints)} hard constraints — use "
+                "knowledge(action='read', layer='handoff') for details."
             )
-        successes = summary.get("key_successes") or []
-        if successes:
-            lines.append("Key Successes:")
-            lines.extend(
-                f"  {index}. {_trunc(str(item), 200)}"
-                for index, item in enumerate(successes[:5], 1)
-            )
-        patterns = summary.get("reusable_patterns") or []
-        if patterns:
-            lines.append("Reusable Patterns:")
-            lines.extend(f"  - {_trunc(str(item), 150)}" for item in patterns[:8])
         lines.append("Use knowledge(action='read') tool for detailed failure_set/success_path.")
         return "\n".join(lines)
     except Exception:

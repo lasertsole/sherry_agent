@@ -701,7 +701,7 @@
   },
   "personaPreset": {
     "unbound": "未选择",
-    "applyFailed": "预设应用失败，请检查后端连接后重试",
+    "applyFailed": "预设应用失败，请查看日志后重试",
     "create": "创建会话",
     "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
     "selectTitle": "选择预设",

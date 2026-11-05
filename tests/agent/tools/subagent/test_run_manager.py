@@ -223,3 +223,62 @@ class TestCompleteRun:
     def test_complete_missing(self):
         outcome = RunOutcome(status=RunOutcomeStatus.OK)
         assert complete_run("nonexistent", outcome) is None
+
+
+class TestHandoffPersistence:
+    def test_register_run_keeps_the_taskflow_coordinates(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:coord",
+            requester_session_key="agent:main:session:p1",
+            task="t",
+            step_id="step-1",
+            flow_id="flow-1",
+        )
+
+        assert run.step_id == "step-1"
+        assert run.flow_id == "flow-1"
+
+    def test_complete_run_stores_the_handoff(self):
+        run = register_run(
+            child_session_key="agent:main:subagent:ho",
+            requester_session_key="agent:main:session:p1",
+            task="t",
+        )
+        handoff = {
+            "task_understanding": "u",
+            "discovered_hard_constraints": [],
+            "locked_decisions": [],
+            "failed_paths": [],
+        }
+
+        updated = complete_run(
+            run.run_id,
+            RunOutcome(status=RunOutcomeStatus.OK),
+            "the result",
+            handoff=handoff,
+        )
+
+        assert updated is not None
+        assert updated.completion.handoff == handoff
+        assert updated.completion.result_text == "the result"
+
+    def test_a_steer_resets_the_previous_handoff(self):
+        from agent.tools.subagent.registry.run_manager import replace_run_after_steer
+
+        run = register_run(
+            child_session_key="agent:main:subagent:steer",
+            requester_session_key="agent:main:session:p1",
+            task="t",
+        )
+        complete_run(
+            run.run_id,
+            RunOutcome(status=RunOutcomeStatus.OK),
+            "old",
+            handoff={"task_understanding": "old"},
+        )
+
+        updated = replace_run_after_steer(run.run_id, "new task")
+
+        assert updated is not None
+        assert updated.completion.handoff is None
+        assert updated.completion.result_text is None

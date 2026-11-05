@@ -276,10 +276,14 @@ class Summarization(
         trigger: list | None = None,
         main_llm_context_window: int | None = None,
         need_update_system_prompt: bool = False,
+        summary_total_max_tokens: int | None = None,
         **kwargs,
     ):
         self._model = model
         self._trigger = trigger or [("tokens", 80_000)]
+        #: Per-instance summary budget. None = the main agent's config value;
+        #: a subagent passes its depth-scaled budget.
+        self._summary_total_max_tokens = summary_total_max_tokens
         self._main_llm_context_window = main_llm_context_window
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False

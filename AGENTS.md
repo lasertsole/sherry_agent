@@ -305,10 +305,22 @@ User message → Robyn WS → agent.core.built_agent() graph
       including the manual batch and the auto-dispatch wave). The shape is
       ALSO enforced at generation time: the child agent is built with
       create_agent(response_format=<schema>) (AutoStrategy: provider-native
-      structured output, else a structured-output tool call), the schema
-      text stays in the child's system prompt as the prompt-level fallback,
-      and sessions_spawn exposes the same output_schema field so a
-      tool-driven child can be constrained the same way
+      structured output, else a structured-output tool call with a FORCED
+      tool_choice), the schema text stays in the child's system prompt as the
+      prompt-level fallback, and sessions_spawn exposes the same output_schema
+      field so a tool-driven child can be constrained the same way.
+      Structured output DEGRADES on a provider rejection
+      (`agent/tools/subagent/model_caps.py`): level 0 (default) is LangChain's
+      `response_format`; a 400 naming the structured-output strategy escalates
+      to level 1 — the child sends `response_format={"type":"json_object"}`
+      ITSELF via `NormalizingChatModel.with_request_options` (it survives
+      `bind_tools`, which returns the inner model; tools are bound strict
+      because OpenAI's auto-parse path demands it), keeps the schema in its
+      prompt, and the local validation FAILS the run on a shape miss — and, if
+      that also errors, level 2 adds thinking OFF. The rung is PERSISTED per
+      `(provider, model)` in `src/data/subagent_model_caps.json`, so a model
+      that already degraded is never probed again (the runner retries from a
+      clean checkpoint thread under ONE shared wall-clock budget)
     · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
@@ -369,6 +381,23 @@ User message → Robyn WS → agent.core.built_agent() graph
       and a run that ended TIMEOUT/KILLED auto-resumes its step with
       `step_outcome="failure"`, so the step fails instead of being marked done
       with an empty result and unlocking its dependents
+    · Child handoff (Phase 1, prompt-bound) — every child puts a ```json block
+      with four EXPERIENCE fields about ITS OWN layer (task_understanding /
+      discovered_hard_constraints / locked_decisions / failed_paths) FIRST in
+      its answer (both the stored-result and delivery caps truncate the tail).
+      At completion `_extract_handoff_json` parses the LAST block (fail-open
+      → None, then the free-text result) into `run.completion.handoff`; the run
+      also carries its spawn-time `step_id`/`flow_id`. Plan extraction reads the
+      DESCENDANT runs' handoffs, filters them against the LIVE plan snapshot
+      (a cancelled todo / superseded flow drops its run; `resolved_position`
+      re-maps step_id → the todo's CURRENT position, never step_id-1), assembles
+      the per-layer tree (an orphan whose parent was filtered is promoted to a
+      root), flattens it depth-first with `source` labels, and writes
+      `handoff-tree.json` BEFORE the extraction LLM (atomic, idempotent). The
+      child's `SummaryDoc` carries `failed_paths` through compression
+      (`failed_paths_max_items`) and a subagent's summary budget scales with
+      depth (`summary_total_max_tokens_base` + a step per level above the
+      deepest; the main agent keeps the flat value)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence; a
       `[stale]` or `[broken]` row counts as "lacks" (the same marks the finish
@@ -1040,6 +1069,31 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   A dev build (`pnpm tauri dev`, a plain `cargo build`) neither ships nor starts
   a frozen backend, and spawns `python -m server` from the checkout when
   `EMA_AUTO_START_BACKEND` asks for it.
+- **Window lifecycle**: the notification-area entry sets its icon from
+  `app.default_window_icon()` (tauri.conf.json's `icon` array only feeds the
+  window / executable; the packaged tree ships no `icons/` folder). The main
+  window's close button never ends the process by default: the Rust
+  `CloseRequested` handler calls `api.prevent_close()`, bumps `CLOSE_TICKET`,
+  emits `close-requested` and hides the window after 1.5 s ONLY if the frontend
+  has not `close_ack`ed (the ack runs as soon as its listener fires, BEFORE the
+  prompt, so the fallback cannot hide an open dialog). `CloseToTrayDialog`
+  applies the remembered `closeAction` app flag — `tray` hides, `exit` calls
+  `quit_app` (sets `EXPLICIT_QUIT`, lets the close through; the `RunEvent::Exit`
+  hook stops the backend), anything else prompts with a "don't ask again"
+  checkbox. The same flag is editable under System Config → Desktop
+  (`DesktopSettingsSection.vue`, appended LAST — the panel's footer guard is
+  keyed by tab index, so tab 7 joins the exclusion list).
+- **First-run files**: the writable home seeds `sherry.jsonc` / `.models` /
+  `.network` at import (`config/_home.py` resolves `--sherry-home`, then
+  `SHERRY_HOME`, then the code root for all four consumers); the read handlers
+  answer a structured 503 when a file is missing/unreadable and the sherry WRITE
+  path re-seeds before saving (a first-run App Config save used to 500). The
+  workspace roots are created on the WRITE path too — `FileStore.write_files`
+  runs the store's pre-read hook and `_write_one` mkdirs its parent — so the
+  packaged app's first persona write cannot fail with `FileNotFoundError`
+  (which the onboarding/preset dialogs then rendered as `[object Object]`;
+  both now use `describeError`, which prefers a Tauri error object's
+  `message`/`code` over `String(obj)`).
 - **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
   `nvidia-smi` / the kernel-module record and gates the model settings tab's
   card (`cuda_support` command; `CudaPackCard.vue` + `use-cuda-pack.ts` +
@@ -2429,7 +2483,7 @@ each suite is the version-controlled reference (threshold + model id).
   `tests/agent/tools/test_tool_schema_goldens.py` (which also asserts those
   modules no longer import the archived packages at all)
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). Its fuzzy ladder (`pub_base/text_matcher.py`, 11 strategies, first match wins) strips a copied snippet's line numbers (`N|` / `N: ` / `N<tab>`) and unescapes `\uXXXX` before the fuzzy ones, refuses `replace_all=True` for the lossy `BROAD_MATCHERS` (a global replace must not land on a lookalike), re-indents a fuzzy replacement to the file's own indentation and rewrites its straight quotes into the region's curly ones (only when the region uses that kind exclusively — mixed code/prose keeps straight quotes).
-- `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
+- `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). `read_file` itself is the first context cut: the window is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, CJK-aware — the same budget means the same context cost in every language) and the caller's line `limit` (the stricter wins, truncation always at a line boundary), and a re-read of an unchanged file the session READ in full answers with a pointer instead of the content. A single line whose cost alone exceeds `TOOLS_TIMEOUTS["read_file_max_line_tokens"]` (4 000) is clipped inside itself (`...[N chars clipped]...`) and reported `truncated: true` (no write license off it) — WHEREVER the line sits in the page and even when the page budget is switched off, so one minified line can never ride the response whole. Because `offset` counts LINES there is no read_file address for the rest of a clipped line: the hint names the tools that reach it (`search_files` with context, `terminal` / `python_repl`). Oversized files add three gates: the input schema refuses binary extensions and blocking device paths before any syscall (a FIELD validator, so the tool node keeps the refusal text instead of a blank "fix the error"); a WHOLE read (offset=1 + the default limit) of a file at or above `TOOLS_TIMEOUTS["read_file_max_whole_read_bytes"]` (256 KiB) is refused with its size and an offset/limit hint (a range read is never refused); and at or above `read_file_fast_path_threshold_bytes` (10 MiB) the reader streams `read_file_stream_chunk_bytes` (64 KiB) chunks — incremental decoding, an exact `total_lines`, only the window retained (one clipped line head at most) — returning `oversized: true` + `truncated: true` and NO write license, with `truncated_by_token_cap` separating the token budget from the line window. `_line_token_cost` short-circuits past the per-line cap, so a 500 MB single line costs ~13 600 chars, not 500 million. Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
 - the skills index (`<available_skills>`, built by `skills/loader.py::get_skills_text`) renders each skill's `description` plus two frontmatter signals — `when_to_use` (**required** on every skill the nudge / curator create or patch, and now carried by every shipped built-in) and `when_not_to_use` (also present on the built-ins) — all three token-bounded CJK-aware (60/50/50 tokens, `truncate_by_tokens`) and XML-escaped; the client's skill tooltip shows the same fields. The curator writes a second, narrower level into the umbrella BODY: every `##` sub-capability section opens with its own `**When to use:**` line (plus `**When NOT to use:**` when a real exclusion exists), and its deterministic fallback extracts both from the merge reasons.
 - a taskflow step may bind skills (`skills: ["browser"]`): `build_task_with_dep_results` (the one task-text builder every dispatch path calls) prepends each SKILL.md via `_skill_prepend.prepend_skills`, mirroring cron's `[IMPORTANT: …]` header + fail-open binding + `bump_use` + injection scan — so the child receives the skill directly and the orchestrator never relays it through its own context. `taskflow_flow(action="plan")`'s planner may emit the field and `taskflow_step(action="update_steps")` may change it.

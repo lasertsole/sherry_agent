@@ -34,10 +34,30 @@ class _StubCheckpointer:
         return None
 
 
+class _StubLLM:
+    """Records ``bind`` calls; ``create_agent`` receives the bound marker."""
+
+    def __init__(self, calls: list[dict[str, Any]]) -> None:
+        self._calls = calls
+
+    def bind(self, **kwargs: Any) -> SimpleNamespace:
+        self._calls.append(kwargs)
+        return SimpleNamespace(kind="bound", kwargs=kwargs)
+
+    def with_request_options(self, options: dict[str, Any]) -> SimpleNamespace:
+        self._calls.append(options)
+        return SimpleNamespace(kind="bound", kwargs=options)
+
+
 @pytest.fixture()
 def create_agent_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Stub the heavy dependencies of ``_build_child_agent``; capture its call."""
-    captured: dict[str, Any] = {}
+    captured: dict[str, Any] = {
+        "main_llm_calls": [],
+        "profile_calls": [],
+        "aux_llm_calls": [],
+        "bind_calls": [],
+    }
 
     def _fake_create_agent(**kwargs):
         captured.update(kwargs)
@@ -52,8 +72,18 @@ def create_agent_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
     monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
-    monkeypatch.setattr("models.build_main_llm", lambda *a, **k: SimpleNamespace())
-    monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(
+        "models.build_main_llm",
+        lambda *a, **k: captured["main_llm_calls"].append(k) or _StubLLM(captured["bind_calls"]),
+    )
+    monkeypatch.setattr(
+        "models.build_main_llm_for_profile",
+        lambda **k: captured["profile_calls"].append(k) or _StubLLM(captured["bind_calls"]),
+    )
+    monkeypatch.setattr(
+        "models.build_auxiliary_llm",
+        lambda *a, **k: captured["aux_llm_calls"].append(k) or _StubLLM(captured["bind_calls"]),
+    )
     return captured
 
 
@@ -93,6 +123,71 @@ class TestResponseFormat:
         _build(system_prompt=prompt, output_schema=_SCHEMA)
 
         assert "summary" in create_agent_capture["system_prompt"]
+
+
+class TestStructuredOutputLadder:
+    """Default level 0 is untouched; degradation only narrows the strategy.
+
+    The runner escalates on a provider rejection (see the spawn retry loop) and
+    PERSISTS the level per model, so these tests pin what each level builds.
+    """
+
+    def test_level_0_keeps_langchains_structured_output(self, create_agent_capture):
+        _build(output_schema=_SCHEMA, role=SubagentSessionRole.ORCHESTRATOR)
+
+        assert create_agent_capture["response_format"] == _SCHEMA
+        assert create_agent_capture["bind_calls"] == []
+        # Thinking is NOT touched at level 0.
+        assert create_agent_capture["main_llm_calls"] == [{}]
+
+    def test_level_1_sends_json_object_itself_and_drops_response_format(self, create_agent_capture):
+        _build(
+            output_schema=_SCHEMA,
+            role=SubagentSessionRole.ORCHESTRATOR,
+            strategy_level=1,
+        )
+
+        assert create_agent_capture["response_format"] is None
+        assert create_agent_capture["bind_calls"] == [{"response_format": {"type": "json_object"}}]
+        assert create_agent_capture["model"].kwargs == {"response_format": {"type": "json_object"}}
+        # Thinking still untouched at level 1.
+        assert create_agent_capture["main_llm_calls"] == [{}]
+
+    def test_level_2_adds_thinking_off(self, create_agent_capture):
+        _build(
+            output_schema=_SCHEMA,
+            role=SubagentSessionRole.ORCHESTRATOR,
+            strategy_level=2,
+        )
+
+        assert create_agent_capture["response_format"] is None
+        assert create_agent_capture["main_llm_calls"] == [{"thinking": False}]
+
+    def test_level_2_disables_thinking_for_the_auxiliary_family_too(self, create_agent_capture):
+        _build(output_schema=_SCHEMA, strategy_level=2)
+
+        assert create_agent_capture["aux_llm_calls"] == [{"thinking": False}]
+
+    def test_level_2_profile_build_pins_thinking_off(self, create_agent_capture):
+        _build(
+            output_schema=_SCHEMA,
+            strategy_level=2,
+            model_profile={"model": "deepseek-flash", "provider": "deepseek"},
+        )
+
+        assert create_agent_capture["profile_calls"][0]["thinking"] is False
+
+    def test_a_free_form_child_never_binds_json_mode(self, create_agent_capture):
+        _build(role=SubagentSessionRole.ORCHESTRATOR, strategy_level=2)
+
+        assert create_agent_capture["bind_calls"] == []
+        assert create_agent_capture["main_llm_calls"] == [{}]
+
+    def test_a_free_form_profile_child_leaves_thinking_to_the_env(self, create_agent_capture):
+        _build(model_profile={"model": "deepseek-flash", "provider": "deepseek"})
+
+        # Byte-identical call shape for the free-form path: no thinking key.
+        assert "thinking" not in create_agent_capture["profile_calls"][0]
 
 
 class TestSessionsSpawnSurfaces:
@@ -171,3 +266,39 @@ class TestSessionsSpawnSurfaces:
 
         assert "output_schema" in sessions_spawn_runtime_tool.args
         assert "output_schema" in SessionsSpawnSchema.model_fields
+
+
+class TestDegradationTrigger:
+    """Only structured-output rejections degrade a model; other errors surface."""
+
+    def test_the_known_deepseek_rejection_matches(self):
+        from agent.tools.subagent.spawn.core import _is_structured_output_rejection
+
+        exc = RuntimeError(
+            "Error code: 400 - {'error': {'message': 'Thinking mode does not support "
+            "this tool_choice (request_id: x)'}}"
+        )
+        assert _is_structured_output_rejection(exc) is True
+
+    def test_other_provider_errors_do_not_degrade(self):
+        from agent.tools.subagent.spawn.core import _is_structured_output_rejection
+
+        assert _is_structured_output_rejection(RuntimeError("connection reset")) is False
+        assert _is_structured_output_rejection(TimeoutError("timeout")) is False
+
+    def test_the_identity_mirrors_the_selection_precedence(self, monkeypatch):
+        from agent.tools.subagent.spawn.core import _child_model_identity
+        from agent.tools.subagent.types import FunctionalRole
+
+        monkeypatch.setenv("AUXILIARY_LLM_PROVIDER", "deepseek")
+        monkeypatch.setenv("AUXILIARY_LLM_API_NAME", "deepseek-flash")
+
+        assert _child_model_identity(
+            {"model": "glm-4.6", "provider": "zhipu"},
+            FunctionalRole.RESEARCHER,
+            "auxiliary",
+            SubagentSessionRole.LEAF,
+        ) == ("zhipu", "glm-4.6")
+        assert _child_model_identity(
+            None, FunctionalRole.RESEARCHER, "auxiliary", SubagentSessionRole.LEAF
+        ) == ("deepseek", "deepseek-flash")

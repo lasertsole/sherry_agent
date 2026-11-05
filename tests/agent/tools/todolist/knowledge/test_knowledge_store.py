@@ -372,3 +372,81 @@ class TestPurge:
 
     def test_purge_returns_false_when_missing(self, knowledge_root: Path):
         assert KnowledgeStore.purge(_identity()) is False
+
+
+class TestHandoffTree:
+    """The code-merged tree is a sidecar file, readable as its own layer."""
+
+    _AGGREGATED = {
+        "failed_paths": [{"path": "p1", "failure_reason": "r1", "source": "depth-1:a"}],
+        "hard_constraints": ["no network"],
+        "locked_decisions": [{"decision": "d1", "reason": "why", "source": "depth-1:a"}],
+        "handoff_forest": [
+            {
+                "task_understanding": "root",
+                "failed_paths": [],
+                "discovered_hard_constraints": [],
+                "locked_decisions": [],
+                "depth": 1,
+                "agent_label": "a",
+                "outcome": "ok",
+                "children": [],
+            }
+        ],
+    }
+
+    @pytest.mark.asyncio
+    async def test_write_then_read_round_trips(self, knowledge_root: Path):
+        path = await KnowledgeStore.write_handoff_tree(_identity("p"), self._AGGREGATED)
+
+        written = Path(path)
+        assert written.name == "handoff-tree.json"
+        payload = json.loads(written.read_text(encoding="utf-8"))
+        assert payload["handoff_forest"][0]["task_understanding"] == "root"
+        assert payload["schema_version"] == 1
+        assert payload["written_at"]
+        assert not list(written.parent.glob("*.tmp"))
+
+        all_data = KnowledgeStore.read_all(_identity("p"))
+        assert all_data["handoff"]["failed_paths"][0]["path"] == "p1"
+        text = KnowledgeStore.read_formatted(_identity("p"), layer="handoff")
+        assert "# Handoff Tree" in text
+        assert '"handoff_forest"' in text
+
+    @pytest.mark.asyncio
+    async def test_the_plan_overview_counts_the_handoff(self, knowledge_root: Path):
+        identity = _identity("p")
+        await KnowledgeStore.write(identity, layer="plan", data={"method": "m"})
+        await KnowledgeStore.write_handoff_tree(identity, self._AGGREGATED)
+
+        text = KnowledgeStore.read_formatted(identity)
+
+        assert "Handoff tree: 1 failed paths, 1 hard constraints" in text
+
+
+class TestPromptBlockHandoff:
+    @pytest.mark.asyncio
+    async def test_the_count_line_appears_after_extraction(self, knowledge_root, monkeypatch):
+        from agent.tools.todolist.knowledge import prompt_block
+
+        identity = _identity("p")
+        await KnowledgeStore.write(identity, layer="plan", data={"method": "m"})
+        await KnowledgeStore.write_handoff_tree(identity, TestHandoffTree._AGGREGATED)
+        monkeypatch.setattr(prompt_block, "_resolve_identity", lambda _sid: identity)
+
+        block = prompt_block.build_knowledge_block("s")
+
+        assert "Handoff: 1 failed paths, 1 hard constraints" in block
+        assert "layer='handoff'" in block
+
+    @pytest.mark.asyncio
+    async def test_the_tree_alone_still_renders(self, knowledge_root, monkeypatch):
+        # An extraction LLM failure leaves no plan-summary.json; the raw tree
+        # must still tell the main agent that experience data exists.
+        from agent.tools.todolist.knowledge import prompt_block
+
+        identity = _identity("p")
+        await KnowledgeStore.write_handoff_tree(identity, TestHandoffTree._AGGREGATED)
+        monkeypatch.setattr(prompt_block, "_resolve_identity", lambda _sid: identity)
+
+        assert "Handoff: 1 failed paths" in prompt_block.build_knowledge_block("s")

@@ -57,6 +57,17 @@ class ToolsTimeoutsConfig(TypedDict):
     #: line costing more than this is clipped even when the budget is off, so a
     #: minified single-line file can never ride a page whole.
     read_file_max_line_tokens: int
+    #: Whole-file read refusal: a file at or above this size is refused when the
+    #: model did not ask for a RANGE (offset=1 + the default limit). A range read
+    #: is never refused. 0 disables the refusal (historical behavior).
+    read_file_max_whole_read_bytes: int
+    #: Fast-path / streaming boundary: below this size the reader loads the file
+    #: whole (the historical path); at or above it the reader scans fixed-size
+    #: chunks and holds only the window (+ one clipped line head). 0 disables
+    #: streaming (the historical whole-file path).
+    read_file_fast_path_threshold_bytes: int
+    #: Bytes per ``os.read`` in the streaming scan.
+    read_file_stream_chunk_bytes: int
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
@@ -113,6 +124,12 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     # one line whose token cost exceeds this is clipped even when the budget is
     # switched off, so a minified single-line file can never ride a page whole.
     "read_file_max_line_tokens": 4000,
+    # Whole-file reads are refused at 256 KiB unless the caller asked for a
+    # range; the streaming scan takes over at 10 MiB (peak heap is one chunk +
+    # the window, never the file).
+    "read_file_max_whole_read_bytes": 262_144,
+    "read_file_fast_path_threshold_bytes": 10_485_760,
+    "read_file_stream_chunk_bytes": 65_536,
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,

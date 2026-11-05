@@ -66,9 +66,13 @@ def _install_deps(
         return child
 
     async def _fake_complete(
-        run_id: str, outcome, result_text, expected_generation: int | None = None
+        run_id: str,
+        outcome,
+        result_text,
+        expected_generation: int | None = None,
+        handoff: dict | None = None,
     ) -> None:
-        captured.append((run_id, outcome, result_text))
+        captured.append((run_id, outcome, result_text, handoff))
 
     async def _noop(*_: object, **__: object) -> None:
         return None
@@ -347,3 +351,35 @@ async def test_sessions_spawn_schema_forwards_goal_params(monkeypatch: pytest.Mo
     await tool._arun(task=_GOAL_TASK, goal_max_turns=3)
 
     assert captured["goal_max_turns"] == 3
+
+
+@pytest.mark.asyncio
+async def test_the_child_handoff_reaches_completion(monkeypatch: pytest.MonkeyPatch):
+    """The whole path: answer text → parse → complete_run(handoff=...)."""
+    run = _make_run()
+    answer = (
+        "## Task Result\n**Status**: completed\n\n"
+        "```json\n"
+        '{"task_understanding": "mine", "discovered_hard_constraints": ["no net"], '
+        '"locked_decisions": [], "failed_paths": [{"path": "p", "failure_reason": "r"}]}'
+        "\n```"
+    )
+    child = _FakeChildAgent([answer])
+
+    captured = await _run_goal(monkeypatch, run, child, goal_max_turns=1)
+
+    assert captured[0][3] == {
+        "task_understanding": "mine",
+        "discovered_hard_constraints": ["no net"],
+        "locked_decisions": [],
+        "failed_paths": [{"path": "p", "failure_reason": "r"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_missing_handoff_block_completes_with_none(monkeypatch: pytest.MonkeyPatch):
+    child = _FakeChildAgent(["plain answer without a block"])
+
+    captured = await _run_goal(monkeypatch, _make_run(), child, goal_max_turns=1)
+
+    assert captured[0][3] is None

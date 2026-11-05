@@ -34,15 +34,36 @@ _CODE_ROOT = Path(__file__).resolve().parents[1]
 APP_HOME = resolve_app_home(_CODE_ROOT)
 
 SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
-if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
-    # Seed the editable copy from the shipped file so the App Config panel has the
-    # full key list (comments included) to write into.
+
+
+def ensure_sherry_config_file() -> None:
+    """Seed ``sherry.jsonc`` from the shipped template when it is missing.
+
+    Called at import AND from the write path: an install where the file was
+    never seeded (or was deleted) must still be able to load and save the App
+    Config panel instead of answering a bare HTTP 500. Never overwrites an
+    existing file; a seed failure is logged (not swallowed) and left for the
+    handler's structured 503.
+    """
+    if SHERRY_CONFIG_PATH.exists():
+        return
     template = _CODE_ROOT / "sherry.jsonc"
-    if template.exists():
-        try:
-            SHERRY_CONFIG_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
-        except OSError:
-            pass
+    if template == SHERRY_CONFIG_PATH or not template.is_file():
+        return
+    from loguru import logger
+
+    try:
+        SHERRY_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SHERRY_CONFIG_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError as exc:
+        logger.warning(
+            "Failed to seed sherry.jsonc from {} to {}: {}", template, SHERRY_CONFIG_PATH, exc
+        )
+
+
+# Seed the editable copy from the shipped file so the App Config panel has the
+# full key list (comments included) to write into.
+ensure_sherry_config_file()
 
 # Single source of truth for accepted keys and their typed defaults. Nested
 # objects in sherry.jsonc are addressed with dotted paths ("GROUP.KEY").

@@ -337,8 +337,10 @@ def ensure_models_config_file() -> None:
     try:
         MODELS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         MODELS_CONFIG_PATH.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        from loguru import logger
+
+        logger.warning("Failed to seed {} from the shipped template: {}", MODELS_CONFIG_PATH, exc)
 
 
 #: The context-window floor before the 200K bump. An existing ``.models`` that
