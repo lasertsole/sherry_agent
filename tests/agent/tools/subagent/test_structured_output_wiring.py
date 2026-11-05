@@ -37,7 +37,7 @@ class _StubCheckpointer:
 @pytest.fixture()
 def create_agent_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Stub the heavy dependencies of ``_build_child_agent``; capture its call."""
-    captured: dict[str, Any] = {}
+    captured: dict[str, Any] = {"main_llm_calls": [], "profile_calls": []}
 
     def _fake_create_agent(**kwargs):
         captured.update(kwargs)
@@ -52,8 +52,18 @@ def create_agent_capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "200000")
     monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "200000")
     monkeypatch.setattr("models.LLMs.main_llm.max_tokens", 65_536)
-    monkeypatch.setattr("models.build_main_llm", lambda *a, **k: SimpleNamespace())
-    monkeypatch.setattr("models.build_auxiliary_llm", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(
+        "models.build_main_llm",
+        lambda *a, **k: captured["main_llm_calls"].append(k) or SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "models.build_main_llm_for_profile",
+        lambda **k: captured["profile_calls"].append(k) or SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "models.build_auxiliary_llm",
+        lambda *a, **k: captured.setdefault("aux_llm_calls", []).append(k) or SimpleNamespace(),
+    )
     return captured
 
 
@@ -93,6 +103,47 @@ class TestResponseFormat:
         _build(system_prompt=prompt, output_schema=_SCHEMA)
 
         assert "summary" in create_agent_capture["system_prompt"]
+
+
+class TestSchemaBoundChildrenDisableThinking:
+    """A forced ``tool_choice`` (how ToolStrategy enforces the schema) is
+    rejected by some providers in thinking mode — DeepSeek answers
+    ``400 Thinking mode does not support this tool_choice`` — so a schema-bound
+    child is built with thinking off."""
+
+    def test_a_schema_child_builds_the_main_llm_with_thinking_off(self, create_agent_capture):
+        _build(output_schema=_SCHEMA, role=SubagentSessionRole.ORCHESTRATOR)
+
+        assert create_agent_capture["main_llm_calls"] == [{"thinking": False}]
+
+    def test_a_free_form_child_keeps_the_env_thinking_default(self, create_agent_capture):
+        _build(role=SubagentSessionRole.ORCHESTRATOR)
+
+        assert create_agent_capture["main_llm_calls"] == [{}]
+
+    def test_a_leaf_child_on_the_auxiliary_family_disables_thinking_too(self, create_agent_capture):
+        _build(output_schema=_SCHEMA)
+
+        assert create_agent_capture["aux_llm_calls"] == [{"thinking": False}]
+
+    def test_a_free_form_leaf_child_keeps_the_auxiliary_default(self, create_agent_capture):
+        _build()
+
+        assert create_agent_capture["aux_llm_calls"] == [{}]
+
+    def test_a_role_profile_child_is_built_with_thinking_off(self, create_agent_capture):
+        _build(
+            output_schema=_SCHEMA,
+            model_profile={"model": "deepseek-flash", "provider": "deepseek"},
+        )
+
+        assert create_agent_capture["profile_calls"][0]["thinking"] is False
+
+    def test_a_free_form_profile_child_leaves_thinking_to_the_env(self, create_agent_capture):
+        _build(model_profile={"model": "deepseek-flash", "provider": "deepseek"})
+
+        # Byte-identical call shape for the free-form path: no thinking key.
+        assert "thinking" not in create_agent_capture["profile_calls"][0]
 
 
 class TestSessionsSpawnSurfaces:

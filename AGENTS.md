@@ -305,10 +305,15 @@ User message → Robyn WS → agent.core.built_agent() graph
       including the manual batch and the auto-dispatch wave). The shape is
       ALSO enforced at generation time: the child agent is built with
       create_agent(response_format=<schema>) (AutoStrategy: provider-native
-      structured output, else a structured-output tool call), the schema
-      text stays in the child's system prompt as the prompt-level fallback,
-      and sessions_spawn exposes the same output_schema field so a
-      tool-driven child can be constrained the same way
+      structured output, else a structured-output tool call with a FORCED
+      tool_choice), the schema text stays in the child's system prompt as the
+      prompt-level fallback, and sessions_spawn exposes the same output_schema
+      field so a tool-driven child can be constrained the same way.
+      A SCHEMA-BOUND child is built with thinking OFF
+      (`_select_child_llm(thinking_off=True)`): DeepSeek rejects a forced
+      tool_choice in thinking mode (`400 Thinking mode does not support this
+      tool_choice`), so the two cannot coexist; the run record stores
+      `thinking="off"` and no `thinking:<level>` tag is stamped
     · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a

@@ -734,7 +734,10 @@ async def spawn_subagent_direct(
         task_name=normalized_task_name,
         cleanup=cleanup,
         agent_id=agent_id,
-        thinking=thinking_resolved or thinking,
+        # A schema-bound child is built with thinking off (see
+        # ``_select_child_llm``): record "off" instead of a level the model will
+        # not use, and never stamp a ``thinking:<level>`` run tag for it.
+        thinking="off" if output_schema else (thinking_resolved or thinking),
         max_output_tokens=resolve_child_max_output_tokens(
             model_profile=role_model_profile,
             model_override=model,
@@ -1754,6 +1757,8 @@ def _select_child_llm(
     functional_role: FunctionalRole,
     model_tier: str | None,
     role: SubagentSessionRole,
+    *,
+    thinking_off: bool = False,
 ):
     """Pick the child's LLM, in precedence order.
 
@@ -1763,20 +1768,40 @@ def _select_child_llm(
     *model_override* (resolved by name), then the functional role's *model_tier*,
     and finally the depth role: ORCHESTRATOR gets the main LLM, LEAF the
     auxiliary one.
+
+    ``thinking_off`` forces the main-family builders to the thinking-off variant.
+    It is set for schema-bound children: ``create_agent(response_format=...)``
+    enforces the schema through a structured-output tool with a FORCED
+    ``tool_choice``, and some providers (DeepSeek) reject that combination in
+    thinking mode with ``400 Thinking mode does not support this tool_choice``.
+    Structured output needs no reasoning, so dropping thinking is the safe side.
+    The auxiliary family has no thinking knob and is returned unchanged.
     """
     from models import build_auxiliary_llm, build_main_llm
+
+    if thinking_off:
+        logger.info(
+            "Subagent structured output: thinking forced off (functional_role={}, tier={})",
+            functional_role,
+            model_tier,
+        )
 
     if model_profile and model_profile.get("model"):
         try:
             from models import build_main_llm_for_profile
 
-            child_llm = build_main_llm_for_profile(
-                provider=model_profile.get("provider"),
-                model=model_profile["model"],
-                api_key=model_profile.get("api_key"),
-                base_url=model_profile.get("base_url"),
-                max_output_tokens=resolve_profile_max_output_tokens(model_profile),
-            )
+            profile_kwargs: dict[str, Any] = {
+                "provider": model_profile.get("provider"),
+                "model": model_profile["model"],
+                "api_key": model_profile.get("api_key"),
+                "base_url": model_profile.get("base_url"),
+                "max_output_tokens": resolve_profile_max_output_tokens(model_profile),
+            }
+            if thinking_off:
+                # Keep the free-form call shape untouched; only a schema-bound
+                # child pins the variant.
+                profile_kwargs["thinking"] = False
+            child_llm = build_main_llm_for_profile(**profile_kwargs)
             logger.info(
                 "Subagent role model: functional_role={} model={} provider={}",
                 functional_role,
@@ -1800,12 +1825,12 @@ def _select_child_llm(
     # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
     # the pre-migration depth-based behavior untouched.
     if functional_role != FunctionalRole.GENERAL and model_tier == "main":
-        return build_main_llm()
+        return build_main_llm(thinking=False) if thinking_off else build_main_llm()
     if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
-        return build_auxiliary_llm()
+        return build_auxiliary_llm(thinking=False) if thinking_off else build_auxiliary_llm()
     if role == SubagentSessionRole.ORCHESTRATOR:
-        return build_main_llm()
-    return build_auxiliary_llm()
+        return build_main_llm(thinking=False) if thinking_off else build_main_llm()
+    return build_auxiliary_llm(thinking=False) if thinking_off else build_auxiliary_llm()
 
 
 async def _build_child_agent(
@@ -1852,9 +1877,13 @@ async def _build_child_agent(
             output. It is enforced at generation time through LangChain's
             ``response_format`` (a raw schema resolves to ``AutoStrategy``: the
             provider's native structured output where supported, else a
-            structured-output tool call), while ``build_structured_output_prompt``
-            keeps the schema in the system prompt as the prompt-level fallback
-            and Tier 1 re-validates on resume. ``None`` = free-form output.
+            structured-output tool call WITH a forced ``tool_choice``), while
+            ``build_structured_output_prompt`` keeps the schema in the system
+            prompt as the prompt-level fallback and Tier 1 re-validates on
+            resume. Because some providers (DeepSeek) reject a forced
+            ``tool_choice`` in thinking mode, a schema-bound child is built with
+            thinking OFF (``_select_child_llm(thinking_off=True)``).
+            ``None`` = free-form output.
         tools: Tool list; ``None`` falls back to :func:`build_main_tools`.
         tool_allow: Explicit allow-list (empty = no restriction beyond deny-list).
         tool_deny: Explicit deny-list (an empty list is authoritative — it means the
@@ -1881,7 +1910,17 @@ async def _build_child_agent(
     final_tools = _assemble_child_tools(
         tools, tool_allow, tool_deny, extra_tools, functional_role, session_id
     )
-    child_llm = _select_child_llm(model_profile, model_override, functional_role, model_tier, role)
+    child_llm = _select_child_llm(
+        model_profile,
+        model_override,
+        functional_role,
+        model_tier,
+        role,
+        # Schema enforcement uses a forced tool_choice (ToolStrategy); providers
+        # such as DeepSeek reject that in thinking mode, so a schema-bound child
+        # runs with thinking off.
+        thinking_off=bool(output_schema),
+    )
 
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()

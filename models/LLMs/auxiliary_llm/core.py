@@ -50,7 +50,12 @@ load_env()
 # ---------------------------------------------------------------------------
 
 
-def build_auxiliary_llm(temperature: float | None = None, model_name: str | None = None):
+def build_auxiliary_llm(
+    temperature: float | None = None,
+    model_name: str | None = None,
+    *,
+    thinking: bool | None = None,
+):
     """Create a fresh auxiliary LLM instance bound to the current event loop.
 
     The module-level ``auxiliary_llm`` singleton is created at import time on
@@ -67,6 +72,13 @@ def build_auxiliary_llm(temperature: float | None = None, model_name: str | None
     ``model_name`` overrides ``AUXILIARY_LLM_API_NAME`` while keeping the
     family's provider/credentials — the safety filter's review model is one
     name on an existing deployment, not a second provider block.
+
+    ``thinking`` forces the family's reasoning state for THIS instance (the
+    remote branch only; a local GGUF has no wire switch): ``False`` sends the
+    provider's "off" payload, ``True`` its default-on level, ``None`` keeps the
+    provider's own default. Schema-bound subagents pass ``False`` — a forced
+    ``tool_choice`` (how structured output is enforced) is rejected by some
+    providers in thinking mode.
     """
     _provider = read_env("AUXILIARY_LLM_PROVIDER")
     _api_base = read_env("AUXILIARY_LLM_API_BASE")
@@ -79,6 +91,16 @@ def build_auxiliary_llm(temperature: float | None = None, model_name: str | None
 
         _raw_max = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
         _max_tokens = int(_raw_max) if _raw_max else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+
+        _thinking_kwargs: dict[str, Any] = {}
+        if thinking is not None:
+            from config.features import THINKING_LEVEL_CONFIG
+            from models.LLMs.reasoning_payload import build_thinking_kwargs
+
+            _level = "off" if thinking is False else THINKING_LEVEL_CONFIG["default_level"]
+            _thinking_kwargs = build_thinking_kwargs(
+                _provider, os.getenv("AUXILIARY_LLM_API_NAME"), _level
+            )
 
         _model_config: dict[str, Any] = ModelEnvBuilder(
             {
@@ -106,6 +128,7 @@ def build_auxiliary_llm(temperature: float | None = None, model_name: str | None
                     _provider,
                     os.getenv("AUXILIARY_LLM_API_NAME"),
                 ),
+                **_thinking_kwargs,
             }
         )
 
