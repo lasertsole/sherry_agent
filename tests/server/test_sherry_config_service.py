@@ -321,3 +321,26 @@ class TestDefaultsAndMissingKeys:
         text = path.read_text(encoding="utf-8")
         assert '"TOKEN_BUDGET_DEFAULT_CAP": 250000' in text
         assert json5.loads(text)["TOKEN_BUDGET_DEFAULT_CAP"] == 250000
+
+
+class TestFirstRunSeeding:
+    def test_a_save_on_a_missing_file_seeds_it_from_the_template(self, tmp_path, monkeypatch):
+        """A first-run App Config save used to 500: the write path only refused.
+
+        It now seeds ``sherry.jsonc`` from the shipped template and saves into
+        it (the read path keeps its structured 503 for a genuinely broken
+        install)."""
+        target = tmp_path / "app-data" / "sherry.jsonc"
+        template_root = tmp_path / "bundle"
+        template_root.mkdir()
+        (template_root / "sherry.jsonc").write_text(SAMPLE, encoding="utf-8")
+
+        monkeypatch.setattr("config.sherry_settings.SHERRY_CONFIG_PATH", target)
+        monkeypatch.setattr("config.sherry_settings._CODE_ROOT", template_root)
+        monkeypatch.setattr("server.service.sherry_config.SHERRY_CONFIG_PATH", target)
+
+        write_sherry_config({"LOG_LEVEL": "DEBUG"})
+
+        assert target.is_file()
+        assert '"LOG_LEVEL": "DEBUG"' in target.read_text(encoding="utf-8")
+        assert target.read_text(encoding="utf-8").startswith("// app settings")

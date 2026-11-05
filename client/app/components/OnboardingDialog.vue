@@ -141,6 +141,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import type { PresetEntry } from '~/composables/persona-catalog';
+import { describeError } from '~/utils/describe-error';
 // The page owns the character snapshot helper; injected into the shared
 // creator so the catalogue module never imports a component.
 import { ensureSessionCharacter } from '~/pages/home/components/SessionSidebar.vue';
@@ -238,7 +239,7 @@ const finish = async (): Promise<void> => {
     await complete();
   } catch (e) {
     logUtil.e('[OnboardingDialog] Failed to create the session:', e);
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = describeError(e);
     error.value = detail ? `${t('onboarding.createFailed')} (${detail})` : t('onboarding.createFailed');
   } finally {
     creating.value = false;

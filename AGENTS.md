@@ -1052,6 +1052,31 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   A dev build (`pnpm tauri dev`, a plain `cargo build`) neither ships nor starts
   a frozen backend, and spawns `python -m server` from the checkout when
   `EMA_AUTO_START_BACKEND` asks for it.
+- **Window lifecycle**: the notification-area entry sets its icon from
+  `app.default_window_icon()` (tauri.conf.json's `icon` array only feeds the
+  window / executable; the packaged tree ships no `icons/` folder). The main
+  window's close button never ends the process by default: the Rust
+  `CloseRequested` handler calls `api.prevent_close()`, bumps `CLOSE_TICKET`,
+  emits `close-requested` and hides the window after 1.5 s ONLY if the frontend
+  has not `close_ack`ed (the ack runs as soon as its listener fires, BEFORE the
+  prompt, so the fallback cannot hide an open dialog). `CloseToTrayDialog`
+  applies the remembered `closeAction` app flag — `tray` hides, `exit` calls
+  `quit_app` (sets `EXPLICIT_QUIT`, lets the close through; the `RunEvent::Exit`
+  hook stops the backend), anything else prompts with a "don't ask again"
+  checkbox. The same flag is editable under System Config → Desktop
+  (`DesktopSettingsSection.vue`, appended LAST — the panel's footer guard is
+  keyed by tab index, so tab 7 joins the exclusion list).
+- **First-run files**: the writable home seeds `sherry.jsonc` / `.models` /
+  `.network` at import (`config/_home.py` resolves `--sherry-home`, then
+  `SHERRY_HOME`, then the code root for all four consumers); the read handlers
+  answer a structured 503 when a file is missing/unreadable and the sherry WRITE
+  path re-seeds before saving (a first-run App Config save used to 500). The
+  workspace roots are created on the WRITE path too — `FileStore.write_files`
+  runs the store's pre-read hook and `_write_one` mkdirs its parent — so the
+  packaged app's first persona write cannot fail with `FileNotFoundError`
+  (which the onboarding/preset dialogs then rendered as `[object Object]`;
+  both now use `describeError`, which prefers a Tauri error object's
+  `message`/`code` over `String(obj)`).
 - **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
   `nvidia-smi` / the kernel-module record and gates the model settings tab's
   card (`cuda_support` command; `CudaPackCard.vue` + `use-cuda-pack.ts` +

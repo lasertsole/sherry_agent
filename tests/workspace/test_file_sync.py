@@ -149,3 +149,23 @@ def test_returns_empty_when_nothing_required(file_sync_isolation):
         target.write_text("existing", encoding="utf-8")
 
     assert ensure_workspace_system_files() == []
+
+
+def test_a_missing_workspace_root_is_created_even_with_no_templates(tmp_path, monkeypatch):
+    """First run of the packaged app: the home exists, workspace/ does not, and
+    a write must not fail because nothing got copied."""
+    import workspace.file_sync as mod
+
+    ws = tmp_path / "fresh-home" / "workspace"
+    memory_dir = ws / "memory"
+    monkeypatch.setattr(mod, "WORKSPACE_DIR", ws)
+    monkeypatch.setattr(mod, "MEMORY_DIR", memory_dir)
+    monkeypatch.setattr(mod, "ALL_SYSTEM_FILE_NAMES", ["AGENTS.md"])
+    monkeypatch.setattr(mod, "MEMORY_SYSTEM_FILE_NAMES", ["FACTS.md"])
+    monkeypatch.setattr(
+        mod, "resolve_workspace_template_dir", lambda lang=None: tmp_path / "no-template"
+    )
+
+    assert mod.ensure_workspace_system_files() == []
+    assert ws.is_dir()
+    assert memory_dir.is_dir()

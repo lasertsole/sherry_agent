@@ -148,6 +148,11 @@ def write_sherry_config(changes: dict[str, str]) -> None:
     if not isinstance(changes, dict):
         raise ValueError("changes must be a mapping of key to value")
 
+    # A missing file is an INSTALL state, not a caller error: seed it from the
+    # shipped template so the first save works (the read path keeps its 503).
+    from config.sherry_settings import ensure_sherry_config_file
+
+    ensure_sherry_config_file()
     if not SHERRY_CONFIG_PATH.exists():
         raise FileNotFoundError(f"Sherry config file not found: {SHERRY_CONFIG_PATH}")
 

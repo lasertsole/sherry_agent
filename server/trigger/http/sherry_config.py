@@ -22,7 +22,7 @@ async def read_sherry_config_handler(request):
         # answer a structured 503 instead of letting the exception become a
         # bare HTTP 500 (the packaged app's first run used to surface one).
         logger.error(f"sherry.jsonc is unavailable: {e}")
-        return {"success": False, "message": str(e)}, 503
+        return {"success": False, "message": str(e)}, {}, 503
 
 
 @app.put("/sherry-config")
@@ -42,6 +42,11 @@ async def write_sherry_config_handler(request):
         write_sherry_config(changes)
     except ValueError as e:
         return {"success": False, "message": str(e)}
+    except (FileNotFoundError, OSError) as e:
+        # The file was never seeded and the seed failed too: an INSTALL
+        # problem, not a server bug — same structured 503 as the read path.
+        logger.error(f"sherry.jsonc is unavailable for writing: {e}")
+        return {"success": False, "message": str(e)}, {}, 503
     logger.info(f"Sherry config updated: keys={len(changes)}")
     return {"success": True, "message": "Sherry config updated"}
 

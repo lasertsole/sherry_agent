@@ -62,6 +62,7 @@
 
 <script lang="ts" setup>
 import { computed, ref, watch } from 'vue';
+import { describeError } from '~/utils/describe-error';
 import { useI18n } from 'vue-i18n';
 import { ensureSessionCharacter } from './SessionSidebar.vue';
 import { logUtil } from '~/utils/log';
@@ -127,7 +128,7 @@ const confirm = async () => {
     visible.value = false;
   } catch (e) {
     logUtil.e('[NewSessionPresetDialog] Failed to create the session:', e);
-    const detail = e instanceof Error ? e.message : String(e);
+    const detail = describeError(e);
     toastError(detail ? `${t('personaPreset.applyFailed')} (${detail})` : t('personaPreset.applyFailed'));
   } finally {
     creating.value = false;

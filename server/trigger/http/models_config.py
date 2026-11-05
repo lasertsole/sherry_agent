@@ -16,7 +16,7 @@ async def read_models_config_handler(request):
         # Missing/unreadable file = install problem → structured 503, never a
         # bare 500 (the panel can then tell "load failed" from "no config").
         logger.error(f".models is unavailable: {e}")
-        return {"success": False, "message": str(e)}, 503
+        return {"success": False, "message": str(e)}, {}, 503
 
 
 @app.put("/models-config")
@@ -37,5 +37,8 @@ async def write_models_config_handler(request):
         write_models_config(changes)
     except ValueError as e:
         return {"success": False, "message": str(e)}
+    except (FileNotFoundError, OSError) as e:
+        logger.error(f".models is unavailable for writing: {e}")
+        return {"success": False, "message": str(e)}, {}, 503
     logger.info(f"Models config updated: keys={len(changes)}")
     return {"success": True, "message": "Models config updated"}

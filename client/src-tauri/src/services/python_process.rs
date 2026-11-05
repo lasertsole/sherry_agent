@@ -84,7 +84,10 @@ fn cuda_pack_usable(exe: &Path, pack_dir: &Path) -> bool {
 pub struct PythonProcessManager {
     child: Mutex<Option<Child>>,
     command: BackendCommand,
-    /// Directory the child runs in AND the value exported as `SHERRY_HOME`.
+    /// Directory the child runs in AND its `--sherry-home` value.
+    ///
+    /// The shell deliberately does NOT export `SHERRY_HOME` (the env var is
+    /// only a transitional fallback on the Python side).
     app_home: PathBuf,
 }
 
@@ -326,8 +329,9 @@ mod tests {
 
     #[test]
     fn the_child_is_pointed_at_the_app_home() {
-        // The writable root travels as SHERRY_HOME and as the working
-        // directory, so nothing the backend writes lands in the bundle.
+        // The writable root travels as --sherry-home and as the working
+        // directory (not as an env var), so nothing the backend writes lands
+        // in the bundle.
         let home = std::env::temp_dir().join("sherry-home-probe");
         let mgr = PythonProcessManager::new(checkout("/tmp"), home.clone());
         assert_eq!(mgr.app_home, home);

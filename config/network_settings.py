@@ -214,8 +214,10 @@ def ensure_network_config_file() -> None:
     try:
         NETWORK_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         NETWORK_CONFIG_PATH.write_text(text, encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        from loguru import logger
+
+        logger.warning("Failed to seed {} from the shipped template: {}", NETWORK_CONFIG_PATH, exc)
 
 
 def load_network_settings() -> dict[str, Any]:

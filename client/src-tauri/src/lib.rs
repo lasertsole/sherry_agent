@@ -2,7 +2,7 @@ mod commands;
 mod services;
 mod utils;
 
-use commands::{agent, cuda, session, system, system_prompt};
+use commands::{agent, cuda, session, system, system_prompt, window};
 use services::backend_bundle::{expected_backend_path, resolve_bundled_backend};
 use services::cuda_pack_downloader::CudaPackDownloadState;
 use services::python_bridge::PythonBridge;
@@ -13,15 +13,27 @@ use utils::logger::setup_logger;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-/// Set when the user asked for a REAL quit (the tray menu's Quit). The window's
-/// close button otherwise hides to the tray, so this flag is what separates
-/// "the operator pressed X" from "the operator chose Quit".
-static EXPLICIT_QUIT: std::sync::atomic::AtomicBool =
+/// Set when the user asked for a REAL quit (the tray menu's Quit, or the close
+/// dialog's "quit"). The window's close button otherwise asks the frontend /
+/// hides to the tray, so this flag is what separates "the operator pressed X"
+/// from "the operator chose Quit".
+pub(crate) static EXPLICIT_QUIT: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
+/// Monotonic id of the newest `close-requested` emission. The fallback thread
+/// captures its ticket and hides the window only when no newer acknowledgement
+/// arrived — a stale fallback must not hide a window the user just reopened.
+pub(crate) static CLOSE_TICKET: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Highest ticket the frontend acknowledged (it answers as soon as its handler
+/// runs, BEFORE showing the dialog, so the fallback cannot steal a dialog).
+pub(crate) static CLOSE_ACKED: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -82,6 +94,9 @@ pub fn run() {
             cuda::download_cuda_pack,
             cuda::remove_cuda_pack,
             cuda::restart_backend,
+            // Window lifecycle (close-to-tray dialog / real quit)
+            window::close_ack,
+            window::quit_app,
         ])
         .setup(|app| {
             // ── System tray ──────────────────────────────────────
@@ -96,9 +111,17 @@ pub fn run() {
                 .item(&quit_item)
                 .build()?;
 
-            let _tray = TrayIconBuilder::new()
+            // The notification-area entry needs its OWN icon: tauri.conf.json's
+            // icon array only feeds the window / executable, and the packaged
+            // tree ships no icons/ folder. The default window icon is embedded
+            // in the binary at build time, so this holds for the installer too.
+            let mut tray_builder = TrayIconBuilder::new()
                 .menu(&tray_menu)
-                .tooltip("EMA AI Agent")
+                .tooltip("EMA AI Agent");
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            let _tray = tray_builder
                 // Left-click restores the window — the standard habit for a
                 // window the X button only hid.
                 .on_tray_icon_event(|tray, event| {
@@ -261,12 +284,12 @@ pub fn run() {
 
             Ok(())
         })
-        // Close-to-tray: the X button HIDES the main window instead of ending
-        // the app, so the backend (and any running turn) keeps living; the
-        // tray's Show / left click restores it, and its Quit sets
-        // EXPLICIT_QUIT so this branch lets the close through. Without this
-        // interception a distro's "click X" killed the shell and left the
-        // backend to the (unreliable) Drop path.
+        // Close behaviour: the X button never ends the process by default —
+        // the frontend decides (remembered preference, or its "close to tray?"
+        // dialog) and the fallback below only hides when nobody answers (the
+        // webview is still booting / has no listener). The tray's Quit and the
+        // dialog's "quit" set EXPLICIT_QUIT so this branch lets the close
+        // through; `quit_app` also stops the backend via the RunEvent exit hook.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
@@ -275,8 +298,18 @@ pub fn run() {
                 if EXPLICIT_QUIT.load(std::sync::atomic::Ordering::SeqCst) {
                     return;
                 }
-                let _ = window.hide();
                 api.prevent_close();
+                let ticket = CLOSE_TICKET.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                let _ = window.emit("close-requested", ());
+                let handle = window.app_handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    if CLOSE_ACKED.load(std::sync::atomic::Ordering::SeqCst) < ticket {
+                        if let Some(w) = handle.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                });
             }
         })
         .build(tauri::generate_context!())

@@ -72,6 +72,12 @@ def ensure_workspace_system_files(lang: str | None = None) -> list[str]:
     Returns the list of files actually copied (empty when nothing was needed);
     memory files are reported as ``memory/<name>``.
     """
+    # The packaged app's first run has neither directory: the write path opens
+    # ``workspace/<file>`` directly, so "no template got copied" must still
+    # leave the roots in place instead of surfacing a FileNotFoundError.
+    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
     template_dir = resolve_workspace_template_dir(lang)
     copied: list[str] = []
 

@@ -12,6 +12,7 @@
 //! | [`system_prompt`] | `system_prompt_read/write/update` | System prompt CRUD |
 //! | [`system`] | `system_info`, `system_health` | App metadata and health |
 //! | [`cuda`] | `cuda_support`, `cuda_pack_status`, `download_cuda_pack`, `remove_cuda_pack`, `restart_backend` | Optional CUDA pack (model settings tab) |
+//! | [`window`] | `close_ack`, `quit_app` | Close-to-tray acknowledgement / real quit |
 //! | [`events`] | — | Streaming event types and constants |
 
 pub mod agent;
@@ -20,3 +21,4 @@ pub mod events;
 pub mod session;
 pub mod system;
 pub mod system_prompt;
+pub mod window;

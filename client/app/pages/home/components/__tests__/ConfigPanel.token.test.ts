@@ -179,8 +179,8 @@ describe('ConfigPanel shortcut-bindings tab', () => {
     const vm = wrapper.vm as unknown as ConfigPanelVm;
 
     // The token budget left the settings for a session tab; the memory
-    // settings tab is appended last: background / env / app / language /
-    // shortcuts / live safety / memory settings.
+    // settings and desktop tabs are appended last: background / env / app /
+    // language / shortcuts / live safety / memory settings / desktop.
     expect(wrapper.findAll('.tp-header').map(node => node.text())).toEqual([
       '背景图片',
       '模型配置',
@@ -188,7 +188,8 @@ describe('ConfigPanel shortcut-bindings tab', () => {
       '国际化',
       '快捷键',
       '直播安全',
-      '记忆设置'
+      '记忆设置',
+      '桌面'
     ]);
 
     // The tab body is the (stubbed) section; it saves on its own, so the
