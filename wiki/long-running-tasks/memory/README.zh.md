@@ -23,6 +23,12 @@
 
 **图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:227`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
 
+## 🔎 语义召回与整理
+
+两者都是可选开关，且全程 fail-open。开启 `semantic_recall_enabled`（记忆设置里的“语义召回”）后，系统提示词只放紧凑索引（`MemoryStore.format_index_for_system_prompt`），每轮由 `memory_recall` reminder（priority 88，cooldown 3）注入与当前请求相关的条目。`context_engine/store/memory_recall.py` 会用 bge-m3 自愈 `memory_entries.embedding` 索引，用 bge-reranker 精排 cosine 候选，按 `semantic_recall_char_budget` 截断，跳过早于当前 `context_epoch` 基线的条目，并累加 `usage_count`。`memory(action="recall")` 与 `POST /memory/search` 走同一路径；开关关闭时搜索回退到子串匹配。
+
+`POST /memory/consolidate` 启动异步任务（`GET /memory/consolidate/:task_id` 查询）：先跑确定性的 `prune_unused` 老化，再在活跃条目达到 `consolidation_min_entries`（10）时，用主模型通过 memory 工具合并重复、消解矛盾、纠正错放目标并精简措辞。压缩在记忆 review 之后跑同一 pass（15 turns）；会话删除在两波 salvage 之后跑（5 turns）。失败只记日志，不阻塞压缩或删除。
+
 ## 🔗 摘要 ↔ TaskFlow 协调
 
 当压缩构建其 LLM 提示词时，`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:122`）会渲染本会话的活动 flow，并把它作为摘要提示词的**最后**一部分追加（`_build_summary_prompt`，`summarization/summary_generation.py:554`）：

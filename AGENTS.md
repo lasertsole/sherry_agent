@@ -870,11 +870,35 @@ entries and increments their usage. `facts` overflow archives the LEAST-ACTIVE
 entries (`COALESCE(last_used, created_at)`, then `usage_count`) instead of the
 oldest; every removal is a soft delete (`archived` + reason), restorable from
 the panel. The panel talks to `/memory/entries*` (CRUD, stats, search,
-restore), `/memory/settings` (the UI-editable caps and `max_unused_days`, with
-the code defaults in `MEMORY_TOOL`), and `/memory/consolidate` (the aging pass);
+restore), `/memory/settings` (the UI-editable caps, `max_unused_days` and the
+semantic-recall switch, with the code defaults in `MEMORY_TOOL`), and
+`/memory/consolidate` (an async aging + LLM consolidation task);
 legacy `GET/PUT /memory` still renders/parses the old `§`-delimited shape without
 a `session_id`. A legacy `<project>/.sherry/memory/FACTS.md` is ignored (left on
 disk, never rewritten) — it is not migrated automatically.
+
+**Semantic recall is an opt-in second injection mode.** The switch lives in
+`MEMORY_TOOL["semantic_recall_*"]` (default off) and the settings panel persists
+overrides in `memory_settings`. When on, `build_system_prompt` injects only the
+compact index (`MemoryStore.format_index_for_system_prompt`) and the
+`memory_recall` reminder source (priority 88, cooldown 3, async builder) injects
+the per-turn hits; `context_engine/store/memory_recall.py` self-heals the
+`memory_entries.embedding` vector index (`memory_embeddings.py`), embeds the
+query with the same bge-m3 backend, re-ranks the cosine shortlist with
+bge-reranker, applies `semantic_recall_char_budget`, skips entries stamped with
+an older `context_epoch` baseline, and increments usage. `memory(action="recall")`
+and `/memory/search` use the same path; `/memory/search` falls back to substring
+when the switch is off.
+
+**Consolidation is cost-gated and async.** `run_memory_consolidation` first runs
+the deterministic `prune_unused` aging pass, then, only with at least
+`consolidation_min_entries` (10) active entries, asks the main model to merge
+duplicates / resolve contradictions / re-route / tighten through the memory tool
+(15 turns). Compression runs it after the memory review, session-end salvage
+after both waves (5 turns), and `POST /memory/consolidate` starts a detached task
+(`GET /memory/consolidate/:task_id` reports it). Entries are stamped with the
+writer session's `context_epoch` baseline; recall treats an older-epoch entry
+with no later `last_used` as stale. All paths are fail-open.
 
 The external-path HITL gate agrees with that root: `resolve_external_path`'s
 first check is "inside `ROOT_DIR` **or inside the session's project directory**"

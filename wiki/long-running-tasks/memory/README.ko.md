@@ -23,6 +23,12 @@
 
 **그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
 
+## 🔎 의미 검색과 정리
+
+둘 다 선택형이며 모든 경로가 fail-open입니다. `semantic_recall_enabled`(기억 설정의 "의미 검색")를 켜면 시스템 프롬프트에는 간단한 색인(`MemoryStore.format_index_for_system_prompt`)만 들어가고, 매 턴 `memory_recall` 알림(priority 88, cooldown 3)이 현재 요청과 관련된 항목을 주입합니다. `context_engine/store/memory_recall.py`는 bge-m3로 `memory_entries.embedding` 색인을 자가 복구하고, bge-reranker로 cosine 후보를 재정렬하며, `semantic_recall_char_budget`으로 자르고, 현재 `context_epoch` 기준선보다 오래된 항목을 건너뛰고, `usage_count`를 올립니다. `memory(action="recall")`과 `POST /memory/search`는 같은 경로를 사용하며, 스위치가 꺼져 있으면 검색은 부분 문자열로 폴백합니다.
+
+`POST /memory/consolidate`는 비동기 작업을 시작합니다(`GET /memory/consolidate/:task_id`로 조회). 항상 결정적인 `prune_unused` 노화를 실행하고, 활성 항목이 `consolidation_min_entries`(10) 이상일 때만 메인 모델이 memory 도구로 중복 병합, 모순 해소, 잘못된 target 교정, 문장 압축을 수행합니다. 압축은 기억 리뷰 뒤에 같은 경로를 실행하고(15 turns), 세션 삭제는 두 번의 salvage 뒤에 실행합니다(5 turns). 실패는 로그만 남기며 압축이나 삭제를 막지 않습니다.
+
 ## 🔗 요약 ↔ TaskFlow 조정
 
 압축이 LLM 프롬프트를 구성할 때, `_get_taskflow_context_sync(session_id)`(`agent/middlewares/summarization/core.py:122`)가 이 세션의 활성 flow를 렌더링하여 요약 프롬프트의 **마지막** 부분으로 덧붙입니다(`_build_summary_prompt`, `summarization/summary_generation.py:554`):

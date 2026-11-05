@@ -23,6 +23,12 @@
 
 **グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:227`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
 
+## 🔎 意味検索と整理
+
+どちらもオプトインで、すべて fail-open です。`semantic_recall_enabled`（記憶設定の「意味検索」）を有効にすると、システムプロンプトにはコンパクトな索引（`MemoryStore.format_index_for_system_prompt`）だけが入り、毎ターン `memory_recall` リマインダー（priority 88、cooldown 3）が現在のリクエストに関連するエントリを注入します。`context_engine/store/memory_recall.py` は bge-m3 で `memory_entries.embedding` 索引を自己修復し、bge-reranker で cosine 候補を再ランクし、`semantic_recall_char_budget` で切り詰め、現在の `context_epoch` ベースラインより古いエントリを除外し、`usage_count` を加算します。`memory(action="recall")` と `POST /memory/search` は同じ経路を使い、スイッチがオフの検索は部分文字列にフォールバックします。
+
+`POST /memory/consolidate` は非同期タスクを開始します（`GET /memory/consolidate/:task_id` で照会）。まず決定的な `prune_unused` 老化を実行し、アクティブエントリが `consolidation_min_entries`（10）以上ある場合だけ、メインモデルが memory ツール経由で重複統合・矛盾解消・誤った target の修正・簡潔化を行います。圧縮はメモリレビューの後に同じパスを実行し（15 turns）、セッション削除は 2 回の salvage の後に実行します（5 turns）。失敗はログのみで、圧縮や削除をブロックしません。
+
 ## 🔗 要約 ↔ TaskFlow 連携
 
 圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:122`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization/summary_generation.py:554`）：

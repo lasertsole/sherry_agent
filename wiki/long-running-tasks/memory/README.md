@@ -23,6 +23,12 @@ The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
 **Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above: every `built_agent()` call prunes it to the latest checkpoint per thread (`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:227`), and because `auto_vacuum=0` that DELETE only frees pages instead of shrinking the file, the same call reads `PRAGMA freelist_count × page_size` right after pruning and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
 
+## 🔎 Semantic Recall & Consolidation
+
+Both are opt-in and fail-open. With `semantic_recall_enabled` on (memory settings → Semantic recall), the system prompt carries only a compact index (`MemoryStore.format_index_for_system_prompt`) and a per-turn `memory_recall` reminder (priority 88, cooldown 3) injects the entries relevant to the current request. `context_engine/store/memory_recall.py` self-heals the `memory_entries.embedding` index with the bge-m3 backend, re-ranks the cosine shortlist with bge-reranker, applies `semantic_recall_char_budget`, skips entries older than the session's current `context_epoch` baseline, and increments `usage_count`. `memory(action="recall")` and `POST /memory/search` use the same path; search falls back to substring when the switch is off.
+
+`POST /memory/consolidate` starts an async task (`GET /memory/consolidate/:task_id`): it always runs the deterministic `prune_unused` aging pass, then — only with at least `consolidation_min_entries` (10) active entries — asks the main model to merge duplicates, resolve contradictions, re-route misfiled facts and tighten wording through the memory tool. Compression runs the same pass after the memory review (15 turns); session deletion runs it after both salvage waves (5 turns). Every failure is logged and never blocks compression or deletion.
+
 ## 🔗 Summary ↔ TaskFlow Coordination
 
 When compression builds its LLM prompt, `_get_taskflow_context_sync(session_id)` (`agent/middlewares/summarization/core.py:122`) renders this session's active flows and appends them as the **last** part of the summary prompt (`_build_summary_prompt`, `summarization/summary_generation.py:554`):
