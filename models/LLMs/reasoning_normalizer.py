@@ -97,6 +97,20 @@ class NormalizingChatModel(BaseChatModel):
     """
 
     inner: BaseChatModel = Field(exclude=True)
+    #: Extra request kwargs forced onto EVERY inner call. Unlike ``bind(...)``,
+    #: these SURVIVE ``bind_tools`` — which returns the inner model and drops the
+    #: wrapper's own binding — so provider-level options that must ride on each
+    #: actual request (JSON mode's ``response_format``) live here.
+    request_options: dict[str, Any] = Field(default_factory=dict, exclude=True)
+
+    def with_request_options(self, options: dict[str, Any]) -> NormalizingChatModel:
+        """A copy carrying ``options`` on every inner call (chainable)."""
+        return self.model_copy(update={"request_options": {**self.request_options, **options}})
+
+    def _request_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if not self.request_options:
+            return kwargs
+        return {**kwargs, **self.request_options}
 
     @property
     def _llm_type(self) -> str:
@@ -121,7 +135,9 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        result = self.inner._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        result = self.inner._generate(
+            messages, stop=stop, run_manager=run_manager, **self._request_kwargs(kwargs)
+        )
         for gen in result.generations:
             _normalize_message_reasoning(gen.message)
         return result
@@ -133,7 +149,9 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: AsyncCallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        result = await self.inner._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        result = await self.inner._agenerate(
+            messages, stop=stop, run_manager=run_manager, **self._request_kwargs(kwargs)
+        )
         for gen in result.generations:
             _normalize_message_reasoning(gen.message)
         return result
@@ -146,7 +164,9 @@ class NormalizingChatModel(BaseChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        for chunk in self.inner._stream(messages, stop=stop, run_manager=run_manager, **kwargs):
+        for chunk in self.inner._stream(
+            messages, stop=stop, run_manager=run_manager, **self._request_kwargs(kwargs)
+        ):
             self._normalize_chunk_reasoning(chunk)
             yield chunk
 
@@ -158,7 +178,7 @@ class NormalizingChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         async for chunk in self.inner._astream(
-            messages, stop=stop, run_manager=run_manager, **kwargs
+            messages, stop=stop, run_manager=run_manager, **self._request_kwargs(kwargs)
         ):
             self._normalize_chunk_reasoning(chunk)
             yield chunk
@@ -195,8 +215,18 @@ class NormalizingChatModel(BaseChatModel):
         tool_choice: str | dict | bool | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Delegate tool binding to the inner model."""
-        return self.inner.bind_tools(tools, tool_choice=tool_choice, **kwargs)
+        """Delegate tool binding to the inner model.
+
+        With ``request_options`` set, the returned binding is re-bound with them
+        AFTER tool binding (the wrapper itself is dropped here, so this is the
+        only place they can be attached), and tools are marked strict — the
+        OpenAI client's auto-parse path (taken when a ``response_format`` rides
+        the request) rejects non-strict tools.
+        """
+        if self.request_options:
+            kwargs = {"strict": True, **kwargs}
+        bound = self.inner.bind_tools(tools, tool_choice=tool_choice, **kwargs)
+        return bound.bind(**self.request_options) if self.request_options else bound
 
     def with_structured_output(
         self,

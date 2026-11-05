@@ -409,6 +409,17 @@ def resolve_evidence_ledger_path() -> Path:
     return SRC_DIR / "data" / "evidence-ledger.db"
 
 
+def subagent_model_caps_path() -> Path:
+    """Return the per-model structured-output capability labels path.
+
+    ``SRC_DIR/data/subagent_model_caps.json`` — one persisted level per
+    ``(provider, model)`` so a model that rejected a structured-output strategy
+    is not probed again by every later subagent. Read at call time (``SRC_DIR``
+    is repointed by tests); a missing file means "every model starts at 0".
+    """
+    return SRC_DIR / "data" / "subagent_model_caps.json"
+
+
 #: Warn-once guard for an invalid configured project directory (see
 #: :func:`resolve_default_project_dir`). Tool calls resolve the default on the
 #: cold path, so a bad value would otherwise log per call.

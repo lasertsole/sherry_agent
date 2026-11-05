@@ -309,11 +309,18 @@ User message → Robyn WS → agent.core.built_agent() graph
       tool_choice), the schema text stays in the child's system prompt as the
       prompt-level fallback, and sessions_spawn exposes the same output_schema
       field so a tool-driven child can be constrained the same way.
-      A SCHEMA-BOUND child is built with thinking OFF
-      (`_select_child_llm(thinking_off=True)`): DeepSeek rejects a forced
-      tool_choice in thinking mode (`400 Thinking mode does not support this
-      tool_choice`), so the two cannot coexist; the run record stores
-      `thinking="off"` and no `thinking:<level>` tag is stamped
+      Structured output DEGRADES on a provider rejection
+      (`agent/tools/subagent/model_caps.py`): level 0 (default) is LangChain's
+      `response_format`; a 400 naming the structured-output strategy escalates
+      to level 1 — the child sends `response_format={"type":"json_object"}`
+      ITSELF via `NormalizingChatModel.with_request_options` (it survives
+      `bind_tools`, which returns the inner model; tools are bound strict
+      because OpenAI's auto-parse path demands it), keeps the schema in its
+      prompt, and the local validation FAILS the run on a shape miss — and, if
+      that also errors, level 2 adds thinking OFF. The rung is PERSISTED per
+      `(provider, model)` in `src/data/subagent_model_caps.json`, so a model
+      that already degraded is never probed again (the runner retries from a
+      clean checkpoint thread under ONE shared wall-clock budget)
     · StepJudge — step_judge.py, on taskflow_step(action="resume") for criteria-bearing steps
       (judge_criteria or validation_criteria; pass / retry within
       STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a

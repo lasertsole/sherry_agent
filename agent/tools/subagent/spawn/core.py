@@ -734,10 +734,7 @@ async def spawn_subagent_direct(
         task_name=normalized_task_name,
         cleanup=cleanup,
         agent_id=agent_id,
-        # A schema-bound child is built with thinking off (see
-        # ``_select_child_llm``): record "off" instead of a level the model will
-        # not use, and never stamp a ``thinking:<level>`` run tag for it.
-        thinking="off" if output_schema else (thinking_resolved or thinking),
+        thinking=thinking_resolved or thinking,
         max_output_tokens=resolve_child_max_output_tokens(
             model_profile=role_model_profile,
             model_override=model,
@@ -1274,6 +1271,52 @@ class _RunWallClock:
         return remaining
 
 
+#: Error text markers of a provider rejecting the structured-output strategy
+#: (a forced ``tool_choice``, or JSON mode it cannot combine with thinking).
+#: Only schema-bound children consult this, so a generic "thinking mode" 400
+#: from some other call never degrades a model.
+_STRUCTURED_OUTPUT_REJECTION_MARKERS = (
+    "does not support this tool_choice",
+    "thinking mode",
+    "response_format",
+    "structured output",
+)
+
+
+def _is_structured_output_rejection(exc: BaseException) -> bool:
+    """True when ``exc`` looks like a provider rejecting the JSON strategy."""
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _STRUCTURED_OUTPUT_REJECTION_MARKERS)
+
+
+async def _reset_child_attempt(run: SubagentRunRecord, child_agent: Any) -> None:
+    """Prepare a clean retry after a rejected structured-output attempt.
+
+    Closes the failed attempt's checkpointer, wipes the child's checkpoint
+    thread (the failed turn may have saved the input state — replaying it would
+    duplicate the HumanMessage), and releases the repetition-guard keys so the
+    fresh attempt starts from zero. Best-effort: a cleanup failure must not
+    block the retry.
+    """
+    child_checkpointer = getattr(child_agent, "checkpointer", None) if child_agent else None
+    if child_checkpointer is not None:
+        try:
+            await child_checkpointer.aclose()
+        except Exception:
+            logger.debug("subagent retry: checkpointer close failed", exc_info=True)
+    try:
+        from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
+
+        await delete_thread_history(run.child_session_key)
+    except Exception:
+        logger.debug("subagent retry: thread wipe failed", exc_info=True)
+    try:
+        # Same-module helper (the registry copy does not exist).
+        release_child_session_state(run)
+    except Exception:
+        logger.debug("subagent retry: session state release failed", exc_info=True)
+
+
 async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
     """Close the child's checkpointer and drop its per-session state.
 
@@ -1459,49 +1502,93 @@ async def _execute_subagent_scoped(
     # _build_child_agent itself raised (e.g. a missing required middleware).
     child_agent = None
 
-    try:
-        # Build the child LangGraph agent with scoped tools
-        child_agent = await _build_child_agent(
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_allow=run.inherited_tool_allow,
-            tool_deny=effective_deny,
-            role=run.role,
-            functional_role=run.functional_role,
-            model_override=model_override,
-            model_tier=model_tier,
-            model_profile=model_profile,
-            extra_tools=extra_tools,
-            session_id=run.child_session_key,
-            output_schema=output_schema,
+    from .. import model_caps
+
+    identity = (
+        _child_model_identity(model_profile, run.functional_role, model_tier, run.role)
+        if output_schema
+        else ("", "")
+    )
+    # A model that already degraded starts at its learned level, so a later
+    # subagent never pays for the same rejected request again.
+    strategy_level = model_caps.get_level(*identity) if output_schema else 0
+    if output_schema and strategy_level:
+        logger.info(
+            "Subagent structured output: {} starts at level {} ({})",
+            "/".join(identity),
+            strategy_level,
+            model_caps.level_label(strategy_level),
         )
 
-        messages = [HumanMessage(content=user_message)]
+    # ONE wall-clock budget for the whole run, retries included: degrading a
+    # strategy must not multiply the advertised run timeout.
+    budget = _RunWallClock(timeout_seconds)
 
-        agent_config = _bind_child_run_context(run)
-
-        # Invoke the child agent under a wall-clock timeout (0 disables the timeout).
-        # ``_invoke`` is reused by goal-loop continuation turns: the same config
-        # keeps the same checkpoint thread, so a continuation extends the SAME
-        # child conversation instead of starting a fresh one.
-        #
-        # The budget is ONE deadline for the whole run, not one per turn: the
-        # goal loop can spend up to ``goal_max_turns`` calls, and a per-turn
-        # ``wait_for(timeout_seconds)`` let five turns run five times the
-        # advertised ``run_timeout_seconds``.
-        budget = _RunWallClock(timeout_seconds)
-
-        async def _invoke(msgs: list) -> dict:
-            payload = {"session_id": run.child_session_key, "messages": msgs}
-            remaining = budget.remaining()
-            if remaining is None:
-                return await child_agent.ainvoke(input=payload, config=agent_config)
-            return await asyncio.wait_for(
-                child_agent.ainvoke(input=payload, config=agent_config),
-                timeout=remaining,
+    try:
+        while True:
+            # Build the child LangGraph agent with scoped tools
+            child_agent = await _build_child_agent(
+                system_prompt=system_prompt,
+                tools=tools,
+                tool_allow=run.inherited_tool_allow,
+                tool_deny=effective_deny,
+                role=run.role,
+                functional_role=run.functional_role,
+                model_override=model_override,
+                model_tier=model_tier,
+                model_profile=model_profile,
+                extra_tools=extra_tools,
+                session_id=run.child_session_key,
+                output_schema=output_schema,
+                strategy_level=strategy_level,
             )
 
-        agent_result = await _invoke(messages)
+            messages = [HumanMessage(content=user_message)]
+
+            agent_config = _bind_child_run_context(run)
+
+            # Invoke the child agent under the wall-clock timeout (0 disables it).
+            # ``_invoke`` is reused by goal-loop continuation turns: the same
+            # config keeps the same checkpoint thread, so a continuation extends
+            # the SAME child conversation instead of starting a fresh one.
+            async def _invoke(msgs: list) -> dict:
+                payload = {"session_id": run.child_session_key, "messages": msgs}
+                remaining = budget.remaining()
+                if remaining is None:
+                    return await child_agent.ainvoke(input=payload, config=agent_config)
+                return await asyncio.wait_for(
+                    child_agent.ainvoke(input=payload, config=agent_config),
+                    timeout=remaining,
+                )
+
+            try:
+                agent_result = await _invoke(messages)
+            except Exception as exc:  # noqa: BLE001 - a rejection is classified below
+                if (
+                    output_schema is not None
+                    and strategy_level < model_caps.MAX_LEVEL
+                    and _is_structured_output_rejection(exc)
+                ):
+                    # Degrade ONE rung and retry from a clean conversation. The
+                    # level is persisted, so the NEXT child on this model starts
+                    # here instead of re-hitting the same 400.
+                    strategy_level = model_caps.escalate(
+                        *identity,
+                        strategy_level + 1,
+                        reason=f"{type(exc).__name__}: {exc}",
+                    )
+                    logger.warning(
+                        "Subagent structured output rejected for {} ({}); retrying at level {} ({})",
+                        run.run_id,
+                        type(exc).__name__,
+                        strategy_level,
+                        model_caps.level_label(strategy_level),
+                    )
+                    await _reset_child_attempt(run, child_agent)
+                    child_agent = None
+                    continue
+                raise
+            break
 
         # Extract the last substantive assistant text as the result text.
         # The last message in the returned state is frequently an AIMessage with
@@ -1531,15 +1618,26 @@ async def _execute_subagent_scoped(
             if budget_outcome is not None:
                 outcome = budget_outcome
 
-        # Validate structured output against the provided JSON Schema (swarm mode)
+        # Validate structured output against the provided JSON Schema. At levels
+        # 1/2 nothing else enforces the shape, so a miss FAILS the run (the
+        # caller's retry flow owns the next attempt); level 0 keeps the legacy
+        # warn-only behaviour because LangChain already enforced it.
         if output_schema and result_text:
             from ..swarm.collector import validate_structured_output
 
             valid, err = validate_structured_output(result_text, output_schema)
             if not valid:
-                logger.warning(
-                    "Structured output validation failed for run {}: {}", run.run_id, err
-                )
+                if strategy_level >= 1 and outcome.status is RunOutcomeStatus.OK:
+                    outcome = RunOutcome(
+                        status=RunOutcomeStatus.ERROR,
+                        error=(
+                            f"Structured output validation failed: {err}; got {result_text[:160]!r}"
+                        ),
+                    )
+                else:
+                    logger.warning(
+                        "Structured output validation failed for run {}: {}", run.run_id, err
+                    )
 
     # --- Exception handling: map failures to RunOutcome statuses ---
     except TimeoutError:
@@ -1770,12 +1868,13 @@ def _select_child_llm(
     auxiliary one.
 
     ``thinking_off`` forces the main-family builders to the thinking-off variant.
-    It is set for schema-bound children: ``create_agent(response_format=...)``
-    enforces the schema through a structured-output tool with a FORCED
-    ``tool_choice``, and some providers (DeepSeek) reject that combination in
-    thinking mode with ``400 Thinking mode does not support this tool_choice``.
-    Structured output needs no reasoning, so dropping thinking is the safe side.
-    The auxiliary family has no thinking knob and is returned unchanged.
+    The structured-output degradation ladder sets it only at its LAST level: a
+    child whose forced ``tool_choice`` the provider rejects gets there after
+    the self-sent ``response_format`` level also failed (see
+    :mod:`agent.tools.subagent.model_caps`).
+
+    The auxiliary family has no thinking knob by default; ``thinking`` is
+    forwarded only when ``thinking_off`` is set.
     """
     from models import build_auxiliary_llm, build_main_llm
 
@@ -1833,6 +1932,43 @@ def _select_child_llm(
     return build_auxiliary_llm(thinking=False) if thinking_off else build_auxiliary_llm()
 
 
+def _child_model_identity(
+    model_profile: dict[str, str] | None,
+    functional_role: FunctionalRole,
+    model_tier: str | None,
+    role: SubagentSessionRole,
+) -> tuple[str, str]:
+    """The ``(provider, model)`` :func:`_select_child_llm` is about to build.
+
+    Mirrors that function's PRECEDENCE without building a client: the persisted
+    structured-output level is looked up before the model exists. A profile
+    whose build later fails falls back to the role tier inside the builder; the
+    label then names the profile's model, which is harmless — a failed build is
+    not a structured-output rejection, so nothing is recorded for it.
+    """
+    import os
+
+    from models.LLMs.main_llm import api_name as main_model, model_provider as main_provider
+
+    if model_profile and model_profile.get("model"):
+        return (
+            str(model_profile.get("provider") or main_provider or ""),
+            str(model_profile["model"]),
+        )
+    main_identity = (str(main_provider or ""), str(main_model or ""))
+    aux_identity = (
+        os.getenv("AUXILIARY_LLM_PROVIDER") or "",
+        os.getenv("AUXILIARY_LLM_API_NAME") or "",
+    )
+    if functional_role != FunctionalRole.GENERAL and model_tier == "main":
+        return main_identity
+    if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
+        return aux_identity
+    if role == SubagentSessionRole.ORCHESTRATOR:
+        return main_identity
+    return aux_identity
+
+
 async def _build_child_agent(
     system_prompt: str,
     tools: list | None,
@@ -1846,8 +1982,16 @@ async def _build_child_agent(
     extra_tools: list[str] | None = None,
     session_id: str = "",
     output_schema: dict | None = None,
+    strategy_level: int = 0,
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
+
+    ``strategy_level`` is the structured-output degradation rung (see
+    :mod:`agent.tools.subagent.model_caps`): 0 hands the schema to LangChain's
+    ``response_format`` (a forced structured-output tool), 1 sends
+    ``response_format={"type": "json_object"}`` ourselves (the schema stays in
+    the system prompt and the result is validated locally), 2 does the same with
+    thinking OFF. Ignored when no ``output_schema`` is given.
 
     The LLM selection logic is:
       - *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
@@ -1910,17 +2054,30 @@ async def _build_child_agent(
     final_tools = _assemble_child_tools(
         tools, tool_allow, tool_deny, extra_tools, functional_role, session_id
     )
+    self_structured = output_schema is not None and strategy_level >= 1
     child_llm = _select_child_llm(
         model_profile,
         model_override,
         functional_role,
         model_tier,
         role,
-        # Schema enforcement uses a forced tool_choice (ToolStrategy); providers
-        # such as DeepSeek reject that in thinking mode, so a schema-bound child
-        # runs with thinking off.
-        thinking_off=bool(output_schema),
+        # Level 2 drops thinking: the provider rejected even the self-sent
+        # response_format while reasoning.
+        thinking_off=bool(output_schema) and strategy_level >= 2,
     )
+    # Levels 1/2: no framework-level structured output (no forced tool_choice);
+    # the provider's JSON mode + the prompt schema + our validator replace it.
+    # ``with_request_options`` is used instead of ``bind`` because the graph's
+    # ``bind_tools`` returns the INNER model and would drop a plain binding;
+    # the option must ride on every actual request.
+    agent_llm = child_llm
+    if self_structured:
+        from models.LLMs.reasoning_normalizer import NormalizingChatModel
+
+        if isinstance(child_llm, NormalizingChatModel):
+            agent_llm = child_llm.with_request_options({"response_format": {"type": "json_object"}})
+        else:
+            agent_llm = child_llm.bind(response_format={"type": "json_object"})
 
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()
@@ -1934,18 +2091,17 @@ async def _build_child_agent(
     # middleware must abort the spawn, not ship a weakened child.
     validate_required_middleware(child_middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
     child_agent = create_agent(
-        model=child_llm,
+        model=agent_llm,
         system_prompt=system_prompt,
         state_schema=StateSchema,
         checkpointer=child_checkpointer,
         tools=final_tools,
         middleware=child_middleware,
-        # Structured output as a CONSTRAINT, not a request: a raw schema makes
-        # LangChain auto-pick the provider's native structured output (or a
-        # structured-output tool where the provider lacks one). The schema text
-        # in the system prompt stays as guidance, and Tier 1 still re-validates
-        # the delivered result — this layer just stops the obvious misses.
-        response_format=output_schema if output_schema else None,
+        # Level 0: structured output as a CONSTRAINT, not a request — a raw
+        # schema makes LangChain auto-pick the provider's native structured
+        # output (or a structured-output tool where the provider lacks one).
+        # Levels 1/2 already carry the shape themselves (see above).
+        response_format=output_schema if (output_schema and not self_structured) else None,
     )
 
     # Wrap with RepetitionGuardWrapper, mirroring the main agent
