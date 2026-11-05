@@ -4,10 +4,11 @@ from server.service import read_env_file, write_env_file
 
 
 @app.get("/env")
-async def read_env_handler(request) -> dict:
+async def read_env_handler(request) -> dict | tuple[dict, dict, int]:
     """
     Read the project .env file, grouped by prefix.
     Returns: {"groups": [{"name": str, "entries": [{"key", "value"}, ...]}]}
+    The 503 path is Robyn's (body, headers, status) tuple.
     """
     logger.debug("Reading environment config")
     try:
