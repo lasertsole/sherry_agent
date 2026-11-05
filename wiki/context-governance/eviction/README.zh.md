@@ -99,9 +99,9 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 用户可能粘贴任何工具都产不出的载荷：日志、文档、转录稿、整个代码库。`ContextEvictionMiddleware` 移植了 DeepAgents 的人类消息驱逐，并做了 Sherry 特有的划分。
 
-- **触发**（`before_model` / `abefore_model`）：`human_evict_enabled` 为真，且**最后一条**消息是 `HumanMessage`，且不带 `lc_evicted_to`，且其提取文本**超过 `human_evict_threshold_chars`（200 000 字符）**。只检查最后一条，因此过去的用户回合永远不会被重新检视。
+- **触发**（`before_model` / `abefore_model`）：`human_evict_enabled` 为真，且**最后一条**消息是 `HumanMessage`，且是真实用户输入（`is_user_message`：`metadata.origin == "user"`），且不带 `lc_evicted_to`，且其提取文本**超过 `human_evict_threshold_chars`（200 000 字符）**。只检查最后一条，因此过去的用户回合永远不会被重新检视。system reminder、workspace notice、task-intent/continuation 指令、子代理完成载体等都复用了 HumanMessage 角色，但携带其他 origin 或 provenance；正向 origin 检查是 fail-closed 的，因此它们永远不会被打标或预览截断。
 - **打标 + 卸载**（`evict_human_message`）：全文写入 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|timestamp>.md`，然后钩子返回偏量 state 更新 `{"messages": [tagged]}`，其中 `tagged` 的 **id 与内容不变**，只新增 `additional_kwargs["lc_evicted_to"]`。标准 `add_messages` reducer 按 id **原地更新**该消息 —— 不重写消息列表、不依赖 `DeltaChannel`、state 侧不触发前缀缓存失效。文件先于标记写入，因此写失败永远不会留下悬空指针。
-- **模型视图**（`wrap_model_call` / `awrap_model_call`）：每条携带 `lc_evicted_to` 的 `HumanMessage` **仅在请求中**（`request.override(messages=...)`）被替换为基于 state 文本构建的预览：驱逐路径、head/tail 各 5 行、以及 `read_file` 恢复提示。非文本块（图片/音频/视频）原样保留（`_build_evicted_content`）—— 媒体永远不会被卸载进文本文件。
+- **模型视图**（`wrap_model_call` / `awrap_model_call`）：每条携带 `lc_evicted_to` 的**用户** `HumanMessage` **仅在请求中**（`request.override(messages=...)`）被替换为基于 state 文本构建的预览：驱逐路径、head/tail 各 5 行、以及 `read_file` 恢复提示。非文本块（图片/音频/视频）原样保留（`_build_evicted_content`）—— 媒体永远不会被卸载进文本文件。
 - **自愈**：驱逐文件缺失时（会话目录被清、磁盘问题），`_heal_eviction_file` 会在下一次模型调用时从 state 文本重写它 —— 但仅当目标位于该会话自己的 `evicted/` 目录；标记中的外来路径会被拒绝并告警。
 
 ### 为什么与工具结果采用相反的三态划分

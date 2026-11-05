@@ -252,14 +252,30 @@ class TestLoadEvicted:
 
 class TestHumanEviction:
     def test_at_threshold_is_not_evicted(self, sessions_dir):
-        message = HumanMessage(content=_lines(HUMAN_THRESHOLD), id="h1")
+        message = HumanMessage(
+            content=_lines(HUMAN_THRESHOLD), id="h1", metadata={"origin": "user"}
+        )
+
+        assert evict_human_message(message, SID) is None
+        assert not sessions_dir.exists()
+
+    def test_non_user_human_message_is_never_evicted(self, sessions_dir):
+        message = HumanMessage(
+            content=_lines(HUMAN_THRESHOLD + 1),
+            id="h1",
+            metadata={
+                "origin": "todo_block",
+                "internal": True,
+                "provenance": "reminder_catalog",
+            },
+        )
 
         assert evict_human_message(message, SID) is None
         assert not sessions_dir.exists()
 
     def test_one_char_over_is_tagged_with_full_text_on_disk(self, sessions_dir):
         content = _lines(HUMAN_THRESHOLD + 1)
-        message = HumanMessage(content=content, id="h1")
+        message = HumanMessage(content=content, id="h1", metadata={"origin": "user"})
 
         tagged = evict_human_message(message, SID)
 
@@ -275,7 +291,8 @@ class TestHumanEviction:
 
     def test_already_tagged_is_idempotent(self, sessions_dir):
         tagged = evict_human_message(
-            HumanMessage(content=_lines(HUMAN_THRESHOLD + 1), id="h1"), SID
+            HumanMessage(content=_lines(HUMAN_THRESHOLD + 1), id="h1", metadata={"origin": "user"}),
+            SID,
         )
         assert tagged is not None
 
@@ -284,7 +301,9 @@ class TestHumanEviction:
     def test_media_blocks_stay_in_content_and_text_is_offloaded(self, sessions_dir):
         text = _lines(HUMAN_THRESHOLD + 1)
         image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
-        message = HumanMessage(content=[{"type": "text", "text": text}, image], id="h1")
+        message = HumanMessage(
+            content=[{"type": "text", "text": text}, image], id="h1", metadata={"origin": "user"}
+        )
 
         tagged = evict_human_message(message, SID)
 
@@ -295,13 +314,15 @@ class TestHumanEviction:
 
     def test_disabled_flag_skips_every_write(self, sessions_dir, monkeypatch):
         monkeypatch.setitem(TOOL_RESULT_EVICTION, "human_evict_enabled", False)
-        message = HumanMessage(content=_lines(HUMAN_THRESHOLD + 1), id="h1")
+        message = HumanMessage(
+            content=_lines(HUMAN_THRESHOLD + 1), id="h1", metadata={"origin": "user"}
+        )
 
         assert evict_human_message(message, SID) is None
         assert not sessions_dir.exists()
 
     def test_missing_id_uses_a_timestamp_name(self, sessions_dir):
-        message = HumanMessage(content=_lines(HUMAN_THRESHOLD + 1))
+        message = HumanMessage(content=_lines(HUMAN_THRESHOLD + 1), metadata={"origin": "user"})
 
         tagged = evict_human_message(message, SID)
 
@@ -311,7 +332,7 @@ class TestHumanEviction:
     def test_single_giant_line_is_still_offloaded(self, sessions_dir):
         """Same fallback as the tool path: the state text is written, the tag set."""
         content = "u" * (HUMAN_THRESHOLD + 1)
-        message = HumanMessage(content=content, id="h1")
+        message = HumanMessage(content=content, id="h1", metadata={"origin": "user"})
 
         tagged = evict_human_message(message, SID)
 
@@ -323,7 +344,9 @@ class TestHumanEviction:
 
     @pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b", "../escape"])
     def test_unsafe_session_segment_skips_every_write(self, sessions_dir, bad):
-        message = HumanMessage(content=_lines(HUMAN_THRESHOLD + 1), id="h1")
+        message = HumanMessage(
+            content=_lines(HUMAN_THRESHOLD + 1), id="h1", metadata={"origin": "user"}
+        )
 
         assert evict_human_message(message, bad) is None
         assert not sessions_dir.exists() or not any(sessions_dir.rglob("*"))

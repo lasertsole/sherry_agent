@@ -119,7 +119,8 @@ def _tagged(session_id: str, middleware: ContextEvictionMiddleware) -> HumanMess
 
 
 def _huge_human(**kwargs: Any) -> HumanMessage:
-    return HumanMessage(content=_huge_human_text(), id="h1", **kwargs)
+    metadata = kwargs.pop("metadata", {"origin": "user"})
+    return HumanMessage(content=_huge_human_text(), id="h1", metadata=metadata, **kwargs)
 
 
 def _evicted_path(preview: str) -> Path:
@@ -236,7 +237,7 @@ class TestTaskIntentSteeringBoundary:
         self, isolated_db, isolated_sessions, sid
     ):
         eviction = ContextEvictionMiddleware()
-        oversized = HumanMessage(content=_huge_human_text(), id="h1")
+        oversized = HumanMessage(content=_huge_human_text(), id="h1", metadata={"origin": "user"})
         steering = HumanMessage(content=_TASK_STEERING_PROMPT, id="h2")
         assert len(_TASK_STEERING_PROMPT) > 100
 
@@ -248,7 +249,7 @@ class TestTaskIntentSteeringBoundary:
     ):
         eviction = ContextEvictionMiddleware()
         steering = HumanMessage(content=_TASK_STEERING_PROMPT, id="h1")
-        oversized = HumanMessage(content=_huge_human_text(), id="h2")
+        oversized = HumanMessage(content=_huge_human_text(), id="h2", metadata={"origin": "user"})
 
         update = eviction.before_model(_state(sid, [steering, oversized]), None)
 
@@ -263,7 +264,9 @@ class TestPreviewNestingBoundary:
     def test_original_read_file_hint_survives_verbatim(self, isolated_db, isolated_sessions, sid):
         eviction = ContextEvictionMiddleware()
         hint = "read_file(file_path='/original/path.md', offset=0, limit=100)"
-        original = HumanMessage(content=_huge_human_with_hint(hint), id="h1")
+        original = HumanMessage(
+            content=_huge_human_with_hint(hint), id="h1", metadata={"origin": "user"}
+        )
         update = eviction.before_model(_state(sid, [original]), None)
         assert update is not None
         tagged = update["messages"][0]

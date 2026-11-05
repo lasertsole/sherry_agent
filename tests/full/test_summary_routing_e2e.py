@@ -704,7 +704,12 @@ async def test_p1_9_eviction_then_compression_three_way_consistency() -> None:
         graph = await _real_graph()
         out = await _invoke_with_retry(
             graph,
-            {"messages": [HumanMessage(content=content, id=f"h-{sid}")], "session_id": sid},
+            {
+                "messages": [
+                    HumanMessage(content=content, id=f"h-{sid}", metadata={"origin": "user"})
+                ],
+                "session_id": sid,
+            },
             build_agent_config(sid),
         )
 

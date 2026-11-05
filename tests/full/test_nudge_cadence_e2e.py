@@ -889,7 +889,7 @@ async def test_p1_9_evicted_human_then_compression_dispatches_review(sandbox: _S
             session_id=sid,
         )
         content = _human_210k()
-        human = HumanMessage(content=content, id=f"h-{sid}")
+        human = HumanMessage(content=content, id=f"h-{sid}", metadata={"origin": "user"})
         eviction = ContextEvictionMiddleware()
         update = eviction.before_model({"session_id": sid, "messages": [human]}, None)
         assert update is not None, "the 210K human message was not evicted"

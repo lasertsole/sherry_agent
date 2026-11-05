@@ -177,7 +177,12 @@ async def _run_until_tool(
         sid = _new_sid(f"{tag}-{attempt}")
         out = await _invoke_with_retry(
             graph,
-            {"messages": [HumanMessage(content=prompt, id=f"h-{sid}")], "session_id": sid},
+            {
+                "messages": [
+                    HumanMessage(content=prompt, id=f"h-{sid}", metadata={"origin": "user"})
+                ],
+                "session_id": sid,
+            },
             build_agent_config(sid),
         )
         tool_messages = [
@@ -240,7 +245,12 @@ async def test_p1_9_human_eviction_real_graph_three_state_split() -> None:
         graph = await _real_graph()
         out = await _invoke_with_retry(
             graph,
-            {"messages": [HumanMessage(content=content, id=f"h-{sid}")], "session_id": sid},
+            {
+                "messages": [
+                    HumanMessage(content=content, id=f"h-{sid}", metadata={"origin": "user"})
+                ],
+                "session_id": sid,
+            },
             build_agent_config(sid),
         )
 

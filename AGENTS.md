@@ -152,8 +152,10 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     CHAR-budgeted head/tail (per-line 2 048, per-side 8 192 — the mirror of
   │     the fd path's byte budgets), so it is offloaded like any oversized
   │     result instead of riding the window in full. Its
-  │     before_model tags an oversized trailing HumanMessage (full text stays in
-  │     state/MesMemory) and wrap_model_call truncates only the model view)
+  │     before_model tags only an oversized trailing USER HumanMessage
+  │     (`is_user_message`: `metadata.origin == "user"`; reminders, notices and
+  │     every other injected carrier are never tagged) and wrap_model_call
+  │     truncates only the model view)
   │    ThinkingControl: per-session thinking control (client switch / level
   │     picker → PUT /sessions/thinking → state register); swaps request.model
   │     for the variant built by build_main_llm(thinking=... / level=...) when

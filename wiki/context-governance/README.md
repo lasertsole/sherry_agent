@@ -58,7 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|---|---|
 | **Tool return** | `ContextEvictionMiddleware` (P0-2 / P2-4) | none | generic > 20 000 chars → head/tail preview + file pointer; `read_file` → 4 000-char slice + notice |
 | **Model boundary** | `MessagePersistenceMiddleware` `after_model` | none | full text written to MesMemory (state untouched) |
-| **Human message** | `ContextEvictionMiddleware` (P1-9) | none | request view truncated to a preview; state/MesMemory keep the full text |
+| **Human message** | `ContextEvictionMiddleware` (P1-9) | none | only user-origin messages: request view truncated to a preview; injected carriers untouched; state/MesMemory keep the full text |
 | **Overflow (first move)** | `clip_overflow_tail` (P1-2) | none | trailing tool results stubbed; message identity and pairing intact |
 | **Overflow (existing routes)** | `summarization` 4-route dispatch | one auxiliary-LLM call on compact routes | truncation and/or history compaction |
 | **Overflow (provider error)** | T4/T5 forced recovery | one call per compact step | clip → compact + budget truncate, retried up to 3 times |

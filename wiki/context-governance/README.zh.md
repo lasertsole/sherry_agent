@@ -58,7 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|---|---|
 | **工具返回** | `ContextEvictionMiddleware`（P0-2 / P2-4） | 无 | 通用结果 > 20 000 字符 → head/tail 预览 + 文件指针；`read_file` → 4 000 字符切片 + 提示 |
 | **模型边界** | `MessagePersistenceMiddleware` 的 `after_model` | 无 | 全文写入 MesMemory（不动 state） |
-| **人类消息** | `ContextEvictionMiddleware`（P1-9） | 无 | 仅请求视图截断为预览；state/MesMemory 保留全文 |
+| **人类消息** | `ContextEvictionMiddleware`（P1-9） | 无 | 仅用户来源的消息：请求视图截断为预览；注入载体不动；state/MesMemory 保留全文 |
 | **溢出（首步）** | `clip_overflow_tail`（P1-2） | 无 | 尾部工具结果替换为 stub；消息身份与配对不变 |
 | **溢出（既有路由）** | `summarization` 四路由分发 | compact 类路由调一次辅助 LLM | 截断与/或历史压缩 |
 | **溢出（提供商错误）** | T4/T5 强制恢复 | 每个 compact 步骤一次调用 | 先裁剪 → 再压缩 + 预算截断，最多重试 3 次 |

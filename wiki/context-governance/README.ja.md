@@ -58,7 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|---|---|
 | **ツール返却** | `ContextEvictionMiddleware`（P0-2 / P2-4） | なし | 汎用結果 > 20 000 文字 → head/tail プレビュー + ファイルポインタ；`read_file` → 4 000 文字スライス + 通知 |
 | **モデル境界** | `MessagePersistenceMiddleware` の `after_model` | なし | 全文を MesMemory へ書き込み（state は不変） |
-| **人間メッセージ** | `ContextEvictionMiddleware`（P1-9） | なし | リクエストビューのみプレビューに切り詰め；state/MesMemory は全文保持 |
+| **人間メッセージ** | `ContextEvictionMiddleware`（P1-9） | なし | ユーザー由来のみ: リクエストビューのみプレビューに切り詰め、注入キャリアはそのまま；state/MesMemory は全文保持 |
 | **オーバーフロー（第一手）** | `clip_overflow_tail`（P1-2） | なし | 末尾のツール結果をスタブ化；メッセージ同一性とペアリングは不変 |
 | **オーバーフロー（既存ルート）** | `summarization` 4 ルート分岐 | compact 系ルートは補助 LLM 1 回 | 切り詰めおよび／または履歴圧縮 |
 | **オーバーフロー（プロバイダエラー）** | T4/T5 強制リカバリ | compact ステップごとに 1 回 | クリップ → 圧縮 + 予算切り詰め、最大 3 回再試行 |

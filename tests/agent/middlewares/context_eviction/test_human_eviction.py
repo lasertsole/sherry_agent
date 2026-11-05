@@ -35,6 +35,7 @@ from context_engine.store.core import get_history_by_turn_page
 from pub.func import sanitize_tool_use_result_pairing
 from pub.func.message.eviction import EVICTED_TO_KEY, load_evicted
 from pub.func.message.overflow_clip import clip_overflow_tail
+from pub.func.message.system_reminder import system_reminder_metadata
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
@@ -52,12 +53,19 @@ def _fill(total: int) -> str:
 
 
 def _big_human(
-    *, msg_id: str | None = "h1", extra: int = 1, blocks: list[Any] | None = None
+    *,
+    msg_id: str | None = "h1",
+    extra: int = 1,
+    blocks: list[Any] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> HumanMessage:
     text = _fill(THRESHOLD + extra)
+    meta = {"origin": "user"} if metadata is None else metadata
     if blocks:
-        return HumanMessage(content=[{"type": "text", "text": text}, *blocks], id=msg_id)
-    return HumanMessage(content=text, id=msg_id)
+        return HumanMessage(
+            content=[{"type": "text", "text": text}, *blocks], id=msg_id, metadata=meta
+        )
+    return HumanMessage(content=text, id=msg_id, metadata=meta)
 
 
 def _state(session_id: str, messages: list[Any]) -> dict[str, Any]:
@@ -186,7 +194,7 @@ class TestTaggingGate:
         """
         middleware = ContextEvictionMiddleware()
         text = "u" * (THRESHOLD + 1)
-        message = HumanMessage(content=text, id="h1")
+        message = HumanMessage(content=text, id="h1", metadata={"origin": "user"})
 
         update = middleware.before_model(_state(sid, [message]), None)
 
@@ -195,6 +203,29 @@ class TestTaggingGate:
         path = Path(tagged.additional_kwargs[EVICTED_TO_KEY])
         assert path.read_text(encoding="utf-8") == text
         assert tagged.content == text
+
+    def test_system_reminder_is_never_tagged(self, isolated_db, isolated_sessions, sid):
+        middleware = ContextEvictionMiddleware()
+        reminder = _big_human(metadata=system_reminder_metadata("todo_block"))
+
+        assert middleware.before_model(_state(sid, [reminder]), None) is None
+        assert not (isolated_sessions / sid).exists()
+
+    def test_other_injected_carrier_is_never_tagged(self, isolated_db, isolated_sessions, sid):
+        middleware = ContextEvictionMiddleware()
+        notice = _big_human(
+            metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}
+        )
+
+        assert middleware.before_model(_state(sid, [notice]), None) is None
+        assert not (isolated_sessions / sid).exists()
+
+    def test_message_without_user_origin_is_never_tagged(self, isolated_db, isolated_sessions, sid):
+        middleware = ContextEvictionMiddleware()
+        untagged = _big_human(metadata={})
+
+        assert middleware.before_model(_state(sid, [untagged]), None) is None
+        assert not (isolated_sessions / sid).exists()
 
     def test_missing_session_id_returns_none(self, isolated_db, isolated_sessions):
         middleware = ContextEvictionMiddleware()
@@ -296,7 +327,7 @@ class TestThreeStateAndPersistence:
         persistence = MessagePersistenceMiddleware()
         needle = "NEEDLETOKEN"
         text = needle + " " + _fill(THRESHOLD + 1 - len(needle) - 1)
-        original = HumanMessage(content=text, id="h1")
+        original = HumanMessage(content=text, id="h1", metadata={"origin": "user"})
         update = middleware.before_model(_state(sid, [original]), None)
         assert update is not None
         persistence.after_model(_state(sid, [update["messages"][0]]), None)
@@ -351,6 +382,20 @@ class TestModelView:
     def test_untagged_messages_pass_through_untouched(self, isolated_db, isolated_sessions, sid):
         middleware = ContextEvictionMiddleware()
         request = _request([HumanMessage(content="small", id="h1")], sid)
+        captured, handler = _recording_handler()
+
+        middleware.wrap_model_call(request, handler)
+
+        assert captured["request"] is request
+
+    def test_legacy_tagged_reminder_is_not_truncated(
+        self, isolated_db, isolated_sessions, sid, tmp_path
+    ):
+        middleware = ContextEvictionMiddleware()
+        reminder = _big_human(metadata=system_reminder_metadata("todo_block")).model_copy(
+            update={"additional_kwargs": {EVICTED_TO_KEY: str(tmp_path / "reminder.txt")}}
+        )
+        request = _request([reminder], sid)
         captured, handler = _recording_handler()
 
         middleware.wrap_model_call(request, handler)

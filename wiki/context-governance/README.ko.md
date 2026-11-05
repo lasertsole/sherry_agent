@@ -58,7 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 |---|---|---|---|
 | **도구 반환** | `ContextEvictionMiddleware` (P0-2 / P2-4) | 없음 | 일반 결과 > 20 000자 → head/tail 프리뷰 + 파일 포인터; `read_file` → 4 000자 슬라이스 + 안내 |
 | **모델 경계** | `MessagePersistenceMiddleware`의 `after_model` | 없음 | 전문을 MesMemory에 기록(state 불변) |
-| **인간 메시지** | `ContextEvictionMiddleware` (P1-9) | 없음 | 요청 뷰만 프리뷰로 절단; state/MesMemory는 전문 유지 |
+| **인간 메시지** | `ContextEvictionMiddleware` (P1-9) | 없음 | 사용자 출처만: 요청 뷰만 프리뷰로 절단, 주입 캐리어는 그대로; state/MesMemory는 전문 유지 |
 | **오버플로(첫 수)** | `clip_overflow_tail` (P1-2) | 없음 | 꼬리 도구 결과를 스텁화; 메시지 정체성과 페어링 불변 |
 | **오버플로(기존 라우트)** | `summarization` 4-라우트 디스패치 | compact 계열 라우트는 보조 LLM 1회 | 트렁케이션 및/또는 이력 압축 |
 | **오버플로(프로바이더 오류)** | T4/T5 강제 복구 | compact 단계마다 1회 | 클립 → 압축 + 예산 트렁케이션, 최대 3회 재시도 |
