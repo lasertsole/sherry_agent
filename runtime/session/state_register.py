@@ -428,3 +428,38 @@ class ContextEpoch:
                 (snapshot_json, now, session_id),
             )
             conn.commit()
+
+
+def get_context_epoch(session_id: str) -> tuple[int, int]:
+    """Return a session's ``(baseline_seq, updated_at_ms)``.
+
+    ``baseline_seq`` advances when a compaction rebuilds the system context
+    (``ContextEpoch.replace``); ``updated_at`` is the wall-clock stamp of that
+    rebuild. ``(0, 0)`` means the session never recorded an epoch (or the
+    register is temporarily unreadable) — callers must treat that as "unknown",
+    never as "stale".
+    """
+    from datetime import datetime
+
+    if not session_id:
+        return 0, 0
+    try:
+        with state_register_db._conn_lock:
+            conn = state_register_db.ensure_initialized()
+            row = conn.execute(
+                "SELECT baseline_seq, updated_at FROM context_epoch WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return 0, 0
+        seq = int(row[0] or 0)
+        raw = str(row[1] or "")
+        try:
+            stamp = datetime.strptime(raw, "%Y%m%d%H%M%S")
+            updated_ms = int(stamp.timestamp() * 1000)
+        except ValueError:
+            updated_ms = 0
+        return seq, updated_ms
+    except Exception as exc:  # noqa: BLE001 - staleness is advisory
+        _log_state_db_failure("get_context_epoch", exc, session_id=session_id)
+        return 0, 0

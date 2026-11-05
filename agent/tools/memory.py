@@ -179,7 +179,12 @@ class MemoryStore:
         "user_char_limit",
         "facts_char_limit",
         "max_unused_days",
+        "semantic_recall_enabled",
+        "semantic_recall_top_k",
+        "semantic_recall_char_budget",
     )
+    #: Setting keys whose value is a switch rather than a positive integer.
+    _BOOLEAN_SETTING_KEYS: frozenset[str] = frozenset({"semantic_recall_enabled"})
 
     def __init__(
         self,
@@ -189,6 +194,9 @@ class MemoryStore:
         *,
         repo: MemoryEntryRepository | None = None,
         max_unused_days: int = MEMORY_TOOL["max_unused_days"],
+        semantic_recall_enabled: bool = MEMORY_TOOL["semantic_recall_enabled"],
+        semantic_recall_top_k: int = MEMORY_TOOL["semantic_recall_top_k"],
+        semantic_recall_char_budget: int = MEMORY_TOOL["semantic_recall_char_budget"],
     ):
         self._repo = repo
         self.memory_entries: list[str] = []
@@ -198,13 +206,19 @@ class MemoryStore:
         self.user_char_limit = user_char_limit
         self.facts_char_limit = facts_char_limit
         self.max_unused_days = max_unused_days
+        self.semantic_recall_enabled = bool(semantic_recall_enabled)
+        self.semantic_recall_top_k = semantic_recall_top_k
+        self.semantic_recall_char_budget = semantic_recall_char_budget
         # Constructor values are the fallback when no UI override is stored; the
         # production singleton is constructed from the code defaults.
-        self._default_limits: dict[str, int] = {
+        self._default_limits: dict[str, Any] = {
             "memory_char_limit": int(memory_char_limit),
             "user_char_limit": int(user_char_limit),
             "facts_char_limit": int(facts_char_limit),
             "max_unused_days": int(max_unused_days),
+            "semantic_recall_enabled": bool(semantic_recall_enabled),
+            "semantic_recall_top_k": int(semantic_recall_top_k),
+            "semantic_recall_char_budget": int(semantic_recall_char_budget),
         }
         # Cached rows (with ids/provenance) parallel to the public str lists.
         self._entries_by_target: dict[str, list[dict[str, Any]]] = {
@@ -237,6 +251,9 @@ class MemoryStore:
             raw = settings.get(name)
             if raw is None:
                 continue
+            if name in self._BOOLEAN_SETTING_KEYS:
+                setattr(self, name, str(raw).strip().lower() in {"1", "true", "yes", "on"})
+                continue
             try:
                 value = int(raw)
             except (TypeError, ValueError):
@@ -252,16 +269,23 @@ class MemoryStore:
             "user_char_limit": self.user_char_limit,
             "facts_char_limit": self.facts_char_limit,
             "max_unused_days": self.max_unused_days,
-            "semantic_recall_enabled": bool(MEMORY_TOOL["semantic_recall_enabled"]),
-            "semantic_recall_top_k": int(MEMORY_TOOL["semantic_recall_top_k"]),
-            "semantic_recall_char_budget": int(MEMORY_TOOL["semantic_recall_char_budget"]),
+            "semantic_recall_enabled": bool(self.semantic_recall_enabled),
+            "semantic_recall_top_k": int(self.semantic_recall_top_k),
+            "semantic_recall_char_budget": int(self.semantic_recall_char_budget),
         }
 
     def update_settings(self, values: dict[str, Any]) -> dict[str, Any]:
         """Persist the UI-editable limits and apply them to this store."""
-        accepted: dict[str, int] = {}
+        accepted: dict[str, Any] = {}
         for name in self._SETTING_KEYS:
             if name not in values or values[name] is None:
+                continue
+            if name in self._BOOLEAN_SETTING_KEYS:
+                raw = values[name]
+                if isinstance(raw, str):
+                    accepted[name] = 1 if raw.strip().lower() in {"1", "true", "yes", "on"} else 0
+                else:
+                    accepted[name] = 1 if bool(raw) else 0
                 continue
             try:
                 parsed = int(values[name])
@@ -269,6 +293,10 @@ class MemoryStore:
                 raise ValueError(f"{name} must be an integer") from exc
             if parsed <= 0:
                 raise ValueError(f"{name} must be positive")
+            if name == "semantic_recall_top_k" and parsed > 20:
+                raise ValueError("semantic_recall_top_k must be at most 20")
+            if name == "semantic_recall_char_budget" and parsed > 20_000:
+                raise ValueError("semantic_recall_char_budget must be at most 20000")
             accepted[name] = parsed
         if accepted:
             self.repo.set_settings(accepted)
@@ -378,6 +406,18 @@ class MemoryStore:
             int(entry.get("usage_count") or 0),
             int(entry.get("id") or 0),
         )
+
+    @staticmethod
+    def _context_epoch_for(origin_session: str | None) -> int:
+        """The writer session's current compaction epoch (0 when unknown)."""
+        if not origin_session:
+            return 0
+        try:
+            from runtime.session.state_register import get_context_epoch
+
+            return int(get_context_epoch(origin_session)[0])
+        except Exception:  # noqa: BLE001 - an unknown epoch is not a write failure
+            return 0
 
     def _evict_least_active_to_fit(
         self,
@@ -507,6 +547,7 @@ class MemoryStore:
             content,
             entry_type=self._infer_entry_type(target, content),
             origin_session=origin_session,
+            compaction_epoch=self._context_epoch_for(origin_session),
         )
         survivors = [e for e in all_entries if e is not new_entry_stub]
         survivors.append(entry)
@@ -563,6 +604,7 @@ class MemoryStore:
                         item,
                         entry_type=self._infer_entry_type(target, item),
                         origin_session=origin_session,
+                        compaction_epoch=self._context_epoch_for(origin_session),
                     )
                 )
             self._set_target(target, self.repo.active_entries_ordered(target))
@@ -782,6 +824,50 @@ class MemoryStore:
         entries = self.repo.active_entries_ordered(target)
         return self._joined([entry["content"] for entry in entries])
 
+    def recall(
+        self,
+        query: str,
+        target: str | None = None,
+        limit: int | None = None,
+        char_budget: int | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Semantic recall over the active entries (usage-incrementing)."""
+        from context_engine.store.memory_recall import recall_memories
+
+        return recall_memories(
+            query,
+            target,
+            self.semantic_recall_top_k if limit is None else limit,
+            self.semantic_recall_char_budget if char_budget is None else char_budget,
+            session_id=session_id,
+            repo=self.repo,
+        )
+
+    def format_index_for_system_prompt(self, target: str) -> str | None:
+        """Compact prompt block for semantic mode: counts + latest entries.
+
+        Full content stays in SQLite and is fetched by ``memory(action="recall")``
+        (or ``read``) on demand; the system prompt carries only enough to tell
+        the model that the store exists and what it is about.
+        """
+        entries = self.repo.active_entries_ordered(target)
+        if not entries:
+            return None
+        lines = [f"## {target} memory index ({len(entries)} entries)"]
+        for entry in entries[-3:]:
+            first = str(entry.get("content") or "").strip().splitlines()
+            preview = (first[0] if first else "").strip()
+            if len(preview) > 120:
+                preview = preview[:120] + "…"
+            used = int(entry.get("usage_count") or 0)
+            lines.append(f"- (used {used}x) {preview}")
+        lines.append(
+            "Use memory(action='recall', query='…') or memory(action='read') to fetch full entries."
+        )
+        return "\n".join(lines)
+
     # -- internal helpers ---------------------------------------------------
 
     def _success_response(self, target: str, message: str = None) -> dict[str, Any]:
@@ -872,6 +958,11 @@ def memory_tool(
         return _tool_error(
             f"Invalid target '{target}'. Use 'memory', 'user' or 'facts'.", success=False
         )
+    if action == "recall" and target not in MEMORY_TARGETS and target not in {"all", "*"}:
+        return _tool_error(
+            f"Invalid target '{target}'. Use 'memory', 'user', 'facts' or 'all'.",
+            success=False,
+        )
 
     try:
         if action == "add":
@@ -901,9 +992,22 @@ def memory_tool(
                 "query": query or "",
             }
 
+        elif action == "recall":
+            if not query:
+                return _tool_error("query is required for 'recall' action.", success=False)
+            recall_target = None if target in {"all", "*"} else target
+            entries = memory_store.recall(query, recall_target, session_id=origin)
+            result = {
+                "success": True,
+                "target": target,
+                "entries": entries,
+                "entry_count": len(entries),
+                "query": query,
+            }
+
         else:
             return _tool_error(
-                f"Unknown action '{action}'. Use: add, replace, remove, read",
+                f"Unknown action '{action}'. Use: add, replace, remove, read, recall",
                 success=False,
             )
 
@@ -930,15 +1034,15 @@ def memory_tool(
 class MemoryActionSchema(BaseModel):
     """Schema for memory tool arguments."""
 
-    action: Literal["add", "replace", "remove", "read"] = Field(
+    action: Literal["add", "replace", "remove", "read", "recall"] = Field(
         description=(
-            "The action to perform: 'add' / 'replace' / 'remove' / 'read' on "
-            "the memory, user or facts store."
+            "The action to perform: 'add' / 'replace' / 'remove' / 'read' / "
+            "'recall' on the memory, user or facts store."
         )
     )
     target: str = Field(
         default="memory",
-        description="Which store: 'memory', 'user' or 'facts'.",
+        description="Which store: 'memory', 'user' or 'facts' ('all' for recall).",
     )
     content: str | None = Field(
         default=None,
@@ -950,7 +1054,7 @@ class MemoryActionSchema(BaseModel):
     )
     query: str | None = Field(
         default=None,
-        description="Optional substring filter for the 'read' action.",
+        description="Substring filter for 'read', or the semantic query for 'recall'.",
     )
 
     #: Runtime-injected; excluded from the model-facing schema.
@@ -989,7 +1093,8 @@ class MemoryTool(BaseTool):
         "in ANY project); project-specific notes and conventions belong in 'memory'.\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (archive -- old_text identifies it), read (return entries and mark them used; "
-        "an optional query filters by substring).\n\n"
+        "an optional query filters by substring), recall (semantic search over entries; "
+        "target='all' searches every store).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.\n\n"
     )
     args_schema: type[BaseModel] = MemoryActionSchema

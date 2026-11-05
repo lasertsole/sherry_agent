@@ -458,21 +458,29 @@ def build_system_prompt(
         file_paths = _read_static_files(selected_file_names)
 
     # --- Dynamic memory block -----------------------------------------
-    # Memory is NOT frozen: it must stay live so the current conversation
-    # reflects fresh "memory"/"user" state. Only appended when the caller did
-    # not filter to explicit files. `None` results are dropped.
+    # Two presentation modes, selected by the semantic-recall switch:
+    #   full  — the frozen snapshot (default; prefix-cache friendly);
+    #   index — counts + latest previews, with the full entries fetched on
+    #           demand by memory(action="recall"/"read").
+    # Only appended when the caller did not filter to explicit files.
     if selected_file_names is None:
         provider = _resolve_provider("format_memory_for_system_prompt")
         if provider is not None:
-            file_paths.extend(
-                content
-                for content in (
+            semantic = bool(getattr(provider, "memory_semantic_recall_enabled", lambda: False)())
+            index_formatter = getattr(provider, "format_memory_index_for_system_prompt", None)
+            if semantic and index_formatter is not None:
+                blocks = (
+                    index_formatter("memory"),
+                    index_formatter("user"),
+                    index_formatter("facts"),
+                )
+            else:
+                blocks = (
                     provider.format_memory_for_system_prompt("memory"),
                     provider.format_memory_for_system_prompt("user"),
                     provider.format_memory_for_system_prompt("facts"),
                 )
-                if content
-            )
+            file_paths.extend(content for content in blocks if content)
 
     # --- Assembling the final prompt ----------------------------------
     # STABLE content only: persona files + memory + the skills index. The live

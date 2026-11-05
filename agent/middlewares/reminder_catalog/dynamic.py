@@ -29,9 +29,9 @@ from pub.func.message.system_reminder import (
 )
 
 from .core import (
+    aresolve_injections,
     clear_session,
     registered_sources,
-    resolve_injections,
     transient_source_ids,
 )
 
@@ -108,7 +108,7 @@ class DynamicReminderMiddleware(AgentMiddleware):
 
             transient_ids = transient_source_ids()
             sources = registered_sources()
-            injections = resolve_injections(session_id, state, current_turn=turn)
+            injections = await aresolve_injections(session_id, state, current_turn=turn)
 
             reminders = [
                 HumanMessage(

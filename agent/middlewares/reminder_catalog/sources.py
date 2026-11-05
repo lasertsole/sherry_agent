@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.messages import HumanMessage
+
 from workspace.prompt_builder import (
     _build_boulder_block,
     _build_continuity_block,
@@ -39,6 +41,64 @@ def _as_builder(builder: Any) -> Any:
         return text or None
 
     return _source_builder
+
+
+def _last_user_text(state: dict[str, Any]) -> str:
+    """The current turn's user request, excluding injected carriers."""
+    messages = state.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for message in reversed(messages):
+        if not isinstance(message, HumanMessage):
+            continue
+        meta = getattr(message, "metadata", None) or {}
+        if isinstance(meta, dict) and meta.get("internal"):
+            continue
+        content = message.content
+        text = content if isinstance(content, str) else str(content)
+        text = text.strip()
+        if text.startswith("[SYSTEM DIRECTIVE") or text.startswith("<system-reminder"):
+            continue
+        return text[:2000]
+    return ""
+
+
+async def _memory_recall_builder(session_id: str, state: dict[str, Any]) -> str | None:
+    """Per-turn semantic recall, only while the switch is on and a query exists."""
+    from agent.tools.memory import memory_store
+
+    if not memory_store.semantic_recall_enabled:
+        return None
+    query = _last_user_text(state)
+    if not query:
+        return None
+    try:
+        from context_engine.store.memory_recall import semantic_recall
+
+        entries = await semantic_recall(
+            query,
+            limit=memory_store.semantic_recall_top_k,
+            char_budget=memory_store.semantic_recall_char_budget,
+            session_id=session_id,
+            repo=memory_store.repo,
+        )
+    except Exception:  # noqa: BLE001 - recall is advisory, never load-bearing
+        return None
+    if not entries:
+        return None
+    lines = [
+        "[MEMORY RECALL — entries relevant to the current request. "
+        "Full entries remain available via memory(action='read').]"
+    ]
+    for entry in entries:
+        tags = str(entry.get("target") or "memory")
+        if entry.get("stale"):
+            tags += ", stale"
+        lines.append(
+            f"- ({tags}, id {entry.get('id')}, used {entry.get('usage_count', 0)}x, "
+            f"score {entry.get('score', 0):.3f}) {entry.get('content', '')}"
+        )
+    return "\n".join(lines)
 
 
 def register_default_sources() -> None:
@@ -135,5 +195,18 @@ def register_default_sources() -> None:
             budget_chars=1000,
             priority=50,
             only_if_changed=True,
+        )
+    )
+    # Semantic recall sits ABOVE plan mode: when the switch is on, the entries
+    # relevant to the current request outrank the static live views. The
+    # builder is async (embedding + reranker); the sync path skips it.
+    register(
+        ReminderSource(
+            source_id="memory_recall",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=_memory_recall_builder,
+            budget_chars=4000,
+            priority=88,
+            cooldown_turns=3,
         )
     )

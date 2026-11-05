@@ -63,7 +63,11 @@ class PromptDataProvider(Protocol):
 
     Memory (``agent.tools.memory``)
         :meth:`format_memory_for_system_prompt` returns the frozen memory
-        snapshot block for ``"memory"`` / ``"user"`` (``None`` when empty).
+        snapshot block for ``"memory"`` / ``"user"`` (``None`` when empty);
+        :meth:`format_memory_index_for_system_prompt` returns the compact
+        semantic-recall index instead; :meth:`memory_semantic_recall_enabled`
+        selects between the two; :meth:`get_context_epoch` exposes the session's
+        current compaction epoch for staleness checks.
 
     Prompt blocks
         :meth:`build_todolist_knowledge_block` renders the plan knowledge
@@ -94,6 +98,18 @@ class PromptDataProvider(Protocol):
 
     def format_memory_for_system_prompt(self, target: str) -> str | None:
         """Return the frozen memory block for ``memory`` / ``user`` / ``facts``."""
+        ...
+
+    def format_memory_index_for_system_prompt(self, target: str) -> str | None:
+        """Return the compact semantic-recall index for one memory target."""
+        ...
+
+    def memory_semantic_recall_enabled(self) -> bool:
+        """Whether the session's memory is injected as a compact recall index."""
+        ...
+
+    def get_context_epoch(self, session_id: str) -> tuple[int, int]:
+        """Return ``(baseline_seq, updated_at_ms)``; ``(0, 0)`` when unknown."""
         ...
 
     def build_todolist_knowledge_block(self, session_id: str) -> str:

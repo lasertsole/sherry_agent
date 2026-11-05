@@ -110,6 +110,7 @@ export {
   archiveMemoryEntry,
   consolidateMemory,
   createMemoryEntry,
+  readConsolidationStatus,
   readMemoryEntries,
   readMemorySettings,
   readMemoryStats,
@@ -120,6 +121,7 @@ export {
 } from './bridge/memory-entries';
 export type {
   MemoryArchiveReason,
+  MemoryConsolidationTask,
   MemoryEntry,
   MemoryEntryPage,
   MemorySearchResult,

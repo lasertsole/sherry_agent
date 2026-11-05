@@ -23,7 +23,8 @@ never silently withholds content that should have been shown twice.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -38,6 +39,7 @@ __all__ = [
     "clear_session",
     "registered_sources",
     "register",
+    "aresolve_injections",
     "resolve_injections",
     "transient_source_ids",
 ]
@@ -67,8 +69,10 @@ class ReminderSource:
     :param source_id: Stable identifier (also the message's ``origin`` and the
         ``source=`` attribute in the tag).
     :param channel: Delivery channel (only ``CURRENT_TURN`` is consumed today).
-    :param builder: ``(session_id, state) -> text | None``; ``None``/blank means
-        "nothing to say this turn".
+    :param builder: ``(session_id, state) -> text | None`` (or an awaitable of
+        either); ``None``/blank means "nothing to say this turn". Async builders
+        are awaited by ``aresolve_injections`` (the production path) and skipped
+        by the sync path.
     :param budget_chars: Per-source cap; longer text is clipped with an ellipsis.
     :param priority: Higher wins under the total budget; 100 = must keep.
     :param cooldown_turns: Inject at most once per N turns (0 = no cooldown).
@@ -86,7 +90,7 @@ class ReminderSource:
 
     source_id: str
     channel: ReminderChannel
-    builder: Callable[[str, dict[str, Any]], str | None]
+    builder: Callable[[str, dict[str, Any]], str | None | Awaitable[str | None]]
     budget_chars: int = 2000
     priority: int = 50
     cooldown_turns: int = REMINDER_CATALOG["default_cooldown_turns"]
@@ -133,52 +137,39 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def resolve_injections(
+def _is_due(source: ReminderSource, shown: dict[str, Any], current_turn: int) -> bool:
+    """Whether the source's cooldown allows an injection this turn."""
+    if source.cooldown_turns <= 0 or not shown:
+        return True
+    # The cooldown applies only to a source that HAS been injected:
+    # "never shown" is eligible now, not cooling down from turn 0.
+    last_turn = int(shown.get("turn", 0) or 0)
+    return current_turn - last_turn >= source.cooldown_turns
+
+
+def _accept_candidate(
+    source: ReminderSource,
+    content: str | None,
+    shown: dict[str, Any],
+    candidates: list[tuple[ReminderSource, str]],
+) -> None:
+    """Clip, change-check and append one builder result."""
+    if not content or not content.strip():
+        return
+    if len(content) > source.budget_chars:
+        content = content[: source.budget_chars] + "…"
+    if source.only_if_changed and _content_hash(content) == shown.get("hash"):
+        return
+    candidates.append((source, content))
+
+
+def _apply_budget(
+    candidates: list[tuple[ReminderSource, str]],
     session_id: str,
-    state: dict[str, Any],
-    *,
     current_turn: int,
 ) -> dict[str, str]:
-    """Resolve every source for one model call.
-
-    Applies, in order: the enabled switch → the per-source cooldown → the
-    builder → the change check → the per-source cap → the TOTAL budget (by
-    priority, dropping whole sources rather than truncating a source to nothing)
-    → the throttle bookkeeping for what was actually kept.
-
-    :param session_id: The session the reminder is for.
-    :param state: The graph state (passed through to the builders).
-    :param current_turn: Monotonic turn counter for the session.
-    :returns: ``{source_id: text}`` for the sources that should be injected.
-    """
-    if not REMINDER_CATALOG["enabled"]:
-        return {}
-    session_state = _THROTTLE_STATE.get(session_id, {})
-
-    candidates: list[tuple[ReminderSource, str]] = []
-    for source in _SOURCES.values():
-        shown = session_state.get(source.source_id, {})
-        if source.cooldown_turns > 0 and shown:
-            # The cooldown applies only to a source that HAS been injected:
-            # "never shown" is eligible now, not cooling down from turn 0.
-            last_turn = int(shown.get("turn", 0) or 0)
-            if current_turn - last_turn < source.cooldown_turns:
-                continue
-        try:
-            content = source.builder(session_id, state)
-        except Exception:  # noqa: BLE001 - one broken source must not kill the layer
-            logger.exception("reminder_catalog: builder failed for {}", source.source_id)
-            continue
-        if not content or not content.strip():
-            continue
-        if len(content) > source.budget_chars:
-            content = content[: source.budget_chars] + "…"
-        if source.only_if_changed and _content_hash(content) == shown.get("hash"):
-            continue
-        candidates.append((source, content))
-
+    """Sort by priority, spend the total budget, and record what was kept."""
     candidates.sort(key=lambda item: -item[0].priority)
-
     result: dict[str, str] = {}
     total = 0
     for source, content in candidates:
@@ -197,6 +188,82 @@ def resolve_injections(
             "hash": _content_hash(content),
         }
     return result
+
+
+def resolve_injections(
+    session_id: str,
+    state: dict[str, Any],
+    *,
+    current_turn: int,
+) -> dict[str, str]:
+    """Resolve every source for one model call (sync sources only).
+
+    Applies, in order: the enabled switch → the per-source cooldown → the
+    builder → the change check → the per-source cap → the TOTAL budget (by
+    priority, dropping whole sources rather than truncating a source to nothing)
+    → the throttle bookkeeping for what was actually kept.
+
+    Async builders are skipped here; the production path is
+    :func:`aresolve_injections`.
+    """
+    if not REMINDER_CATALOG["enabled"]:
+        return {}
+    session_state = _THROTTLE_STATE.get(session_id, {})
+    candidates: list[tuple[ReminderSource, str]] = []
+    for source in _SOURCES.values():
+        shown = session_state.get(source.source_id, {})
+        if not _is_due(source, shown, current_turn):
+            continue
+        if inspect.iscoroutinefunction(source.builder):
+            logger.warning(
+                "reminder_catalog: async builder {} skipped on the sync path",
+                source.source_id,
+            )
+            continue
+        try:
+            content = source.builder(session_id, state)
+        except Exception:  # noqa: BLE001 - one broken source must not kill the layer
+            logger.exception("reminder_catalog: builder failed for {}", source.source_id)
+            continue
+        if inspect.isawaitable(content):
+            # A sync wrapper returned a coroutine: close it so the GC does not
+            # warn about an un-awaited coroutine.
+            close = getattr(content, "close", None)
+            if callable(close):
+                close()
+            logger.warning(
+                "reminder_catalog: async builder {} skipped on the sync path",
+                source.source_id,
+            )
+            continue
+        _accept_candidate(source, content, shown, candidates)
+    return _apply_budget(candidates, session_id, current_turn)
+
+
+async def aresolve_injections(
+    session_id: str,
+    state: dict[str, Any],
+    *,
+    current_turn: int,
+) -> dict[str, str]:
+    """Async variant: awaits async builders (semantic memory recall)."""
+    if not REMINDER_CATALOG["enabled"]:
+        return {}
+    session_state = _THROTTLE_STATE.get(session_id, {})
+    candidates: list[tuple[ReminderSource, str]] = []
+    for source in _SOURCES.values():
+        shown = session_state.get(source.source_id, {})
+        if not _is_due(source, shown, current_turn):
+            continue
+        try:
+            content = source.builder(session_id, state)
+            if inspect.isawaitable(content):
+                content = await content
+        except Exception:  # noqa: BLE001 - one broken source must not kill the layer
+            logger.exception("reminder_catalog: builder failed for {}", source.source_id)
+            continue
+        _accept_candidate(source, content, shown, candidates)
+    return _apply_budget(candidates, session_id, current_turn)
 
 
 def clear_session(session_id: str) -> None:

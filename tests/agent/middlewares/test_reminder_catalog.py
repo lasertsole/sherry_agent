@@ -498,6 +498,6 @@ class TestMiddleware:
         def _boom(*_args, **_kwargs):
             raise RuntimeError("registry exploded")
 
-        monkeypatch.setattr(dynamic_mod, "resolve_injections", _boom)
+        monkeypatch.setattr(dynamic_mod, "aresolve_injections", _boom)
 
         assert await mw.abefore_model(self._state(HumanMessage(content="hi"))) is None

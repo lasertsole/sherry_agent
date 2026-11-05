@@ -55,6 +55,20 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _pack_embedding(vector: list[float]) -> bytes:
+    import array
+
+    return array.array("d", vector).tobytes()
+
+
+def _unpack_embedding(blob: bytes) -> list[float]:
+    import array
+
+    values = array.array("d")
+    values.frombytes(blob)
+    return values.tolist()
+
+
 def _validate_target(target: str) -> str:
     if target not in MEMORY_TARGETS:
         raise ValueError(f"Invalid memory target: {target!r}")
@@ -182,6 +196,72 @@ class MemoryEntryRepository:
             tuple(int(i) for i in entry_ids),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_missing_embeddings(
+        self, target: str | None = None, *, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Active entries whose embedding has not been generated yet."""
+        clauses = ["archived = 0", "embedding IS NULL"]
+        params: list[Any] = []
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(_validate_target(target))
+        rows = self.db.execute(
+            "SELECT * FROM memory_entries WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY id ASC LIMIT ?",
+            (*params, int(limit)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_with_embeddings(
+        self, target: str | None = None
+    ) -> list[tuple[dict[str, Any], list[float]]]:
+        """Active entries that carry an embedding, decoded to float lists."""
+        clauses = ["archived = 0", "embedding IS NOT NULL"]
+        params: list[Any] = []
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(_validate_target(target))
+        rows = self.db.execute(
+            "SELECT * FROM memory_entries WHERE " + " AND ".join(clauses) + " ORDER BY id ASC",
+            tuple(params),
+        ).fetchall()
+        result: list[tuple[dict[str, Any], list[float]]] = []
+        for row in rows:
+            entry = dict(row)
+            blob = entry.pop("embedding", None)
+            if not blob:
+                continue
+            result.append((entry, _unpack_embedding(blob)))
+        return result
+
+    def set_embedding(
+        self,
+        entry_id: int,
+        embedding: list[float],
+        *,
+        model: str,
+    ) -> None:
+        """Persist one entry's vector (idempotent; callers batch externally)."""
+        self._write(
+            "UPDATE memory_entries SET embedding = ?, embedding_model = ?, embedding_dim = ? "
+            "WHERE id = ? AND archived = 0",
+            (_pack_embedding(embedding), model, len(embedding), entry_id),
+        )
+
+    def count_embeddings(self, target: str | None = None) -> int:
+        """Active entries that already carry a vector."""
+        clauses = ["archived = 0", "embedding IS NOT NULL"]
+        params: list[Any] = []
+        if target is not None:
+            clauses.append("target = ?")
+            params.append(_validate_target(target))
+        row = self.db.execute(
+            "SELECT COUNT(*) AS n FROM memory_entries WHERE " + " AND ".join(clauses),
+            tuple(params),
+        ).fetchone()
+        return int(row["n"] if row is not None else 0)
 
     def find_active(self, target: str, substring: str) -> list[dict[str, Any]]:
         """Case-sensitive substring matches, in creation order (tool semantics)."""

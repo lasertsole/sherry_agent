@@ -58,6 +58,25 @@ class AgentPromptDataProvider:
 
         return memory_store.format_for_system_prompt(target)
 
+    def format_memory_index_for_system_prompt(self, target: str) -> str | None:
+        """Return the compact semantic-recall index for one memory target."""
+        from agent.tools.memory import memory_store
+
+        formatter = getattr(memory_store, "format_index_for_system_prompt", None)
+        return formatter(target) if callable(formatter) else None
+
+    def memory_semantic_recall_enabled(self) -> bool:
+        """Whether memory is injected as a compact recall index."""
+        from agent.tools.memory import memory_store
+
+        return bool(getattr(memory_store, "semantic_recall_enabled", False))
+
+    def get_context_epoch(self, session_id: str) -> tuple[int, int]:
+        """Return ``(baseline_seq, updated_at_ms)`` from the runtime register."""
+        from runtime.session.state_register import get_context_epoch
+
+        return get_context_epoch(session_id)
+
     def build_todolist_knowledge_block(self, session_id: str) -> str:
         """Render the current plan's knowledge summary."""
         from agent.tools.todolist.knowledge.prompt_block import build_knowledge_block

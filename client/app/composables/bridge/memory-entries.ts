@@ -75,6 +75,22 @@ export interface MemorySearchResult {
   entries: MemoryEntry[];
   total: number;
   query: string;
+  mode?: 'semantic' | 'substring';
+}
+
+/** `POST /memory/consolidate` acknowledgment. */
+export interface MemoryConsolidationTask {
+  task_id: string;
+  status: 'running' | 'completed' | 'skipped' | 'failed';
+  result?: {
+    status?: string;
+    reason?: string;
+    archived?: number;
+    entries_before?: number;
+    entries_after?: number;
+    reply?: string;
+  };
+  error?: string | null;
 }
 
 /** Parameters for {@link readMemoryEntries}. */
@@ -193,12 +209,41 @@ export async function readMemorySettings(): Promise<MemorySettings> {
  * @param body
  */
 export async function writeMemorySettings(
-  body: Partial<Pick<MemorySettings, 'memory_char_limit' | 'user_char_limit' | 'facts_char_limit' | 'max_unused_days'>>
+  body: Partial<
+    Pick<
+      MemorySettings,
+      | 'memory_char_limit'
+      | 'user_char_limit'
+      | 'facts_char_limit'
+      | 'max_unused_days'
+      | 'semantic_recall_enabled'
+      | 'semantic_recall_top_k'
+      | 'semantic_recall_char_budget'
+    >
+  >
 ): Promise<MemorySettings> {
   return fetchApiPayload<MemorySettings>({ url: '/memory/settings', method: 'put', opts: body });
 }
 
-/** Run the usage-aging pass (`max_unused_days`) now. */
-export async function consolidateMemory(): Promise<{ archived: number; max_unused_days: number; stats: MemoryStats }> {
-  return fetchApiPayload({ url: '/memory/consolidate', method: 'post' });
+/**
+ * Start the async aging + LLM consolidation pass for one session.
+ * @param sessionId
+ */
+export async function consolidateMemory(sessionId: string): Promise<MemoryConsolidationTask> {
+  return fetchApiPayload<MemoryConsolidationTask>({
+    url: '/memory/consolidate',
+    method: 'post',
+    opts: { session_id: sessionId }
+  });
+}
+
+/**
+ * Poll one consolidation task.
+ * @param taskId
+ */
+export async function readConsolidationStatus(taskId: string): Promise<MemoryConsolidationTask> {
+  return fetchApiPayload<MemoryConsolidationTask>({
+    url: `/memory/consolidate/${encodeURIComponent(taskId)}`,
+    method: 'get'
+  });
 }

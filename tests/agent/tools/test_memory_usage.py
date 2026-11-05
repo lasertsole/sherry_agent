@@ -140,3 +140,28 @@ def test_update_settings_rejects_non_positive_values(memory_repo):
     store = MemoryStore()
     with pytest.raises(ValueError):
         store.update_settings({"memory_char_limit": 0})
+
+
+def test_semantic_recall_settings_roundtrip(memory_repo):
+    store = MemoryStore()
+
+    updated = store.update_settings(
+        {
+            "semantic_recall_enabled": True,
+            "semantic_recall_top_k": 8,
+            "semantic_recall_char_budget": 2500,
+        }
+    )
+    assert updated["semantic_recall_enabled"] is True
+    assert updated["semantic_recall_top_k"] == 8
+    assert updated["semantic_recall_char_budget"] == 2500
+
+    # A fresh store reads the persisted overrides.
+    reread = MemoryStore()
+    reread.reload_limits()
+    assert reread.semantic_recall_enabled is True
+    assert reread.semantic_recall_top_k == 8
+
+    # The boolean can be turned back off (0 is a valid override).
+    store.update_settings({"semantic_recall_enabled": False})
+    assert store.semantic_recall_enabled is False

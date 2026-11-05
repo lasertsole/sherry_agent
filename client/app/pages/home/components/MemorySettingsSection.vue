@@ -1,7 +1,6 @@
 <template>
-  <!-- 系统配置 → 记忆设置: the UI-editable limits (stored in the memory DB) plus
-       the usage-aging trigger. Semantic recall is declared but Phase 5 is not
-       implemented, so its controls stay disabled and say so. -->
+  <!-- 系统配置 → 记忆设置: the UI-editable limits (stored in the memory DB), the
+       semantic-recall switch and the async consolidation trigger. -->
   <div class="flex flex-col gap-4">
     <p class="m-0 text-xs text-gray-500 dark:text-gray-400">
       {{ t('memorySettings.hint') }}
@@ -73,6 +72,46 @@
       }}
     </div>
 
+    <div class="flex flex-col gap-2 rounded-lg border border-dashed border-gray-200 p-3 dark:border-gray-700">
+      <div class="flex items-center gap-2">
+        <ToggleSwitch
+          v-model="form.semantic_recall_enabled"
+          data-test="memory-semantic-toggle" />
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+          {{ t('memorySettings.semanticRecall') }}
+        </span>
+      </div>
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div class="flex flex-col gap-1">
+          <label class="text-xs text-gray-600 dark:text-gray-300">
+            {{ t('memorySettings.semanticTopK') }}
+          </label>
+          <InputNumber
+            v-model="form.semantic_recall_top_k"
+            :min="1"
+            :max="20"
+            :use-grouping="false"
+            :disabled="!form.semantic_recall_enabled"
+            data-test="memory-semantic-top-k"
+            class="w-full" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-xs text-gray-600 dark:text-gray-300">
+            {{ t('memorySettings.semanticBudget') }}
+          </label>
+          <InputNumber
+            v-model="form.semantic_recall_char_budget"
+            :min="200"
+            :max="20000"
+            :use-grouping="false"
+            :disabled="!form.semantic_recall_enabled"
+            data-test="memory-semantic-budget"
+            class="w-full" />
+        </div>
+      </div>
+      <span class="text-[11px] text-gray-400">{{ t('memorySettings.semanticRecallHint') }}</span>
+    </div>
+
     <div class="flex flex-wrap items-center gap-2">
       <Button
         :label="t('memorySettings.save')"
@@ -91,22 +130,10 @@
         data-test="memory-consolidate"
         @click="handleConsolidate" />
       <span
-        v-if="consolidated !== null"
+        v-if="consolidationMessage"
         class="text-xs text-gray-500 dark:text-gray-400">
-        {{ t('memorySettings.consolidated', { n: consolidated }) }}
+        {{ consolidationMessage }}
       </span>
-    </div>
-
-    <div class="flex flex-col gap-2 rounded-lg border border-dashed border-gray-200 p-2 dark:border-gray-700">
-      <div class="flex items-center gap-2">
-        <ToggleSwitch
-          :model-value="false"
-          disabled />
-        <span class="text-xs text-gray-500 dark:text-gray-400">
-          {{ t('memorySettings.semanticRecall') }}
-        </span>
-      </div>
-      <span class="text-[11px] text-gray-400">{{ t('memorySettings.semanticRecallHint') }}</span>
     </div>
   </div>
 </template>
@@ -114,26 +141,40 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
 import { logUtil } from '~/utils/log';
 import type { MemorySettings, MemoryStats } from '~/composables/bridge';
 
 const { t } = useI18n({ useScope: 'local' });
+const route = useRoute() as unknown as { params?: Record<string, unknown> } | undefined;
+
+/** The session the manual consolidation pass runs under (model + prompt). */
+const sessionId = computed(() => String(route?.params?.sid ?? ''));
 
 const DEFAULT_FORM: Pick<
   MemorySettings,
-  'memory_char_limit' | 'user_char_limit' | 'facts_char_limit' | 'max_unused_days'
+  | 'memory_char_limit'
+  | 'user_char_limit'
+  | 'facts_char_limit'
+  | 'max_unused_days'
+  | 'semantic_recall_enabled'
+  | 'semantic_recall_top_k'
+  | 'semantic_recall_char_budget'
 > = {
   memory_char_limit: 2200,
   user_char_limit: 1375,
   facts_char_limit: 1375,
-  max_unused_days: 90
+  max_unused_days: 90,
+  semantic_recall_enabled: false,
+  semantic_recall_top_k: 5,
+  semantic_recall_char_budget: 4000
 };
 const form = ref({ ...DEFAULT_FORM });
 const original = ref({ ...DEFAULT_FORM });
 const stats = ref<MemoryStats | null>(null);
 const saving = ref(false);
 const consolidating = ref(false);
-const consolidated = ref<number | null>(null);
+const consolidationMessage = ref('');
 const error = ref('');
 
 const dirty = computed(() =>
@@ -152,7 +193,10 @@ function apply(settings: MemorySettings) {
     memory_char_limit: settings.memory_char_limit,
     user_char_limit: settings.user_char_limit,
     facts_char_limit: settings.facts_char_limit,
-    max_unused_days: settings.max_unused_days
+    max_unused_days: settings.max_unused_days,
+    semantic_recall_enabled: settings.semantic_recall_enabled,
+    semantic_recall_top_k: settings.semantic_recall_top_k,
+    semantic_recall_char_budget: settings.semantic_recall_char_budget
   };
   original.value = { ...form.value };
 }
@@ -184,12 +228,34 @@ async function handleSave() {
 }
 
 async function handleConsolidate() {
+  if (!sessionId.value) {
+    error.value = t('memorySettings.sessionRequired');
+    return;
+  }
   consolidating.value = true;
+  consolidationMessage.value = '';
   error.value = '';
   try {
-    const result = await consolidateMemory();
-    consolidated.value = result.archived;
-    stats.value = result.stats;
+    const started = await consolidateMemory(sessionId.value);
+    let task = started;
+    const deadline = Date.now() + 300_000;
+    while (task.status === 'running' && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      task = await readConsolidationStatus(task.task_id);
+    }
+    if (task.status === 'running') {
+      throw new Error(t('memorySettings.consolidationTimeout'));
+    }
+    if (task.status === 'failed') {
+      throw new Error(task.error || t('memorySettings.consolidationFailed'));
+    }
+    const archived = task.result?.archived ?? 0;
+    const remaining = task.result?.entries_after;
+    consolidationMessage.value =
+      task.status === 'skipped'
+        ? t('memorySettings.consolidationSkipped', { n: archived })
+        : t('memorySettings.consolidationDone', { n: archived, m: remaining ?? '?' });
+    stats.value = await readMemoryStats();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -213,9 +279,15 @@ onMounted(load);
       "usage": "当前 {entries} 条 · {chars} 字符 · 平均占用 {percent}%",
       "save": "保存记忆设置",
       "consolidate": "立即整理",
-      "consolidated": "已归档 {n} 条",
-      "semanticRecall": "语义召回（预留）",
-      "semanticRecallHint": "Phase 5 尚未实现；开关保持关闭。"
+      "consolidationDone": "已整理：归档 {n} 条，剩余 {m} 条",
+      "consolidationSkipped": "条目不足，仅执行老化（归档 {n} 条）",
+      "consolidationFailed": "整理失败",
+      "consolidationTimeout": "整理超时，请稍后重试",
+      "sessionRequired": "请先打开一个会话再整理记忆",
+      "semanticRecall": "语义召回",
+      "semanticRecallHint": "开启后系统提示词只放记忆索引，每轮按需检索相关条目；需要 embedding 与 reranker 模型。",
+      "semanticTopK": "召回条数",
+      "semanticBudget": "召回字符预算"
     }
   },
   "en": {
@@ -229,9 +301,15 @@ onMounted(load);
       "usage": "{entries} entries · {chars} chars · {percent}% average usage",
       "save": "Save memory settings",
       "consolidate": "Consolidate now",
-      "consolidated": "{n} entries archived",
-      "semanticRecall": "Semantic recall (reserved)",
-      "semanticRecallHint": "Phase 5 is not implemented yet; the switch stays off."
+      "consolidationDone": "Consolidated: {n} archived, {m} remaining",
+      "consolidationSkipped": "Too few entries; aging only ({n} archived)",
+      "consolidationFailed": "Consolidation failed",
+      "consolidationTimeout": "Consolidation timed out; try again later",
+      "sessionRequired": "Open a session before consolidating memory",
+      "semanticRecall": "Semantic recall",
+      "semanticRecallHint": "When on, the system prompt carries only a memory index and relevant entries are recalled per turn; requires the embedding and reranker models.",
+      "semanticTopK": "Recall count",
+      "semanticBudget": "Recall character budget"
     }
   },
   "ja": {
@@ -245,9 +323,15 @@ onMounted(load);
       "usage": "現在 {entries} 件 · {chars} 文字 · 平均使用率 {percent}%",
       "save": "記憶設定を保存",
       "consolidate": "今すぐ整理",
-      "consolidated": "{n} 件をアーカイブしました",
-      "semanticRecall": "意味検索（予約）",
-      "semanticRecallHint": "Phase 5 は未実装のため、スイッチはオフのままです。"
+      "consolidationDone": "整理完了：{n} 件をアーカイブ、残り {m} 件",
+      "consolidationSkipped": "件数が少ないため老化のみ実行（{n} 件をアーカイブ）",
+      "consolidationFailed": "整理に失敗しました",
+      "consolidationTimeout": "整理がタイムアウトしました。後でもう一度お試しください",
+      "sessionRequired": "記憶を整理する前にセッションを開いてください",
+      "semanticRecall": "意味検索",
+      "semanticRecallHint": "オンにするとシステムプロンプトは記憶インデックスのみになり、ターンごとに関連エントリを検索します。embedding と reranker モデルが必要です。",
+      "semanticTopK": "検索件数",
+      "semanticBudget": "検索の文字予算"
     }
   },
   "ko": {
@@ -261,9 +345,15 @@ onMounted(load);
       "usage": "현재 {entries}개 · {chars}자 · 평균 사용률 {percent}%",
       "save": "기억 설정 저장",
       "consolidate": "지금 정리",
-      "consolidated": "{n}개 보관됨",
-      "semanticRecall": "의미 검색(예약)",
-      "semanticRecallHint": "Phase 5는 아직 구현되지 않아 스위치가 꺼져 있습니다."
+      "consolidationDone": "정리 완료: {n}개 보관, {m}개 남음",
+      "consolidationSkipped": "항목이 적어 노화만 실행({n}개 보관)",
+      "consolidationFailed": "정리에 실패했습니다",
+      "consolidationTimeout": "정리 시간이 초과되었습니다. 나중에 다시 시도하세요",
+      "sessionRequired": "기억을 정리하기 전에 세션을 여세요",
+      "semanticRecall": "의미 검색",
+      "semanticRecallHint": "켜면 시스템 프롬프트에는 기억 색인만 들어가고 매 턴 관련 항목을 검색합니다. embedding과 reranker 모델이 필요합니다.",
+      "semanticTopK": "검색 개수",
+      "semanticBudget": "검색 문자 예산"
     }
   }
 }

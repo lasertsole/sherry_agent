@@ -8,7 +8,12 @@ replaces a target's entries with the parsed text.
 
 from __future__ import annotations
 
+import asyncio
+import time
+import uuid
 from typing import Any
+
+from loguru import logger
 
 from agent.tools.memory import ENTRY_DELIMITER, memory_store
 from config.features import SERVER_HTTP
@@ -206,6 +211,7 @@ def search_memory(
     *,
     target: str | None = None,
     limit: int = 50,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     if target is not None:
         _require_target(target)
@@ -213,6 +219,25 @@ def search_memory(
     if not needle:
         return {"entries": [], "total": 0, "query": query}
     safe_limit = max(1, min(int(limit), 200))
+    if memory_store.semantic_recall_enabled:
+        matches = memory_store.recall(
+            query,
+            target,
+            limit=min(safe_limit, 50),
+            session_id=session_id,
+        )
+        rows: list[dict[str, Any]] = []
+        for hit in matches:
+            entry = _repo().get_entry(int(hit["id"]))
+            if entry is None:
+                continue
+            rows.append({**_public(entry), "score": hit.get("score"), "stale": hit.get("stale")})
+        return {
+            "entries": rows,
+            "total": len(rows),
+            "query": query,
+            "mode": "semantic",
+        }
     entries = _repo().list_entries(
         target,
         include_archived=False,
@@ -220,16 +245,17 @@ def search_memory(
         order="desc",
         limit=None,
     )
-    matches = [entry for entry in entries if needle in entry["content"].lower()]
+    substring_matches = [entry for entry in entries if needle in entry["content"].lower()]
     return {
-        "entries": [_public(entry) for entry in matches[:safe_limit]],
-        "total": len(matches),
+        "entries": [_public(entry) for entry in substring_matches[:safe_limit]],
+        "total": len(substring_matches),
         "query": query,
+        "mode": "substring",
     }
 
 
 def consolidate_memory() -> dict[str, Any]:
-    """Run the usage-based aging pass (the manual 立即整理 button)."""
+    """Run ONLY the usage-based aging pass (kept for compatibility/tests)."""
     archived = _repo().prune_unused(int(memory_store.max_unused_days))
     memory_store.refresh_live()
     return {
@@ -237,6 +263,66 @@ def consolidate_memory() -> dict[str, Any]:
         "max_unused_days": int(memory_store.max_unused_days),
         "stats": memory_stats(),
     }
+
+
+#: ``{task_id: record}`` for the async manual-consolidation button. Process-local
+#: on purpose: a restart abandons an in-flight pass, and the panel simply starts
+#: a new one.
+_CONSOLIDATION_TASKS: dict[str, dict[str, Any]] = {}
+_CONSOLIDATION_KEEP = 50
+
+
+def _prune_consolidation_tasks() -> None:
+    finished = [key for key, value in _CONSOLIDATION_TASKS.items() if value["status"] != "running"]
+    for key in finished[: max(0, len(finished) - _CONSOLIDATION_KEEP)]:
+        _CONSOLIDATION_TASKS.pop(key, None)
+
+
+def start_memory_consolidation(session_id: str) -> dict[str, Any]:
+    """Start the async aging + LLM consolidation pass; returns its task id.
+
+    The handler must run on the event loop (Robyn's async handlers do); the
+    worker itself is a detached task so a long model pass never blocks the
+    HTTP response.
+    """
+    if not session_id:
+        raise ValueError("session_id is required for memory consolidation")
+    loop = asyncio.get_running_loop()
+    task_id = uuid.uuid4().hex
+    record: dict[str, Any] = {
+        "task_id": task_id,
+        "session_id": session_id,
+        "status": "running",
+        "started_at": time.time(),
+        "finished_at": None,
+        "result": None,
+        "error": None,
+    }
+    _CONSOLIDATION_TASKS[task_id] = record
+    _prune_consolidation_tasks()
+
+    async def _runner() -> None:
+        from agent.middlewares.summarization.nudges import run_memory_consolidation
+
+        try:
+            result = await run_memory_consolidation(session_id)
+            record["status"] = str(result.get("status") or "completed")
+            record["result"] = result
+        except Exception as exc:  # noqa: BLE001 - report on the task record
+            logger.exception("memory consolidation task {} failed", task_id)
+            record["status"] = "failed"
+            record["error"] = str(exc)
+        finally:
+            record["finished_at"] = time.time()
+
+    loop.create_task(_runner())
+    return {"task_id": task_id, "status": "running"}
+
+
+def consolidation_status(task_id: str) -> dict[str, Any] | None:
+    """Return one task's record (a copy), or ``None`` when unknown."""
+    record = _CONSOLIDATION_TASKS.get(task_id)
+    return dict(record) if record is not None else None
 
 
 def read_memory_settings() -> dict[str, Any]:
