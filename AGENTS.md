@@ -1119,18 +1119,39 @@ and the code CI jobs (docs parity/link gates run in their own job); see
   hook stops the backend), anything else prompts with a "don't ask again"
   checkbox. The same flag is editable under System Config → Desktop
   (`DesktopSettingsSection.vue`, appended LAST — the panel's footer guard is
-  keyed by tab index, so tab 7 joins the exclusion list).
+  keyed by tab index, so tab 7 joins the exclusion list). The frontend's
+  `getCurrentWindow().hide()` is an IPC command, so
+  `capabilities/default.json` explicitly grants `core:window:allow-hide`;
+  `core:default` alone only covers read-only window introspection and left the
+  X button doing nothing on a tray action.
 - **First-run files**: the writable home seeds `sherry.jsonc` / `.models` /
-  `.network` at import (`config/_home.py` resolves `--sherry-home`, then
-  `SHERRY_HOME`, then the code root for all four consumers); the read handlers
-  answer a structured 503 when a file is missing/unreadable and the sherry WRITE
-  path re-seeds before saving (a first-run App Config save used to 500). The
-  workspace roots are created on the WRITE path too — `FileStore.write_files`
-  runs the store's pre-read hook and `_write_one` mkdirs its parent — so the
-  packaged app's first persona write cannot fail with `FileNotFoundError`
-  (which the onboarding/preset dialogs then rendered as `[object Object]`;
-  both now use `describeError`, which prefers a Tauri error object's
-  `message`/`code` over `String(obj)`).
+  `.network` / `.env` at import (`config/_home.py` resolves `--sherry-home`,
+  then `SHERRY_HOME`, then the code root for all four consumers). Shipped
+  TEMPLATES are located through `resolve_code_root()`: PyInstaller onedir puts
+  them under `sys._MEIPASS` (`_internal`), not under a frozen module's synthetic
+  `__file__`; a missing template now logs a warning instead of silently
+  skipping the seed. The read handlers answer a structured 503 when a file is
+  missing/unreadable and the sherry WRITE path re-seeds before saving (a
+  first-run App Config save used to 500). The workspace roots are created on
+  the WRITE path too — `FileStore.write_files` runs the store's pre-read hook
+  and `_write_one` mkdirs its parent — so the packaged app's first persona
+  write cannot fail with `FileNotFoundError` (which the onboarding/preset
+  dialogs then rendered as `[object Object]`; both now use `describeError`,
+  which prefers a Tauri error object's `message`/`code` over `String(obj)`).
+- **Frozen channel dependencies**: a PyInstaller process has no venv and cannot
+  run `uv pip install`; `channels/deps.install_requirements` and
+  `channels/registry._ensure_deps` short-circuit in frozen mode, and
+  `plugins/channels/qq` treats the SDK as bundled (`botpy` is in
+  `packaging/build_backend.py::COLLECT_ALL` and in the project dependencies).
+  A build that nevertheless omits it logs one INFO (“QQ channel disabled in
+  packaged build”), not a per-start install storm.
+- **HTTP client-input boundary**: the desktop route probe found five handlers
+  leaking deliberate client errors into the generic 500 funnel. `GET /media`
+  (missing/unsafe parameters, missing file), `GET /get_history_by_turn_page`
+  (missing/non-integer page fields), `GET /get_pending_interrupt` (missing
+  session), `DELETE /sessions` (missing JSON/body/session) and
+  `DELETE /memory/entries/:entry_id` (non-integer id) now answer the shared
+  `bad_request`/`not_found` responses (400/404) instead of 500.
 - **Optional CUDA pack** (Linux only): `services/cuda_detect.rs` probes
   `nvidia-smi` / the kernel-module record and gates the model settings tab's
   card (`cuda_support` command; `CudaPackCard.vue` + `use-cuda-pack.ts` +

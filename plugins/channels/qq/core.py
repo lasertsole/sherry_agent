@@ -1,6 +1,7 @@
 """QQ channel implementation using botpy SDK."""
 
 import json
+import sys
 import time
 import asyncio
 import importlib
@@ -82,7 +83,11 @@ def _install_deps() -> bool:
     After ``_COOLDOWN_THRESHOLD`` consecutive failures the install is skipped
     for ``_COOLDOWN_WINDOW`` seconds (see cooldown helpers above), so a
     persistent outage doesn't trigger a hot loop of subprocess installs.
+    A frozen build cannot install into its interpreter: check whether the SDK
+    was bundled and report that instead of launching uv/pip.
     """
+    if getattr(sys, "frozen", False):
+        return _try_import_botpy()
     if _in_cooldown():
         logger.warning("QQ dep auto-install suppressed (in cooldown); install manually")
         return False
@@ -236,6 +241,15 @@ class QQChannel(BaseChannel):
     async def start(self) -> None:
         """Start the QQ bot."""
         if not QQ_AVAILABLE:
+            if getattr(sys, "frozen", False):
+                # A frozen build cannot install the SDK; the bundled tree either
+                # carries botpy or this optional channel is unavailable. One
+                # INFO, not the old per-start ERROR/install storm.
+                logger.info(
+                    "QQ channel disabled in packaged build (SDK not bundled); "
+                    "no runtime install attempted"
+                )
+                return
             # First import failed at load time -- try to install the SDK on
             # the fly (enable channel -> auto-download deps), then re-import.
             logger.warning("QQ SDK not installed. Attempting to auto-install dependencies...")

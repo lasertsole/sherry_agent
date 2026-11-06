@@ -72,7 +72,7 @@ channels/
 
 - `discover_channel_names() -> list[str]`: `plugins/channels/` 아래 채널 **디렉터리**(하위 디렉터리, 단일 파일 아님) 중 `core.py`를 포함하는 폴더를 검색하고 정렬된 이름을 반환
 - `load_channel_class(module_name, strict_deps=True) -> type[BaseChannel]`: `plugins/channels/<module_name>/core.py`를 동적으로 임포트하여 처음 발견된 `BaseChannel` 하위 클래스를 반환. `strict_deps=False`인 경우 의존성 설치 실패로도 로드가 중단되지 않으며, 채널은 등록된 상태로 `start()`가 설치를 재시도
-- `_ensure_deps(plugin_dir, plugin_name) -> bool`: 존재하는 경우 플러그인의 `requirements.txt` 설치(`uv pip install` 우선, `python -m pip` 폴백, 120초 타임아웃)
+- `_ensure_deps(plugin_dir, plugin_name) -> bool`: 존재하는 경우 플러그인의 `requirements.txt` 설치(`uv pip install` 우선, `python -m pip` 폴백, 120초 타임아웃). PyInstaller 동결 프로세스에서는 즉시 반환합니다: 인터프리터가 패키지를 설치할 수 없으므로 채널 SDK는 빌드 시 함께 포함되어야 합니다.
 - `discover_plugins() -> dict[str, type[BaseChannel]]`: `entry_points(group="channels")`로 등록된 외부 플러그인 로드
 - `discover_all() -> dict[str, type[BaseChannel]]`: 내장(디렉터리 검색, `strict_deps=False`로 로드)과 외부 채널을 병합 — 내장이 우선이며, 외부 플러그인은 내장 이름을 가릴 수 없음
 

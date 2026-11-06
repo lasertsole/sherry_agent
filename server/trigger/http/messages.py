@@ -6,6 +6,7 @@ from loguru import logger
 from pub.func.validator import is_safe_session_id
 
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request
 from server.service import (
     clear_session,
     get_history_by_turn_page as _get_history_by_turn_page,
@@ -30,14 +31,21 @@ async def get_sessions_handler(request):
 
 @app.delete("/sessions")
 async def clear_session_handler(request):
-    request_json = request.json()
+    try:
+        request_json = request.json()
+    except Exception:
+        return bad_request("JSON body required")
+    if not isinstance(request_json, dict):
+        return bad_request("JSON body required")
 
     session_id: str | None = request_json.get("session_id", None)
     # Traversal guard: session_id reaches Path joins + shutil.rmtree in the
     # DAO — a value like "../../workspace" must be rejected before any store
     # is touched.
-    if not session_id or not is_safe_session_id(session_id):
-        raise ValueError("invalid session_id")
+    if not session_id:
+        return bad_request("session_id is required")
+    if not is_safe_session_id(session_id):
+        return bad_request("invalid session_id")
     logger.info(f"Clearing session: session_id={session_id}")
     await clear_session(session_id=cast("str", session_id))
     logger.info(f"Session cleared: session_id={session_id}")
@@ -63,19 +71,31 @@ async def get_history_by_turn_page(request):
     logger.debug(f"Reading history messages: session_id={session_id}")
 
     if not session_id:
-        raise ValueError("session_id is required")
+        return bad_request("session_id is required")
 
     if not min_turn_num:
-        raise ValueError("last_turn_count is required")
+        return bad_request("last_turn_count is required")
+    try:
+        int(min_turn_num)
+    except (TypeError, ValueError):
+        return bad_request("min_turn_num must be an integer")
 
     if not turn_page_size:
-        raise ValueError("turn_page_size is required")
+        return bad_request("turn_page_size is required")
 
-    if int(turn_page_size) > _MAX_TURN_PAGE_SIZE:
-        raise ValueError(f"turn_page_size must be <= {_MAX_TURN_PAGE_SIZE}")
+    try:
+        page_size = int(turn_page_size)
+    except (TypeError, ValueError):
+        return bad_request("turn_page_size must be an integer")
+    if page_size > _MAX_TURN_PAGE_SIZE:
+        return bad_request(f"turn_page_size must be <= {_MAX_TURN_PAGE_SIZE}")
 
     if not turn_page_num:
-        raise ValueError("turn_page_num is required")
+        return bad_request("turn_page_num is required")
+    try:
+        int(turn_page_num)
+    except (TypeError, ValueError):
+        return bad_request("turn_page_num must be an integer")
 
     # The store read is blocking SQLite: keep it off the event loop thread.
     rows = await asyncio.to_thread(
@@ -134,6 +154,6 @@ async def get_pending_interrupt_handler(request):
     logger.debug(f"Reading pending HITL interrupt: session_id={session_id}")
 
     if not session_id:
-        raise ValueError("session_id is required")
+        return bad_request("session_id is required")
 
     return await _get_pending_interrupt(session_id)

@@ -110,9 +110,15 @@ async def memory_entries_archive_handler(request, path_params):
     if reason not in ARCHIVE_REASONS:
         return bad_request(f"Invalid archive reason: {reason!r}")
     try:
-        return ok(archive_memory_entry(_entry_id(path_params), reason))
+        entry_id = _entry_id(path_params)
+    except (KeyError, TypeError, ValueError):
+        return bad_request("entry_id must be an integer")
+    try:
+        return ok(archive_memory_entry(entry_id, reason))
     except LookupError as exc:
         return not_found(str(exc))
+    except ValueError as exc:
+        return bad_request(str(exc))
 
 
 @app.post("/memory/entries/:entry_id/restore")

@@ -72,7 +72,7 @@ channels/
 
 - `discover_channel_names() -> list[str]`：扫描 `plugins/channels/` 下的通道**目录**（子目录，而非单文件），仅识别含 `core.py` 的文件夹；返回排序后的名称
 - `load_channel_class(module_name, strict_deps=True) -> type[BaseChannel]`：动态导入 `plugins/channels/<module_name>/core.py` 并返回找到的第一个 `BaseChannel` 子类。`strict_deps=False` 时，依赖安装失败不会中断加载——通道仍会注册，并由 `start()` 重试安装
-- `_ensure_deps(plugin_dir, plugin_name) -> bool`：如存在则安装插件的 `requirements.txt`（优先 `uv pip install`，回退 `python -m pip`，120 秒超时）
+- `_ensure_deps(plugin_dir, plugin_name) -> bool`：如存在则安装插件的 `requirements.txt`（优先 `uv pip install`，回退 `python -m pip`，120 秒超时）。PyInstaller 冻结进程中会直接短路：解释器无法安装包，通道 SDK 必须在构建期随包。
 - `discover_plugins() -> dict[str, type[BaseChannel]]`：通过 `entry_points(group="channels")` 加载外部插件
 - `discover_all() -> dict[str, type[BaseChannel]]`：合并内置（目录扫描，以 `strict_deps=False` 加载）与外部通道——内置优先，外部插件不能覆盖内置名称
 

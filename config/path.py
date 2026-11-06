@@ -6,12 +6,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from config._home import resolve_app_home
+from config._home import resolve_app_home, resolve_code_root
 from config.sherry_settings import get_sherry_setting
 
 ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
 ROOT_DIR = ROOT_DIR.resolve()
+
+#: The code root that owns the SHIPPED ``.env`` template. Under PyInstaller this
+#: is ``sys._MEIPASS`` (onedir ``_internal``); the frozen module's synthetic
+#: ``__file__`` is not a reliable anchor. ``ROOT_DIR`` stays untouched: it is
+#: also the unconfigured default project directory and the skills/plugin root.
+_ENV_TEMPLATE_ROOT = resolve_code_root(ROOT_DIR)
 
 
 #: The WRITABLE app-data root. Unset (a checkout, a server, CI) keeps every
@@ -33,16 +39,36 @@ SHERRY_DESKTOP = "--sherry-desktop" in sys.argv or os.environ.get(
 ).strip().lower() in {"1", "true", "yes", "on"}
 
 ENV_PATH = APP_HOME / ".env"
-if APP_HOME != ROOT_DIR and not ENV_PATH.exists():
-    # Seed the editable copy from the TRACKED .env (it is the shipped default:
-    # the file holds the non-secret application configuration only — model and
-    # network credentials live in .models / .network).
-    template = ROOT_DIR / ".env"
-    if template.exists():
-        try:
-            ENV_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
-        except OSError:
-            pass
+
+
+def _seed_env_file() -> None:
+    """Seed the writable ``.env`` from the TRACKED template (desktop homes only).
+
+    A checkout (``APP_HOME == ROOT_DIR``) stays untouched. A missing template
+    is logged instead of silently skipped: a packaged build whose template root
+    resolved wrong must say so, or first-run config panels only see 503s with
+    no explanation.
+    """
+    if APP_HOME == ROOT_DIR or ENV_PATH.exists():
+        return
+    template = _ENV_TEMPLATE_ROOT / ".env"
+    from loguru import logger
+
+    if not template.is_file():
+        logger.warning(
+            ".env template not found at {} (code_root={}); seeding skipped",
+            template,
+            _ENV_TEMPLATE_ROOT,
+        )
+        return
+    try:
+        ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ENV_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to seed .env from {} to {}: {}", template, ENV_PATH, exc)
+
+
+_seed_env_file()
 # The model configuration (.models) and the network service configuration
 # (.network) live in their own project-root files (config/models_settings.py,
 # config/network_settings.py). Importing them seeds the files when missing AND

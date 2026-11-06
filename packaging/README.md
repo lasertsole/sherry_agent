@@ -43,7 +43,11 @@ lock and silently put CUDA PyTorch back on Linux.
   `.models.example`, `.network.example`, `context_engine/`), and writes the
   **`VERSION` marker** plus a copy of this document into the tree. Most of the
   size is PyTorch. A first run seeds the app-data home's `.env` from the tracked
-  one and its `.models` / `.network` from the two templates.
+  one and its `.models` / `.network` from the two templates; those template
+  lookups use `sys._MEIPASS` (`_internal`) via `config/_home.resolve_code_root`,
+  because a frozen module's `__file__` is not a reliable anchor. The QQ channel
+  SDK (`botpy`) is collected with `COLLECT_ALL`, so a frozen process never tries
+  to `pip install` it at runtime.
 - **Code embedder (optional)** — the code-intel semantic layer's Jina v2 Base
   Code ONNX backend is collected through `onnxruntime`; its 612 MB ONNX weights
   and tokenizer files are downloaded at runtime into

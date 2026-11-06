@@ -1,11 +1,8 @@
 """Tests for server/trigger/http/messages.py — history pagination validation.
 
-Drives the ``GET /get_history_by_turn_page`` handler directly (no Robyn
-server started). The module is registered on the real app, so the handler
-object is Robyn's wrapped surface: a raised ``ValueError`` comes back as a
-500 ``Response`` through the global exception funnel. ``turn_page_size`` is
-capped at the HTTP boundary so an unbounded page request can never reach
-the store.
+Drives the handlers directly (no Robyn server started). Client-input errors are
+returned as structured 400 responses at the boundary; ``turn_page_size`` is
+capped there so an unbounded page request can never reach the store.
 """
 
 import asyncio
@@ -48,7 +45,7 @@ def test_turn_page_size_over_cap_rejected(monkeypatch):
     )
 
     assert calls == []
-    assert int(response.status_code) == 500
+    assert int(response.status_code) == 400
     assert "turn_page_size must be <= 200" in response.description
 
 
@@ -93,7 +90,7 @@ def test_clear_session_rejects_traversal_session_id(monkeypatch):
     )
 
     assert calls == []
-    assert int(response.status_code) == 500
+    assert int(response.status_code) == 400
     assert "invalid session_id" in response.description
 
 
@@ -104,7 +101,23 @@ def test_clear_session_rejects_none_session_id(monkeypatch):
     response = asyncio.run(messages_http.clear_session_handler(_FakeJsonRequest({})))
 
     assert calls == []
-    assert int(response.status_code) == 500
+    assert int(response.status_code) == 400
+    assert "session_id is required" in response.description
+
+
+def test_clear_session_rejects_invalid_json(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(messages_http, "clear_session", _stub_clear_session(calls))
+
+    class _BadRequest:
+        def json(self):
+            raise ValueError("bad json")
+
+    response = asyncio.run(messages_http.clear_session_handler(_BadRequest()))
+
+    assert calls == []
+    assert int(response.status_code) == 400
+    assert "JSON body required" in response.description
 
 
 def test_clear_session_passes_valid_session_id(monkeypatch):
@@ -142,3 +155,25 @@ def test_history_read_runs_off_the_event_loop(monkeypatch):
 
     assert observed["off_loop"] is True
     assert observed["args"] == ("s1", "1", "20", "1")
+
+
+def test_missing_history_session_answers_400():
+    response = _call_handler({})
+
+    assert int(response.status_code) == 400
+    assert "session_id is required" in response.description
+
+
+def test_pending_interrupt_without_session_answers_400():
+    async def _stub(_sid):
+        raise AssertionError("the service must not be called without a session")
+
+    original = messages_http._get_pending_interrupt
+    messages_http._get_pending_interrupt = _stub
+    try:
+        response = asyncio.run(messages_http.get_pending_interrupt_handler(_FakeRequest({})))
+    finally:
+        messages_http._get_pending_interrupt = original
+
+    assert int(response.status_code) == 400
+    assert "session_id is required" in response.description
