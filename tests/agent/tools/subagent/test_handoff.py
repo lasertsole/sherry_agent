@@ -21,7 +21,7 @@ _BLOCK = """{
   "task_understanding": "add a token",
   "discovered_hard_constraints": ["no network"],
   "locked_decisions": [{"decision": "use jwt", "reason": "stateless"}],
-  "failed_paths": [{"path": "sessions", "failure_reason": "needs a store"}]
+  "failed_branches": [{"branch": "sessions", "failure_reason": "needs a store"}]
 }"""
 
 
@@ -36,7 +36,7 @@ def test_a_valid_block_is_parsed():
         "task_understanding": "add a token",
         "discovered_hard_constraints": ["no network"],
         "locked_decisions": [{"decision": "use jwt", "reason": "stateless"}],
-        "failed_paths": [{"path": "sessions", "failure_reason": "needs a store"}],
+        "failed_branches": [{"branch": "sessions", "failure_reason": "needs a store"}],
     }
 
 
@@ -99,7 +99,8 @@ def test_the_system_prompt_asks_for_the_block_first():
         "task_understanding",
         "discovered_hard_constraints",
         "locked_decisions",
-        "failed_paths",
+        "failed_branches",
+        "success_steps",
     ):
         assert field in prompt
     assert "Do NOT add depth/agent_label/children/outcome" in prompt
@@ -117,3 +118,23 @@ def test_completion_state_carries_the_handoff():
     )
     assert record.completion.handoff is None
     assert (record.step_id, record.flow_id) == ("step-1", "flow-1")
+
+
+def test_success_steps_are_parsed():
+    block = '{"success_steps": [{"step": "install", "tool": "terminal", "params": "uv add x", "outcome": "ok"}]}'
+
+    parsed = _extract_handoff_json(_wrap(block))
+
+    assert parsed == {
+        "success_steps": [
+            {"step": "install", "tool": "terminal", "params": "uv add x", "outcome": "ok"}
+        ]
+    }
+
+
+def test_the_old_failed_paths_key_is_normalized():
+    block = '{"failed_paths": [{"path": "old", "failure_reason": "r"}]}'
+
+    parsed = _extract_handoff_json(_wrap(block))
+
+    assert parsed == {"failed_branches": [{"branch": "old", "failure_reason": "r"}]}

@@ -361,7 +361,7 @@ async def test_the_child_handoff_reaches_completion(monkeypatch: pytest.MonkeyPa
         "## Task Result\n**Status**: completed\n\n"
         "```json\n"
         '{"task_understanding": "mine", "discovered_hard_constraints": ["no net"], '
-        '"locked_decisions": [], "failed_paths": [{"path": "p", "failure_reason": "r"}]}'
+        '"locked_decisions": [], "failed_branches": [{"branch": "p", "failure_reason": "r"}]}'
         "\n```"
     )
     child = _FakeChildAgent([answer])
@@ -372,7 +372,7 @@ async def test_the_child_handoff_reaches_completion(monkeypatch: pytest.MonkeyPa
         "task_understanding": "mine",
         "discovered_hard_constraints": ["no net"],
         "locked_decisions": [],
-        "failed_paths": [{"path": "p", "failure_reason": "r"}],
+        "failed_branches": [{"branch": "p", "failure_reason": "r"}],
     }
 
 

@@ -7,8 +7,9 @@ from agent.middlewares.summarization.summary_doc import (
     COMPLETED_MAX_ITEMS,
     CRITICAL_CONTEXT_MAX_ITEMS,
     EVICTED_REFS_MAX_ITEMS,
-    FAILED_PATHS_MAX_ITEMS,
+    FAILED_BRANCHES_MAX_ITEMS,
     KEY_DECISIONS_MAX_ITEMS,
+    SUCCESS_STEPS_MAX_ITEMS,
     SummaryDoc,
     cap_items,
     cap_summary_doc,
@@ -248,27 +249,66 @@ class TestCapSummaryDoc:
         assert "omitted" not in render_summary_markdown(cap_summary_doc(doc))
 
 
-class TestFailedPaths:
+class TestFailedBranches:
     """The handoff's failed paths survive compression as their own section."""
 
     def test_defaults_to_empty(self):
-        assert SummaryDoc().failed_paths == []
+        assert SummaryDoc().failed_branches == []
 
     def test_renders_the_section(self):
-        doc = SummaryDoc(failed_paths=["sessions: needs a store"])
+        doc = SummaryDoc(failed_branches=["sessions: needs a store"])
 
         markdown = render_summary_markdown(doc)
 
-        assert "## Failed Paths" in markdown
+        assert "## Failed Branches" in markdown
         assert "- sessions: needs a store" in markdown
 
     def test_renders_none_when_empty(self):
         assert "- (none)" in render_summary_markdown(SummaryDoc())
 
     def test_cap_keeps_the_most_recent(self):
-        doc = SummaryDoc(failed_paths=[f"p{i}: r{i}" for i in range(8)])
+        doc = SummaryDoc(failed_branches=[f"p{i}: r{i}" for i in range(8)])
 
         capped = cap_summary_doc(doc)
 
-        assert len(capped.failed_paths) == FAILED_PATHS_MAX_ITEMS
-        assert capped.failed_paths[-1] == "p7: r7"
+        assert len(capped.failed_branches) == FAILED_BRANCHES_MAX_ITEMS
+        assert capped.failed_branches[-1] == "p7: r7"
+
+
+class TestSuccessSteps:
+    def test_defaults_to_empty(self):
+        assert SummaryDoc().success_steps == []
+
+    def test_renders_the_direct_path_section(self):
+        doc = SummaryDoc(success_steps=["install (terminal, uv add x): ok"])
+
+        markdown = render_summary_markdown(doc)
+
+        assert "## Success Steps" in markdown
+        assert "- install (terminal, uv add x): ok" in markdown
+
+    def test_cap_keeps_the_most_recent(self):
+        doc = SummaryDoc(success_steps=[f"s{i} (t, p): o" for i in range(8)])
+
+        capped = cap_summary_doc(doc)
+
+        assert len(capped.success_steps) == SUCCESS_STEPS_MAX_ITEMS
+        assert capped.success_steps[-1] == "s7 (t, p): o"
+
+
+def test_old_failed_paths_alias_still_validates():
+    doc = SummaryDoc(failed_paths=["old: reason"])
+
+    assert doc.failed_branches == ["old: reason"]
+
+
+def test_summary_json_rules_carry_success_steps_and_branches():
+    from agent.middlewares.summarization.summary_generation import (
+        _SUMMARY_JSON_RULES,
+        _SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED,
+    )
+
+    assert '"success_steps"' in _SUMMARY_JSON_RULES
+    assert '"failed_branches"' in _SUMMARY_JSON_RULES
+    assert "success_steps" in _SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED
+    assert "failed_branches" in _SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED

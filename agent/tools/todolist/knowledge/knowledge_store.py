@@ -39,7 +39,7 @@ _SCHEMA_VERSION = 1
 _META_FILENAME = "meta.json"
 _HANDOFF_FILENAME = "handoff-tree.json"
 
-Layer = Literal["task", "wave", "plan", "handoff"]
+Layer = Literal["task", "wave", "plan", "handoff", "success"]
 
 
 def _parse_index(suffix: str) -> int | None:
@@ -70,6 +70,8 @@ def _filename_for(layer: Layer, position: int | None, wave_index: int | None) ->
         return f"wave-{wave_index}.json"
     if layer == "plan":
         return "plan-summary.json"
+    if layer == "success":
+        return "success-steps.json"
     raise ValueError(f"unknown layer: {layer}")
 
 
@@ -131,11 +133,19 @@ def _format_plan(plan_name: str, all_data: dict, *, full: bool) -> str:
         lines.extend(f"  - {pattern}" for pattern in patterns)
     handoff = all_data.get("handoff") or {}
     if handoff:
+        failed_branches = handoff.get("failed_branches") or handoff.get("failed_paths") or []
         lines.append(
             "\nHandoff tree: "
-            f"{len(handoff.get('failed_paths', []))} failed paths, "
+            f"{len(failed_branches)} failed branches, "
+            f"{len(handoff.get('success_steps', []))} success steps, "
             f"{len(handoff.get('hard_constraints', []))} hard constraints "
             "(knowledge(action='read', layer='handoff') for the full tree)"
+        )
+    aggregate_steps = plan.get("aggregate_success_steps", [])
+    if aggregate_steps:
+        lines.append(
+            f"\nAggregate success steps: {len(aggregate_steps)} "
+            "(knowledge(action='read', layer='success'))"
         )
     if full:
         return "\n".join(lines)
@@ -147,7 +157,7 @@ def _format_plan(plan_name: str, all_data: dict, *, full: bool) -> str:
             lines.append(
                 f"  Task {position}: method={task.get('method', 'unknown')} "
                 f"(failures={len(task.get('failure_set', []))}, "
-                f"steps={len(task.get('success_path', []))})"
+                f"steps={len(task.get('success_steps', task.get('success_path', [])))})"
             )
         lines.append(
             f"\nUse knowledge(action='read', plan_name='{plan_name}', "
@@ -180,19 +190,50 @@ def _format_task(plan_name: str, all_data: dict, position: int | None) -> str:
     ]
     failures = task.get("failure_set", [])
     lines += _numbered("Failure Set", failures) if failures else ["\n## Failure Set: (none)"]
-    steps = task.get("success_path", [])
-    lines += _numbered("Success Path", steps) if steps else ["\n## Success Path: (none)"]
+    structured_steps = task.get("success_steps", [])
+    if structured_steps:
+        rendered = [
+            f"{step.get('step', '?')} ({step.get('tool', '?')}, "
+            f"{step.get('params', '')}) -> {step.get('outcome', '')}"
+            for step in structured_steps
+            if isinstance(step, dict)
+        ]
+        lines += _numbered("Success Steps", rendered)
+    else:
+        steps = task.get("success_path", [])
+        lines += _numbered("Success Path", steps) if steps else ["\n## Success Path: (none)"]
     hard_constraints = task.get("hard_constraints", [])
     if hard_constraints:
         lines += _numbered("Hard Constraints", hard_constraints)
-    failed_paths_tree = task.get("failed_paths_tree", [])
-    if failed_paths_tree:
-        lines += _numbered("Failed Paths (traceable)", failed_paths_tree)
+    failed_branches_tree = task.get("failed_branches_tree") or task.get("failed_paths_tree") or []
+    if failed_branches_tree:
+        lines += _numbered("Failed Branches (traceable)", failed_branches_tree)
     runs = task.get("subagent_runs", [])
     if runs:
         lines.append("\n## Subagent Runs")
         lines.extend(
             f"  - {run.get('task_name', '?')}: outcome={run.get('outcome', '?')}" for run in runs
+        )
+    return "\n".join(lines)
+
+
+def _format_success(plan_name: str, all_data: dict) -> str:
+    """Render the plan-level aggregate success steps (replayable order)."""
+    success = all_data.get("success") or {}
+    steps = success.get("aggregate_success_steps") if isinstance(success, dict) else None
+    if not steps:
+        plan = all_data.get("plan") or {}
+        steps = plan.get("aggregate_success_steps", [])
+    if not steps:
+        return f"No aggregate success steps found for: {plan_name}"
+    lines = [f"# Success Steps: {plan_name}"]
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        lines.append(
+            f"  {index}. {step.get('step', '?')} "
+            f"({step.get('tool', '?')}, {step.get('params', '')}) "
+            f"-> {step.get('outcome', '')}"
         )
     return "\n".join(lines)
 
@@ -275,7 +316,7 @@ class KnowledgeStore:
         dir_path = _existing_dir(identity)
         if dir_path is None:
             return {}
-        result: dict = {"tasks": {}, "waves": {}, "plan": None}
+        result: dict = {"tasks": {}, "waves": {}, "plan": None, "success": None}
         for file_path in sorted(dir_path.iterdir()):
             if file_path.suffix != ".json":
                 continue
@@ -295,6 +336,8 @@ class KnowledgeStore:
                 result["plan"] = data
             elif stem == "handoff-tree":
                 result["handoff"] = data
+            elif stem == "success-steps":
+                result["success"] = data
         return result
 
     @staticmethod
@@ -330,6 +373,8 @@ class KnowledgeStore:
             return _format_wave(plan_name, all_data, wave_index)
         if layer == "handoff":
             return _format_handoff(plan_name, all_data)
+        if layer == "success":
+            return _format_success(plan_name, all_data)
         if layer in (None, "plan"):
             return _format_plan(plan_name, all_data, full=layer == "plan")
         return f"Unknown layer: {layer}"

@@ -82,11 +82,14 @@ async def knowledge(
         -> Returns full plan summary
       knowledge(action="read", plan_name="implement-auth", layer="handoff")
         -> Returns the RAW code-merged handoff tree (per-layer experience data)
+      knowledge(action="read", plan_name="implement-auth", layer="success")
+        -> Returns the plan-level aggregate success steps (replayable order)
 
     Write examples:
       knowledge(action="write", plan_name="...", layer="task", position=0, data={...})
       knowledge(action="write", plan_name="...", layer="wave", wave_index=0, data={...})
       knowledge(action="write", plan_name="...", layer="plan", data={...})
+      knowledge(action="write", plan_name="...", layer="success", data={"aggregate_success_steps": [...]})
     """
     sid = session_id if isinstance(session_id, str) else ""
 

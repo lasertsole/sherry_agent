@@ -150,7 +150,7 @@ class TestMultiStrategyPipeline:
 
     def test_summary_item_token_budgets(self):
         assert SUMMARY_ITEM_TOKENS == 100
-        # 75 (was 50): a handoff field (failed_paths) is worth a longer line.
+        # 75 (was 50): a handoff field (failed_branches) is worth a longer line.
         assert SUMMARY_ITEM_TOKENS_SHORT == 75
         assert SUMMARY_ITEM_TOKENS_SHORT <= SUMMARY_ITEM_TOKENS
 

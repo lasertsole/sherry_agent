@@ -248,7 +248,7 @@ class TestHandoffPersistence:
             "task_understanding": "u",
             "discovered_hard_constraints": [],
             "locked_decisions": [],
-            "failed_paths": [],
+            "failed_branches": [],
         }
 
         updated = complete_run(

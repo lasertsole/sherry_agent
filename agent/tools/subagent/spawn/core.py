@@ -99,26 +99,54 @@ _ISOLATION_PROMPT_NOTE = (
 )
 
 
-#: The four EXPERIENCE fields a child reports about ITS OWN layer. Metadata
+#: The five EXPERIENCE fields a child reports about ITS OWN layer. Metadata
 #: (depth/label/children/outcome) is code-assembled later — a model that echoes
 #: them back is stripped here so layers cannot smuggle each other's data.
 _HANDOFF_FIELDS = (
     "task_understanding",
     "discovered_hard_constraints",
     "locked_decisions",
-    "failed_paths",
+    "failed_branches",
+    "success_steps",
 )
 _HANDOFF_JSON_BLOCK = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+
+def _normalise_handoff(data: dict) -> dict:
+    """Project one parsed handoff, accepting the pre-rename ``failed_paths`` key."""
+    result = {key: data[key] for key in _HANDOFF_FIELDS if key in data}
+    if "failed_branches" not in result:
+        legacy = data.get("failed_paths")
+        if isinstance(legacy, list):
+            result["failed_branches"] = [
+                {
+                    "branch": str(item.get("branch") or item.get("path") or ""),
+                    "failure_reason": str(item.get("failure_reason") or ""),
+                }
+                for item in legacy
+                if isinstance(item, dict)
+            ]
+    elif isinstance(result.get("failed_branches"), list):
+        result["failed_branches"] = [
+            {
+                "branch": str(item.get("branch") or item.get("path") or ""),
+                "failure_reason": str(item.get("failure_reason") or ""),
+            }
+            for item in result["failed_branches"]
+            if isinstance(item, dict)
+        ]
+    return result
 
 
 def _extract_handoff_json(result_text: str | None) -> dict | None:
     """The child's handoff JSON block, or None (fail-open).
 
-    Phase 1 is prompt-bound: the child appends a ```json block with four
+    Phase 1 is prompt-bound: the child appends a ```json block with five
     experience fields to its Task Result. The LAST parseable block carrying at
     least one of them wins; depth/agent_label/outcome/children are dropped here
     (program-injected later). A missing/malformed block returns None, and the
-    plan extractor falls back to the free-text result.
+    plan extractor falls back to the free-text result. An older child that still
+    emitted ``failed_paths`` is normalized to ``failed_branches``.
     """
     if not result_text:
         return None
@@ -127,9 +155,11 @@ def _extract_handoff_json(result_text: str | None) -> dict | None:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             continue
-        if not isinstance(data, dict) or not any(key in data for key in _HANDOFF_FIELDS):
+        if not isinstance(data, dict):
             continue
-        return {key: data[key] for key in _HANDOFF_FIELDS if key in data}
+        if not any(key in data for key in (*_HANDOFF_FIELDS, "failed_paths")):
+            continue
+        return _normalise_handoff(data)
     return None
 
 

@@ -49,8 +49,10 @@ class SummarizationConfig(TypedDict):
     completed_max_items: int
     key_decisions_max_items: int
     critical_context_max_items: int
-    #: The handoff's failed-path entries kept per SummaryDoc; the tail wins.
-    failed_paths_max_items: int
+    #: The handoff's failed-BRANCH entries kept per SummaryDoc; the tail wins.
+    failed_branches_max_items: int
+    #: The curated DIRECT success-step entries kept per SummaryDoc.
+    success_steps_max_items: int
     #: Per-run summary budget for a SUBAGENT: the DEEPEST layer gets the base,
     #: each level above it adds the step. A layer deeper in the chain summarizes
     #: less conversation but its summary is consumed by every ancestor, so the
@@ -123,7 +125,8 @@ SUMMARIZATION: SummarizationConfig = {
     "completed_max_items": 5,
     "key_decisions_max_items": 5,
     "critical_context_max_items": 3,
-    "failed_paths_max_items": 5,
+    "failed_branches_max_items": 5,
+    "success_steps_max_items": 5,
     "summary_total_max_tokens_base": 5_000,
     "summary_total_max_tokens_depth_step": 1_000,
     "active_plan_notes_max_items": 20,

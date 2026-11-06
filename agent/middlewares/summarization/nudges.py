@@ -187,11 +187,12 @@ GOOD: "Synchronous bcrypt blocks event loop — use passlib CryptContext for asy
 The plan context now carries machine-readable experience:
 
 - `aggregated_handoff` — the per-layer handoffs already merged DEPTH-FIRST by
-  code: `failed_paths` [{path, failure_reason, source}], `hard_constraints`
-  [str], `locked_decisions` [{decision, reason, source}], plus totals and the
-  original `handoff_forest`. Each entry's `source` names the layer
+  code: `failed_branches` [{branch, failure_reason, source}], `success_steps`
+  [{step, tool, params, outcome, source}], `hard_constraints` [str],
+  `locked_decisions` [{decision, reason, source}], plus totals and the original
+  `handoff_forest`. Each entry's `source` names the layer
   (e.g. "depth-1:researcher-a2b3 > depth-2:executor-c7d8").
-- each `subagent_runs` entry — its OWN `handoff` (4 fields, this layer only),
+- each `subagent_runs` entry — its OWN `handoff` (5 fields, this layer only),
   `spawn_depth`, `label`, `outcome`, `step_id`, `flow_id`, `relevance` and
   `resolved_position` (the run's step re-resolved against the CURRENT plan;
   null when its todo was deleted/reordered away). Runs from
@@ -199,21 +200,27 @@ The plan context now carries machine-readable experience:
 
 ### For EACH task, extract:
 
-1. **failure_set**: Take `aggregated_handoff.failed_paths` entries as
-   "<path>: <failure_reason>" (deduplicate semantically similar entries).
+1. **failure_set**: Take `aggregated_handoff.failed_branches` entries as
+   "<branch>: <failure_reason>" (deduplicate semantically similar entries).
    When a run has no handoff, fall back to reading its result_text for
    failure signals. If there are no failures, use an empty array [].
 
-2. **success_path**: Derive it from `aggregated_handoff.locked_decisions` — a
-   locked decision means that path worked: "<decision>: <reason>", ordered by
-   depth (parent decisions first). Supplement from result_text only when the
-   decisions are sparse. If trivial, use ["straightforward implementation"].
+2. **success_steps**: Consume `aggregated_handoff.success_steps` (the
+   subagent's curated DIRECT path: only the minimal ordered steps that led
+   straight to completion, NO exploratory/groping branches) as the primary
+   source. Emit each as `{step, tool, params, outcome}` in dependency order.
+   `locked_decisions` annotate WHY this approach was chosen; use them to fill
+   missing rationale, not to replace the steps. When success_steps is empty
+   (task failed), emit [] and record the failure_set only.
+   Build `success_path` as the human-readable projection:
+   "<step> (<tool>, <params>) -> <outcome>", annotated with the matching
+   locked_decision reason when one exists.
 
 3. **hard_constraints**: Copy `aggregated_handoff.hard_constraints` into the
    task-level knowledge as `hard_constraints` (deduplicated). These are
    inviolable — future plans must respect them.
 
-4. **failed_paths_tree**: Keep the traceable form `"<path>: <reason>
+4. **failed_branches_tree**: Keep the traceable form `"<branch>: <reason>
    (source: <source>)"` for entries whose origin matters (a child tried a
    variation of its parent's approach). Do not invent relationships.
 
@@ -240,12 +247,15 @@ Write knowledge files using the knowledge tool with action='write':
 - knowledge(action="write", plan_name="...", layer="task", position=0, data={...})
 - knowledge(action="write", plan_name="...", layer="wave", wave_index=0, data={...})
 - knowledge(action="write", plan_name="...", layer="plan", data={...})
+- The plan-layer data carries `aggregate_success_steps`: concatenate the
+  task success_steps along the dependency chain (topological order); parallel
+  tasks stay side-by-side as separate entries rather than one interleaved list.
 
 Extract ALL layers. Be thorough — this knowledge will be queried in future sessions
 to avoid repeating the same mistakes and to replicate successful approaches.
 
 If the plan had no subagent runs and no notable patterns, still write the files
-with empty failure_set and minimal success_path.
+with empty failure_set/success_steps and a minimal success_path.
 
 ## Part 2: Skill Library Update
 
@@ -1101,13 +1111,29 @@ def _walk_handoff(node: dict, aggregate: dict, seen: set[str], source_prefix: st
     depth = node.get("depth", "?")
     label = node.get("agent_label", "?")
     source = f"{source_prefix}depth-{depth}:{label}" if source_prefix else f"depth-{depth}:{label}"
-    for failed in node.get("failed_paths", []) or []:
+    branches = node.get("failed_branches")
+    if not isinstance(branches, list):
+        # Pre-rename handoffs stored ``failed_paths`` with a ``path`` key.
+        branches = node.get("failed_paths") or []
+    for failed in branches:
         if not isinstance(failed, dict):
             continue
-        aggregate["failed_paths"].append(
+        aggregate["failed_branches"].append(
             {
-                "path": str(failed.get("path") or ""),
+                "branch": str(failed.get("branch") or failed.get("path") or ""),
                 "failure_reason": str(failed.get("failure_reason") or ""),
+                "source": source,
+            }
+        )
+    for step in node.get("success_steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        aggregate["success_steps"].append(
+            {
+                "step": str(step.get("step") or ""),
+                "tool": str(step.get("tool") or ""),
+                "params": str(step.get("params") or ""),
+                "outcome": str(step.get("outcome") or ""),
                 "source": source,
             }
         )
@@ -1133,7 +1159,8 @@ def _walk_handoff(node: dict, aggregate: dict, seen: set[str], source_prefix: st
 def _aggregate_handoffs(tree_roots: list[dict]) -> dict[str, Any]:
     """Flatten the assembled forest (pure; same input → same output)."""
     aggregate: dict[str, Any] = {
-        "failed_paths": [],
+        "failed_branches": [],
+        "success_steps": [],
         "hard_constraints": [],
         "locked_decisions": [],
         "handoff_forest": tree_roots,
@@ -1151,14 +1178,17 @@ def _compact_aggregate(aggregate: dict[str, Any]) -> dict[str, Any]:
     subagents ran; the full tree lives in ``handoff-tree.json`` and is fetched
     on demand with ``knowledge(action="read", layer="handoff")``.
     """
-    failed_paths = aggregate.get("failed_paths") or []
+    failed_branches = aggregate.get("failed_branches") or []
+    success_steps = aggregate.get("success_steps") or []
     hard_constraints = aggregate.get("hard_constraints") or []
     locked_decisions = aggregate.get("locked_decisions") or []
     return {
-        "failed_paths": failed_paths[:_PLAN_CONTEXT_LIST_CAP],
+        "failed_branches": failed_branches[:_PLAN_CONTEXT_LIST_CAP],
+        "success_steps": success_steps[:_PLAN_CONTEXT_LIST_CAP],
         "hard_constraints": hard_constraints[:_PLAN_CONTEXT_LIST_CAP],
         "locked_decisions": locked_decisions[:_PLAN_CONTEXT_LIST_CAP],
-        "total_failed_paths": len(failed_paths),
+        "total_failed_branches": len(failed_branches),
+        "total_success_steps": len(success_steps),
         "total_hard_constraints": len(hard_constraints),
         "total_locked_decisions": len(locked_decisions),
     }

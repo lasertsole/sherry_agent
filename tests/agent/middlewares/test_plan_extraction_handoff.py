@@ -64,7 +64,8 @@ def _handoff(**overrides) -> dict:
         "task_understanding": "restated",
         "discovered_hard_constraints": [],
         "locked_decisions": [],
-        "failed_paths": [],
+        "failed_branches": [],
+        "success_steps": [],
     }
     data.update(overrides)
     return data
@@ -239,7 +240,7 @@ def test_aggregation_flattens_depth_first_with_sources_and_dedupes():
         "requester_session_key": MAIN,
         "handoff": _handoff(
             discovered_hard_constraints=["no network"],
-            failed_paths=[{"path": "p1", "failure_reason": "r1"}],
+            failed_branches=[{"branch": "p1", "failure_reason": "r1"}],
             locked_decisions=[{"decision": "d1", "reason": "why"}],
         ),
         "spawn_depth": 1,
@@ -252,7 +253,10 @@ def test_aggregation_flattens_depth_first_with_sources_and_dedupes():
         "requester_session_key": "child-a",
         "handoff": _handoff(
             discovered_hard_constraints=["no network", "disk cap"],
-            failed_paths=[{"path": "p2", "failure_reason": "r2"}],
+            failed_branches=[{"branch": "p2", "failure_reason": "r2"}],
+            success_steps=[
+                {"step": "write", "tool": "write_file", "params": "a.py", "outcome": "ok"}
+            ],
         ),
         "spawn_depth": 2,
         "label": "executor",
@@ -262,8 +266,10 @@ def test_aggregation_flattens_depth_first_with_sources_and_dedupes():
 
     aggregated = nudges._aggregate_handoffs(nudges._assemble_handoff_tree([parent, child]))
 
-    assert [entry["path"] for entry in aggregated["failed_paths"]] == ["p1", "p2"]
-    assert aggregated["failed_paths"][1]["source"] == "depth-1:researcher > depth-2:executor"
+    assert [entry["branch"] for entry in aggregated["failed_branches"]] == ["p1", "p2"]
+    assert aggregated["failed_branches"][1]["source"] == "depth-1:researcher > depth-2:executor"
+    assert aggregated["success_steps"][0]["step"] == "write"
+    assert aggregated["success_steps"][0]["source"] == "depth-1:researcher > depth-2:executor"
     assert aggregated["hard_constraints"] == ["no network", "disk cap"]
     assert aggregated["locked_decisions"][0]["source"] == "depth-1:researcher"
     assert len(aggregated["handoff_forest"]) == 1
@@ -271,7 +277,8 @@ def test_aggregation_flattens_depth_first_with_sources_and_dedupes():
 
 def test_compact_view_caps_lists_and_drops_the_forest():
     aggregate = {
-        "failed_paths": [{"path": str(i)} for i in range(15)],
+        "failed_branches": [{"branch": str(i)} for i in range(15)],
+        "success_steps": [{"step": str(i)} for i in range(15)],
         "hard_constraints": ["c"] * 15,
         "locked_decisions": [{"decision": "d"}] * 15,
         "handoff_forest": [{"big": "tree"}],
@@ -279,8 +286,10 @@ def test_compact_view_caps_lists_and_drops_the_forest():
 
     compact = nudges._compact_aggregate(aggregate)
 
-    assert len(compact["failed_paths"]) == 10
-    assert compact["total_failed_paths"] == 15
+    assert len(compact["failed_branches"]) == 10
+    assert len(compact["success_steps"]) == 10
+    assert compact["total_failed_branches"] == 15
+    assert compact["total_success_steps"] == 15
     assert compact["total_hard_constraints"] == 15
     assert "handoff_forest" not in compact
 
@@ -317,7 +326,7 @@ def test_build_plan_context_runs_the_whole_chain(monkeypatch):
     run = _run(
         "agent:main:subagent:a",
         MAIN,
-        handoff=_handoff(failed_paths=[{"path": "p", "failure_reason": "r"}]),
+        handoff=_handoff(failed_branches=[{"branch": "p", "failure_reason": "r"}]),
         step_id="step-1",
         depth=1,
         label="researcher",
@@ -335,7 +344,7 @@ def test_build_plan_context_runs_the_whole_chain(monkeypatch):
 
     assert context
     assert context["subagent_runs"][0]["resolved_position"] == 3
-    assert context["aggregated_handoff"]["failed_paths"][0]["path"] == "p"
+    assert context["aggregated_handoff"]["failed_branches"][0]["branch"] == "p"
     assert context["plan_snapshot"]["todo_by_step"]
 
 
@@ -360,7 +369,7 @@ def test_the_full_tree_is_written_before_the_llm(monkeypatch):
     context = {
         "plan_name": "p",
         "aggregated_handoff": {
-            "failed_paths": [],
+            "failed_branches": [],
             "hard_constraints": [],
             "locked_decisions": [],
             "handoff_forest": [{"task_understanding": "x"}],
@@ -388,3 +397,12 @@ def test_no_file_is_written_without_a_forest(monkeypatch):
     asyncio.run(nudges._write_handoff_tree_safely(SESSION, {"aggregated_handoff": {}}))
 
     assert calls == []
+
+
+def test_the_plan_prompt_consumes_success_steps_and_branches():
+    prompt = nudges._PLAN_EXTRACTION_PROMPT
+
+    assert "success_steps" in prompt
+    assert "failed_branches" in prompt
+    assert "aggregate_success_steps" in prompt
+    assert "failed_paths" not in prompt

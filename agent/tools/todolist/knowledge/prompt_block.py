@@ -62,11 +62,13 @@ def build_knowledge_block(session_id: str) -> str:
                 lines.extend(f"  - {_trunc(str(item), 150)}" for item in patterns[:8])
         # The code-merged tree survives an extraction-LLM failure: keep a tiny
         # count line so the main agent knows raw experience data exists.
-        failed_paths = handoff.get("failed_paths") or []
+        failed_branches = handoff.get("failed_branches") or handoff.get("failed_paths") or []
+        success_steps = handoff.get("success_steps") or []
         hard_constraints = handoff.get("hard_constraints") or []
-        if failed_paths or hard_constraints:
+        if failed_branches or success_steps or hard_constraints:
             lines.append(
-                f"Handoff: {len(failed_paths)} failed paths, "
+                f"Handoff: {len(failed_branches)} failed branches, "
+                f"{len(success_steps)} success steps, "
                 f"{len(hard_constraints)} hard constraints — use "
                 "knowledge(action='read', layer='handoff') for details."
             )

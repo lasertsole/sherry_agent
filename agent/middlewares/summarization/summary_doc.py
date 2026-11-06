@@ -33,7 +33,7 @@ both arrays are empty.
 from __future__ import annotations
 
 from pub.func.message.token_truncation import truncate_by_tokens
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from config.features import SUMMARIZATION
 
@@ -48,7 +48,8 @@ COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
 KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
 CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
 ACTIVE_PLAN_NOTES_MAX_ITEMS = SUMMARIZATION["active_plan_notes_max_items"]
-FAILED_PATHS_MAX_ITEMS = SUMMARIZATION["failed_paths_max_items"]
+FAILED_BRANCHES_MAX_ITEMS = SUMMARIZATION["failed_branches_max_items"]
+SUCCESS_STEPS_MAX_ITEMS = SUMMARIZATION["success_steps_max_items"]
 EVICTED_REFS_MAX_ITEMS = SUMMARIZATION["evicted_refs_max_items"]
 
 _STRING_FIELDS = ("latest_user_request", "goal")
@@ -58,7 +59,8 @@ _LIST_FIELDS = (
     "in_progress",
     "blocked",
     "key_decisions",
-    "failed_paths",
+    "failed_branches",
+    "success_steps",
     "next_steps",
     "critical_context",
     "relevant_files",
@@ -71,7 +73,8 @@ _LIST_FIELDS = (
 _FIELD_CAPS: dict[str, int] = {
     "completed": COMPLETED_MAX_ITEMS,
     "key_decisions": KEY_DECISIONS_MAX_ITEMS,
-    "failed_paths": FAILED_PATHS_MAX_ITEMS,
+    "failed_branches": FAILED_BRANCHES_MAX_ITEMS,
+    "success_steps": SUCCESS_STEPS_MAX_ITEMS,
     "critical_context": CRITICAL_CONTEXT_MAX_ITEMS,
     "active_plan_notes": ACTIVE_PLAN_NOTES_MAX_ITEMS,
     "evicted_refs": EVICTED_REFS_MAX_ITEMS,
@@ -110,12 +113,24 @@ class SummaryDoc(BaseModel):
     key_decisions: list[str] = Field(
         default_factory=list, description='Decisions as "<decision>: <reason>", oldest first.'
     )
-    failed_paths: list[str] = Field(
+    failed_branches: list[str] = Field(
         default_factory=list,
+        validation_alias=AliasChoices("failed_branches", "failed_paths"),
         description=(
-            'Paths tried and failed, each as "<path>: <failure_reason>". '
+            'Branches/approaches tried and failed, each as "<branch>: <failure_reason>". '
             "Carry existing entries forward verbatim; append newly discovered. "
             "Empty list when none."
+        ),
+    )
+    success_steps: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The DIRECT path to success — only the minimal ordered steps that led "
+            "straight to task completion, each as '<step> (<tool>, <params>): <outcome>'. "
+            "MUST EXCLUDE exploratory/groping/tentative/abandoned branches (those go "
+            "to failed_branches). Carry existing entries forward verbatim; replace "
+            "with the final curated DIRECT path once the approach settles. Empty if "
+            "the task failed."
         ),
     )
     next_steps: list[str] = Field(
@@ -184,7 +199,8 @@ def cap_items(items: list[str], max_items: int) -> tuple[list[str], int]:
 _ITEM_TOKEN_BUDGETS: dict[str, int] = {
     "completed": SUMMARIZATION["summary_item_tokens"],
     "key_decisions": SUMMARIZATION["summary_item_tokens"],
-    "failed_paths": SUMMARIZATION["summary_item_tokens"],
+    "failed_branches": SUMMARIZATION["summary_item_tokens"],
+    "success_steps": SUMMARIZATION["summary_item_tokens"],
     "critical_context": SUMMARIZATION["summary_item_tokens"],
     "constraints": SUMMARIZATION["summary_item_tokens_short"],
     "in_progress": SUMMARIZATION["summary_item_tokens_short"],
@@ -301,9 +317,17 @@ def render_summary_markdown(doc: SummaryDoc) -> str:
 
     _render_list_section(
         lines,
-        f"## Failed Paths (most recent {FAILED_PATHS_MAX_ITEMS}; do not retry)",
-        doc.failed_paths,
-        cap=FAILED_PATHS_MAX_ITEMS,
+        f"## Failed Branches (most recent {FAILED_BRANCHES_MAX_ITEMS}; do not retry)",
+        doc.failed_branches,
+        cap=FAILED_BRANCHES_MAX_ITEMS,
+    )
+    lines.append("")
+
+    _render_list_section(
+        lines,
+        f"## Success Steps (most recent {SUCCESS_STEPS_MAX_ITEMS}; direct path)",
+        doc.success_steps,
+        cap=SUCCESS_STEPS_MAX_ITEMS,
     )
     lines.append("")
 
