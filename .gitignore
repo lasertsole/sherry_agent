@@ -35,6 +35,9 @@ models/embed_model/code/tokenizer/
 /src/
 # root temp/ — scratch/evidence dir, root only (cf. /workspace/ below)
 /temp/
+# Shared shadow-git store (APP_HOME/checkpoints/store); in a checkout APP_HOME
+# is the repo root, so this runtime directory is anchored here.
+/checkpoints/
 cron_jobs.json
 skills/.curator_state
 skills/.archive

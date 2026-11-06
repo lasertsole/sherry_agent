@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent.tools.pub_base import shadow_git
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
+
+
+@pytest.fixture(autouse=True)
+def _isolated_shared_store(tmp_path, monkeypatch):
+    """One shared store per test, plus a clean process-level floor slate."""
+    from config.features import SHADOW_GIT
+
+    monkeypatch.setitem(SHADOW_GIT, "store_dir", str(tmp_path / "shared-store"))
+    monkeypatch.setattr(shadow_git, "_dedup", set())
+    monkeypatch.setattr(shadow_git, "_turn_counts", {})
+    monkeypatch.setattr(shadow_git, "_floors", {})
+    monkeypatch.setattr(shadow_git, "_floors_loaded", set())
+    monkeypatch.setattr(shadow_git, "_frozen", set())
+    monkeypatch.setattr(shadow_git, "_active_writers", {})
 
 
 @pytest.fixture
@@ -20,10 +36,12 @@ def project(tmp_path):
 def test_snapshot_creates_the_store_not_a_user_repository(project):
     sha = shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
     assert sha
-    assert (project / ".sherry" / "shadow-git" / "HEAD").is_file()
+    assert (shadow_git.shadow_store(project) / "HEAD").is_file()
+    assert shadow_git.shadow_meta(project).is_file()
+    assert not (project / ".sherry" / "shadow-git").exists()
     assert not (project / ".git").exists()
     tree = shadow_git.run_shadow(
-        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+        project, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(project)]
     ).stdout.split()
     assert tree == ["a.txt"]
 
@@ -34,7 +52,7 @@ def test_secrets_and_the_store_are_excluded(project):
     (project / ".models").write_text("secret\n", encoding="utf-8")
     shadow_git.take_snapshot(project, "manual:first")
     tree = shadow_git.run_shadow(
-        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+        project, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(project)]
     ).stdout.split()
     assert "a.txt" in tree
     assert ".env.example" in tree
@@ -50,7 +68,7 @@ def test_list_checkpoints_parses_the_structured_message(project):
     # the helper call above does not bind one, so read via run_shadow instead.
     assert items == []
     raw = shadow_git.run_shadow(
-        project, ["log", "-1", "--pretty=%s", shadow_git.SHADOW_REF]
+        project, ["log", "-1", "--pretty=%s", shadow_git.shadow_ref(project)]
     ).stdout.strip()
     assert "type=before_write|tool=write_file|target=a.txt" in raw
 
@@ -96,10 +114,11 @@ def test_store_dir_override_moves_the_store_out_of_the_project(project, tmp_path
     assert sha
     assert not (project / ".sherry").exists()
     store = shadow_git.shadow_store(project)
-    assert store.is_relative_to(store_root)
+    assert store == store_root.resolve()
     assert (store / "HEAD").is_file()
+    assert shadow_git.shadow_meta(project).is_file()
     tree = shadow_git.run_shadow(
-        project, ["ls-tree", "-r", "--name-only", shadow_git.SHADOW_REF]
+        project, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(project)]
     ).stdout.split()
     assert tree == ["a.txt"]
 
@@ -110,7 +129,7 @@ def test_freeze_blocks_new_snapshots_and_wait_for_idle_tracks_writers(project, m
     shadow_git.freeze(project)
     try:
         assert shadow_git.take_snapshot(project, "manual:frozen") is None
-        assert not (project / ".sherry" / "shadow-git" / "HEAD").exists()
+        assert not (shadow_git.shadow_store(project) / "HEAD").exists()
         assert (
             shadow_git.ensure_checkpoint(
                 "s", reason="before_write:write_file:a.txt", project_root=project
@@ -145,7 +164,7 @@ def test_freeze_blocks_new_snapshots_and_wait_for_idle_tracks_writers(project, m
 def _snapshot_count(project) -> int:
     """The store's snapshot-chain length."""
     out = shadow_git.run_shadow(
-        project, ["rev-list", "--count", shadow_git.SHADOW_REF]
+        project, ["rev-list", "--count", shadow_git.shadow_ref(project)]
     ).stdout.strip()
     return int(out)
 
@@ -217,7 +236,7 @@ class TestTurnFloors:
 
         shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
         assert shadow_git.floor_for("s", project_root=project) == base
-        state = project / ".sherry" / "shadow-git" / "state.json"
+        state = shadow_git.shadow_meta(project)
         assert state.is_file()
 
         # A later snapshot in the SAME turn must not move the boundary.
@@ -240,7 +259,7 @@ class TestTurnFloors:
         shadow_git.new_turn("s")
         assert shadow_git.floor_for("s", project_root=project) is None
         previous_tip = shadow_git.run_shadow(
-            project, ["rev-parse", shadow_git.SHADOW_REF]
+            project, ["rev-parse", shadow_git.shadow_ref(project)]
         ).stdout.strip()
         tip = shadow_git.take_snapshot(project, "before_write:write_file:a.txt", session_id="s")
         # The new turn's floor is the tip that preceded ITS first snapshot.
@@ -261,7 +280,9 @@ class TestTurnFloors:
         # The cap alone would leave 3; the active floor keeps the whole turn
         # (base + 6) and drops only the commit before the floor.
         assert _snapshot_count(project) == 7
-        kept = shadow_git.run_shadow(project, ["rev-list", shadow_git.SHADOW_REF]).stdout.split()
+        kept = shadow_git.run_shadow(
+            project, ["rev-list", shadow_git.shadow_ref(project)]
+        ).stdout.split()
         assert pre not in kept
         assert base in kept
         assert shadow_git.floor_for("s", project_root=project) == base
@@ -355,3 +376,155 @@ class TestRestoreToTurn:
             "restored": False,
             "reason": "no_checkpoint",
         }
+
+
+def _write_legacy_store(project) -> str:
+    """Create a legacy ``.sherry/shadow-git`` bare repo with one commit."""
+    import json
+    import os
+    import subprocess
+
+    legacy = project / ".sherry" / "shadow-git"
+    legacy.mkdir(parents=True)
+    subprocess.run(["git", "init", "--bare", "-q", str(legacy)], check=True)
+    env = {
+        **os.environ,
+        "GIT_DIR": str(legacy),
+        "GIT_WORK_TREE": str(project),
+        "GIT_INDEX_FILE": str(project.parent / "legacy-index"),
+        "GIT_AUTHOR_NAME": "legacy",
+        "GIT_AUTHOR_EMAIL": "legacy@localhost",
+        "GIT_COMMITTER_NAME": "legacy",
+        "GIT_COMMITTER_EMAIL": "legacy@localhost",
+    }
+    subprocess.run(["git", "add", "-A"], cwd=str(project), env=env, check=True)
+    tree = subprocess.run(
+        ["git", "write-tree"], cwd=str(project), env=env, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    commit = subprocess.run(
+        ["git", "commit-tree", tree, "-m", "legacy snapshot"],
+        cwd=str(project),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "update-ref", "refs/heads/main", commit], env=env, check=True)
+    (legacy / "state.json").write_text(
+        json.dumps({"boot": "old-boot", "floors": {"old-session": {"turn": 1, "tip": commit}}}),
+        encoding="utf-8",
+    )
+    return commit
+
+
+def test_shared_store_isolates_refs_and_indexes_per_project(project, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "b.txt").write_text("b\n", encoding="utf-8")
+
+    shadow_git.take_snapshot(project, "manual:a")
+    assert shadow_git.shadow_head(project) is not None
+    assert shadow_git.shadow_head(other) is None
+    assert shadow_git.shadow_ref(other) not in shadow_git.run_shadow(project, ["show-ref"]).stdout
+    assert shadow_git.shadow_index(other).exists() is False
+
+    shadow_git.take_snapshot(other, "manual:b")
+    assert shadow_git.shadow_head(other) is not None
+    assert shadow_git.shadow_index(project).exists()
+    assert shadow_git.shadow_index(other).exists()
+    assert shadow_git.shadow_index(project) != shadow_git.shadow_index(other)
+    assert shadow_git.run_shadow(
+        project, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(project)]
+    ).stdout.split() == ["a.txt"]
+    assert shadow_git.run_shadow(
+        other, ["ls-tree", "-r", "--name-only", shadow_git.shadow_ref(other)]
+    ).stdout.split() == ["b.txt"]
+
+
+def test_projects_json_carries_workdir_and_floors(project):
+    import json
+
+    shadow_git.take_snapshot(project, "manual:base")
+    shadow_git.new_turn("s")
+    shadow_git.take_snapshot(project, "manual:turn", session_id="s")
+
+    meta = json.loads(shadow_git.shadow_meta(project).read_text(encoding="utf-8"))
+    assert meta["workdir"] == str(project.resolve())
+    assert meta["created_at"]
+    assert meta["last_touch"]
+    assert meta["boot"]
+    assert meta["floors"]["s"]["turn"] == 1
+    assert meta["floors"]["s"]["tip"]
+
+
+def test_migrates_a_legacy_per_project_store(project):
+    import json
+
+    legacy_tip = _write_legacy_store(project)
+    assert (project / ".sherry" / "shadow-git" / "HEAD").is_file()
+
+    # A read/write path initializes the shared store and runs the lazy import
+    # WITHOUT taking a new snapshot, so the copied legacy floors are visible.
+    shadow_git.run_shadow(project, ["show-ref"])
+    meta = json.loads(shadow_git.shadow_meta(project).read_text(encoding="utf-8"))
+    assert meta["workdir"] == str(project.resolve())
+    assert meta["floors"]["old-session"]["tip"] == legacy_tip
+    assert not (project / ".sherry" / "shadow-git").exists()
+    assert (project / ".sherry" / "shadow-git.migrated" / "HEAD").is_file()
+    assert shadow_git.shadow_head(project) is not None
+    assert (
+        shadow_git.run_shadow(project, ["cat-file", "-e", f"{legacy_tip}^{{commit}}"]).returncode
+        == 0
+    )
+
+    created = meta["created_at"]
+    shadow_git.take_snapshot(project, "manual:again")
+    again = json.loads(shadow_git.shadow_meta(project).read_text(encoding="utf-8"))
+    assert again["created_at"] == created
+
+
+def test_migrate_legacy_can_be_disabled(project, monkeypatch):
+    from config.features import SHADOW_GIT
+
+    _write_legacy_store(project)
+    monkeypatch.setitem(SHADOW_GIT, "migrate_legacy", False)
+
+    shadow_git.take_snapshot(project, "manual:no-migration")
+
+    assert (project / ".sherry" / "shadow-git" / "HEAD").is_file()
+    assert shadow_git.shadow_head(project) is not None
+
+
+def test_migrate_legacy_is_fail_open(project):
+    """A legacy store without ``refs/heads/main`` must not block a snapshot."""
+    legacy = project / ".sherry" / "shadow-git"
+    legacy.mkdir(parents=True)
+    (legacy / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    sha = shadow_git.take_snapshot(project, "manual:new-after-failed-migration")
+
+    assert sha
+    assert (project / ".sherry" / "shadow-git").is_dir()
+    assert shadow_git.shadow_meta(project).is_file()
+    assert shadow_git.shadow_head(project) is not None
+
+
+def test_default_store_root_is_the_app_home_checkpoint_store(project, monkeypatch):
+    from config.features import SHADOW_GIT
+    from config.path import APP_HOME
+
+    monkeypatch.setitem(SHADOW_GIT, "store_dir", "")
+    monkeypatch.delenv("SHERRY_SHADOW_GIT_DIR", raising=False)
+
+    assert shadow_git.shadow_store(project) == Path(APP_HOME) / "checkpoints" / "store"
+
+
+def test_public_git_head_reads_the_override_store(project, tmp_path):
+    from pub.git_head import shadow_head
+
+    other = tmp_path / "other"
+    other.mkdir()
+    shadow_git.take_snapshot(project, "manual:x")
+
+    assert shadow_head(project) is not None
+    assert shadow_head(other) is None

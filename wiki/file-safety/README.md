@@ -35,7 +35,7 @@ Seven mechanisms answer that, in the order a write meets them:
 4. `write_file`'s read-before-write license — an existing file may only be overwritten by a session that has read it (§ next but one).
 5. `sweep_stale_temp_files` — a `kill -9` leftover is swept by the next write into that directory.
 6. Isolated subagent workspaces — an opt-in git worktree whose changes merge back under a lock, conflicts reported.
-7. Shadow git checkpoints — the first write of each turn snapshots the project into `.sherry/shadow-git`; the user's `.git` is never touched.
+7. Shadow git checkpoints — the first write of each turn snapshots the project into the global `APP_HOME/checkpoints/store`; the user's `.git` is never touched.
 
 ## 🧱 The Layers
 
@@ -68,11 +68,11 @@ Only a hard kill between the temporary file's creation and the replace can leave
 
 ## 🔒 Shadow git checkpoints (the git-readiness gate is gone)
 
-A bound project directory is **never** turned into a repository: there is no `git init`, `add`, `commit`, `reset`, `checkout` or worktree in the user's `.git`. The first write of each turn calls `shadow_git.ensure_checkpoint()` (write_file, patch_file, terminal, python_repl), which snapshots the project into `.sherry/shadow-git/` with `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation. The snapshot is fail-open: a broken store logs a warning and the write proceeds.
+A bound project directory is **never** turned into a repository: there is no `git init`, `add`, `commit`, `reset`, `checkout` or worktree in the user's `.git`. The first write of each turn calls `shadow_git.ensure_checkpoint()` (write_file, patch_file, terminal, python_repl), which snapshots the project into the shared bare store `APP_HOME/checkpoints/store` (one `refs/sherry/<hash>` branch per project) with `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation. The snapshot is fail-open: a broken store logs a warning and the write proceeds.
 
-The store holds a single `refs/heads/main` chain of `commit-tree` snapshots. `info/exclude` carries the deny patterns (secrets, bulky directories and the shadow store itself) before `git add -A`; the chain keeps the NEWEST `SHADOW_GIT["max_snapshots"]` (100) commits — the store is per PROJECT ROOT and shared by every session including subagents, so a small budget collapsed to the last step or two during a concurrent fan-out. The cap is a soft cap on history: the first snapshot of a turn records that turn's FLOOR (the tip it replaced), pruning never cuts past an active floor (a fan-out or an edit-message rewind can own more than 100 commits), and the excess is released once the turn ends. The old end is dropped with `git replace --graft`, so every surviving hash — the tip included — stays stable. Editing a message rewinds the workspace to the edited turn's floor and deletes files that turn created; a turn with no snapshot has no floor, and the edit then proceeds with the files untouched. Restore takes a `pre-restore` snapshot first (undo the undo) and supports one file or the whole tree; it is internal only — the agent-facing `checkpoint` tool and the panel's reset route were removed. The git-graph panel reads this chain (branch label `checkpoint`); it no longer reads the user's history.
+The shared store holds one `refs/sherry/<hash>` chain of `commit-tree` snapshots per project. Its `info/exclude` carries the deny patterns (secrets and bulky directories) before `git add -A`; each chain keeps the NEWEST `SHADOW_GIT["max_snapshots"]` (100) commits — a chain is per PROJECT ROOT and shared by every session including subagents, so a small budget collapsed to the last step or two during a concurrent fan-out. The cap is a soft cap on history: the first snapshot of a turn records that turn's FLOOR (the tip it replaced), pruning never cuts past an active floor (a fan-out or an edit-message rewind can own more than 100 commits), and the excess is released once the turn ends. The old end is dropped with `git replace --graft`, so every surviving hash — the tip included — stays stable. Editing a message rewinds the workspace to the edited turn's floor and deletes files that turn created; a turn with no snapshot has no floor, and the edit then proceeds with the files untouched. Restore takes a `pre-restore` snapshot first (undo the undo) and supports one file or the whole tree; it is internal only — the agent-facing `checkpoint` tool and the panel's reset route were removed. The git-graph panel reads this chain (branch label `checkpoint`); it no longer reads the user's history.
 
-Reads are never gated, and a directory that is not a repository is a normal answer. The shadow store lives with the project, so it follows a clone; `SHADOW_GIT["enabled"]=False` makes every hook a no-op. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`) moves the store outside the project; the eval harness uses a run-scoped directory so an instance checkout never contains `.sherry`. `wait_for_idle()` and `freeze()` are its teardown barrier: wait for in-flight snapshot writers, then block late ones before reverting.
+Reads are never gated, and a directory that is not a repository is a normal answer. The shadow store is global (it does NOT live in the project, so it does not follow a clone); `SHADOW_GIT["enabled"]=False` makes every hook a no-op. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`) points the shared store elsewhere; the eval harness uses a run-scoped directory so instances never share snapshots. `wait_for_idle()` and `freeze()` are its teardown barrier: wait for in-flight snapshot writers, then block late ones before reverting.
 
 ## 📖 Read-before-write license
 
@@ -105,7 +105,7 @@ The baseline is the DIRTY working tree: `git stash create` turns the user's unco
 - **untracked files** are copied individually: `git stash create` never carries them, so without this step the child would be blind to a file the user just created;
 - only paths git actually IGNORES are materialized, and the caches (`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build`, …) are neither copied nor merged.
 
-The baseline is the project's **shadow checkpoint**, not a user-repository commit: the deny patterns live in `.sherry/shadow-git/info/exclude`, the worktree is registered in the shadow store, and no `.git` or `.sherry-isolation-repo` marker is created. Sherry never pushes, never adds a remote and never rewrites the user's history.
+The baseline is the project's **shadow checkpoint**, not a user-repository commit: the deny patterns live in the shared store's `info/exclude`, the worktree is registered in the shadow store, and no `.git` or `.sherry-isolation-repo` marker is created. Sherry never pushes, never adds a remote and never rewrites the user's history.
 
 A read that goes through a materialized link stays inside the run: `resolve_external_path` exempts exactly the paths the run's manifest recorded, so the HITL "external file" prompt does not fire on `src/…` inside the tree while an arbitrary symlink out of it still prompts.
 
@@ -243,7 +243,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 | `agent/tools/pub_base/path_lock.py` | In-process per-path lock registry |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecars, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | The read-before-write license registry |
-| `agent/tools/pub_base/shadow_git.py` | Per-project shadow store, auto snapshots and internal restore |
+| `agent/tools/pub_base/shadow_git.py` | Shared shadow store with per-project refs, auto snapshots and internal restore |
 | `agent/tools/subagent/isolation/worktree.py` | Dirty baseline, auto-init + deny list, worktree lifecycle |
 | `agent/tools/subagent/isolation/materialize.py` | Ignored / untracked path materialization |
 | `agent/tools/subagent/isolation/tree.py` | Workspace worktree, manifest, discard |

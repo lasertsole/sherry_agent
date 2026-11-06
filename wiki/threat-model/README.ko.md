@@ -104,7 +104,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 | 모드 | 규칙 | sherry 자체 트리 안에서 허용되는 경로 |
 |---|---|---|
-| **쓰기** | "바꿔도 런타임·다른 세션을 깨지 않고 자격 증명도 새지 않는다" | `<project>/.sherry/`(인덱스, shadow-git, attachments), **현재 세션**의 `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
+| **쓰기** | "바꿔도 런타임·다른 세션을 깨지 않고 자격 증명도 새지 않는다" | `<project>/.sherry/`(인덱스, attachments), `APP_HOME/checkpoints/store`, **현재 세션**의 `plans/` `attachments/` `uploads/`, `TEMP_DIR`, `STATIC_DIR`, `SRC_DIR/{images,audio,video}`, `SRC_DIR/rag/uploads` |
 | **읽기** | "읽어도 자격 증명·사적 메모리·다른 세션의 기록이 새지 않는다" | **소스 트리 전체**(읽기는 런타임을 깨지도, 아무것도 새지도 않음) + 쓰기 목록. 거부: `.env` `.models` `.network` `sherry.jsonc` 및 그 `.example`, `src/data/**`, `src/checkpoints/**`, `workspace/{AGENTS,SOUL,USER,ROLE,IDENTITY}.md`, `workspace/memory/**`, `workspace/knowledge/**`, 모델 가중치 파일, `mcp_servers/**`, 쓰기 가능한 스킬 트리, `CODE_INTEL_DIR`, `LOG_DIR`, 공유 trajectory 원장, 그리고 **현재 세션**의 `plans/`를 제외한 모든 세션 디렉터리 |
 
 둘 다 파일 도구의 해석 경로에 걸립니다——외부 경로 분기뿐 아니라 **in-root 성공 분기**에도. 기본 checkout이 바로 그 지점에서 조용히 통과했기 때문입니다(`agent/tools/pub_base/path_utils.py`의 `resolve_tool_path`, 그리고 자체 해석하는 `search_files`). **다른** 세션의 프로젝트 디렉터리 안 경로는 사용자 작업 영역이며 이 정책을 거치지 않습니다.

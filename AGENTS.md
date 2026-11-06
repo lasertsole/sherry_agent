@@ -514,7 +514,7 @@ follows.
 The workspace half is `shadow_git.restore_to_turn` (ZCode-style rewind), run in
 that window: the edited turn's FLOOR — the chain tip that preceded its first
 snapshot, recorded by `_take_snapshot_locked` and persisted per root in
-`state.json` — is checked out wholesale, files CREATED during the turn are
+`projects/<hash>.json` — is checked out wholesale, files CREATED during the turn are
 deleted (index-vs-target-tree plus untracked, git's own excludes doing the
 filtering), and a `post_restore` snapshot re-anchors the chain to the restored
 tree (otherwise the re-run's floor would describe the pre-rollback state and a
@@ -809,9 +809,14 @@ hidden entry sherry creates inside a project:
 
 ```
 <project>/.sherry/
-├── codeintel/index.db    # per-project code index (was .codeintel/)
-└── shadow-git/           # per-project write snapshots
+└── codeintel/index.db    # per-project code index (was .codeintel/)
 ```
+
+The write-snapshot store is NOT here: it is one global bare repo at
+`APP_HOME/checkpoints/store` with a per-project `refs/sherry/<hash>` branch,
+`indexes/<hash>` index and `projects/<hash>.json` metadata. A legacy
+`<project>/.sherry/shadow-git/` is imported lazily on the first snapshot and
+renamed `.sherry/shadow-git.migrated/` (never deleted).
 
 It is created LAZILY by `runtime/session/project_dir.py::maybe_create_sherry_dir`,
 called from `WorkspaceNoticeMiddleware` before it records the announced baseline:
@@ -2384,8 +2389,8 @@ instances: pinned base commit, per-instance `uv venv --python 3.11`, the
 instance's own FAIL_TO_PASS/PASS_TO_PASS verdict; the test patch is applied by
 the JUDGE and a gold-patch miss aborts before any model call; the host harness
 quiesces the session before it reads the tree — turn cancel, descendant/background
-kill, shadow-git `wait_for_idle` + `freeze` — keeps `.sherry` outside the checkout,
-quarantines it atomically on revert, includes untracked files in the saved diff,
+kill, shadow-git `wait_for_idle` + `freeze` — keeps the shadow store outside the checkout,
+quarantines `.sherry` atomically on revert, includes untracked files in the saved diff,
 and writes a per-instance result immediately), `deepswe`
 (DeepSWE tasks: the host checkout is bind-mounted into the task's own Docker
 image, only the `terminal` tool is replaced by a `docker exec` bridge, and the
@@ -2470,22 +2475,23 @@ each suite is the version-controlled reference (threshold + model id).
 - `taskflow_step(action="resume")` and `taskflow_step(action="run_task")` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
-- a session's BOUND project directory is snapshotted into
-  `<project>/.sherry/shadow-git` before the first write of each turn
+- a session's BOUND project directory is snapshotted into the GLOBAL bare
+  store `APP_HOME/checkpoints/store` before the first write of each turn
   (`agent/tools/pub_base/shadow_git.py::ensure_checkpoint`): write_file,
   patch_file, terminal and python_repl all call it, and it is fail-open — a
   broken store logs a warning and the write proceeds. The user's `.git` is
   NEVER initialized, staged, committed, reset, checked out or worktree'd; the
-  shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation and a
-  single `refs/heads/main` chain. `info/exclude` carries the deny patterns
-  (secrets, bulk dirs and the shadow store) before `git add -A`; the chain keeps
-  the NEWEST `SHADOW_GIT["max_snapshots"]` (100) commits — the store is PER
-  PROJECT ROOT and shared by every session including subagents, so a small
-  budget collapsed the restore window to the last step or two once a fan-out ran
-  concurrently; `ensure_checkpoint` dedupes per session per turn, and the bare
-  store's delta compression keeps the window small. The cap is a SOFT cap on
-  HISTORY: the first snapshot of a turn records that turn's FLOOR (the tip it
-  replaced) in `state.json`, the prune never cuts past an ACTIVE floor (one turn
+  shadow store uses `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` isolation with
+  one `refs/sherry/<hash>` chain per project (the shared repo's default HEAD is
+  `refs/heads/_default`). The shared `info/exclude` carries the deny patterns
+  (secrets, bulk dirs) before `git add -A`; each project's chain keeps the
+  NEWEST `SHADOW_GIT["max_snapshots"]` (100) commits — every session including
+  subagents shares one project's chain, so a small budget collapsed the restore
+  window to the last step or two once a fan-out ran concurrently;
+  `ensure_checkpoint` dedupes per session per turn, and the bare store's delta
+  compression keeps the window small. The cap is a SOFT cap on HISTORY: the
+  first snapshot of a turn records that turn's FLOOR (the tip it replaced) in
+  `projects/<hash>.json`, the prune never cuts past an ACTIVE floor (one turn
   may legitimately own more than 100 commits — one per fan-out child, plus the
   edit-message restore pair) and the excess is released when the turn ends and
   its floor stops matching; pruning drops the OLD end with `git replace --graft`
@@ -2497,8 +2503,8 @@ each suite is the version-controlled reference (threshold + model id).
   and supports one file or the whole tree — internal only: the agent-facing
   `checkpoint` tool and the panel's reset route were removed, so no user- or
   model-reachable rollback surface remains. `SHADOW_GIT["store_dir"]` (or `SHERRY_SHADOW_GIT_DIR`)
-  moves the store outside the project — the eval harness points it at a
-  run-scoped directory so an instance checkout never contains `.sherry` — and
+  points the shared store at a run-scoped directory — the eval harness uses it so
+  instances never share snapshots — and
   `freeze()` / `wait_for_idle()` are the write barrier a harness uses to stop
   snapshot writers before it reverts. The git-graph panel reads the shadow chain (branch label
   `checkpoint`), and `git_head` announces `checkpoint@<hash>`. An UNBOUND

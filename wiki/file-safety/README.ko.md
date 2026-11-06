@@ -35,7 +35,7 @@
 4. `write_file`의 읽기 우선 라이선스——이미 있는 파일은 그것을 읽은 세션만 덮어쓸 수 있습니다(아래 해당 절).
 5. `sweep_stale_temp_files`——`kill -9`가 남긴 것은 그 디렉터리에 대한 다음 쓰기가 청소합니다.
 6. 격리 서브에이전트 워크스페이스——선택적 git worktree로, 변경은 잠금 아래 병합되고 충돌은 보고됩니다.
-7. Shadow git 체크포인트——각 턴의 첫 쓰기에서 프로젝트를 `.sherry/shadow-git`에 스냅샷하며 사용자의 `.git`은 건드리지 않습니다.
+7. Shadow git 체크포인트——각 턴의 첫 쓰기에서 프로젝트를 전역 `APP_HOME/checkpoints/store`에 스냅샷하며 사용자의 `.git`은 건드리지 않습니다.
 
 ## 🧱 각 계층
 
@@ -68,11 +68,11 @@
 
 ## 🔒 Shadow git 체크포인트 (기존 git 준비 게이트 제거)
 
-바인딩된 프로젝트는 더 이상 저장소로 초기화되지 않습니다. sherry는 사용자의 `.git`에서 `git init` / `add` / `commit` / `reset` / `checkout` / worktree를 실행하지 않습니다. 각 턴의 첫 쓰기에서 `shadow_git.ensure_checkpoint()`(write_file, patch_file, terminal, python_repl)가 `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`을 분리해 `.sherry/shadow-git/`에 스냅샷합니다. 실패해도 쓰기는 계속됩니다(fail-open).
+바인딩된 프로젝트는 더 이상 저장소로 초기화되지 않습니다. sherry는 사용자의 `.git`에서 `git init` / `add` / `commit` / `reset` / `checkout` / worktree를 실행하지 않습니다. 각 턴의 첫 쓰기에서 `shadow_git.ensure_checkpoint()`(write_file, patch_file, terminal, python_repl)가 `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`을 분리해 공유 bare store `APP_HOME/checkpoints/store`(프로젝트당 `refs/sherry/<hash>` 브랜치)에 스냅샷합니다. 실패해도 쓰기는 계속됩니다(fail-open).
 
-store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 비밀, 대용량 디렉터리, shadow store 자체를 `git add -A` 전에 기록하고 **최신** `SHADOW_GIT["max_snapshots"]`(100)개만 유지합니다——store는 프로젝트 루트 단위로 모든 세션(서브에이전트 포함)이 공유하므로, 한도가 작으면 동시 팬아웃에서 최근 1~2단계로 줄어들었습니다. 100은 기록 부분의 소프트 한도입니다. 각 턴의 첫 스냅샷이 그 턴의 floor(대체한 체인 끝)를 기록하고, 정리는 유효한 floor를 절대 넘지 않습니다(한 번의 팬아웃이나 메시지 편집 되감기가 한 턴에서 100개 넘는 커밋을 만들 수 있습니다). 턴이 끝나면 초과분은 해제됩니다. 오래된 끝은 `git replace --graft`로 잘라내므로 남는 커밋(끝 포함)의 해시는 그대로입니다. 메시지 편집은 작업 공간을 편집한 턴의 floor까지 되돌리고 그 턴이 만든 파일을 삭제합니다. 스냅샷이 없는 턴에는 floor가 없고, 파일을 건드리지 않은 채 편집만 진행됩니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. 복원은 내부 전용입니다——에이전트용 `checkpoint` 도구와 패널의 리셋 경로는 제거되었습니다. git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
+공유 store는 프로젝트마다 `refs/sherry/<hash>`의 `commit-tree` 체인을 가집니다. store의 `info/exclude`에 비밀, 대용량 디렉터리 제외를 `git add -A` 전에 기록하고 각 체인은 **최신** `SHADOW_GIT["max_snapshots"]`(100)개만 유지합니다——체인은 프로젝트 루트 단위로 모든 세션(서브에이전트 포함)이 공유하므로, 한도가 작으면 동시 팬아웃에서 최근 1~2단계로 줄어들었습니다. 100은 기록 부분의 소프트 한도입니다. 각 턴의 첫 스냅샷이 그 턴의 floor(대체한 체인 끝)를 기록하고, 정리는 유효한 floor를 절대 넘지 않습니다(한 번의 팬아웃이나 메시지 편집 되감기가 한 턴에서 100개 넘는 커밋을 만들 수 있습니다). 턴이 끝나면 초과분은 해제됩니다. 오래된 끝은 `git replace --graft`로 잘라내므로 남는 커밋(끝 포함)의 해시는 그대로입니다. 메시지 편집은 작업 공간을 편집한 턴의 floor까지 되돌리고 그 턴이 만든 파일을 삭제합니다. 스냅샷이 없는 턴에는 floor가 없고, 파일을 건드리지 않은 채 편집만 진행됩니다. 복원 전에 `pre-restore` 스냅샷을 찍고(undo의 undo), 단일 파일/전체 복원을 지원합니다. 복원은 내부 전용입니다——에이전트용 `checkpoint` 도구와 패널의 리셋 경로는 제거되었습니다. git graph는 이 체인(브랜치 라벨 `checkpoint`)을 읽습니다.
 
-읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 프로젝트를 따라가며, `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다. `SHADOW_GIT["store_dir"]`(또는 `SHERRY_SHADOW_GIT_DIR`)로 store를 프로젝트 밖으로 옮길 수 있습니다. eval harness는 run 단위 디렉터리를 사용하므로 인스턴스 checkout에 `.sherry`가 생기지 않습니다. `wait_for_idle()`과 `freeze()`가 teardown 배리어로, 진행 중인 스냅샷을 기다린 뒤 늦은 쓰기를 막고 revert합니다.
+읽기는 게이트되지 않으며 비 git 디렉터리도 정상 결과입니다. shadow store는 전역이며(프로젝트 안에 없으므로 clone을 따라가지 않습니다), `SHADOW_GIT["enabled"]=False`면 모든 훅이 no-op입니다. `SHADOW_GIT["store_dir"]`(또는 `SHERRY_SHADOW_GIT_DIR`)로 공유 store를 다른 곳으로 지정할 수 있습니다. eval harness는 run 단위 디렉터리를 사용하므로 인스턴스끼리 스냅샷을 공유하지 않습니다. `wait_for_idle()`과 `freeze()`가 teardown 배리어로, 진행 중인 스냅샷을 기다린 뒤 늦은 쓰기를 막고 revert합니다.
 
 ## 📖 읽기 우선 라이선스
 
@@ -105,7 +105,7 @@ store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 �
 - **미추적 파일**은 개별 복사됩니다: `git stash create`는 결코 그것들을 나르지 않으므로, 이 단계가 없으면 자식은 사용자가 방금 만든 파일을 보지 못합니다;
 - 물질화되는 것은 git이 실제로 무시하는 경로뿐이며, 캐시(`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build` 등)는 복사도 병합도 되지 않습니다.
 
-베이스라인은 사용자 저장소의 커밋이 아니라 프로젝트의 **shadow 체크포인트**입니다. 거부 패턴은 `.sherry/shadow-git/info/exclude`에 있고 worktree는 shadow store에 등록되며 `.git`이나 `.sherry-isolation-repo` 마커는 만들지 않습니다. sherry는 결코 push하지 않고 리모트를 추가하지 않으며 사용자 역사를 다시 쓰지 않습니다.
+베이스라인은 사용자 저장소의 커밋이 아니라 프로젝트의 **shadow 체크포인트**입니다. 거부 패턴은 공유 store의 `info/exclude`에 있고 worktree는 shadow store에 등록되며 `.git`이나 `.sherry-isolation-repo` 마커는 만들지 않습니다. sherry는 결코 push하지 않고 리모트를 추가하지 않으며 사용자 역사를 다시 쓰지 않습니다.
 
 물질화 링크를 거치는 읽기는 격리 내부로 남습니다: `resolve_external_path`는 그 실행의 매니페스트가 기록한 경로만 면제하므로, 트리 안의 `src/…`는 HITL '외부 파일' 승인을 일으키지 않고 트리 밖을 가리키는 임의의 심볼릭 링크는 여전히 확인을 요구합니다.
 
@@ -213,7 +213,7 @@ store는 `refs/heads/main`의 `commit-tree` 체인입니다. `info/exclude`에 �
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |
-| `agent/tools/pub_base/shadow_git.py` | 프로젝트별 shadow store, 자동 스냅샷, 복원, 이력 읽기 |
+| `agent/tools/pub_base/shadow_git.py` | 공유 shadow store + 프로젝트별 ref, 자동 스냅샷, 복원, 이력 읽기 |
 | `agent/tools/subagent/isolation/worktree.py` | 더러운 베이스라인, auto-init과 거부 목록, worktree 수명주기 |
 | `agent/tools/subagent/isolation/materialize.py` | 무시·미추적 경로 물질화 |
 | `agent/tools/subagent/isolation/tree.py` | 워크스페이스 worktree, 매니페스트, 폐기 |
