@@ -560,3 +560,56 @@ async def test_taskflow_summary_context_is_session_scoped(flow_env: Path) -> Non
     assert "flow-ctx-B" in ctx_b and "do-B-work" in ctx_b, ctx_b
     assert "flow-ctx-A" not in ctx_b, ctx_b
     logger.info("[iso e2e] session-scoped taskflow context:\n{}", ctx_a)
+
+
+# ---------------------------------------------------------------------------
+# Case 6 — Real spawn chain: the five-field handoff reaches the run record
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subagent_handoff_carries_success_steps(clean_subagent_registry):
+    """A real child emits success_steps/failed_branches into completion.handoff."""
+    from agent.tools.subagent.spawn.core import spawn_subagent_direct
+    from agent.tools.subagent.types.registry import RunOutcomeStatus
+
+    sid = _new_sid("handoff")
+    requester = f"agent:main:session:{sid}"
+    task = (
+        "Use the terminal tool to run exactly `printf handoff-ok`, then finish. "
+        "In your handoff JSON block, include success_steps for the terminal call. "
+        "Reply with exactly: handoff-ok."
+    )
+
+    async def _spawn_once():
+        result = await spawn_subagent_direct(
+            task=task,
+            requester_session_key=requester,
+            agent_id="main",
+            cleanup="delete",
+            run_timeout_seconds=180.0,
+        )
+        assert result.status == "accepted", f"{result.status}: {result.error}"
+        run = await _poll_run(result.run_id, timeout=240.0)
+        return result, run
+
+    result, run = await _spawn_once()
+    if run.execution.outcome is None or run.execution.outcome.status != RunOutcomeStatus.OK:
+        logger.warning("[iso e2e] handoff spawn not OK; retrying once")
+        result, run = await _spawn_once()
+
+    assert run.execution.outcome is not None
+    assert run.execution.outcome.status == RunOutcomeStatus.OK, (
+        f"child run outcome: {run.execution.outcome.status} — {run.execution.outcome.error}"
+    )
+    handoff = run.completion.handoff
+    assert isinstance(handoff, dict), "the child did not emit a handoff block"
+    assert isinstance(handoff.get("failed_branches"), list), handoff
+    assert isinstance(handoff.get("success_steps"), list), handoff
+    assert handoff["success_steps"], f"empty success_steps: {handoff}"
+    first = handoff["success_steps"][0]
+    assert first.get("step") and first.get("outcome"), handoff
+    assert "failed_paths" not in handoff, "the old field leaked into the new handoff"
+    logger.info("[iso e2e] handoff: {}", handoff)
+    assert result.child_session_key is not None
+    await _purge_child_session(result.child_session_key)
