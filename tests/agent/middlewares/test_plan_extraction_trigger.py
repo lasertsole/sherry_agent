@@ -32,6 +32,26 @@ from agent.tools.todolist.registry import store_sqlite as todo_store
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.fixture(autouse=True)
+def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
+    """These trigger/lifecycle tests are not judge-quality tests."""
+    from agent.middlewares.summarization.skill_quality import SkillJudgement
+
+    async def _pass(*_args: Any, **_kwargs: Any) -> SkillJudgement:
+        return SkillJudgement(
+            passed=True,
+            verdict="pass",
+            grounded_in_run=True,
+            reusable=True,
+            trigger_quality=8,
+            quality=8,
+            no_op_justified=False,
+            feedback="",
+        )
+
+    monkeypatch.setattr(nudge_mod, "judge_skill_update", _pass)
+
+
 class _FakeStateDB:
     """In-memory stand-in for the durable register (``state_register_db``)."""
 
@@ -272,11 +292,9 @@ async def test_the_extraction_agent_binds_only_the_extraction_tools(monkeypatch)
     await nudge_mod._create_plan_extraction_agent("sys")
 
     assert [tool.name for tool in calls["tools"]] == [
-        "knowledge",
         "skill_list",
         "skill_view",
         "skill_manage",
-        "memory",
     ]
     # No tag-based gate anymore: the bound list already excludes everything else.
     assert nudge_mod._NudgeLimitTool not in [type(entry) for entry in calls["middleware"]]

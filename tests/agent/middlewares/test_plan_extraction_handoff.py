@@ -404,5 +404,9 @@ def test_the_plan_prompt_consumes_success_steps_and_branches():
 
     assert "success_steps" in prompt
     assert "failed_branches" in prompt
-    assert "aggregate_success_steps" in prompt
+    assert "hard_constraints" in prompt
+    assert "locked_decisions" in prompt
+    assert "feedback.loaded_skills" in prompt
+    assert "feedback.user_corrections" in prompt
+    assert "aggregate_success_steps" not in prompt
     assert "failed_paths" not in prompt

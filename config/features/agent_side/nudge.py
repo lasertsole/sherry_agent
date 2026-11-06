@@ -12,6 +12,21 @@ class NudgeConfig(TypedDict):
     """Compression-time nudge settings."""
 
     plan_extraction_enabled: bool
+    #: The plan-completion pass is now a skill-quality nudge: it updates skills
+    #: from success/failure evidence and never writes knowledge. Kept separate
+    #: from ``plan_extraction_enabled`` so an upgrade can disable only the new
+    #: LLM judge/retry loop without turning off the completion detector.
+    skill_nudge_enabled: bool
+    skill_nudge_max_attempts: int
+    skill_nudge_quality_threshold: int
+    #: Bounded user-correction / loaded-skill context (no full transcript).
+    skill_nudge_feedback_turns: int
+    skill_nudge_feedback_max_items: int
+    skill_nudge_feedback_chars: int
+    skill_nudge_loaded_skills_max: int
+    #: After an exhausted judge/retry pass, do not hot-loop on the same plan
+    #: snapshot for this long. A changed plan (new snapshot hash) retries at once.
+    skill_nudge_failure_cooldown_s: int
     #: How the memory review builds its input.
     #:
     #: - ``cache_warm`` (default): the discarded messages VERBATIM, on the main
@@ -35,6 +50,14 @@ class NudgeConfig(TypedDict):
 
 NUDGE: NudgeConfig = {
     "plan_extraction_enabled": True,
+    "skill_nudge_enabled": True,
+    "skill_nudge_max_attempts": 2,
+    "skill_nudge_quality_threshold": 6,
+    "skill_nudge_feedback_turns": 12,
+    "skill_nudge_feedback_max_items": 8,
+    "skill_nudge_feedback_chars": 2000,
+    "skill_nudge_loaded_skills_max": 20,
+    "skill_nudge_failure_cooldown_s": 3600,
     "memory_review_mode": "cache_warm",
     "session_end_review_enabled": True,
     "session_end_review_timeout_s": 120,

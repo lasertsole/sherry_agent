@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다; 버려질 메시지만 받아 해당 턴 자신의 모델과 프리픽스에서 캐시 온존으로 실행), 플랜이 턴 경계에서 완료될 때의 plan extraction, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage(캡처한 압축 컷에 대해 백그라운드 2파 memory review를 실행). 산출물은 다섯 개 저장소——MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review, 플랜이 턴 경계에서 완료될 때의 **skill-quality nudge**, 압축 후 todo fork, 그리고 메인 세션 삭제 시의 session-end salvage. 산출물은 네 개 저장소——MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `todos.db`——와 감사용 원본 `handoff-tree.json`으로 들어갑니다. 아래 **Curator** 절은 skill-quality nudge의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > **저장소 업데이트(2026-11-04):** 아래에서 MEMORY.md / USER.md / FACTS.md라고 부르는 세 메모리 출력은 이제 MesMemory `memory_entries` 테이블의 행(대상 `memory` / `user` / `facts`)입니다. 이전 Markdown 파일은 부팅 시 `memory_migration.py`가 한 번 가져와 `*.md.bak`으로 이름을 바꿉니다. 로더는 `MemoryStore.load_from_store()`이며, 각 행은 `origin_session`(출처)과 `usage_count` / `last_used`(사용 피드백)를 가집니다.
 
@@ -10,17 +10,18 @@
 
 ## 설계 원칙
 
-1. **모든 추출은 기존 저장소를 확장합니다.** 산출물은 MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `skills/auto/`, `todos.db` 중 하나로 들어갑니다. 병렬 저장소를 만드는 추출 경로는 없습니다.
-2. **전면 fail-open.** 모든 트리거는 자신의 실패를 기록하고 삼킵니다. todo 저장소 손상, plan 파일 읽기 불가, LLM 호출 실패, 커서 손상이 메인 대화 턴을 막거나 중단시키지 않습니다.
-3. **턴 경로는 제로 블로킹.** 압축 후 todo fork와 압축 시점 nudge는 모두 fire-and-forget 백그라운드 작업입니다; memory review와 plan extraction은 NUDGE 레인에서 독립 자식 Agent로 실행되어 모델 호출을 절대 막지 않습니다.
-4. **모든 추출 경로에 도구가 필요합니다.** memory review, plan extraction, todo fork는 모두 `create_agent` fork입니다 — 각각 `memory`, `knowledge` / `skill_manage`, `todowrite`를 통해 기록하기 때문입니다. 독립적인 순수 추출 호출은 남아 있지 않습니다.
+1. **모든 추출은 기존 저장소를 확장합니다.** 산출물은 MEMORY.md / USER.md / FACTS.md, `skills/auto/`, `todos.db` 중 하나로 들어갑니다. 원본 handoff tree는 감사용이며 모델 대상 지식 저장소가 아닙니다. 병렬 저장소를 만드는 추출 경로는 없습니다.
+2. **전면 fail-open.** 모든 트리거는 자신의 실패를 기록하고 삼킵니다. todo 저장소 손상, plan 파일 읽기 불가, LLM 호출 실패가 메인 대화 턴을 막거나 중단시키지 않습니다.
+3. **턴 경로는 제로 블로킹.** 압축 후 todo fork와 압축 시점 nudge는 모두 fire-and-forget 백그라운드 작업입니다. memory review와 skill-quality nudge는 NUDGE 레인에서 독립 자식 Agent로 실행되어 모델 호출을 절대 막지 않습니다.
+4. **모든 추출 경로에 도구가 필요합니다.** memory review, skill-quality nudge, todo fork는 모두 `create_agent` fork이며 각각 `memory`, `skill_manage`, `todowrite`를 통해 기록합니다. 독립적인 순수 추출 호출은 남아 있지 않습니다.
+5. **플랜 완료는 스킬만 유지합니다.** 완료 경로는 knowledge도 FACTS도 쓰지 않습니다. 영속 산출물은 클래스 레벨 skill 변경 또는 judge가 승인한 no-op입니다.
 
 ## 트리거 × 메커니즘 × 기록 대상
 
 | 트리거 | 메커니즘(fork agent 여부 / 호출 형태) | 기록 대상 |
 |---|---|---|
 | 압축마다 | memory review(`_nudge_memory`): **버려질** 슬라이스만 **원문 그대로** 해당 턴이 사용한 모델 구성(`_build_session_model`)으로 보내고, 세션의 시스템 프롬프트와 도구 면도 재현해 프리픽스 캐시에 적중시킴; `NUDGE["memory_review_mode"] = "digest"`면 대신 접음(최근 24개는 원문, 그 이전은 한 줄로 절단) | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
-| 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | plan extraction(`_run_plan_extraction`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`)이 **보조 모델**로 전용 agent를 fork하고 `_PLAN_EXTRACTION_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | ① 지식 JSON ② `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`) ③ FACTS.md |
+| 플랜 완료——턴 경계에서 모든 todo가 `completed` / `cancelled`(**압축 시점이 아님**) | skill-quality nudge(`_run_plan_extraction`): 완료 훅(`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`)이 **보조 모델**로 전용 agent를 fork하고 `_PLAN_EXTRACTION_PROMPT`를 쓰며 **대화 기록을 전혀 넘기지 않음** | `skills/auto/`(클래스 레벨 스킬 + `<module>-notes`); judge가 승인한 no-op 허용; 원본 `handoff-tree.json`은 먼저 감사용으로 기록 |
 | 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget nudge agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
 | 메인 세션 삭제 시(purge 전) | session-end salvage(`salvage_session_memory`): checkpoint transcript를 스냅샷하고 모델/시스템 프롬프트/도구 면을 캡처하며, 일반 압축 컷을 **읽기 전용**으로 계산한 뒤 독립적인 2파 memory review를 예약한다 — 1파는 버려질 프리픽스, 2파는 memory 재로드와 프롬프트 재구축 후 보존 꼬리 | `memory` 도구를 거쳐 MEMORY.md / USER.md / FACTS.md |
 
@@ -36,29 +37,29 @@
 - `_NudgeLimitTool`(`allowed_metadata_key` 미지정)은 metadata에 `nudge: True`가 있는 도구만 통과시킵니다. `memory`와 `knowledge`가 이 마커를 가지므로(대화형 `question`과 플랜 모드 두 도구 포함) memory review는 memory를 쓸 수 있지만 임의의 메인 도구는 호출할 수 없습니다. 스킬 3종(`skill_list` / `skill_view` / `skill_manage`)은 **의도적으로 미마커**——스킬 추출은 플랜 완료 패스의 담당이며, 그쪽은 마커 대신 명시적인 도구 면을 바인딩합니다.
 - fork의 메시지는 로그만 남깁니다. `res["messages"]`의 어떤 내용도 메인 그래프로 들어가지 않습니다.
 
-### 2. plan extraction(todo 완료, 턴 경계)
+### 2. Skill-quality nudge(todo 완료, 턴 경계)
 
-`_detect_todo_all_complete(session_id)`(`summarization/nudges.py`)는 압축마다 평가되며 완료 사이클마다 한 번 발화합니다:
+`_detect_todo_all_complete(session_id)`는 플랜이 완료될 수 있는 각 턴에서 평가되고 완료 사이클마다 한 번 발화합니다: todos가 존재하고 모두 `completed` / `cancelled`이며 `nudge_plan_extraction_fired`가 설정되지 않음. fired 플래그를 세우고 목록이 불완전해지면 리셋합니다. 읽기는 fail-open이며, 완료 훅이 매 턴 확인하므로 짧은 세션도 추출됩니다.
 
-- todo가 존재하고, 모든 todo가 `completed` 또는 `cancelled`입니다.
-- `nudge_plan_extraction_fired`(`state_register_db`)가 아직 설정되지 않았습니다.
+플래그만으로는 completed todo의 in-place 편집을 볼 수 없으므로 `_plan_snapshot_hash`(id + content + status + plan_ref)를 마지막 **성공** pass의 `nudge_plan_snapshot_hash`와 비교합니다. 내용이 바뀌면 다시 추출하고, 그대로면 건너뛰며, 실패 pass는 cooldown 후 재시도합니다.
 
-전이 시 플래그를 세우고, 목록이 전부 완료가 아니면 `False`로 되돌리므로 다음 완료 사이클에서 다시 발화합니다. 읽기는 fail-open. 감지는 예전에는 압축 시점에만 돌았습니다——한 번도 압축하지 않는 세션은 추출하지 못했습니다. 이제 **플랜이 완료된 모든 턴**(완료 훅)에 돌기 때문에 짧은 세션도 추출합니다.
+`plan_extraction_enabled`와 `skill_nudge_enabled`가 켜져 있으면 hook이 NUDGE 레인에서 `_run_plan_extraction`을 fire-and-forget으로 실행합니다:
 
-플래그만으로는 완료된 todo의 제자리 수정을 볼 수 없으므로, 트리거는 플랜 **스냅샷 지문**(`_plan_snapshot_hash`: id + content + status + plan_ref)을 마지막 **성공** 추출 후 `nudge_plan_snapshot_hash`에 저장된 값과 비교합니다——내용이 바뀌면 재추출, 변화가 없으면 건너뛰고, 실패한 패스는 다음 완료 턴에 재시도합니다.
+1. `_build_plan_context`는 plan 파일, todos, 자식 Agent runs(result_text 24 KB 제한), 그리고 제한된 `feedback`(최근 메시지의 `skill_view` 호출 + `.usage.json` 최근 항목 = `loaded_skills`, 최근 턴의 사용자 수정 = `user_corrections`)을 모읍니다. internal carrier, system reminder, workspace notice는 제외합니다. todo가 없으면 `{}`를 반환해 pass를 건너뜁니다.
+2. LLM 전에 원본 merged handoff tree를 `handoff-tree.json`에 원자적으로 써서 감사용으로 남깁니다. 모델 대상 지식 읽기 경로가 아닙니다.
+3. `_PLAN_EXTRACTION_PROMPT`를 압축 컨텍스트로 렌더링해 전용 agent(보조 모델, temperature=0, **대화 없음**)에 넘깁니다. 도구 면은 `skill_list` / `skill_view` / `skill_manage`만; `knowledge`와 `memory`는 없어 지식이나 FACTS를 쓸 수 없습니다.
+4. Prompt는 증거를 명시적으로 매핑합니다: `success_steps` → 절차/검증, `failed_branches` → pitfalls / `when_not_to_use`, `hard_constraints` → guardrails, `locked_decisions` → rationale, `user_corrections` → body / `when_to_use`. 이번에 로드한 skill, 기존 class-level umbrella, support file, 마지막으로 새 class-level skill 순서. 구체적 이유가 있는 no-op만 허용합니다.
 
-`plan_extraction_enabled`가 켜져 있고, 세션별 `Summarization → nudge` 스위치가 켜져 있고, 감지가 발화하면 훅이 `_run_plan_extraction`을 fire-and-forget으로 디스패치해 `nudge_plan_extraction_lock` 아래, NUDGE 레인에서 실행합니다:
+구현: `summarization/nudges.py`의 `_run_plan_extraction`이 `_create_plan_extraction_agent`를 `nudge_plan_extraction_lock` 아래에서 사용합니다. `state_register_db`가 지문을 저장하고, `outcome`은 subagent runs에서 오며, 실패 플래그는 `False`입니다.
 
-1. `_build_plan_context`가 plan 파일(`plan_ref` 상태 우선, 없으면 `plan_ref`를 가진 첫 todo), todo 목록, 이 세션의 자식 Agent 실행 기록(`result_text`는 24 KB로 절단, `outcome`, task)을 모읍니다. todo 목록이 없으면 `{}`를 반환하며, 호출자는 이를 보고 건너뜁니다.
-2. plan 컨텍스트를 채운 `_PLAN_EXTRACTION_PROMPT`를 전용 agent(`_create_plan_extraction_agent`: **보조 모델**, `temperature=0`)로 보냅니다——**대화는 전혀 없음**. 데이터는 플랜 파일, todo, 자식 agent 실행 기록에 모두 있으므로 이 패스는 창을 압박하지도, 채팅을 읽지도 않습니다. 도구 면은 명시 바인딩(`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`——마지막은 Part 3의 FACTS.md 기록 경로)되어, 스킬 쓰기는 이 패스만 담당합니다.
+Nudge는 snapshot/judge 트랜잭션으로 실행됩니다:
 
-프롬프트는 세 종류의 산출물을 만듭니다:
+- **snapshot**: `skill_quality.snapshot_auto_skills()`가 첫 시도 전에 `skills/auto`(skill, support file, usage sidecar)를 캡처합니다.
+- **write**: nudge가 skill을 생성/수정합니다. `set_current_write_origin("background_review")`로 새 skill이 agent-created로 표시되어 curator 관리 대상이 됩니다.
+- **judge**: `skill_quality.judge_skill_update()`가 보조 모델에 `verdict`, `grounded_in_run`, `reusable`, `trigger_quality`, `quality`, `no_op_justified`, `feedback`을 요청합니다. `quality >= NUDGE["skill_nudge_quality_threshold"]`, `trigger_quality >= 6`, grounded, reusable이 통과 조건이며 no-op은 `no_op_justified`가 필요합니다.
+- **retry/rollback**: 거부된 시도는 pre-nudge snapshot으로 복원하고 judge feedback과 함께 재시도합니다(기본 최대 2회). 소진되면 다시 복원하고 `nudge_skill_quality_failed_hash` + 시각을 기록하며 성공 fingerprint를 진행하지 않습니다. 이후 턴에서 `skill_nudge_failure_cooldown_s` 후 재시도할 수 있고, plan이 바뀌면 즉시 재시도합니다.
 
-- **Part 1: 구조화 지식.** `knowledge(action="write", ...)`가 JSON 문서를 `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/`, 계획 아이덴티티 키 — `agent/tools/todolist/knowledge/identity.py` 참조)에 씁니다: `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. 각 task는 `failure_set`, `success_path`, `method`를, wave는 실패 / 성공 패턴을, plan은 전체 방법, 핵심 실패 / 성공, 재사용 패턴을 담습니다.
-- **Part 2: 스킬 라이브러리 갱신.** `skill_manage`가 로드되었거나 기존인 클래스 레벨 스킬을 패치하고, 지원 파일을 추가하거나, `skills/auto/` 아래 새 클래스 레벨 umbrella를 만듭니다. 프롬프트는 명시적으로 능동적이며("most completed plans produce at least one skill update") 사용자 교정, 워크플로 교정, 비자명한 기법, 오래된 스킬을 일급 신호로 나열합니다. 또한 모듈 결박 교훈을 이어받습니다: 특정 파일 / 모듈 / 테스트에 결박되어 있고 그 모듈이 앞으로 다시 바뀔 것이 예상되는 교훈은 `<module>-notes` 스킬로 기록합니다(`skill_manage(action="create", name="<module>-notes", ...)`). 같은 이름의 스킬이 이미 있으면 `action="patch"`로 덧붙이고, 중복 생성하지 않습니다. 내용은 모듈별 간결한 "증상 → 원인 → 회피 동작" 목록입니다.
-- **Part 3: 시스템 수준 함정 → FACTS.md.** 어떤 프로젝트에서든 참인 함정——툴체인 동작, 환경 제약, 일반 명령 함정——은 `memory` 도구의 `target="facts"`로 기록합니다. 프로젝트별 사실은 MEMORY로. 프롬프트는 현재 FACTS.md 내용과 문자 상한을 전달하고, 덧붙이기가 아니라 병합 / 교체를 지시합니다("소음보다 무를 우선").
-
-이후 읽기는 같은 도구(`knowledge(action="read")`)가 제공하고, 압축된 plan 요약은 `build_knowledge_block`(`knowledge/prompt_block.py`)이 시스템 프롬프트에 자동 주입합니다.
+이 경로는 knowledge(`task-*.json` / `wave-*.json` / `plan-summary.json`)도 FACTS도 쓰지 않습니다. 기존 knowledge 파일은 디스크에 남지만 legacy이며, 모델 대상 prompt block과 `knowledge` 도구는 retired입니다.
 
 ### 3. 압축 후 todo fork
 
@@ -87,7 +88,7 @@ fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 chec
 
 **frontmatter 계약(인덱스 자체가 트리거).** `<available_skills>`는 스킬의 frontmatter만 렌더합니다 — 본문은 로드 후에 읽힙니다 — 따라서 이 필드들이 라우팅 신호입니다: `description`(능력 요약), `when_to_use`(**필수**: 이 경로들이 만들거나 고치는 모든 스킬에, 그것을 로드해야 하는 구체적 시나리오/사용자 의도를 명시), `when_not_to_use`(선택: 제외 조건과 대안). 로더는 두 태그를 CJK 인식 토큰 예산(60 / 50 / 50 토큰)으로 렌더하고 XML 이스케이프합니다. 클라이언트 스킬 툴팁도 같은 세 필드를 보여줍니다. 큐레이터는 더 좁은 두 번째 층을 더합니다: 엄브렐라의 frontmatter가 스킬 전체를 덮고, 각 `##` 하위 능력 섹션이 자체 `**When to use:**` 줄로 시작합니다(실제 제외가 있을 때만 `**When NOT to use:**`도). 그래서 모델은 `skill_view` 후 올바른 섹션을 고를 수 있습니다. 결정적 폴백도 같은 모양을 쓰며 조건은 병합 이유에서 추출합니다.
 
-Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `todos.db`는 범위 밖입니다.
+Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md / FACTS.md와 `todos.db`는 범위 밖입니다.
 
 **무엇인가.** 정기 cron이 아니라 유휴 트리거 오케스트레이터입니다. 서비스 엔트리포인트가 `context_engine.curator.init()`으로 데몬 스레드(`curator-timer`)를 시작합니다(`server/__main__.py:140`; HTTP-only 모드에서는 건너뜀, `server/__main__.py:66-73`). 스레드는 3600초마다 깨어나 `maybe_run_curator(idle_for_seconds=...)`를 호출합니다(`context_engine/curator/__init__.py:122-140`). 패키지 임포트는 부수 효과가 없으며 스레드를 시작하는 것은 `init()`뿐입니다(`context_engine/curator/__init__.py:151-165`).
 
@@ -110,6 +111,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 
 | 가드 | 보호 대상 |
 |---|---|
+| skill-quality 도구 면 | `skill_list` / `skill_view` / `skill_manage`만 바인딩하며 knowledge/memory는 없습니다. |
 | nudge metadata 허용 목록(`metadata["nudge"]`, `_NudgeLimitTool` 기본 규칙) | memory nudge와 plan extraction은 nudge 단계용으로 태그된 도구만 호출할 수 있습니다. 다른 모든 메인 도구는 오류 `ToolMessage`를 반환하고 실행되지 않습니다. |
 | 압축 metadata 허용 목록(`metadata["todo_update"] is True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`) | 압축 fork는 해당 metadata 마커가 붙은 `todowrite` 심만 허용합니다. |
 | 파생 세션 키 `<id>::compression-todo` | 압축 fork의 `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 상태 키가 메인 세션과 충돌하지 않습니다. fork가 도는 동안 메인 세션은 `awrap_model_call` 중이기 때문입니다. `compression_todo_update_lock`만 의도적으로 메인 세션에 기록되어 교차 경로 재진입 조정자 역할을 합니다. |
@@ -128,7 +130,9 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | `memory` target | MesMemory `memory_entries` 행(`target='memory'`) | 2200자(`MEMORY_TOOL["memory_char_limit"]`, `/memory/settings`에서 재정의 가능) |
 | `user` target | MesMemory `memory_entries` 행(`target='user'`) | 1375자(`MEMORY_TOOL["user_char_limit"]`, 재정의 가능) |
 | `facts` target | MesMemory `memory_entries` 행(`target='facts'`, 유일한 전역 대상) | 1375자(`MEMORY_TOOL["facts_char_limit"]`, 재정의 가능); `add`가 상한을 넘으면 가장 적게 사용된 항목부터 보관 |
-| plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/` — 아이덴티티 키) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
+| legacy plan knowledge | `workspace/knowledge/plans/<plan_key>/` | 폐기: 이전 `task-<n>.json` / `wave-<n>.json` / `plan-summary.json`은 디스크에 남지만 모델 대상 경로는 읽지도 쓰지도 않음 |
+| handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | nudge 전에 쓰는 원본 handoff tree; prompt block 아님 |
+| 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/` / `templates/` / `scripts/` 지원 파일; PTC는 `ptc__<plan_key>__<step_id>.py`, LDW는 `ldw__<plan_key>.py` |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
 | todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |
 
@@ -137,7 +141,13 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | 키 | 위치 | 기본값 | 효과 |
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`(`config/features/agent_side/summarization.py`) | `True` | 압축 후 todo fork 활성화 |
-| `plan_extraction_enabled` | `NUDGE`(`config/features/agent_side/nudge.py`) | `True` | todo 완료 시 plan extraction 활성화 |
+| `plan_extraction_enabled` | `NUDGE`(`config/features/agent_side/nudge.py`) | `True` | todo 완료 nudge 트리거 |
+| `skill_nudge_enabled` | `NUDGE` | `True` | skill-only 품질 패스 활성화(knowledge 미기록) |
+| `skill_nudge_max_attempts` | `NUDGE` | `2` | 최초 + judge feedback 재시도 최대 1회 |
+| `skill_nudge_quality_threshold` | `NUDGE` | `6` | 통과 최소 `quality` |
+| `skill_nudge_feedback_turns` / `_max_items` / `_chars` | `NUDGE` | `12` / `8` / `2000` | 제한된 사용자 수정 컨텍스트 |
+| `skill_nudge_loaded_skills_max` | `NUDGE` | `20` | loaded-skill 목록 상한 |
+| `skill_nudge_failure_cooldown_s` | `NUDGE` | `3600` | 동일 실패 plan snapshot 재시도 쿨다운 |
 | `session_end_review_enabled` | `NUDGE` | `True` | 메인 세션 삭제 시 salvage 활성화 |
 | `session_end_review_timeout_s` | `NUDGE` | `120` | 삭제 salvage의 파별 모델 호출 예산 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 실제 압축 후 능동 압축 쿨다운 |
@@ -146,6 +156,10 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 ## 검증
 
 대상 테스트:
+
+검증 메모: Persistence assertions live in `tests/agent/middlewares/message_persistence/`. `skill_view` 로드 기록, `test_skill_quality.py`, `test_skill_quality_feedback.py`, `test_skill_quality_nudge.py` 추가.
+
+
 
 ```bash
 uv run pytest \
@@ -173,7 +187,7 @@ AI 판정 평가: `evals/nudge_extraction/suite.py`는 완료된 plan 실행(pla
 uv run python evals/evals.py nudge_extraction
 ```
 
-이 스위트는 `knowledge_written`, `skills_created`, `ai_judge_skill_quality`, `no_repo_pollution`을 검사합니다.
+이 스위트는 `knowledge_retired`, `skills_created`, `ai_judge_skill_quality`, `no_repo_pollution`을 검사합니다.
 
 ## 알려진 경계
 

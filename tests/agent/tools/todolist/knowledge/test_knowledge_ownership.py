@@ -9,6 +9,7 @@ plan-extraction path that supplies ``session_id`` through ``InjectedState``.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -333,6 +334,19 @@ class TestNudgeSessionIdSupply:
         async def _create(system_prompt: str):
             return _RecordingAgent()
 
+        async def _judge(*_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(
+                passed=True,
+                verdict="pass",
+                grounded_in_run=True,
+                reusable=True,
+                trigger_quality=8,
+                quality=8,
+                no_op_justified=False,
+                feedback="",
+            )
+
+        monkeypatch.setattr(nudge_mod, "judge_skill_update", _judge)
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
         monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", _create)
         monkeypatch.setattr(

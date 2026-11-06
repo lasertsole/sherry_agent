@@ -27,7 +27,6 @@ from .memory import build_memory_tool, memory_store as memory_store
 from .message_search import build_message_search_tool
 from .taskflow import build_taskflow_tools
 from .todolist import build_todolist_tools
-from .todolist.knowledge import build_knowledge_tools
 
 
 def tool_flatten(
@@ -65,7 +64,6 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_subagent_runtime_tools,
     build_taskflow_tools,
     build_todolist_tools,
-    build_knowledge_tools,
     build_question_tool,
     build_plan_mode_tools,
     build_compact_now_tool,

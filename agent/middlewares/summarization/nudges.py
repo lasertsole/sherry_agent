@@ -1,12 +1,13 @@
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, override
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
@@ -19,6 +20,13 @@ from pub.func.message.system_reminder import is_system_reminder
 from pub.func.message.workspace_notice import is_workspace_notice
 from runtime import StateKey, state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
+
+from .skill_quality import (
+    changed_skill_paths,
+    judge_skill_update,
+    restore_auto_skills,
+    snapshot_auto_skills,
+)
 
 
 # Lazy import to avoid circular dependency with IterationBudget
@@ -150,289 +158,77 @@ def _render_discarded_text(discarded_messages: Sequence[Any]) -> str:
     return "\n\n".join(f"[{_msg_type(m)}] {_msg_to_text(m)}" for m in discarded_messages)
 
 
-# Plan-aware extraction prompt. Part 1 writes structured JSON knowledge via
-# knowledge(action="write"); Part 2 carries the complete skill-library-update
-# guidance (the former standalone skill-review prompt, merged here and removed
-# as a separate constant) including the module-bound `<module>-notes`
-# carry-forward; Part 3 routes system-level / cross-project pitfalls to the
-# the facts memory target.
-_PLAN_EXTRACTION_PROMPT = """You are a knowledge extraction and skill maintenance specialist.
-A plan has just been completed. Do THREE things:
+# Skill-quality prompt. The plan-completion pass is skill-only: success/failure
+# evidence, loaded skills and user corrections feed class-level skill updates.
+# No knowledge or FACTS writes; the raw handoff tree stays as an audit file.
+_PLAN_EXTRACTION_PROMPT = """You are a skill-quality maintainer.
+A plan has just completed. Update the class-level skill library from the real
+success/failure evidence below. Do NOT write knowledge; the only durable output
+is a skill change, or a judge-approved no-op.
 
-## Part 1: Structured Knowledge Extraction
-
-Extract knowledge from the completed plan below into JSON knowledge files.
-
-### Context
+## Plan context
 
 {plan_context}
 
-### Writing Style (CRITICAL)
+## Evidence to consume
 
-ALL text fields must be CONCISE and DENSE:
-- failure_set entries: one sentence per failure — root cause + what failed, no stack traces
-- success_path entries: one sentence per step — verb + library/function name + why it works
-- method: 3-5 words, kebab-case (e.g., "async-password-hashing-with-passlib")
-- key_failures/key_successes (plan layer): one sentence each, max 150 chars
-- reusable_patterns: one-liner code or config snippet, max 100 chars
-- Strip error messages to the essential signal: "bcrypt hash mismatch" not the full traceback
-- No narrative, no explanations of context, no "we decided to" — just the fact
+The context contains:
+- `aggregated_handoff.success_steps`: the direct procedure that worked;
+- `aggregated_handoff.failed_branches`: abandoned approaches and why they failed;
+- `aggregated_handoff.hard_constraints`: invariants that must always hold;
+- `aggregated_handoff.locked_decisions`: decisions and their rationale;
+- `feedback.loaded_skills`: skills actually loaded during this plan;
+- `feedback.user_corrections`: bounded user corrections/preferences.
 
-BAD:  "We initially tried using synchronous bcrypt but it caused test failures because
-       the hash function was blocking the event loop, so we switched to passlib"
-GOOD: "Synchronous bcrypt blocks event loop — use passlib CryptContext for async"
+Map them explicitly:
+- success_steps -> procedure / verification steps in the skill;
+- failed_branches -> pitfalls / when_not_to_use / anti-patterns;
+- hard_constraints -> guardrails / must-hold constraints;
+- locked_decisions -> why / decision rationale (never a substitute for steps);
+- user_corrections -> SKILL.md body or when_to_use triggers.
 
-### Structured handoff (PREFER it over result_text)
+## Update rules
 
-The plan context now carries machine-readable experience:
+1. Prefer patching a skill in `feedback.loaded_skills`.
+2. Otherwise patch the best existing class-level umbrella (use `skill_list` and
+   `skill_view`).
+3. Otherwise add a support file under an existing umbrella (`references/`,
+   `templates/`, or `scripts/`) and add a one-line pointer in its SKILL.md.
+4. Create a new class-level umbrella only when no existing skill covers the class.
+5. The skill name MUST be class-level. Never use plan_key, step_id, a PR number,
+   an error string, a feature codename, or a session artifact.
+6. `when_to_use` is required on every created or patched skill. It must name the
+   concrete situations that should trigger loading the skill.
+7. Do NOT capture environment setup failures, transient errors, negative claims
+   about tools, or one-off task narratives.
+8. Do not execute code. You may write scripts for a skill but cannot run them.
 
-- `aggregated_handoff` — the per-layer handoffs already merged DEPTH-FIRST by
-  code: `failed_branches` [{branch, failure_reason, source}], `success_steps`
-  [{step, tool, params, outcome, source}], `hard_constraints` [str],
-  `locked_decisions` [{decision, reason, source}], plus totals and the original
-  `handoff_forest`. Each entry's `source` names the layer
-  (e.g. "depth-1:researcher-a2b3 > depth-2:executor-c7d8").
-- each `subagent_runs` entry — its OWN `handoff` (5 fields, this layer only),
-  `spawn_depth`, `label`, `outcome`, `step_id`, `flow_id`, `relevance` and
-  `resolved_position` (the run's step re-resolved against the CURRENT plan;
-  null when its todo was deleted/reordered away). Runs from
-  cancelled/superseded branches are already filtered out.
+### Module-bound carry-forward
 
-### For EACH task, extract:
+A lesson that names a concrete file/module/test and will be hit again by the
+next plan touching that module goes into a `<module>-notes` skill (for example
+`auth-module-notes`). Patch an existing one instead of creating a duplicate.
+Keep it to one-line symptom -> cause -> avoidance entries.
 
-1. **failure_set**: Take `aggregated_handoff.failed_branches` entries as
-   "<branch>: <failure_reason>" (deduplicate semantically similar entries).
-   When a run has no handoff, fall back to reading its result_text for
-   failure signals. If there are no failures, use an empty array [].
+### User preferences
 
-2. **success_steps**: Consume `aggregated_handoff.success_steps` (the
-   subagent's curated DIRECT path: only the minimal ordered steps that led
-   straight to completion, NO exploratory/groping branches) as the primary
-   source. Emit each as `{step, tool, params, outcome}` in dependency order.
-   `locked_decisions` annotate WHY this approach was chosen; use them to fill
-   missing rationale, not to replace the steps. When success_steps is empty
-   (task failed), emit [] and record the failure_set only.
-   Build `success_path` as the human-readable projection:
-   "<step> (<tool>, <params>) -> <outcome>", annotated with the matching
-   locked_decision reason when one exists.
+Put user corrections/style/workflow preferences in the governing skill's
+SKILL.md body (and, when useful, its `when_to_use`), not only in memory.
 
-3. **hard_constraints**: Copy `aggregated_handoff.hard_constraints` into the
-   task-level knowledge as `hard_constraints` (deduplicated). These are
-   inviolable — future plans must respect them.
+## Output contract
 
-4. **failed_branches_tree**: Keep the traceable form `"<branch>: <reason>
-   (source: <source>)"` for entries whose origin matters (a child tried a
-   variation of its parent's approach). Do not invent relationships.
+After the tool calls, end with exactly one JSON object on its own:
 
-5. **position mapping**: When writing task-level knowledge, use the run's
-   `resolved_position`. When it is null (todo deleted/reordered), fall back to
-   matching the run's task text against the todos array. NEVER compute
-   position as step_id - 1 — todos may have shifted.
+{"status":"updated","skills":["skill-name"],"reason":"what changed and why"}
+or
+{"status":"no_op","reason":"a concrete explanation of why this plan has no reusable signal"}
 
-6. **method**: 3-5 word kebab-case identifier (e.g., "async-password-hashing-with-passlib")
+A no-op is allowed only when the evidence truly contains no reusable procedure,
+pitfall, or hard constraint. The quality judge will reject an unjustified no-op.
+If `judge_feedback` is present in the context, address it directly and do not
+repeat the rejected approach.
 
-### For EACH WAVE, summarize (one-liner each):
-- Common failure patterns across tasks
-- Common success patterns across tasks
-
-### For the PLAN as a whole (one-liner each, max 150 chars):
-- Overall method/approach (3-5 words)
-- Key failures (most impactful, max 5)
-- Key successes (most reusable, max 5)
-- Reusable patterns (one-liner code/config, max 8)
-
-### Output (Part 1)
-
-Write knowledge files using the knowledge tool with action='write':
-- knowledge(action="write", plan_name="...", layer="task", position=0, data={...})
-- knowledge(action="write", plan_name="...", layer="wave", wave_index=0, data={...})
-- knowledge(action="write", plan_name="...", layer="plan", data={...})
-- The plan-layer data carries `aggregate_success_steps`: concatenate the
-  task success_steps along the dependency chain (topological order); parallel
-  tasks stay side-by-side as separate entries rather than one interleaved list.
-
-Extract ALL layers. Be thorough — this knowledge will be queried in future sessions
-to avoid repeating the same mistakes and to replicate successful approaches.
-
-If the plan had no subagent runs and no notable patterns, still write the files
-with empty failure_set/success_steps and a minimal success_path.
-
-## Part 2: Skill Library Update
-
-Be ACTIVE — most completed plans produce at least one skill update, even if
-small. A pass that does nothing is a missed learning opportunity, not a
-neutral outcome.
-
-Target shape of the library: CLASS-LEVEL skills, each with a rich SKILL.md
-and a `references/` directory for session-specific detail. Not a long flat
-list of narrow one-session-one-skill entries. This shapes HOW you update,
-not WHETHER you update.
-
-### Signals to look for (any one warrants action):
-  - User corrected your style, tone, format, legibility, or verbosity during
-    the plan execution. Frustration signals like 'stop doing X', 'this is too
-    verbose', 'don't format like this', 'why are you explaining', 'just give
-    me the answer', 'you always do Y and I hate it', or an explicit 'remember
-    this' are FIRST-CLASS skill signals. Update the relevant skill(s) to embed
-    the preference so the next session starts already knowing.
-  - User corrected your workflow, approach, or sequence of steps. Encode the
-    correction as a pitfall or explicit step in the skill that governs that
-    class of task.
-  - Non-trivial technique, fix, workaround, debugging path, or tool-usage
-    pattern emerged from the subagent runs. Capture it.
-  - A skill that got loaded or consulted during the plan turned out to be
-    wrong, missing a step, or outdated. Patch it NOW.
-
-### Preference order — prefer the earliest action that fits:
-  1. UPDATE A CURRENTLY-LOADED SKILL. Look through the plan context for
-     skills the user loaded or you read. If any covers the territory of
-     the new learning, PATCH that one first.
-  2. UPDATE AN EXISTING UMBRELLA (via skill_list + skill_view). If no
-     loaded skill fits but an existing class-level skill does, patch it.
-     Add a subsection, a pitfall, or broaden a trigger.
-  3. ADD A SUPPORT FILE under an existing umbrella. Three kinds:
-       - `references/<topic>.md` — session-specific detail (error
-         transcripts, reproduction recipes, provider quirks) AND condensed
-         knowledge banks: quoted research, API docs, external authoritative
-         excerpts, or domain notes. Write it concise and for the value of
-         the task, not as a full mirror of upstream docs.
-       - `templates/<name>.<ext>` — starter files meant to be copied and
-         modified (boilerplate configs, scaffolding, a known-good example).
-       - `scripts/<name>.<ext>` — statically re-runnable actions the skill
-         can invoke directly (verification scripts, fixture generators,
-         deterministic probes).
-     Add support files via skill_manage action=write_file with file_path
-     starting 'references/', 'templates/', or 'scripts/'. The umbrella's
-     SKILL.md should gain a one-line pointer to any new support file.
-  4. CREATE A NEW CLASS-LEVEL UMBRELLA SKILL when no existing skill covers
-     the class. The name MUST be at the class level — NOT a specific PR
-     number, error string, feature codename, library-alone name, or
-     'fix-X / debug-Y / audit-Z-today' session artifact. If the proposed
-     name only makes sense for today's task, it's wrong — fall back to
-     (1), (2), or (3).
-
-### Frontmatter standard (the ONLY text the index shows)
-
-`<available_skills>` renders a skill's frontmatter, and those few lines are the
-model's entire basis for deciding whether to load the skill — the body is read
-only AFTER loading. So the fields are the trigger mechanism, not metadata:
-
-- `name` — class-level kebab-case identifier.
-- `description` — one-line capability summary (what the skill does).
-- `when_to_use` — **REQUIRED** on every skill you create or patch: the specific
-  scenarios, user intents, or triggers that should make the agent load this
-  skill. Not "when needed" — name the situation. Example: "When implementing
-  authentication that needs non-blocking bcrypt/scrypt verification, or when
-  synchronous hashing blocks the event loop."
-- `when_not_to_use` — optional but valuable: exclusions, alternatives, or
-  conditions where the approach does not apply. Example: "For simple CLI
-  scripts where blocking is acceptable, or when the project already uses
-  argon2."
-
-Keep each field short (~60 tokens for `description`, ~50 for the others — CJK
-characters cost about twice as many tokens per character). When patching a
-skill that lacks `when_to_use`, add it in the same patch.
-
-If you notice two existing skills that overlap, note it in your reply —
-the background curator handles consolidation at scale.
-
-### Module-bound carry-forward (`<module>-notes` skills)
-
-The class-level umbrellas above cover reusable classes of work. Module-bound
-pitfalls need a narrower channel: a lesson that binds to a SPECIFIC file /
-module / test and whose module can foreseeably be modified again.
-
-- Judgment: the lesson names a concrete file, module, or test (e.g.
-  `auth/token.py`, `test_auth_17`) and whoever touches that module next would
-  hit the same pitfall. If the module is finished for good, leave the detail
-  to Part 1 knowledge instead.
-- Output: write that module's notes skill with
-  `skill_manage(action="create", name="<module>-notes", content=...)` —
-  naming convention `<module>-notes` (e.g. `auth-module-notes`). If a skill
-  with that exact name already exists, do NOT create a duplicate: append the
-  new rows with
-  `skill_manage(action="patch", name="<module>-notes", old_string=..., new_string=...)`
-  (use action="edit" only for a full rewrite).
-- Content format: a short, actionable list grouped by module — "symptom →
-  cause → avoidance action", one line per lesson.
-- Keep it lean (prefer nothing over noise): one-off task details stay in
-  Part 1 knowledge; only carry forward what is genuinely reusable by the next
-  plan that touches the same module.
-
-### User-preference embedding:
-When the user expressed a style/format/workflow preference during the plan,
-the update belongs in the SKILL.md body, not just in memory. Memory
-captures 'who the user is and what the current situation and state of your
-operations are'; skills capture 'how to do this class of task for this
-user'. When they complain about how you handled a task, the skill that
-governs that task needs to carry the lesson.
-
-### Do NOT capture as skills:
-  - Environment-dependent failures: missing binaries, fresh-install errors,
-    post-migration path mismatches, 'command not found', unconfigured
-    credentials, uninstalled packages. The user can fix these — they are
-    not durable rules.
-  - Negative claims about tools or features ('browser tools do not work',
-    'X tool is broken', 'cannot use Y from execute_code'). These harden
-    into refusals the agent cites against itself for months after the
-    actual problem was fixed.
-  - Session-specific transient errors that resolved before the plan ended.
-    If retrying worked, the lesson is the retry pattern, not the original
-    failure.
-  - One-off task narratives. A user asking 'summarize today's market' or
-    'analyze this PR' is not a class of work that warrants a skill.
-
-If a tool failed because of setup state, capture the FIX (install command,
-config step, env var to set) under an existing setup or troubleshooting
-skill — never 'this tool does not work' as a standalone constraint.
-
-### Output (Part 2)
-
-Use the skill_manage tool to update or create skills as described above.
-Act on Part 2 only if there is real signal from the plan execution. If
-genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
-
-## Part 3: System-Level Pitfalls → the 'facts' target
-
-Not every durable lesson is bound to a module or belongs to a skill class.
-SYSTEM-LEVEL pitfalls — toolchain behavior, environment constraints,
-generic command gotchas that ANY project on this machine could hit — are
-kept in the 'facts' memory target, which is injected into every system prompt.
-
-Judge each candidate against the routing rules:
-- Bound to a specific file / module / test → Part 2 `<module>-notes` skill.
-- About the user (preferences, traits, expectations) → USER.
-- A reusable class of work or technique → Part 2 skill.
-- SYSTEM-LEVEL/CROSS-PROJECT pitfall (true in ANY project) → 'facts'.
-- Project-specific pitfall or convention → 'memory' (not 'facts').
-
-To write: call the memory tool with target="facts" (actions: add / replace /
-remove). Keep each entry to one short line — symptom plus avoidance. ONLY
-write system-level/cross-project facts here. If a fact is specific to the
-current project, write it to the 'memory' target instead.
-A transient setup failure the user can fix is not durable (see the Do-NOT
-list); a recurring constraint of this environment is.
-
-Current 'facts' target content (limit {facts_limit} chars):
-<facts>
-{facts_block}
-</facts>
-
-Maintain it like an editor: merge entries describing the same pitfall, replace
-outdated ones, and prefer saving nothing over bloating the store (prefer
-nothing over noise). If a fact is project-specific, remove it from 'facts'
-and add it to 'memory' instead.
-
-## Important
-
-The knowledge you write via the knowledge tool (action='write') is stored
-as JSON files in workspace/knowledge/plans/. In future sessions, you can query this
-knowledge using the SAME tool with action='read' to look up failure_set,
-success_path, and method from previously completed plans before starting
-similar work. A condensed summary is also auto-injected into the system
-prompt so you always know what previously failed/succeeded.
 """
-
 _PLAN_EXTRACTION_LOCK_KEY = StateKey.NUDGE_PLAN_EXTRACTION_LOCK
 _PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 # Subagent result text is truncated before it enters the extraction prompt so a
@@ -522,7 +318,9 @@ _NUDGE_MEMORY_LOCK_KEY = StateKey.NUDGE_REVIEW_MEMORY_LOCK
 _PLAN_EXTRACTION_FIRED_KEY = StateKey.NUDGE_PLAN_EXTRACTION_FIRED
 #: Fingerprint of the plan content the last SUCCESSFUL extraction consumed.
 _PLAN_SNAPSHOT_HASH_KEY = StateKey.NUDGE_PLAN_SNAPSHOT_HASH
-_PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
+_PLAN_SKILL_FAILED_HASH_KEY = StateKey.NUDGE_SKILL_QUALITY_FAILED_HASH
+_PLAN_SKILL_FAILED_AT_KEY = StateKey.NUDGE_SKILL_QUALITY_FAILED_AT
+_PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"] and NUDGE["skill_nudge_enabled"]
 
 # Keeps scheduled nudge coroutines referenced until they complete (asyncio
 # holds only weak references to tasks).
@@ -1175,8 +973,8 @@ def _compact_aggregate(aggregate: dict[str, Any]) -> dict[str, Any]:
     """The plan-context view: capped flat lists + totals, NO forest.
 
     Keeps the prompt increment fixed (~500-800 tokens) regardless of how many
-    subagents ran; the full tree lives in ``handoff-tree.json`` and is fetched
-    on demand with ``knowledge(action="read", layer="handoff")``.
+    subagents ran; the full tree lives in ``handoff-tree.json`` as the audit
+    artifact and is no longer exposed as a model-facing knowledge read.
     """
     failed_branches = aggregate.get("failed_branches") or []
     success_steps = aggregate.get("success_steps") or []
@@ -1191,6 +989,161 @@ def _compact_aggregate(aggregate: dict[str, Any]) -> dict[str, Any]:
         "total_success_steps": len(success_steps),
         "total_hard_constraints": len(hard_constraints),
         "total_locked_decisions": len(locked_decisions),
+    }
+
+
+def _row_text(row: dict[str, Any]) -> str:
+    """Flatten a persisted message row's content to text."""
+    content = row.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            str(block.get("text", ""))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return str(content or "")
+
+
+def _row_skill_name(call: Any) -> str:
+    """Extract a skill name from a LangChain/OpenAI-style tool call."""
+    if not isinstance(call, dict):
+        return ""
+    name = call.get("name")
+    args = call.get("args")
+    if not name:
+        function = call.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            args = function.get("arguments")
+    if str(name or "") != "skill_view":
+        return ""
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (TypeError, ValueError):
+            return ""
+    if isinstance(args, dict):
+        return str(args.get("name") or "").strip()
+    return ""
+
+
+def _loaded_skill_details(names: list[str]) -> list[dict[str, str]]:
+    """Resolve loaded skill names to their index metadata (best-effort)."""
+    if not names:
+        return []
+    try:
+        from skills.loader import scan_skills
+
+        index = {str(skill.get("name") or ""): skill for skill in scan_skills()}
+    except Exception:
+        index = {}
+    result: list[dict[str, str]] = []
+    for name in names:
+        meta = index.get(name) or {}
+        result.append(
+            {
+                "name": name,
+                "description": str(meta.get("description") or ""),
+                "when_to_use": str(meta.get("when_to_use") or ""),
+            }
+        )
+    return result
+
+
+def _recent_usage_skill_names(limit: int) -> list[str]:
+    """Recently used auto skills, as a best-effort fallback for preload paths.
+
+    TaskFlow/cron skill preloading bumps ``use_count`` without a transcript
+    ``skill_view`` call. This is not plan-scoped, so callers add it only after
+    the exact transcript-derived names.
+    """
+    if limit <= 0:
+        return []
+    try:
+        from agent.tools.pub_base.skill_usage import load_usage
+
+        records = load_usage()
+    except Exception:
+        return []
+    rows = []
+    for name, record in records.items():
+        if not isinstance(record, dict):
+            continue
+        stamp = str(record.get("last_used_at") or record.get("last_viewed_at") or "")
+        if stamp:
+            rows.append((stamp, str(name)))
+    rows.sort(reverse=True)
+    return [name for _stamp, name in rows[:limit]]
+
+
+def _collect_plan_feedback(session_id: str) -> dict[str, Any]:
+    """Bounded user corrections + actually-loaded skills for the nudge.
+
+    Plan extraction has never received the conversation; the skill-quality
+    prompt needs the user's explicit corrections and the skills the plan really
+    touched. This reads only the recent persisted turns, skips internal carriers
+    and system reminders, and caps both lists so the nudge prompt stays small.
+    """
+    corrections: list[str] = []
+    loaded_names: list[str] = []
+    try:
+        from context_engine.store.core import get_messages_by_lastest_n_turns
+
+        rows = get_messages_by_lastest_n_turns(
+            session_id,
+            last_n=max(1, int(NUDGE["skill_nudge_feedback_turns"])),
+            only_eligible=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - advisory context, never load-bearing
+        logger.debug("plan extraction: feedback read failed for {}: {}", session_id, exc)
+        return {"loaded_skills": [], "user_corrections": []}
+
+    max_items = max(1, int(NUDGE["skill_nudge_feedback_max_items"]))
+    max_chars = max(0, int(NUDGE["skill_nudge_feedback_chars"]))
+    for row in reversed(rows or []):
+        role = str(row.get("role") or "")
+        if role == "human":
+            if row.get("origin") not in (None, "user"):
+                continue
+            text = _row_text(row).strip()
+            if (
+                not text
+                or text.startswith("[SYSTEM DIRECTIVE")
+                or text.startswith("<system-reminder")
+            ):
+                continue
+            if len(corrections) >= max_items:
+                continue
+            corrections.append(text[:500])
+            continue
+        if role != "ai":
+            continue
+        for call in row.get("tool_calls") or []:
+            name = _row_skill_name(call)
+            if name and name not in loaded_names:
+                loaded_names.append(name)
+
+    # Chronological order is more useful to a reviewer than newest-first.
+    max_loaded = max(1, int(NUDGE["skill_nudge_loaded_skills_max"]))
+    for name in _recent_usage_skill_names(max_loaded):
+        if name not in loaded_names:
+            loaded_names.append(name)
+    loaded_names = loaded_names[:max_loaded]
+    if max_chars:
+        budget = 0
+        bounded: list[str] = []
+        for text in corrections:
+            remaining = max_chars - budget
+            if remaining <= 0:
+                break
+            bounded.append(text[:remaining])
+            budget += min(len(text), remaining)
+        corrections = bounded
+    return {
+        "loaded_skills": _loaded_skill_details(loaded_names),
+        "user_corrections": corrections,
     }
 
 
@@ -1247,6 +1200,7 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
         "todos": todos,
         "subagent_runs": filtered,
         "aggregated_handoff": aggregated,
+        "feedback": _collect_plan_feedback(session_id),
         "plan_snapshot": snapshot,
     }
 
@@ -1723,21 +1677,18 @@ async def salvage_session_memory(session_id: str) -> bool:
 
 
 async def _create_plan_extraction_agent(system_prompt: str):
-    """The extraction fork's agent: auxiliary model, an EXPLICIT tool binding.
+    """The skill-quality fork: auxiliary model, explicit skill tool binding.
 
     NOT ``_create_nudge_agent``: the memory review keeps the main model (it reads
-    a conversation), while this pass consumes structured data (todos + subagent
-    runs + the plan file) and runs a template-driven extraction — the same shape
-    the step / completion judges already run on the auxiliary model, at a
-    fraction of the cost and with no chance of crowding the main window.
-    The system prompt is kept: the skills index in it decides patch-vs-create.
+    a conversation), while this pass consumes structured plan evidence and runs
+    a template-driven skill review — the same shape the step / completion judges
+    already run on the auxiliary model, at a fraction of the cost and with no
+    chance of crowding the main window. The system prompt is kept: the skills
+    index in it decides patch-vs-create.
 
-    The tool face is bound to exactly the tools the extraction prompt drives
-    (knowledge write, the skills trio, and ``memory`` for the facts target) —
-    the bound list IS the barrier, so nothing else is even callable. The skills
-    toolset deliberately carries NO ``nudge`` marker: the memory review
-    (``_NudgeLimitTool()``, the tag-based gate) must not extract skills — the
-    experience extraction is this pass's whole job.
+    The tool face is bound to exactly the skill tools the prompt drives. This
+    pass must not write knowledge or facts: those outputs were retired from the
+    plan-completion path, and the bound list is the barrier.
     """
     from agent.middlewares import ToolCallNormalize, ToolGuardrails
     from models import build_auxiliary_llm
@@ -1755,10 +1706,9 @@ async def _create_plan_extraction_agent(system_prompt: str):
     )
 
 
-#: The tools the extraction prompt drives, by name — knowledge write, the
-#: skills-index read / skill read / skill write trio, and ``memory`` (its Part 3
-#: routes system-level pitfalls to the facts target through that tool).
-_EXTRACTION_TOOL_NAMES = ("knowledge", "skill_list", "skill_view", "skill_manage", "memory")
+#: The skill tools the skill-quality nudge drives. Knowledge and memory are
+#: deliberately absent: this pass only updates the skill library.
+_EXTRACTION_TOOL_NAMES = ("skill_list", "skill_view", "skill_manage")
 
 
 def _extraction_tool_face() -> list[BaseTool]:
@@ -1774,8 +1724,9 @@ async def _write_handoff_tree_safely(session_id: str, context: dict[str, Any]) -
     """Persist the code-merged handoff tree BEFORE the extraction LLM runs.
 
     An interrupted synthesis must not lose the raw merged data: the file is
-    written first (atomic replace), and the LLM's `plan-summary.json` is a
-    second, lossy layer on top. Fail-open.
+    written first (atomic replace). The nudge's skill update is a second,
+    lossy layer on top and the audit file remains available if it is rejected.
+    Fail-open.
     """
     aggregated = context.get("aggregated_handoff") or {}
     if not aggregated.get("handoff_forest"):
@@ -1795,29 +1746,87 @@ async def _write_handoff_tree_safely(session_id: str, context: dict[str, Any]) -
         )
 
 
+def _last_ai_text(res: dict[str, Any]) -> str:
+    """Return the final assistant text from a nudge invocation."""
+    messages = res.get("messages") if isinstance(res, dict) else None
+    for message in reversed(messages or []):
+        if isinstance(message, AIMessage) or getattr(message, "type", "") == "ai":
+            return _msg_to_text(message)
+    return ""
+
+
+def _extract_no_op_reason(text: str) -> str | None:
+    """Read the nudge's final ``{"status":"no_op",...}`` JSON block."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        payload = json.loads(text[start : end + 1])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or str(payload.get("status") or "").lower() != "no_op":
+        return None
+    return str(payload.get("reason") or "").strip() or "no-op without a reason"
+
+
+def _plan_skill_failure_active(session_id: str, snapshot_hash: str) -> bool:
+    """Whether this exact plan snapshot is in a skill-quality failure cooldown."""
+    stored_hash = str(
+        state_register_db.get_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, "") or ""
+    )
+    if stored_hash != snapshot_hash:
+        return False
+    try:
+        failed_at = float(state_register_db.get_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, 0))
+    except (TypeError, ValueError):
+        failed_at = 0.0
+    cooldown = max(0, int(NUDGE["skill_nudge_failure_cooldown_s"]))
+    return failed_at > 0 and (time.time() - failed_at) < cooldown
+
+
+def _mark_plan_skill_failed(session_id: str, snapshot_hash: str) -> None:
+    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, snapshot_hash)
+    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, time.time())
+
+
+def _clear_plan_skill_failed(session_id: str) -> None:
+    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_HASH_KEY, "")
+    state_register_db.set_state(session_id, _PLAN_SKILL_FAILED_AT_KEY, 0)
+
+
 async def _run_plan_extraction(session_id: str) -> None:
-    """One independent extraction pass: instruction + plan context, no history.
+    """Run the skill-quality nudge with judge/rollback/retry.
 
-    Plan-aware knowledge extraction + skill library update, driven by the
-    rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
-    knowledge(action="write"); Part 2: skill library update via skill_manage,
-    including ``<module>-notes`` carry-forward; Part 3: system-level pitfalls to the
-    ``facts`` memory target).
+    The plan's raw handoff tree is written first for audit. The nudge then
+    receives a bounded view of the evidence, loaded skills and user corrections;
+    its only tools are the skill trio (``skill_list`` / ``skill_view`` /
+    ``skill_manage``). No knowledge or facts are written.
 
-    The snapshot fingerprint is stored only AFTER a successful pass (and for the
-    very todos this pass consumed), so a failed or raced extraction is retried on
-    the next completion turn instead of being silently marked done.
-
-    Fail-open: errors are logged and swallowed, never propagated into the turn's
-    ``after_agent`` hook.
+    Each attempt snapshots ``skills/auto`` first. A judge-approved change (or a
+    justified no-op) advances the success fingerprint; a rejected attempt is
+    restored and retried with the judge's feedback. Exhaustion records a failure
+    marker and leaves the plan eligible for a later retry after the cooldown.
     """
     state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, True)
     try:
         from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
+        from agent.tools.pub_base.skill_provenance import (
+            BACKGROUND_REVIEW,
+            reset_current_write_origin,
+            set_current_write_origin,
+        )
 
         context = _build_plan_context(session_id)
         if not context:
             logger.debug("plan extraction: no plan context for session {}", session_id)
+            return
+
+        snapshot_hash = _plan_snapshot_hash(list(context.get("todos") or []))
+        if _plan_skill_failure_active(session_id, snapshot_hash):
+            logger.debug(
+                "plan extraction: skill-quality failure cooldown active for {}", session_id
+            )
             return
 
         # Raw merged tree first (code), then the compact view for the LLM.
@@ -1827,28 +1836,68 @@ async def _run_plan_extraction(session_id: str) -> None:
         render_context["aggregated_handoff"] = _compact_aggregate(
             context.get("aggregated_handoff") or {}
         )
-
         system_prompt = _get_and_reload_system_prompt(session_id)
-        context_str = json.dumps(render_context, ensure_ascii=False, indent=2)
-        prompt = _render_prompt_facts(
-            _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
-        )
 
-        async with lane_slot(LaneType.NUDGE):
-            _agent = await _create_plan_extraction_agent(system_prompt)
-            res = await _agent.ainvoke(
-                input={
-                    "session_id": session_id,
-                    "messages": [HumanMessage(content=prompt)],
-                }
+        attempts = max(1, int(NUDGE["skill_nudge_max_attempts"]))
+        before = snapshot_auto_skills()
+        feedback = ""
+        for attempt in range(1, attempts + 1):
+            prompt_context = dict(render_context)
+            if feedback:
+                prompt_context["judge_feedback"] = feedback
+            prompt = _PLAN_EXTRACTION_PROMPT.replace(
+                "{plan_context}", json.dumps(prompt_context, ensure_ascii=False, indent=2)
             )
-        logger.debug("plan extraction res is {}", res["messages"][-1])
+            async with lane_slot(LaneType.NUDGE):
+                agent = await _create_plan_extraction_agent(system_prompt)
+                token = set_current_write_origin(BACKGROUND_REVIEW)
+                try:
+                    res = await agent.ainvoke(
+                        input={
+                            "session_id": session_id,
+                            "messages": [HumanMessage(content=prompt)],
+                        }
+                    )
+                finally:
+                    reset_current_write_origin(token)
 
-        state_register_db.set_state(
+            text = _last_ai_text(res)
+            logger.debug("plan extraction attempt {}/{} result: {}", attempt, attempts, text[:2000])
+            after = snapshot_auto_skills()
+            judgement = await judge_skill_update(
+                render_context,
+                before,
+                after,
+                _extract_no_op_reason(text),
+            )
+            logger.info(
+                "skill-quality nudge attempt {}/{}: pass={} verdict={} grounded={} "
+                "reusable={} trigger={} quality={} changed={} reason={}",
+                attempt,
+                attempts,
+                judgement.passed,
+                judgement.verdict,
+                judgement.grounded_in_run,
+                judgement.reusable,
+                judgement.trigger_quality,
+                judgement.quality,
+                len(changed_skill_paths(before, after)),
+                judgement.feedback,
+            )
+            if judgement.passed:
+                _clear_plan_skill_failed(session_id)
+                state_register_db.set_state(session_id, _PLAN_SNAPSHOT_HASH_KEY, snapshot_hash)
+                return
+
+            restore_auto_skills(before)
+            feedback = judgement.feedback
+
+        logger.warning(
+            "skill-quality nudge exhausted {} attempt(s) for {}; rolled back skills/auto",
+            attempts,
             session_id,
-            _PLAN_SNAPSHOT_HASH_KEY,
-            _plan_snapshot_hash(list(context.get("todos") or [])),
         )
+        _mark_plan_skill_failed(session_id, snapshot_hash)
     except Exception:
         logger.exception("plan extraction failed (fail-open) for {}", session_id)
     finally:

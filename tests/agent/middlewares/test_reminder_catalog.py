@@ -182,7 +182,6 @@ class TestRegistration:
             "continuity_context",
             "project_dir_notice",
             "project_instructions",
-            "knowledge_index",
         } <= set(_isolated_catalog["real"])
 
     def test_the_project_instructions_source_is_change_gated(self, _isolated_catalog):

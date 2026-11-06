@@ -866,9 +866,20 @@ per-project FACTS path and `runtime/session/context.py` no longer exists.
 FACTS holds only SYSTEM-LEVEL / CROSS-PROJECT pitfalls — things true in ANY
 project on this machine (toolchain behavior, environment limits, generic command
 gotchas), not project conventions (those go to `memory` or the project's
-AGENTS.md). The memory review and plan extraction prompts state this routing and
-instruct the model to migrate a project-specific entry out of FACTS into the
-memory target when it spots one.
+AGENTS.md). The memory review states this routing; the plan-completion nudge is
+skill-only and does not write FACTS or knowledge, so it never migrates facts.
+
+**Skill-quality nudge (plan completion).** `_run_plan_extraction` reads the plan,
+compact success/failure evidence, loaded skills and bounded user corrections, then
+asks the auxiliary model to update a class-level skill. Its tool face is only
+`skill_list` / `skill_view` / `skill_manage`; knowledge and memory are absent.
+It snapshots `skills/auto`, runs the nudge, and sends the changed files plus the
+evidence to `skill_quality.judge_skill_update()` (grounded / reusable / trigger /
+quality). A rejected attempt restores the snapshot and retries with judge feedback;
+exhaustion records `nudge_skill_quality_failed_hash` and leaves the success
+fingerprint untouched. A no-op is allowed only when the judge accepts its reason.
+`handoff-tree.json` remains the raw audit file; `task-*.json` / `wave-*.json` /
+`plan-summary.json` are legacy and the `knowledge` tool/prompt block are retired.
 
 `MemoryStore.load_from_store()` reads the active rows ordered
 `created_at ASC, id ASC` (the old top-to-bottom file order) and freezes the
@@ -1256,10 +1267,10 @@ are deliberately NOT part of the per-session agent config):
 - `TASKFLOW_LLM_*` — the TaskFlow decision model. It serves the four internal
   calls `taskflow_flow(action="plan")` / `taskflow_flow(action="replan")` / `step_judge` / `taskflow_flow(action="finish")`
   (temperature 0). Non-taskflow callers stay on auxiliary: the subagent
-  completion judge, the spawn/steer branches and plan extraction.
+  completion judge, the spawn/steer branches and the skill-quality nudge.
 - `COMPRESSION_LLM_*` — the summarization middleware's own model: the LLM
   summary (`_create_summary` / `_acreate_summary`). It does NOT serve memory
-  review (the MAIN model, cache-warm by design) or plan extraction (the
+  review (the MAIN model, cache-warm by design) or the skill-quality nudge (the
   auxiliary model).
 
 Both are built by `models/LLMs/family_llm.py::build_family_llm` (exposed as

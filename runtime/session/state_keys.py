@@ -168,6 +168,11 @@ class StateKey(StrEnum):
     # the once-per-cycle fired flag misses a plan whose completed todos were
     # edited in place, so a changed fingerprint triggers the re-extraction.
     NUDGE_PLAN_SNAPSHOT_HASH = "nudge_plan_snapshot_hash"
+    #: The plan-completion skill-quality pass exhausted its judge/retry budget
+    #: for this snapshot. Kept separately from the success hash so a later turn
+    #: can retry after the cooldown without pretending the plan was extracted.
+    NUDGE_SKILL_QUALITY_FAILED_HASH = "nudge_skill_quality_failed_hash"
+    NUDGE_SKILL_QUALITY_FAILED_AT = "nudge_skill_quality_failed_at"
     NUDGE_REVIEW_MEMORY_LOCK = "nudge_review_memory_lock"
     COMPRESSION_TODO_UPDATE_LOCK = "compression_todo_update_lock"
     PLAN_REF = "plan_ref"

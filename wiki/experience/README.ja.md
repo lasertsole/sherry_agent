@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（圧縮のたびに、破棄されるメッセージだけを受け取り、そのターン自身のモデルとプレフィックスでキャッシュ温存のまま走る）、プランがターン境界で完了したときの plan extraction、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage（捕捉した圧縮カットに対してバックグラウンドで 2 波の memory review を走らせる）。産出は 5 つのストア——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
+本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review、プランがターン境界で完了したときの **skill-quality nudge**、圧縮後の todo fork、そしてメインセッション削除時の session-end salvage。産出は 4 つのストア——MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db`——と、監査用の生 `handoff-tree.json` に入る。以下の **Curator** 節は、skill-quality nudge の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
 > **ストレージ更新（2026-11-04）：** 以下で MEMORY.md / USER.md / FACTS.md と呼んでいる 3 つのメモリ出力は、MesMemory の `memory_entries` テーブルの行（ターゲット `memory` / `user` / `facts` ごと）になりました。旧 Markdown ファイルは起動時に `memory_migration.py` が一度だけインポートし、`*.md.bak` に改名します。読み込みは `MemoryStore.load_from_store()` で、各行は `origin_session`（由来）と `usage_count` / `last_used`（使用状況）を持ちます。
 
@@ -10,17 +10,18 @@
 
 ## 設計原則
 
-1. **すべての抽出は既存ストアを拡張する。** 産出は MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db` のいずれかへ入る。並列ストアを作る抽出経路は一つもない。
-2. **全面 fail-open。** どのトリガも自身の失敗をログに記録して握り潰す。todo ストアの破損、plan ファイルの読み取り不能、LLM 呼び出しの失敗、カーソルの破損が、メインの対話ターンを阻塞したり中断したりしない。
-3. **ターン経路はゼロ阻塞。** 圧縮後 todo fork と圧縮時 nudge はどちらも fire-and-forget のバックグラウンドタスク; memory review と plan extraction は NUDGE レーン上で独立した子 Agent として走り、モデル呼び出しを決してブロックしない。
-4. **すべての抽出経路がツールを必要とする。** memory review、plan extraction、todo fork はいずれも `create_agent` fork です——それぞれ `memory`、`knowledge` / `skill_manage`、`todowrite` を通じて書き込むためです。独立した純粋抽出呼び出しは残っていません。
+1. **すべての抽出は既存ストアを拡張する。** 産出は MEMORY.md / USER.md / FACTS.md、`skills/auto/`、`todos.db` のいずれかへ入る。生 handoff tree は監査用で、モデル向け知識ストアではない。並列ストアを作る抽出経路はない。
+2. **全面 fail-open。** どのトリガも自身の失敗をログに記録して握り潰す。todo ストアの破損、plan ファイルの読み取り不能、LLM 呼び出しの失敗が、メインの対話ターンを阻塞したり中断したりしない。
+3. **ターン経路はゼロ阻塞。** 圧縮後 todo fork と圧縮時 nudge はどちらも fire-and-forget のバックグラウンドタスク。memory review と skill-quality nudge は NUDGE レーン上で独立した子 Agent として走り、モデル呼び出しを決してブロックしない。
+4. **すべての抽出経路がツールを必要とする。** memory review、skill-quality nudge、todo fork はいずれも `create_agent` fork で、それぞれ `memory`、`skill_manage`、`todowrite` を通じて書き込む。独立した純粋抽出呼び出しは残っていない。
+5. **プラン完了はスキルだけを保守する。** 完了パスは knowledge も FACTS も書かない。永続産出はクラスレベル skill の変更、または judge 承認済み no-op だけ。
 
 ## トリガ × 機構 × 書込先
 
 | トリガ | 機構（fork agent か / 呼び出し形態） | 書込先 |
 |---|---|---|
 | 圧縮のたび | memory review（`_nudge_memory`）：**破棄される**スライスだけを**原文のまま**、そのターンが使ったモデル構成（`_build_session_model`）で送り、セッションのシステムプロンプトとツール面も再現してプレフィックスキャッシュに命中させる；`NUDGE["memory_review_mode"] = "digest"` なら折り畳む（直近 24 件は原文、それ以前は 1 行に切詰め） | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
-| プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | plan extraction（`_run_plan_extraction`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）が**補助モデル**で専用 agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使い、**会話履歴を一切渡さない** | ① 知識 JSON ② `skills/auto/`（クラスレベルスキル + `<module>-notes`） ③ FACTS.md |
+| プラン完了——ターン境界で全 todo が `completed` / `cancelled`（**圧縮時ではない**） | skill-quality nudge（`_run_plan_extraction`）：完了フック（`PlanContinuationEnforcer` → `maybe_trigger_plan_extraction`）が**補助モデル**で専用 agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使い、**会話履歴を一切渡さない** | `skills/auto/`（クラスレベルスキル + `<module>-notes`）。judge 承認済み no-op も可。生 `handoff-tree.json` は先に監査用として書込 |
 | 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の nudge agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
 | メインセッション削除時（purge 前） | session-end salvage（`salvage_session_memory`）：checkpoint transcript をスナップショットし、モデル/システムプロンプト/ツール面を捕捉し、通常の圧縮カットを読み取り専用で計算して、独立した 2 波の memory review をスケジュールする——第 1 波は破棄されるはずのプレフィックス、第 2 波は memory 再読込とプロンプト再構築後の保持尾部 | `memory` ツール経由で MEMORY.md / USER.md / FACTS.md |
 
@@ -36,29 +37,29 @@
 - `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory` と `knowledge` がこのマークを持ち（ほかに対話用 `question` とプランモードの 2 つ）、memory review は memory を書けるが任意のメインツールは呼べない。スキル三点セット（`skill_list` / `skill_view` / `skill_manage`）は**意図的に未マーク**——スキル抽出はプラン完了パスの担当で、そちらはタグではなく明示的なツール面をバインドする。
 - fork のメッセージはログのみ。`res["messages"]` の内容はメイングラフへ一切入らない。
 
-### 2. plan extraction（todo 完了、ターン境界）
+### 2. Skill-quality nudge（todo 完了、ターン境界）
 
-`_detect_todo_all_complete(session_id)`（`summarization/nudges.py`）は圧縮ごとに評価され、完了サイクルごとに 1 回発火する：
+`_detect_todo_all_complete(session_id)` はプラン完了の可能性がある各ターンで評価され、完了サイクルごとに一度発火する：todos が存在し、すべて `completed` / `cancelled` で、`nudge_plan_extraction_fired` が未設定。fired フラグを立て、リストが不完全になるとリセットする。読み取りは fail-open。完了フックは毎ターン確認するため、短いセッションでも抽出できる。
 
-- todo が存在し、すべて `completed` または `cancelled` である；
-- `nudge_plan_extraction_fired`（`state_register_db`）が未設定である。
+フラグだけでは completed todo の in-place 編集を見逃すため、`_plan_snapshot_hash`（id + content + status + plan_ref）を前回**成功** pass の `nudge_plan_snapshot_hash` と比較する。内容が変われば再抽出し、変化がなければスキップ、失敗 pass は cooldown 後に再試行する。
 
-遷移時にフラグを立て、リストが全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出はかつて圧縮時にのみ走っていた——一度も圧縮しないセッションは抽出しなかった。今は**プランが完了した毎ターン**（完了フック）に走るため、短いセッションでも抽出する。
+`plan_extraction_enabled` と `skill_nudge_enabled` が有効なとき、hook は NUDGE レーンで `_run_plan_extraction` を fire-and-forget 起動する：
 
-フラグだけでは「完了済み todo のその場編集」を見えないため、トリガはプランの**スナップショット指紋**（`_plan_snapshot_hash`：id + content + status + plan_ref）を、最後に**成功**した抽出後に `nudge_plan_snapshot_hash` へ保存した値と比較する——内容が変われば再抽出、変化なしならスキップ、失敗したパスは次の完了ターンで再試行する。
+1. `_build_plan_context` は plan ファイル、todos、子 Agent runs（result_text 24 KB 上限）、および有界 `feedback`（最近の `skill_view` 呼び出し + `.usage.json` の最近項目 = `loaded_skills`、最近ターンのユーザー修正 = `user_corrections`）を集める。internal carrier、system reminder、workspace notice は除外。todo がなければ `{}` を返し pass をスキップ。
+2. LLM の前に生の merged handoff tree を `handoff-tree.json` に原子的に書き、監査用に残す。モデル向け知識の読み取り口ではない。
+3. `_PLAN_EXTRACTION_PROMPT` を圧縮コンテキストでレンダリングし、専用 agent（補助モデル、temperature=0、**会話なし**）に渡す。ツール面は `skill_list` / `skill_view` / `skill_manage` のみ。`knowledge` と `memory` はなく、知識や FACTS は書けない。
+4. Prompt は証拠を明示的にマッピングする：`success_steps` → 手順/検証、`failed_branches` → pitfalls / `when_not_to_use`、`hard_constraints` → guardrails、`locked_decisions` → rationale、`user_corrections` → body / `when_to_use`。今回ロードした skill、既存 class-level umbrella、support file、最後に新規 class-level skill の順。具体的理由がある no-op だけ許可。
 
-`plan_extraction_enabled` が有効で、セッション単位の `Summarization → nudge` スイッチが入り、検出が発火すると、フックが `_run_plan_extraction` を fire-and-forget で派遣し、`nudge_plan_extraction_lock` の下、NUDGE レーンで走る：
+実装: `summarization/nudges.py` の `_run_plan_extraction` は `_create_plan_extraction_agent` を `nudge_plan_extraction_lock` 下で使います。`state_register_db` が指紋を保存し、`outcome` は subagent runs から来て、失敗フラグは `False` です。
 
-1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
-2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、専用 agent（`_create_plan_extraction_agent`：**補助モデル**、`temperature=0`）へ送る——**会話は一切なし**。データはプランファイル、todo、子 agent 実行記録に揃っているため、このパスはウィンドウを圧迫せず、チャットも読まない。ツール面は明示バインド（`knowledge` / `skill_list` / `skill_view` / `skill_manage` / `memory`——最後は Part 3 の FACTS.md 書き込み経路）で、スキル書き込みはこのパスだけが担う。
+Nudge は snapshot/judge トランザクションで走る：
 
-プロンプトは 3 種類の産出を行う：
+- **snapshot**：`skill_quality.snapshot_auto_skills()` が最初の試行前に `skills/auto`（skill、support file、usage sidecar）を捕捉。
+- **write**：nudge が skill を作成/修補。`set_current_write_origin("background_review")` により新規 skill は agent-created として curator の管理対象になる。
+- **judge**：`skill_quality.judge_skill_update()` が補助モデルに `verdict`、`grounded_in_run`、`reusable`、`trigger_quality`、`quality`、`no_op_justified`、`feedback` を求める。`quality >= NUDGE["skill_nudge_quality_threshold"]`、`trigger_quality >= 6`、grounded、reusable が通過条件。no-op は `no_op_justified` が必要。
+- **retry/rollback**：拒否された試行は pre-nudge snapshot に戻し、judge feedback 付きで再試行（既定最大 2 回）。使い切ると再度復元し、`nudge_skill_quality_failed_hash` と時刻を記録して成功 fingerprint を進めない。後続ターンで `skill_nudge_failure_cooldown_s` 後に再試行でき、plan が変われば即時再試行。
 
-- **Part 1：構造化知識。** `knowledge(action="write", ...)` が JSON 文書を `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`、計画アイデンティティをキーとする——`agent/tools/todolist/knowledge/identity.py`）へ書く：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。各 task は `failure_set`、`success_path`、`method` を持ち、wave は失敗 / 成功パターン、plan は全体手法、主要な失敗 / 成功、再利用パターンを持つ。
-- **Part 2：スキルライブラリ更新。** `skill_manage` がロード済みまたは既存のクラスレベルスキルを修正し、サポートファイルを追加し、または `skills/auto/` に新しいクラスレベル umbrella を作成する。プロンプトは明確に能動的で（"most completed plans produce at least one skill update"）、ユーザーの訂正、ワークフローの訂正、非自明な技法、陳腐化したスキルを一次信号として挙げる。さらにモジュール束縛の教訓を引き継ぐ：特定のファイル / モジュール / テストに束縛され、そのモジュールが将来再び変更される見込みの教訓は `<module>-notes` スキルとして書き出す（`skill_manage(action="create", name="<module>-notes", ...)`）。同名スキルが既にあれば `action="patch"` で追記し、重複作成はしない。内容はモジュール別の簡潔な「症状 → 原因 → 回避動作」リストとする。
-- **Part 3：システムレベルの落とし穴 → FACTS.md。** どのプロジェクトでも当てはまる落とし穴——ツールチェーンの挙動、環境制約、一般的なコマンドの罠——は `memory` ツールの `target="facts"` で書き込む。プロジェクト固有の事実は MEMORY へ。プロンプトは現在の FACTS.md 内容と文字上限を渡し、追記ではなく統合 / 置換を指示する（「ノイズより無を優先」）。
-
-後続の読み取りは同じツール（`knowledge(action="read")`）が提供し、圧縮された plan 要約は `build_knowledge_block`（`knowledge/prompt_block.py`）がシステムプロンプトへ自動注入する。
+この経路は knowledge（`task-*.json` / `wave-*.json` / `plan-summary.json`）も FACTS も書かない。既存 knowledge ファイルはディスクに残るが legacy 扱い。モデル向け prompt block と `knowledge` ツールは retired。
 
 ### 3. 圧縮後 todo fork
 
@@ -87,7 +88,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 
 **frontmatter 契約（インデックスそのものがトリガー）。** `<available_skills>` が描画するのはスキルの frontmatter だけ——本文はロード後に読まれます——なので、これらのフィールドがルーティング信号です: `description`（能力の要約）、`when_to_use`（**必須**：これらの経路が作成・修正するすべてのスキルに、それを読み込むべき具体的なシナリオ／ユーザー意図を記載）、`when_not_to_use`（任意：除外条件と代替手段）。ローダーはこの 2 つのタグを CJK 対応のトークン予算（60 / 50 / 50 トークン）で描画し XML エスケープします。クライアントのスキルツールチップも同じ 3 フィールドを表示します。キュレーターはさらに狭い第 2 層を加えます: アンブレラの frontmatter がスキル全体を覆い、各 `##` サブ能力セクションは自身の `**When to use:**` 行で始まります（実際の除外がある場合のみ `**When NOT to use:**` も）。これによりモデルは `skill_view` 後に正しいセクションを選べます。決定的フォールバックも同じ形を書き、条件はマージ理由から抽出します。
 
-Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`todos.db` は対象外である。
+Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md / FACTS.md と `todos.db` は対象外である。
 
 **何か。** 定時 cron ではなくアイドルトリガーのオーケストレーター。サービスエントリポイントが `context_engine.curator.init()` でデーモンスレッド（`curator-timer`）を起動する（`server/__main__.py:140`；HTTP-only モードではスキップ、`server/__main__.py:66-73`）。スレッドは 3600 秒ごとに起床し `maybe_run_curator(idle_for_seconds=...)` を呼ぶ（`context_engine/curator/__init__.py:122-140`）。パッケージのインポートは副作用なし——スレッドを起動するのは `init()` だけ（`context_engine/curator/__init__.py:151-165`）。
 
@@ -110,6 +111,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 
 | ガード | 保護対象 |
 |---|---|
+| skill-quality ツール面 | `skill_list` / `skill_view` / `skill_manage` のみ。knowledge/memory はありません。 |
 | nudge metadata 許可リスト（`metadata["nudge"]`、`_NudgeLimitTool` 既定規則） | memory nudge と plan extraction は nudge 段階用にタグ付けされたツールしか呼べない。それ以外のメインツールはエラー `ToolMessage` を返し、実行されない。 |
 | 圧縮 metadata 許可リスト（`metadata["todo_update"] is True`、`_NudgeLimitTool(allowed_metadata_key="todo_update")`） | 圧縮 fork は該当 metadata マーク付き `todowrite` シムだけを許可する。 |
 | 派生セッションキー `<id>::compression-todo` | 圧縮 fork の `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 状態キーがメインセッションと衝突しない。fork 実行中、メインセッションは `awrap_model_call` の最中だからである。`compression_todo_update_lock` だけが意図的にメインセッションへ書かれ、クロスパス再入コーディネータとして働く。 |
@@ -128,7 +130,9 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 | `memory` target | MesMemory `memory_entries` 行（`target='memory'`） | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`、`/memory/settings` で上書き可） |
 | `user` target | MesMemory `memory_entries` 行（`target='user'`） | 1375 文字（`MEMORY_TOOL["user_char_limit"]`、上書き可） |
 | `facts` target | MesMemory `memory_entries` 行（`target='facts'`、唯一のグローバルターゲット） | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`、上書き可）；`add` が上限超過時は最も使われていない項目をアーカイブ |
-| plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——アイデンティティ・キー） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
+| legacy plan knowledge | `workspace/knowledge/plans/<plan_key>/` | 廃止：旧 `task-<n>.json` / `wave-<n>.json` / `plan-summary.json` はディスクに残るが、モデル向け経路は読み書きしない |
+| handoff audit | `workspace/knowledge/plans/<plan_key>/handoff-tree.json` | nudge 前に書く生 handoff tree。prompt block ではない |
+| スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/` / `templates/` / `scripts/` のサポートファイル。PTC は `ptc__<plan_key>__<step_id>.py`、LDW は `ldw__<plan_key>.py` |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |
 
@@ -137,7 +141,13 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 | キー | 場所 | 既定値 | 効果 |
 |---|---|---|---|
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 圧縮後 todo fork を有効化 |
-| `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | todo 完了時の plan extraction を有効化 |
+| `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | todo 完了 nudge のトリガ |
+| `skill_nudge_enabled` | `NUDGE` | `True` | skill-only 品質パスを有効化（knowledge を書かない） |
+| `skill_nudge_max_attempts` | `NUDGE` | `2` | 初回 + judge feedback 付き最大 1 回 |
+| `skill_nudge_quality_threshold` | `NUDGE` | `6` | 通過に必要な最低 `quality` |
+| `skill_nudge_feedback_turns` / `_max_items` / `_chars` | `NUDGE` | `12` / `8` / `2000` | 有界のユーザー修正コンテキスト |
+| `skill_nudge_loaded_skills_max` | `NUDGE` | `20` | loaded-skill リスト上限 |
+| `skill_nudge_failure_cooldown_s` | `NUDGE` | `3600` | 同一失敗 plan snapshot の再試行クールダウン |
 | `session_end_review_enabled` | `NUDGE` | `True` | メインセッション削除時のサルベージを有効化 |
 | `session_end_review_timeout_s` | `NUDGE` | `120` | 削除サルベージの波ごとのモデル呼び出し予算 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 実際の圧縮後の能動的圧縮クールダウン |
@@ -146,6 +156,10 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 ## 検証
 
 対象テスト：
+
+検証メモ: Persistence assertions live in `tests/agent/middlewares/message_persistence/`。`skill_view` のロード記録、`test_skill_quality.py`、`test_skill_quality_feedback.py`、`test_skill_quality_nudge.py` を追加。
+
+
 
 ```bash
 uv run pytest \
@@ -173,7 +187,7 @@ AI 判定評価：`evals/nudge_extraction/suite.py` が完了済み plan の実�
 uv run python evals/evals.py nudge_extraction
 ```
 
-スイートは `knowledge_written`、`skills_created`、`ai_judge_skill_quality`、`no_repo_pollution` を検査する。
+スイートは `knowledge_retired`、`skills_created`、`ai_judge_skill_quality`、`no_repo_pollution` を検査する。
 
 ## 既知の境界
 

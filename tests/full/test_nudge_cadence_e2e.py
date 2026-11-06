@@ -3,8 +3,8 @@
 LIVE-NETWORK, RUN EXPLICITLY. These tests drive the production
 ``Summarization`` middleware (real auxiliary-LLM summaries via
 ``build_auxiliary_llm()``), the REAL compression-time nudge agents built by
-``summarization/nudges.py`` (main LLM via ``build_main_llm()``), the real
-``knowledge`` / ``skill_manage`` / ``memory`` tools, and real SQLite stores
+``summarization/nudges.py`` (auxiliary model), the real ``skill_manage`` /
+``skill_list`` / ``skill_view`` tools, and real SQLite stores
 (MesMemory, todos.db, taskflow registry, state registers). They require a
 populated ``.env`` with working endpoints. Run with::
 
@@ -33,9 +33,9 @@ Coverage:
    queues nothing; after release the next compression dispatches normally.
 4. All-complete todos: memory review and plan extraction both fire in the same
    round, sequentially, without suppressing each other.
-5. Plan-extraction double output: real knowledge files under
-   ``<plan_knowledge>/<plan_key>/`` (``meta.json`` + ``plan-summary.json``) AND
-   a real ``skill_manage``-created skill in the auto-skills sandbox.
+5. Skill-only plan extraction: the real nudge writes a class-level
+   ``skill_manage`` update in the auto-skills sandbox and no longer writes
+   ``plan-summary.json`` / task knowledge.
 6. P1-9 interleave: a ~210K-char human message is evicted (full text in state +
    ``lc_evicted_to``, preview in the model view) and then compressed — the
    summary is real, the memory review is dispatched in the same round, the
@@ -68,7 +68,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import re
 import shutil
 import sqlite3
@@ -88,9 +87,11 @@ from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
 from agent.middlewares.context_eviction import ContextEvictionMiddleware
 from agent.middlewares.message_persistence import MessagePersistenceMiddleware
 from agent.middlewares.summarization import nudges as nudge_mod
+from agent.middlewares.summarization import skill_quality
 from agent.middlewares.summarization.core import Summarization, _get_taskflow_context_sync
 from agent.tools import memory as memory_module
 from agent.tools.skill_tools import skill_manage
+from agent.tools.skill_tools import skill_view as skill_view_module
 from agent.tools.taskflow.registry.store_sqlite import create_flow, delete_flows_by_session
 from agent.tools.todolist.knowledge import knowledge_store
 from agent.tools.todolist.knowledge.identity import plan_key
@@ -348,7 +349,7 @@ class _NudgeRecorder:
 def _classify_prompt(prompt: str) -> str:
     if prompt.startswith("Review the conversation above"):
         return "memory_review"
-    if prompt.startswith("You are a knowledge extraction"):
+    if prompt.startswith("You are a skill-quality maintainer"):
         return "plan_extraction"
     return "other"
 
@@ -416,6 +417,9 @@ class _Sandbox:
         monkeypatch.setattr(memory_module, "memory_entry_repo", self.memory_repo)
         monkeypatch.setattr(knowledge_store, "_KNOWLEDGE_ROOT", self.plans_dir)
         monkeypatch.setattr(skill_manage, "AUTO_SKILLS_DIR", self.auto_skills_dir)
+        monkeypatch.setattr(skill_view_module, "SKILLS_DIR", self.auto_skills_dir)
+        monkeypatch.setattr(skill_quality, "AUTO_SKILLS_DIR", self.auto_skills_dir)
+        monkeypatch.setattr("skills.build_skills_snapshot", lambda: None)
         # The post-compression todo reconciliation fork is a separate nudge
         # path with its own contract; disabling it keeps every main-model call
         # here attributable to the cadence / extraction assertions.
@@ -738,17 +742,10 @@ def _plan_output_problems(
 ) -> list[str]:
     problems: list[str] = []
     key_dir = sandbox.plans_dir / setup.expected_key
-    meta_path = key_dir / "meta.json"
-    if not meta_path.is_file():
-        problems.append(f"missing meta.json under plan key dir {key_dir}")
-    else:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if meta.get("key") != setup.expected_key:
-            problems.append(f"meta.json key mismatch: {meta.get('key')!r}")
-        if meta.get("plan_name") != setup.plan_name:
-            problems.append(f"meta.json plan_name mismatch: {meta.get('plan_name')!r}")
-    if not (key_dir / "plan-summary.json").is_file():
-        problems.append(f"missing plan-summary.json under plan key dir {key_dir}")
+    if (key_dir / "plan-summary.json").is_file():
+        problems.append(f"retired plan-summary.json was written under {key_dir}")
+    if list(key_dir.glob("task-*.json")):
+        problems.append(f"retired task knowledge was written under {key_dir}")
 
     skill_files = sorted(sandbox.auto_skills_dir.rglob("SKILL.md"))
     if not skill_files:
@@ -765,19 +762,16 @@ def _plan_output_problems(
         if run.session_id == setup.sid and run.kind == "plan_extraction"
     ]
     if not plan_runs:
-        problems.append("the plan-extraction nudge agent never ran")
+        problems.append("the skill-quality nudge agent never ran")
         return problems
     tools = {name for run in plan_runs for name in run.tool_names()}
-    if "knowledge" not in tools:
-        problems.append(f"plan extraction never called the knowledge tool; tools={sorted(tools)}")
+    if "knowledge" in tools or "memory" in tools:
+        problems.append(f"retired knowledge/memory tools were called; tools={sorted(tools)}")
     if "skill_manage" not in tools:
-        problems.append(f"plan extraction never called skill_manage; tools={sorted(tools)}")
-    knowledge_text = "\n".join(run.tool_content("knowledge") for run in plan_runs)
-    if "Knowledge written to" not in knowledge_text:
-        problems.append(f"knowledge writes failed: {knowledge_text[:300]!r}")
+        problems.append(f"skill-quality nudge never called skill_manage; tools={sorted(tools)}")
     skill_text = "\n".join(run.tool_content("skill_manage") for run in plan_runs)
-    if "created" not in skill_text.lower():
-        problems.append(f"skill_manage produced no creation: {skill_text[:300]!r}")
+    if not any(word in skill_text.lower() for word in ("created", "patched", "updated")):
+        problems.append(f"skill_manage produced no skill change: {skill_text[:300]!r}")
     return problems
 
 
@@ -823,12 +817,12 @@ async def test_compaction_reviews_memory_and_the_completion_hook_forks_the_extra
 
 
 # ---------------------------------------------------------------------------
-# 5. Plan extraction double output: knowledge dir + skill in the auto sandbox
+# 5. Plan extraction: skill-only output, no knowledge files
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_plan_extraction_writes_knowledge_and_skill_outputs(sandbox: _Sandbox) -> None:
+async def test_plan_extraction_writes_skill_without_knowledge(sandbox: _Sandbox) -> None:
     recorder = _NudgeRecorder()
     sandbox.instrument(recorder)
     harness = _CompressionHarness()
@@ -845,12 +839,9 @@ async def test_plan_extraction_writes_knowledge_and_skill_outputs(sandbox: _Sand
             await _settle_nudge_tasks()
             problems = _plan_output_problems(sandbox, recorder, setup)
             if not problems:
-                key_dir = sandbox.plans_dir / setup.expected_key
                 skill_files = sorted(sandbox.auto_skills_dir.rglob("SKILL.md"))
                 logger.info(
-                    "plan extraction outputs: key_dir={} files={} skills={}",
-                    key_dir.name,
-                    sorted(path.name for path in key_dir.iterdir()),
+                    "plan extraction outputs: skills={}",
                     [path.parent.name for path in skill_files],
                 )
                 assert _summary_present(final)
@@ -862,7 +853,7 @@ async def test_plan_extraction_writes_knowledge_and_skill_outputs(sandbox: _Sand
             await _purge_session(setup.sid)
 
     pytest.fail(
-        "the live model did not produce both plan-extraction outputs after 2 attempts:\n"
+        "the live skill-quality nudge did not produce a skill output after 2 attempts:\n"
         + "\n".join(reports)
     )
 

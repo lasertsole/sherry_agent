@@ -23,7 +23,6 @@ from config.features import TASKFLOW_INFRA
 from workspace.prompt_builder import (
     _build_boulder_block,
     _build_continuity_block,
-    _build_knowledge_block,
     _build_plan_mode_block,
     _build_project_dir_block,
     _build_project_instructions_block,
@@ -233,16 +232,6 @@ def register_default_sources() -> None:
             # strip it from the message list on later turns. The model reads it
             # once; keeping it resident would waste every subsequent context.
             transient=True,
-        )
-    )
-    register(
-        ReminderSource(
-            source_id="knowledge_index",
-            channel=ReminderChannel.CURRENT_TURN,
-            builder=_as_builder(_build_knowledge_block),
-            budget_chars=1000,
-            priority=50,
-            only_if_changed=True,
         )
     )
     # Semantic recall sits ABOVE plan mode: when the switch is on, the entries

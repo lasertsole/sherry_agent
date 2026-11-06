@@ -34,6 +34,26 @@ from agent.tools.todolist.knowledge.identity import fallback_plan_name
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
+    """This file tests the fork plumbing, not judge quality."""
+
+    class _Judgement:
+        passed = True
+        verdict = "pass"
+        grounded_in_run = True
+        reusable = True
+        trigger_quality = 8
+        quality = 8
+        no_op_justified = False
+        feedback = ""
+
+    async def _pass(*_args, **_kwargs):
+        return _Judgement()
+
+    monkeypatch.setattr(nudge_mod, "judge_skill_update", _pass)
+
+
 class _FakeStateRegister:
     """Minimal in-memory stand-in for state_register_db / state_register_mem."""
 
@@ -356,8 +376,9 @@ class TestRunPlanExtraction:
         assert len(prompts) == 1
         prompt = prompts[0]
         assert '"plan_name": "p"' in prompt
-        assert "## Part 1: Structured Knowledge Extraction" in prompt
-        assert "## Part 2: Skill Library Update" in prompt
+        assert "You are a skill-quality maintainer." in prompt
+        assert "aggregated_handoff.success_steps" in prompt
+        assert "Do NOT write knowledge" in prompt
 
     @pytest.mark.asyncio
     async def test_agent_failure_is_swallowed_and_lock_released(self, monkeypatch, prompt_stub):

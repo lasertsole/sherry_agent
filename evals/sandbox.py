@@ -119,6 +119,7 @@ class EvalSandbox:
             "agent.tools.skill_tools.skill_manage",
             "agent.tools.pub_base.skill_usage",
             "agent.tools.pub_base.skill_utils",
+            "agent.middlewares.summarization.skill_quality",
         ):
             try:
                 module = importlib.import_module(module_name)

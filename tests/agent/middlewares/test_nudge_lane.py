@@ -27,6 +27,24 @@ from agent.middlewares.summarization import nudges as nudge
 pytestmark = [pytest.mark.unit]
 
 
+@pytest.fixture(autouse=True)
+def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
+    class _Judgement:
+        passed = True
+        verdict = "pass"
+        grounded_in_run = True
+        reusable = True
+        trigger_quality = 8
+        quality = 8
+        no_op_justified = False
+        feedback = ""
+
+    async def _pass(*_args, **_kwargs):
+        return _Judgement()
+
+    monkeypatch.setattr(nudge, "judge_skill_update", _pass)
+
+
 async def _wait_until(predicate, timeout: float = 2.0) -> None:
     """Poll ``predicate`` until true, failing the test on timeout."""
     deadline = time.monotonic() + timeout

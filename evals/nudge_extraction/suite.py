@@ -1,12 +1,13 @@
-"""Eval suite: real plan-aware extraction scored by an auxiliary-LLM judge.
+"""Eval suite: real skill-quality nudge scored by an auxiliary-LLM judge.
 
 The suite seeds a self-contained, completed-plan run (plan file + completed
 todos + synthetic subagent run records), invokes the
-production plan-extraction fork
+production skill-quality nudge
 (``agent.middlewares.summarization.nudges._run_plan_extraction``), then asks
 an auxiliary LLM whether the skill it produced is genuinely grounded in THIS
-run, reusable, and non-generic. Every write is redirected into the sandbox, so
-the repo's real ``skills/auto/`` and ``workspace/`` are never touched.
+run, reusable, and non-generic. It also asserts that the retired knowledge
+documents are not written. Every write is redirected into the sandbox, so the
+repo's real ``skills/auto/`` and ``workspace/`` are never touched.
 
 Usage:
     uv run python evals/evals.py nudge_extraction
@@ -78,7 +79,7 @@ keeping the swap atomic and tolerating dirty schema across files.
 
 _JUDGE_PROMPT_TEMPLATE = """\
 You are an exacting evaluation judge. Decide whether an automated post-plan
-knowledge extraction pass produced a GENUINELY USEFUL, REUSABLE skill.
+skill-quality nudge produced a GENUINELY USEFUL, REUSABLE skill.
 
 Use ONLY the material below. Do not reward generic advice, and do not assume
 anything that is not shown here.
@@ -159,25 +160,19 @@ def _diff_snapshots(
 
 
 def _install_nudge_tools() -> list[str]:
-    """Bind the nudge-marked tool set the production extraction agent may call.
+    """Bind the skill trio the skill-quality nudge may call.
 
-    Production wires the full main-tool list and lets ``_NudgeLimitTool`` reject
-    every non-nudge tool at call time. Here only the nudge-marked tools are
-    bound, which is the same effective toolset without paying for MCP/terminal
-    construction inside an eval.
+    The extraction pass is skill-only: knowledge and memory are deliberately
+    absent, so the eval exercises the same barrier as production.
     """
     import agent.core as agent_core
-    from agent.tools.memory import build_memory_tool
     from agent.tools.skill_tools import (
         build_skill_list_tool,
         build_skill_manage_tool,
         build_skill_view_tool,
     )
-    from agent.tools.todolist.knowledge import build_knowledge_tools
 
     tools = [
-        *build_knowledge_tools(),
-        build_memory_tool(),
         build_skill_manage_tool(),
         build_skill_list_tool(),
         build_skill_view_tool(),
@@ -275,7 +270,12 @@ def _seed_subagent_runs(session_id: str) -> list[dict[str, str]]:
 
 
 def _scan_knowledge(plans_dir: Path) -> dict[str, Any]:
-    """Summarize the knowledge JSON documents written under the sandbox root."""
+    """Record any RETIRED task/wave/plan knowledge documents.
+
+    ``handoff-tree.json`` is the retained raw audit file and is deliberately not
+    counted: the contract is that the model-facing knowledge files stop being
+    written.
+    """
     result: dict[str, Any] = {
         "plan_dirs": [],
         "task_files": 0,
@@ -287,10 +287,17 @@ def _scan_knowledge(plans_dir: Path) -> dict[str, Any]:
         return result
     for plan_dir in sorted(entry for entry in plans_dir.iterdir() if entry.is_dir()):
         files = sorted(plan_dir.glob("*.json"))
-        if not files:
+        retired = [
+            file_path
+            for file_path in files
+            if file_path.name == "plan-summary.json"
+            or file_path.name.startswith("task-")
+            or file_path.name.startswith("wave-")
+        ]
+        if not retired:
             continue
         result["plan_dirs"].append(plan_dir.name)
-        for file_path in files:
+        for file_path in retired:
             result["files"].append(str(file_path.relative_to(plans_dir)))
             if file_path.name.startswith("task-"):
                 result["task_files"] += 1
@@ -428,17 +435,19 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
             extraction_error = f"{type(exc).__name__}: {exc}"
         knowledge = _scan_knowledge(sandbox.knowledge_plans_dir)
         skill_files = _list_skill_files(sandbox.auto_skills_dir)
-        produced = bool(knowledge["files"]) or bool(skill_files)
+        produced = bool(skill_files)
         if produced:
             break
     extraction_latency = round(time.monotonic() - extraction_started, 2)
 
-    knowledge_passed = (
-        knowledge["plan_summaries"] >= 1
-        and knowledge["task_files"] >= 1
-        and knowledge["wave_files"] >= 1
+    knowledge_retired = not knowledge["files"]
+    checks.append(
+        {
+            "check": "knowledge_retired",
+            "passed": knowledge_retired,
+            "detail": knowledge,
+        }
     )
-    checks.append({"check": "knowledge_written", "passed": knowledge_passed, "detail": knowledge})
 
     skill_text = "\n\n".join(file_path.read_text(encoding="utf-8") for file_path in skill_files)[
         :_MAX_SKILL_CHARS

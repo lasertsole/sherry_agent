@@ -1,15 +1,8 @@
-"""Tests for the plan-extraction module-notes carry-forward and FACTS routing.
+"""Skill-quality nudge: module-notes guidance + memory-review FACTS routing.
 
-Part 2 of ``_PLAN_EXTRACTION_PROMPT`` carries module-bound lessons into
-``<module>-notes`` skills; Part 3 routes broad, module-independent pitfalls to
-the ``facts`` memory target. The suite covers:
-
-- prompt content: the carry-forward guidance, the ``<module>-notes`` naming
-  convention, the create/patch branches, and the Part 3 FACTS instruction;
-- rendering: the live FACTS.md content and char limit reach both nudge prompts;
-- behavior: a stub LLM emitting the guidance-prescribed ``skill_manage`` calls —
-  a new ``auth-module-notes`` skill lands under ``skills/auto/``, and an
-  existing one is patched in place instead of duplicated.
+The plan-completion pass is now skill-only. It no longer writes knowledge or
+FACTS; module-bound lessons still go to ``<module>-notes`` skills. The memory
+review remains the FACTS writer and keeps its system-level routing tests.
 """
 
 from __future__ import annotations
@@ -18,10 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 import agent.middlewares.summarization.nudges as nudge_mod
+import agent.middlewares.summarization.skill_quality as skill_quality
 import agent.tools.skill_tools.skill_manage as skill_manage_module
 from agent.tools.skill_tools.skill_manage import build_skill_manage_tool
 
@@ -29,8 +23,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
 
 class _FakeStateRegister:
-    """Minimal in-memory stand-in for ``state_register_mem`` (locks only)."""
-
     def __init__(self) -> None:
         self.data: dict[tuple[str, str], object] = {}
 
@@ -42,8 +34,6 @@ class _FakeStateRegister:
 
 
 class _FakeFactsStore:
-    """Stand-in for ``agent.tools.memory.memory_store`` (facts reads)."""
-
     facts_char_limit = 1_375
 
     def __init__(self, content: str = "KNOWN-FACT: test_auth_17 needs network") -> None:
@@ -54,50 +44,55 @@ class _FakeFactsStore:
         return self.content
 
 
-# ---------------------------------------------------------------------------
-# Prompt content
-# ---------------------------------------------------------------------------
+class _PassingJudgement:
+    passed = True
+    verdict = "pass"
+    grounded_in_run = True
+    reusable = True
+    trigger_quality = 8
+    quality = 8
+    no_op_justified = False
+    feedback = ""
 
 
-class TestPromptGuidance:
-    def test_plan_extraction_prompt_has_module_notes_carry_forward(self):
+@pytest.fixture(autouse=True)
+def _passing_skill_judge(monkeypatch: pytest.MonkeyPatch):
+    async def _pass(*_args, **_kwargs):
+        return _PassingJudgement()
+
+    monkeypatch.setattr(nudge_mod, "judge_skill_update", _pass)
+
+
+class TestSkillPrompt:
+    def test_module_notes_carry_forward_is_still_present(self):
         prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
 
         assert "<module>-notes" in prompt
-        assert 'action="create"' in prompt
-        assert 'action="patch"' in prompt
         assert "auth-module-notes" in prompt
-        assert "symptom" in prompt and "avoidance action" in prompt
-        # Part 1 vs carry-forward split is spelled out.
-        assert "Part 1 knowledge" in prompt
+        assert "symptom" in prompt and "avoidance" in prompt
 
-    def test_plan_extraction_prompt_has_facts_part(self):
+    def test_prompt_is_skill_only(self):
         prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
 
-        assert "Do THREE things:" in prompt
-        assert "## Part 3" in prompt
-        assert 'target="facts"' in prompt
-        assert "{facts_limit}" in prompt
-        assert "{facts_block}" in prompt
+        assert "Do NOT write knowledge" in prompt
+        assert "aggregate_success_steps" not in prompt
+        assert "Part 1: Structured Knowledge Extraction" not in prompt
+        assert "Part 3" not in prompt
+        assert 'target="facts"' not in prompt
+        assert "feedback.loaded_skills" in prompt
+        assert "feedback.user_corrections" in prompt
 
+
+class TestMemoryReviewFacts:
     def test_memory_review_prompt_has_facts_routing(self):
         prompt = nudge_mod._MEMORY_REVIEW_PROMPT
 
         assert "target: 'facts'" in prompt
         assert "{facts_limit}" in prompt
         assert "{facts_block}" in prompt
-        # Skill extraction is the plan-completion pass's job — the review prompt
-        # carries no skill guidance at all (its tool face cannot touch skills).
         assert "skill" not in prompt.lower()
 
-
-# ---------------------------------------------------------------------------
-# Rendering (live FACTS content + limit)
-# ---------------------------------------------------------------------------
-
-
-class TestFactsRendering:
-    def test_render_prompt_facts_injects_live_content_and_limit(self, monkeypatch):
+    def test_facts_rendering_injects_live_content_and_limit(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
 
         rendered = nudge_mod._render_prompt_facts(
@@ -109,72 +104,11 @@ class TestFactsRendering:
         assert "{facts_block}" not in rendered
         assert "{facts_limit}" not in rendered
 
-    def test_render_prompt_facts_marks_empty_store(self, monkeypatch):
+    def test_facts_rendering_marks_empty_store(self, monkeypatch):
         monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore(content=""))
 
-        rendered = nudge_mod._render_prompt_facts("{facts_block}")
+        assert "(the facts target is empty)" in nudge_mod._render_prompt_facts("{facts_block}")
 
-        assert "(the facts target is empty)" in rendered
-
-    @pytest.mark.asyncio
-    async def test_nudge_memory_prompt_carries_facts_context(self, monkeypatch):
-        monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
-        prompts: list[str] = []
-
-        class _CapturingAgent:
-            async def ainvoke(self, input, **kwargs):  # noqa: ARG002
-                prompts.append(input["messages"][-1].content)
-                return {"messages": [AIMessage(content="nothing")]}
-
-        async def _create(session_id, system_prompt):
-            return _CapturingAgent()
-
-        monkeypatch.setattr(nudge_mod, "_create_memory_review_agent", _create)
-
-        await nudge_mod._nudge_memory("sess-review", "sys", [HumanMessage("hi")])
-
-        assert len(prompts) == 1
-        assert "KNOWN-FACT: test_auth_17 needs network" in prompts[0]
-        assert "1,375" in prompts[0]
-        assert "(the facts target is empty)" not in prompts[0]
-
-    @pytest.mark.asyncio
-    async def test_plan_extraction_prompt_carries_facts_context(self, monkeypatch):
-        monkeypatch.setattr("agent.tools.memory.memory_store", _FakeFactsStore())
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(
-            nudge_mod,
-            "_build_plan_context",
-            lambda sid: {"plan_name": "p", "plan_path": "x", "plan_content": "", "todos": []},
-        )
-        prompts: list[str] = []
-
-        class _CapturingAgent:
-            async def ainvoke(self, input, **kwargs):  # noqa: ARG002
-                prompts.append(input["messages"][-1].content)
-                return {"messages": [AIMessage(content="done")]}
-
-        async def _create(system_prompt):
-            return _CapturingAgent()
-
-        monkeypatch.setattr(nudge_mod, "_create_plan_extraction_agent", _create)
-        monkeypatch.setattr(nudge_mod, "state_register_db", _FakeStateRegister())
-        monkeypatch.setattr(
-            "agent.middlewares.system_prompt.core._get_and_reload_system_prompt",
-            lambda session_id: "sys",
-        )
-
-        await nudge_mod._run_plan_extraction("sess-plan-facts")
-
-        assert len(prompts) == 1
-        assert "KNOWN-FACT: test_auth_17 needs network" in prompts[0]
-        assert "{facts_block}" not in prompts[0]
-        assert "<module>-notes" in prompts[0]
-
-
-# ---------------------------------------------------------------------------
-# Behavior: stub LLM emits the guidance-prescribed skill_manage calls
-# ---------------------------------------------------------------------------
 
 _CREATE_CONTENT = """---
 name: auth-module-notes
@@ -217,11 +151,11 @@ def _stub_model(tool_call: dict) -> BaseChatModel:
 
 
 def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
-    """Wire the real nudge fork to a stub LLM + isolated auto skills dir."""
     auto_dir = tmp_path / "skills" / "auto"
     auto_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(skill_manage_module, "AUTO_SKILLS_DIR", auto_dir)
+    monkeypatch.setattr(skill_quality, "AUTO_SKILLS_DIR", auto_dir)
     monkeypatch.setattr("skills.build_skills_snapshot", lambda: None)
 
     import agent.tools.pub_base as pub_base
@@ -230,9 +164,6 @@ def _install_stub(monkeypatch, tmp_path, tool_call: dict) -> SimpleNamespace:
         monkeypatch.setattr(pub_base, name, lambda *a, **k: None)
     monkeypatch.setattr(pub_base, "is_background_review", lambda: False)
 
-    # Plan extraction builds its agent on the AUXILIARY model; the memory review
-    # rebuilds the session's main-model configuration (cache-warm), so both seams
-    # get the stub.
     monkeypatch.setattr("models.build_auxiliary_llm", lambda **kwargs: _stub_model(tool_call))
     monkeypatch.setattr(
         nudge_mod, "_build_session_model", lambda session_id: _stub_model(tool_call)
@@ -310,23 +241,3 @@ class TestModuleNotesBehavior:
         text = existing_md.read_text(encoding="utf-8")
         assert "- existing row" in text
         assert "- appended row" in text
-
-
-class TestFactsSystemLevelRouting:
-    """FACTS is global and system-level only; project facts route to MEMORY."""
-
-    def test_the_memory_review_prompt_requires_system_level_facts(self):
-        prompt = nudge_mod._MEMORY_REVIEW_PROMPT
-
-        assert "SYSTEM-LEVEL or CROSS-PROJECT" in prompt
-        assert "the 'facts' target is for SYSTEM-LEVEL facts only" in prompt
-        assert "Project-specific facts" in prompt
-        assert "remove it from 'facts' and add it to 'memory'" in prompt
-
-    def test_the_plan_extraction_prompt_requires_system_level_facts(self):
-        prompt = nudge_mod._PLAN_EXTRACTION_PROMPT
-
-        assert "SYSTEM-LEVEL/CROSS-PROJECT pitfall" in prompt
-        assert "Project-specific pitfall or convention → 'memory'" in prompt
-        assert "ONLY\nwrite system-level/cross-project facts here" in prompt
-        assert "remove it from 'facts'" in prompt

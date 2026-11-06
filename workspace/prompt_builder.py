@@ -418,16 +418,6 @@ def _build_continuity_block(session_id: str) -> str:
         return ""
 
 
-def _build_knowledge_block(session_id: str) -> str:
-    """Inject the current plan's knowledge summary; "" on none or any failure."""
-    try:
-        provider = _resolve_provider("build_todolist_knowledge_block")
-        return provider.build_todolist_knowledge_block(session_id) if provider is not None else ""
-    except Exception as error:  # a broken block must not break the prompt
-        logger.debug("prompt builder: knowledge block failed ({}); omitting it", error)
-        return ""
-
-
 def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
