@@ -119,7 +119,10 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    (DynamicReminderMiddleware injects the LIVE views as
   │     `<system-reminder source="…">` messages once per turn's first model call:
   │     plan mode, working directory, project instructions, todo list, boulder,
-  │     TaskFlow board, continuity, knowledge index — the catalogue in
+  │     TaskFlow board, continuity, knowledge index, semantic recall (when the
+  │     switch is on) and `current_time` — the lowest-priority source, transient,
+  │     re-injected every turn as one English local-clock line with date, weekday,
+  │     seconds and UTC offset. The catalogue in
   │     `agent/middlewares/reminder_catalog/` decides what, at which priority, with
   │     which cooldown and under a 30 000-char total budget (lowest priority
   │     dropped first). Priority is the BUDGET order; delivery reverses the kept

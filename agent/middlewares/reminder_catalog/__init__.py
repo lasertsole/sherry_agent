@@ -2,9 +2,10 @@
 
 Importing this package registers the default sources (``plan_mode_block``,
 ``todo_block``, ``taskflow_status``, ``boulder_status``, ``continuity_context``,
-``project_dir_notice``, ``knowledge_index``) and exposes the middleware that
-injects them. ``TaskIntent`` / todo-continuation / workspace-notice keep their
-own injection paths — the catalogue is an overlay, and a middleware that never
+``project_dir_notice``, ``project_instructions``, ``knowledge_index``,
+``memory_recall``, ``current_time``) and exposes the middleware that injects
+them. ``TaskIntent`` / todo-continuation / workspace-notice keep their own
+injection paths — the catalogue is an overlay, and a middleware that never
 registers keeps working exactly as before.
 """
 

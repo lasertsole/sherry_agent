@@ -13,6 +13,7 @@ actively steering by is expensive and high (todo list, plan mode).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -41,6 +42,31 @@ def _as_builder(builder: Any) -> Any:
         return text or None
 
     return _source_builder
+
+
+#: English weekday names, independent of the process locale (``strftime("%A")``
+#: follows the C locale and can return a localized name).
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _local_time_builder(_session_id: str, _state: dict[str, Any]) -> str:
+    """One English, local-time line with date, weekday, seconds and UTC offset."""
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")
+    offset_fmt = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset or "+00:00"
+    zone = now.tzname() or "local"
+    return (
+        f"Current local time: {now.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"({_WEEKDAYS[now.weekday()]}) ({zone}, UTC{offset_fmt})"
+    )
 
 
 def _last_user_text(state: dict[str, Any]) -> str:
@@ -102,7 +128,7 @@ async def _memory_recall_builder(session_id: str, state: dict[str, Any]) -> str 
 
 
 def register_default_sources() -> None:
-    """Register the seven live views (idempotent — a re-register replaces)."""
+    """Register the live views, semantic recall and the local clock (idempotent)."""
     register(
         ReminderSource(
             source_id="plan_mode_block",
@@ -208,5 +234,18 @@ def register_default_sources() -> None:
             budget_chars=4000,
             priority=88,
             cooldown_turns=3,
+        )
+    )
+    # Local wall-clock time: always injected, always last in the budget order.
+    # ``transient`` strips yesterday's copy from the transcript, so exactly one
+    # current line rides the context instead of accumulating one per turn.
+    register(
+        ReminderSource(
+            source_id="current_time",
+            channel=ReminderChannel.CURRENT_TURN,
+            builder=_local_time_builder,
+            budget_chars=120,
+            priority=10,
+            transient=True,
         )
     )

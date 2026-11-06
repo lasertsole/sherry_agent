@@ -196,12 +196,12 @@ class TestRegistration:
         )
         assert source.channel is ReminderChannel.CURRENT_TURN
 
-    def test_only_project_instructions_is_transient(self, _isolated_catalog):
+    def test_transient_sources_are_project_instructions_and_current_time(self, _isolated_catalog):
         transient = {
             source_id for source_id, source in _isolated_catalog["real"].items() if source.transient
         }
 
-        assert transient == {"project_instructions"}
+        assert transient == {"project_instructions", "current_time"}
 
     def test_transient_source_ids_reads_the_live_registry(self, _isolated_catalog):
         from agent.middlewares.reminder_catalog.core import transient_source_ids
