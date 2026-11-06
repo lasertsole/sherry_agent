@@ -18,6 +18,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 
+from config.features import TASKFLOW_INFRA
+
 from workspace.prompt_builder import (
     _build_boulder_block,
     _build_continuity_block,
@@ -27,6 +29,7 @@ from workspace.prompt_builder import (
     _build_project_instructions_block,
     _build_taskflow_block,
     _build_todo_block,
+    has_undispatched_ready_steps,
 )
 
 from .core import ReminderChannel, ReminderSource, register
@@ -127,6 +130,23 @@ async def _memory_recall_builder(session_id: str, state: dict[str, Any]) -> str 
     return "\n".join(lines)
 
 
+#: The board's normal throttle when no dispatch decision is outstanding.
+_TASKFLOW_IDLE_COOLDOWN = 5
+
+
+def _taskflow_cooldown(session_id: str, _state: dict[str, Any]) -> int:
+    """Shorten the board cooldown while ready work is waiting for dispatch.
+
+    A ready-but-undispatched step is a decision the model must make now; a
+    running board with nothing to start keeps the historical 5-turn throttle.
+    ``only_if_changed`` still suppresses a byte-identical board, so this changes
+    WHEN a changed board is eligible, not whether duplicates are repeated.
+    """
+    if has_undispatched_ready_steps(session_id):
+        return int(TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"])
+    return _TASKFLOW_IDLE_COOLDOWN
+
+
 def register_default_sources() -> None:
     """Register the live views, semantic recall and the local clock (idempotent)."""
     register(
@@ -159,8 +179,10 @@ def register_default_sources() -> None:
             budget_chars=2000,
             priority=75,
             # A steered board is worth a nudge, but not every single turn: at
-            # most once per 5 turns, and only when it actually moved.
-            cooldown_turns=5,
+            # most once per 5 turns, and only when it actually moved. The
+            # cooldown shortens to 1 while a ready step awaits dispatch (see
+            # _taskflow_cooldown); once work is in flight it returns to 5.
+            cooldown_turns=_taskflow_cooldown,
             only_if_changed=True,
         )
     )

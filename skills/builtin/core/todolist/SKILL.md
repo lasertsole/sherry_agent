@@ -50,7 +50,7 @@ The todolist layer does **not** track `depends_on`, does **not** store a DAG/wav
 - Declare dependencies: `taskflow_step(action="run_task", flow_id=..., task=..., depends_on=["step-1"])`. While dependencies are unmet, the step is recorded as `blocked` and is not dispatched.
 - Dispatch ready steps in parallel: `taskflow_step(action="dispatch", flow_id=..., step_ids=[...])`.
 - Wait for the child sessions dispatched by this flow to settle: `taskflow_step(action="wait_all", flow_id=...)`.
-- Inject results and unlock successors: `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`. Resume only unlocks; it does not dispatch automatically.
+- Inject results and unlock successors: `taskflow_step(action="resume", flow_id=..., child_session_key=..., result=...)`. Resume auto-dispatches the whole ready set (newly unlocked downstream plus ready siblings) unless `auto_dispatch=false`.
 - Read back DAG state: `taskflow_inspect(action="summary", flow_id=...)` renders each step's `status` (`blocked | ready | dispatched | done`) and `depends_on`.
 
 A todo points at the corresponding flow step only through the optional `flow_id` / `step_id`; when DAG state is needed, read it back with `taskflow_inspect(action="summary")` — do not rebuild a scheduler at the todo layer. The dependency graph, unlocking, and parallel dispatch have exactly one authoritative source: TaskFlow.

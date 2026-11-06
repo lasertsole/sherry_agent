@@ -72,12 +72,14 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_flow(action="plan")` の自動生成 id は**安定**になりました：`plan-<sha256(session_id + goal)[:10]>`。同じセッションで同じ goal を再計画すると、既存の**非終端**フローを冪等成功として返し、2 つ目を作りません。終端フローは引き続きエラーです（別 id か後継フローを使います）。`flow_id` はグローバル主キーで所有はセッション単位のため、seed に session id を含めます。
+- `taskflow_flow(action="plan")` の自動生成 id は**安定**になりました：`plan-<sha256(session_id + goal)[:10]>`。同じセッションで同じ goal を再計画すると、既存の**非終端**フローを冪等成功として返し、2 つ目を作りません。終端フローは引き続きエラーです（別 id か後継フローを使います）。`flow_id` はグローバル主キーで所有はセッション単位のため、seed に session id を含めます。作成後は**初期 ready step をすべて自動 dispatch** します（依存のない兄弟）。`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（既定 true）で従来の「レビューしてから dispatch」に戻せ、個々の spawn 失敗は fail-open（その step は `ready` のまま）です。表示される plan は dispatch 後の状態です。
+- `taskflow_step(action="resume")` の auto-dispatch は**フロー全体**を走査します（今回 unlock した下流だけではありません）：`newly_ready ∪ all_ready` を 1 つの有界並列 wave で dispatch します。これにより、以前から ready なのに名前を挙げられていなかった兄弟ブランチも起動します。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（既定 true）で今回 unlock した集合だけに制限できます。既に dispatched の step は除外され、フローロック内で再確認されるため二重 spawn はしません。
+- TaskFlow board reminder は**すべての ready step** を列挙し（`ready_to_dispatch: s3(...), s4(...)`）、複数あるときは `[N steps ready — parallelize via taskflow_dispatch!]` を付けます。未 dispatch の ready がある間の cooldown は `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）、なければ通常の 5 ターンです（`only_if_changed` は同一 board の再注入を引き続き抑制します）。
 - `taskflow_flow(action="create")` は重複した**非終端** `flow_id` を冪等成功（revision + status）として返します。終端フロー、または他セッション所有の id はエラーのままです。
-- 手動 `taskflow_step(action="dispatch")` と `taskflow_step(action="resume")` の auto-dispatch wave は `_dispatch.flow_dispatch_lock(flow_id)` を共有します：read → validate → spawn → persist の全体をフロー単位で直列化し、wave はロック取得後に各 step がまだ `ready` か再確認します。ロックは**プロセス内**です（単一バックエンド、TaskFlow は main-only）。マルチプロセス配置では DB lease が必要です。
+- 手動 `taskflow_step(action="dispatch")`、plan の初期 ready wave、`taskflow_step(action="resume")` の auto-dispatch wave は `_dispatch.flow_dispatch_lock(flow_id)` を共有します：read → validate → spawn → persist の全体をフロー単位で直列化し、wave はロック取得後に各 step がまだ `ready` か再確認します。ロックは**プロセス内**です（単一バックエンド、TaskFlow は main-only）。マルチプロセス配置では DB lease が必要です。
 - **mutating 重複計測（2026-10-22）：** 225 checkpoint スレッド、204 ツール呼び出し——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——連続する同名 + 同引数の成功 mutating 呼び出しは**0 件**でした。そのため `ToolCallSignature` ミドルウェアは追加せず、`ToolGuardrails` が引き続きループ検出を担当します。実際の繰り返しがテレメトリで確認された場合のみ mutating カウンタを再検討します。
 
-出典：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`；テスト：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`。
+出典：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；テスト：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
 
 ## ⚙️ 設定レジストリ
 
@@ -181,7 +183,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | ディスパッチ済みステップ、または未充足依存付き `blocked` |
 | `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | ディスパッチ済み step id + リビジョン |
 | `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | ステップごとの確定レポート（完全または部分；ポリシー付きステップを自動再試行） |
-| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、判定器の判定、再試行ノート |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 再開後ステータス、アンロック id、全 ready step の自動 dispatch（下流 + 兄弟）、ステップ状態カウント、基準エコー、判定器の判定、再試行ノート |
 | `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting ステータス + リビジョン |
 | `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | 待機/締め切り状態を含む完全な flow 状態 |
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
@@ -189,7 +191,7 @@ TaskFlow は**アクティブな todo ルート**で生存します。`taskflow_
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
 | `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 目標 + 完了済み結果 + 失敗理由から**未完了**ステップを再生成（完了/実行中は保持、変更ステップの下流は blocked に戻る、1 フロー ≤ 3 回） |
-| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 目標を依存順の新フローに分解（登録のみ、ディスパッチしない） |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 目標を依存順の新フローに分解。初期 ready の兄弟 step は自動ディスパッチ |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
 | `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `cancelled` |
 
@@ -242,6 +244,9 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_step_graph.py` | `deps_satisfied`、`mark_step_done`、`unlock_dependents`、旧ステータス導出、自己依存ガード |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")` の DAG 描画 |
 | `test_resume_dag.py` | 再開で done 化、後続アンロック、部分完了、冪等な空操作 |
+| `test_taskflow_resume_all_ready.py` | resume がフロー全体を走査：unlock された下流 + ready の兄弟、オプトアウト、二重 spawn なし、部分失敗 |
+| `test_taskflow_plan_auto_dispatch.py` | plan が初期 ready 集合を自動 dispatch、依存 step は blocked のまま、オプトアウト、fail-open、finish Gate A のフォールバック |
+| `tests/agent/middlewares/test_taskflow_reminder_ready.py` | ready 集合 reminder の描画/クールダウン、呼び出し可能クールダウン、ready 判定 |
 | `test_taskflow_tools.py` | 再起動を跨ぐ create→run→resume→finish、競合、終端遷移 |
 | `test_taskflow_dispatch.py` | 一括ディスパッチ、オール・オア・ナッシング検証、バッチ途中失敗の永続化 |
 | `test_dag_e2e.py` | プロセス再起動を跨ぐ完全並列 DAG flow |

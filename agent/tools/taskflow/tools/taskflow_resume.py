@@ -39,6 +39,7 @@ from ._shared import (
     apply_dispatched_steps,
     build_task_with_bindings,
     build_task_with_dep_results,
+    deps_satisfied,
     is_terminal,
     not_found_error,
     requester_session_key,
@@ -83,6 +84,12 @@ async def taskflow_resume(
     retry budget) and records the judge's guidance on ``judge_feedback``, and
     BLOCK marks the step blocked. The judge is fail-open: when it is disabled
     or unavailable the step is marked done as before.
+
+    ``auto_dispatch`` (default True) starts every ready step after the result
+    lands — the downstream steps this resume unlocked AND sibling branches that
+    were already ready but never dispatched. It is the flow's wave boundary, so
+    a single completion cannot leave a forgotten parallel branch parked. Pass
+    False to only record the result and report the unlocked ids.
 
     When the result text classifies as a failure and the step's retry_policy
     allows it (``retry_on`` filter, budget left), a replacement child is
@@ -156,7 +163,8 @@ async def taskflow_resume(
 
     # DAG bookkeeping: a retried failure keeps the step dispatched on its
     # replacement child; any other result marks the step done and may unlock
-    # blocked dependents. Resume never spawns the newly-ready steps.
+    # blocked dependents. The auto-dispatch wave (below) then starts the
+    # unlocked downstream AND any sibling that was already ready.
     steps = list(state.get("steps") or [])
     step = next((s for s in steps if s.get("child_session_key") == child_session_key), None)
     step_id = step.get("step_id") if step is not None else None
@@ -463,17 +471,32 @@ async def taskflow_resume(
             return error
         newly_ready = unlocked_from_persisted.get("ids", newly_ready)
 
-    # Auto-dispatch the wave this resume just unlocked: without it every step
-    # completion costs the AI two extra turns (resume + dispatch), which is the
-    # whole point of closing the loop. Fail-open: a step that cannot spawn stays
-    # ready and is named in the answer for a manual retry.
+    # Auto-dispatch the wave this resume unlocked, plus every sibling that was
+    # already ready but never dispatched. A resume is the flow's natural wave
+    # boundary: without the full scan the loop can follow one branch and leave a
+    # parallel branch parked until finish's Gate A. Fail-open: a step that
+    # cannot spawn stays ready and is named in the answer for a manual retry.
     dispatched_now: list[str] = []
     dispatch_failures: list[str] = []
-    if auto_dispatch and newly_ready and not is_terminal(updated["status"]):
-        dispatched_now, dispatch_failures = await _auto_dispatch_ready(
-            flow_id, newly_ready, session_id
-        )
-        updated = await store_sqlite.get_flow(flow_id, session_id) or updated
+    if auto_dispatch and not is_terminal(updated["status"]):
+        fresh_steps = list((updated["state"] or {}).get("steps") or [])
+        all_ready = [
+            str(step["step_id"])
+            for step in fresh_steps
+            if step.get("step_id") is not None
+            and step_status(step) == StepStatus.READY
+            and not step.get("child_session_key")
+            and deps_satisfied(step, fresh_steps)
+        ]
+        if TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]:
+            to_dispatch = list(dict.fromkeys([*newly_ready, *all_ready]))
+        else:
+            to_dispatch = list(dict.fromkeys(newly_ready))
+        if to_dispatch:
+            dispatched_now, dispatch_failures = await _auto_dispatch_ready(
+                flow_id, to_dispatch, session_id
+            )
+            updated = await store_sqlite.get_flow(flow_id, session_id) or updated
     counts = steps_summary(list((updated["state"] or {}).get("steps") or []))
 
     counts_text = ",".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
@@ -495,29 +518,31 @@ async def taskflow_resume(
 
 
 async def _auto_dispatch_ready(
-    flow_id: str, newly_ready: list[str], session_id: str
+    flow_id: str, ready_ids: list[str], session_id: str
 ) -> tuple[list[str], list[str]]:
     """Serialize the auto-dispatch wave on the flow-local dispatch lock."""
     from . import _dispatch
 
     async with _dispatch.flow_dispatch_lock(flow_id):
-        return await _auto_dispatch_ready_locked(flow_id, newly_ready, session_id)
+        return await _auto_dispatch_ready_locked(flow_id, ready_ids, session_id)
 
 
 async def _auto_dispatch_ready_locked(
-    flow_id: str, newly_ready: list[str], session_id: str
+    flow_id: str, ready_ids: list[str], session_id: str
 ) -> tuple[list[str], list[str]]:
-    """Dispatch the steps a resume just unlocked; returns ``(dispatched, failures)``.
+    """Dispatch every ready step in the wave; returns ``(dispatched, failures)``.
 
     The loop is what makes a flow advance without an AI turn per step: a resume
     that unlocked the next wave starts it here instead of parking until the
-    model reads the result and calls ``taskflow_dispatch`` itself. Each step is
-    dispatched exactly like the dispatch tool does it (task bindings + judge
+    model reads the result and calls ``taskflow_dispatch`` itself. ``ready_ids``
+    is the union of the downstream steps this resume unlocked and the siblings
+    that were already ready, so a parallel branch cannot be forgotten. Each step
+    is dispatched exactly like the dispatch tool does it (task bindings + judge
     feedback), and every failure is reported, never raised — a step that could
     not spawn is left ``ready`` for the caller to retry, and the resume's own
     answer names it.
 
-    The caller holds ``flow_dispatch_lock``, so ``newly_ready`` is re-checked
+    The caller holds ``flow_dispatch_lock``, so ``ready_ids`` is re-checked
     against the freshly-read state: a manual dispatch (or another wave) that won
     the lock first has already moved a step to ``dispatched``; that step is
     skipped instead of spawned a second time.
@@ -528,16 +553,23 @@ async def _auto_dispatch_ready_locked(
     failures: list[str] = []
     flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
-        return dispatched, [f"{sid}: flow vanished" for sid in newly_ready]
+        return dispatched, [f"{sid}: flow vanished" for sid in ready_ids]
     state = dict(flow["state"])
     steps = list(state.get("steps") or [])
     results = list(state.get("results") or [])
     by_id = {step.get("step_id"): step for step in steps}
     # A step unknown here stays in the list so _spawn_one reports it by id.
-    newly_ready = [
+    # ``deps_satisfied`` keeps a stale blocked/ready entry from being spawned
+    # after a concurrent writer re-blocked it with a new dependency.
+    ready_ids = [
         sid
-        for sid in newly_ready
-        if (step := by_id.get(sid)) is None or step_status(step) == StepStatus.READY
+        for sid in ready_ids
+        if (step := by_id.get(sid)) is None
+        or (
+            step_status(step) == StepStatus.READY
+            and not step.get("child_session_key")
+            and deps_satisfied(step, steps)
+        )
     ]
     requester_key = requester_session_key(session_id)
 
@@ -580,7 +612,7 @@ async def _auto_dispatch_ready_locked(
         async with semaphore:
             return await _spawn_one(sid)
 
-    spawned = await asyncio.gather(*(_bounded(sid) for sid in newly_ready))
+    spawned = await asyncio.gather(*(_bounded(sid) for sid in ready_ids))
 
     records: list[dict] = []
     for sid, child_key, failure, feedback in spawned:

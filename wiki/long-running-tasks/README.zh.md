@@ -72,12 +72,14 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_flow(action="plan")` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。
+- `taskflow_flow(action="plan")` 自动生成的 id 现在是**稳定**的：`plan-<sha256(session_id + goal)[:10]>`；同一 session 重复规划同一 goal 会返回已有的**非终态** flow，作为幂等成功，不再创建第二个。终态 flow 仍返回错误（换一个 id，或用后继 flow）。种子包含 session id，因为 `flow_id` 是全局主键而归属于 session。创建后它会**自动派发所有初始 ready step**（无依赖的兄弟分支）；`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（默认 true）可恢复旧的「先审查再派发」行为，单个 spawn 失败是 fail-open（该 step 留 `ready`）。打印的 plan 显示派发后的状态。
+- `taskflow_step(action="resume")` 的 auto-dispatch 会扫描**整个 flow**，不只本次解锁的下游：`newly_ready ∪ all_ready` 作为一个有界并发波次派发。这样一直 ready 但没被点名的兄弟分支也会启动；`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）可限制回只派发本次解锁集。已派发 step 会被过滤并在 flow 锁内重新确认，因此扩大扫描不会重复 spawn。
+- TaskFlow board reminder 会列出**所有 ready step**（`ready_to_dispatch: s3(...), s4(...)`），多于一个时追加 `[N steps ready — parallelize via taskflow_dispatch!]`。存在未派发 ready 时，cooldown 使用 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`（1）；否则恢复正常的 5 轮（`only_if_changed` 仍会抑制逐字节相同的 board）。
 - `taskflow_flow(action="create")` 对重复的**非终态** `flow_id` 返回幂等成功（revision + status）；终态 flow 或属于其他 session 的 id 仍返回错误。
-- 手动 `taskflow_step(action="dispatch")` 与 `taskflow_step(action="resume")` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
+- 手动 `taskflow_step(action="dispatch")`、plan 的初始 ready 波次，以及 `taskflow_step(action="resume")` 的 auto-dispatch wave 共用 `_dispatch.flow_dispatch_lock(flow_id)`：完整的 read → validate → spawn → persist 序列按 flow 串行化，wave 拿到锁后会重新确认每个 step 仍为 `ready`。锁是**进程内**的（单后端进程、TaskFlow 工具 main-only）；多进程部署需要 DB lease。
 - **Mutating 重复测量（2026-10-22）：** 225 个 checkpoint 线程、204 次工具调用——122 `ast_grep_search`、34 `terminal`、23 `execute_code`、10 `explore`、5 `ast_grep_rewrite`、5 `question`、3 `write_file`、1 `python_repl`、1 `sessions_spawn`——**没有出现**连续同工具 + 同参数且成功的 mutating 调用。因此没有新增 `ToolCallSignature` 中间件；`ToolGuardrails` 继续负责循环检测，只有遥测出现真实重复时才考虑增加 mutating 计数。
 
-来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`。
+来源：`agent/tools/taskflow/tools/_dispatch.py`、`agent/tools/taskflow/tools/taskflow_plan.py`、`agent/tools/taskflow/tools/taskflow_create.py`、`agent/tools/taskflow/tools/taskflow_dispatch.py`、`agent/tools/taskflow/tools/taskflow_resume.py`、`workspace/prompt_builder.py`、`agent/middlewares/reminder_catalog/`；测试：`tests/agent/tools/taskflow/test_no_double_dispatch.py`、`tests/agent/tools/taskflow/test_plan_replan_loop.py`、`tests/agent/tools/taskflow/test_concurrent_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`、`tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`、`tests/agent/middlewares/test_taskflow_reminder_ready.py`。
 
 ## ⚙️ 配置注册表
 
@@ -181,7 +183,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | 已派发步骤，或带待满足依赖的 `blocked` |
 | `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | 已派发的 step id + 版本 |
 | `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 每个步骤的落定报告（完整或部分；对策略步骤自动重试） |
-| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 恢复后的状态、解锁的步骤、步骤状态计数、标准回显、判别器判定、重试说明 |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 恢复后的状态、解锁的 id、所有 ready step 自动派发（下游 + 兄弟）、步骤状态计数、标准回显、判别器判定、重试说明 |
 | `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting 状态 + 版本 |
 | `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | 完整 flow 状态，含等待/截止状态 |
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 完成度 %、分解、后续步骤、预计剩余 |
@@ -189,7 +191,7 @@ TaskFlow 靠**活跃 todo 根**保活。`taskflow_flow(action="create")` 与 `ta
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | 本会话面板（`active` / `all` / 状态名） |
 | `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 终态 `done`（四道门、失败开放） |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 用目标 + 已完成结果 + 失败原因重新生成**未完成**步骤（已完成/在跑的保留，被改步骤的下游重新 blocked，每流程 ≤ 3 次） |
-| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程，只注册不派发 |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程；初始 ready 兄弟 step 会自动派发 |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `failed` |
 | `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `cancelled` |
 
@@ -242,6 +244,9 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试
 | `test_step_graph.py` | `deps_satisfied`、`mark_step_done`、`unlock_dependents`、旧状态推导、自依赖保护 |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")` 的 DAG 渲染 |
 | `test_resume_dag.py` | 恢复标记 done、解锁后继、部分完成、幂等空操作 |
+| `test_taskflow_resume_all_ready.py` | resume 扫描全 flow：解锁的下游 + 一直 ready 的兄弟、关闭开关、不重复 spawn、部分失败 |
+| `test_taskflow_plan_auto_dispatch.py` | plan 自动派发初始 ready 集、依赖 step 保持 blocked、开关关闭、fail-open、finish Gate A 兜底 |
+| `tests/agent/middlewares/test_taskflow_reminder_ready.py` | ready 集 reminder 渲染/冷却、可调用冷却、就绪过滤 |
 | `test_taskflow_tools.py` | 跨重启的完整 create→run→resume→finish、冲突、终态转换 |
 | `test_taskflow_dispatch.py` | 批量派发、全有或全无校验、批次中途失败的持久化 |
 | `test_dag_e2e.py` | 跨进程重启的完整并行 DAG flow |

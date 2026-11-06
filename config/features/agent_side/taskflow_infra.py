@@ -48,6 +48,19 @@ class TaskFlowInfraConfig(TypedDict):
     #: PENDING); this cap keeps a single dispatch wave from flooding it. 1
     #: restores the historical one-at-a-time behaviour.
     max_parallel_dispatch: int
+    #: ``taskflow_plan`` dispatches every initial ready step as soon as the flow
+    #: is created. False restores the old "review the plan, then dispatch by
+    #: hand" behaviour; a failed spawn is fail-open and leaves the step ready.
+    auto_dispatch_initial_ready: bool
+    #: ``taskflow_resume`` dispatches ALL ready steps after a result lands, not
+    #: only the downstream steps that resume just unlocked. This is what picks
+    #: up sibling branches that were ready but never dispatched (the loop can
+    #: otherwise focus on one branch and forget the others).
+    auto_dispatch_all_ready_on_resume: bool
+    #: ``taskflow_status`` reminder cooldown while at least one step is ready
+    #: and undispatched. Without ready work the source keeps its normal 5-turn
+    #: cooldown; a ready set is a decision point, so it is reminded sooner.
+    taskflow_reminder_cooldown_when_ready: int
 
 
 TASKFLOW_INFRA: TaskFlowInfraConfig = {
@@ -77,4 +90,13 @@ TASKFLOW_INFRA: TaskFlowInfraConfig = {
     # default (the lane cap is 8): a wave of N steps costs ceil(N / this) spawn
     # rounds instead of N, and a slow spawn no longer serializes the wave.
     "max_parallel_dispatch": 2,
+    # The plan's ready set starts immediately: a sibling branch that is ready
+    # but never explicitly named used to be forgotten until finish's Gate A.
+    "auto_dispatch_initial_ready": True,
+    # A resume is the other natural wave boundary: scan the whole flow, not only
+    # the dependencies it just unlocked.
+    "auto_dispatch_all_ready_on_resume": True,
+    # Ready-but-undispatched work is a decision point, so remind about it on the
+    # next turn instead of waiting out the board's normal 5-turn cooldown.
+    "taskflow_reminder_cooldown_when_ready": 1,
 }

@@ -299,13 +299,55 @@ def _build_boulder_block(session_id: str) -> str:
         return ""
 
 
+def _taskflow_ready_steps(steps: list[dict], status_of) -> list[dict]:
+    """Steps whose dependencies are all done and that are not yet dispatched.
+
+    ``ready`` is the DAG's own state for them; re-checking ``depends_on`` keeps
+    a stale/hand-edited entry (or a blocked step whose deps just completed) from
+    being advertised as parallelizable before the unlock pass runs.
+    """
+    by_id = {step.get("step_id"): step for step in steps}
+    statuses = {step.get("step_id"): status_of(step) for step in steps}
+    ready: list[dict] = []
+    for step in steps:
+        if status_of(step) != "ready" or step.get("child_session_key"):
+            continue
+        depends_on = step.get("depends_on") or []
+        if all(by_id.get(dep) is not None and statuses.get(dep) == "done" for dep in depends_on):
+            ready.append(step)
+    return ready
+
+
+def has_undispatched_ready_steps(session_id: str) -> bool:
+    """Whether this session has at least one ready, not-yet-dispatched step.
+
+    Used by the reminder catalogue to shorten the TaskFlow board's cooldown: a
+    ready set is a dispatch decision the model must make now, unlike a stable
+    running board. Returns False on any failure (the caller then keeps the
+    normal cooldown).
+    """
+    try:
+        provider = _resolve_provider("get_active_flows")
+        if provider is None:
+            return False
+        for flow in provider.get_active_flows(session_id):
+            steps = (flow.get("state") or {}).get("steps") or []
+            if _taskflow_ready_steps(steps, provider.step_status):
+                return True
+        return False
+    except Exception as error:  # a broken read must not break the reminder layer
+        logger.debug("prompt builder: TaskFlow readiness probe failed ({}); assuming none", error)
+        return False
+
+
 def _build_taskflow_block(session_id: str) -> str:
     """Render pending TaskFlows for this session. Returns "" on none or failure.
 
     Reads the session's non-terminal flows from the taskflow registry (the
     registry filters by session id in SQL) and injects a concise summary
     (max 3 flows) so the agent can proactively continue unfinished work on
-    session start.
+    session start. Every ready step is named, not only the first pending one:
+    the ready set is the parallel branch set a single-branch run forgets.
     """
     try:
         provider = _resolve_provider("get_active_flows")
@@ -326,17 +368,30 @@ def _build_taskflow_block(session_id: str) -> str:
             desc = state.get("description", "")[:60]
             status = flow.get("status", "?")
 
-            # Find the next actionable step (first non-done).
-            pending = [s for s in steps if provider.step_status(s) not in ("done",)]
-            next_hint = ""
-            if pending:
-                next_step = pending[0]
-                next_id = next_step.get("step_id", "?")
-                next_task = (next_step.get("task", "") or "")[:40]
-                next_hint = f' | next: {next_id} "{next_task}"'
+            ready = _taskflow_ready_steps(steps, provider.step_status)
+            if ready:
+                items = ", ".join(
+                    f"{step.get('step_id', '?')}("
+                    f"{' '.join(str(step.get('task') or '').split())[:40]})"
+                    for step in ready
+                )
+                ready_hint = f" | ready_to_dispatch: {items}"
+                if len(ready) > 1:
+                    ready_hint += (
+                        f" [{len(ready)} steps ready — parallelize via taskflow_dispatch!]"
+                    )
+            else:
+                # No dispatch decision outstanding: keep the old next-step hint.
+                pending = [s for s in steps if provider.step_status(s) != "done"]
+                ready_hint = ""
+                if pending:
+                    next_step = pending[0]
+                    next_id = next_step.get("step_id", "?")
+                    next_task = (next_step.get("task", "") or "")[:40]
+                    ready_hint = f' | next: {next_id} "{next_task}"'
 
             lines.append(
-                f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{next_hint}'
+                f'- [{status}] {flow["flow_id"]}: "{desc}" | {done}/{total} steps done{ready_hint}'
             )
 
         lines.append(

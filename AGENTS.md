@@ -2648,26 +2648,33 @@ writable_roots)` takes the caller's write surface, which each tool resolves from
   (`USER_HOOKS["enabled"]`): the config file is git-tracked, so executing its
   commands must be a deliberate act. Listed in `MIDDLEWARE_ORDER`, and the config is read once at construction
   (change = restart).
-- the TaskFlow loop closes itself: a child spawned by a flow resumes it
-  automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
+- the TaskFlow loop closes itself and starts every ready sibling: a child spawned
+  by a flow resumes it automatically
+  (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
   finds the owning flow by scanning active flows' steps for the child key), and
-  `taskflow_step(action="resume")` then dispatches the wave it unlocked
-  (`auto_dispatch=True` default; `auto_dispatch=False` keeps the "unlock only"
-  shape). The AI still supervises the exceptions — judge BLOCK, failures,
+  `taskflow_step(action="resume")` then dispatches the full ready set —
+  `newly_ready ∪ all_ready` (`auto_dispatch=True` default; the wider scan is
+  `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`, and
+  `auto_dispatch=False` keeps the "unlock only" shape). `taskflow_flow(action="plan")`
+  also starts its initial ready set through the same batch path
+  (`auto_dispatch_initial_ready`), leaving only dependency-blocked steps parked.
+  The TaskFlow board reminder lists every ready step with a
+  `[N steps ready — parallelize via taskflow_dispatch!]` marker and shortens its
+  cooldown to `taskflow_reminder_cooldown_when_ready` (1) while that set exists.
+  The AI still supervises the exceptions — judge BLOCK, failures,
   planning and the final finish — instead of driving every step. `taskflow_flow(action="replan")`
   regenerates a flow's REMAINING steps from the goal, the done results and the
   failure reason (transitively invalidated steps go back to `blocked`; bounded by
-  `REPLAN_MAX` replans per flow), `taskflow_flow(action="plan")` decomposes a goal into a
-  dependency-ordered flow without dispatching anything, and `taskflow_flow(action="finish")`
+  `REPLAN_MAX` replans per flow), and `taskflow_flow(action="finish")`
   gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
   model judges whether the collected results actually satisfy the goal (fail-open;
   a rejection names `taskflow_flow(action="replan")`).
 - TaskFlow dispatch is **serialized per flow** and planning is idempotent:
   `_dispatch.flow_dispatch_lock(flow_id)` (process-local, keyed by loop + flow)
-  wraps the manual `taskflow_step(action="dispatch")` read → validate → spawn → persist body
-  and the resume auto-dispatch wave, which re-checks each step is still `ready`
-  after acquiring it — two dispatchers cannot spawn the same step twice. A
-  multi-process deployment would need a DB lease. `taskflow_flow(action="plan")` generates
+  wraps the manual `taskflow_step(action="dispatch")` read → validate → spawn → persist body,
+  the plan's initial-ready wave and the resume auto-dispatch wave, which re-checks
+  each step is still `ready` after acquiring it — two dispatchers cannot spawn the
+  same step twice. A multi-process deployment would need a DB lease. `taskflow_flow(action="plan")` generates
   `plan-<sha256(session_id + goal)[:10]>` (stable across processes, session
   scoped because `flow_id` is a global PK); repeating a goal/session returns
   the existing non-terminal flow as an idempotent success, and a duplicate

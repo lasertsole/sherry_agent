@@ -72,12 +72,14 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 
 ## 🔒 Dispatch Serialization & Idempotent Planning
 
-- `taskflow_flow(action="plan")`이 자동 생성하는 id가 이제 **안정적**입니다: `plan-<sha256(session_id + goal)[:10]>`. 같은 세션에서 같은 goal을 다시 계획하면 기존 **비터미널** 플로우를 멱등 성공으로 반환하고 두 번째 플로우를 만들지 않습니다. 터미널 플로우는 여전히 오류입니다(다른 id 또는 후속 플로우 사용). `flow_id`는 전역 기본 키이고 소유권은 세션 단위이므로 seed에 session id를 포함합니다.
+- `taskflow_flow(action="plan")`이 자동 생성하는 id가 이제 **안정적**입니다: `plan-<sha256(session_id + goal)[:10]>`. 같은 세션에서 같은 goal을 다시 계획하면 기존 **비터미널** 플로우를 멱등 성공으로 반환하고 두 번째 플로우를 만들지 않습니다. 터미널 플로우는 여전히 오류입니다(다른 id 또는 후속 플로우 사용). `flow_id`는 전역 기본 키이고 소유권은 세션 단위이므로 seed에 session id를 포함합니다. 생성 후 **모든 초기 ready step**을 자동 dispatch합니다(의존성 없는 형제들). `TASKFLOW_INFRA["auto_dispatch_initial_ready"]`(기본 true)로 기존의 "검토 후 dispatch" 동작으로 되돌릴 수 있고, 개별 spawn 실패는 fail-open(해당 step은 `ready` 유지)입니다. 출력되는 plan은 dispatch 이후 상태를 보여줍니다.
+- `taskflow_step(action="resume")`의 auto-dispatch는 **플로우 전체**를 스캔합니다(이번에 unlock한 하류만이 아님): `newly_ready ∪ all_ready`를 하나의 제한된 동시 wave로 dispatch합니다. 이로써 예전부터 ready였지만 이름이 지정되지 않은 형제 브랜치도 시작됩니다. `TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`(기본 true)로 이번 unlock 집합만으로 제한할 수 있습니다. 이미 dispatched된 step은 걸러지고 플로우 락 안에서 다시 확인되므로 이중 spawn은 없습니다.
+- TaskFlow board reminder는 **모든 ready step**을 나열하고(`ready_to_dispatch: s3(...), s4(...)`), 둘 이상이면 `[N steps ready — parallelize via taskflow_dispatch!]`를 붙입니다. 미dispatch ready가 있는 동안 cooldown은 `TASKFLOW_INFRA["taskflow_reminder_cooldown_when_ready"]`(1), 없으면 평소 5턴입니다(`only_if_changed`는 동일한 board의 재주입을 계속 억제합니다).
 - `taskflow_flow(action="create")`는 중복된 **비터미널** `flow_id`를 멱등 성공(revision + status)으로 반환합니다. 터미널 플로우나 다른 세션이 소유한 id는 계속 오류입니다.
-- 수동 `taskflow_step(action="dispatch")`와 `taskflow_step(action="resume")`의 auto-dispatch wave는 `_dispatch.flow_dispatch_lock(flow_id)`를 공유합니다: read → validate → spawn → persist 전체를 플로우 단위로 직렬화하고, wave는 락 획득 후 각 step이 여전히 `ready`인지 다시 확인합니다. 락은 **프로세스 로컬**입니다(단일 백엔드 프로세스, TaskFlow는 main-only). 다중 프로세스 배포에는 DB lease가 필요합니다.
+- 수동 `taskflow_step(action="dispatch")`, plan의 초기 ready wave, `taskflow_step(action="resume")`의 auto-dispatch wave는 `_dispatch.flow_dispatch_lock(flow_id)`를 공유합니다: read → validate → spawn → persist 전체를 플로우 단위로 직렬화하고, wave는 락 획득 후 각 step이 여전히 `ready`인지 다시 확인합니다. 락은 **프로세스 로컬**입니다(단일 백엔드 프로세스, TaskFlow는 main-only). 다중 프로세스 배포에는 DB lease가 필요합니다.
 - **mutating 반복 측정(2026-10-22):** 225개 checkpoint 스레드, 204개 도구 호출 — 122 `ast_grep_search`, 34 `terminal`, 23 `execute_code`, 10 `explore`, 5 `ast_grep_rewrite`, 5 `question`, 3 `write_file`, 1 `python_repl`, 1 `sessions_spawn` — 연속 동일 이름 + 동일 인자의 성공 mutating 호출은 **0건**이었습니다. 따라서 `ToolCallSignature` 미들웨어를 추가하지 않았고, `ToolGuardrails`가 계속 루프 감지를 담당합니다. 실제 반복이 텔레메트리로 확인될 때만 mutating 카운터를 재검토합니다.
 
-출처: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`; 테스트: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`.
+출처: `agent/tools/taskflow/tools/_dispatch.py`, `agent/tools/taskflow/tools/taskflow_plan.py`, `agent/tools/taskflow/tools/taskflow_create.py`, `agent/tools/taskflow/tools/taskflow_dispatch.py`, `agent/tools/taskflow/tools/taskflow_resume.py`, `workspace/prompt_builder.py`, `agent/middlewares/reminder_catalog/`; 테스트: `tests/agent/tools/taskflow/test_no_double_dispatch.py`, `tests/agent/tools/taskflow/test_plan_replan_loop.py`, `tests/agent/tools/taskflow/test_concurrent_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_plan_auto_dispatch.py`, `tests/agent/tools/taskflow/test_taskflow_resume_all_ready.py`, `tests/agent/middlewares/test_taskflow_reminder_ready.py`.
 
 ## ⚙️ 설정 레지스트리
 
@@ -181,7 +183,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | `taskflow_step(action="run_task")` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | 디스패치된 단계, 또는 미충족 의존이 있는 `blocked` |
 | `taskflow_step(action="dispatch")` | `(flow_id, step_ids, expected_revision=None, session_id)` | 디스패치된 step id + 리비전 |
 | `taskflow_step(action="wait_all")` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 단계별 정착 보고서(완전 또는 부분; 정책 단계 자동 재시도) |
-| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 재개 상태, 언락된 단계, 단계 상태 카운트, 기준 에코, 판정기 판정, 재시도 노트 |
+| `taskflow_step(action="resume")` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 재개 상태, 언락된 id, 모든 ready step 자동 dispatch(하류 + 형제), 단계 상태 카운트, 기준 에코, 판정기 판정, 재시도 노트 |
 | `taskflow_flow(action="set_waiting")` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting 상태 + 리비전 |
 | `taskflow_inspect(action="summary")` | `(flow_id, session_id)` | 대기/데드라인 상태를 포함한 전체 flow 상태 |
 | `taskflow_inspect(action="progress")` | `(flow_id, session_id)` | 완료율, 내역, 다음 단계, 예상 남은 시간 |
@@ -189,7 +191,7 @@ TaskFlow는 **활성 todo 루트**로 살아 있습니다. `taskflow_flow(action
 | `taskflow_inspect(action="list")` | `(status_filter="active", session_id)` | 이 세션의 보드(`active` / `all` / 상태 이름) |
 | `taskflow_flow(action="finish")` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 종단 `done`(4개 게이트, 페일오픈) |
 | `taskflow_flow(action="replan")` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 목표 + 완료 결과 + 실패 사유로 **미완료** 단계 재생성(완료/실행 중은 유지, 변경된 단계의 하류는 blocked로 복귀, 플로우당 ≤ 3회) |
-| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 목표를 의존성 순서의 새 플로우로 분해(등록만, 디스패치 안 함) |
+| `taskflow_flow(action="plan")` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 목표를 의존성 순서의 새 플로우로 분해; 초기 ready 형제 step은 자동 dispatch |
 | `taskflow_flow(action="fail")` | `(flow_id, reason="", expected_revision=None, session_id)` | 종단 `failed` |
 | `taskflow_flow(action="cancel")` | `(flow_id, reason="", expected_revision=None, session_id)` | 종단 `cancelled` |
 
@@ -242,6 +244,9 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(24개 `unit`
 | `test_step_graph.py` | `deps_satisfied`, `mark_step_done`, `unlock_dependents`, 레거시 상태 파생, 자기 의존 가드 |
 | `test_summary_dag.py` | `taskflow_inspect(action="summary")`의 DAG 렌더링 |
 | `test_resume_dag.py` | 재개로 done 표시, 후속 언락, 부분 완료, 멱등 무동작 |
+| `test_taskflow_resume_all_ready.py` | resume이 플로우 전체를 스캔: unlock된 하류 + ready 형제, 옵트아웃, 이중 spawn 없음, 부분 실패 |
+| `test_taskflow_plan_auto_dispatch.py` | plan이 초기 ready 집합을 자동 dispatch, 의존 step은 blocked 유지, 옵트아웃, fail-open, finish Gate A 폴백 |
+| `tests/agent/middlewares/test_taskflow_reminder_ready.py` | ready 집합 reminder 렌더링/쿨다운, 호출 가능 쿨다운, ready 필터 |
 | `test_taskflow_tools.py` | 재시작을 넘는 create→run→resume→finish, 충돌, 종단 전환 |
 | `test_taskflow_dispatch.py` | 일괄 디스패치, 전부 아니면 전무 검증, 배치 중간 실패 영속화 |
 | `test_dag_e2e.py` | 프로세스 재시작을 넘는 완전 병렬 DAG flow |

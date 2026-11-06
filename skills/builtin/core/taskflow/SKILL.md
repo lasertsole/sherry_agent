@@ -57,8 +57,9 @@ getTaskSummary).
   inject it with `taskflow_step(action="resume")`.
 - `taskflow_step(action="dispatch", flow_id, step_ids, expected_revision)`: batch-dispatch one
   or more steps that are currently `ready` (dependencies satisfied but not yet
-  dispatched). Use it to dispatch independent steps in parallel, or to dispatch
-  steps unlocked by `taskflow_step(action="resume")`. If any id is unknown, is already
+  dispatched). `taskflow_step(action="resume")` already auto-dispatches the ready
+  set; use this for steps left `ready` by `auto_dispatch=false`, a failed spawn,
+  or `taskflow_step(action="update_steps")`. If any id is unknown, is already
   `dispatched`/`done`, or still has unmet dependencies, the whole batch is
   rejected — nothing is dispatched and no state changes; if a dispatch fails
   mid-batch, the steps already dispatched successfully are persisted first and
@@ -151,9 +152,13 @@ getTaskSummary).
   failure.
 - `taskflow_flow(action="plan", goal, flow_id, context, max_steps)`: decompose a goal into a
   dependency-ordered flow. Creates the flow and registers every step BLOCKED
-  (READY when it has no dependencies) — nothing is dispatched, so review the
-  printed plan and start it with `taskflow_step(action="dispatch")` (or `taskflow_step(action="run_task")`),
-  or fix it first with `taskflow_step(action="update_steps")`. Each planned step may carry
+  (READY when it has no dependencies), then **auto-dispatches every initial
+  ready step** through the batch dispatch path — independent siblings start in
+  parallel without you naming each id. Steps with unmet dependencies stay
+  blocked. The printed plan shows the post-dispatch statuses; use
+  `taskflow_step(action="update_steps")` to change it, and dispatch any step
+  that is still `ready` (a failed spawn, a config opt-out, or a newly added
+  step) with `taskflow_step(action="dispatch")`. Each planned step may carry
   `judge_criteria` and `response_schema` gates like any other step.
 
 ## Optimistic locking and conflict retry
@@ -203,8 +208,11 @@ Status progression: `blocked -> ready -> dispatched -> done`, with `failed` /
   the step and does not dispatch it.
 - `ready`: dependencies satisfied, waiting to be dispatched. **Unlocked by
   `taskflow_step(action="resume")`**: after a prerequisite step is marked `done`, the `blocked`
-  steps depending on it become `ready`; `taskflow_step(action="resume")` only reports the newly
-  unlocked step ids and does not dispatch automatically. Unlocking is
+  steps depending on it become `ready`. With `auto_dispatch` on (the default),
+  resume then starts the full ready set — the unlocked downstream steps **and**
+  any sibling that was already ready but never dispatched — so a parallel
+  branch cannot be parked until finish's Gate A. Pass `auto_dispatch=false` to
+  only record the result and report the unlocked ids. Unlocking is
   failure-aware: a prerequisite that ended `failed` leaves its dependents
   `blocked`, and one that was `skipped`/`cancelled` cascades `skipped` into them.
 - `dispatched`: a detached subagent session was dispatched and
@@ -235,16 +243,19 @@ non-blocking warning — kill the child or settle it (`taskflow_step(action="wai
 
 1. Register steps with `taskflow_step(action="run_task")`: independent steps are dispatched
    immediately; steps with unmet `depends_on` are recorded as `blocked` (not dispatched).
+   `taskflow_flow(action="plan")` does the equivalent for a generated plan and starts its
+   initial ready siblings automatically.
 2. Once a prerequisite step's result arrives, inject it with `taskflow_step(action="resume")`:
-   that step becomes `done` and unlocks the `blocked` steps depending on it to
-   `ready` (the newly ready step ids are returned).
-3. Dispatch those `ready` steps in one `taskflow_step(action="dispatch")` call (they can be
-   dispatched in parallel together with other independent steps).
+   that step becomes `done`, its blocked dependents unlock, and the resume's auto-dispatch
+   wave starts the whole ready set (unlocked downstream plus any ready sibling).
+3. Read the returned `auto_dispatched` list. Use `taskflow_step(action="dispatch")` only for
+   steps left `ready` — `auto_dispatch=false`, a failed spawn, or steps added later by
+   `taskflow_step(action="update_steps")`.
 4. `taskflow_step(action="wait_all")` waits for the child sessions of the steps dispatched by
    this flow to settle.
 5. Call `taskflow_step(action="resume")` for each completed child session, injecting the results
-   one by one; each injection may unlock the next layer of `ready` steps — return
-   to step 3 until every step is `done`.
+   one by one; each injection may unlock another layer and start its ready set — repeat until
+   every step is `done`.
 
 ## Step statuses
 

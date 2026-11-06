@@ -165,6 +165,8 @@ class TestTaskflowBlockInjection:
         prompt = _reminder("sess-main", "taskflow_status")
 
         assert "Pending TaskFlows" not in prompt
+        # First injection is always due, so the cooldown probe is skipped and
+        # only the block builder reads the session-scoped store.
         assert prompt_env["flow_store"].calls == 1
         assert prompt_env["flow_store"].requested_sessions == ["sess-main"]
 
@@ -190,7 +192,49 @@ class TestTaskflowBlockInjection:
         prompt = _reminder("sess-main", "taskflow_status")
 
         assert "2/5 steps done" in prompt
-        assert 'next: s3 "task 3"' in prompt
+        assert "ready_to_dispatch: s3(task 3)" in prompt
+        assert "parallelize" not in prompt, "one ready step is not a fan-out"
+
+    def test_taskflow_block_lists_every_ready_sibling(self, prompt_env):
+        prompt_env["flow_store"].flows = [
+            _flow(
+                "fanout",
+                steps=[
+                    _step("s1", "implement the parser", status="done"),
+                    _step("s2", "write the tests", status="ready"),
+                    _step("s3", "update the docs", status="ready"),
+                    _step("s4", "wire the CLI", status="ready"),
+                    _step("s5", "downstream", status="blocked"),
+                ],
+            )
+        ]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert (
+            "ready_to_dispatch: s2(write the tests), s3(update the docs), s4(wire the CLI)"
+            in prompt
+        )
+        assert "[3 steps ready — parallelize via taskflow_dispatch!]" in prompt, (
+            "the fan-out must be explicit, not only implied by the list"
+        )
+
+    def test_taskflow_block_falls_back_to_next_when_nothing_is_ready(self, prompt_env):
+        prompt_env["flow_store"].flows = [
+            _flow(
+                "linear",
+                steps=[
+                    _step("s1", "collect", status="done"),
+                    _step("s2", "waiting on a child", status="dispatched"),
+                    _step("s3", "after", status="blocked"),
+                ],
+            )
+        ]
+
+        prompt = _reminder("sess-main", "taskflow_status")
+
+        assert "ready_to_dispatch" not in prompt
+        assert 'next: s2 "waiting on a child"' in prompt
 
     def test_taskflow_block_max_three_flows(self, prompt_env):
 

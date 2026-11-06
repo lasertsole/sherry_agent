@@ -76,6 +76,9 @@ class ReminderSource:
     :param budget_chars: Per-source cap; longer text is clipped with an ellipsis.
     :param priority: Higher wins under the total budget; 100 = must keep.
     :param cooldown_turns: Inject at most once per N turns (0 = no cooldown).
+        May be a callable ``(session_id, state) -> int`` when the throttle
+        depends on live state (the TaskFlow board shortens it while ready work
+        is waiting for dispatch).
     :param only_if_changed: Skip when the rendered text is identical to the last
         text this session injected for the source.
     :param transient: When True, the reminder is stripped from the message list
@@ -93,7 +96,9 @@ class ReminderSource:
     builder: Callable[[str, dict[str, Any]], str | None | Awaitable[str | None]]
     budget_chars: int = 2000
     priority: int = 50
-    cooldown_turns: int = REMINDER_CATALOG["default_cooldown_turns"]
+    cooldown_turns: int | Callable[[str, dict[str, Any]], int] = REMINDER_CATALOG[
+        "default_cooldown_turns"
+    ]
     only_if_changed: bool = False
     is_meta: bool = True
     tags: tuple[str, ...] = field(default_factory=tuple)
@@ -137,14 +142,30 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
-def _is_due(source: ReminderSource, shown: dict[str, Any], current_turn: int) -> bool:
+def _cooldown_for(
+    source: ReminderSource,
+    session_id: str,
+    state: dict[str, Any],
+) -> int:
+    """Resolve a source's cooldown, evaluating a live-state resolver if present."""
+    value = source.cooldown_turns
+    if not callable(value):
+        return max(0, int(value))
+    try:
+        return max(0, int(value(session_id, state)))
+    except Exception:  # noqa: BLE001 - a broken resolver must not suppress reminders
+        logger.exception("reminder_catalog: cooldown resolver failed for {}", source.source_id)
+        return 0
+
+
+def _is_due(shown: dict[str, Any], current_turn: int, cooldown_turns: int) -> bool:
     """Whether the source's cooldown allows an injection this turn."""
-    if source.cooldown_turns <= 0 or not shown:
+    if cooldown_turns <= 0 or not shown:
         return True
     # The cooldown applies only to a source that HAS been injected:
     # "never shown" is eligible now, not cooling down from turn 0.
     last_turn = int(shown.get("turn", 0) or 0)
-    return current_turn - last_turn >= source.cooldown_turns
+    return current_turn - last_turn >= cooldown_turns
 
 
 def _accept_candidate(
@@ -212,7 +233,10 @@ def resolve_injections(
     candidates: list[tuple[ReminderSource, str]] = []
     for source in _SOURCES.values():
         shown = session_state.get(source.source_id, {})
-        if not _is_due(source, shown, current_turn):
+        # "Never shown" is always due, so do not run a live cooldown resolver
+        # (which may read the TaskFlow store) on the first eligible turn.
+        cooldown_turns = _cooldown_for(source, session_id, state) if shown else 0
+        if not _is_due(shown, current_turn, cooldown_turns):
             continue
         if inspect.iscoroutinefunction(source.builder):
             logger.warning(
@@ -253,7 +277,10 @@ async def aresolve_injections(
     candidates: list[tuple[ReminderSource, str]] = []
     for source in _SOURCES.values():
         shown = session_state.get(source.source_id, {})
-        if not _is_due(source, shown, current_turn):
+        # "Never shown" is always due, so do not run a live cooldown resolver
+        # (which may read the TaskFlow store) on the first eligible turn.
+        cooldown_turns = _cooldown_for(source, session_id, state) if shown else 0
+        if not _is_due(shown, current_turn, cooldown_turns):
             continue
         try:
             content = source.builder(session_id, state)

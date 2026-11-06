@@ -323,6 +323,12 @@ async def taskflow_flow(action="create", flow_id: str, description: str = "", in
 
 
 
+### taskflow_flow(action="plan")
+
+请求 TaskFlow planner 生成依赖有序的步骤列表，用稳定的 `plan-<sha256(session_id + goal)[:10]>` id 创建流、绑定 todo 根，然后**自动派发所有初始 ready 步骤**（无依赖的兄弟）——复用与手动 `taskflow_step(action="dispatch")` 相同的批量派发路径。`depends_on` 未满足的步骤保持 `blocked`；单个 spawn 失败是 fail-open，该步骤留 `ready`。`TASKFLOW_INFRA["auto_dispatch_initial_ready"]`（默认 true）可恢复旧的「先审查再派发」行为。返回的 plan 显示派发后的状态，并列出被自动派发的 id。
+
+
+
 ### taskflow_step(action="run_task")
 
 
@@ -479,7 +485,7 @@ async def taskflow_step(action="resume",
 
 
 
-**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时新就绪的波次会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_stepactionresume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_step(action="dispatch")`。
+**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。写入在冲突重试时会把已判定的结论重新应用到新读取的状态上，因此两个子代理同时完成时两个结果都会落地（见[带已派生子代理的冲突重试](#带已派生子代理的冲突重试)）。`auto_dispatch=True`（默认）时完整的 ready 集会被立即以有界并发批量 spawn——见[自动派发波次](#自动派发波次taskflow_stepactionresume)；传 `auto_dispatch=False` 则只解锁，由调用方显式 `taskflow_step(action="dispatch")`。
 
 ### taskflow_flow(action="set_waiting")
 
@@ -720,7 +726,7 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 
 
-解锁了依赖者的 resume 会顺带把它们启动起来（`auto_dispatch=True`，默认值）：新就绪的波次通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn，且 spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_step(action="dispatch")` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试。由于解锁集合来自**实际持久化**的状态，两个完成事件争抢解锁同一步骤时只会 spawn 一次。
+resume 会启动整个 ready 集，而不只是它解锁的依赖者（`auto_dispatch=True`，默认值）：`newly_ready ∪ all_ready` —— 本次解锁的下游，加上一直 `ready` 却未派发的兄弟步骤 —— 通过同一接缝、同一 `max_parallel_dispatch` 上限并发 spawn。`TASKFLOW_INFRA["auto_dispatch_all_ready_on_resume"]`（默认 true）控制扩大扫描；设为 false（或传 `auto_dispatch=False`）可恢复旧的「只解锁/只派发新解锁集」行为。spawn 出的子代理键通过 CAS 重试写入（`update_flow_with_conflict_retry`）持久化，并发写入无法丢掉它们。每个步骤的派发方式与 `taskflow_step(action="dispatch")` 完全一致（任务绑定 + 判别反馈）。失败只报告、不抛出：spawn 不成的步骤保持 `ready`，resume 的应答里带 `auto_dispatch_failed=<step_id>: <error>` 供手动重试。已派发的步骤会被过滤并在 flow 锁内重新确认，因此扩大扫描也只会 spawn 一次。
 
 
 
